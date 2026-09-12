@@ -17,12 +17,12 @@ import (
 // validator, and shared-file preflight; publication itself never adopts a
 // destination into durable ownership state.
 type conversionPublisher struct {
-	target    string
-	shared    []string
-	clone     func(*hcc.Result) (*hcc.Result, error)
-	preflight func(string) error
-	validate  func(string, []string) error
-	prune     func(string, []string) error
+	target          string
+	shared          []string
+	clone           func(*hcc.Result) (*hcc.Result, error)
+	preflight       func(string) error
+	validate        func(string, []string) error
+	pruneCandidates func(string, []hcc.StaleFileCandidate) error
 }
 
 func (p conversionPublisher) materialize(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool) (*hcc.WriteReport, error) {
@@ -34,7 +34,9 @@ func (p conversionPublisher) materialize(result *hcc.Result, outDir string, matO
 		if err := p.preflight(outDir); err != nil {
 			return nil, err
 		}
-		return hcc.Materialize(converted, outDir, matOpts...)
+		report, err := hcc.Materialize(converted, outDir, matOpts...)
+		protectConversionSharedCandidates(report, p.shared)
+		return report, err
 	}
 	store, err := ownership.Open(outDir)
 	if err != nil {
@@ -55,6 +57,7 @@ func (p conversionPublisher) materialize(result *hcc.Result, outDir string, matO
 	if resultErr != nil && !errors.Is(resultErr, hcc.ErrPartialResult) {
 		return nil, resultErr
 	}
+	protectConversionSharedCandidates(report, p.shared)
 	stageParent, err := codexConversionStageParent(outDir)
 	if err != nil {
 		return nil, err
@@ -77,12 +80,43 @@ func (p conversionPublisher) materialize(result *hcc.Result, outDir string, matO
 	if err := publishConversionWith(stageDir, outDir, report.Written, p.shared, p.target, nil); err != nil {
 		return nil, err
 	}
-	return finishConversion(outDir, report, resultErr, p.prune)
+	return finishConversionWithCandidates(outDir, report, resultErr, p.pruneCandidates)
+}
+
+func protectConversionSharedCandidates(report *hcc.WriteReport, shared []string) {
+	if report == nil || len(shared) == 0 {
+		return
+	}
+	protected := make(map[string]struct{}, len(shared))
+	for _, path := range shared {
+		protected[path] = struct{}{}
+	}
+	filteredCandidates := report.StaleCandidates[:0]
+	filteredRemoved := report.Removed[:0]
+	for _, candidate := range report.StaleCandidates {
+		if _, ok := protected[candidate.Path]; ok {
+			continue
+		}
+		filteredCandidates = append(filteredCandidates, candidate)
+		filteredRemoved = append(filteredRemoved, candidate.Path)
+	}
+	report.StaleCandidates = filteredCandidates
+	report.Removed = filteredRemoved
 }
 
 func finishConversion(outDir string, report *hcc.WriteReport, resultErr error, prune func(string, []string) error) (*hcc.WriteReport, error) {
 	if pruneErr := prune(outDir, report.Removed); pruneErr != nil {
 		return report, fmt.Errorf("conversion output was published, but stale output pruning failed: %w", pruneErr)
+	}
+	slog.Info("conversion published", "out_dir", filepath.Clean(outDir), "written", len(report.Written), "removed", len(report.Removed), "partial", report.Partial)
+	return report, resultErr
+}
+
+func finishConversionWithCandidates(outDir string, report *hcc.WriteReport, resultErr error, pruneCandidates func(string, []hcc.StaleFileCandidate) error) (*hcc.WriteReport, error) {
+	if pruneCandidates != nil {
+		if pruneErr := pruneCandidates(outDir, report.StaleCandidates); pruneErr != nil {
+			return report, fmt.Errorf("conversion output was published, but stale output pruning failed: %w", pruneErr)
+		}
 	}
 	slog.Info("conversion published", "out_dir", filepath.Clean(outDir), "written", len(report.Written), "removed", len(report.Removed), "partial", report.Partial)
 	return report, resultErr

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +80,82 @@ func TestConvertCommandCanonicalizesHarnessFlags(t *testing.T) {
 		t.Fatalf("expected canonical conversion summary, got:\n%s", output)
 	}
 	assertFileExists(t, filepath.Join(outDir, "skills", "demo-skill", "SKILL.md"))
+}
+
+func TestConvertCommandRejectsCanonicalSourceOutputOverlap(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	tests := []struct {
+		name  string
+		sync  bool
+		setup func(t *testing.T) (source, output string)
+	}{
+		{
+			name: "equal",
+			setup: func(t *testing.T) (string, string) {
+				source := filepath.Join(t.TempDir(), "source")
+				writeClaudePluginSkill(t, source, "must-not-change")
+				return source, source
+			},
+		},
+		{
+			name: "output nested under source",
+			sync: true,
+			setup: func(t *testing.T) (string, string) {
+				source := filepath.Join(t.TempDir(), "source")
+				writeClaudePluginSkill(t, source, "must-not-change")
+				return source, filepath.Join(source, "nested-output")
+			},
+		},
+		{
+			name: "source nested under output",
+			setup: func(t *testing.T) (string, string) {
+				output := filepath.Join(t.TempDir(), "output")
+				source := filepath.Join(output, "nested-source")
+				writeClaudePluginSkill(t, source, "must-not-change")
+				return source, output
+			},
+		},
+		{
+			name: "symlink alias",
+			setup: func(t *testing.T) (string, string) {
+				root := t.TempDir()
+				source := filepath.Join(root, "source")
+				writeClaudePluginSkill(t, source, "must-not-change")
+				output := filepath.Join(root, "output-alias")
+				if err := os.Symlink(source, output); err != nil {
+					t.Fatalf("symlink output: %v", err)
+				}
+				return source, output
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, output := tt.setup(t)
+			before, readErr := os.ReadFile(filepath.Join(source, "skills", "must-not-change", "SKILL.md"))
+			if readErr != nil {
+				t.Fatalf("read source before conversion: %v", readErr)
+			}
+			args := []string{"convert", "--from", "claude", "--to", "factory", "--out", output}
+			if tt.sync {
+				args = append(args, "--sync")
+			}
+			args = append(args, source)
+			result, err := executeCommand(args...)
+			if err == nil || !strings.Contains(result+err.Error(), "source and output paths overlap") {
+				t.Fatalf("expected canonical overlap refusal, output=%q err=%v", result, err)
+			}
+			after, readErr := os.ReadFile(filepath.Join(source, "skills", "must-not-change", "SKILL.md"))
+			if readErr != nil {
+				t.Fatalf("read source after conversion: %v", readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("source changed despite overlap refusal: before=%q after=%q", before, after)
+			}
+		})
+	}
 }
 
 func TestConvertCommandToCodexPublishesCompleteSharedAggregates(t *testing.T) {
@@ -331,6 +408,42 @@ func TestConvertCommandToCodexSyncPrunesStaleOutput(t *testing.T) {
 	assertPathExistence(t, stale, false)
 	assertFileExists(t, filepath.Join(outDir, ".codex", "hooks.json"))
 	assertFileExists(t, filepath.Join(outDir, ".agents", "skills", "demo-skill", "SKILL.md"))
+}
+
+func TestConvertSyncPreservesConcurrentlyModifiedStaleCandidate(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	outDir := t.TempDir()
+	stalePath := filepath.Join(outDir, "stale.txt")
+	writeFile(t, stalePath, "planned-old\n")
+	planned, err := hcc.Materialize(&hcc.Result{Artifacts: []hcc.Artifact{{Path: "kept.txt", Bytes: []byte("kept\n")}}}, outDir, hcc.WithWriteMode(hcc.WriteModeSync), hcc.WithDryRun())
+	if err != nil {
+		t.Fatalf("plan stale prune: %v", err)
+	}
+	if len(planned.StaleCandidates) != 1 || planned.StaleCandidates[0].Path != "stale.txt" {
+		t.Fatalf("stale candidates = %+v, want stale.txt", planned.StaleCandidates)
+	}
+
+	changed := make(chan struct{})
+	go func() {
+		_ = os.WriteFile(stalePath, []byte("external-writer\n"), 0o644)
+		close(changed)
+	}()
+	<-changed
+
+	removeCalled := false
+	err = pruneCodexConversionStaleCandidatesWith(outDir, planned.StaleCandidates, func(path string) error {
+		removeCalled = true
+		return os.Remove(path)
+	})
+	if !errors.Is(err, hcc.ErrStalePruneConflict) {
+		t.Fatalf("prune error = %v, want ErrStalePruneConflict", err)
+	}
+	if removeCalled {
+		t.Fatal("stale candidate was removed after an external modification")
+	}
+	assertFileContents(t, stalePath, "external-writer\n")
 }
 
 func TestPublishCodexConversionRollsBackOnlyConversionArtifacts(t *testing.T) {
@@ -706,6 +819,171 @@ func TestConvertCommandToDevinSyncPrunesStaleOutput(t *testing.T) {
 	}
 	assertPathExistence(t, filepath.Join(outDir, "skills", "stale-skill", "SKILL.md"), false)
 	assertPathExistence(t, stale, false)
+}
+
+func TestPruneCodexConversionStaleRejectsParentSymlinkSubstitution(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	outDir := t.TempDir()
+	nested := filepath.Join(outDir, "nested")
+	if err := os.Mkdir(nested, 0o755); err != nil {
+		t.Fatalf("create stale parent: %v", err)
+	}
+	stale := filepath.Join(nested, "stale.txt")
+	writeFile(t, stale, "managed\\n")
+	planned, err := hcc.Materialize(&hcc.Result{Artifacts: []hcc.Artifact{{Path: "kept.txt", Bytes: []byte("kept\\n")}}}, outDir, hcc.WithWriteMode(hcc.WriteModeSync), hcc.WithDryRun())
+	if err != nil {
+		t.Fatalf("plan stale prune: %v", err)
+	}
+	if len(planned.StaleCandidates) != 1 || planned.StaleCandidates[0].Path != "nested/stale.txt" {
+		t.Fatalf("stale candidates = %+v, want nested/stale.txt", planned.StaleCandidates)
+	}
+
+	outside := t.TempDir()
+	outsideStale := filepath.Join(outside, "stale.txt")
+	writeFile(t, outsideStale, "outside\\n")
+	if err := os.RemoveAll(nested); err != nil {
+		t.Fatalf("replace stale parent: %v", err)
+	}
+	if err := os.Symlink(outside, nested); err != nil {
+		t.Fatalf("create stale parent symlink: %v", err)
+	}
+	removeCalled := false
+	err = pruneCodexConversionStaleCandidatesWith(outDir, planned.StaleCandidates, func(path string) error {
+		removeCalled = true
+		return os.Remove(path)
+	})
+	if !errors.Is(err, hcc.ErrStalePruneConflict) {
+		t.Fatalf("prune error = %v, want ErrStalePruneConflict", err)
+	}
+	if removeCalled {
+		t.Fatal("stale path was removed through a substituted parent symlink")
+	}
+	assertFileContents(t, outsideStale, "outside\\n")
+}
+
+func TestPruneCodexConversionStaleRejectsOutputRootSubstitution(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, substituteWithSymlink := range []bool{false, true} {
+		name := "directory"
+		if substituteWithSymlink {
+			name = "symlink"
+		}
+		t.Run(name, func(t *testing.T) {
+			outDir := t.TempDir()
+			stale := filepath.Join(outDir, "stale.txt")
+			writeFile(t, stale, "planned\\n")
+			planned, err := hcc.Materialize(&hcc.Result{Artifacts: []hcc.Artifact{{Path: "kept.txt", Bytes: []byte("kept\\n")}}}, outDir, hcc.WithWriteMode(hcc.WriteModeSync), hcc.WithDryRun())
+			if err != nil {
+				t.Fatalf("plan stale prune: %v", err)
+			}
+			if len(planned.StaleCandidates) != 1 || planned.StaleCandidates[0].Path != "stale.txt" {
+				t.Fatalf("stale candidates = %+v, want root-level stale.txt", planned.StaleCandidates)
+			}
+
+			replacementParent := t.TempDir()
+			replacement := filepath.Join(replacementParent, "replacement")
+			if err := os.Mkdir(replacement, 0o755); err != nil {
+				t.Fatalf("create replacement root: %v", err)
+			}
+			replacementStale := filepath.Join(replacement, "stale.txt")
+			writeFile(t, replacementStale, "replacement\\n")
+			if err := os.RemoveAll(outDir); err != nil {
+				t.Fatalf("remove planned root: %v", err)
+			}
+			if substituteWithSymlink {
+				if err := os.Symlink(replacement, outDir); err != nil {
+					t.Fatalf("substitute output root with symlink: %v", err)
+				}
+			} else if err := os.Rename(replacement, outDir); err != nil {
+				t.Fatalf("substitute output root with directory: %v", err)
+			}
+
+			removeCalled := false
+			err = pruneCodexConversionStaleCandidatesWith(outDir, planned.StaleCandidates, func(path string) error {
+				removeCalled = true
+				return os.Remove(path)
+			})
+			if !errors.Is(err, hcc.ErrStalePruneConflict) {
+				t.Fatalf("prune error = %v, want ErrStalePruneConflict", err)
+			}
+			if !strings.Contains(err.Error(), "stale.txt") {
+				t.Fatalf("prune error = %v, want the preserved root-level candidate named", err)
+			}
+			if removeCalled {
+				t.Fatal("stale path was removed through a substituted output root")
+			}
+			assertFileContents(t, filepath.Join(outDir, "stale.txt"), "replacement\\n")
+		})
+	}
+}
+
+func TestConvertCommandToDevinSyncProtectsAllSharedAggregatesWhenSourceOmitsThem(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	srcDir := t.TempDir()
+	writeClaudePluginSkill(t, srcDir, "skill-only")
+	outDir := filepath.Join(t.TempDir(), "devin-out")
+	if output, err := executeCommand("convert", "--from", "claude", "--to", "devin", "--out", outDir, srcDir); err != nil {
+		t.Fatalf("initial Devin conversion: %v\\n%s", err, output)
+	}
+	shared := map[string]string{
+		"config.json": `{
+  "hooks": {
+    "PreToolUse": []
+  }
+}
+`,
+		"hooks.v1.json": `{
+  "PreToolUse": []
+}
+`,
+		"mcp_config.json": `{
+  "mcpServers": {}
+}
+`,
+	}
+	for rel, contents := range shared {
+		writeFile(t, filepath.Join(outDir, rel), contents)
+	}
+	stale := filepath.Join(outDir, "stale.txt")
+	writeFile(t, stale, "stale\\n")
+
+	output, err := executeCommand("convert", "--from", "claude", "--to", "devin", "--out", outDir, "--sync", srcDir)
+	if err == nil || !strings.Contains(output, `shared file "config.json" already exists`) {
+		t.Fatalf("sync Devin conversion error = %v, output=%s", err, output)
+	}
+	for rel, want := range shared {
+		assertFileContents(t, filepath.Join(outDir, rel), want)
+	}
+	assertPathExistence(t, stale, true)
+}
+
+func TestProtectConversionSharedCandidatesExcludesCompleteDevinSet(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	report := &hcc.WriteReport{
+		Removed: []string{"config.json", "hooks.v1.json", "mcp_config.json", "stale.txt"},
+		StaleCandidates: []hcc.StaleFileCandidate{
+			{Path: "config.json"},
+			{Path: "hooks.v1.json"},
+			{Path: "mcp_config.json"},
+			{Path: "stale.txt"},
+		},
+	}
+	protectConversionSharedCandidates(report, devinConversionSharedPaths[:])
+	if got, want := report.Removed, []string{"stale.txt"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Removed = %v, want %v", got, want)
+	}
+	if len(report.StaleCandidates) != 1 || report.StaleCandidates[0].Path != "stale.txt" {
+		t.Fatalf("StaleCandidates = %+v, want stale.txt", report.StaleCandidates)
+	}
 }
 
 func TestPublishDevinConversionUsesCollisionSafeRecovery(t *testing.T) {

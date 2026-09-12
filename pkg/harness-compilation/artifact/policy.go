@@ -9,7 +9,7 @@ type ReconciliationMode uint8
 const (
 	// ReconciliationReplace publishes the complete artifact without reading a
 	// destination. It is the default for ordinary files.
-	ReconciliationReplace ReconciliationMode = iota
+	ReconciliationReplace ReconciliationMode = iota + 1
 	// ReconciliationMarker permits a consumer-owned aggregate merge whose
 	// entries carry the declared marker metadata.
 	ReconciliationMarker
@@ -19,7 +19,8 @@ const (
 )
 
 // ReconciliationPolicy describes how one artifact may reconcile its
-// destination. The zero value is the safe, non-owning replacement policy.
+// destination. The zero value means no typed policy was supplied and invokes
+// legacy compatibility resolution; that resolution defaults to replacement.
 type ReconciliationPolicy struct {
 	Mode        ReconciliationMode
 	MarkerField string
@@ -105,13 +106,9 @@ func (a *Artifact) ValidatePolicy() error {
 // PolicyValidation validates the policy with the artifact's fragment or
 // already-merged aggregate shape.
 func (a Artifact) PolicyValidation() error {
-	p := a.Reconciliation
-	if p == (ReconciliationPolicy{}) && (a.ExternalReconciliationRequired || a.MergeWithExisting || a.ManagedByField != "" || a.ManagedByValue != "") {
-		var err error
-		p, err = a.Policy()
-		if err != nil {
-			return err
-		}
+	p, err := a.Policy()
+	if err != nil {
+		return err
 	}
 	return p.Validate(a.Fragment || a.MergeWithExisting)
 }
