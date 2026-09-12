@@ -1,0 +1,106 @@
+name: Harness Images
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: harness-image-refresh
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Validate image metadata tooling
+        run: go test ./tools/harness-compat
+      - name: Select registered native harnesses
+        id: matrix
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          matrix=$(go run ./tools/harness-compat matrix --native --repository "$REPOSITORY")
+          echo "value=$matrix" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Refresh ${{ matrix.target }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Prepare image diagnostics
+        run: |
+          mkdir -p "$RUNNER_TEMP/harness-image-artifacts"
+          echo "HARNESS_COMPAT_REPORT_DIR=$RUNNER_TEMP/harness-image-artifacts" >> "$GITHUB_ENV"
+      - name: Authenticate image publisher
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build newest stable CLI and publish after offline startup verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HARNESS_COMPAT_REPORT_DIR"
+          bash tools/harness-compat/build-image.sh "$TARGET" "$IMAGE" --push 2>&1 | tee "$HARNESS_COMPAT_REPORT_DIR/build.log"
+      - name: Report image provenance
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Daily harness image refresh'
+            echo 'Newest stable releases are resolved at build time. Existing CI images remain available if refresh fails.'
+            if [[ -f "$HARNESS_COMPAT_REPORT_DIR/image.json" ]]; then
+              jq -r '.[0] | .Config.Labels as $l | "Image ID: \(.Id)\n\nCLI: \($l["io.agent-marketplace.target"]) \($l["org.opencontainers.image.version"])\n\nCreated: \($l["org.opencontainers.image.created"])\n\nSource revision: \($l["org.opencontainers.image.revision"])\n\nGo base: \($l["io.agent-marketplace.go-image"])\n\nNode base: \($l["io.agent-marketplace.node-image"])"' "$HARNESS_COMPAT_REPORT_DIR/image.json"
+            else
+              echo '**Image refresh failed before publication evidence was recorded. See the failing step and build artifact.**'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload image diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: harness-image-${{ matrix.target }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/harness-image-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  verify:
+    name: Check refreshed image compatibility
+    needs: publish
+    if: always() && needs.publish.result != 'skipped'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/harness-compatibility.yml

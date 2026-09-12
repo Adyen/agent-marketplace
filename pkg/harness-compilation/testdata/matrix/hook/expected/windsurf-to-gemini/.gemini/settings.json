@@ -2,9 +2,13 @@
   "hooks": {
     "BeforeTool": [
       {
-        "command": "/plugins/demo/scripts/check.sh",
-        "matcher": "Read",
-        "type": "command"
+        "hooks": [
+          {
+            "command": "/plugins/demo/scripts/check.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Read"
       }
     ]
   }

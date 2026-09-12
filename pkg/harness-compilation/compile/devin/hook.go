@@ -213,6 +213,7 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 		hookKeyCommand: true,
 		hookKeyPrompt:  true,
 		hookKeyTimeout: true,
+		hooksKey:       true,
 	})
 	extraKeys, extraDiags := compile.ExtraKeys(h.Extra, canonical, mapping.TargetDevin, name, source)
 	diags = append(diags, extraDiags...)
@@ -310,7 +311,12 @@ func resolvePluginRoot(command, name string, source diag.SourceRef, opts compile
 // one shared file, and it opts into entry deduplication so duplicate behavior
 // tuples collapse (see hookBehaviorIdentity).
 func hookArtifact(event string, rule map[string]any, opts compile.Options) (artifact.Artifact, error) {
-	events := map[string]any{event: []any{rule}}
+	group := map[string]any{hooksKey: []any{rule}}
+	if matcher, ok := rule[hookKeyMatcher]; ok {
+		group[hookKeyMatcher] = matcher
+		delete(rule, hookKeyMatcher)
+	}
+	events := map[string]any{event: []any{group}}
 
 	path := projectHooks
 	document := events

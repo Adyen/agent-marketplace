@@ -2,8 +2,8 @@ name: agent-marketplace-sqlite
 
 x-marketplace-platform: &marketplace-platform ${MARKETPLACE_PLATFORM:-}
 x-marketplace-build-args: &marketplace-build-args
-  GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.26.6-alpine3.23}
-  ALPINE_RUNTIME_IMAGE: ${ALPINE_RUNTIME_IMAGE:-alpine:3.22.1}
+  GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.26.6-bookworm}
+  RUNTIME_IMAGE: ${RUNTIME_IMAGE:-gcr.io/distroless/static-debian12:nonroot}
 
 services:
   # SQLite is intentionally all-in-one: one process owns the database handle,
@@ -33,7 +33,7 @@ services:
       - "8080"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "-T", "5", "http://127.0.0.1:9090/readyz"]
+      test: ["CMD", "/app/marketplace-healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3

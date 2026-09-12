@@ -115,6 +115,40 @@ func TestParseGitOID(t *testing.T) {
 	}
 }
 
+func TestResolveExactGitRefReturnsConciseSSHTransportFailure(t *testing.T) {
+	isolatedGitAuth(t)
+	canonical := "git+scp://git@example.invalid/repo"
+	store := exactGitObjectStorePath(canonical)
+	if err := prepareExactGitDirectory(filepath.Dir(store)); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, "", "init", "--bare", store)
+	if err := os.Chmod(store, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AUTH_REAL_GIT", realGit)
+	wrapper := authFile(t, "git", "#!/bin/sh\ncase \" $* \" in *\" fetch \"*) echo synthetic-auth-secret >&2; exit 128;; *) exec \"$AUTH_REAL_GIT\" \"$@\";; esac\n", 0o700)
+	t.Setenv("PATH", filepath.Dir(wrapper)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, err = ResolveExactGitRefWithContext(context.Background(), canonical, "git@example.invalid:repo", "main")
+	const want = "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"
+	if err == nil || err.Error() != want {
+		t.Fatalf("ResolveExactGitRefWithContext() error = %q, want %q", err, want)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("ResolveExactGitRefWithContext() error does not preserve the Git process failure: %v", err)
+	}
+	if strings.Contains(err.Error(), "synthetic-auth-secret") {
+		t.Fatal("transport diagnostic leaked a secret")
+	}
+}
+
 func TestExactGitSubprocessHonorsCancellation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	binDir := t.TempDir()

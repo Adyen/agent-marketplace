@@ -5,7 +5,8 @@ description: >
   tour, testing workflow, TUI (Bubble Tea) and CLI (Cobra) conventions,
   and the config/resolver/materialization invariants that every change
   must preserve. Use when adding features, fixing bugs, or reviewing
-  changes to the agent-marketplace Go binary, or running local TUI QA.
+  changes to the agent-marketplace Go binary, running local TUI QA,
+  or maintaining harness compatibility validation.
 metadata:
   tags:
     - development
@@ -420,6 +421,24 @@ help path. Anything that might be invoked from CI must honor these
 signals.
 
 ## Testing Playbook
+
+### Harness validation and CI (on demand)
+
+Use this section only when adding a harness, changing native resource
+compilation/materialization, or investigating the `Harness Compatibility`
+check. Ordinary CLI/TUI work does not require loading the CI guides.
+
+From the agent-marketplace checkout, read `docs/harness-validation/README.md`,
+then only the relevant harness guide in that directory. Resolve these paths
+from the checkout, not from an installed or cached copy of this skill.
+The guide owns the probe contracts, coverage gaps, image/release policy,
+required merge gate, fixture trust boundaries, and artifact diagnostics;
+do not duplicate that policy here or in always-loaded project guidance.
+
+For local verification, use `make harness-compat-check` and
+`make harness-compat-config`. Neither invokes vendor CLIs. Native executables
+and containers run only in GitHub Actions, with no model credentials or
+model turns; synchronization must never grant real workspace trust.
 
 ### Local TUI QA (real terminal)
 

@@ -95,6 +95,9 @@ func ResolveExactGitRefWithContext(ctx context.Context, canonicalSource, fetchUR
 		}
 		const resolvedRef = "refs/agent-marketplace/resolved"
 		if err := runExactGitWithContext(ctx, store, "fetch", "--force", "--no-tags", "--no-write-fetch-head", "--", fetchURL, ref+":"+resolvedRef); err != nil {
+			if isGitTransportFailure(err) {
+				return err
+			}
 			return fmt.Errorf("fetch mutable ref %q: %w", ref, err)
 		}
 		defer func() { _ = runExactGitWithContext(context.Background(), store, "update-ref", "-d", resolvedRef) }()
@@ -376,6 +379,9 @@ func cloneExactGitObjectStoreWithContext(ctx context.Context, fetchURL, store st
 	}
 	defer func() { _ = os.RemoveAll(stage) }()
 	if err := runExactGitWithContext(ctx, "", "clone", "--mirror", "--no-tags", "--", fetchURL, stage); err != nil {
+		if isGitTransportFailure(err) {
+			return err
+		}
 		return fmt.Errorf("clone git object store: %w", err)
 	}
 	if err := sanitizeExactGitConfigWithContext(ctx, stage); err != nil {
@@ -1041,6 +1047,9 @@ func exactGitBytesWithContext(ctx context.Context, repoDir string, args ...strin
 		if ctx != nil && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		if isGitTransportFailure(err) {
+			return nil, err
+		}
 		message := redactSecrets(strings.TrimSpace(string(output)))
 		if message != "" {
 			message = strings.SplitN(message, "\n", 2)[0]
@@ -1067,6 +1076,9 @@ func runExactGitWithContext(ctx context.Context, repoDir string, args ...string)
 	}
 	if ctx != nil && ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if isGitTransportFailure(err) {
+		return err
 	}
 	message := redactSecrets(strings.TrimSpace(string(output)))
 	if message != "" {
