@@ -158,6 +158,7 @@ func TestConvertCommandRejectsCanonicalSourceOutputOverlap(t *testing.T) {
 	}
 }
 
+
 func TestCodexConversionResultTypedPolicyOverridesStaleLegacyExternal(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -282,6 +283,7 @@ func TestConversionRootRevalidationRejectsSymlinkedOutputAncestorSubstitution(t 
 		t.Fatalf("substituted ancestor was followed during validation: %v", err)
 	}
 }
+
 
 func TestConvertCommandToCodexPublishesCompleteSharedAggregates(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -571,6 +573,7 @@ func TestConvertSyncPreservesConcurrentlyModifiedStaleCandidate(t *testing.T) {
 	assertFileContents(t, stalePath, "external-writer\n")
 }
 
+
 func TestPublishCodexConversionRejectsNestedParentSubstitution(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -648,6 +651,7 @@ func TestPublishConversionRejectsOutputRootSubstitution(t *testing.T) {
 		})
 	}
 }
+
 
 func TestPublishCodexConversionRollsBackOnlyConversionArtifacts(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -1025,6 +1029,8 @@ func TestConvertCommandToDevinSyncPrunesStaleOutput(t *testing.T) {
 }
 
 
+
+
 func TestPruneCodexConversionStaleRejectsParentSymlinkSubstitution(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -1189,6 +1195,8 @@ func TestProtectConversionSharedCandidatesExcludesCompleteDevinSet(t *testing.T)
 		t.Fatalf("StaleCandidates = %+v, want stale.txt", report.StaleCandidates)
 	}
 }
+
+
 
 
 func TestPublishDevinConversionUsesCollisionSafeRecovery(t *testing.T) {
