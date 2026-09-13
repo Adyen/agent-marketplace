@@ -121,6 +121,85 @@ func TestR6DiagnosticProjectionMatrix(t *testing.T) {
 	}
 }
 
+func TestR6DiagnosticIdentityRegressionFixture(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	longTail := strings.Repeat("x", 300)
+	base := diag.Diagnostic{
+		Code: longTail + "-code", Resource: longTail + "-resource",
+		Source: diag.SourceRef{File: longTail + "/source.md"}, Hint: longTail + "-hint",
+		Message: longTail + "-message", Severity: diag.SeverityError,
+	}
+	cases := []struct {
+		name         string
+		left, right  diag.Diagnostic
+		wantDistinct bool
+	}{
+		{"code long tail", base, func() diag.Diagnostic { d := base; d.Code += "-other"; return d }(), true},
+		{"resource long tail", base, func() diag.Diagnostic { d := base; d.Resource += "-other"; return d }(), true},
+		{"source long tail", base, func() diag.Diagnostic { d := base; d.Source.File += "-other"; return d }(), true},
+		{"hint long tail", base, func() diag.Diagnostic { d := base; d.Hint += "-other"; return d }(), true},
+		{"message long tail", base, func() diag.Diagnostic { d := base; d.Message += "-other"; return d }(), true},
+		{"target severity presence", withTargetAndSeverity(base, "", diag.SeverityWarning), withTargetAndSeverity(base, "target-1", diag.SeverityError), true},
+		{"same resource absolute message paths", func() diag.Diagnostic {
+			d := base
+			d.Target = ""
+			d.Severity = diag.SeverityWarning
+			d.Message = "cannot write /project/.claude/settings.json"
+			return d
+		}(), func() diag.Diagnostic {
+			d := base
+			d.Target = ""
+			d.Severity = diag.SeverityWarning
+			d.Message = "cannot write /machine/.claude/settings.json"
+			return d
+		}(), false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := len(pipeline.DedupIssues([]error{pipeline.PromoteDiagnostic(tt.left), pipeline.PromoteDiagnostic(tt.right)}))
+			want := 1
+			if tt.wantDistinct {
+				want = 2
+			}
+			if got != want {
+				t.Fatalf("deduplicated %d diagnostics, want %d", got, want)
+			}
+		})
+	}
+
+	report := &materialize.Report{PerRoot: []materialize.TargetReport{{
+		Target: hcc.TargetClaude, RootID: "project-root", Issues: []materialize.MaterializationIssue{{
+			Resource: "existing", Target: hcc.TargetClaude, Scope: "project", RootID: "project-root",
+			Code: diag.CodeOwnershipUnmanagedKey, Severity: diag.SeverityWarning, Message: "preserved",
+		}}, Diags: []diag.Diagnostic{{
+			Code: "materialize.write.error", Resource: "generated", Severity: diag.SeverityError,
+			Source: diag.SourceRef{File: "settings.json"}, Message: "failed",
+		}},
+	}}}
+	if report.InSync() {
+		t.Fatal("mixed pre-populated issue and TargetReport.Diags incorrectly reported in sync")
+	}
+	surfaced := report.SurfaceIssues()
+	if len(surfaced) != 2 {
+		t.Fatalf("mixed TargetReport issues/diags projection = %#v, want union of two records", surfaced)
+	}
+	for _, issue := range surfaced {
+		if issue.Scope != "project" || issue.RootID != "project-root" {
+			t.Fatalf("report-level attribution lost producer scope/root: %#v", issue)
+		}
+	}
+
+	scoped := &materialize.Report{Issues: []materialize.MaterializationIssue{
+		{Resource: "settings.json", Target: hcc.TargetClaude, Scope: "project", RootID: "project-root", Path: "settings.json", Code: "materialize.write.error", Severity: diag.SeverityError, Message: "failed at /project/.claude/settings.json"},
+		{Resource: "settings.json", Target: hcc.TargetClaude, Scope: "machine", RootID: "machine-root", Path: "settings.json", Code: "materialize.write.error", Severity: diag.SeverityError, Message: "failed at /machine/.claude/settings.json"},
+	}}
+	if got := len(scoped.SurfaceIssues()); got != 2 {
+		t.Fatalf("project/machine producer diagnostics collapsed: %d", got)
+	}
+}
+
 func withTargetAndSeverity(d diag.Diagnostic, target string, severity diag.Severity) diag.Diagnostic {
 	d.Target, d.Severity = target, severity
 	return d

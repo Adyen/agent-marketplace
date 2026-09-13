@@ -41,6 +41,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/diagnosticidentity"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -1794,7 +1795,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 		}
 		// Per-file prune refusals are reported even if the merge itself also
 		// failed: each names a different file.
-		report.Diags = append(report.Diags, retargetPruneDiags(mergeDiags, key.target, plan.reportPrefix)...)
+		appendTargetDiagnostics(report, key, plan.rootID, retargetPruneDiags(mergeDiags, key.target, plan.reportPrefix))
 		if mergeErr != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.write.error",
@@ -1884,7 +1885,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 	// do and the destination's own syntax stopped us — and the refused file was
 	// left byte-identical, so there is nothing to suppress. It therefore blocks
 	// no component and costs no sibling its prune; it only reports itself.
-	report.Diags = append(report.Diags, retargetPruneDiags(pruneDiags, key.target, pruneReportPrefix)...)
+	appendTargetDiagnostics(report, key, codexRootIDForPrefix(key, pruneReportPrefix), retargetPruneDiags(pruneDiags, key.target, pruneReportPrefix))
 	if len(pruneReport.Written) > 0 || len(pruneReport.Removed) > 0 {
 		tr := TargetReport{
 			Target:       key.target,
@@ -2886,6 +2887,29 @@ func retargetPruneDiags(diags []diag.Diagnostic, target hcc.Target, prefix strin
 		diags[i].Source.File = diags[i].Resource
 	}
 	return diags
+}
+
+// appendTargetDiagnostics records diagnostics in both the normal report list
+// and the structured projection. The latter is the producer seam that knows
+// outputKey scope and (for partitioned roots) root identity; generic HCC
+// Diagnostic semantics remain unchanged.
+func appendTargetDiagnostics(report *Report, key outputKey, rootID string, diags []diag.Diagnostic) {
+	for _, d := range diags {
+		report.Diags = append(report.Diags, d)
+		if !IsMaterializationDiagnostic(d) {
+			continue
+		}
+		operation, outcome := MaterializationOperationFailure, MaterializationOutcomeFailed
+		if !d.IsError() {
+			operation, outcome = MaterializationOperationSkip, MaterializationOutcomeWarning
+		}
+		report.Issues = append(report.Issues, MaterializationIssue{
+			Resource: d.Resource, Target: key.target,
+			Scope: materializationScope(key.machineScope), RootID: rootID,
+			Path: d.Source.File, Operation: operation, Outcome: outcome,
+			Code: d.Code, Severity: d.Severity, Message: d.Message,
+		})
+	}
 }
 
 // aggregateProtectedPaths returns the output-root-relative aggregate files a
@@ -4799,10 +4823,25 @@ func (tr *TargetReport) buildIssues() {
 	if tr == nil {
 		return
 	}
-	issues := make([]MaterializationIssue, 0, len(tr.Written)+len(tr.Skipped)+len(tr.Removed)+len(tr.Diags))
+	// TargetReport.Issues may already contain producer-authored records. Keep
+	// them and merge diagnostics-derived records before Report canonicalization.
+	existing := append([]MaterializationIssue(nil), tr.Issues...)
+	issues := make([]MaterializationIssue, 0, len(existing)+len(tr.Written)+len(tr.Skipped)+len(tr.Removed)+len(tr.Diags))
+	seen := make(map[string]struct{}, len(existing)+len(tr.Diags))
+	appendIssue := func(issue MaterializationIssue) {
+		key := materializationIssueKey(issue)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		issues = append(issues, issue)
+	}
+	for _, issue := range existing {
+		appendIssue(issue)
+	}
 	addPath := func(path string, operation MaterializationOperation, outcome MaterializationOutcome) {
 		path = filepath.ToSlash(path)
-		issues = append(issues, MaterializationIssue{
+		appendIssue(MaterializationIssue{
 			Resource: tr.ResourceByPath[path], Target: tr.Target, Scope: materializationScope(tr.MachineScope),
 			RootID: tr.RootID, Path: path, Operation: operation, Outcome: outcome,
 			Severity: diag.SeverityInfo,
@@ -4829,7 +4868,7 @@ func (tr *TargetReport) buildIssues() {
 		if path == "" {
 			path = skippedPathForResource(*tr, d.Resource)
 		}
-		issues = append(issues, MaterializationIssue{
+		appendIssue(MaterializationIssue{
 			Resource: d.Resource, Target: tr.Target, Scope: materializationScope(tr.MachineScope), RootID: tr.RootID,
 			Path: path, Code: d.Code, Severity: d.Severity, Message: d.Message,
 			Operation: operation, Outcome: outcome,
@@ -4857,27 +4896,36 @@ func skippedPathForResource(tr TargetReport, resource string) string {
 }
 
 func fullMaterializationField(value string) string {
-	// Diagnostic identity must survive display truncation. Sanitization is
-	// still applied before hashing so malformed UTF-8 and terminal controls can
-	// never influence identity differently from their visible representation.
-	return diag.SanitizeText(value, len(value)+len(diagTruncatedIdentityMark))
+	return diagnosticidentity.FullText(value)
 }
-
-const diagTruncatedIdentityMark = "…"
 
 func materializationIssueKey(issue MaterializationIssue) string {
 	if issue.identity != "" {
 		return issue.identity
 	}
-	identity := strings.Join([]string{
-		fullMaterializationField(string(issue.Target)), fullMaterializationField(issue.Scope),
-		fullMaterializationField(issue.RootID), fullMaterializationField(issue.Resource),
-		fullMaterializationField(issue.Path), fullMaterializationField(string(issue.Operation)),
-		fullMaterializationField(string(issue.Outcome)), fullMaterializationField(issue.Code),
-		fullMaterializationField(issue.Message), strconv.Itoa(int(issue.Severity)),
-	}, "\x00")
+	identity := materializationIssueCanonicalIdentity(issue)
 	sum := sha256.Sum256([]byte(identity))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func materializationIssueCanonicalIdentity(issue MaterializationIssue) string {
+	return diagnosticidentity.Canonical(
+		diagnosticidentity.Field{Label: "target", Value: fullMaterializationField(string(issue.Target))},
+		diagnosticidentity.Field{Label: "scope", Value: fullMaterializationField(issue.Scope)},
+		diagnosticidentity.Field{Label: "root", Value: fullMaterializationField(issue.RootID)},
+		diagnosticidentity.Field{Label: "resource", Value: fullMaterializationField(issue.Resource)},
+		diagnosticidentity.Field{Label: "source.file", Value: fullMaterializationField(issue.Path)},
+		diagnosticidentity.Field{Label: "operation", Value: fullMaterializationField(string(issue.Operation))},
+		diagnosticidentity.Field{Label: "outcome", Value: fullMaterializationField(string(issue.Outcome))},
+		diagnosticidentity.Field{Label: "code", Value: fullMaterializationField(issue.Code)},
+		diagnosticidentity.Field{Label: "message", Value: diagnosticidentity.NormalizeMessage(fullMaterializationField(issue.Message))},
+		diagnosticidentity.Field{Label: "severity", Value: strconv.Itoa(int(issue.Severity))},
+	)
+}
+
+func materializationDiagnosticKey(issue MaterializationIssue) string {
+	issue.Scope, issue.RootID = "", ""
+	return materializationIssueKey(issue)
 }
 
 func normalizeMaterializationIssue(issue MaterializationIssue) MaterializationIssue {
@@ -4909,18 +4957,26 @@ func (r *Report) rebuildIssues() {
 	for _, issue := range r.Issues {
 		appendIssue(issue)
 	}
-	for _, tr := range r.TargetReports() {
-		if len(tr.Issues) == 0 && (len(tr.Written) > 0 || len(tr.Skipped) > 0 || len(tr.Removed) > 0 || len(tr.Diags) > 0) {
-			tr.buildIssues()
-		}
-		for _, issue := range tr.Issues {
+	reports := r.TargetReports()
+	for i := range reports {
+		reports[i].buildIssues()
+		for _, issue := range reports[i].Issues {
 			appendIssue(issue)
+		}
+		if len(r.PerRoot) == 0 && r.PerTarget != nil {
+			r.PerTarget[reports[i].Target] = reports[i]
 		}
 	}
 	// Diagnostics are also retained when no target report was produced (for
-	// example, a materialization or destination failure). Compiler diagnostics
-	// remain in Report.Diags for the CLI's normal renderer and are not projected
-	// into materialization-owned structured issues.
+	// example, a materialization or destination failure). A producer may have
+	// already attached a diagnostic to a root-aware issue; do not add a second,
+	// un-attributed copy from Report.Diags in that case.
+	attributed := make(map[string]struct{}, len(issues))
+	for _, issue := range issues {
+		if IsMaterializationDiagnosticCode(issue.Code) {
+			attributed[materializationDiagnosticKey(issue)] = struct{}{}
+		}
+	}
 	for _, d := range r.Diags {
 		if !IsMaterializationDiagnostic(d) {
 			continue
@@ -4929,6 +4985,9 @@ func (r *Report) rebuildIssues() {
 			Resource: d.Resource, Target: hcc.Target(d.Target), Code: d.Code, Severity: d.Severity,
 			Path: d.Source.File, Message: d.Message, Operation: MaterializationOperationFailure,
 			Outcome: MaterializationOutcomeFailed,
+		}
+		if _, ok := attributed[materializationDiagnosticKey(issue)]; ok {
+			continue
 		}
 		reports := r.TargetReports()
 		matches := make([]TargetReport, 0, 1)

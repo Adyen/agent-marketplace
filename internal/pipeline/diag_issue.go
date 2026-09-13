@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/diagnosticidentity"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -27,7 +28,6 @@ const (
 	maxDiagSourceLen   = 256
 	maxDiagHintLen     = 512
 	maxDiagIdentityLen = 4096
-	diagTruncatedMark  = "…(truncated)"
 )
 
 // diagIssue is the error value a materialize diagnostic is promoted to,
@@ -87,7 +87,11 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 	}
 	issue.key = diagDedupKey(d, issue)
 	if code != "" && resource != "" {
-		presentationIdentity := strings.Join([]string{code, hint, normalizeDiagMessageForKey(sanitizeDiagText(d.Message, len(d.Message)+len(diagTruncatedMark)))}, "\x00")
+		presentationIdentity := diagnosticidentity.Canonical(
+			diagnosticidentity.Field{Label: "code", Value: diagnosticidentity.FullText(d.Code)},
+			diagnosticidentity.Field{Label: "hint", Value: diagnosticidentity.FullText(d.Hint)},
+			diagnosticidentity.Field{Label: "message", Value: diagnosticidentity.NormalizeMessage(diagnosticidentity.FullText(d.Message))},
+		)
 		// PresentationText is the bounded display form; the grouping identity
 		// must not retain an arbitrarily large registry message either.
 		issue.presentationKey = hashedDiagIdentity(presentationIdentity)
@@ -98,48 +102,37 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 // diagDedupKey computes the identity described on DedupKey.
 //
 // The structured key carries the message with target-specific absolute paths
-// folded away (normalizeDiagMessageForKey). The FULL, untruncated message is
+// folded away by diagnosticidentity.NormalizeMessage. The FULL, untruncated message is
 // used, never issue.msg: two 8 KB messages that differ only past the render
 // budget are still two different failures, and keying on the truncated render
 // would collapse them.
 //
-// The fallback uses the full sanitized message with the code, resource and
-// source identity that the rendered line carries. Target and non-error
-// severity are appended to the identity (and hashed) without entering the
-// user-facing line. Long identities use a stable digest so hostile registry
+// Every identity field is full, sanitized, and explicitly framed. Target and
+// severity are always present, including empty/default values, without entering
+// the user-facing line. Long identities use a stable digest so hostile registry
 // content cannot grow memory or output bounds.
 func diagDedupKey(d diag.Diagnostic, issue *diagIssue) string {
-	fullMessage := sanitizeDiagText(d.Message, len(d.Message)+len(diagTruncatedMark))
+	fullIdentity := diagnosticidentity.Canonical(
+		diagnosticidentity.Field{Label: "code", Value: diagnosticidentity.FullText(d.Code)},
+		diagnosticidentity.Field{Label: "resource", Value: diagnosticidentity.FullText(d.Resource)},
+		diagnosticidentity.Field{Label: "source.file", Value: diagnosticidentity.FullText(d.Source.File)},
+		diagnosticidentity.Field{Label: "source.line", Value: strconv.Itoa(d.Source.Line)},
+		diagnosticidentity.Field{Label: "hint", Value: diagnosticidentity.FullText(d.Hint)},
+		// Path normalization is intentionally scoped to this one identity
+		// component; producer-provided scope/root fields are not involved here.
+		diagnosticidentity.Field{Label: "message", Value: diagnosticidentity.NormalizeMessage(diagnosticidentity.FullText(d.Message))},
+		diagnosticidentity.Field{Label: "target", Value: diagnosticidentity.FullText(d.Target)},
+		diagnosticidentity.Field{Label: "severity", Value: strconv.Itoa(int(d.Severity))},
+	)
+	// Preserve the historical resource-less default fallback's rendered key,
+	// while every non-default target/severity value still gets an explicit
+	// framed identity. Structured diagnostics always use all framed fields.
 	if issue.code == "" || issue.resource == "" {
-		key := renderDiagMessage(issue.code, fullMessage, issue.resource, issue.source)
-		if d.Target != "" || d.Severity != diag.SeverityError {
-			key = strings.Join([]string{key, sanitizeDiagText(d.Target, maxDiagResourceLen), strconv.Itoa(int(d.Severity))}, "\x00")
-			return hashedDiagIdentity(key)
+		if d.Target == "" && d.Severity == diag.SeverityError {
+			return boundedDiagIdentity(renderDiagMessage(issue.code, diagnosticidentity.FullText(d.Message), issue.resource, issue.source))
 		}
-		return boundedDiagIdentity(key)
 	}
-	parts := []string{
-		issue.code,
-		issue.resource,
-		issue.source,
-		issue.hint,
-		normalizeDiagMessageForKey(fullMessage),
-	}
-	// Target and severity are part of diagnostic identity even when the
-	// rendered line is intentionally target-neutral. A target may report the
-	// same source fact with a different policy outcome, and severity changes
-	// the user's remediation and exit behavior.
-	if d.Target != "" {
-		parts = append(parts, sanitizeDiagText(d.Target, maxDiagResourceLen))
-	}
-	if d.Severity != diag.SeverityError {
-		parts = append(parts, strconv.Itoa(int(d.Severity)))
-	}
-	key := strings.Join(parts, "\x00")
-	if d.Target != "" || d.Severity != diag.SeverityError {
-		return hashedDiagIdentity(key)
-	}
-	return boundedDiagIdentity(key)
+	return hashedDiagIdentity(fullIdentity)
 }
 
 func hashedDiagIdentity(identity string) string {
@@ -225,7 +218,7 @@ func (i *diagIssue) Remediation() string { return i.hint }
 // same-named command apart, since both report skill.devin.tool-unknown.
 //
 // The message is part of the key with ABSOLUTE PATHS FOLDED AWAY
-// (normalizeDiagMessageForKey). Both halves of that sentence are load-bearing
+// (diagnosticidentity.NormalizeMessage). Both halves of that sentence are load-bearing
 // and each fixes a different failure mode:
 //
 //   - Excluding the message entirely under-reports. Several emitters build the
@@ -338,63 +331,4 @@ func formatDiagSource(source diag.SourceRef) string {
 // identity and command output cannot disagree about hostile bytes or bounds.
 func sanitizeDiagText(s string, limit int) string {
 	return diag.SanitizeText(s, limit)
-}
-
-// diagKeyPathPlaceholder stands in for an absolute path inside a dedup key.
-const diagKeyPathPlaceholder = "<path>"
-
-// normalizeDiagMessageForKey folds absolute filesystem paths in a message to a
-// placeholder so the message can take part in the dedup identity without
-// re-expanding the cross-target collapse.
-//
-// An absolute path in a diagnostic message is always a property of the OUTPUT
-// ROOT the run is writing to (internal/materialize builds several messages with
-// fmt.Sprintf over an output directory), never of the failure itself: the same
-// resource failing the same way for two harnesses differs only there. Every
-// other part of a message — the field name, the tool name, the hook event,
-// the reason — is a property of the failure and stays in the key.
-//
-// Only whole space-delimited tokens are folded, and only after stripping the
-// punctuation Go's %q and English prose wrap them in, so a registry-relative
-// path such as `skills/alpha/SKILL.md` (no leading separator) is untouched.
-func normalizeDiagMessageForKey(message string) string {
-	if !strings.Contains(message, "/") && !strings.Contains(message, `\`) {
-		return message
-	}
-	fields := strings.Split(message, " ")
-	folded := false
-	for i, field := range fields {
-		lead := 0
-		for lead < len(field) && strings.IndexByte(`"'`+"`"+`(<[`, field[lead]) >= 0 {
-			lead++
-		}
-		trail := len(field)
-		for trail > lead && strings.IndexByte(`"'`+"`"+`)>],.:;`, field[trail-1]) >= 0 {
-			trail--
-		}
-		if !isAbsolutePathToken(field[lead:trail]) {
-			continue
-		}
-		fields[i] = field[:lead] + diagKeyPathPlaceholder + field[trail:]
-		folded = true
-	}
-	if !folded {
-		return message
-	}
-	return strings.Join(fields, " ")
-}
-
-// isAbsolutePathToken reports whether token is a POSIX absolute path, a Windows
-// drive-letter path, or a `~`-rooted home path.
-func isAbsolutePathToken(token string) bool {
-	switch {
-	case len(token) > 1 && token[0] == '/':
-		return true
-	case len(token) > 2 && token[0] == '~' && (token[1] == '/' || token[1] == '\\'):
-		return true
-	case len(token) > 2 && token[1] == ':' && (token[2] == '\\' || token[2] == '/'):
-		return true
-	default:
-		return false
-	}
 }
