@@ -603,6 +603,52 @@ func TestPublishCodexConversionRejectsNestedParentSubstitution(t *testing.T) {
 	}
 }
 
+func TestPublishConversionRejectsOutputRootSubstitution(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, initiallyExists := range []bool{true, false} {
+		name := "existing-root"
+		if !initiallyExists {
+			name = "root-created-concurrently"
+		}
+		t.Run(name, func(t *testing.T) {
+			stageDir := t.TempDir()
+			parent := t.TempDir()
+			outDir := filepath.Join(parent, "output")
+			if initiallyExists {
+				if err := os.Mkdir(outDir, 0o755); err != nil {
+					t.Fatalf("create output root: %v", err)
+				}
+			}
+			rootSnapshot, err := snapshotConversionRoot(outDir, false)
+			if err != nil {
+				t.Fatalf("snapshot output root: %v", err)
+			}
+			replacementParent := t.TempDir()
+			replacement := filepath.Join(replacementParent, "replacement")
+			writeFile(t, filepath.Join(replacement, "sentinel.txt"), "do not touch\\n")
+			if initiallyExists {
+				if err := os.Remove(outDir); err != nil {
+					t.Fatalf("remove output root: %v", err)
+				}
+			}
+			if err := os.Rename(replacement, outDir); err != nil {
+				t.Fatalf("substitute output root: %v", err)
+			}
+
+			const rel = "skill.txt"
+			writeFile(t, filepath.Join(stageDir, rel), "conversion\\n")
+			err = publishConversionWithRoot(stageDir, outDir, []string{rel}, nil, "Codex", &rootSnapshot, nil)
+			if err == nil || !strings.Contains(err.Error(), "output root") {
+				t.Fatalf("publication error = %v, want output-root substitution refusal", err)
+			}
+			assertFileContents(t, filepath.Join(outDir, "sentinel.txt"), "do not touch\\n")
+			assertPathExistence(t, filepath.Join(outDir, rel), false)
+		})
+	}
+}
+
 func TestPublishCodexConversionRollsBackOnlyConversionArtifacts(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

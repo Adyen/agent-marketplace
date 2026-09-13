@@ -56,6 +56,50 @@ func canonicalConversionExistingPath(path string) (string, error) {
 	}
 }
 
+func openConversionDirectoryForSnapshot(path string, create bool, snapshot *conversionRootSnapshot) (int, []conversionCreatedDirectory, error) {
+	fd, created, err := openConversionDirectory(path, create)
+	if err != nil || snapshot == nil {
+		return fd, created, err
+	}
+	if snapshot.exists {
+		duplicate, dupErr := unix.Dup(fd)
+		if dupErr != nil {
+			_ = unix.Close(fd)
+			return -1, created, fmt.Errorf("duplicate conversion output root descriptor: %w", dupErr)
+		}
+		file := os.NewFile(uintptr(duplicate), path)
+		if file == nil {
+			_ = unix.Close(duplicate)
+			_ = unix.Close(fd)
+			return -1, created, errors.New("open conversion output root descriptor")
+		}
+		info, statErr := file.Stat()
+		_ = file.Close()
+		if statErr != nil {
+			_ = unix.Close(fd)
+			return -1, created, fmt.Errorf("inspect opened conversion output root: %w", statErr)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !os.SameFile(snapshot.info, info) {
+			_ = unix.Close(fd)
+			return -1, created, errors.New("conversion output root identity changed before publication")
+		}
+		return fd, created, nil
+	}
+	absolute, absErr := filepath.Abs(path)
+	if absErr != nil {
+		_ = unix.Close(fd)
+		return -1, created, fmt.Errorf("resolve conversion output root %q: %w", path, absErr)
+	}
+	absolute = filepath.Clean(absolute)
+	for _, directory := range created {
+		if filepath.Clean(directory.path) == absolute {
+			return fd, created, nil
+		}
+	}
+	_ = unix.Close(fd)
+	return -1, created, errors.New("conversion output root was created concurrently")
+}
+
 func openConversionDirectory(path string, create bool) (int, []conversionCreatedDirectory, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

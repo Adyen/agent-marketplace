@@ -24,6 +24,7 @@ type conversionPublisher struct {
 	preflight       func(string) error
 	validate        func(string, []string) error
 	pruneCandidates func(string, []hcc.StaleFileCandidate) error
+	outputRoot      *conversionRootSnapshot
 }
 
 func (p conversionPublisher) materialize(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool) (*hcc.WriteReport, error) {
@@ -88,7 +89,7 @@ func (p conversionPublisher) materialize(result *hcc.Result, outDir string, matO
 			return nil, err
 		}
 	}
-	if err := publishConversionWith(stageDir, outDir, report.Written, p.shared, p.target, nil); err != nil {
+	if err := publishConversionWithRoot(stageDir, outDir, report.Written, p.shared, p.target, p.outputRoot, nil); err != nil {
 		return nil, err
 	}
 	return finishConversionWithCandidates(outDir, report, resultErr, p.pruneCandidates)
@@ -140,6 +141,10 @@ func finishConversionWithCandidates(outDir string, report *hcc.WriteReport, resu
 // hard link is exposed, and rollback restores only paths still owned by this
 // transaction.
 func publishConversionWith(stageDir, outDir string, written, shared []string, target string, publishFile func(codexConversionPublication) error) error {
+	return publishConversionWithRoot(stageDir, outDir, written, shared, target, nil, publishFile)
+}
+
+func publishConversionWithRoot(stageDir, outDir string, written, shared []string, target string, outputRoot *conversionRootSnapshot, publishFile func(codexConversionPublication) error) error {
 	publications, err := planConversionPublication(stageDir, outDir, written, shared, target)
 	if err != nil {
 		return err
@@ -148,7 +153,7 @@ func publishConversionWith(stageDir, outDir string, written, shared []string, ta
 	if publishFile == nil {
 		publishFile = publishCodexConversionFile
 	}
-	destinationFD, rootCreated, err := openConversionDirectory(outDir, true)
+	destinationFD, rootCreated, err := openConversionDirectoryForSnapshot(outDir, true, outputRoot)
 	createdDirs := rootCreated
 	if err != nil {
 		rollbackErr := rollbackCodexConversion(fmt.Errorf("open destination for publication: %w", err), nil, createdDirs)
