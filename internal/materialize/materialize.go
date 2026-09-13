@@ -5199,7 +5199,8 @@ func (r *Report) TotalRemoved() int {
 }
 
 // InSync reports whether all targets have zero pending changes (no written
-// or removed files, and no error diagnostics). Useful for --check mode.
+// or removed files, no error diagnostics, and no retained structured
+// MaterializationIssue errors). Useful for --check mode.
 func (r *Report) InSync() bool {
 	r.rebuildIssues()
 	if r.TotalWritten() > 0 || r.TotalRemoved() > 0 {
