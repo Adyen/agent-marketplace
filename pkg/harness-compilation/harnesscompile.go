@@ -433,30 +433,18 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 //
 // # Bundle error contract
 //
-// Suppression is PER RESOURCE, never bundle-wide. The promoted Devin plan
-// (docs/plans/2026-08-03-devin-first-class-harness.md, "Error behavior") states
-// it directly: "Resources with error diagnostics are skipped, valid resources
-// continue, and sync exits non-zero if any error occurred."
+// Suppression is resource-attributable, never bundle-wide:
 //
-//   - A resource that emitted at least one ERROR diagnostic (or whose compiler
-//     returned an error) contributes NO artifacts — not its own files and not
-//     its fragments of a shared aggregate. It is listed in Result.Skipped.
-//   - A resource that emitted only warnings or info contributes ALL of its
-//     artifacts.
-//   - Diagnostics that are not attributable to a single resource must suppress
-//     at the point of emission and never suppress an unrelated resource.
-//     There are exactly two sources of them, and both already do:
-//     ingest/loader failures carried in b.Diagnostics describe a resource that
-//     never reached b.Resources and therefore has no artifacts to suppress;
-//     bundle-level artifact path conflicts are resolved by
-//     resolveArtifactPathConflicts, which suppresses both named producers.
-//     A future bundle-level error code must state its own suppression rule for
-//     the same reason: a diagnostic with no resource to blame cannot be allowed
-//     to delete resources it says nothing about.
+//   - An ERROR diagnostic or compiler error suppresses that resource's complete
+//     output, including its fragments of a shared aggregate, and records it in
+//     Result.Skipped. Warnings and info retain all of the resource's artifacts.
+//   - A bundle-level diagnostic suppresses only the explicitly implicated
+//     producers. Ingest failures refer to resources with no artifacts; artifact
+//     path conflicts suppress both named producers. No unrelated resource is
+//     suppressed.
 //
-// Errors stay fully visible. Result.Diagnostics keeps every diagnostic and
-// Result.HasErrors reports that the run was not clean, so a caller can — and
-// must — fail the run while still publishing what compiled.
+// Result.Diagnostics retains every diagnostic and Result.HasErrors reports any
+// error, so callers can fail the run while still publishing valid output.
 func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, error) {
 	cfg := &config{}
 	for _, o := range opts {
