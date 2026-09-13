@@ -252,6 +252,37 @@ func TestConversionRootRevalidationRejectsConcurrentSubstitution(t *testing.T) {
 	}
 }
 
+func TestConversionRootRevalidationRejectsSymlinkedOutputAncestorSubstitution(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := t.TempDir()
+	ancestor := filepath.Join(root, "output-parent")
+	if err := os.Mkdir(ancestor, 0o755); err != nil {
+		t.Fatalf("create output ancestor: %v", err)
+	}
+	output := filepath.Join(ancestor, "output")
+	snapshot, err := snapshotConversionRoot(output, false)
+	if err != nil {
+		t.Fatalf("snapshot conversion output root: %v", err)
+	}
+
+	replacement := t.TempDir()
+	if err := os.Remove(ancestor); err != nil {
+		t.Fatalf("remove output ancestor: %v", err)
+	}
+	if err := os.Symlink(replacement, ancestor); err != nil {
+		t.Fatalf("substitute output ancestor: %v", err)
+	}
+
+	if err := revalidateConversionRoot(snapshot); err == nil {
+		t.Fatal("symlinked output ancestor substitution was not rejected")
+	}
+	if _, err := os.Stat(filepath.Join(replacement, "output")); !os.IsNotExist(err) {
+		t.Fatalf("substituted ancestor was followed during validation: %v", err)
+	}
+}
+
 func TestConvertCommandToCodexPublishesCompleteSharedAggregates(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
