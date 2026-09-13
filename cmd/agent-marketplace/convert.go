@@ -156,9 +156,9 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	var writeReport *hcc.WriteReport
 	switch to {
 	case "codex":
-		writeReport, err = materializeCodexConversion(result, canonicalOutput, matOpts, dryRun, rootGuard)
+		writeReport, err = materializeCodexConversion(result, canonicalOutput, matOpts, dryRun, rootGuard, &outputRoot)
 	case "devin":
-		writeReport, err = materializeDevinConversion(result, canonicalOutput, matOpts, dryRun, rootGuard)
+		writeReport, err = materializeDevinConversion(result, canonicalOutput, matOpts, dryRun, rootGuard, &outputRoot)
 	default:
 		if err := rootGuard(); err != nil {
 			return err
@@ -341,7 +341,7 @@ func revalidateConversionRoot(snapshot conversionRootSnapshot) error {
 // materializeCodexConversion publishes a one-shot conversion without adopting
 // ownership. Sync reconciles shared configuration entry by entry; conversion
 // requires an empty shared-file destination and publishes a staged result.
-func materializeCodexConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool, rootGuard func() error) (*hcc.WriteReport, error) {
+func materializeCodexConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool, rootGuard func() error, outputRoot *conversionRootSnapshot) (*hcc.WriteReport, error) {
 	return conversionPublisher{
 		target:          "Codex",
 		rootGuard:       rootGuard,
@@ -350,6 +350,7 @@ func materializeCodexConversion(result *hcc.Result, outDir string, matOpts []hcc
 		preflight:       func(dir string) error { return preflightCodexConversion(dir) },
 		validate:        func(dir string, _ []string) error { return validateCodexConversionStage(dir) },
 		pruneCandidates: pruneCodexConversionStaleCandidates,
+		outputRoot:      outputRoot,
 	}.materialize(result, outDir, matOpts, dryRun)
 }
 
@@ -955,7 +956,7 @@ func pruneCodexConversionStaleCandidatesWith(outDir string, candidates []hcc.Sta
 // materializeDevinConversion publishes a Devin conversion without adopting
 // ownership. Shared aggregate paths come from artifact policies, are staged and
 // syntax-validated, then exposed by hard link.
-func materializeDevinConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool, rootGuard func() error) (*hcc.WriteReport, error) {
+func materializeDevinConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool, rootGuard func() error, outputRoot *conversionRootSnapshot) (*hcc.WriteReport, error) {
 	shared, err := externalConversionPaths(result)
 	if err != nil {
 		return nil, err
@@ -970,6 +971,7 @@ func materializeDevinConversion(result *hcc.Result, outDir string, matOpts []hcc
 		preflight:       func(dir string) error { return preflightConversionPaths(dir, shared, "Devin") },
 		validate:        validateDevinConversionStage,
 		pruneCandidates: pruneCodexConversionStaleCandidates,
+		outputRoot:      outputRoot,
 	}.materialize(result, outDir, matOpts, dryRun)
 }
 
