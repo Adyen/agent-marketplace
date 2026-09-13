@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"strconv"
 	"strings"
 
@@ -24,6 +26,7 @@ const (
 	maxDiagResourceLen = 256
 	maxDiagSourceLen   = 256
 	maxDiagHintLen     = 512
+	maxDiagIdentityLen = 4096
 	diagTruncatedMark  = "…(truncated)"
 )
 
@@ -97,21 +100,59 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 // budget are still two different failures, and keying on the truncated render
 // would collapse them.
 //
-// The fallback is issue.msg — the rendered line — because that is exactly what
-// the pre-diagIssue code deduplicated on for a diagnostic with no resource, and
-// TestDiagIssueDedupKeyKeepsResourcelessDiagnosticsApart pins the equivalence.
+// The fallback starts with issue.msg — the rendered line — because that is
+// exactly what the pre-diagIssue code deduplicated on for a diagnostic with no
+// resource. Target and non-error severity are appended to the identity (and
+// hashed) without entering the user-facing line. Long identities use a stable
+// digest so hostile registry content cannot grow memory or output bounds.
 func diagDedupKey(d diag.Diagnostic, issue *diagIssue) string {
-	if issue.code == "" || issue.resource == "" {
-		return issue.msg
-	}
 	fullMessage := sanitizeDiagText(d.Message, len(d.Message)+len(diagTruncatedMark))
-	return strings.Join([]string{
+	if issue.code == "" || issue.resource == "" {
+		key := issue.msg
+		if d.Target != "" || d.Severity != diag.SeverityError {
+			key = strings.Join([]string{key, sanitizeDiagText(d.Target, maxDiagResourceLen), strconv.Itoa(int(d.Severity))}, "\x00")
+			return hashedDiagIdentity(key)
+		}
+		return boundedDiagIdentity(key)
+	}
+	parts := []string{
 		issue.code,
 		issue.resource,
 		issue.source,
 		issue.hint,
 		normalizeDiagMessageForKey(fullMessage),
-	}, "\x00")
+	}
+	// Target and severity are part of diagnostic identity even when the
+	// rendered line is intentionally target-neutral. A target may report the
+	// same source fact with a different policy outcome, and severity changes
+	// the user's remediation and exit behavior.
+	if d.Target != "" {
+		parts = append(parts, sanitizeDiagText(d.Target, maxDiagResourceLen))
+	}
+	if d.Severity != diag.SeverityError {
+		parts = append(parts, strconv.Itoa(int(d.Severity)))
+	}
+	key := strings.Join(parts, "\x00")
+	if d.Target != "" || d.Severity != diag.SeverityError {
+		return hashedDiagIdentity(key)
+	}
+	return boundedDiagIdentity(key)
+}
+
+func hashedDiagIdentity(identity string) string {
+	sum := sha256.Sum256([]byte(identity))
+	parts := make([]string, 0, 4)
+	for offset := 0; offset < len(sum); offset += 8 {
+		parts = append(parts, strconv.FormatUint(binary.BigEndian.Uint64(sum[offset:offset+8]), 10))
+	}
+	return strings.Join(parts, ":")
+}
+
+func boundedDiagIdentity(identity string) string {
+	if len(identity) <= maxDiagIdentityLen {
+		return identity
+	}
+	return hashedDiagIdentity(identity)
 }
 
 // PromoteDiagnostic is the ONE way anything outside this package turns a

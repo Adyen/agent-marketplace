@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -156,6 +157,11 @@ type MaterializationIssue struct {
 	Code      string
 	Severity  diag.Severity
 	Message   string
+
+	// identity retains the stable digest used for deduplication after the
+	// display fields have been bounded. It is intentionally not serialized or
+	// exposed to command consumers.
+	identity string
 }
 
 // Report holds the aggregate outcome of a materialization run.
@@ -4768,7 +4774,11 @@ func IsMaterializationDiagnostic(d diag.Diagnostic) bool {
 }
 
 func IsMaterializationDiagnosticCode(code string) bool {
-	return strings.HasPrefix(code, "materialize.")
+	// Ownership diagnostics are emitted by the materialization boundary and
+	// describe a failed or safety-preserving materialization decision. Keep
+	// them with materialization issues; compiler diagnostics remain on the
+	// normal renderer.
+	return strings.HasPrefix(code, "materialize.") || strings.HasPrefix(code, "ownership.")
 }
 
 func boundedMaterializationMessage(message string) string {
@@ -4795,11 +4805,11 @@ func (tr *TargetReport) buildIssues() {
 	issues := make([]MaterializationIssue, 0, len(tr.Written)+len(tr.Skipped)+len(tr.Removed)+len(tr.Diags))
 	addPath := func(path string, operation MaterializationOperation, outcome MaterializationOutcome) {
 		path = filepath.ToSlash(path)
-		issues = append(issues, sanitizeMaterializationIssue(MaterializationIssue{
+		issues = append(issues, MaterializationIssue{
 			Resource: tr.ResourceByPath[path], Target: tr.Target, Scope: materializationScope(tr.MachineScope),
 			RootID: tr.RootID, Path: path, Operation: operation, Outcome: outcome,
 			Severity: diag.SeverityInfo,
-		}))
+		})
 	}
 	for _, path := range tr.Written {
 		addPath(path, MaterializationOperationWrite, MaterializationOutcomeWritten)
@@ -4814,7 +4824,6 @@ func (tr *TargetReport) buildIssues() {
 		if !IsMaterializationDiagnostic(d) {
 			continue
 		}
-		message := boundedMaterializationMessage(d.Message)
 		operation, outcome := MaterializationOperationFailure, MaterializationOutcomeFailed
 		if !d.IsError() {
 			operation, outcome = MaterializationOperationSkip, MaterializationOutcomeWarning
@@ -4823,11 +4832,11 @@ func (tr *TargetReport) buildIssues() {
 		if path == "" {
 			path = skippedPathForResource(*tr, d.Resource)
 		}
-		issues = append(issues, sanitizeMaterializationIssue(MaterializationIssue{
+		issues = append(issues, MaterializationIssue{
 			Resource: d.Resource, Target: tr.Target, Scope: materializationScope(tr.MachineScope), RootID: tr.RootID,
-			Path: path, Code: d.Code, Severity: d.Severity, Message: message,
+			Path: path, Code: d.Code, Severity: d.Severity, Message: d.Message,
 			Operation: operation, Outcome: outcome,
-		}))
+		})
 	}
 	tr.Issues = issues
 }
@@ -4850,14 +4859,33 @@ func skippedPathForResource(tr TargetReport, resource string) string {
 	return match
 }
 
+func fullMaterializationField(value string) string {
+	// Diagnostic identity must survive display truncation. Sanitization is
+	// still applied before hashing so malformed UTF-8 and terminal controls can
+	// never influence identity differently from their visible representation.
+	return diag.SanitizeText(value, len(value)+len(diagTruncatedIdentityMark))
+}
+
+const diagTruncatedIdentityMark = "…"
+
 func materializationIssueKey(issue MaterializationIssue) string {
-	issue = sanitizeMaterializationIssue(issue)
-	return strings.Join([]string{
-		string(issue.Target), boundedMaterializationMessage(issue.Scope), boundedMaterializationMessage(issue.RootID),
-		boundedMaterializationMessage(issue.Resource), boundedMaterializationMessage(issue.Path),
-		string(issue.Operation), string(issue.Outcome), boundedMaterializationMessage(issue.Code),
-		boundedMaterializationMessage(issue.Message),
+	if issue.identity != "" {
+		return issue.identity
+	}
+	identity := strings.Join([]string{
+		fullMaterializationField(string(issue.Target)), fullMaterializationField(issue.Scope),
+		fullMaterializationField(issue.RootID), fullMaterializationField(issue.Resource),
+		fullMaterializationField(issue.Path), fullMaterializationField(string(issue.Operation)),
+		fullMaterializationField(string(issue.Outcome)), fullMaterializationField(issue.Code),
+		fullMaterializationField(issue.Message), strconv.Itoa(int(issue.Severity)),
 	}, "\x00")
+	sum := sha256.Sum256([]byte(identity))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func normalizeMaterializationIssue(issue MaterializationIssue) MaterializationIssue {
+	issue.identity = materializationIssueKey(issue)
+	return sanitizeMaterializationIssue(issue)
 }
 
 func (r *Report) rebuildIssues() {
@@ -4866,21 +4894,30 @@ func (r *Report) rebuildIssues() {
 	}
 	issues := make([]MaterializationIssue, 0)
 	seen := make(map[string]struct{})
+	appendIssue := func(issue MaterializationIssue) {
+		if issue.Code != "" && !IsMaterializationDiagnosticCode(issue.Code) {
+			return
+		}
+		key := materializationIssueKey(issue)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		issues = append(issues, normalizeMaterializationIssue(issue))
+	}
+
+	// Report.Issues can be populated by callers before materialization adds its
+	// generated issues. Preserve those records, but sanitize and deduplicate
+	// them through the same path as generated records.
+	for _, issue := range r.Issues {
+		appendIssue(issue)
+	}
 	for _, tr := range r.TargetReports() {
 		if len(tr.Issues) == 0 && (len(tr.Written) > 0 || len(tr.Skipped) > 0 || len(tr.Removed) > 0 || len(tr.Diags) > 0) {
 			tr.buildIssues()
 		}
 		for _, issue := range tr.Issues {
-			issue = sanitizeMaterializationIssue(issue)
-			if issue.Code != "" && !IsMaterializationDiagnosticCode(issue.Code) {
-				continue
-			}
-			key := materializationIssueKey(issue)
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			issues = append(issues, issue)
+			appendIssue(issue)
 		}
 	}
 	// Diagnostics are also retained when no target report was produced (for
@@ -4893,7 +4930,7 @@ func (r *Report) rebuildIssues() {
 		}
 		issue := MaterializationIssue{
 			Resource: d.Resource, Target: hcc.Target(d.Target), Code: d.Code, Severity: d.Severity,
-			Path: d.Source.File, Message: boundedMaterializationMessage(d.Message), Operation: MaterializationOperationFailure,
+			Path: d.Source.File, Message: d.Message, Operation: MaterializationOperationFailure,
 			Outcome: MaterializationOutcomeFailed,
 		}
 		reports := r.TargetReports()
@@ -4911,13 +4948,7 @@ func (r *Report) rebuildIssues() {
 			issue.Scope = materializationScope(matches[0].MachineScope)
 			issue.RootID = matches[0].RootID
 		}
-		issue = sanitizeMaterializationIssue(issue)
-		key := materializationIssueKey(issue)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		issues = append(issues, issue)
+		appendIssue(issue)
 	}
 	r.Issues = issues
 }

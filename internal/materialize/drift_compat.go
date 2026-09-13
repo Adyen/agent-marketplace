@@ -71,9 +71,7 @@ func (r *Report) SurfaceIssues() []MaterializationIssue {
 	if r == nil {
 		return nil
 	}
-	if len(r.Issues) == 0 {
-		r.rebuildIssues()
-	}
+	r.rebuildIssues()
 	seen := make(map[string]struct{}, len(r.Issues))
 	issues := make([]MaterializationIssue, 0, len(r.Issues))
 	for i := range r.Issues {
@@ -162,9 +160,7 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 	if report == nil {
 		return DriftReport{}
 	}
-	if len(report.Issues) == 0 {
-		report.rebuildIssues()
-	}
+	report.rebuildIssues()
 
 	resolvedByName := make(map[string]string, len(resolvedNames))
 	for _, name := range resolvedNames {
