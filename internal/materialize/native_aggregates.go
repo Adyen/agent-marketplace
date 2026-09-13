@@ -17,16 +17,12 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
-func materializeNativeAggregates(ctx context.Context, report *Report, key outputKey, repoRoot string, artifacts []artifact.Artifact, blocked map[string]bool, dryRun bool) []artifact.Artifact {
+func planNativeAggregates(key outputKey, destinations []harness.Destination, artifacts []artifact.Artifact, blocked map[string]bool) ([]artifact.Artifact, []nativeAggregatePlan, error) {
 	if len(harness.NativeAggregateInstalls(key.target)) == 0 {
-		return artifacts
-	}
-	destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
-	if err != nil {
-		report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, "", "", err, "materialize.destination.error"))
-		return nil
+		return artifacts, nil, nil
 	}
 	remaining := append([]artifact.Artifact(nil), artifacts...)
+	var plans []nativeAggregatePlan
 	for _, destination := range destinations {
 		if len(destination.AggregateRoutes) == 0 {
 			continue
@@ -35,7 +31,7 @@ func materializeNativeAggregates(ctx context.Context, report *Report, key output
 		var routeErr error
 		for _, route := range destination.AggregateRoutes {
 			desired[route.Container] = json.RawMessage(`{}`)
-			kept := remaining[:0]
+			kept := make([]artifact.Artifact, 0, len(remaining))
 			for _, a := range remaining {
 				if a.Path != route.ArtifactPath {
 					kept = append(kept, a)
@@ -55,26 +51,60 @@ func materializeNativeAggregates(ctx context.Context, report *Report, key output
 			}
 			remaining = kept
 		}
-		rel := destination.Info.AggregateFilesForScope(key.machineScope)[0]
-		if routeErr == nil {
-			var tr TargetReport
-			if key.target == hcc.TargetGemini {
-				var diagnostics []diag.Diagnostic
-				tr, diagnostics, routeErr = syncGeminiNativeAggregate(ctx, key, destination, desired, dryRun, !componentBlocked(blocked, ""))
-				report.Diags = append(report.Diags, diagnostics...)
-			} else {
-				tr, routeErr = syncNativeAggregate(key, destination, rel, desired, dryRun, !componentBlocked(blocked, ""))
-			}
-			if routeErr == nil && len(tr.Written)+len(tr.Skipped)+len(tr.Removed) > 0 {
-				report.PerRoot = append(report.PerRoot, tr)
-				report.PerTarget[key.target] = mergeTargetReports(report.PerTarget[key.target], tr)
-			}
+		rels := destination.Info.AggregateFilesForScope(key.machineScope)
+		if routeErr != nil {
+			return nil, nil, routeErr
+		}
+		if len(rels) == 0 {
+			return nil, nil, fmt.Errorf("native aggregate destination %q has no aggregate file", destination.ID)
+		}
+		plans = append(plans, nativeAggregatePlan{
+			destination:       destination,
+			rel:               rels[0],
+			desired:           desired,
+			pruneStaleEntries: !componentBlocked(blocked, ""),
+		})
+	}
+	return remaining, plans, nil
+}
+
+func executeNativeAggregatePlans(ctx context.Context, report *Report, key outputKey, plans []nativeAggregatePlan, dryRun bool) {
+	for _, plan := range plans {
+		var tr TargetReport
+		var routeErr error
+		if key.target == hcc.TargetGemini {
+			var diagnostics []diag.Diagnostic
+			tr, diagnostics, routeErr = syncGeminiNativeAggregate(ctx, key, plan.destination, plan.desired, dryRun, plan.pruneStaleEntries)
+			report.Diags = append(report.Diags, diagnostics...)
+		} else {
+			tr, routeErr = syncNativeAggregate(key, plan.destination, plan.rel, plan.desired, dryRun, plan.pruneStaleEntries)
+		}
+		if routeErr == nil && len(tr.Written)+len(tr.Skipped)+len(tr.Removed) > 0 {
+			report.PerRoot = append(report.PerRoot, tr)
+			report.PerTarget[key.target] = mergeTargetReports(report.PerTarget[key.target], tr)
 		}
 		if routeErr != nil {
-			slog.Error("native aggregate preserved after refusal", "target", key.target, "destination", destination.ID, "file", rel)
-			report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, destination.Root, rel, routeErr, "materialize.write.error"))
+			slog.Error("native aggregate preserved after refusal", "target", key.target, "destination", plan.destination.ID, "file", plan.rel)
+			report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, plan.destination.Root, plan.rel, routeErr, "materialize.write.error"))
 		}
 	}
+}
+
+// materializeNativeAggregates is retained for the one-shot helper path used by
+// older internal callers. BuildPlan uses planNativeAggregates instead so
+// Execute never resolves a destination after backup.
+func materializeNativeAggregates(ctx context.Context, report *Report, key outputKey, repoRoot string, artifacts []artifact.Artifact, blocked map[string]bool, dryRun bool) []artifact.Artifact {
+	destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+	if err != nil {
+		report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, "", "", err, "materialize.destination.error"))
+		return nil
+	}
+	remaining, plans, err := planNativeAggregates(key, destinations, artifacts, blocked)
+	if err != nil {
+		report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, "", "", err, "materialize.write.error"))
+		return nil
+	}
+	executeNativeAggregatePlans(ctx, report, key, plans, dryRun)
 	return remaining
 }
 

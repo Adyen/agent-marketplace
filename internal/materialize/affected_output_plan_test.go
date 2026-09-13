@@ -7,6 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 func TestBuildPlanRejectsInvalidMaterializationRootsBeforeWrites(t *testing.T) {
@@ -46,6 +52,112 @@ func TestBuildPlanRejectsRegularOutputRootWithoutWriting(t *testing.T) {
 	}
 	if !bytes.Equal(got, before) {
 		t.Fatalf("regular output root changed: got %q, want %q", got, before)
+	}
+}
+
+func TestPlanExecuteRefusesEnvironmentDestinationDriftBeforeWrites(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target hcc.Target
+		mutate func(t *testing.T, home, alternate string)
+	}{
+		{
+			name:   "home",
+			target: hcc.TargetClaude,
+			mutate: func(t *testing.T, _, alternate string) { t.Setenv("HOME", alternate) },
+		},
+		{
+			name:   "codex-home",
+			target: hcc.TargetCodex,
+			mutate: func(t *testing.T, _, alternate string) { t.Setenv("CODEX_HOME", alternate) },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			home := t.TempDir()
+			alternate := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_HOME", filepath.Join(home, "codex-home"))
+			resolved := []resolver.ResolvedArtifact{{
+				Entry:     catalog.Entry{Name: "drift", Resource: ir.NewSkill("drift", "drift", "body", nil, nil, ir.SourceRef{})},
+				Source:    config.UserPersonal,
+				Harnesses: []hcc.Target{test.target},
+			}}
+			plan, err := BuildPlan(context.Background(), repoRoot, resolved)
+			if err != nil {
+				t.Fatalf("BuildPlan: %v", err)
+			}
+			test.mutate(t, home, alternate)
+			report, err := plan.Execute(context.Background())
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if !hasDiagCode(report.Diags, "materialize.plan.drift") {
+				t.Fatalf("missing plan drift diagnostic: %#v", report.Diags)
+			}
+			if _, err := os.Stat(filepath.Join(alternate, ".claude")); !os.IsNotExist(err) {
+				t.Fatalf("drifted HOME received output: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(alternate, ".codex")); !os.IsNotExist(err) {
+				t.Fatalf("drifted CODEX_HOME received output: %v", err)
+			}
+		})
+	}
+}
+
+func TestPlanExecuteRefusesPortableManifestDriftBeforeWrites(t *testing.T) {
+	repoRoot := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "manifest-drift", Resource: ir.NewSkill("manifest-drift", "manifest drift", "body", nil, nil, ir.SourceRef{})},
+		Source:    config.UserPersonal,
+		Harnesses: []hcc.Target{hcc.TargetClaude},
+	}}
+	plan, err := BuildPlan(context.Background(), repoRoot, resolved)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	manifestPath := filepath.Join(home, ".agent-marketplace", "materialization-manifest.yaml")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("version: 1\nentries:\n  - target: claude\n    path: skills/other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := plan.Execute(context.Background())
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !hasDiagCode(report.Diags, "materialize.plan.drift") {
+		t.Fatalf("missing plan drift diagnostic: %#v", report.Diags)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("manifest drift allowed output: %v", err)
+	}
+}
+
+func TestBuildPlanRejectsUnknownPortableManifestTarget(t *testing.T) {
+	repoRoot := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	manifestPath := filepath.Join(home, ".agent-marketplace", "materialization-manifest.yaml")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before := []byte("version: 1\nentries:\n  - target: unknown-harness\n    path: skills/unknown\n")
+	if err := os.WriteFile(manifestPath, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildPlan(context.Background(), repoRoot, nil); err == nil || !strings.Contains(err.Error(), "unknown materialization manifest target") {
+		t.Fatalf("BuildPlan error = %v, want unknown target rejection", err)
+	}
+	got, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, before) {
+		t.Fatalf("unknown-target manifest changed: got %q, want %q", got, before)
 	}
 }
 

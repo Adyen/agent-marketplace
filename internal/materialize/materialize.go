@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -75,6 +76,13 @@ type materializePlan struct {
 	mode         hcc.WriteMode
 	prune        bool
 	reportPrefix string
+}
+
+type nativeAggregatePlan struct {
+	destination       harness.Destination
+	rel               string
+	desired           map[string]json.RawMessage
+	pruneStaleEntries bool
 }
 
 type skillLink struct {
@@ -151,6 +159,7 @@ type portableState struct {
 	repoRoot     string
 	machineScope bool
 	entries      map[string]portableManifestEntry
+	destinations []harness.Destination
 }
 
 type portableSyncContext struct {
@@ -196,8 +205,11 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 		return nil, fmt.Errorf("unsupported materialization manifest version %d", manifest.Version)
 	}
 	for _, entry := range manifest.Entries {
+		if entry.Target == "" || !hcc.IsValidTarget(entry.Target) {
+			return nil, fmt.Errorf("unknown materialization manifest target %q", entry.Target)
+		}
 		clean := filepath.ToSlash(filepath.Clean(entry.Path))
-		if entry.Target == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(entry.Path) {
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(entry.Path) {
 			return nil, fmt.Errorf("invalid materialization manifest entry %q", entry.Path)
 		}
 		entry.Path = clean
@@ -219,7 +231,7 @@ func (s *portableState) add(target hcc.Target, path, digest string) {
 	entry := portableManifestEntry{Target: string(target), Path: path, Digest: digest}
 	if target == hcc.Target(targetmeta.TargetCodex) {
 		key := outputKey{target: target, machineScope: s.machineScope}
-		if id, root, _, err := portableEntryDestination(key, "", s.repoRoot, path); err == nil {
+		if id, root, _, err := portableEntryDestinationForDestinations(key, "", path, s.destinations); err == nil {
 			entry.RootID, entry.RootKey = id, ownership.RootKey(root)
 		}
 	}
@@ -228,7 +240,7 @@ func (s *portableState) add(target hcc.Target, path, digest string) {
 
 func (s *portableState) matchesCodexRoot(entry portableManifestEntry) bool {
 	key := outputKey{target: hcc.Target(targetmeta.TargetCodex), machineScope: s.machineScope}
-	id, root, _, err := portableEntryDestination(key, "", s.repoRoot, entry.Path)
+	id, root, _, err := portableEntryDestinationForDestinations(key, "", entry.Path, s.destinations)
 	return err == nil && entry.RootID == id && entry.RootKey == ownership.RootKey(root)
 }
 
@@ -491,8 +503,218 @@ type Plan struct {
 	repoRoot      string
 	dryRun        bool
 	modes         config.MaterializationModes
+	snapshot      executionSnapshot
 	ManagedPaths  map[hcc.Target]backup.ManagedPaths
 	CodexParts    []backup.CodexPartition
+}
+
+type manifestSnapshot struct {
+	path    string
+	exists  bool
+	data    []byte
+	entries map[string]portableManifestEntry
+}
+
+type pathSnapshot struct {
+	exists bool
+	mode   os.FileMode
+	link   string
+	digest string
+}
+
+type executionSnapshot struct {
+	home, codexHome       string
+	homeSet, codexHomeSet bool
+	roots                 map[outputKey]string
+	destinations          map[outputKey][]harness.Destination
+	paths                 map[string]pathSnapshot
+	manifests             map[bool]manifestSnapshot
+	outputs               map[outputKey]bool
+	artifacts             map[outputKey][]artifact.Artifact
+	materializePlans      map[outputKey][]materializePlan
+	nativeAggregates      map[outputKey][]nativeAggregatePlan
+	pruneFences           map[outputKey]map[string]bool
+	codexPartitions       map[string]bool
+	preflightDiag         *diag.Diagnostic
+}
+
+func captureExecutionSnapshot(repoRoot string, outputs map[outputKey]bool) (executionSnapshot, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return executionSnapshot{}, fmt.Errorf("resolve home directory: %w", err)
+	}
+	codexHome, codexHomeSet := os.LookupEnv("CODEX_HOME")
+	_, homeSet := os.LookupEnv("HOME")
+	snapshot := executionSnapshot{
+		home: home, codexHome: codexHome, homeSet: homeSet, codexHomeSet: codexHomeSet,
+		roots: make(map[outputKey]string), destinations: make(map[outputKey][]harness.Destination),
+		paths: make(map[string]pathSnapshot), manifests: make(map[bool]manifestSnapshot, 2),
+		outputs: make(map[outputKey]bool, len(outputs)),
+	}
+	for key := range outputs {
+		snapshot.outputs[key] = true
+	}
+	roots := harness.MakeInstallRoots()
+	for key := range outputs {
+		target, machineScope := key.target, key.machineScope
+		destinations, err := harness.ResolveDestinations(target, machineScope, repoRoot)
+		if err != nil {
+			return executionSnapshot{}, fmt.Errorf("resolve %s %s destinations: %w", scopeName(machineScope), target, err)
+		}
+		snapshot.destinations[key] = destinations
+		if target == hcc.Target(targetmeta.TargetCodex) {
+			if machineScope {
+				snapshot.roots[key] = home
+			} else {
+				snapshot.roots[key] = repoRoot
+			}
+		} else if targetRoot, ok := roots[target]; ok {
+			snapshot.roots[key] = targetRoot.For(machineScope, repoRoot)
+		}
+		for _, destination := range destinations {
+			snapshot.paths[destination.Root] = inspectPathSnapshot(destination.Root)
+			for _, rel := range destination.Info.AggregateFilesForScope(machineScope) {
+				snapshot.paths[filepath.Join(destination.Root, rel)] = inspectPathSnapshot(filepath.Join(destination.Root, rel))
+			}
+		}
+		if root := snapshot.roots[key]; root != "" {
+			snapshot.paths[root] = inspectPathSnapshot(root)
+		}
+	}
+	for _, machineScope := range []bool{false, true} {
+		state, err := loadPortableState(repoRoot, machineScope)
+		if err != nil {
+			return executionSnapshot{}, fmt.Errorf("load %s materialization manifest: %w", scopeName(machineScope), err)
+		}
+		data, err := os.ReadFile(state.path)
+		if errors.Is(err, os.ErrNotExist) {
+			data = nil
+		} else if err != nil {
+			return executionSnapshot{}, fmt.Errorf("read %s materialization manifest: %w", scopeName(machineScope), err)
+		}
+		entries := make(map[string]portableManifestEntry, len(state.entries))
+		for key, entry := range state.entries {
+			entries[key] = entry
+		}
+		snapshot.manifests[machineScope] = manifestSnapshot{path: state.path, exists: data != nil, data: append([]byte(nil), data...), entries: entries}
+	}
+	return snapshot, nil
+}
+
+func inspectPathSnapshot(path string) pathSnapshot {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return pathSnapshot{}
+	}
+	if err != nil {
+		return pathSnapshot{exists: true}
+	}
+	snapshot := pathSnapshot{exists: true, mode: info.Mode()}
+	if info.Mode()&os.ModeSymlink != 0 {
+		snapshot.link, _ = os.Readlink(path)
+	} else if info.Mode().IsRegular() {
+		if data, readErr := os.ReadFile(path); readErr == nil {
+			digest := sha256.Sum256(data)
+			snapshot.digest = hex.EncodeToString(digest[:])
+		}
+	}
+	return snapshot
+}
+
+func (s executionSnapshot) validate(repoRoot string) error {
+	current, err := captureExecutionSnapshot(repoRoot, s.outputs)
+	if err != nil {
+		return err
+	}
+	planned := executionSnapshot{
+		home: s.home, codexHome: s.codexHome, homeSet: s.homeSet, codexHomeSet: s.codexHomeSet,
+		roots: s.roots, destinations: s.destinations, paths: s.paths, manifests: s.manifests, outputs: s.outputs,
+	}
+	observed := executionSnapshot{
+		home: current.home, codexHome: current.codexHome, homeSet: current.homeSet, codexHomeSet: current.codexHomeSet,
+		roots: current.roots, destinations: current.destinations, paths: current.paths, manifests: current.manifests, outputs: current.outputs,
+	}
+	if !reflect.DeepEqual(planned, observed) {
+		return errors.New("materialization environment, destination, output root, or portable manifest changed after planning")
+	}
+	return nil
+}
+
+func freezeExecutionPlan(snapshot *executionSnapshot, result *compilePhaseResult, repoRoot string, modes config.MaterializationModes) error {
+	coalesced, preflight := preflightCodexDestinationsFrozen(result, snapshot.destinations, modes)
+	if preflight != nil {
+		snapshot.preflightDiag = preflight
+		return nil
+	}
+	snapshot.artifacts = make(map[outputKey][]artifact.Artifact, len(result.allOutputs))
+	snapshot.materializePlans = make(map[outputKey][]materializePlan, len(result.allOutputs))
+	snapshot.nativeAggregates = make(map[outputKey][]nativeAggregatePlan, len(result.allOutputs))
+	snapshot.pruneFences = make(map[outputKey]map[string]bool, len(result.allOutputs))
+	snapshot.codexPartitions = coalesced
+	keys := make([]outputKey, 0, len(result.allOutputs))
+	for key := range result.allOutputs {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(a, b outputKey) int {
+		if a.target != b.target {
+			return strings.Compare(string(a.target), string(b.target))
+		}
+		if a.machineScope == b.machineScope {
+			return 0
+		}
+		if a.machineScope {
+			return 1
+		}
+		return -1
+	})
+	roots := harness.MakeInstallRoots()
+	for _, key := range keys {
+		tw := result.byTarget[key]
+		var artifacts []artifact.Artifact
+		if tw != nil {
+			merged, err := artifact.MergeFragments(tw.artifacts)
+			if err != nil {
+				return fmt.Errorf("merge fragments for target %s: %w", key.target, err)
+			}
+			artifacts = merged
+		}
+		destinations := snapshot.destinations[key]
+		artifacts, nativePlans, err := planNativeAggregates(key, destinations, artifacts, result.blocked.componentsFor(key))
+		if err != nil {
+			return fmt.Errorf("plan native aggregates for target %s: %w", key.target, err)
+		}
+		snapshot.artifacts[key] = artifacts
+		snapshot.nativeAggregates[key] = nativePlans
+		outDir := repoRoot
+		if key.target == hcc.Target(targetmeta.TargetCodex) {
+			if key.machineScope {
+				outDir = snapshot.home
+			}
+		} else if root, ok := roots[key.target]; ok {
+			outDir = root.For(key.machineScope, repoRoot)
+		}
+		plans := materializePlansWithDestinations(key.target, outDir, artifacts, linkedComponents(result.skillLinks[key]), key.machineScope, destinations)
+		for i := range plans {
+			if componentBlocked(result.blocked.componentsFor(key), plans[i].reportPrefix) {
+				plans[i].mode = hcc.WriteModeOverwrite
+				plans[i].prune = false
+			}
+		}
+		snapshot.materializePlans[key] = plans
+		snapshot.pruneFences[key] = cloneBoolMap(nativeAggregatePruneFence(key.target, key.machineScope))
+	}
+	return nil
+}
+
+func cloneBoolMap(values map[string]bool) map[string]bool {
+	if values == nil {
+		return nil
+	}
+	clone := make(map[string]bool, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
 }
 
 // Plan discovers resolved and previously managed output keys, native aggregate
@@ -551,10 +773,17 @@ func BuildPlan(ctx context.Context, repoRoot string, resolved []resolver.Resolve
 	if err := validatePlanOutputs(allOutputs, repoRoot); err != nil {
 		return nil, fmt.Errorf("validate materialization destinations: %w", err)
 	}
+	snapshot, err := captureExecutionSnapshot(repoRoot, allOutputs)
+	if err != nil {
+		return nil, fmt.Errorf("freeze materialization destinations and environment: %w", err)
+	}
 	// Phase 2: Compile each work item and collect artifacts per target.
 	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, aggregateFences, repoRoot)
 	slog.Debug("materialize compile complete", "targets", len(compileResult.byTarget), "diagnostics", len(compileResult.allDiags))
-	managed, codexParts, err := backupInventory(allOutputs, repoRoot)
+	if err := freezeExecutionPlan(&snapshot, &compileResult, repoRoot, rc.modes); err != nil {
+		return nil, fmt.Errorf("freeze materialization execution plan: %w", err)
+	}
+	managed, codexParts, err := backupInventory(allOutputs, repoRoot, snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve configured backup inventory: %w", err)
 	}
@@ -563,6 +792,7 @@ func BuildPlan(ctx context.Context, repoRoot string, resolved []resolver.Resolve
 		repoRoot:      repoRoot,
 		dryRun:        rc.dryRun,
 		modes:         rc.modes,
+		snapshot:      snapshot,
 		ManagedPaths:  managed,
 		CodexParts:    codexParts,
 	}, nil
@@ -577,10 +807,19 @@ func (p *Plan) Execute(ctx context.Context) (*Report, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := p.snapshot.validate(p.repoRoot); err != nil {
+		diagnostic := diag.Diagnostic{
+			Code:     "materialize.plan.drift",
+			Severity: diag.SeverityError,
+			Message:  fmt.Sprintf("refusing materialization after planned inputs changed: %v", err),
+			Hint:     "rebuild the materialization plan and backup from the current destinations",
+		}
+		return &Report{PerTarget: make(map[hcc.Target]TargetReport), Diags: append(append([]diag.Diagnostic(nil), p.compileResult.allDiags...), diagnostic)}, nil
+	}
 	start := time.Now()
 	slog.Debug("materialize execute start", "repo_root", p.repoRoot, "outputs", len(p.compileResult.allOutputs), "dry_run", p.dryRun,
 		"machine_mode", p.modes.Machine, "project_mode", p.modes.Project)
-	report := executeMaterializePlans(ctx, p.compileResult, p.dryRun, p.repoRoot, p.modes)
+	report := executeMaterializePlans(ctx, p.compileResult, p.snapshot, p.dryRun, p.repoRoot, p.modes)
 	slog.Info("materialize end", "duration_ms", time.Since(start).Milliseconds(), "targets", len(report.PerRoot), "diagnostics", len(report.Diags))
 	return report, nil
 }
@@ -621,11 +860,33 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	if diagnostic := invalidTargetIntent(resolved); diagnostic != nil {
 		return &Report{PerTarget: make(map[hcc.Target]TargetReport), Diags: []diag.Diagnostic{*diagnostic}}, nil
 	}
-	plan, err := BuildPlan(ctx, repoRoot, resolved, opts...)
-	if err != nil {
-		return nil, err
+	for attempt := 0; attempt < 2; attempt++ {
+		plan, err := BuildPlan(ctx, repoRoot, resolved, opts...)
+		if err != nil {
+			return nil, err
+		}
+		report, err := plan.Execute(ctx)
+		if err != nil || !hasDiagnosticCode(report, "materialize.plan.drift") || attempt == 1 {
+			return report, err
+		}
+		// A concurrent one-shot sync may have completed between planning and
+		// execution. Rebuild once from the now-current snapshot; direct Plan
+		// callers still fail closed on the first drift and can decide whether to
+		// retry after their configured backup is rebuilt.
 	}
-	return plan.Execute(ctx)
+	return nil, errors.New("materialization retry exhausted")
+}
+
+func hasDiagnosticCode(report *Report, code string) bool {
+	if report == nil {
+		return false
+	}
+	for _, diagnostic := range report.Diags {
+		if diagnostic.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func validatePlanRoot(repoRoot string) error {
@@ -927,7 +1188,7 @@ func backupPathCoveredByAncestor(rel string, collected []string) bool {
 
 // backupInventory derives configured machine-scope coverage from the exact
 // output keys in a plan, including keys revived from stale output and manifests.
-func backupInventory(outputs map[outputKey]bool, repoRoot string) (map[hcc.Target]backup.ManagedPaths, []backup.CodexPartition, error) {
+func backupInventory(outputs map[outputKey]bool, repoRoot string, snapshot executionSnapshot) (map[hcc.Target]backup.ManagedPaths, []backup.CodexPartition, error) {
 	managed := make(map[hcc.Target]backup.ManagedPaths)
 	keys := make([]outputKey, 0, len(outputs))
 	for key := range outputs {
@@ -940,25 +1201,19 @@ func backupInventory(outputs map[outputKey]bool, repoRoot string) (map[hcc.Targe
 		if key.target == hcc.Target(targetmeta.TargetCodex) {
 			continue
 		}
-		root, ok := harness.MachineRoot(key.target)
-		if !ok || root == "" {
-			return nil, nil, fmt.Errorf("target %q has no machine root", key.target)
+		root := snapshot.roots[key]
+		if root == "" {
+			return nil, nil, fmt.Errorf("target %q has no frozen machine root", key.target)
 		}
 		info, ok := harness.TargetInfoFor(key.target)
 		if !ok {
 			return nil, nil, fmt.Errorf("target %q has no target metadata", key.target)
 		}
-		mappedFiles, err := harness.NativeAggregateBackupFiles(key.target)
-		if err != nil {
-			return nil, nil, fmt.Errorf("resolve %s aggregate backup mapping: %w", key.target, err)
-		}
+		destinations := snapshot.destinations[key]
+		mappedFiles := nativeAggregateBackupFilesFromDestinations(destinations)
 		relPaths := append([]string(nil), info.ComponentsForScope(true)...)
 		aggregates := info.AggregateFilesForScope(true)
 		if len(harness.NativeAggregateInstalls(key.target)) > 0 {
-			destinations, err := harness.ResolveDestinations(key.target, true, repoRoot)
-			if err != nil {
-				return nil, nil, fmt.Errorf("resolve %s native destinations: %w", key.target, err)
-			}
 			aggregates = nil
 			found := false
 			for _, destination := range destinations {
@@ -979,13 +1234,11 @@ func backupInventory(outputs map[outputKey]bool, repoRoot string) (map[hcc.Targe
 		managed[key.target] = backup.ManagedPaths{Root: root, RelPaths: relPaths, MappedFiles: mappedFiles}
 	}
 	if outputs[outputKey{target: hcc.Target(targetmeta.TargetCodex), machineScope: true}] {
-		paths, err := CodexMachineManagedPaths(repoRoot)
+		destinations := snapshot.destinations[outputKey{target: hcc.Target(targetmeta.TargetCodex), machineScope: true}]
+		manifest := snapshot.manifests[true]
+		paths, err := codexMachineManagedPathsFromSnapshot(destinations, manifest.entries)
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolve Codex machine backup paths: %w", err)
-		}
-		destinations, err := harness.ResolveDestinations(hcc.Target(targetmeta.TargetCodex), true, repoRoot)
-		if err != nil {
-			return nil, nil, fmt.Errorf("resolve Codex machine destinations: %w", err)
 		}
 		parts := make([]backup.CodexPartition, 0, len(destinations))
 		for _, destination := range destinations {
@@ -994,6 +1247,23 @@ func backupInventory(outputs map[outputKey]bool, repoRoot string) (map[hcc.Targe
 		return managed, parts, nil
 	}
 	return managed, nil, nil
+}
+
+func nativeAggregateBackupFilesFromDestinations(destinations []harness.Destination) map[string]string {
+	files := make(map[string]string)
+	if len(destinations) == 0 {
+		return files
+	}
+	baseRoot := destinations[0].Root
+	for _, destination := range destinations[1:] {
+		if len(destination.AggregateRoutes) == 0 || destination.Root == baseRoot {
+			continue
+		}
+		for _, rel := range destination.Info.AggregateFilesForScope(true) {
+			files[filepath.ToSlash(filepath.Join(".agent-marketplace-native", destination.ID, rel))] = filepath.Join(destination.Root, rel)
+		}
+	}
+	return files
 }
 
 // compileWorkItems compiles each skill-target pair, splits artifacts by kind,
@@ -1274,18 +1544,29 @@ func markOwnedAggregateIncomplete(handler ownedAggregateHandler, state ownedAggr
 //
 // ctx reaches the owned-aggregate handlers because their per-canonical-root
 // critical sections must abandon a contended wait when the run is cancelled.
-func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResult, dryRun bool, repoRoot string, modes config.MaterializationModes) *Report {
+func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResult, snapshot executionSnapshot, dryRun bool, repoRoot string, modes config.MaterializationModes) *Report {
 	report := &Report{
 		PerTarget: make(map[hcc.Target]TargetReport),
 		Diags:     compileResult.allDiags,
 	}
-	coalescedCodexPartitions, preflightDiag := preflightCodexDestinations(&compileResult, repoRoot, modes)
-	if preflightDiag != nil {
-		report.Diags = append(report.Diags, *preflightDiag)
+	if snapshot.preflightDiag != nil {
+		report.Diags = append(report.Diags, *snapshot.preflightDiag)
 		return report
 	}
+	states := make(map[bool]*portableState, 2)
+	for _, machineScope := range []bool{false, true} {
+		manifest := snapshot.manifests[machineScope]
+		entries := make(map[string]portableManifestEntry, len(manifest.entries))
+		for key, entry := range manifest.entries {
+			entries[key] = entry
+		}
+		states[machineScope] = &portableState{
+			path: manifest.path, repoRoot: repoRoot, machineScope: machineScope, entries: entries,
+			destinations: snapshot.destinations[outputKey{target: hcc.Target(targetmeta.TargetCodex), machineScope: machineScope}],
+		}
+	}
 
-	composition, adapterErr := newMaterializeAdapterComposition()
+	_, adapterErr := newMaterializeAdapterComposition()
 	if adapterErr != nil {
 		for key := range compileResult.allOutputs {
 			if harness.IsInstallationAdapterTarget(key.target) {
@@ -1294,8 +1575,6 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		}
 		return report
 	}
-	adapters := composition.registry
-
 	// Sort output keys for deterministic PerRoot ordering.
 	sortedOutputs := make([]outputKey, 0, len(compileResult.allOutputs))
 	for key := range compileResult.allOutputs {
@@ -1305,119 +1584,45 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		if a.target != b.target {
 			return strings.Compare(string(a.target), string(b.target))
 		}
-		if a.machineScope != b.machineScope {
-			if a.machineScope {
-				return 1
-			}
-			return -1
+		if a.machineScope == b.machineScope {
+			return 0
 		}
-		return 0
+		if a.machineScope {
+			return 1
+		}
+		return -1
 	})
 
 	for _, key := range sortedOutputs {
-		var roots harness.Roots
-		var ok bool
-		var adapterDestinations []harness.Destination
-		if adapter, migrated := adapters.Lookup(key.target); migrated {
-			var home string
-			if key.machineScope {
-				var err error
-				home, err = os.UserHomeDir()
-				if err != nil {
-					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("resolve home directory: %v", err)})
-					continue
-				}
-			}
-			var err error
-			adapterDestinations, err = adapter.Resolve(key.machineScope, repoRoot, home)
-			if err != nil {
-				slog.Error("adapter destination resolution failed", "target", key.target, "machine_scope", key.machineScope, "code", "materialize.destination.error", "error", err)
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
-				continue
-			}
-		} else {
-			roots, ok = harness.MakeInstallRoots()[key.target]
-		}
-		if !ok && len(adapterDestinations) == 0 {
-			report.Diags = append(report.Diags, diag.Diagnostic{
-				Code:     "materialize.target.unknown",
-				Severity: diag.SeverityError,
-				Target:   string(key.target),
-				Message:  fmt.Sprintf("no install root configured for target %q", key.target),
-			})
+		outDir := snapshot.roots[key]
+		if outDir == "" {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.target.unknown", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("no frozen output root for target %q", key.target)})
 			continue
 		}
-		outDir := repoRoot
-		if len(adapterDestinations) > 0 {
-			// A single destination owns the whole output root (Devin); multiple
-			// destinations are partitions under the scope base (Codex).
-			if len(adapterDestinations) == 1 {
-				outDir = adapterDestinations[0].Root
-			} else if key.machineScope {
-				outDir, _ = os.UserHomeDir()
-			}
-		} else {
-			outDir = roots.For(key.machineScope, repoRoot)
-		}
-
 		if !dryRun {
 			if err := os.MkdirAll(outDir, 0o755); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("create output directory %s: %v", outDir, err),
-				})
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("create output directory %s: %v", outDir, err)})
 				continue
 			}
 		}
-
 		tw := compileResult.byTarget[key]
-
-		var artifacts []artifact.Artifact
-		var targetDiags []diag.Diagnostic
 		if tw != nil {
-			merged, mergeErr := artifact.MergeFragments(tw.artifacts)
-			if mergeErr != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.merge.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("merge fragments for target %s: %v", key.target, mergeErr),
-				})
-				continue
-			}
-			artifacts = merged
-			targetDiags = tw.diags
-			// Aggregate compile diagnostics once at the report level so
-			// InSync() reflects compile errors. Per-plan TargetReport.Diags
-			// are left empty to avoid duplication across multiple plans.
-			report.Diags = append(report.Diags, targetDiags...)
+			report.Diags = append(report.Diags, tw.diags...)
 		}
-
 		mode := modes.For(string(key.target), key.machineScope)
-		// Resource installation mode is distribution policy, not a compiler
-		// capability. All targets use the same file-copy or symlink path;
-		// shared aggregates retain their separate ownership reconciliation.
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
-		artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
-		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
-		if binding, ok := composition.bindings[key.target]; ok {
-			report = binding.handler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, adapterDestinations, dryRun)
+		executeNativeAggregatePlans(ctx, report, key, snapshot.nativeAggregates[key], dryRun)
+		report = executeTargetPlans(report, key, outDir, snapshot.materializePlans[key], states[key.machineScope], compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, snapshot.codexPartitions, snapshot.pruneFences[key])
+		if aggregateHandler := ownedAggregateHandlerFor(key.target); aggregateHandler != nil {
+			report = aggregateHandler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, snapshot.destinations[key], dryRun)
+
 		}
 	}
-
 	return report
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool) *Report {
-	state, stateErr := loadPortableState(repoRoot, key.machineScope)
-	if stateErr != nil {
-		slog.Error("materialize manifest load failed", "target", key.target, "machine_scope", key.machineScope, "error", stateErr)
-		report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.manifest.error", Severity: diag.SeverityError, Target: string(key.target), Message: stateErr.Error()})
-		return report
-	}
+func executeTargetPlans(report *Report, key outputKey, outDir string, plans []materializePlan, state *portableState, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, pruneFence map[string]bool) *Report {
 	fileDesired := make(map[string]bool)
 	// Track which plan output directories had merge artifacts, so we can
 	// prune managed merge entries from directories NOT covered by any plan.
@@ -1426,15 +1631,6 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	// component directory, including components that have no desired artifacts.
 	portableCleanupDirs := make(map[string]string)
 
-	plans := materializePlans(key.target, outDir, artifacts, linkedComponents(skillLinks[key]), key.machineScope)
-	// Prune suppression is per COMPONENT: only the components a skipped
-	// resource would have written into may keep their stale files.
-	for i := range plans {
-		if componentBlocked(blocked, plans[i].reportPrefix) {
-			plans[i].mode = hcc.WriteModeOverwrite
-			plans[i].prune = false
-		}
-	}
 	for _, plan := range plans {
 		regularArtifacts, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
 		if mode == config.MaterializationModeFile {
@@ -1620,7 +1816,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	if key.target == hcc.Target(targetmeta.TargetCodex) {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	} else if !componentBlocked(blocked, "") {
-		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, nativeAggregatePruneFence(key.target, key.machineScope))
+		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, pruneFence)
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}
@@ -1861,8 +2057,15 @@ func codexRootIDForPrefix(key outputKey, rel string) string {
 }
 
 func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
+	return materializePlansWithDestinations(target, outDir, artifacts, linkedSkills, machineScope, nil)
+}
+
+func materializePlansWithDestinations(target hcc.Target, outDir string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool, destinations []harness.Destination) []materializePlan {
 	if target == hcc.Target(targetmeta.TargetCodex) {
-		return codexMaterializePlans(outDir, artifacts, linkedSkills, machineScope)
+		if destinations == nil {
+			return codexMaterializePlans(outDir, artifacts, linkedSkills, machineScope)
+		}
+		return codexMaterializePlansForDestinations(outDir, artifacts, linkedSkills, destinations)
 	}
 	info, ok := harness.TargetInfoFor(target)
 	if !ok {
@@ -1880,6 +2083,10 @@ func codexMaterializePlans(repoRoot string, artifacts []artifact.Artifact, linke
 		slog.Error("resolve Codex materialization destinations", "code", "materialize.destination.error", "error", err)
 		return nil
 	}
+	return codexMaterializePlansForDestinations(repoRoot, artifacts, linkedSkills, destinations)
+}
+
+func codexMaterializePlansForDestinations(repoRoot string, artifacts []artifact.Artifact, linkedSkills map[string]bool, destinations []harness.Destination) []materializePlan {
 	var plans []materializePlan
 	for _, destination := range destinations {
 		var routed []artifact.Artifact
@@ -3221,7 +3428,7 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 		if key.target == hcc.Target(targetmeta.TargetCodex) && !state.matchesCodexRoot(entry) {
 			continue
 		}
-		rootID, root, rel, err := portableEntryDestination(key, outDir, repoRoot, entry.Path)
+		rootID, root, rel, err := portableEntryDestinationForDestinations(key, outDir, entry.Path, state.destinations)
 		if err != nil {
 			return nil, diags, err
 		}
@@ -3281,6 +3488,13 @@ func portableEntryDestination(key outputKey, outDir, repoRoot, entryPath string)
 	destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
 	if err != nil {
 		return "", "", "", err
+	}
+	return portableEntryDestinationForDestinations(key, outDir, entryPath, destinations)
+}
+
+func portableEntryDestinationForDestinations(key outputKey, outDir, entryPath string, destinations []harness.Destination) (string, string, string, error) {
+	if key.target != hcc.Target(targetmeta.TargetCodex) {
+		return "default", outDir, entryPath, nil
 	}
 	entryPath = filepath.ToSlash(entryPath)
 	for _, destination := range destinations {
@@ -4338,6 +4552,58 @@ func isManagedSymlink(path string) bool {
 		return false
 	}
 	return strings.HasPrefix(target, cache.CacheDir()+string(os.PathSeparator))
+}
+
+func codexMachineManagedPathsFromSnapshot(destinations []harness.Destination, entries map[string]portableManifestEntry) (map[string][]string, error) {
+	paths := make(map[string]map[string]bool, len(destinations))
+	for _, destination := range destinations {
+		paths[destination.ID] = make(map[string]bool)
+		for _, component := range destination.Info.ComponentsForScope(true) {
+			entries, err := os.ReadDir(filepath.Join(destination.Root, component))
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, err
+			}
+			for _, entry := range entries {
+				rel := filepath.Join(component, entry.Name())
+				if isManagedSymlink(filepath.Join(destination.Root, rel)) {
+					paths[destination.ID][filepath.ToSlash(rel)] = true
+				}
+			}
+		}
+		store, err := ownership.Open(destination.Root)
+		if err != nil {
+			return nil, err
+		}
+		for _, rel := range destination.Info.AggregateFilesForScope(true) {
+			proof, err := store.Proof(rel)
+			if err == nil && proof.OwnedCount() > 0 {
+				paths[destination.ID][filepath.ToSlash(rel)] = true
+			}
+		}
+	}
+	for _, entry := range entries {
+		if entry.Target != string(hcc.Target(targetmeta.TargetCodex)) {
+			continue
+		}
+		for _, destination := range destinations {
+			prefix := strings.TrimSuffix(filepath.ToSlash(destination.Prefix), "/") + "/"
+			if rel, ok := strings.CutPrefix(filepath.ToSlash(entry.Path), prefix); ok {
+				paths[destination.ID][filepath.ToSlash(rel)] = true
+				break
+			}
+		}
+	}
+	result := make(map[string][]string, len(paths))
+	for id, set := range paths {
+		for rel := range set {
+			result[id] = append(result[id], rel)
+		}
+		sort.Strings(result[id])
+	}
+	return result, nil
 }
 
 // CodexMachineManagedPaths returns existing, evidenced machine output grouped
