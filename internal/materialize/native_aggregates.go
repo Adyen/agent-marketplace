@@ -388,7 +388,7 @@ func nativeAggregateHasManagedEntries(target hcc.Target, destination harness.Des
 			continue
 		}
 		containerPos := bytes.Index(raw, []byte(`"`+route.Container+`"`))
-		if containerPos >= 0 && bytes.Index(raw[containerPos:], []byte(managedByField)) >= 0 {
+		if containerPos >= 0 && bytes.Contains(raw[containerPos:], []byte(managedByField)) {
 			managedRoute = true
 			break
 		}
