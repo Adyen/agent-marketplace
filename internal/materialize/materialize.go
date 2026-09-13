@@ -503,6 +503,9 @@ func BuildPlan(ctx context.Context, repoRoot string, resolved []resolver.Resolve
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := validatePlanRoot(repoRoot); err != nil {
+		return nil, fmt.Errorf("validate materialization root: %w", err)
+	}
 	var rc runConfig
 	rc.modes = config.DefaultMaterializationModes()
 	for _, o := range opts {
@@ -623,6 +626,26 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 		return nil, err
 	}
 	return plan.Execute(ctx)
+}
+
+func validatePlanRoot(repoRoot string) error {
+	if repoRoot == "" {
+		return errors.New("materialization root is empty")
+	}
+	if !filepath.IsAbs(repoRoot) {
+		return fmt.Errorf("materialization root %q must be absolute", repoRoot)
+	}
+	info, err := os.Stat(repoRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("materialization root %q does not exist", repoRoot)
+	}
+	if err != nil {
+		return fmt.Errorf("stat materialization root %q: %w", repoRoot, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("materialization root %q is not a directory", repoRoot)
+	}
+	return nil
 }
 
 // buildWorkItems groups resolved skills by target and identifies all output
@@ -757,10 +780,18 @@ func addExistingOutputKeys(repoRoot string, allOutputs, seededOutputs map[output
 		// ~/.factory). Adding both keys would cause the repo-scope pass (which
 		// has no resolved artifacts) to prune every file the machine-scope pass
 		// just wrote, creating an install→remove→install cycle on every sync.
-		if outputDirExists(repoDir) && !sameOutputDir(repoDir, machineDir) {
+		repoExists, err := outputDirExists(repoDir)
+		if err != nil {
+			return fmt.Errorf("inspect %s repo-scope output root %q: %w", target, repoDir, err)
+		}
+		if repoExists && !sameOutputDir(repoDir, machineDir) {
 			allOutputs[outputKey{target: target, machineScope: false}] = true
 		}
-		if outputDirExists(machineDir) {
+		machineExists, err := outputDirExists(machineDir)
+		if err != nil {
+			return fmt.Errorf("inspect %s machine-scope output root %q: %w", target, machineDir, err)
+		}
+		if machineExists {
 			allOutputs[outputKey{target: target, machineScope: true}] = true
 		}
 	}
@@ -780,37 +811,48 @@ func addExistingOutputKeys(repoRoot string, allOutputs, seededOutputs map[output
 					// Shared native partitions are not installation markers, but durable
 					// managed-link evidence must still revive their output key for prune.
 					if !destination.InstallationEvidence {
-						if destinationHasManagedSymlink(destination, machineScope) {
+						hasManaged, err := destinationHasManagedSymlink(destination, machineScope)
+						if err != nil {
+							return fmt.Errorf("inspect %s %s destination %q for managed links: %w", target, scopeName(machineScope), destination.Root, err)
+						}
+						if hasManaged {
 							allOutputs[outputKey{target: target, machineScope: machineScope}] = true
 							break
 						}
 						continue
 					}
-					if outputDirExists(destination.Root) {
+					exists, err := outputDirExists(destination.Root)
+					if err != nil {
+						return fmt.Errorf("inspect %s %s destination %q: %w", target, scopeName(machineScope), destination.Root, err)
+					}
+					if exists {
 						allOutputs[outputKey{target: target, machineScope: machineScope}] = true
 						break
 					}
-
 				}
+
 			}
 		}
 	}
 	return nil
 }
 
-func destinationHasManagedSymlink(destination harness.Destination, machineScope bool) bool {
+func destinationHasManagedSymlink(destination harness.Destination, machineScope bool) (bool, error) {
 	for _, component := range destination.Info.ComponentsForScope(machineScope) {
 		entries, err := os.ReadDir(filepath.Join(destination.Root, component))
-		if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("read component directory %q: %w", filepath.Join(destination.Root, component), err)
 		}
 		for _, entry := range entries {
 			if isManagedSymlink(filepath.Join(destination.Root, component, entry.Name())) {
-				return true
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
 // sameOutputDir reports whether two output directory paths refer to the same
@@ -835,15 +877,21 @@ func repoOutputDir(target hcc.Target, roots harness.Roots, repoRoot string) stri
 	return roots.For(false, repoRoot)
 }
 
-func outputDirExists(path string) bool {
+func outputDirExists(path string) (bool, error) {
 	if path == "" {
-		return false
+		return false, errors.New("output directory path is empty")
 	}
 	info, err := os.Stat(path)
-	if err != nil {
-		return false
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	return info.IsDir()
+	if err != nil {
+		return false, fmt.Errorf("stat output directory %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("output path %q is not a directory", path)
+	}
+	return true, nil
 }
 
 func validatePlanOutputs(outputs map[outputKey]bool, repoRoot string) error {
@@ -1538,7 +1586,12 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			for _, installDirRel := range info.ResourceDirs {
 				installDirRel = machineSkillInstallDirRel(key.target, key.machineScope, installDirRel)
 				dir := filepath.Join(outDir, filepath.FromSlash(installDirRel))
-				if outputDirExists(dir) {
+				exists, err := outputDirExists(dir)
+				if err != nil {
+					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("inspect portable resource cleanup directory %s: %v", dir, err)})
+					continue
+				}
+				if exists {
 					if _, err := validatePortableOutputDir(outDir, installDirRel); err != nil {
 						report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource cleanup directory %s: %v", dir, err)})
 						continue
@@ -1705,7 +1758,17 @@ func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, co
 			continue
 		}
 		dir := filepath.Join(outDir, filepath.FromSlash(installDirRel))
-		if covered[dir] || seen[dir] || !outputDirExists(dir) {
+		exists, err := outputDirExists(dir)
+		if err != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{
+				Code:     "materialize.write.error",
+				Severity: diag.SeverityError,
+				Target:   string(key.target),
+				Message:  fmt.Sprintf("inspect managed command directory %s: %v", dir, err),
+			})
+			continue
+		}
+		if covered[dir] || seen[dir] || !exists {
 			continue
 		}
 		seen[dir] = true

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -79,7 +80,17 @@ func materializeNativeAggregates(ctx context.Context, report *Report, key output
 
 func syncNativeAggregate(key outputKey, destination harness.Destination, rel string, desired map[string]json.RawMessage, dryRun, pruneStaleEntries bool) (TargetReport, error) {
 	tr := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: destination.ID, OutDir: destination.Root}
-	if !hasNativeDesiredEntries(desired) && (!pruneStaleEntries || !nativeAggregateHasManagedEntries(key.target, destination)) {
+	hasDesired := hasNativeDesiredEntries(desired)
+	if !hasDesired && pruneStaleEntries {
+		managed, err := nativeAggregateHasManagedEntries(key.target, destination)
+		if err != nil {
+			return tr, err
+		}
+		if !managed {
+			return tr, nil
+		}
+	}
+	if !hasDesired && !pruneStaleEntries {
 		return tr, nil
 	}
 	if err := harness.ValidateRelPath(rel); err != nil {
@@ -321,40 +332,75 @@ func retainNativeManagedEntries(doc *jsonc.Document, desired map[string]json.Raw
 	return merged[0].Bytes, nil
 }
 
-func nativeAggregateHasManagedEntries(target hcc.Target, destination harness.Destination) bool {
-	if target == hcc.TargetGemini && geminiNativeHasOwnedMCP(destination) {
-		return true
+func nativeAggregateHasManagedEntries(target hcc.Target, destination harness.Destination) (bool, error) {
+	if target == hcc.TargetGemini {
+		owned, err := geminiNativeHasOwnedMCP(destination)
+		if err != nil {
+			return false, fmt.Errorf("inspect Gemini native aggregate ownership: %w", err)
+		}
+		if owned {
+			return true, nil
+		}
 	}
 	rel := destination.AggregateFile
-	if rel == "" || harness.ValidateRelPath(rel) != nil {
-		return false
+	if rel == "" {
+		return false, nil
+	}
+	if err := harness.ValidateRelPath(rel); err != nil {
+		return false, fmt.Errorf("validate native aggregate path %q: %w", rel, err)
 	}
 	file := filepath.Join(destination.Root, rel)
 	info, err := os.Lstat(file)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("stat native aggregate %q: %w", file, err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("native aggregate %q must be a regular file", file)
 	}
 	if _, err := validatePortableOutputDir(destination.Root, filepath.Dir(rel)); err != nil {
-		return false
+		return false, fmt.Errorf("validate native aggregate directory %q: %w", destination.Root, err)
 	}
 	raw, err := os.ReadFile(file)
-	if err != nil || !bytes.Contains(raw, []byte(managedByField)) {
-		return false
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read native aggregate %q: %w", file, err)
+	}
+	managedRoute := false
+	for _, route := range destination.AggregateRoutes {
+		if target == hcc.TargetGemini && route.Container == "mcpServers" {
+			continue
+		}
+		containerPos := bytes.Index(raw, []byte(`"`+route.Container+`"`))
+		if containerPos >= 0 && bytes.Index(raw[containerPos:], []byte(managedByField)) >= 0 {
+			managedRoute = true
+			break
+		}
+	}
+	if !managedRoute {
+		return false, nil
 	}
 	doc, err := jsonc.Parse("", raw)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("parse native aggregate %q: %w", file, err)
 	}
 	for _, route := range destination.AggregateRoutes {
 		if target == hcc.TargetGemini && route.Container == "mcpServers" {
 			continue
 		}
 		entries, err := nativeManagedMembers(doc.Root(), route.Container)
-		if err == nil && len(entries) > 0 {
-			return true
+		if err != nil {
+			return false, fmt.Errorf("inspect managed entries in native aggregate %q: %w", file, err)
+		}
+		if len(entries) > 0 {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func nativeAggregatePruneFence(target hcc.Target, machineScope bool) map[string]bool {
@@ -383,10 +429,7 @@ func addExistingNativeAggregateKeys(repoRoot string, outputs map[outputKey]bool)
 			key := outputKey{target: target, machineScope: machine}
 			destinations, err := harness.ResolveDestinations(target, machine, repoRoot)
 			if err != nil {
-				if outputs[key] {
-					return fmt.Errorf("resolve %s %s native aggregate destinations: %w", scopeName(machine), target, err)
-				}
-				continue
+				return fmt.Errorf("resolve %s %s native aggregate destinations: %w", scopeName(machine), target, err)
 			}
 			if outputs[key] {
 				continue
@@ -401,7 +444,11 @@ func addExistingNativeAggregateKeys(repoRoot string, outputs map[outputKey]bool)
 						continue
 					}
 				}
-				if nativeAggregateHasManagedEntries(key.target, destination) {
+				hasManaged, err := nativeAggregateHasManagedEntries(key.target, destination)
+				if err != nil {
+					return fmt.Errorf("inspect %s %s native aggregate destination %q: %w", scopeName(machine), target, destination.Root, err)
+				}
+				if hasManaged {
 					outputs[key] = true
 				}
 			}

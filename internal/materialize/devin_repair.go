@@ -57,6 +57,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -193,7 +194,11 @@ func compileRepairTarget(repoRoot string, resolved []resolver.ResolvedArtifact, 
 	// repair preview would be noise the user cannot act on here.
 	work, allOutputs, blocked, _, err := buildWorkItems(resolved, repoRoot)
 	if err != nil {
-		return compilePhaseResult{allDiags: []diag.Diagnostic{{Code: "materialize.plan.error", Severity: diag.SeverityError, Target: string(target), Message: err.Error()}}}, nil
+		diags := []diag.Diagnostic{{Code: "materialize.plan.error", Severity: diag.SeverityError, Target: string(target), Message: err.Error()}}
+		if target == hcc.TargetCodex && strings.Contains(err.Error(), "not a directory") {
+			diags = append(diags, diag.Diagnostic{Code: codexRepairMalformedCode, Severity: diag.SeverityError, Target: string(target), Message: "Codex shared configuration is malformed or unsupported; it was left unchanged"})
+		}
+		return compilePhaseResult{allDiags: diags}, nil
 	}
 
 	targetWork := work[:0:0]
