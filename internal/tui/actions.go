@@ -19,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -239,13 +240,12 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		}
 	}
 	if dryRunReport != nil {
-		for _, diagnostic := range dryRunReport.Diags {
-			severity := diagnosticWarning
-			if diagnostic.IsError() {
-				severity = diagnosticError
+		diagnostics = appendReportDiagnostics(diagnostics, dryRunReport)
+		for _, issue := range dryRunReport.SurfaceIssues() {
+			if issue.Severity == diag.SeverityError {
 				driftState = driftFailed
+				break
 			}
-			diagnostics = appendSnapshotDiagnostics(diagnostics, severity, diagnosticMaterialization, pipeline.PromoteDiagnostic(diagnostic))
 		}
 	}
 	if dryRunErr != nil {
@@ -1021,29 +1021,22 @@ func runUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requ
 	}
 }
 
-// promoteReportErrors turns a materialization report's ERROR diagnostics into
-// error values, through the same promotion `sync` uses, and collapses repeats
-// the same way.
-//
-// Two bugs used to live in the four lines this replaces (bead
-// agent-marketplace-oc2r, adversarial review):
-//
-//   - It flattened the diagnostic with fmt.Errorf("%s: %s", d.Code, d.Message),
-//     which is exactly the anonymous, resource-less, hint-less line the bead
-//     removed from `sync`. `update` still showed three byte-identical lines for
-//     three different failing skills, and deduplicated nothing.
-//   - It selected diagnostics with `d.Severity >= diag.SeverityError`.
-//     diag.Severity is an iota with SeverityError = 0, so that predicate is
-//     `>= 0`: every warning and every info was promoted to an error and failed
-//     the update. A `rule.devin.unsupported` warning — which AGENTS.md says
-//     must never fail a run — failed the TUI's update.
+// promoteReportErrors projects materialization-owned errors through the same
+// structured report contract used by the TUI snapshot and keeps generic HCC
+// errors on pipeline.PromoteDiagnostic. Repeated failures use the shared
+// pipeline deduplication identity, while warnings remain non-fatal.
 func promoteReportErrors(report *materialize.Report) []error {
 	if report == nil {
 		return nil
 	}
 	var errs []error
+	for _, issue := range report.SurfaceIssues() {
+		if issue.Severity == diag.SeverityError {
+			errs = append(errs, errors.New(materialize.FormatIssue(issue)))
+		}
+	}
 	for _, d := range report.Diags {
-		if !d.IsError() {
+		if !d.IsError() || materialize.IsMaterializationDiagnostic(d) {
 			continue
 		}
 		errs = append(errs, pipeline.PromoteDiagnostic(d))

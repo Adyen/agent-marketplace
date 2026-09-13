@@ -291,10 +291,10 @@ func TestDiagIssueDedupKeyIsNotForgeable(t *testing.T) {
 	}
 }
 
-// TestDiagIssueSourceLineSurvivesWithoutAFile pins that a source location whose
-// File is empty but whose Line is set does not silently lose the line. Today
-// formatDiagSource returns "" for an empty File whatever the Line is, so two
-// failures of one resource at two different lines collapse.
+// TestDiagIssueSourceLineSurvivesWithoutAFile is a regression guard for a
+// source location whose File is empty but whose Line is set. The line remains
+// part of the source identity, so two failures of one resource at different
+// lines stay distinct.
 func TestDiagIssueSourceLineSurvivesWithoutAFile(t *testing.T) {
 	first := diag.Diagnostic{Code: "c", Resource: "r", Message: "line 4 is bad", Source: diag.SourceRef{Line: 4}}
 	second := diag.Diagnostic{Code: "c", Resource: "r", Message: "line 9 is bad", Source: diag.SourceRef{Line: 9}}
@@ -316,8 +316,8 @@ func TestDiagIssueSourceLineSurvivesWithoutAFile(t *testing.T) {
 // and a forged line can impersonate an `Error:` or `warning:` prefix and claim a
 // failure was a warning (or invent one that never happened).
 //
-// Resource is run through strconv.Quote and is safe. Message and Source.File are
-// interpolated raw.
+// Resource is run through strconv.Quote and is safe; Message and Source.File
+// are sanitized before interpolation.
 func TestDiagIssueRenderStaysOnOneLine(t *testing.T) {
 	tests := []struct {
 		name string

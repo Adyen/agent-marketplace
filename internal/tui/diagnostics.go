@@ -4,6 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+
+	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
 type diagnosticSeverity uint8
@@ -78,6 +82,44 @@ func snapshotDiagnostic(severity diagnosticSeverity, category diagnosticCategory
 		stableKey:  stableDiagnosticKey(err),
 		err:        err,
 	}
+}
+
+// appendMaterializationReportDiagnostics projects materialization-owned report
+// issues through the structured surface contract. Generic compiler diagnostics
+// deliberately stay on pipeline.PromoteDiagnostic so the HCC diagnostic
+// renderer remains the single owner of their identity and remediation fields.
+func appendMaterializationReportDiagnostics(dst []tuiDiagnostic, report *materialize.Report) []tuiDiagnostic {
+	if report == nil {
+		return dst
+	}
+	for _, issue := range report.SurfaceIssues() {
+		severity := diagnosticWarning
+		if issue.Severity == diag.SeverityError {
+			severity = diagnosticError
+		}
+		dst = appendSnapshotDiagnostics(dst, severity, diagnosticMaterialization, errors.New(materialize.FormatIssue(issue)))
+	}
+	return dst
+}
+
+// appendReportDiagnostics projects one materialization report without letting
+// materialization-owned diagnostics also enter the generic HCC renderer.
+func appendReportDiagnostics(dst []tuiDiagnostic, report *materialize.Report) []tuiDiagnostic {
+	if report == nil {
+		return dst
+	}
+	dst = appendMaterializationReportDiagnostics(dst, report)
+	for _, diagnostic := range report.Diags {
+		if materialize.IsMaterializationDiagnostic(diagnostic) {
+			continue
+		}
+		severity := diagnosticWarning
+		if diagnostic.IsError() {
+			severity = diagnosticError
+		}
+		dst = appendSnapshotDiagnostics(dst, severity, diagnosticMaterialization, pipeline.PromoteDiagnostic(diagnostic))
+	}
+	return dst
 }
 
 func stableDiagnosticKey(err error) string {

@@ -1650,18 +1650,18 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 	for _, key := range sortedOutputs {
 		outDir := snapshot.roots[key]
 		if outDir == "" {
-			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.target.unknown", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("no frozen output root for target %q", key.target)})
+			appendTargetDiagnostics(report, key, "", []diag.Diagnostic{{Code: "materialize.target.unknown", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("no frozen output root for target %q", key.target)}})
 			continue
 		}
 		if !dryRun {
 			if err := os.MkdirAll(outDir, 0o755); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("create output directory %s: %v", outDir, err)})
+				appendTargetDiagnostics(report, key, "", []diag.Diagnostic{{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("create output directory %s: %v", outDir, err)}})
 				continue
 			}
 		}
 		tw := compileResult.byTarget[key]
 		if tw != nil {
-			report.Diags = append(report.Diags, tw.diags...)
+			appendTargetDiagnostics(report, key, "", tw.diags)
 		}
 		mode := modes.For(string(key.target), key.machineScope)
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
@@ -1695,7 +1695,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 			}
 			rel, err := filepath.Rel(planRoot, plan.outDir)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("unsafe portable output directory %s", plan.outDir)})
+				appendTargetDiagnostic(report, key, plan.rootID, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("unsafe portable output directory %s", plan.outDir)}, plan.reportPrefix)
 				continue
 			}
 			validate := validatePortableOutputDir
@@ -1703,23 +1703,23 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 				validate = ensurePortableOutputDir
 			}
 			if _, err := validate(planRoot, rel); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
+				appendTargetDiagnostic(report, key, plan.rootID, diag.Diagnostic{
 					Code:     "materialize.mkdir.error",
 					Severity: diag.SeverityError,
 					Target:   string(key.target),
 					Message:  fmt.Sprintf("validate portable output directory %s: %v", plan.outDir, err),
-				})
+				}, plan.reportPrefix)
 				continue
 			}
 			portableCleanupDirs[plan.outDir] = plan.reportPrefix
 		} else if !dryRun {
 			if err := os.MkdirAll(plan.outDir, 0o755); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
+				appendTargetDiagnostic(report, key, plan.rootID, diag.Diagnostic{
 					Code:     "materialize.mkdir.error",
 					Severity: diag.SeverityError,
 					Target:   string(key.target),
 					Message:  fmt.Sprintf("create output directory %s: %v", plan.outDir, err),
-				})
+				}, plan.reportPrefix)
 				continue
 			}
 		}
@@ -1733,12 +1733,12 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 		}
 		cacheDir := cachedPlanDir(key.target, cacheMachineScope, cacheOutDir, plan.reportPrefix, plan.artifacts)
 		if matErr := prepareArtifactLinkCache(cacheDir, regularArtifacts, dryRun); matErr != nil {
-			report.Diags = append(report.Diags, diag.Diagnostic{
+			appendTargetDiagnostic(report, key, plan.rootID, diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
 				Target:   string(key.target),
 				Message:  fmt.Sprintf("prepare artifact cache for target %s: %v", key.target, matErr),
-			})
+			}, plan.reportPrefix)
 			continue
 		}
 
@@ -1775,19 +1775,19 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired})
 		}
 		if matErr != nil {
-			report.Diags = append(report.Diags, diag.Diagnostic{
+			appendTargetDiagnostic(report, key, plan.rootID, diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
 				Target:   string(key.target),
 				Message:  fmt.Sprintf("materialize target %s to %s: %v", key.target, plan.outDir, matErr),
-			})
+			}, plan.reportPrefix)
 			continue
 		}
 		if len(writeDiags) > 0 {
 			for i := range writeDiags {
 				writeDiags[i].Target = string(key.target)
 			}
-			report.Diags = append(report.Diags, writeDiags...)
+			appendTargetDiagnostics(report, key, plan.rootID, writeDiags)
 		}
 		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, wantPrune)
 		if len(mergeArtifacts) > 0 {
@@ -1797,12 +1797,12 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 		// failed: each names a different file.
 		appendTargetDiagnostics(report, key, plan.rootID, retargetPruneDiags(mergeDiags, key.target, plan.reportPrefix))
 		if mergeErr != nil {
-			report.Diags = append(report.Diags, diag.Diagnostic{
+			appendTargetDiagnostic(report, key, plan.rootID, diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
 				Target:   string(key.target),
 				Message:  fmt.Sprintf("merge target %s config in %s: %v", key.target, plan.outDir, mergeErr),
-			})
+			}, plan.reportPrefix)
 			continue
 		}
 		writeReport.Written = append(writeReport.Written, mergeReport.Written...)
@@ -1846,7 +1846,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 				}
 				if exists {
 					if _, err := validatePortableOutputDir(outDir, installDirRel); err != nil {
-						report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource cleanup directory %s: %v", dir, err)})
+						appendTargetDiagnostic(report, key, codexRootIDForPrefix(key, installDirRel), diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource cleanup directory %s: %v", dir, err)}, installDirRel)
 						continue
 					}
 					portableCleanupDirs[dir] = filepath.ToSlash(installDirRel)
@@ -1914,7 +1914,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 				validate = ensurePortableOutputDir
 			}
 			if _, err := validate(outDir, group.installDirRel); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource directory %s: %v", groupDir, err)})
+				appendTargetDiagnostic(report, key, codexRootIDForPrefix(key, group.reportPrefix), diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource directory %s: %v", groupDir, err)}, group.reportPrefix)
 				continue
 			}
 			portableCleanupDirs[groupDir] = group.reportPrefix
@@ -1923,12 +1923,12 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 
 		if len(symlinkLinks) > 0 {
 			if err := prepareSkillLinkCaches(symlinkLinks, dryRun); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
+				appendTargetDiagnostic(report, key, codexRootIDForPrefix(key, group.reportPrefix), diag.Diagnostic{
 					Code:     "materialize.write.error",
 					Severity: diag.SeverityError,
 					Target:   string(key.target),
 					Message:  fmt.Sprintf("prepare skill cache for target %s: %v", key.target, err),
-				})
+				}, group.reportPrefix)
 				continue
 			}
 			var tr TargetReport
@@ -1973,12 +1973,12 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 	}
 	if portableErr != nil {
 		slog.Error("materialize manifest prune failed", "target", key.target, "machine_scope", key.machineScope, "error", portableErr)
-		report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.manifest.error", Severity: diag.SeverityError, Target: string(key.target), Message: portableErr.Error()})
+		appendTargetDiagnostics(report, key, "", []diag.Diagnostic{{Code: "materialize.manifest.error", Severity: diag.SeverityError, Target: string(key.target), Message: portableErr.Error()}})
 	} else {
 		for i := range portableDiags {
 			portableDiags[i].Target = string(key.target)
 		}
-		report.Diags = append(report.Diags, portableDiags...)
+		appendTargetDiagnostics(report, key, "", portableDiags)
 		for _, tr := range portableReports {
 			report.PerRoot = append(report.PerRoot, tr)
 			report.PerTarget[key.target] = mergeTargetReports(report.PerTarget[key.target], tr)
@@ -1986,7 +1986,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 	}
 	if err := state.save(dryRun); err != nil {
 		slog.Error("materialize manifest save failed", "target", key.target, "machine_scope", key.machineScope, "error", err)
-		report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.manifest.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+		appendTargetDiagnostics(report, key, "", []diag.Diagnostic{{Code: "materialize.manifest.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()}})
 	} else {
 		slog.Debug("materialize manifest synchronized", "target", key.target, "machine_scope", key.machineScope, "entries", len(state.entries), "path", state.path)
 	}
@@ -2027,12 +2027,12 @@ func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, co
 		seen[dir] = true
 		tr := TargetReport{OutDir: dir}
 		if err := pruneStaleCommandFiles(dir, nil, dryRun, &tr); err != nil {
-			report.Diags = append(report.Diags, diag.Diagnostic{
+			appendTargetDiagnostic(report, key, codexRootIDForPrefix(key, installDirRel), diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
 				Target:   string(key.target),
 				Message:  fmt.Sprintf("prune managed command files in %s: %v", dir, err),
-			})
+			}, installDirRel)
 			continue
 		}
 		sort.Strings(tr.Removed)
@@ -2068,12 +2068,12 @@ func appendGroupReport(report *Report, key outputKey, outDir, reportPrefix strin
 		tr.RootID = codexRootIDForPrefix(key, reportPrefix)
 	}
 	if err != nil {
-		report.Diags = append(report.Diags, diag.Diagnostic{
+		appendTargetDiagnostic(report, key, tr.RootID, diag.Diagnostic{
 			Code:     "materialize.write.error",
 			Severity: diag.SeverityError,
 			Target:   string(key.target),
 			Message:  fmt.Sprintf(errFormat+": %v", key.target, tr.OutDir, err),
-		})
+		}, reportPrefix)
 		return report
 	}
 	tr.buildIssues()
@@ -2895,21 +2895,36 @@ func retargetPruneDiags(diags []diag.Diagnostic, target hcc.Target, prefix strin
 // Diagnostic semantics remain unchanged.
 func appendTargetDiagnostics(report *Report, key outputKey, rootID string, diags []diag.Diagnostic) {
 	for _, d := range diags {
-		report.Diags = append(report.Diags, d)
-		if !IsMaterializationDiagnostic(d) {
-			continue
-		}
-		operation, outcome := MaterializationOperationFailure, MaterializationOutcomeFailed
-		if !d.IsError() {
-			operation, outcome = MaterializationOperationSkip, MaterializationOutcomeWarning
-		}
-		report.Issues = append(report.Issues, MaterializationIssue{
-			Resource: d.Resource, Target: key.target,
-			Scope: materializationScope(key.machineScope), RootID: rootID,
-			Path: d.Source.File, Operation: operation, Outcome: outcome,
-			Code: d.Code, Severity: d.Severity, Message: d.Message,
-		})
+		appendTargetDiagnostic(report, key, rootID, d, d.Source.File)
 	}
+}
+
+// appendTargetDiagnostic keeps the public HCC diagnostic untouched while
+// allowing a materialization seam to supply a safe, output-relative path for
+// its structured issue. Report-level failures must not turn an absolute output
+// root into a user-visible RootID or structured path.
+func appendTargetDiagnostic(report *Report, key outputKey, rootID string, d diag.Diagnostic, issuePath string) {
+	report.Diags = append(report.Diags, d)
+	if !IsMaterializationDiagnostic(d) {
+		return
+	}
+	operation, outcome := MaterializationOperationFailure, MaterializationOutcomeFailed
+	if !d.IsError() {
+		operation, outcome = MaterializationOperationSkip, MaterializationOutcomeWarning
+	}
+	if issuePath == "" {
+		issuePath = d.Source.File
+	}
+	if filepath.IsAbs(issuePath) {
+		issuePath = ""
+	}
+	report.Issues = append(report.Issues, MaterializationIssue{
+		Resource: d.Resource, Target: key.target,
+		Scope: materializationScope(key.machineScope), RootID: rootID,
+		Path: issuePath, Operation: operation, Outcome: outcome,
+		Code: d.Code, Severity: d.Severity,
+		Message: diagnosticidentity.NormalizeMessage(d.Message),
+	})
 }
 
 // aggregateProtectedPaths returns the output-root-relative aggregate files a
@@ -3614,7 +3629,7 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 		}
 		stale, diags, err := staleArtifactLinks(dir, desiredInDir)
 		if err != nil {
-			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("prune stale portable symlinks in %s: %v", dir, err)})
+			appendTargetDiagnostic(report, key, codexRootIDForPrefix(key, prefix), diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("prune stale portable symlinks in %s: %v", dir, err)}, prefix)
 			continue
 		}
 		tr := TargetReport{OutDir: dir, Removed: stale, Diags: diags}
@@ -3622,11 +3637,11 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 			for _, rel := range stale {
 				path, pathErr := portableOutputPath(dir, rel)
 				if pathErr != nil {
-					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: pathErr.Error()})
+					appendTargetDiagnostic(report, key, codexRootIDForPrefix(key, prefix), diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: pathErr.Error()}, prefix)
 					continue
 				}
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("remove stale portable symlink %s: %v", path, err)})
+					appendTargetDiagnostic(report, key, codexRootIDForPrefix(key, prefix), diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("remove stale portable symlink %s: %v", path, err)}, filepath.ToSlash(filepath.Join(prefix, rel)))
 					continue
 				}
 				cleanEmptyPortableArtifactDirs(dir, filepath.Dir(filepath.FromSlash(rel)))
@@ -4810,13 +4825,23 @@ func sanitizeMaterializationIssue(issue MaterializationIssue) MaterializationIss
 	issue.Resource = diag.SanitizeText(issue.Resource, maxMaterializationIssueField)
 	issue.Target = hcc.Target(diag.SanitizeText(string(issue.Target), maxMaterializationIssueField))
 	issue.Scope = diag.SanitizeText(issue.Scope, maxMaterializationIssueField)
-	issue.RootID = diag.SanitizeText(issue.RootID, maxMaterializationIssueField)
-	issue.Path = diag.SanitizeText(issue.Path, maxMaterializationIssueField)
+	issue.RootID = redactAbsoluteMaterializationPath(diag.SanitizeText(issue.RootID, maxMaterializationIssueField))
+	issue.Path = redactAbsoluteMaterializationPath(diag.SanitizeText(issue.Path, maxMaterializationIssueField))
 	issue.Operation = MaterializationOperation(diag.SanitizeText(string(issue.Operation), maxMaterializationIssueEnum))
 	issue.Outcome = MaterializationOutcome(diag.SanitizeText(string(issue.Outcome), maxMaterializationIssueEnum))
 	issue.Code = diag.SanitizeText(issue.Code, maxMaterializationIssueField)
-	issue.Message = boundedMaterializationMessage(issue.Message)
+	issue.Message = diagnosticidentity.NormalizeMessage(boundedMaterializationMessage(issue.Message))
 	return issue
+}
+
+func redactAbsoluteMaterializationPath(value string) string {
+	if filepath.IsAbs(value) || strings.HasPrefix(value, "~/") || strings.HasPrefix(value, `~\`) {
+		return ""
+	}
+	if len(value) > 2 && value[1] == ':' && (value[2] == '/' || value[2] == '\\') {
+		return ""
+	}
+	return value
 }
 
 func (tr *TargetReport) buildIssues() {
@@ -4924,7 +4949,14 @@ func materializationIssueCanonicalIdentity(issue MaterializationIssue) string {
 }
 
 func materializationDiagnosticKey(issue MaterializationIssue) string {
+	issue.identity = ""
 	issue.Scope, issue.RootID = "", ""
+	return materializationIssueKey(issue)
+}
+
+func materializationDiagnosticFallbackKey(issue MaterializationIssue) string {
+	issue.identity = ""
+	issue.Scope, issue.RootID, issue.Path = "", "", ""
 	return materializationIssueKey(issue)
 }
 
@@ -4975,6 +5007,11 @@ func (r *Report) rebuildIssues() {
 	for _, issue := range issues {
 		if IsMaterializationDiagnosticCode(issue.Code) {
 			attributed[materializationDiagnosticKey(issue)] = struct{}{}
+			// Report-level producer issues may carry an output-relative Path
+			// for structured consumers while the generic Diagnostic has no
+			// source path. Keep a path-free fallback only for that comparison;
+			// the public issue identity still retains Path.
+			attributed[materializationDiagnosticFallbackKey(issue)] = struct{}{}
 		}
 	}
 	for _, d := range r.Diags {
@@ -4987,6 +5024,9 @@ func (r *Report) rebuildIssues() {
 			Outcome: MaterializationOutcomeFailed,
 		}
 		if _, ok := attributed[materializationDiagnosticKey(issue)]; ok {
+			continue
+		}
+		if _, ok := attributed[materializationDiagnosticFallbackKey(issue)]; ok && issue.Path == "" {
 			continue
 		}
 		reports := r.TargetReports()

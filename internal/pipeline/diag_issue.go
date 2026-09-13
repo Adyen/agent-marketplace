@@ -30,15 +30,12 @@ const (
 	maxDiagIdentityLen = 4096
 )
 
-// diagIssue is the error value a materialize diagnostic is promoted to,
-// whatever its severity. ONE type serves the warning and the error path on
-// purpose: bead agent-marketplace-oc2r exists because they had diverged —
-// warnings kept d.Resource and were deduplicated, while errors were flattened
-// with fmt.Errorf("%s: %s", d.Code, d.Message) and printed once per occurrence.
-// A beta tester's sync therefore printed three byte-identical lines for three
-// DIFFERENT skills, and neither they nor support could tell which of ~40
-// selected resources were at fault. Any future divergence has to be a
-// deliberate second type, not an accident of two call sites.
+// diagIssue is the error value used for generic HCC diagnostics, whatever
+// their severity. ONE type serves the warning and error paths on purpose: it
+// keeps resource, source, hint, and the full dedup identity consistent for
+// every caller of PromoteDiagnostic. Structured materialization report issues
+// use their own projection so output scope/root context is not smuggled into
+// the generic HCC Diagnostic model.
 //
 // What the rendered line may contain is not a style choice. The reporting
 // policy in pkg/harness-compilation/diag/codes.go (see the Devin ingest and
@@ -152,14 +149,13 @@ func boundedDiagIdentity(identity string) string {
 }
 
 // PromoteDiagnostic is the ONE way anything outside this package turns a
-// materialize diagnostic into an error value.
+// generic HCC diagnostic into an error value.
 //
-// It exists because "one type serves both severities" (see diagIssue) was only
-// half true: Sync went through diagIssue while internal/tui's update path kept
-// its own fmt.Errorf("%s: %s", d.Code, d.Message), so the TUI still printed the
-// anonymous, resource-less, hint-less lines bead agent-marketplace-oc2r exists
-// to remove. Exporting the promotion is what makes the invariant enforceable
-// instead of aspirational.
+// It exists because "one type serves both severities" (see diagIssue) must be
+// enforced at the generic HCC boundary. Sync and TUI use this promotion for
+// compiler-owned diagnostics; materialization-owned report issues instead use
+// Report.SurfaceIssues and FormatIssue so their output-root context remains
+// structured without extending the generic HCC Diagnostic model.
 func PromoteDiagnostic(d diag.Diagnostic) error { return newDiagIssue(d) }
 
 // DedupIssues drops later occurrences of the same underlying problem while
@@ -240,17 +236,12 @@ func (i *diagIssue) Remediation() string { return i.hint }
 //     only part of a message that is a property of the OUTPUT ROOT rather than
 //     of the failure.
 //
-// KNOWN GAP (bead agent-marketplace-oc2r, adversarial review): folding absolute
-// paths means two diagnostics whose messages differ ONLY by an absolute path
-// still collapse. That is right for a marketplace resource reported once per
-// target, and wrong for the consumer-side emitters whose Resource is itself an
-// output-root-relative FILE PATH — internal/materialize's managedMergePruneDiag
-// names `settings.json` for both `<repo>/.claude/settings.json` and
-// `~/.claude/settings.json`. Those are two files, two failures and one printed
-// line. diag.Diagnostic carries no output-scope field, so the distinction does
-// not exist at this layer and the fix belongs in the emitter, which must make
-// the scope part of the diagnostic's identity.
-// TestDiagIssueKeepsSameFileInTwoOutputScopesApart is the skipped repro.
+// Absolute paths are intentionally folded in generic HCC diagnostic identity:
+// they describe an output root rather than a distinct compiler failure. The
+// materialization producer supplies scope/root identity through
+// MaterializationIssue instead, so same-relative-file failures in project and
+// machine roots remain distinct in Report.SurfaceIssues.
+// TestDiagIssueKeepsSameFileInTwoOutputScopesApart pins that boundary.
 //
 // The HINT is part of the key too. One code can cover two materially
 // different failures of the same resource at the same source location: the
