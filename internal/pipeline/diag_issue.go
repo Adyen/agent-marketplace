@@ -3,7 +3,6 @@ package pipeline
 import (
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
@@ -21,6 +20,7 @@ import (
 // line. Their sum is the guaranteed bound on a rendered line.
 const (
 	maxDiagMessageLen  = 1024
+	maxDiagCodeLen     = 256
 	maxDiagResourceLen = 256
 	maxDiagSourceLen   = 256
 	maxDiagHintLen     = 512
@@ -68,22 +68,23 @@ type diagIssue struct {
 // ONCE and threaded into the message rather than formatted again there
 // (BenchmarkNewDiagIssue is the guard).
 func newDiagIssue(d diag.Diagnostic) *diagIssue {
+	code := sanitizeDiagText(d.Code, maxDiagCodeLen)
 	source := sanitizeDiagText(formatDiagSource(d.Source), maxDiagSourceLen)
 	resource := sanitizeDiagText(d.Resource, maxDiagResourceLen)
 	message := sanitizeDiagText(d.Message, maxDiagMessageLen)
 	hint := sanitizeDiagText(d.Hint, maxDiagHintLen)
 	issue := &diagIssue{
-		code:             d.Code,
+		code:             code,
 		resource:         resource,
 		source:           source,
 		hint:             hint,
-		msg:              renderDiagMessage(d.Code, message, resource, source),
+		msg:              renderDiagMessage(code, message, resource, source),
 		message:          message,
-		presentationText: renderDiagMessage(d.Code, message, "", ""),
+		presentationText: renderDiagMessage(code, message, "", ""),
 	}
 	issue.key = diagDedupKey(d, issue)
-	if d.Code != "" && resource != "" {
-		issue.presentationKey = strings.Join([]string{d.Code, strings.ReplaceAll(d.Hint, "\x00", ""), normalizeDiagMessageForKey(d.Message)}, "\x00")
+	if code != "" && resource != "" {
+		issue.presentationKey = strings.Join([]string{code, hint, normalizeDiagMessageForKey(sanitizeDiagText(d.Message, len(d.Message)+len(diagTruncatedMark)))}, "\x00")
 	}
 	return issue
 }
@@ -100,15 +101,16 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 // the pre-diagIssue code deduplicated on for a diagnostic with no resource, and
 // TestDiagIssueDedupKeyKeepsResourcelessDiagnosticsApart pins the equivalence.
 func diagDedupKey(d diag.Diagnostic, issue *diagIssue) string {
-	if d.Code == "" || issue.resource == "" {
+	if issue.code == "" || issue.resource == "" {
 		return issue.msg
 	}
+	fullMessage := sanitizeDiagText(d.Message, len(d.Message)+len(diagTruncatedMark))
 	return strings.Join([]string{
-		d.Code,
+		issue.code,
 		issue.resource,
 		issue.source,
-		strings.ReplaceAll(d.Hint, "\x00", ""),
-		normalizeDiagMessageForKey(d.Message),
+		issue.hint,
+		normalizeDiagMessageForKey(fullMessage),
 	}, "\x00")
 }
 
@@ -287,87 +289,11 @@ func formatDiagSource(source diag.SourceRef) string {
 	return source.File
 }
 
-// sanitizeDiagText makes one registry-supplied field safe to put on a terminal
-// line, and bounds it.
-//
-// `sync` prints `Errors N` and then one line per error (errors.Join separates
-// with "\n"). The user, `e2e`'s OutContains assertions and support reading a
-// pasted transcript all count lines. Message and Source.File reach the rendered
-// line UNQUOTED — Resource goes through strconv.Quote and is already safe — so a
-// newline in either forges an extra line, and a forged line can carry a
-// convincing `Error:` or `warning:` prefix and claim a failure that never
-// happened or downgrade one that did. A carriage return does the same thing
-// invisibly by rewriting the line in place.
-//
-// Unicode bidi controls (RLO and friends) are dropped rather than escaped: they
-// reorder the glyphs AROUND them, so leaving one in a message lets a registry
-// make `resource "alpha"` render as some other resource's name.
-//
-// Nothing here can add information: it only removes bytes the diagnostic policy
-// never authorized a field to carry.
+// sanitizeDiagText is kept as the pipeline-local name for the shared
+// diagnostic policy. Materialization reports use the same implementation so
+// identity and command output cannot disagree about hostile bytes or bounds.
 func sanitizeDiagText(s string, limit int) string {
-	if s == "" {
-		return ""
-	}
-	if !needsDiagSanitizing(s) {
-		return truncateDiagText(s, limit)
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case isDiagBidiControl(r):
-			// Dropped entirely; see above.
-		case r == utf8.RuneError, r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
-			b.WriteByte(' ')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return truncateDiagText(b.String(), limit)
-}
-
-// needsDiagSanitizing is the fast path: almost every diagnostic in a real run
-// is printable ASCII, and this runs three times per diagnostic on every sync
-// (BenchmarkNewDiagIssue is the guard). It therefore scans BYTES, not runes, and
-// only pays for a rune decode once it leaves ASCII. UTF-8 continuation bytes are
-// always >= 0x80, so the single-byte C0/DEL test can never fire inside a
-// multi-byte character.
-func needsDiagSanitizing(s string) bool {
-	for i := 0; i < len(s); i++ {
-		b := s[i]
-		if b < 0x20 || b == 0x7f {
-			return true
-		}
-		if b >= 0x80 {
-			r, size := utf8.DecodeRuneInString(s[i:])
-			if r == utf8.RuneError || (r >= 0x80 && r <= 0x9f) || isDiagBidiControl(r) {
-				return true
-			}
-			i += size - 1
-		}
-	}
-	return false
-}
-
-// isDiagBidiControl reports whether r is one of the Unicode bidirectional
-// formatting characters: the embedding/override block U+202A..U+202E and the
-// isolate block U+2066..U+2069.
-func isDiagBidiControl(r rune) bool {
-	return (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069)
-}
-
-// truncateDiagText cuts s to at most limit bytes on a rune boundary and marks
-// the cut, so a reader can tell a truncated field from a short one.
-func truncateDiagText(s string, limit int) string {
-	if len(s) <= limit {
-		return s
-	}
-	cut := limit - len(diagTruncatedMark)
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + diagTruncatedMark
+	return diag.SanitizeText(s, limit)
 }
 
 // diagKeyPathPlaceholder stands in for an absolute path inside a dedup key.

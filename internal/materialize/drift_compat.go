@@ -76,7 +76,9 @@ func (r *Report) SurfaceIssues() []MaterializationIssue {
 	}
 	seen := make(map[string]struct{}, len(r.Issues))
 	issues := make([]MaterializationIssue, 0, len(r.Issues))
-	for _, issue := range r.Issues {
+	for i := range r.Issues {
+		r.Issues[i] = sanitizeMaterializationIssue(r.Issues[i])
+		issue := r.Issues[i]
 		if issue.Code == "" || !IsMaterializationDiagnosticCode(issue.Code) || (issue.Severity != diag.SeverityWarning && issue.Severity != diag.SeverityError) {
 			continue
 		}
@@ -114,6 +116,7 @@ func (r *Report) SurfaceIssues() []MaterializationIssue {
 // fields are deliberately explicit: prose is bounded at the materialization
 // seam, while code/severity and resource/target/scope/root remain stable.
 func FormatIssue(issue MaterializationIssue) string {
+	issue = sanitizeMaterializationIssue(issue)
 	var b strings.Builder
 	b.WriteString(issue.Code)
 	b.WriteString(": ")

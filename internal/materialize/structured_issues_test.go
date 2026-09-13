@@ -98,6 +98,102 @@ func TestStructuredIssuesPreserveDistinctDiagnosticsAndSkippedPath(t *testing.T)
 	}
 }
 
+func TestReportLevelDiagnosticPreservesSourceAndOnlyUsesUniqueRoot(t *testing.T) {
+	tests := []struct {
+		name       string
+		reports    []TargetReport
+		diagnostic diag.Diagnostic
+		wantPath   string
+		wantScope  string
+		wantRoot   string
+	}{
+		{
+			name: "unique project resource",
+			reports: []TargetReport{{
+				Target: harnesscompilation.TargetClaude, RootID: "project-claude",
+				ResourceByPath: map[string]string{"skills/a/SKILL.md": "alpha"},
+			}},
+			diagnostic: diag.Diagnostic{Code: "materialize.write.error", Target: string(harnesscompilation.TargetClaude), Resource: "alpha", Source: diag.SourceRef{File: "skills/alpha/SKILL.md"}},
+			wantPath:   "skills/alpha/SKILL.md", wantScope: "project", wantRoot: "project-claude",
+		},
+		{
+			name: "ambiguous project and machine resource",
+			reports: []TargetReport{
+				{Target: harnesscompilation.TargetClaude, RootID: "project-claude", ResourceByPath: map[string]string{"skills/a/SKILL.md": "alpha"}},
+				{Target: harnesscompilation.TargetClaude, MachineScope: true, RootID: "machine-claude", ResourceByPath: map[string]string{"skills/a/SKILL.md": "alpha"}},
+			},
+			diagnostic: diag.Diagnostic{Code: "materialize.write.error", Target: string(harnesscompilation.TargetClaude), Resource: "alpha", Source: diag.SourceRef{File: "skills/alpha/SKILL.md"}},
+			wantPath:   "skills/alpha/SKILL.md",
+		},
+		{
+			name: "target-wide resource-less failure",
+			reports: []TargetReport{
+				{Target: harnesscompilation.TargetClaude, RootID: "project-claude"},
+				{Target: harnesscompilation.TargetClaude, MachineScope: true, RootID: "machine-claude"},
+			},
+			diagnostic: diag.Diagnostic{Code: "materialize.destination.error", Target: string(harnesscompilation.TargetClaude), Source: diag.SourceRef{File: "mcp.json"}},
+			wantPath:   "mcp.json",
+		},
+		{
+			name: "unique machine resource",
+			reports: []TargetReport{{
+				Target: harnesscompilation.TargetClaude, MachineScope: true, RootID: "machine-claude",
+				ResourceByPath: map[string]string{"skills/a/SKILL.md": "alpha"},
+			}},
+			diagnostic: diag.Diagnostic{Code: "materialize.write.error", Target: string(harnesscompilation.TargetClaude), Resource: "alpha", Source: diag.SourceRef{File: "skills/alpha/SKILL.md"}},
+			wantPath:   "skills/alpha/SKILL.md", wantScope: "machine", wantRoot: "machine-claude",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report := &Report{PerRoot: tt.reports, Diags: []diag.Diagnostic{tt.diagnostic}}
+			report.rebuildIssues()
+			if len(report.Issues) != 1 {
+				t.Fatalf("issues = %#v, want one report-level issue", report.Issues)
+			}
+			issue := report.Issues[0]
+			if issue.Path != tt.wantPath || issue.Scope != tt.wantScope || issue.RootID != tt.wantRoot {
+				t.Fatalf("issue identity = path %q scope %q root %q, want %q/%q/%q", issue.Path, issue.Scope, issue.RootID, tt.wantPath, tt.wantScope, tt.wantRoot)
+			}
+		})
+	}
+}
+
+func TestStructuredIssueFieldsUseSharedSafeSanitizer(t *testing.T) {
+	long := strings.Repeat("x", maxMaterializationIssueField+20)
+	unsafe := MaterializationIssue{
+		Resource: "resource\n\x1b[31m",
+		Target:   harnesscompilation.Target("target\u202ehidden"), Scope: "project\u2028machine", RootID: "root\x7f",
+		Path: "source\x00file", Operation: MaterializationOperation("write\runsafe"), Outcome: MaterializationOutcome("failed\u0085unsafe"),
+		Code: "materialize.bad\x1b[31m", Severity: diag.SeverityError, Message: long + "\ufffd\u2029tail",
+	}
+	report := &Report{Issues: []MaterializationIssue{unsafe}}
+	surfaced := report.SurfaceIssues()
+	if len(surfaced) != 1 {
+		t.Fatalf("surface issues = %#v, want one sanitized error", surfaced)
+	}
+	got := report.Issues[0]
+	for name, field := range map[string]string{
+		"resource": got.Resource, "target": string(got.Target), "scope": got.Scope, "root": got.RootID,
+		"path": got.Path, "operation": string(got.Operation), "outcome": string(got.Outcome), "code": got.Code, "message": got.Message,
+	} {
+		if strings.ContainsAny(field, "\x00\x01\x1b\r\n\x7f") || strings.Contains(field, "\u202e") || strings.Contains(field, "\u2028") || strings.Contains(field, "\u2029") || strings.Contains(field, "\u0085") || strings.Contains(field, "\ufffd") {
+			t.Errorf("%s retained unsafe text: %q", name, field)
+		}
+	}
+	if len(got.Message) > maxMaterializationIssueMessage || len(got.Code) > maxMaterializationIssueField {
+		t.Fatalf("sanitized fields were not bounded: message=%d code=%d", len(got.Message), len(got.Code))
+	}
+	formatted := FormatIssue(unsafe)
+	if strings.ContainsAny(formatted, "\x00\x01\x1b\r\n\x7f") || strings.Contains(formatted, "\u202e") || strings.Contains(formatted, "\u2028") || strings.Contains(formatted, "\u2029") || strings.Contains(formatted, "\u0085") || strings.Contains(formatted, "\ufffd") {
+		t.Fatalf("formatted issue retained unsafe text: %q", formatted)
+	}
+	if len(formatted) > maxMaterializationIssueMessage+8*maxMaterializationIssueField {
+		t.Fatalf("formatted issue was not bounded: %d bytes", len(formatted))
+	}
+}
+
 func TestStructuredIssuesKeepTargetAndScopeDistinct(t *testing.T) {
 	report := &Report{PerRoot: []TargetReport{
 		{Target: harnesscompilation.TargetClaude, RootID: "project", Written: []string{"skills/review/SKILL.md"}, ResourceByPath: map[string]string{"skills/review/SKILL.md": "review"}},

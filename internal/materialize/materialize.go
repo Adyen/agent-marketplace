@@ -25,7 +25,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -4727,7 +4726,11 @@ func CodexMachineManagedPaths(repoRoot string) (map[string][]string, error) {
 	return result, nil
 }
 
-const maxMaterializationIssueMessage = 1024
+const (
+	maxMaterializationIssueMessage = 1024
+	maxMaterializationIssueField   = 256
+	maxMaterializationIssueEnum    = 64
+)
 
 func resourceMapForPaths(paths []string, prefix string, metadata map[string]skillLink) map[string]string {
 	if len(metadata) == 0 {
@@ -4769,20 +4772,20 @@ func IsMaterializationDiagnosticCode(code string) bool {
 }
 
 func boundedMaterializationMessage(message string) string {
-	message = strings.Map(func(r rune) rune {
-		if r < 0x20 && r != '\t' {
-			return ' '
-		}
-		return r
-	}, strings.TrimSpace(message))
-	if len(message) <= maxMaterializationIssueMessage {
-		return message
-	}
-	cut := maxMaterializationIssueMessage - len("…(truncated)")
-	for cut > 0 && !utf8.ValidString(message[:cut]) {
-		cut--
-	}
-	return message[:cut] + "…(truncated)"
+	return diag.SanitizeText(message, maxMaterializationIssueMessage)
+}
+
+func sanitizeMaterializationIssue(issue MaterializationIssue) MaterializationIssue {
+	issue.Resource = diag.SanitizeText(issue.Resource, maxMaterializationIssueField)
+	issue.Target = hcc.Target(diag.SanitizeText(string(issue.Target), maxMaterializationIssueField))
+	issue.Scope = diag.SanitizeText(issue.Scope, maxMaterializationIssueField)
+	issue.RootID = diag.SanitizeText(issue.RootID, maxMaterializationIssueField)
+	issue.Path = diag.SanitizeText(issue.Path, maxMaterializationIssueField)
+	issue.Operation = MaterializationOperation(diag.SanitizeText(string(issue.Operation), maxMaterializationIssueEnum))
+	issue.Outcome = MaterializationOutcome(diag.SanitizeText(string(issue.Outcome), maxMaterializationIssueEnum))
+	issue.Code = diag.SanitizeText(issue.Code, maxMaterializationIssueField)
+	issue.Message = boundedMaterializationMessage(issue.Message)
+	return issue
 }
 
 func (tr *TargetReport) buildIssues() {
@@ -4792,11 +4795,11 @@ func (tr *TargetReport) buildIssues() {
 	issues := make([]MaterializationIssue, 0, len(tr.Written)+len(tr.Skipped)+len(tr.Removed)+len(tr.Diags))
 	addPath := func(path string, operation MaterializationOperation, outcome MaterializationOutcome) {
 		path = filepath.ToSlash(path)
-		issues = append(issues, MaterializationIssue{
+		issues = append(issues, sanitizeMaterializationIssue(MaterializationIssue{
 			Resource: tr.ResourceByPath[path], Target: tr.Target, Scope: materializationScope(tr.MachineScope),
 			RootID: tr.RootID, Path: path, Operation: operation, Outcome: outcome,
 			Severity: diag.SeverityInfo,
-		})
+		}))
 	}
 	for _, path := range tr.Written {
 		addPath(path, MaterializationOperationWrite, MaterializationOutcomeWritten)
@@ -4816,11 +4819,15 @@ func (tr *TargetReport) buildIssues() {
 		if !d.IsError() {
 			operation, outcome = MaterializationOperationSkip, MaterializationOutcomeWarning
 		}
-		issues = append(issues, MaterializationIssue{
+		path := d.Source.File
+		if path == "" {
+			path = skippedPathForResource(*tr, d.Resource)
+		}
+		issues = append(issues, sanitizeMaterializationIssue(MaterializationIssue{
 			Resource: d.Resource, Target: tr.Target, Scope: materializationScope(tr.MachineScope), RootID: tr.RootID,
-			Path: skippedPathForResource(*tr, d.Resource), Code: d.Code, Severity: d.Severity, Message: message,
+			Path: path, Code: d.Code, Severity: d.Severity, Message: message,
 			Operation: operation, Outcome: outcome,
-		})
+		}))
 	}
 	tr.Issues = issues
 }
@@ -4844,6 +4851,7 @@ func skippedPathForResource(tr TargetReport, resource string) string {
 }
 
 func materializationIssueKey(issue MaterializationIssue) string {
+	issue = sanitizeMaterializationIssue(issue)
 	return strings.Join([]string{
 		string(issue.Target), boundedMaterializationMessage(issue.Scope), boundedMaterializationMessage(issue.RootID),
 		boundedMaterializationMessage(issue.Resource), boundedMaterializationMessage(issue.Path),
@@ -4863,6 +4871,7 @@ func (r *Report) rebuildIssues() {
 			tr.buildIssues()
 		}
 		for _, issue := range tr.Issues {
+			issue = sanitizeMaterializationIssue(issue)
 			if issue.Code != "" && !IsMaterializationDiagnosticCode(issue.Code) {
 				continue
 			}
@@ -4884,20 +4893,25 @@ func (r *Report) rebuildIssues() {
 		}
 		issue := MaterializationIssue{
 			Resource: d.Resource, Target: hcc.Target(d.Target), Code: d.Code, Severity: d.Severity,
-			Message: boundedMaterializationMessage(d.Message), Operation: MaterializationOperationFailure,
+			Path: d.Source.File, Message: boundedMaterializationMessage(d.Message), Operation: MaterializationOperationFailure,
 			Outcome: MaterializationOutcomeFailed,
 		}
-		for _, tr := range r.TargetReports() {
+		reports := r.TargetReports()
+		matches := make([]TargetReport, 0, 1)
+		for _, tr := range reports {
 			if issue.Target != "" && tr.Target != issue.Target {
 				continue
 			}
 			if issue.Resource != "" && !reportHasResource(tr, issue.Resource) {
 				continue
 			}
-			issue.Scope = materializationScope(tr.MachineScope)
-			issue.RootID = tr.RootID
-			break
+			matches = append(matches, tr)
 		}
+		if len(matches) == 1 {
+			issue.Scope = materializationScope(matches[0].MachineScope)
+			issue.RootID = matches[0].RootID
+		}
+		issue = sanitizeMaterializationIssue(issue)
 		key := materializationIssueKey(issue)
 		if _, ok := seen[key]; ok {
 			continue

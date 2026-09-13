@@ -76,6 +76,22 @@ func TestDiagIssueNamesResourceAndSource(t *testing.T) {
 // TestDiagIssueRendersHintAsRemediation asserts the compiler-authored Hint
 // reaches the user through the same resolver.Remediable surface the CLI already
 // renders, for warnings and errors alike.
+func TestDiagIssueSanitizesCodeAndIdentityFields(t *testing.T) {
+	d := scopedToolDiagnostic("alpha\nresource", "skills/alpha\u2028SKILL.md", 4)
+	d.Code = "materialize.bad\r\x1b[31m"
+	d.Hint = "repair\u0085\u202e this"
+	d.Message = "failure\x00\xff\u2029here"
+	issue := newDiagIssue(d)
+	for name, rendered := range map[string]string{"error": issue.Error(), "key": issue.DedupKey(), "hint": issue.Remediation()} {
+		if strings.ContainsAny(rendered, "\x01\x1b\r\n\x7f") || strings.Contains(rendered, "\u0085") || strings.Contains(rendered, "\u202e") || strings.Contains(rendered, "\u2029") || strings.Contains(rendered, "\ufffd") {
+			t.Errorf("%s retained unsafe diagnostic text: %q", name, rendered)
+		}
+	}
+	if strings.Contains(issue.DiagnosticCode(), "\r") {
+		t.Fatalf("DiagnosticCode retained a control: %q", issue.DiagnosticCode())
+	}
+}
+
 func TestDiagIssueRendersHintAsRemediation(t *testing.T) {
 	d := scopedToolDiagnostic("alpha", "skills/alpha/SKILL.md", 4)
 
