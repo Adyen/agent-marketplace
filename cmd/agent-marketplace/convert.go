@@ -528,7 +528,7 @@ func replaceCodexConversionFileAt(publication codexConversionPublication) error 
 	matches, err := conversionFileMatchesAt(publication.recoveryFD, filepath.Base(publication.backup), publication.originalInfo, publication.originalDigest)
 	if err != nil || !matches {
 		conflict := fmt.Errorf("codex conversion publication conflict for %q: destination changed after planning", publication.rel)
-		if restoreErr := restoreCodexConversionQuarantineAt(publication); restoreErr != nil {
+		if restoreErr := restoreCodexConversionBackupAt(publication); restoreErr != nil {
 			return errors.Join(conflict, codexConversionRecoveryError(publication.rel, publication.backup), restoreErr)
 		}
 		if err != nil {
@@ -537,7 +537,7 @@ func replaceCodexConversionFileAt(publication codexConversionPublication) error 
 		return conflict
 	}
 	if err := linkConversionFileAt(publication.src, publication.destinationFD, publication.destinationName); err != nil {
-		if restoreErr := restoreCodexConversionQuarantineAt(publication); restoreErr != nil {
+		if restoreErr := restoreCodexConversionBackupAt(publication); restoreErr != nil {
 			conflict := fmt.Errorf("codex conversion publication conflict for %q: destination changed during publication", publication.rel)
 			return errors.Join(err, conflict, codexConversionRecoveryError(publication.rel, publication.backup), restoreErr)
 		}
@@ -827,16 +827,6 @@ func restoreCodexConversionQuarantine(quarantine, dst string) error {
 		return fmt.Errorf("restore quarantined Codex artifact: %w", err)
 	}
 	if err := os.Remove(quarantine); err != nil {
-		return fmt.Errorf("remove restored Codex artifact quarantine: %w", err)
-	}
-	return nil
-}
-
-func restoreCodexConversionQuarantineAt(publication codexConversionPublication) error {
-	if err := linkConversionFileBetweenAt(publication.recoveryFD, filepath.Base(publication.backup), publication.destinationFD, publication.destinationName); err != nil {
-		return fmt.Errorf("restore quarantined Codex artifact: %w", err)
-	}
-	if err := removeConversionFileAt(publication.recoveryFD, filepath.Base(publication.backup)); err != nil {
 		return fmt.Errorf("remove restored Codex artifact quarantine: %w", err)
 	}
 	return nil
