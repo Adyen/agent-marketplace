@@ -1032,7 +1032,7 @@ func promoteReportErrors(report *materialize.Report) []error {
 	var errs []error
 	for _, issue := range report.SurfaceIssues() {
 		if issue.Severity == diag.SeverityError {
-			errs = append(errs, errors.New(materialize.FormatIssue(issue)))
+			errs = append(errs, materialize.SurfaceIssueError(issue))
 		}
 	}
 	for _, d := range report.Diags {

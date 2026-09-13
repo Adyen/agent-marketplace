@@ -362,7 +362,7 @@ func dedupIssues(issues []error) []error { return pipeline.DedupIssues(issues) }
 // destination path.
 func materializationIssueErrors(report *materialize.Report) (warnings, errorsOut []error) {
 	for _, issue := range report.SurfaceIssues() {
-		rendered := errors.New(materialize.FormatIssue(issue))
+		rendered := materialize.SurfaceIssueError(issue)
 		if issue.Severity == diag.SeverityError {
 			errorsOut = append(errorsOut, rendered)
 		} else {

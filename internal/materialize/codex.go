@@ -114,7 +114,9 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 		}
 		hookOptions := codexHookJSONOptions()
 		hookOptions.rootID = destination.ID
-		hookOptions.onWrite = appendCodexTrustReviewDiagnostic
+		hookOptions.onWrite = func(report *Report, key outputKey, rel string, dryRun bool) {
+			appendCodexTrustReviewDiagnosticForRoot(report, key, destination.ID, rel, dryRun)
+		}
 		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
 		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
 		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, current.mcps, current.blocked, dryRun)
@@ -407,7 +409,7 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 	for _, entry := range desired {
 		if first, duplicate := seen[entry.name]; duplicate {
 			slog.Error("Codex MCP reconciliation refused duplicate desired identity", "target", key.target, "machine_scope", key.machineScope, "server", entry.name, "first_resource", first, "second_resource", entry.resource, "code", diag.CodeMaterializeCodexDuplicateIdentity)
-			report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeCodexDuplicateIdentity, Severity: diag.SeverityError, Target: string(key.target), Resource: entry.resource, Message: fmt.Sprintf("Codex MCP server %q is produced by both %q and %q; neither definition was written", entry.name, first, entry.resource)})
+			appendTargetDiagnostic(report, key, rootID, diag.Diagnostic{Code: diag.CodeMaterializeCodexDuplicateIdentity, Severity: diag.SeverityError, Target: string(key.target), Resource: entry.resource, Message: fmt.Sprintf("Codex MCP server %q is produced by both %q and %q; neither definition was written", entry.name, first, entry.resource)}, "")
 			return report
 		}
 		seen[entry.name] = entry.resource
@@ -420,12 +422,12 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 	}
 	if !dryRun {
 		if err := os.MkdirAll(root, 0o755); err != nil {
-			return codexMCPDiag(report, key, fmt.Errorf("create Codex config root: %w", err))
+			return codexMCPDiag(report, key, rootID, fmt.Errorf("create Codex config root: %w", err))
 		}
 	}
 	store, err := ownership.Open(root)
 	if err != nil {
-		return codexMCPDiag(report, key, err)
+		return codexMCPDiag(report, key, rootID, err)
 	}
 	reconcile := func() error {
 		if !dryRun {
@@ -445,14 +447,14 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 			if readErr == nil && !dryRun {
 				if _, backupErr := store.BackupOnly(codexMCPFile, abs, ownership.ReasonSync); backupErr != nil {
 					slog.Error("Codex MCP malformed-file safety backup failed", "target", key.target, "machine_scope", key.machineScope, "file", abs, "error", backupErr)
-					report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, root, codexMCPFile, backupErr, diag.CodeOwnershipSafetyBackup))
+					appendTargetDiagnostic(report, key, rootID, ownedAggregateCodedDiag(key, root, codexMCPFile, backupErr, diag.CodeOwnershipSafetyBackup), codexMCPFile)
 					return err
 				}
 			}
 			return err
 		}
 		proof, proofErr := store.Proof(codexMCPFile)
-		report.Diags = append(report.Diags, ownedAggregateProofDiags(key, root, codexMCPFile, proofErr)...)
+		appendTargetDiagnostics(report, key, rootID, ownedAggregateProofDiags(key, root, codexMCPFile, proofErr))
 		desiredValues := make([]ownership.EntryValue, 0, len(desired))
 		byName := make(map[string]codexMCPEntry, len(desired))
 		for _, entry := range desired {
@@ -463,7 +465,7 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 		collisions := make(map[string]bool, len(drift.Collisions))
 		for _, id := range drift.Collisions {
 			collisions[id.Key] = true
-			report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeOwnershipUnmanagedKey, Severity: diag.SeverityError, Target: string(key.target), Resource: byName[id.Key].resource, Message: fmt.Sprintf("Codex MCP server %q collides with an unmanaged config.toml entry; existing entry preserved", id.Key)})
+			appendTargetDiagnostic(report, key, rootID, diag.Diagnostic{Code: diag.CodeOwnershipUnmanagedKey, Severity: diag.SeverityError, Target: string(key.target), Resource: byName[id.Key].resource, Message: fmt.Sprintf("Codex MCP server %q collides with an unmanaged config.toml entry; existing entry preserved", id.Key)}, codexMCPFile)
 		}
 		type edit struct {
 			start, end  int
@@ -475,7 +477,7 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 			for _, id := range drift.Stale {
 				if section, ok := sections[id.Key]; ok {
 					if section.alternate {
-						report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError, Target: string(key.target), Resource: id.Key, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be pruned safely; existing entry preserved", id.Key)})
+						appendTargetDiagnostic(report, key, rootID, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError, Target: string(key.target), Resource: id.Key, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be pruned safely; existing entry preserved", id.Key)}, codexMCPFile)
 						resource, _ := proof.Resource(id)
 						owned = append(owned, ownership.Entry{Kind: id.Kind, Container: id.Container, Key: id.Key, IdentityDigest: id.IdentityDigest, ValueDigest: section.value.ValueDigest, Resource: resource})
 						continue
@@ -495,7 +497,7 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 			}
 			if exists {
 				if section.alternate {
-					report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError, Target: string(key.target), Resource: entry.resource, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be replaced safely; existing entry preserved", entry.name)})
+					appendTargetDiagnostic(report, key, rootID, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError, Target: string(key.target), Resource: entry.resource, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be replaced safely; existing entry preserved", entry.name)}, codexMCPFile)
 					if resource, ok := proof.Resource(entry.id()); ok {
 						owned = append(owned, ownership.Entry{Kind: entry.id().Kind, Container: entry.id().Container, Key: entry.id().Key, IdentityDigest: entry.id().IdentityDigest, ValueDigest: section.value.ValueDigest, Resource: resource})
 					}
@@ -558,13 +560,17 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 		err = store.WithWriteSessionContext(ctx, "reconcile-codex-mcp", reconcile)
 	}
 	if err != nil {
-		return codexMCPDiag(report, key, err)
+		return codexMCPDiag(report, key, rootID, err)
 	}
 	slog.Debug("Codex MCP reconciliation complete", "target", key.target, "machine_scope", key.machineScope, "root", root, "dry_run", dryRun)
 	return report
 }
 
 func appendCodexTrustReviewDiagnostic(report *Report, key outputKey, rel string, dryRun bool) {
+	appendCodexTrustReviewDiagnosticForRoot(report, key, materializationRootID(key), rel, dryRun)
+}
+
+func appendCodexTrustReviewDiagnosticForRoot(report *Report, key outputKey, rootID, rel string, dryRun bool) {
 	if report == nil || key.target != targetmeta.TargetCodex || key.machineScope {
 		return
 	}
@@ -577,19 +583,19 @@ func appendCodexTrustReviewDiagnostic(report *Report, key outputKey, rel string,
 		message = fmt.Sprintf("Codex repository configuration %s would change; --check did not modify files or trust state", nativePath)
 		hint = "A later sync may require reviewing or re-approving this repository in Codex"
 	}
-	report.Diags = append(report.Diags, diag.Diagnostic{
+	appendTargetDiagnostic(report, key, rootID, diag.Diagnostic{
 		Code:     code,
 		Severity: diag.SeverityWarning,
 		Target:   string(key.target),
 		Message:  message,
 		Hint:     hint,
-	})
+	}, nativePath)
 	slog.Warn("Codex repository configuration requires trust review",
 		"target", key.target, "file", nativePath, "dry_run", dryRun, "code", code)
 }
 
-func codexMCPDiag(report *Report, key outputKey, err error) *Report {
+func codexMCPDiag(report *Report, key outputKey, rootID string, err error) *Report {
 	slog.Error("Codex MCP reconciliation failed", "target", key.target, "machine_scope", key.machineScope, "code", diag.CodeMaterializeCodexAggregateMalformed, "error", err)
-	report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateMalformed, Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("reconcile Codex config.toml: %v", err)})
+	appendTargetDiagnostic(report, key, rootID, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateMalformed, Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("reconcile Codex config.toml: %v", err)}, codexMCPFile)
 	return report
 }

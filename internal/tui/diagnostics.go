@@ -97,7 +97,7 @@ func appendMaterializationReportDiagnostics(dst []tuiDiagnostic, report *materia
 		if issue.Severity == diag.SeverityError {
 			severity = diagnosticError
 		}
-		dst = appendSnapshotDiagnostics(dst, severity, diagnosticMaterialization, errors.New(materialize.FormatIssue(issue)))
+		dst = appendSnapshotDiagnostics(dst, severity, diagnosticMaterialization, materialize.SurfaceIssueError(issue))
 	}
 	return dst
 }

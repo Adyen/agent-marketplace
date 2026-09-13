@@ -118,6 +118,24 @@ type outputKey struct {
 	machineScope bool
 }
 
+// rootAwareDiagnostic carries producer context until a Report exists. The
+// embedded diagnostic remains the unchanged public HCC value; only the
+// materialization projection consumes the scope/root/path fields.
+type rootAwareDiagnostic struct {
+	diag.Diagnostic
+	key    outputKey
+	rootID string
+	path   string
+}
+
+func materializationRootID(key outputKey) string {
+	scope := "project"
+	if key.machineScope {
+		scope = "machine"
+	}
+	return scope + "-" + string(key.target)
+}
+
 // MaterializationOperation identifies the bounded filesystem action or
 // diagnostic represented by an issue. These values are intentionally strings:
 // report consumers include the TUI and command output, not just Go callers.
@@ -527,6 +545,10 @@ type compilePhaseResult struct {
 	// adapter stores its JSON or TOML work value behind this map and exposes it
 	// only through ownedAggregateHandler.
 	ownedState map[outputKey]any
+	// materializationDiags are producer-owned diagnostics whose output scope is
+	// known before a TargetReport exists (compile and aggregate extraction).
+	// They are appended through appendTargetDiagnostic during report assembly.
+	materializationDiags map[outputKey][]diag.Diagnostic
 }
 
 func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
@@ -589,7 +611,7 @@ type executionSnapshot struct {
 	nativeAggregates      map[outputKey][]nativeAggregatePlan
 	pruneFences           map[outputKey]map[string]bool
 	codexPartitions       map[string]bool
-	preflightDiag         *diag.Diagnostic
+	preflightDiag         *rootAwareDiagnostic
 }
 
 func captureExecutionSnapshot(repoRoot string, outputs map[outputKey]bool) (executionSnapshot, error) {
@@ -1327,6 +1349,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	skillLinks := make(map[outputKey]map[string]*skillLinkGroup)
 	artifactMeta := make(map[outputKey]map[string]skillLink)
 	ownedState := make(map[outputKey]any)
+	materializationDiags := make(map[outputKey][]diag.Diagnostic)
 	ownedAggregates := ownedAggregateState{values: ownedState}
 	markOwnedAggregateFences(ownedAggregates, aggregateFences)
 
@@ -1371,7 +1394,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if err != nil {
 			blocked.blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
-			allDiags = append(allDiags, diag.Diagnostic{
+			materializationDiags[key] = append(materializationDiags[key], diag.Diagnostic{
 				Code:     "materialize.compile.error",
 				Severity: diag.SeverityError,
 				Target:   string(w.target),
@@ -1408,7 +1431,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			if aggregateErr != nil {
 				blocked.blockResource(key, w)
 				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
-				allDiags = append(allDiags, aggregateHandler.malformedDiagnostic(key, w.skill.Name, aggregateErr))
+				materializationDiags[key] = append(materializationDiags[key], aggregateHandler.malformedDiagnostic(key, w.skill.Name, aggregateErr))
 				continue
 			}
 			result.Artifacts = rest
@@ -1530,13 +1553,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	}
 
 	return compilePhaseResult{
-		allDiags:     allDiags,
-		byTarget:     byTarget,
-		skillLinks:   skillLinks,
-		allOutputs:   allOutputs,
-		blocked:      blocked,
-		artifactMeta: artifactMeta,
-		ownedState:   ownedState,
+		allDiags:             allDiags,
+		byTarget:             byTarget,
+		skillLinks:           skillLinks,
+		allOutputs:           allOutputs,
+		blocked:              blocked,
+		artifactMeta:         artifactMeta,
+		ownedState:           ownedState,
+		materializationDiags: materializationDiags,
 	}
 }
 
@@ -1603,8 +1627,11 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		PerTarget: make(map[hcc.Target]TargetReport),
 		Diags:     compileResult.allDiags,
 	}
+	for key, diagnostics := range compileResult.materializationDiags {
+		appendTargetDiagnostics(report, key, "", diagnostics)
+	}
 	if snapshot.preflightDiag != nil {
-		report.Diags = append(report.Diags, *snapshot.preflightDiag)
+		appendTargetDiagnostic(report, snapshot.preflightDiag.key, snapshot.preflightDiag.rootID, snapshot.preflightDiag.Diagnostic, snapshot.preflightDiag.path)
 		return report
 	}
 	states := make(map[bool]*portableState, 2)
@@ -1687,6 +1714,9 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 	portableCleanupDirs := make(map[string]string)
 
 	for _, plan := range plans {
+		if plan.rootID == "" {
+			plan.rootID = materializationRootID(key)
+		}
 		regularArtifacts, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
 		if mode == config.MaterializationModeFile {
 			planRoot := outDir
@@ -2065,7 +2095,10 @@ func appendGroupReport(report *Report, key outputKey, outDir, reportPrefix strin
 	tr.Target = key.target
 	tr.MachineScope = key.machineScope
 	if tr.RootID == "" {
-		tr.RootID = codexRootIDForPrefix(key, reportPrefix)
+		tr.RootID = materializationRootID(key)
+		if codexRootID := codexRootIDForPrefix(key, reportPrefix); codexRootID != "" {
+			tr.RootID = codexRootID
+		}
 	}
 	if err != nil {
 		appendTargetDiagnostic(report, key, tr.RootID, diag.Diagnostic{
@@ -2905,6 +2938,9 @@ func appendTargetDiagnostics(report *Report, key outputKey, rootID string, diags
 // root into a user-visible RootID or structured path.
 func appendTargetDiagnostic(report *Report, key outputKey, rootID string, d diag.Diagnostic, issuePath string) {
 	report.Diags = append(report.Diags, d)
+	if rootID == "" && key.target != "" {
+		rootID = materializationRootID(key)
+	}
 	if !IsMaterializationDiagnostic(d) {
 		return
 	}
@@ -4950,13 +4986,15 @@ func materializationIssueCanonicalIdentity(issue MaterializationIssue) string {
 
 func materializationDiagnosticKey(issue MaterializationIssue) string {
 	issue.identity = ""
-	issue.Scope, issue.RootID = "", ""
+	issue.Scope, issue.RootID, issue.Path = "", "", ""
+	issue.Operation, issue.Outcome = "", ""
 	return materializationIssueKey(issue)
 }
 
 func materializationDiagnosticFallbackKey(issue MaterializationIssue) string {
 	issue.identity = ""
 	issue.Scope, issue.RootID, issue.Path = "", "", ""
+	issue.Operation, issue.Outcome = "", ""
 	return materializationIssueKey(issue)
 }
 
@@ -5026,7 +5064,7 @@ func (r *Report) rebuildIssues() {
 		if _, ok := attributed[materializationDiagnosticKey(issue)]; ok {
 			continue
 		}
-		if _, ok := attributed[materializationDiagnosticFallbackKey(issue)]; ok && issue.Path == "" {
+		if _, ok := attributed[materializationDiagnosticFallbackKey(issue)]; ok {
 			continue
 		}
 		reports := r.TargetReports()

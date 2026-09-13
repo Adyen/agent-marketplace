@@ -30,7 +30,7 @@ type codexManagedPath struct {
 // preflightCodexDestinations resolves active Codex scopes and coalesces desired
 // state for physical partitions shared by repository and machine scope. It is
 // deliberately called before executeMaterializePlans performs its first mkdir.
-func preflightCodexDestinations(result *compilePhaseResult, repoRoot string, modes config.MaterializationModes) (map[string]bool, *diag.Diagnostic) {
+func preflightCodexDestinations(result *compilePhaseResult, repoRoot string, modes config.MaterializationModes) (map[string]bool, *rootAwareDiagnostic) {
 	codex := hcc.Target(targetmeta.TargetCodex)
 	destinationsByKey := make(map[outputKey][]harness.Destination, 2)
 	for _, machineScope := range []bool{false, true} {
@@ -40,14 +40,14 @@ func preflightCodexDestinations(result *compilePhaseResult, repoRoot string, mod
 		}
 		resolved, err := harness.ResolveDestinations(codex, machineScope, repoRoot)
 		if err != nil {
-			return nil, &diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(codex), Message: err.Error()}
+			return nil, &rootAwareDiagnostic{Diagnostic: diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(codex), Message: err.Error()}, key: key, rootID: materializationRootID(key)}
 		}
 		destinationsByKey[key] = resolved
 	}
 	return preflightCodexDestinationsFrozen(result, destinationsByKey, modes)
 }
 
-func preflightCodexDestinationsFrozen(result *compilePhaseResult, destinationsByKey map[outputKey][]harness.Destination, modes config.MaterializationModes) (map[string]bool, *diag.Diagnostic) {
+func preflightCodexDestinationsFrozen(result *compilePhaseResult, destinationsByKey map[outputKey][]harness.Destination, modes config.MaterializationModes) (map[string]bool, *rootAwareDiagnostic) {
 	codex := hcc.Target(targetmeta.TargetCodex)
 	hasCodexOutput := false
 	for key := range result.allOutputs {
@@ -76,7 +76,8 @@ func preflightCodexDestinationsFrozen(result *compilePhaseResult, destinationsBy
 				Message:  fmt.Sprintf("no frozen Codex %s destinations before materialization", codexScopeName(machineScope)),
 				Hint:     "rebuild the materialization plan from the current repository and environment",
 			}
-			return nil, &d
+			slog.Error("Codex destination overlap preflight failed", "scope", codexScopeName(machineScope), "code", d.Code, "error", d.Message)
+			return nil, &rootAwareDiagnostic{Diagnostic: d, key: key, rootID: materializationRootID(key)}
 		}
 	}
 
@@ -92,11 +93,11 @@ func preflightCodexDestinationsFrozen(result *compilePhaseResult, destinationsBy
 	}
 	if d := validateCodexManagedPathIntersections(bindings); d != nil {
 		slog.Error("Codex destination overlap preflight refused managed-path intersection", "code", d.Code, "error", d.Message)
-		return nil, d
+		return nil, rootAwareCodexPreflightDiagnostic(*d, bindings[0].key, bindings[0].destination.ID)
 	}
 	if d := mergeCodexArtifactsBeforePreflight(result); d != nil {
 		slog.Error("Codex destination overlap preflight could not merge artifacts", "code", d.Code, "error", d.Message)
-		return nil, d
+		return nil, rootAwareCodexPreflightDiagnostic(*d, codexPreflightKey(result), "")
 	}
 
 	byPartition := make(map[string][]codexDestinationBinding, len(bindings))
@@ -117,17 +118,32 @@ func preflightCodexDestinationsFrozen(result *compilePhaseResult, destinationsBy
 				"use the same materialization mode for both scopes or move CODEX_HOME/the repository so their managed destinations do not overlap",
 			)
 			slog.Error("Codex destination overlap preflight refused incompatible ownership intent", "code", d.Code, "destination", group[0].destination.ID, "project_mode", projectMode, "machine_mode", machineMode)
-			return nil, &d
+			return nil, rootAwareCodexPreflightDiagnostic(d, group[0].key, group[0].destination.ID)
 		}
 		if d := coalesceCodexPartition(result, group); d != nil {
 			slog.Error("Codex destination overlap preflight refused conflicting writes", "code", d.Code, "destination", group[0].destination.ID, "error", d.Message)
-			return nil, d
+			return nil, rootAwareCodexPreflightDiagnostic(*d, group[0].key, group[0].destination.ID)
 		}
 		coalesced[partition] = true
 		slog.Debug("Codex destination plans coalesced", "root", group[0].destination.Root, "prefix", group[0].destination.Prefix, "plans", len(group))
 	}
 	slog.Debug("Codex destination overlap preflight complete", "destinations", len(bindings), "coalesced_partitions", len(coalesced))
 	return coalesced, nil
+}
+
+func rootAwareCodexPreflightDiagnostic(d diag.Diagnostic, key outputKey, rootID string) *rootAwareDiagnostic {
+	if rootID == "" {
+		rootID = materializationRootID(key)
+	}
+	return &rootAwareDiagnostic{Diagnostic: d, key: key, rootID: rootID, path: d.Source.File}
+}
+
+func codexPreflightKey(result *compilePhaseResult) outputKey {
+	key := outputKey{target: hcc.Target(targetmeta.TargetCodex)}
+	if !result.allOutputs[key] {
+		key.machineScope = true
+	}
+	return key
 }
 
 func codexScopeName(machineScope bool) string {

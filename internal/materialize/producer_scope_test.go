@@ -9,6 +9,35 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
+func TestAppendTargetDiagnosticKeepsGenericDiagnosticAndStructuredRoot(t *testing.T) {
+	key := outputKey{target: hcc.TargetClaude, machineScope: true}
+	report := &Report{}
+	diagnostic := diag.Diagnostic{
+		Code:     "materialize.write.error",
+		Severity: diag.SeverityError,
+		Target:   string(key.target),
+		Resource: "settings",
+		Source:   diag.SourceRef{File: "/home/user/.claude/settings.json"},
+		Message:  "failed to write /home/user/.claude/settings.json",
+	}
+	appendTargetDiagnostic(report, key, "machine-claude", diagnostic, ".claude/settings.json")
+
+	if len(report.Diags) != 1 || report.Diags[0].Source.File != diagnostic.Source.File {
+		t.Fatalf("generic diagnostic was mutated: %#v", report.Diags)
+	}
+	issues := report.SurfaceIssues()
+	if len(issues) != 1 {
+		t.Fatalf("surface issues = %#v, want one structured producer issue", issues)
+	}
+	issue := issues[0]
+	if issue.Scope != "machine" || issue.RootID != "machine-claude" || issue.Path != ".claude/settings.json" {
+		t.Fatalf("structured attribution = %#v, want machine root and safe relative path", issue)
+	}
+	if strings.Contains(FormatIssue(issue), "/home/user/.claude") {
+		t.Fatalf("structured output exposed an absolute root: %q", FormatIssue(issue))
+	}
+}
+
 func TestAppendGroupReportFailureKeepsKnownScopeAndRoot(t *testing.T) {
 	key := outputKey{target: hcc.TargetCodex, machineScope: true}
 	report := &Report{}
