@@ -18,6 +18,7 @@ import (
 // destination into durable ownership state.
 type conversionPublisher struct {
 	target          string
+	rootGuard       func() error
 	shared          []string
 	clone           func(*hcc.Result) (*hcc.Result, error)
 	preflight       func(string) error
@@ -58,6 +59,11 @@ func (p conversionPublisher) materialize(result *hcc.Result, outDir string, matO
 		return nil, resultErr
 	}
 	protectConversionSharedCandidates(report, p.shared)
+	if p.rootGuard != nil {
+		if err := p.rootGuard(); err != nil {
+			return nil, err
+		}
+	}
 	stageParent, err := codexConversionStageParent(outDir)
 	if err != nil {
 		return nil, err
@@ -76,6 +82,11 @@ func (p conversionPublisher) materialize(result *hcc.Result, outDir string, matO
 	}
 	if err := p.validate(stageDir, report.Written); err != nil {
 		return nil, err
+	}
+	if p.rootGuard != nil {
+		if err := p.rootGuard(); err != nil {
+			return nil, err
+		}
 	}
 	if err := publishConversionWith(stageDir, outDir, report.Written, p.shared, p.target, nil); err != nil {
 		return nil, err

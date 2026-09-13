@@ -106,11 +106,39 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	if err := rejectConversionSourceOutputOverlap(srcPath, outDir); err != nil {
 		return err
 	}
-	srcFS := os.DirFS(srcPath)
+	canonicalSource, err := canonicalConversionPath(srcPath)
+	if err != nil {
+		return fmt.Errorf("resolve conversion source path %q: %w", srcPath, err)
+	}
+	canonicalOutput, err := canonicalConversionPath(outDir)
+	if err != nil {
+		return fmt.Errorf("resolve conversion output path %q: %w", outDir, err)
+	}
+	sourceRoot, err := snapshotConversionRoot(canonicalSource, true)
+	if err != nil {
+		return err
+	}
+	outputRoot, err := snapshotConversionRoot(canonicalOutput, false)
+	if err != nil {
+		return err
+	}
+	rootGuard := func() error {
+		if err := revalidateConversionRoot(sourceRoot); err != nil {
+			return fmt.Errorf("conversion source changed during conversion: %w", err)
+		}
+		if err := revalidateConversionRoot(outputRoot); err != nil {
+			return fmt.Errorf("conversion output changed before publication: %w", err)
+		}
+		return nil
+	}
+	srcFS := os.DirFS(canonicalSource)
 
-	result, err := hcc.Convert(srcFS, srcHarness, hcc.Harness(to), hcc.WithPluginRoot(srcPath))
+	result, err := hcc.Convert(srcFS, srcHarness, hcc.Harness(to), hcc.WithPluginRoot(canonicalSource))
 	if err != nil {
 		return fmt.Errorf("convert: %w", err)
+	}
+	if err := rootGuard(); err != nil {
+		return err
 	}
 
 	writeMode := hcc.WriteModeOverwrite
@@ -128,10 +156,13 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	var writeReport *hcc.WriteReport
 	switch to {
 	case "codex":
-		writeReport, err = materializeCodexConversion(result, outDir, matOpts, dryRun)
+		writeReport, err = materializeCodexConversion(result, outDir, matOpts, dryRun, rootGuard)
 	case "devin":
-		writeReport, err = materializeDevinConversion(result, outDir, matOpts, dryRun)
+		writeReport, err = materializeDevinConversion(result, outDir, matOpts, dryRun, rootGuard)
 	default:
+		if err := rootGuard(); err != nil {
+			return err
+		}
 		writeReport, err = hcc.Materialize(result, outDir, matOpts...)
 	}
 	if err != nil && !errors.Is(err, hcc.ErrPartialResult) {
@@ -224,12 +255,56 @@ func conversionPathsOverlap(source, output string) bool {
 	return false
 }
 
+type conversionRootSnapshot struct {
+	path   string
+	exists bool
+	info   os.FileInfo
+}
+
+func snapshotConversionRoot(path string, required bool) (conversionRootSnapshot, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		if required {
+			return conversionRootSnapshot{}, fmt.Errorf("conversion source %q does not exist", path)
+		}
+		return conversionRootSnapshot{path: path}, nil
+	}
+	if err != nil {
+		return conversionRootSnapshot{}, fmt.Errorf("inspect conversion root %q: %w", path, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return conversionRootSnapshot{}, fmt.Errorf("conversion root %q is not a real directory", path)
+	}
+	return conversionRootSnapshot{path: path, exists: true, info: info}, nil
+}
+
+func revalidateConversionRoot(snapshot conversionRootSnapshot) error {
+	info, err := os.Lstat(snapshot.path)
+	if os.IsNotExist(err) {
+		if !snapshot.exists {
+			return nil
+		}
+		return fmt.Errorf("root disappeared")
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("root is no longer a real directory")
+	}
+	if !snapshot.exists || !os.SameFile(snapshot.info, info) {
+		return fmt.Errorf("root identity changed")
+	}
+	return nil
+}
+
 // materializeCodexConversion publishes a one-shot conversion without adopting
 // ownership. Sync reconciles shared configuration entry by entry; conversion
 // requires an empty shared-file destination and publishes a staged result.
-func materializeCodexConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool) (*hcc.WriteReport, error) {
+func materializeCodexConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool, rootGuard func() error) (*hcc.WriteReport, error) {
 	return conversionPublisher{
 		target:          "Codex",
+		rootGuard:       rootGuard,
 		shared:          codexConversionSharedPaths[:],
 		clone:           codexConversionResult,
 		preflight:       func(dir string) error { return preflightCodexConversion(dir) },
@@ -279,16 +354,16 @@ func codexConversionResult(result *hcc.Result) (*hcc.Result, error) {
 		if policyErr != nil {
 			return nil, fmt.Errorf("validate Codex conversion artifact %q: %w", candidate.Path, policyErr)
 		}
-		external := candidate.ExternalReconciliationRequired || policy.IsExternal()
+		external := policy.IsExternal()
 		if !isCodexConversionSharedPath(candidate.Path) {
 			if external {
 				return nil, fmt.Errorf("unexpected externally reconciled Codex artifact %q", candidate.Path)
 			}
 			continue
 		}
+		candidate.ExternalReconciliationRequired = false
 		if external {
-			candidate.ExternalReconciliationRequired = false
-			candidate.Reconciliation = hcc.ReconciliationPolicy{}
+			candidate.Reconciliation = hcc.ReconciliationPolicy{Mode: hcc.ReconciliationReplace}
 			candidate.MergeWithExisting = false
 			candidate.ManagedByField = ""
 			candidate.ManagedByValue = ""
@@ -686,7 +761,20 @@ func removeEmptyCodexConversionRecoveryDirs(publications []codexConversionPublic
 }
 
 func pruneCodexConversionStaleCandidates(outDir string, candidates []hcc.StaleFileCandidate) error {
-	return pruneCodexConversionStaleCandidatesWith(outDir, candidates, os.Remove)
+	root := filepath.Clean(outDir)
+	var pruneErrors []error
+	for _, candidate := range candidates {
+		rel := filepath.FromSlash(candidate.Path)
+		if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			pruneErrors = append(pruneErrors, fmt.Errorf("stale candidate %q escapes output root", candidate.Path))
+			continue
+		}
+		path := filepath.Join(root, rel)
+		if err := hcc.RemoveStaleFileCandidate(path, candidate); err != nil && !os.IsNotExist(err) {
+			pruneErrors = append(pruneErrors, fmt.Errorf("remove stale file %q: %w", candidate.Path, err))
+		}
+	}
+	return errors.Join(pruneErrors...)
 }
 
 func pruneCodexConversionStaleCandidatesWith(outDir string, candidates []hcc.StaleFileCandidate, removePath func(string) error) error {
@@ -729,14 +817,15 @@ func pruneCodexConversionStaleCandidatesWith(outDir string, candidates []hcc.Sta
 // materializeDevinConversion publishes a Devin conversion without adopting
 // ownership. Shared aggregate paths come from artifact policies, are staged and
 // syntax-validated, then exposed by hard link.
-func materializeDevinConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool) (*hcc.WriteReport, error) {
+func materializeDevinConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool, rootGuard func() error) (*hcc.WriteReport, error) {
 	shared, err := externalConversionPaths(result)
 	if err != nil {
 		return nil, err
 	}
 	return conversionPublisher{
-		target: "Devin",
-		shared: shared,
+		target:    "Devin",
+		rootGuard: rootGuard,
+		shared:    shared,
 		clone: func(input *hcc.Result) (*hcc.Result, error) {
 			return cloneNonOwningConversionResult(input, shared), nil
 		},

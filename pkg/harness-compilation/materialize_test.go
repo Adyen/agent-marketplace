@@ -127,6 +127,110 @@ func TestMaterialize_CleanResultPrunesAndReportsClean(t *testing.T) {
 	}
 }
 
+func TestMaterialize_FencesAbandonedConversionTransactionsFromStalePrune(t *testing.T) {
+	outDir := t.TempDir()
+	transactionDir := filepath.Join(outDir, ".agent-marketplace-recovery-abandoned")
+	transactionFile := filepath.Join(transactionDir, "0.original")
+	quarantineFile := filepath.Join(outDir, ".agent-marketplace-stale-leftover")
+	quarantineDirFile := filepath.Join(outDir, ".agent-marketplace-stale-abandoned", "0.current")
+	if err := os.MkdirAll(transactionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transactionFile, []byte("recovery bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(quarantineFile, []byte("quarantined bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(quarantineDirFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(quarantineDirFile, []byte("quarantined directory bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Materialize(&Result{Artifacts: []Artifact{{Path: "kept.txt", Bytes: []byte("valid")}}}, outDir, WithWriteMode(WriteModeSync), WithPruneStale(true))
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if len(report.StaleCandidates) != 0 || len(report.Removed) != 0 {
+		t.Fatalf("abandoned transaction was treated as stale: candidates=%v removed=%v", report.StaleCandidates, report.Removed)
+	}
+	for path, want := range map[string]string{
+		transactionFile:   "recovery bytes",
+		quarantineFile:    "quarantined bytes",
+		quarantineDirFile: "quarantined directory bytes",
+	} {
+		if got, readErr := os.ReadFile(path); readErr != nil || string(got) != want {
+			t.Fatalf("abandoned transaction bytes changed at %s: %q, %v", path, got, readErr)
+		}
+	}
+}
+
+func TestRemoveStaleFileCandidatePreservesReplacementAfterCompare(t *testing.T) {
+	outDir := t.TempDir()
+	stale := filepath.Join(outDir, "stale.txt")
+	if err := os.WriteFile(stale, []byte("planned"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planned, err := Materialize(&Result{Artifacts: []Artifact{{Path: "kept.txt", Bytes: []byte("valid")}}}, outDir, WithWriteMode(WriteModeSync), WithPruneStale(true), WithDryRun())
+	if err != nil {
+		t.Fatalf("plan stale prune: %v", err)
+	}
+	if len(planned.StaleCandidates) != 1 {
+		t.Fatalf("stale candidates = %+v, want one candidate", planned.StaleCandidates)
+	}
+
+	err = removeStaleFileCandidate(stale, planned.StaleCandidates[0], func() error {
+		if err := os.Remove(stale); err != nil {
+			return err
+		}
+		return os.WriteFile(stale, []byte("replacement"), 0o644)
+	})
+	if !errors.Is(err, ErrStalePruneConflict) {
+		t.Fatalf("remove stale error = %v, want ErrStalePruneConflict", err)
+	}
+	if got, readErr := os.ReadFile(stale); readErr != nil || string(got) != "replacement" {
+		t.Fatalf("replacement bytes were not preserved: %q, %v", got, readErr)
+	}
+}
+
+func TestRemoveStaleFileCandidatePreservesReplacementRoot(t *testing.T) {
+	parent := t.TempDir()
+	outDir := filepath.Join(parent, "output")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(outDir, "stale.txt")
+	if err := os.WriteFile(stale, []byte("planned"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planned, err := Materialize(&Result{Artifacts: []Artifact{{Path: "kept.txt", Bytes: []byte("valid")}}}, outDir, WithWriteMode(WriteModeSync), WithPruneStale(true), WithDryRun())
+	if err != nil {
+		t.Fatalf("plan stale prune: %v", err)
+	}
+	if len(planned.StaleCandidates) != 1 {
+		t.Fatalf("stale candidates = %+v, want one candidate", planned.StaleCandidates)
+	}
+
+	replacement := filepath.Join(parent, "replacement")
+	if err := os.Rename(outDir, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "stale.txt"), []byte("replacement root"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveStaleFileCandidate(filepath.Join(outDir, "stale.txt"), planned.StaleCandidates[0]); !errors.Is(err, ErrStalePruneConflict) {
+		t.Fatalf("remove stale after root replacement = %v, want ErrStalePruneConflict", err)
+	}
+	if got, readErr := os.ReadFile(filepath.Join(outDir, "stale.txt")); readErr != nil || string(got) != "replacement root" {
+		t.Fatalf("replacement root bytes = %q, %v", got, readErr)
+	}
+}
+
 func TestMaterialize_BasicWrite(t *testing.T) {
 	outDir := t.TempDir()
 	result := &Result{
