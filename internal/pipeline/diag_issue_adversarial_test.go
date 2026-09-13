@@ -209,6 +209,61 @@ func TestDiagIssueKeyUsesTheUntruncatedMessage(t *testing.T) {
 	}
 }
 
+// TestDiagIssueResourcelessErrorKeyUsesTheUntruncatedMessage covers the
+// fallback path used by aggregate diagnostics that have no resource. The
+// display line is bounded, but two failures that differ only after that bound
+// must remain distinct in the dedup identity.
+func TestDiagIssueResourcelessErrorKeyUsesTheUntruncatedMessage(t *testing.T) {
+	prefix := strings.Repeat("x", maxDiagMessageLen+512)
+	base := diag.Diagnostic{
+		Code:     diag.CodeMaterializeDevinAggregateShape,
+		Severity: diag.SeverityError,
+		Source:   diag.SourceRef{File: "mcp_config.json"},
+		Message:  prefix + " first shape",
+	}
+	other := base
+	other.Message = prefix + " second shape"
+	a := newDiagIssue(base)
+	b := newDiagIssue(other)
+	if a.Error() != b.Error() {
+		t.Fatalf("sanity: bounded renders should match, got %q and %q", a.Error(), b.Error())
+	}
+	if a.DedupKey() == b.DedupKey() {
+		t.Fatalf("resource-less errors differing after the display bound share dedup key %q", a.DedupKey())
+	}
+	if len(a.DedupKey()) > maxDiagIdentityLen || len(b.DedupKey()) > maxDiagIdentityLen {
+		t.Fatalf("resource-less dedup identity exceeded bound: %d, %d", len(a.DedupKey()), len(b.DedupKey()))
+	}
+}
+
+// TestDiagIssuePresentationIdentityIsBounded keeps warning grouping keys from
+// retaining unbounded registry text while preserving exact-message grouping.
+func TestDiagIssuePresentationIdentityIsBounded(t *testing.T) {
+	message := strings.Repeat("x", maxDiagIdentityLen+1024)
+	base := diag.Diagnostic{
+		Code:     "materialize.warning",
+		Severity: diag.SeverityWarning,
+		Resource: "resource",
+		Hint:     "repair the resource",
+		Message:  message,
+	}
+	issue := newDiagIssue(base)
+	if len(issue.PresentationKey()) > maxDiagIdentityLen {
+		t.Fatalf("presentation key retained unbounded registry text: %d bytes", len(issue.PresentationKey()))
+	}
+	if len(issue.PresentationText()) > maxDiagIdentityLen {
+		t.Fatalf("presentation text exceeded display bound: %d bytes", len(issue.PresentationText()))
+	}
+	if issue.PresentationKey() != newDiagIssue(base).PresentationKey() {
+		t.Fatalf("identical warning presentations must retain the same grouping key")
+	}
+	other := base
+	other.Message += "-different"
+	if issue.PresentationKey() == newDiagIssue(other).PresentationKey() {
+		t.Fatalf("distinct warning presentations must retain distinct grouping keys")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Attack 2: the fallback boundary.
 // ---------------------------------------------------------------------------

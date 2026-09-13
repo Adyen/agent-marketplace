@@ -5045,11 +5045,17 @@ func (r *Report) TotalRemoved() int {
 // InSync reports whether all targets have zero pending changes (no written
 // or removed files, and no error diagnostics). Useful for --check mode.
 func (r *Report) InSync() bool {
+	r.rebuildIssues()
 	if r.TotalWritten() > 0 || r.TotalRemoved() > 0 {
 		return false
 	}
 	for _, d := range r.Diags {
 		if d.IsError() {
+			return false
+		}
+	}
+	for _, issue := range r.Issues {
+		if issue.Severity.AtLeastAsSevereAs(diag.SeverityError) {
 			return false
 		}
 	}

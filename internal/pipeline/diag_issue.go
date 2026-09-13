@@ -87,7 +87,10 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 	}
 	issue.key = diagDedupKey(d, issue)
 	if code != "" && resource != "" {
-		issue.presentationKey = strings.Join([]string{code, hint, normalizeDiagMessageForKey(sanitizeDiagText(d.Message, len(d.Message)+len(diagTruncatedMark)))}, "\x00")
+		presentationIdentity := strings.Join([]string{code, hint, normalizeDiagMessageForKey(sanitizeDiagText(d.Message, len(d.Message)+len(diagTruncatedMark)))}, "\x00")
+		// PresentationText is the bounded display form; the grouping identity
+		// must not retain an arbitrarily large registry message either.
+		issue.presentationKey = hashedDiagIdentity(presentationIdentity)
 	}
 	return issue
 }
@@ -100,15 +103,15 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 // budget are still two different failures, and keying on the truncated render
 // would collapse them.
 //
-// The fallback starts with issue.msg — the rendered line — because that is
-// exactly what the pre-diagIssue code deduplicated on for a diagnostic with no
-// resource. Target and non-error severity are appended to the identity (and
-// hashed) without entering the user-facing line. Long identities use a stable
-// digest so hostile registry content cannot grow memory or output bounds.
+// The fallback uses the full sanitized message with the code, resource and
+// source identity that the rendered line carries. Target and non-error
+// severity are appended to the identity (and hashed) without entering the
+// user-facing line. Long identities use a stable digest so hostile registry
+// content cannot grow memory or output bounds.
 func diagDedupKey(d diag.Diagnostic, issue *diagIssue) string {
 	fullMessage := sanitizeDiagText(d.Message, len(d.Message)+len(diagTruncatedMark))
 	if issue.code == "" || issue.resource == "" {
-		key := issue.msg
+		key := renderDiagMessage(issue.code, fullMessage, issue.resource, issue.source)
 		if d.Target != "" || d.Severity != diag.SeverityError {
 			key = strings.Join([]string{key, sanitizeDiagText(d.Target, maxDiagResourceLen), strconv.Itoa(int(d.Severity))}, "\x00")
 			return hashedDiagIdentity(key)
