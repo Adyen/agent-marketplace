@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
@@ -154,8 +155,11 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			materializeErrs = append(materializeErrs, dryRunErr)
 		}
 	}
+	var compilerWarnings, compilerErrors []error
 	if dryRunReport != nil {
 		materializationWarnings, materializationErrors = materializationIssueErrors(dryRunReport)
+		compilerWarnings = reportDiagnosticErrors(dryRunReport, diag.SeverityWarning)
+		compilerErrors = reportDiagnosticErrors(dryRunReport, diag.SeverityError)
 	}
 
 	// Build orphaned rows from files that would be removed.
@@ -241,7 +245,8 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 
 	warnings := append([]error(nil), result.Warnings...)
 	warnings = append(warnings, materializationWarnings...)
-	errorRows := buildErrorRows(materializeErrs, materializationErrors, result.Errors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
+	warnings = append(warnings, compilerWarnings...)
+	errorRows := buildErrorRows(materializeErrs, materializationErrors, compilerErrors, result.Errors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
 
 	targetHarnesses := make([]string, len(result.TargetHarnesses))
 	for i, t := range result.TargetHarnesses {

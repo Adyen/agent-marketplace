@@ -20,6 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -159,6 +160,19 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if dryRunReport != nil {
 		if err := writeMaterializationIssues(errOut, dryRunReport); err != nil {
 			return err
+		}
+		for _, warning := range reportDiagnosticErrors(dryRunReport, diag.SeverityWarning) {
+			if _, err := fmt.Fprintf(errOut, "warning: %v\n", warning); err != nil {
+				return err
+			}
+			if err := printRemediation(errOut, warning); err != nil {
+				return err
+			}
+		}
+		if errorsOut := reportDiagnosticErrors(dryRunReport, diag.SeverityError); len(errorsOut) > 0 {
+			if err := writeSyncIssues(errOut, errorsOut, false, "error:"); err != nil {
+				return err
+			}
 		}
 	}
 	if dryRunReport != nil && !dryRunReport.InSync() {

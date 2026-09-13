@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -76,7 +77,7 @@ func (r *Report) SurfaceIssues() []MaterializationIssue {
 	seen := make(map[string]struct{}, len(r.Issues))
 	issues := make([]MaterializationIssue, 0, len(r.Issues))
 	for _, issue := range r.Issues {
-		if issue.Code == "" || (issue.Severity != diag.SeverityWarning && issue.Severity != diag.SeverityError) {
+		if issue.Code == "" || !IsMaterializationDiagnosticCode(issue.Code) || (issue.Severity != diag.SeverityWarning && issue.Severity != diag.SeverityError) {
 			continue
 		}
 		key := materializationIssueKey(issue)
@@ -190,6 +191,14 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 		case issue.Operation == MaterializationOperationFailure && issue.Severity == diag.SeverityError:
 			add(&dr.Broken, broken, issue, DriftBroken)
 		}
+	}
+	// Generic compiler errors remain outside the materialization SurfaceIssues
+	// projection, but still make their resource broken for drift consumers.
+	for _, d := range report.Diags {
+		if !d.IsError() || IsMaterializationDiagnostic(d) {
+			continue
+		}
+		add(&dr.Broken, broken, MaterializationIssue{Resource: d.Resource, Target: hcc.Target(d.Target)}, DriftBroken)
 	}
 	// A broken resource is not also missing or in sync. Remove it from the
 	// earlier projections without relying on output path parsing.

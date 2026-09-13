@@ -372,6 +372,23 @@ func materializationIssueErrors(report *materialize.Report) (warnings, errorsOut
 	return warnings, errorsOut
 }
 
+// reportDiagnosticErrors keeps compiler diagnostics on the normal CLI
+// renderer. Materialization-owned diagnostics are projected separately as
+// structured issues, so this helper must never return them.
+func reportDiagnosticErrors(report *materialize.Report, severity diag.Severity) []error {
+	if report == nil {
+		return nil
+	}
+	var diagnostics []error
+	for _, d := range report.Diags {
+		if d.Severity != severity || materialize.IsMaterializationDiagnostic(d) {
+			continue
+		}
+		diagnostics = append(diagnostics, pipeline.PromoteDiagnostic(d))
+	}
+	return dedupIssues(diagnostics)
+}
+
 // writeMaterializationIssues renders the report-owned projection once for a
 // command surface. The caller remains responsible for its normal table and
 // resolver/config diagnostic output.
@@ -493,7 +510,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	// Warnings do not affect drift detection or the --check exit code.
 	// Concat, not append: appending to resolvedResult.Warnings could write into
 	// its spare capacity and mutate the caller's slice.
-	allWarnings := slices.Concat(lockWarnings, resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult))
+	allWarnings := slices.Concat(lockWarnings, resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult), reportDiagnosticErrors(report, diag.SeverityWarning))
 	for _, warning := range dedupIssues(allWarnings) {
 		if _, err := fmt.Fprintf(out, "warning: %v\n", warning); err != nil {
 			return err
@@ -545,12 +562,7 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 
 	pendingCount := report.TotalWritten() + report.TotalRemoved()
 
-	var errorDiags []diag.Diagnostic
-	for _, d := range report.Diags {
-		if d.IsError() {
-			errorDiags = append(errorDiags, d)
-		}
-	}
+	genericErrors := reportDiagnosticErrors(report, diag.SeverityError)
 
 	if pendingCount > 0 {
 		if _, err := fmt.Fprintf(out, "sync: %d out of sync", pendingCount); err != nil {
@@ -578,31 +590,18 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 		}
 	}
 
-	surfaceErrors := report.SurfaceIssues()
-	for _, issue := range surfaceErrors {
+	surfaceErrorCount := 0
+	for _, issue := range report.SurfaceIssues() {
 		if issue.Severity != diag.SeverityError {
 			continue
 		}
+		surfaceErrorCount++
 		if _, err := fmt.Fprintf(out, "error: %s\n", materialize.FormatIssue(issue)); err != nil {
 			return err
 		}
 	}
-	for _, d := range errorDiags {
-		matched := false
-		for _, issue := range surfaceErrors {
-			if issue.Severity == diag.SeverityError && issue.Code == d.Code && issue.Resource == d.Resource && issue.Message == d.Message {
-				matched = true
-				break
-			}
-		}
-		if matched {
-			continue
-		}
-		label := d.Code
-		if d.Resource != "" {
-			label = fmt.Sprintf("%s (%s)", d.Code, d.Resource)
-		}
-		if _, err := fmt.Fprintf(out, "error: %s: %s\n", label, d.Message); err != nil {
+	if len(genericErrors) > 0 {
+		if err := writeSyncIssues(out, genericErrors, false, "error:"); err != nil {
 			return err
 		}
 	}
@@ -616,8 +615,12 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 	switch {
 	case pendingCount > 0:
 		return fmt.Errorf("%d skills out of sync", pendingCount)
-	case len(errorDiags) > 0:
-		return fmt.Errorf("%d materialization error(s)", len(errorDiags))
+	case surfaceErrorCount > 0 && len(genericErrors) == 0:
+		return fmt.Errorf("%d materialization error(s)", surfaceErrorCount)
+	case len(genericErrors) > 0 && surfaceErrorCount == 0:
+		return fmt.Errorf("%d compiler diagnostic error(s)", len(genericErrors))
+	case surfaceErrorCount > 0:
+		return fmt.Errorf("%d materialization error(s), %d compiler diagnostic error(s)", surfaceErrorCount, len(genericErrors))
 	case len(configErrs) > 0:
 		return errors.Join(configErrs...)
 	default:

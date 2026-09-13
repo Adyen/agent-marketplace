@@ -4756,6 +4756,18 @@ func materializationScope(machine bool) string {
 	return "project"
 }
 
+// IsMaterializationDiagnostic reports whether a diagnostic was authored by the
+// materialization layer rather than by the harness compiler. Compiler
+// diagnostics stay in the CLI's normal diagnostic renderer; only diagnostics
+// owned by materialization become structured SurfaceIssues.
+func IsMaterializationDiagnostic(d diag.Diagnostic) bool {
+	return IsMaterializationDiagnosticCode(d.Code)
+}
+
+func IsMaterializationDiagnosticCode(code string) bool {
+	return strings.HasPrefix(code, "materialize.")
+}
+
 func boundedMaterializationMessage(message string) string {
 	message = strings.Map(func(r rune) rune {
 		if r < 0x20 && r != '\t' {
@@ -4796,38 +4808,47 @@ func (tr *TargetReport) buildIssues() {
 		addPath(path, MaterializationOperationRemove, MaterializationOutcomeRemoved)
 	}
 	for _, d := range tr.Diags {
-		message := boundedMaterializationMessage(d.Message)
-		if !d.IsError() {
-			matchedSkip := false
-			for i := range issues {
-				if issues[i].Operation == MaterializationOperationSkip && issues[i].Resource == d.Resource {
-					issues[i].Code, issues[i].Severity, issues[i].Message = d.Code, d.Severity, message
-					issues[i].Outcome = MaterializationOutcomeWarning
-					matchedSkip = true
-					break
-				}
-			}
-			if matchedSkip {
-				continue
-			}
+		if !IsMaterializationDiagnostic(d) {
+			continue
 		}
+		message := boundedMaterializationMessage(d.Message)
 		operation, outcome := MaterializationOperationFailure, MaterializationOutcomeFailed
 		if !d.IsError() {
 			operation, outcome = MaterializationOperationSkip, MaterializationOutcomeWarning
 		}
 		issues = append(issues, MaterializationIssue{
 			Resource: d.Resource, Target: tr.Target, Scope: materializationScope(tr.MachineScope), RootID: tr.RootID,
-			Code: d.Code, Severity: d.Severity, Message: message,
+			Path: skippedPathForResource(*tr, d.Resource), Code: d.Code, Severity: d.Severity, Message: message,
 			Operation: operation, Outcome: outcome,
 		})
 	}
 	tr.Issues = issues
 }
 
+func skippedPathForResource(tr TargetReport, resource string) string {
+	if resource == "" || len(tr.ResourceByPath) == 0 {
+		return ""
+	}
+	var match string
+	for _, path := range tr.Skipped {
+		path = filepath.ToSlash(path)
+		if tr.ResourceByPath[path] != resource {
+			continue
+		}
+		if match != "" {
+			return ""
+		}
+		match = path
+	}
+	return match
+}
+
 func materializationIssueKey(issue MaterializationIssue) string {
 	return strings.Join([]string{
-		string(issue.Target), issue.Scope, issue.RootID, issue.Resource, issue.Path,
-		string(issue.Operation), string(issue.Outcome), issue.Code, issue.Message,
+		string(issue.Target), boundedMaterializationMessage(issue.Scope), boundedMaterializationMessage(issue.RootID),
+		boundedMaterializationMessage(issue.Resource), boundedMaterializationMessage(issue.Path),
+		string(issue.Operation), string(issue.Outcome), boundedMaterializationMessage(issue.Code),
+		boundedMaterializationMessage(issue.Message),
 	}, "\x00")
 }
 
@@ -4842,6 +4863,9 @@ func (r *Report) rebuildIssues() {
 			tr.buildIssues()
 		}
 		for _, issue := range tr.Issues {
+			if issue.Code != "" && !IsMaterializationDiagnosticCode(issue.Code) {
+				continue
+			}
 			key := materializationIssueKey(issue)
 			if _, ok := seen[key]; ok {
 				continue
@@ -4851,10 +4875,13 @@ func (r *Report) rebuildIssues() {
 		}
 	}
 	// Diagnostics are also retained when no target report was produced (for
-	// example, a compile or destination failure). Preserve their stable code,
-	// severity, and bounded text while attaching any subject/root known from a
-	// target report.
+	// example, a materialization or destination failure). Compiler diagnostics
+	// remain in Report.Diags for the CLI's normal renderer and are not projected
+	// into materialization-owned structured issues.
 	for _, d := range r.Diags {
+		if !IsMaterializationDiagnostic(d) {
+			continue
+		}
 		issue := MaterializationIssue{
 			Resource: d.Resource, Target: hcc.Target(d.Target), Code: d.Code, Severity: d.Severity,
 			Message: boundedMaterializationMessage(d.Message), Operation: MaterializationOperationFailure,

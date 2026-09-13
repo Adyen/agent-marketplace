@@ -60,8 +60,40 @@ func TestSyncCheckSummaryNamesTheErrorInsteadOfClaimingZeroDrift(t *testing.T) {
 	}
 }
 
-// TestSyncCheckSummaryKeepsTheDriftWording preserves the existing, correct
-// message for real drift (files to write / remove).
+func TestSyncCheckSummaryDeduplicatesStructuredAndGenericDiagnostics(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	longMessage := strings.Repeat("compiler detail ", 300)
+	structured := materialize.MaterializationIssue{
+		Resource: "materialized", Target: hcc.TargetClaude, Scope: "project", RootID: "root",
+		Operation: materialize.MaterializationOperationFailure, Outcome: materialize.MaterializationOutcomeFailed,
+		Code: "materialize.write.error", Severity: diag.SeverityError, Message: "permission denied",
+	}
+	generic := diag.Diagnostic{Code: "hcc.generic", Severity: diag.SeverityError, Resource: "compiled", Message: longMessage}
+	report := &materialize.Report{
+		Diags:  []diag.Diagnostic{generic, generic},
+		Issues: []materialize.MaterializationIssue{structured, structured},
+	}
+	var buf bytes.Buffer
+	if err := writeSyncCheckSummary(&buf, report, nil, nil); err == nil {
+		t.Fatal("duplicate diagnostic report must return an error")
+	}
+	out := buf.String()
+	if got := strings.Count(out, structured.Code); got != 1 {
+		t.Fatalf("structured diagnostic rendered %d times, want one: %q", got, out)
+	}
+	if got := strings.Count(out, generic.Code); got != 1 {
+		t.Fatalf("generic diagnostic rendered %d times, want one: %q", got, out)
+	}
+	if strings.Contains(out, longMessage) {
+		t.Fatal("generic diagnostic emitted an unbounded raw message after normal rendering")
+	}
+	if !strings.Contains(out, "compiled") {
+		t.Fatalf("generic diagnostic lost normal resource identity: %q", out)
+	}
+}
+
 func TestSyncCheckSummaryKeepsTheDriftWording(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -120,8 +152,23 @@ func driftOnlyReport(t *testing.T) *materialize.Report {
 	}
 }
 
-// TestSyncCheckSummarySilentWhenClean pins the in-sync contract: no output, no
-// error. A warning-only report is in sync.
+func TestGenericCompilerWarningStaysOnNormalRenderer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	report := &materialize.Report{Diags: []diag.Diagnostic{{
+		Code: diag.CodeRuleDevinUnsupported, Severity: diag.SeverityWarning,
+		Resource: "some-rule", Message: "rules are out of scope for devin",
+	}}}
+	if got := report.SurfaceIssues(); len(got) != 0 {
+		t.Fatalf("generic compiler warning entered SurfaceIssues: %#v", got)
+	}
+	normal := reportDiagnosticErrors(report, diag.SeverityWarning)
+	if len(normal) != 1 || !strings.Contains(normal[0].Error(), diag.CodeRuleDevinUnsupported) || !strings.Contains(normal[0].Error(), "some-rule") {
+		t.Fatalf("generic compiler warning lost normal rendering: %#v", normal)
+	}
+}
+
 func TestSyncCheckSummarySilentWhenClean(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

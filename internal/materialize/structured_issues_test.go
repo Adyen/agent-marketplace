@@ -56,6 +56,48 @@ func TestReportStructuredIssuesPreserveSubjectAndOperation(t *testing.T) {
 	}
 }
 
+func TestStructuredIssuesPreserveDistinctDiagnosticsAndSkippedPath(t *testing.T) {
+	report := &Report{PerRoot: []TargetReport{{
+		Target:  harnesscompilation.TargetDevin,
+		Skipped: []string{"skills/rules/SKILL.md"},
+		ResourceByPath: map[string]string{
+			"skills/rules/SKILL.md": "rules",
+		},
+		Diags: []diag.Diagnostic{
+			{Code: "materialize.collision.user-owned", Severity: diag.SeverityWarning, Resource: "rules", Message: "destination is user-owned"},
+			{Code: "materialize.skill.user-owned-preserved", Severity: diag.SeverityWarning, Resource: "rules", Message: "skill directory is user-owned"},
+			{Code: diag.CodeRuleDevinUnsupported, Severity: diag.SeverityWarning, Resource: "rules", Message: "rules are out of scope"},
+		},
+	}}}
+	report.rebuildIssues()
+	if len(report.Issues) != 3 {
+		t.Fatalf("issues = %d, want skip plus two distinct materialization diagnostics: %#v", len(report.Issues), report.Issues)
+	}
+	var surfaced []MaterializationIssue
+	for _, issue := range report.SurfaceIssues() {
+		if issue.Resource == "rules" {
+			surfaced = append(surfaced, issue)
+		}
+	}
+	if len(surfaced) != 2 {
+		t.Fatalf("surfaced diagnostics = %#v, want both distinct materialization-owned diagnostics", surfaced)
+	}
+	for _, issue := range surfaced {
+		if issue.Path != "skills/rules/SKILL.md" {
+			t.Fatalf("surfaced diagnostic = %#v, want exact skipped path", issue)
+		}
+	}
+	codes := map[string]bool{}
+	for _, issue := range surfaced {
+		codes[issue.Code] = true
+	}
+	for _, code := range []string{"materialize.collision.user-owned", "materialize.skill.user-owned-preserved"} {
+		if !codes[code] {
+			t.Fatalf("surfaced diagnostics lost %q: %#v", code, surfaced)
+		}
+	}
+}
+
 func TestStructuredIssuesKeepTargetAndScopeDistinct(t *testing.T) {
 	report := &Report{PerRoot: []TargetReport{
 		{Target: harnesscompilation.TargetClaude, RootID: "project", Written: []string{"skills/review/SKILL.md"}, ResourceByPath: map[string]string{"skills/review/SKILL.md": "review"}},
