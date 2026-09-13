@@ -90,24 +90,6 @@ func executeNativeAggregatePlans(ctx context.Context, report *Report, key output
 	}
 }
 
-// materializeNativeAggregates is retained for the one-shot helper path used by
-// older internal callers. BuildPlan uses planNativeAggregates instead so
-// Execute never resolves a destination after backup.
-func materializeNativeAggregates(ctx context.Context, report *Report, key outputKey, repoRoot string, artifacts []artifact.Artifact, blocked map[string]bool, dryRun bool) []artifact.Artifact {
-	destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
-	if err != nil {
-		report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, "", "", err, "materialize.destination.error"))
-		return nil
-	}
-	remaining, plans, err := planNativeAggregates(key, destinations, artifacts, blocked)
-	if err != nil {
-		report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, "", "", err, "materialize.write.error"))
-		return nil
-	}
-	executeNativeAggregatePlans(ctx, report, key, plans, dryRun)
-	return remaining
-}
-
 func syncNativeAggregate(key outputKey, destination harness.Destination, rel string, desired map[string]json.RawMessage, dryRun, pruneStaleEntries bool) (TargetReport, error) {
 	tr := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: destination.ID, OutDir: destination.Root}
 	hasDesired := hasNativeDesiredEntries(desired)
