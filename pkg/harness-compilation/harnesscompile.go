@@ -712,12 +712,22 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 			report.Removed = append(report.Removed, candidate.Path)
 		}
 	}
+	rootSnapshot, err := snapshotMaterializeRoot(outDir)
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: snapshot output root: %w", err)
+	}
+	if err := revalidateMaterializeRoot(outDir, rootSnapshot); err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: output root changed during planning: %w", err)
+	}
 
 	// Dry-run: return report without any I/O.
 	if cfg.dryRun {
 		return report, partialError(report)
 	}
 
+	if err := revalidateMaterializeRoot(outDir, rootSnapshot); err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: output root changed before publication: %w", err)
+	}
 	// Ensure outDir exists.
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: create outDir: %w", err)
@@ -791,22 +801,18 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 				report.PruneConflicts = append(report.PruneConflicts, candidate.Path)
 				return report, fmt.Errorf("harnesscompile.Materialize: stale file %q: %w: %v", candidate.Path, ErrStalePruneConflict, err)
 			}
-			unchanged, err := RevalidateStaleFileCandidate(stalePath, candidate)
-			if err != nil {
-				return nil, fmt.Errorf("harnesscompile.Materialize: revalidate stale file %q: %w", candidate.Path, err)
-			}
-			if !unchanged {
-				pruneConflicts = append(pruneConflicts, candidate.Path)
-				slog.Warn("materialize stale prune preserved changed output", "out_dir", outDir, "path", candidate.Path)
-				continue
-			}
-			if err := os.Remove(stalePath); err != nil {
-				if !os.IsNotExist(err) {
-					return nil, fmt.Errorf("harnesscompile.Materialize: remove stale file %q: %w", candidate.Path, err)
+			if err := RemoveStaleFileCandidate(stalePath, candidate); err != nil {
+				if errors.Is(err, ErrStalePruneConflict) {
+					pruneConflicts = append(pruneConflicts, candidate.Path)
+					slog.Warn("materialize stale prune preserved changed output", "out_dir", outDir, "path", candidate.Path)
+					continue
 				}
-				continue
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, fmt.Errorf("harnesscompile.Materialize: remove stale file %q: %w", candidate.Path, err)
 			}
-			cleanEmptyDirs(outDir, filepath.Dir(filepath.FromSlash(candidate.Path)))
+			cleanEmptyDirs(outDir, filepath.Dir(filepath.FromSlash(candidate.Path)), candidate.parents)
 		}
 		if len(pruneConflicts) > 0 {
 			report.PruneConflicts = pruneConflicts
@@ -1017,6 +1023,58 @@ func fileMatchesBytes(path string, expected []byte) (bool, bool, error) {
 	return bytes.Equal(data, expected), true, nil
 }
 
+type materializeRootSnapshot struct {
+	exists bool
+	info   fs.FileInfo
+}
+
+func snapshotMaterializeRoot(path string) (materializeRootSnapshot, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return materializeRootSnapshot{}, nil
+	}
+	if err != nil {
+		return materializeRootSnapshot{}, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return materializeRootSnapshot{}, fmt.Errorf("output root is not a real directory")
+	}
+	return materializeRootSnapshot{exists: true, info: info}, nil
+}
+
+func revalidateMaterializeRoot(path string, snapshot materializeRootSnapshot) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		if !snapshot.exists {
+			return nil
+		}
+		return errors.New("output root disappeared")
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("output root is no longer a real directory")
+	}
+	if !snapshot.exists || !os.SameFile(snapshot.info, info) {
+		return errors.New("output root identity changed")
+	}
+	return nil
+}
+
+func isMaterializeTransactionDir(name string) bool {
+	for _, prefix := range []string{".tmp-", ".agent-marketplace-convert-", ".agent-marketplace-recovery-", ".agent-marketplace-stale-"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isMaterializeTransactionFile(name string) bool {
+	return isMaterializeTransactionDir(name) || strings.HasPrefix(name, ".agent-marketplace-stale-")
+}
+
 // findStaleFiles walks outDir and returns no-follow identity snapshots for
 // paths not in the artifactPaths set.
 func findStaleFiles(outDir string, artifactPaths map[string]struct{}) ([]StaleFileCandidate, error) {
@@ -1026,14 +1084,16 @@ func findStaleFiles(outDir string, artifactPaths map[string]struct{}) ([]StaleFi
 			return err
 		}
 		if d.IsDir() {
+			if path != outDir && isMaterializeTransactionDir(d.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		rel, err := filepath.Rel(outDir, path)
 		if err != nil {
 			return err
 		}
-		// Skip staging directories.
-		if strings.HasPrefix(filepath.Base(rel), ".tmp-") {
+		if isMaterializeTransactionFile(filepath.Base(rel)) {
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
@@ -1059,19 +1119,38 @@ func findStaleFiles(outDir string, artifactPaths map[string]struct{}) ([]StaleFi
 	return stale, nil
 }
 
-// cleanEmptyDirs removes empty parent directories of relPath from outDir upward.
-func cleanEmptyDirs(outDir, relPath string) {
+// cleanEmptyDirs removes empty parent directories of relPath from outDir
+// upward, but only while each directory still has the inode captured during
+// stale discovery. This prevents a root or parent replacement from turning
+// post-prune cleanup into a deletion of a user's replacement tree.
+func cleanEmptyDirs(outDir, relPath string, parents []staleParentSnapshot) {
 	parts := strings.Split(relPath, "/")
 	for i := len(parts); i >= 1; i-- {
 		dirPath := filepath.Join(outDir, filepath.FromSlash(strings.Join(parts[:i], "/")))
 		if dirPath == outDir {
 			break
 		}
+		current, err := os.Lstat(dirPath)
+		if err != nil {
+			break
+		}
+		var expected fs.FileInfo
+		for _, parent := range parents {
+			if parent.path == dirPath {
+				expected = parent.info
+				break
+			}
+		}
+		if expected == nil || !current.IsDir() || current.Mode()&os.ModeSymlink != 0 || !os.SameFile(expected, current) {
+			break
+		}
 		entries, err := os.ReadDir(dirPath)
 		if err != nil || len(entries) > 0 {
 			break
 		}
-		_ = os.Remove(dirPath)
+		if err := os.Remove(dirPath); err != nil {
+			break
+		}
 	}
 }
 

@@ -114,6 +114,34 @@ func TestMergeFragments_PreservesExplicitExternalPolicy(t *testing.T) {
 	}
 }
 
+func TestMergeFragments_ExplicitPolicyOverridesLegacyAggregateFlags(t *testing.T) {
+	input := []Artifact{
+		{
+			Path:                           "config.json",
+			Bytes:                          []byte(`{"one":1}`),
+			Fragment:                       true,
+			FragmentKey:                    "config",
+			Reconciliation:                 ReconciliationPolicy{Mode: ReconciliationReplace},
+			ExternalReconciliationRequired: true,
+			MergeWithExisting:              true,
+			ManagedByField:                 "_managed_by",
+			ManagedByValue:                 "stale",
+		},
+		{Path: "config.json", Bytes: []byte(`{"two":2}`), Fragment: true, FragmentKey: "config"},
+	}
+	merged, err := MergeFragments(input)
+	if err != nil {
+		t.Fatalf("MergeFragments: %v", err)
+	}
+	policy, err := merged[0].Policy()
+	if err != nil {
+		t.Fatalf("merged Policy() = %v", err)
+	}
+	if policy != (ReconciliationPolicy{Mode: ReconciliationReplace}) {
+		t.Fatalf("merged policy = %+v, want explicit replacement", policy)
+	}
+}
+
 func TestMergeFragments_PassThrough(t *testing.T) {
 	input := []Artifact{
 		{Path: "skills/a.md", Bytes: []byte("skill-a")},

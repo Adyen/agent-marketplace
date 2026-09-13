@@ -158,6 +158,100 @@ func TestConvertCommandRejectsCanonicalSourceOutputOverlap(t *testing.T) {
 	}
 }
 
+func TestCodexConversionResultTypedPolicyOverridesStaleLegacyExternal(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	tests := []struct {
+		name   string
+		policy hcc.ReconciliationPolicy
+	}{
+		{name: "replace", policy: hcc.ReconciliationPolicy{Mode: hcc.ReconciliationReplace}},
+		{name: "marker", policy: hcc.ReconciliationPolicy{Mode: hcc.ReconciliationMarker, MarkerField: "_managed_by", MarkerValue: "agent-marketplace"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := codexConversionResult(&hcc.Result{Artifacts: []hcc.Artifact{{
+				Path:                           codexConversionHooksPath,
+				Bytes:                          []byte(`{"hooks":{}}`),
+				Reconciliation:                 tt.policy,
+				Fragment:                       tt.policy.Mode == hcc.ReconciliationMarker,
+				ExternalReconciliationRequired: true,
+			}}})
+			if err != nil {
+				t.Fatalf("codexConversionResult: %v", err)
+			}
+			if result.Artifacts[0].ExternalReconciliationRequired {
+				t.Fatal("stale legacy external policy was retained")
+			}
+			got, err := result.Artifacts[0].Policy()
+			if err != nil {
+				t.Fatalf("converted policy: %v", err)
+			}
+			if got != tt.policy {
+				t.Fatalf("converted policy = %+v, want %+v", got, tt.policy)
+			}
+		})
+	}
+}
+
+func TestConversionRootRevalidationRejectsConcurrentSubstitution(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := filepath.Join(t.TempDir(), "source")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := snapshotConversionRoot(root, true)
+	if err != nil {
+		t.Fatalf("snapshot conversion root: %v", err)
+	}
+	replacement := filepath.Join(t.TempDir(), "replacement")
+	if err := os.Mkdir(replacement, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	startSubstitution := make(chan struct{})
+	substitutionDone := make(chan error, 1)
+	go func() {
+		<-startSubstitution
+		if err := os.Remove(root); err != nil {
+			substitutionDone <- err
+			return
+		}
+		substitutionDone <- os.Rename(replacement, root)
+	}()
+	close(startSubstitution)
+	if err := <-substitutionDone; err != nil {
+		t.Fatalf("substitute source root: %v", err)
+	}
+	if err := revalidateConversionRoot(snapshot); err == nil {
+		t.Fatal("source root substitution was not rejected")
+	}
+
+	output := filepath.Join(t.TempDir(), "output")
+	if err := os.Mkdir(output, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outputSnapshot, err := snapshotConversionRoot(output, false)
+	if err != nil {
+		t.Fatalf("snapshot conversion output root: %v", err)
+	}
+	replacementOutput := filepath.Join(t.TempDir(), "replacement-output")
+	if err := os.Mkdir(replacementOutput, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(output); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacementOutput, output); err != nil {
+		t.Fatal(err)
+	}
+	if err := revalidateConversionRoot(outputSnapshot); err == nil {
+		t.Fatal("output root substitution was not rejected")
+	}
+}
+
 func TestConvertCommandToCodexPublishesCompleteSharedAggregates(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
