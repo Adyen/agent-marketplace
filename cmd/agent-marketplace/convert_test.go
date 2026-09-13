@@ -159,6 +159,8 @@ func TestConvertCommandRejectsCanonicalSourceOutputOverlap(t *testing.T) {
 }
 
 
+
+
 func TestCodexConversionResultTypedPolicyOverridesStaleLegacyExternal(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -253,6 +255,7 @@ func TestConversionRootRevalidationRejectsConcurrentSubstitution(t *testing.T) {
 	}
 }
 
+
 func TestConversionRootRevalidationRejectsSymlinkedOutputAncestorSubstitution(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -283,6 +286,7 @@ func TestConversionRootRevalidationRejectsSymlinkedOutputAncestorSubstitution(t 
 		t.Fatalf("substituted ancestor was followed during validation: %v", err)
 	}
 }
+
 
 
 func TestConvertCommandToCodexPublishesCompleteSharedAggregates(t *testing.T) {
