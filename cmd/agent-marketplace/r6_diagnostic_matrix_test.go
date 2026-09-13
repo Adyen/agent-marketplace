@@ -10,12 +10,6 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
-// TestR6DiagnosticProjectionMatrix is independently authored against the
-// externally visible diagnostic contract. It intentionally combines a hostile
-// pre-populated issue, ownership diagnostics from both root and report seams,
-// a generic compiler diagnostic, and diagnostics distinguished only by target
-// and severity. Keeping these cases together prevents one projection from
-// silently repairing a different projection's identity.
 func TestR6DiagnosticProjectionMatrix(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -63,8 +57,6 @@ func TestR6DiagnosticProjectionMatrix(t *testing.T) {
 		materialize.MaterializationIssue{Resource: "long", Target: hcc.TargetClaude, Code: diag.CodeOwnershipEntryDrift, Severity: diag.SeverityError, Operation: materialize.MaterializationOperationFailure, Outcome: materialize.MaterializationOutcomeFailed, Message: repeatedPrefix + "B"},
 	)
 
-	// The same compiler fact with a different target and severity is still two
-	// public diagnostics. Its rendered message is intentionally identical.
 	base := diag.Diagnostic{Code: "compiler.same", Resource: "identity", Message: "same fact"}
 	identityDiagnostics := []error{
 		pipeline.PromoteDiagnostic(withTargetAndSeverity(base, string(hcc.TargetClaude), diag.SeverityError)),

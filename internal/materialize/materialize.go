@@ -4774,10 +4774,7 @@ func IsMaterializationDiagnostic(d diag.Diagnostic) bool {
 }
 
 func IsMaterializationDiagnosticCode(code string) bool {
-	// Ownership diagnostics are emitted by the materialization boundary and
-	// describe a failed or safety-preserving materialization decision. Keep
-	// them with materialization issues; compiler diagnostics remain on the
-	// normal renderer.
+	// ownership.* diagnostics are materialization-owned.
 	return strings.HasPrefix(code, "materialize.") || strings.HasPrefix(code, "ownership.")
 }
 
