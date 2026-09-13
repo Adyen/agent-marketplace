@@ -25,37 +25,6 @@ type conversionCreatedDirectory struct {
 	path     string
 }
 
-func canonicalConversionExistingPath(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	current := filepath.Clean(absolute)
-	var missing []string
-	for {
-		resolved, resolveErr := filepath.EvalSymlinks(current)
-		if resolveErr == nil {
-			resolved, err = filepath.Abs(resolved)
-			if err != nil {
-				return "", err
-			}
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, missing[i])
-			}
-			return filepath.Clean(resolved), nil
-		}
-		if !os.IsNotExist(resolveErr) {
-			return "", resolveErr
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", resolveErr
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-	}
-}
-
 func openConversionDirectoryForSnapshot(path string, create bool, snapshot *conversionRootSnapshot) (int, []conversionCreatedDirectory, error) {
 	fd, created, err := openConversionDirectory(path, create)
 	if err != nil || snapshot == nil {
@@ -107,7 +76,7 @@ func openConversionDirectory(path string, create bool) (int, []conversionCreated
 	}
 	absolute = filepath.Clean(absolute)
 	if absolute != string(filepath.Separator) {
-		parent, parentErr := canonicalConversionExistingPath(filepath.Dir(absolute))
+		parent, parentErr := canonicalConversionPath(filepath.Dir(absolute))
 		if parentErr != nil {
 			return -1, nil, fmt.Errorf("resolve conversion directory parent %q: %w", filepath.Dir(absolute), parentErr)
 		}
