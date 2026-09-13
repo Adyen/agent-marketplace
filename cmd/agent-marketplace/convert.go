@@ -156,14 +156,14 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	var writeReport *hcc.WriteReport
 	switch to {
 	case "codex":
-		writeReport, err = materializeCodexConversion(result, outDir, matOpts, dryRun, rootGuard)
+		writeReport, err = materializeCodexConversion(result, canonicalOutput, matOpts, dryRun, rootGuard)
 	case "devin":
-		writeReport, err = materializeDevinConversion(result, outDir, matOpts, dryRun, rootGuard)
+		writeReport, err = materializeDevinConversion(result, canonicalOutput, matOpts, dryRun, rootGuard)
 	default:
 		if err := rootGuard(); err != nil {
 			return err
 		}
-		writeReport, err = hcc.Materialize(result, outDir, matOpts...)
+		writeReport, err = hcc.Materialize(result, canonicalOutput, matOpts...)
 	}
 	if err != nil && !errors.Is(err, hcc.ErrPartialResult) {
 		return fmt.Errorf("materialize: %w", err)
@@ -255,10 +255,16 @@ func conversionPathsOverlap(source, output string) bool {
 	return false
 }
 
+type conversionRootAncestor struct {
+	path string
+	info os.FileInfo
+}
+
 type conversionRootSnapshot struct {
-	path   string
-	exists bool
-	info   os.FileInfo
+	path      string
+	exists    bool
+	info      os.FileInfo
+	ancestors []conversionRootAncestor
 }
 
 func snapshotConversionRoot(path string, required bool) (conversionRootSnapshot, error) {
@@ -267,33 +273,67 @@ func snapshotConversionRoot(path string, required bool) (conversionRootSnapshot,
 		if required {
 			return conversionRootSnapshot{}, fmt.Errorf("conversion source %q does not exist", path)
 		}
-		return conversionRootSnapshot{path: path}, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return conversionRootSnapshot{}, fmt.Errorf("inspect conversion root %q: %w", path, err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	} else if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return conversionRootSnapshot{}, fmt.Errorf("conversion root %q is not a real directory", path)
 	}
-	return conversionRootSnapshot{path: path, exists: true, info: info}, nil
+
+	snapshot := conversionRootSnapshot{path: path, exists: err == nil, info: info}
+	for candidate := filepath.Dir(path); ; candidate = filepath.Dir(candidate) {
+		ancestorInfo, ancestorErr := os.Lstat(candidate)
+		switch {
+		case ancestorErr == nil:
+			if !ancestorInfo.IsDir() || ancestorInfo.Mode()&os.ModeSymlink != 0 {
+				return conversionRootSnapshot{}, fmt.Errorf("conversion root ancestor %q is not a real directory", candidate)
+			}
+		case os.IsNotExist(ancestorErr):
+			ancestorInfo = nil
+		default:
+			return conversionRootSnapshot{}, fmt.Errorf("inspect conversion root ancestor %q: %w", candidate, ancestorErr)
+		}
+		snapshot.ancestors = append(snapshot.ancestors, conversionRootAncestor{path: candidate, info: ancestorInfo})
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			break
+		}
+	}
+	return snapshot, nil
 }
 
 func revalidateConversionRoot(snapshot conversionRootSnapshot) error {
 	info, err := os.Lstat(snapshot.path)
 	if os.IsNotExist(err) {
-		if !snapshot.exists {
-			return nil
+		if snapshot.exists {
+			return fmt.Errorf("root disappeared")
 		}
-		return fmt.Errorf("root disappeared")
-	}
-	if err != nil {
+	} else if err != nil {
 		return err
+	} else {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("root is no longer a real directory")
+		}
+		if !snapshot.exists || !os.SameFile(snapshot.info, info) {
+			return fmt.Errorf("root identity changed")
+		}
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("root is no longer a real directory")
-	}
-	if !snapshot.exists || !os.SameFile(snapshot.info, info) {
-		return fmt.Errorf("root identity changed")
+	for _, ancestor := range snapshot.ancestors {
+		current, currentErr := os.Lstat(ancestor.path)
+		if ancestor.info == nil {
+			if currentErr == nil {
+				return fmt.Errorf("root ancestor %q was created", ancestor.path)
+			}
+			if os.IsNotExist(currentErr) {
+				continue
+			}
+			return fmt.Errorf("inspect root ancestor %q: %w", ancestor.path, currentErr)
+		}
+		if currentErr != nil {
+			return fmt.Errorf("root ancestor %q changed: %w", ancestor.path, currentErr)
+		}
+		if !current.IsDir() || current.Mode()&os.ModeSymlink != 0 || !os.SameFile(ancestor.info, current) {
+			return fmt.Errorf("root ancestor %q identity changed", ancestor.path)
+		}
 	}
 	return nil
 }
