@@ -571,6 +571,38 @@ func TestConvertSyncPreservesConcurrentlyModifiedStaleCandidate(t *testing.T) {
 	assertFileContents(t, stalePath, "external-writer\n")
 }
 
+func TestPublishCodexConversionRejectsNestedParentSubstitution(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	stageDir, outDir := t.TempDir(), t.TempDir()
+	const rel = ".agents/skills/demo/SKILL.md"
+	writeFile(t, filepath.Join(stageDir, filepath.FromSlash(rel)), "conversion\\n")
+	writeFile(t, filepath.Join(outDir, filepath.FromSlash(".agents/skills/.keep")), "keep\\n")
+
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "demo", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(outsideFile), 0o755); err != nil {
+		t.Fatalf("create outside destination: %v", err)
+	}
+	originalParent := filepath.Join(outDir, ".agents", "skills")
+	err := publishCodexConversionWith(stageDir, outDir, []string{rel}, func(publication codexConversionPublication) error {
+		if err := os.RemoveAll(originalParent); err != nil {
+			return err
+		}
+		if err := os.Symlink(outside, originalParent); err != nil {
+			return err
+		}
+		return publishCodexConversionFile(publication)
+	})
+	if err == nil {
+		t.Fatal("publication succeeded through a substituted nested parent")
+	}
+	if _, statErr := os.Lstat(outsideFile); !os.IsNotExist(statErr) {
+		t.Fatalf("publication escaped output root through nested parent: %v", statErr)
+	}
+}
+
 func TestPublishCodexConversionRollsBackOnlyConversionArtifacts(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

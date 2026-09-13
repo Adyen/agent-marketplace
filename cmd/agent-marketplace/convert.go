@@ -451,18 +451,23 @@ func codexConversionSharedFileError(rel string) error {
 }
 
 type codexConversionPublication struct {
-	rel            string
-	src            string
-	dst            string
-	backup         string
-	quarantine     string
-	recoveryDir    string
-	sourceInfo     os.FileInfo
-	sourceDigest   [sha256.Size]byte
-	originalInfo   os.FileInfo
-	originalDigest [sha256.Size]byte
-	existed        bool
-	shared         bool
+	rel              string
+	src              string
+	dst              string
+	backup           string
+	quarantine       string
+	recoveryDir      string
+	recoveryFD       int
+	recoveryParentFD int
+	recoveryName     string
+	destinationFD    int
+	destinationName  string
+	sourceInfo       os.FileInfo
+	sourceDigest     [sha256.Size]byte
+	originalInfo     os.FileInfo
+	originalDigest   [sha256.Size]byte
+	existed          bool
+	shared           bool
 }
 
 func publishCodexConversionWith(stageDir, outDir string, written []string, publishFile func(codexConversionPublication) error) error {
@@ -470,11 +475,17 @@ func publishCodexConversionWith(stageDir, outDir string, written []string, publi
 }
 
 func publishCodexConversionFile(publication codexConversionPublication) error {
+	if publication.destinationFD >= 0 {
+		if publication.existed {
+			return replaceCodexConversionFileAt(publication)
+		}
+		// Staging shares the destination filesystem, so a descriptor-relative hard
+		// link exposes the staged inode without following a substituted parent.
+		return linkConversionFileAt(publication.src, publication.destinationFD, publication.destinationName)
+	}
 	if publication.existed {
 		return replaceCodexConversionFile(publication, os.Link)
 	}
-	// Staging shares the destination filesystem, so a hard link exposes the
-	// staged inode atomically and fails if another writer won the path.
 	return os.Link(publication.src, publication.dst)
 }
 
@@ -506,15 +517,46 @@ func replaceCodexConversionFile(publication codexConversionPublication, linkFile
 	return nil
 }
 
+func replaceCodexConversionFileAt(publication codexConversionPublication) error {
+	if err := renameConversionFileAt(publication.destinationFD, publication.destinationName, publication.recoveryFD, filepath.Base(publication.backup)); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("codex conversion publication conflict for %q: destination changed after planning", publication.rel)
+		}
+		return fmt.Errorf("quarantine prior Codex artifact %q: %w", publication.rel, err)
+	}
+	matches, err := conversionFileMatchesAt(publication.recoveryFD, filepath.Base(publication.backup), publication.originalInfo, publication.originalDigest)
+	if err != nil || !matches {
+		conflict := fmt.Errorf("codex conversion publication conflict for %q: destination changed after planning", publication.rel)
+		if restoreErr := restoreCodexConversionQuarantineAt(publication); restoreErr != nil {
+			return errors.Join(conflict, codexConversionRecoveryError(publication.rel, publication.backup), restoreErr)
+		}
+		if err != nil {
+			return errors.Join(conflict, err)
+		}
+		return conflict
+	}
+	if err := linkConversionFileAt(publication.src, publication.destinationFD, publication.destinationName); err != nil {
+		if restoreErr := restoreCodexConversionQuarantineAt(publication); restoreErr != nil {
+			conflict := fmt.Errorf("codex conversion publication conflict for %q: destination changed during publication", publication.rel)
+			return errors.Join(err, conflict, codexConversionRecoveryError(publication.rel, publication.backup), restoreErr)
+		}
+		return err
+	}
+	return nil
+}
+
 func planCodexConversionPublication(stageDir, outDir string, written []string) ([]codexConversionPublication, error) {
 	ordered := orderCodexConversionPaths(written)
 	publications := make([]codexConversionPublication, 0, len(ordered))
 	for _, rel := range ordered {
 		publication := codexConversionPublication{
-			rel:    rel,
-			src:    filepath.Join(stageDir, filepath.FromSlash(rel)),
-			dst:    filepath.Join(outDir, filepath.FromSlash(rel)),
-			shared: isCodexConversionSharedPath(rel),
+			rel:              rel,
+			src:              filepath.Join(stageDir, filepath.FromSlash(rel)),
+			dst:              filepath.Join(outDir, filepath.FromSlash(rel)),
+			recoveryFD:       -1,
+			recoveryParentFD: -1,
+			destinationFD:    -1,
+			shared:           isCodexConversionSharedPath(rel),
 		}
 		info, digest, err := snapshotCodexConversionFile(publication.src)
 		if err != nil {
@@ -585,48 +627,7 @@ func isCodexConversionSharedPath(path string) bool {
 	return path == codexConversionHooksPath || path == codexConversionMCPPath
 }
 
-func ensureCodexConversionDirs(outDir, dir string, created *[]string) error {
-	root := filepath.Clean(outDir)
-	rel, err := filepath.Rel(root, filepath.Clean(dir))
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("directory %q escapes output root %q", dir, outDir)
-	}
-
-	dirs := []string{root}
-	current := root
-	if rel != "." {
-		for _, component := range strings.Split(rel, string(filepath.Separator)) {
-			current = filepath.Join(current, component)
-			dirs = append(dirs, current)
-		}
-	}
-	for _, candidate := range dirs {
-		info, statErr := os.Lstat(candidate)
-		if statErr == nil {
-			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("%s is not a directory", candidate)
-			}
-			continue
-		}
-		if !os.IsNotExist(statErr) {
-			return statErr
-		}
-		if mkdirErr := os.Mkdir(candidate, 0o755); mkdirErr != nil {
-			if !os.IsExist(mkdirErr) {
-				return mkdirErr
-			}
-			info, statErr = os.Lstat(candidate)
-			if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("%s was created concurrently as a non-directory", candidate)
-			}
-			continue
-		}
-		*created = append(*created, candidate)
-	}
-	return nil
-}
-
-func rollbackCodexConversion(cause error, published []codexConversionPublication, createdDirs []string) error {
+func rollbackCodexConversion(cause error, published []codexConversionPublication, createdDirs []conversionCreatedDirectory) error {
 	var rollbackErrors []error
 	for i := len(published) - 1; i >= 0; i-- {
 		if err := rollbackCodexConversionPublication(published[i]); err != nil {
@@ -634,11 +635,11 @@ func rollbackCodexConversion(cause error, published []codexConversionPublication
 		}
 	}
 	for i := len(createdDirs) - 1; i >= 0; i-- {
-		if err := os.Remove(createdDirs[i]); err != nil && !os.IsNotExist(err) {
+		if err := removeConversionDirectoryAt(createdDirs[i].parentFD, createdDirs[i].name); err != nil && !os.IsNotExist(err) {
 			// Preserve a non-empty directory that now contains another writer's
 			// content and keep the original failure primary.
 			if !errors.Is(err, os.ErrExist) {
-				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove directory %q: %w", createdDirs[i], err))
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove directory %q: %w", createdDirs[i].path, err))
 			}
 		}
 	}
@@ -649,6 +650,9 @@ func rollbackCodexConversion(cause error, published []codexConversionPublication
 }
 
 func rollbackCodexConversionPublication(publication codexConversionPublication) error {
+	if publication.destinationFD >= 0 {
+		return rollbackCodexConversionPublicationAt(publication)
+	}
 	if err := os.Rename(publication.dst, publication.quarantine); err != nil {
 		conflict := fmt.Errorf("codex conversion rollback conflict for %q: destination changed after publication; current path preserved", publication.rel)
 		if publication.existed {
@@ -690,6 +694,72 @@ func rollbackCodexConversionPublication(publication codexConversionPublication) 
 			codexConversionRecoveryError(publication.rel, publication.backup),
 			err,
 		)
+	}
+	return nil
+}
+
+func rollbackCodexConversionPublicationAt(publication codexConversionPublication) error {
+	if err := renameConversionFileAt(publication.destinationFD, publication.destinationName, publication.recoveryFD, filepath.Base(publication.quarantine)); err != nil {
+		conflict := fmt.Errorf("codex conversion rollback conflict for %q: destination changed after publication; current path preserved", publication.rel)
+		if publication.existed {
+			conflict = errors.Join(conflict, codexConversionRecoveryError(publication.rel, publication.backup))
+		}
+		if os.IsNotExist(err) {
+			return conflict
+		}
+		return errors.Join(conflict, err)
+	}
+
+	matches, verifyErr := conversionFileMatchesAt(publication.recoveryFD, filepath.Base(publication.quarantine), publication.sourceInfo, publication.sourceDigest)
+	if verifyErr != nil || !matches {
+		conflict := fmt.Errorf("codex conversion rollback conflict for %q: destination changed after publication; current path preserved", publication.rel)
+		if publication.existed {
+			conflict = errors.Join(conflict, codexConversionRecoveryError(publication.rel, publication.backup))
+		}
+		if restoreErr := restoreCodexConversionQuarantineAtPath(publication); restoreErr != nil {
+			conflict = errors.Join(conflict, codexConversionRecoveryError(publication.rel, publication.quarantine), restoreErr)
+		}
+		if verifyErr != nil {
+			conflict = errors.Join(conflict, verifyErr)
+		}
+		return conflict
+	}
+
+	if err := removeConversionFileAt(publication.recoveryFD, filepath.Base(publication.quarantine)); err != nil {
+		return errors.Join(
+			fmt.Errorf("codex conversion rollback conflict for %q: remove verified published artifact: %w", publication.rel, err),
+			codexConversionRecoveryError(publication.rel, publication.quarantine),
+		)
+	}
+	if !publication.existed {
+		return nil
+	}
+	if err := restoreCodexConversionBackupAt(publication); err != nil {
+		return errors.Join(
+			fmt.Errorf("codex conversion rollback conflict for %q: destination changed while restoring the prior artifact", publication.rel),
+			codexConversionRecoveryError(publication.rel, publication.backup),
+			err,
+		)
+	}
+	return nil
+}
+
+func restoreCodexConversionQuarantineAtPath(publication codexConversionPublication) error {
+	if err := linkConversionFileBetweenAt(publication.recoveryFD, filepath.Base(publication.quarantine), publication.destinationFD, publication.destinationName); err != nil {
+		return fmt.Errorf("restore quarantined Codex artifact: %w", err)
+	}
+	if err := removeConversionFileAt(publication.recoveryFD, filepath.Base(publication.quarantine)); err != nil {
+		return fmt.Errorf("remove restored Codex artifact quarantine: %w", err)
+	}
+	return nil
+}
+
+func restoreCodexConversionBackupAt(publication codexConversionPublication) error {
+	if err := linkConversionFileBetweenAt(publication.recoveryFD, filepath.Base(publication.backup), publication.destinationFD, publication.destinationName); err != nil {
+		return fmt.Errorf("restore prior Codex artifact: %w", err)
+	}
+	if err := removeConversionFileAt(publication.recoveryFD, filepath.Base(publication.backup)); err != nil {
+		return fmt.Errorf("remove restored prior Codex artifact backup: %w", err)
 	}
 	return nil
 }
@@ -761,6 +831,16 @@ func restoreCodexConversionQuarantine(quarantine, dst string) error {
 	return nil
 }
 
+func restoreCodexConversionQuarantineAt(publication codexConversionPublication) error {
+	if err := linkConversionFileBetweenAt(publication.recoveryFD, filepath.Base(publication.backup), publication.destinationFD, publication.destinationName); err != nil {
+		return fmt.Errorf("restore quarantined Codex artifact: %w", err)
+	}
+	if err := removeConversionFileAt(publication.recoveryFD, filepath.Base(publication.backup)); err != nil {
+		return fmt.Errorf("remove restored Codex artifact quarantine: %w", err)
+	}
+	return nil
+}
+
 func codexConversionRecoveryError(rel, path string) error {
 	return fmt.Errorf("prior Codex artifact %q preserved for recovery at %q", rel, path)
 }
@@ -771,7 +851,13 @@ func discardCodexConversionRecovery(publications []codexConversionPublication) e
 		if !publication.existed {
 			continue
 		}
-		matches, err := codexConversionFileMatches(publication.backup, publication.originalInfo, publication.originalDigest)
+		var matches bool
+		var err error
+		if publication.recoveryFD >= 0 {
+			matches, err = conversionFileMatchesAt(publication.recoveryFD, filepath.Base(publication.backup), publication.originalInfo, publication.originalDigest)
+		} else {
+			matches, err = codexConversionFileMatches(publication.backup, publication.originalInfo, publication.originalDigest)
+		}
 		if err != nil || !matches {
 			cleanupErrors = append(cleanupErrors, codexConversionRecoveryError(publication.rel, publication.backup))
 			if err != nil {
@@ -779,8 +865,14 @@ func discardCodexConversionRecovery(publications []codexConversionPublication) e
 			}
 			continue
 		}
-		if err := os.Remove(publication.backup); err != nil {
-			cleanupErrors = append(cleanupErrors, errors.Join(codexConversionRecoveryError(publication.rel, publication.backup), err))
+		var removeErr error
+		if publication.recoveryFD >= 0 {
+			removeErr = removeConversionFileAt(publication.recoveryFD, filepath.Base(publication.backup))
+		} else {
+			removeErr = os.Remove(publication.backup)
+		}
+		if removeErr != nil {
+			cleanupErrors = append(cleanupErrors, errors.Join(codexConversionRecoveryError(publication.rel, publication.backup), removeErr))
 		}
 	}
 	return errors.Join(cleanupErrors...)
@@ -796,7 +888,13 @@ func removeEmptyCodexConversionRecoveryDirs(publications []codexConversionPublic
 			continue
 		}
 		seen[publication.recoveryDir] = struct{}{}
-		_ = os.Remove(publication.recoveryDir)
+		if publication.recoveryParentFD >= 0 {
+			_ = removeConversionDirectoryAt(publication.recoveryParentFD, publication.recoveryName)
+			closeConversionFDValue(publication.recoveryFD)
+			closeConversionFDValue(publication.recoveryParentFD)
+		} else {
+			_ = os.Remove(publication.recoveryDir)
+		}
 	}
 }
 

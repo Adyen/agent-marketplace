@@ -148,13 +148,26 @@ func publishConversionWith(stageDir, outDir string, written, shared []string, ta
 	if publishFile == nil {
 		publishFile = publishCodexConversionFile
 	}
-	createdDirs := make([]string, 0, 4)
+	destinationFD, rootCreated, err := openConversionDirectory(outDir, true)
+	createdDirs := rootCreated
+	if err != nil {
+		rollbackErr := rollbackCodexConversion(fmt.Errorf("open destination for publication: %w", err), nil, createdDirs)
+		closeConversionCreatedDirectories(createdDirs)
+		return rollbackErr
+	}
+	defer closeConversionFD(&destinationFD)
+	defer func() { closeConversionCreatedDirectories(createdDirs) }()
+	defer closeConversionPublicationDirectories(publications)
 	published := make([]codexConversionPublication, 0, len(publications))
-	for _, publication := range publications {
-		if err := ensureCodexConversionDirs(outDir, filepath.Dir(publication.dst), &createdDirs); err != nil {
+	for i := range publications {
+		publication := &publications[i]
+		dirFD, err := ensureConversionDirectoryAt(destinationFD, filepath.Dir(filepath.FromSlash(publication.rel)), outDir, &createdDirs)
+		if err != nil {
 			return rollbackCodexConversion(fmt.Errorf("prepare destination for %q: %w", publication.rel, err), published, createdDirs)
 		}
-		if err := publishFile(publication); err != nil {
+		publication.destinationFD = dirFD
+		publication.destinationName = filepath.Base(filepath.FromSlash(publication.rel))
+		if err := publishFile(*publication); err != nil {
 			if publication.shared && os.IsExist(err) {
 				err = fmt.Errorf("%s shared file %q already exists; in-place conversion is unsupported; choose an empty destination", target, publication.rel)
 			} else {
@@ -162,7 +175,7 @@ func publishConversionWith(stageDir, outDir string, written, shared []string, ta
 			}
 			return rollbackCodexConversion(err, published, createdDirs)
 		}
-		published = append(published, publication)
+		published = append(published, *publication)
 	}
 	return discardCodexConversionRecovery(publications)
 }
@@ -176,7 +189,7 @@ func planConversionPublication(stageDir, outDir string, written, shared []string
 	sort.Strings(ordered)
 	publications := make([]codexConversionPublication, 0, len(ordered))
 	for _, rel := range ordered {
-		publication := codexConversionPublication{rel: rel, src: filepath.Join(stageDir, filepath.FromSlash(rel)), dst: filepath.Join(outDir, filepath.FromSlash(rel))}
+		publication := codexConversionPublication{rel: rel, src: filepath.Join(stageDir, filepath.FromSlash(rel)), dst: filepath.Join(outDir, filepath.FromSlash(rel)), recoveryFD: -1, recoveryParentFD: -1, destinationFD: -1}
 		_, publication.shared = sharedSet[rel]
 		info, digest, err := snapshotCodexConversionFile(publication.src)
 		if err != nil {
@@ -204,16 +217,16 @@ func planConversionPublication(stageDir, outDir string, written, shared []string
 	if len(publications) == 0 {
 		return publications, nil
 	}
-	recoveryParent, err := codexConversionStageParent(outDir)
-	if err != nil {
-		return nil, err
-	}
-	recoveryDir, err := os.MkdirTemp(recoveryParent, ".agent-marketplace-recovery-")
+	recoveryDir, recoveryFD, recoveryParentFD, recoveryName, err := createConversionRecoveryDirectory(outDir)
 	if err != nil {
 		return nil, fmt.Errorf("create %s conversion recovery directory: %w", target, err)
 	}
 	for i := range publications {
 		publications[i].recoveryDir = recoveryDir
+		publications[i].recoveryFD = recoveryFD
+		publications[i].recoveryParentFD = recoveryParentFD
+		publications[i].recoveryName = recoveryName
+		publications[i].destinationFD = -1
 		publications[i].backup = filepath.Join(recoveryDir, fmt.Sprintf("%d.original", i))
 		publications[i].quarantine = filepath.Join(recoveryDir, fmt.Sprintf("%d.current", i))
 	}
