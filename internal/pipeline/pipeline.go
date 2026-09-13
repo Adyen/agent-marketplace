@@ -886,7 +886,11 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) (map[hcc.Target]b
 		if !r.Source.IsMachineScope() {
 			continue
 		}
-		for _, t := range r.Harnesses {
+		targets := r.Harnesses
+		if targets == nil {
+			targets = []hcc.Target{hcc.TargetClaude}
+		}
+		for _, t := range targets {
 			seen[t] = true
 		}
 	}

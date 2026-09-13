@@ -144,6 +144,53 @@ func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 	}
 }
 
+func TestCollectManagedPathsRejectsHomeFailureWithoutWrongRoot(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	managed, err := CollectManagedPaths(machineScopeSkill(hcc.TargetFactory))
+	if err == nil {
+		t.Fatal("CollectManagedPaths succeeded without HOME; want root resolution error")
+	}
+	if managed != nil {
+		t.Fatalf("CollectManagedPaths returned managed paths after HOME failure: %#v", managed)
+	}
+}
+
+func TestBackupCreateDefaultsNilHarnessesToClaude(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	claudeRoot := filepath.Join(homeDir, ".claude")
+	if err := os.MkdirAll(filepath.Join(claudeRoot, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeRoot, "skills", "handwritten"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:  catalog.Entry{Kind: ir.KindSkill, Name: "managed-skill", Resource: ir.NewSkill("managed-skill", "Test", "Body", nil, nil, ir.SourceRef{})},
+		Source: config.UserPersonal,
+	}}
+
+	managed, err := CollectManagedPaths(resolved)
+	if err != nil {
+		t.Fatalf("CollectManagedPaths: %v", err)
+	}
+	if _, ok := managed[hcc.TargetClaude]; !ok {
+		t.Fatalf("CollectManagedPaths omitted default Claude target: %#v", managed)
+	}
+	if err := backup.Create(managed); err != nil {
+		t.Fatalf("backup.Create: %v", err)
+	}
+	backups, err := backup.ListBackups()
+	if err != nil {
+		t.Fatalf("backup.ListBackups: %v", err)
+	}
+	if got := backups[hcc.TargetClaude]; len(got) != 1 {
+		t.Fatalf("Claude backups = %v, want one archive", got)
+	}
+}
+
 // declaredTargets returns every target with TargetInfo, so a new target is
 // covered by the aggregate-backup tests below without being listed here.
 func declaredTargets(t *testing.T) []hcc.Target {

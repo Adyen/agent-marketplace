@@ -26,6 +26,17 @@ func TestMachineRootUsesCurrentHome(t *testing.T) {
 	}
 }
 
+func TestMakeInstallRootsDoesNotInventTmpRootWhenHomeUnavailable(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	if roots := MakeInstallRoots(); len(roots) != 0 {
+		t.Fatalf("MakeInstallRoots() = %#v, want no roots when HOME cannot be resolved", roots)
+	}
+	if root, ok := MachineRoot(hcc.TargetFactory); ok || root != "" {
+		t.Fatalf("MachineRoot(factory) = %q, %v; want no root when HOME cannot be resolved", root, ok)
+	}
+}
+
 func TestComponentsForScope(t *testing.T) {
 	tests := []struct {
 		name         string
