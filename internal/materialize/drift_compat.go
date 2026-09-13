@@ -100,6 +100,7 @@ func (r *Report) SurfaceIssues() []MaterializationIssue {
 			{string(left.Outcome), string(right.Outcome)},
 			{left.Message, right.Message},
 			{left.Severity.String(), right.Severity.String()},
+			{left.presentationIdentity, right.presentationIdentity},
 		} {
 			if pair[0] != pair[1] {
 				return pair[0] < pair[1]
@@ -118,7 +119,7 @@ func (r *Report) SurfaceIssues() []MaterializationIssue {
 // for attribution, but identical issues in the same scope remain one CLI/TUI
 // warning just like generic target-relative HCC diagnostics.
 func SurfaceIssueError(issue MaterializationIssue) error {
-	issue = sanitizeMaterializationIssue(issue)
+	issue = normalizeMaterializationIssue(issue)
 	return surfacedIssueError{text: FormatIssue(issue), key: surfaceIssueDedupKey(issue)}
 }
 
@@ -131,8 +132,7 @@ func (e surfacedIssueError) Error() string    { return e.text }
 func (e surfacedIssueError) DedupKey() string { return e.key }
 
 func surfaceIssueDedupKey(issue MaterializationIssue) string {
-	issue.Target, issue.RootID, issue.identity = "", "", ""
-	return materializationIssueKey(issue)
+	return materializationIssuePresentationKey(issue)
 }
 
 // FormatIssue renders one structured issue for command output.

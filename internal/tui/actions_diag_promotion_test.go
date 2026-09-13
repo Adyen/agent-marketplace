@@ -94,6 +94,24 @@ func TestPromoteReportErrorsNamesEachResource(t *testing.T) {
 	}
 }
 
+func TestPromoteReportErrorsKeepsLongTailMaterializationFailures(t *testing.T) {
+	prefix := strings.Repeat("x", 1100)
+	issue := func(tail string) materialize.MaterializationIssue {
+		return materialize.MaterializationIssue{
+			Resource: "long", Target: hcc.TargetDevin, Scope: "machine", RootID: "machine-devin",
+			Operation: materialize.MaterializationOperationFailure, Outcome: materialize.MaterializationOutcomeFailed,
+			Code: diag.CodeOwnershipEntryDrift, Severity: diag.SeverityError, Message: prefix + tail,
+		}
+	}
+	errs := promoteReportErrors(&materialize.Report{Issues: []materialize.MaterializationIssue{issue("A"), issue("B")}})
+	if len(errs) != 2 {
+		t.Fatalf("TUI dedup collapsed long-tail materialization failures to %d errors: %v", len(errs), errs)
+	}
+	if errs[0].Error() != errs[1].Error() {
+		t.Fatalf("sanity: display-bound renders should match, got %q and %q", errs[0], errs[1])
+	}
+}
+
 // TestPromoteReportErrorsIgnoresNonErrors pins the severity predicate.
 // diag.Severity is an iota with SeverityError = 0, so the previous
 // `d.Severity >= diag.SeverityError` test was `>= 0` and matched EVERY

@@ -181,6 +181,11 @@ type MaterializationIssue struct {
 	// display fields have been bounded. It is intentionally not serialized or
 	// exposed to command consumers.
 	identity string
+
+	// presentationIdentity retains the bounded digest used when this issue is
+	// grouped across target/root presentations. It is derived before display
+	// fields are bounded, and intentionally remains private to this package.
+	presentationIdentity string
 }
 
 // Report holds the aggregate outcome of a materialization run.
@@ -4964,6 +4969,19 @@ func materializationIssueKey(issue MaterializationIssue) string {
 	if issue.identity != "" {
 		return issue.identity
 	}
+	return materializationIssueDigest(issue)
+}
+
+func materializationIssuePresentationKey(issue MaterializationIssue) string {
+	if issue.presentationIdentity != "" {
+		return issue.presentationIdentity
+	}
+	issue.identity = ""
+	issue.Target, issue.RootID = "", ""
+	return materializationIssueDigest(issue)
+}
+
+func materializationIssueDigest(issue MaterializationIssue) string {
 	identity := materializationIssueCanonicalIdentity(issue)
 	sum := sha256.Sum256([]byte(identity))
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -5000,6 +5018,7 @@ func materializationDiagnosticFallbackKey(issue MaterializationIssue) string {
 
 func normalizeMaterializationIssue(issue MaterializationIssue) MaterializationIssue {
 	issue.identity = materializationIssueKey(issue)
+	issue.presentationIdentity = materializationIssuePresentationKey(issue)
 	return sanitizeMaterializationIssue(issue)
 }
 

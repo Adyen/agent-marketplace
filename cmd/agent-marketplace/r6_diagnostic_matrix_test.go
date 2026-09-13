@@ -200,6 +200,53 @@ func TestR6DiagnosticIdentityRegressionFixture(t *testing.T) {
 	}
 }
 
+func TestR6SurfaceIssueErrorsKeepLongTailIdentity(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	prefix := strings.Repeat("x", 1100)
+	issue := func(tail string) materialize.MaterializationIssue {
+		return materialize.MaterializationIssue{
+			Resource: "long", Target: hcc.TargetClaude, Scope: "project", RootID: "project-claude",
+			Operation: materialize.MaterializationOperationFailure, Outcome: materialize.MaterializationOutcomeFailed,
+			Code: diag.CodeOwnershipEntryDrift, Severity: diag.SeverityError, Message: prefix + tail,
+		}
+	}
+	report := &materialize.Report{Issues: []materialize.MaterializationIssue{issue("A"), issue("B")}}
+	surfaced := report.SurfaceIssues()
+	if len(surfaced) != 2 {
+		t.Fatalf("SurfaceIssues collapsed long-tail failures: %#v", surfaced)
+	}
+	errors := []error{materialize.SurfaceIssueError(surfaced[0]), materialize.SurfaceIssueError(surfaced[1])}
+	if errors[0].Error() != errors[1].Error() {
+		t.Fatalf("sanity: display-bound renders should match, got %q and %q", errors[0], errors[1])
+	}
+	if got := len(dedupIssues(errors)); got != 2 {
+		t.Fatalf("CLI dedup collapsed long-tail materialization failures to %d errors", got)
+	}
+
+	reversed := &materialize.Report{Issues: []materialize.MaterializationIssue{issue("B"), issue("A")}}
+	firstKeys := surfaceIssueErrorKeys(surfaced)
+	secondKeys := surfaceIssueErrorKeys(reversed.SurfaceIssues())
+	if len(firstKeys) != len(secondKeys) || firstKeys[0] != secondKeys[0] || firstKeys[1] != secondKeys[1] {
+		t.Fatalf("SurfaceIssues order is not digest-stable: first=%v second=%v", firstKeys, secondKeys)
+	}
+}
+
+func surfaceIssueErrorKeys(issues []materialize.MaterializationIssue) []string {
+	keys := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		err := materialize.SurfaceIssueError(issue)
+		keyer, ok := err.(interface{ DedupKey() string })
+		if !ok {
+			keys = append(keys, err.Error())
+			continue
+		}
+		keys = append(keys, keyer.DedupKey())
+	}
+	return keys
+}
+
 func withTargetAndSeverity(d diag.Diagnostic, target string, severity diag.Severity) diag.Diagnostic {
 	d.Target, d.Severity = target, severity
 	return d
