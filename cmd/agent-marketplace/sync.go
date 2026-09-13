@@ -357,6 +357,45 @@ func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) [
 // so the TUI collapses repeats identically instead of growing a second copy.
 func dedupIssues(issues []error) []error { return pipeline.DedupIssues(issues) }
 
+// materializationIssueErrors adapts the report-owned surface projection to
+// status's existing warning/error grouping without rebuilding identity from a
+// destination path.
+func materializationIssueErrors(report *materialize.Report) (warnings, errorsOut []error) {
+	for _, issue := range report.SurfaceIssues() {
+		rendered := errors.New(materialize.FormatIssue(issue))
+		if issue.Severity == diag.SeverityError {
+			errorsOut = append(errorsOut, rendered)
+		} else {
+			warnings = append(warnings, rendered)
+		}
+	}
+	return warnings, errorsOut
+}
+
+// writeMaterializationIssues renders the report-owned projection once for a
+// command surface. The caller remains responsible for its normal table and
+// resolver/config diagnostic output.
+func writeMaterializationIssues(out io.Writer, report *materialize.Report) error {
+	return writeMaterializationIssuesForSeverity(out, report, nil)
+}
+
+func writeMaterializationWarnings(out io.Writer, report *materialize.Report) error {
+	severity := diag.SeverityWarning
+	return writeMaterializationIssuesForSeverity(out, report, &severity)
+}
+
+func writeMaterializationIssuesForSeverity(out io.Writer, report *materialize.Report, severity *diag.Severity) error {
+	for _, issue := range report.SurfaceIssues() {
+		if severity != nil && issue.Severity != *severity {
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "%s: %s\n", issue.Severity, materialize.FormatIssue(issue)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // remediationHint returns the user-facing remediation an error carries, or "".
 // A promoted materialize diagnostic satisfies resolver.Remediable with
 // diag.Diagnostic.Hint, so compiler-authored remediation is rendered by the
@@ -463,6 +502,9 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 			return err
 		}
 	}
+	if err := writeMaterializationWarnings(out, report); err != nil {
+		return err
+	}
 
 	var requirementWarnings []error
 	for _, resolveErr := range resolvedResult.ResolveErrors {
@@ -536,7 +578,26 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 		}
 	}
 
+	surfaceErrors := report.SurfaceIssues()
+	for _, issue := range surfaceErrors {
+		if issue.Severity != diag.SeverityError {
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "error: %s\n", materialize.FormatIssue(issue)); err != nil {
+			return err
+		}
+	}
 	for _, d := range errorDiags {
+		matched := false
+		for _, issue := range surfaceErrors {
+			if issue.Severity == diag.SeverityError && issue.Code == d.Code && issue.Resource == d.Resource && issue.Message == d.Message {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			continue
+		}
 		label := d.Code
 		if d.Resource != "" {
 			label = fmt.Sprintf("%s (%s)", d.Code, d.Resource)

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -134,5 +135,63 @@ func TestSyncCheckSummarySilentWhenClean(t *testing.T) {
 	}
 	if buf.String() != "" {
 		t.Fatalf("warning-only report printed %q, want nothing", buf.String())
+	}
+}
+
+func TestMaterializationSurfaceProjectionPreservesIdentityOnce(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	warning := materialize.MaterializationIssue{
+		Resource: "review", Target: hcc.TargetClaude, Scope: "project", RootID: "project-claude",
+		Path: "skills/review/SKILL.md", Operation: materialize.MaterializationOperationSkip,
+		Outcome: materialize.MaterializationOutcomeWarning, Code: "materialize.collision.user-owned",
+		Severity: diag.SeverityWarning, Message: "destination is user-owned",
+	}
+	errorIssue := materialize.MaterializationIssue{
+		Resource: "broken", Target: hcc.TargetClaude, Scope: "project", RootID: "project-claude",
+		Operation: materialize.MaterializationOperationFailure, Outcome: materialize.MaterializationOutcomeFailed,
+		Code: "materialize.write.error", Severity: diag.SeverityError, Message: "permission denied",
+	}
+	report := &materialize.Report{Issues: []materialize.MaterializationIssue{warning, warning, errorIssue}}
+	var out bytes.Buffer
+	if err := writeMaterializationIssues(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if got := strings.Count(text, warning.Code); got != 1 {
+		t.Fatalf("warning code count = %d, want one: %q", got, text)
+	}
+	if got := strings.Count(text, errorIssue.Code); got != 1 {
+		t.Fatalf("error code count = %d, want one: %q", got, text)
+	}
+	for _, want := range []string{
+		"warning:", "severity=warning", `resource="review"`, "target=claude", "scope=project",
+		"root=project-claude", `path="skills/review/SKILL.md"`, "operation=skip", "outcome=warning",
+		"error:", "severity=error", `resource="broken"`, "operation=failure", "outcome=failed",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("surface output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestMaterializationSurfaceGroupingKeepsUsableStatusInputs(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	report := &materialize.Report{Issues: []materialize.MaterializationIssue{
+		{Resource: "warn", Target: hcc.TargetClaude, Scope: "project", RootID: "root", Operation: materialize.MaterializationOperationSkip, Outcome: materialize.MaterializationOutcomeWarning, Code: "materialize.warn", Severity: diag.SeverityWarning, Message: "lossy"},
+		{Resource: "fail", Target: hcc.TargetClaude, Scope: "project", RootID: "root", Operation: materialize.MaterializationOperationFailure, Outcome: materialize.MaterializationOutcomeFailed, Code: "materialize.fail", Severity: diag.SeverityError, Message: "blocked"},
+	}}
+	warnings, failures := materializationIssueErrors(report)
+	if len(warnings) != 1 || len(failures) != 1 {
+		t.Fatalf("grouped materialization issues = %d warnings, %d failures, want 1/1", len(warnings), len(failures))
+	}
+	if !strings.Contains(warnings[0].Error(), "materialize.warn") || !strings.Contains(warnings[0].Error(), "resource=\"warn\"") {
+		t.Fatalf("warning lost structured identity: %v", warnings[0])
+	}
+	if !strings.Contains(failures[0].Error(), "materialize.fail") || !strings.Contains(failures[0].Error(), "resource=\"fail\"") {
+		t.Fatalf("failure lost structured identity: %v", failures[0])
 	}
 }

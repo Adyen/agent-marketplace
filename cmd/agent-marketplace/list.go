@@ -156,6 +156,11 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 			return err
 		}
 	}
+	if dryRunReport != nil {
+		if err := writeMaterializationIssues(errOut, dryRunReport); err != nil {
+			return err
+		}
+	}
 	if dryRunReport != nil && !dryRunReport.InSync() {
 		pending := dryRunReport.TotalWritten() + dryRunReport.TotalRemoved()
 		if _, err := fmt.Fprintf(out, "%d resources out of sync — run 'agent-marketplace sync'\n", pending); err != nil {

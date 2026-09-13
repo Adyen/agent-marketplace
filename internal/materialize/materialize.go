@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -116,11 +117,54 @@ type outputKey struct {
 	machineScope bool
 }
 
+// MaterializationOperation identifies the bounded filesystem action or
+// diagnostic represented by an issue. These values are intentionally strings:
+// report consumers include the TUI and command output, not just Go callers.
+type MaterializationOperation string
+
+const (
+	MaterializationOperationWrite   MaterializationOperation = "write"
+	MaterializationOperationRemove  MaterializationOperation = "remove"
+	MaterializationOperationSkip    MaterializationOperation = "skip"
+	MaterializationOperationFailure MaterializationOperation = "failure"
+)
+
+// MaterializationOutcome describes the result of an operation. It is kept
+// separate from Operation so a skipped write and a skipped resource remain
+// distinguishable without parsing diagnostic prose.
+type MaterializationOutcome string
+
+const (
+	MaterializationOutcomeWritten MaterializationOutcome = "written"
+	MaterializationOutcomeRemoved MaterializationOutcome = "removed"
+	MaterializationOutcomeSkipped MaterializationOutcome = "skipped"
+	MaterializationOutcomeFailed  MaterializationOutcome = "failed"
+	MaterializationOutcomeWarning MaterializationOutcome = "warning"
+)
+
+// MaterializationIssue is the bounded, structured identity of one materialize
+// result. Resource and Path are empty only when the seam cannot identify them
+// (for example, a target-wide destination failure). Message is diagnostic
+// context and is bounded before it is exposed to report consumers.
+type MaterializationIssue struct {
+	Resource  string
+	Target    hcc.Target
+	Scope     string
+	RootID    string
+	Path      string
+	Operation MaterializationOperation
+	Outcome   MaterializationOutcome
+	Code      string
+	Severity  diag.Severity
+	Message   string
+}
+
 // Report holds the aggregate outcome of a materialization run.
 type Report struct {
 	PerTarget map[hcc.Target]TargetReport
 	PerRoot   []TargetReport
 	Diags     []diag.Diagnostic
+	Issues    []MaterializationIssue
 }
 
 // TargetReport describes what happened for a single harness target.
@@ -133,6 +177,10 @@ type TargetReport struct {
 	Skipped      []string
 	Removed      []string
 	Diags        []diag.Diagnostic
+	Issues       []MaterializationIssue
+	// ResourceByPath is populated only at materialization seams that know the
+	// originating resource. It avoids reconstructing subjects from paths.
+	ResourceByPath map[string]string
 }
 
 // portableManifest records regular files and directory trees installed in file
@@ -1618,6 +1666,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 
 		}
 	}
+	report.rebuildIssues()
 	return report
 }
 
@@ -1755,14 +1804,16 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, plans []ma
 		writeReport.Removed = append(writeReport.Removed, mergeReport.Removed...)
 
 		tr := TargetReport{
-			Target:       key.target,
-			MachineScope: key.machineScope,
-			RootID:       plan.rootID,
-			OutDir:       writeReport.OutDir,
-			Written:      writeReport.Written,
-			Skipped:      writeReport.Skipped,
-			Removed:      writeReport.Removed,
+			Target:         key.target,
+			MachineScope:   key.machineScope,
+			RootID:         plan.rootID,
+			OutDir:         writeReport.OutDir,
+			Written:        writeReport.Written,
+			Skipped:        writeReport.Skipped,
+			Removed:        writeReport.Removed,
+			ResourceByPath: resourceMapForPaths(append(append(append([]string{}, writeReport.Written...), writeReport.Skipped...), writeReport.Removed...), plan.reportPrefix, artifactMeta[key]),
 		}
+		tr.buildIssues()
 		report.PerRoot = append(report.PerRoot, tr)
 		rootReport := tr
 		if key.target != hcc.Target(targetmeta.TargetCodex) {
@@ -2019,6 +2070,7 @@ func appendGroupReport(report *Report, key outputKey, outDir, reportPrefix strin
 		})
 		return report
 	}
+	tr.buildIssues()
 	report.PerRoot = append(report.PerRoot, tr)
 	if len(tr.Diags) > 0 {
 		for i := range tr.Diags {
@@ -4149,7 +4201,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 	if len(portable) > 0 {
 		state, target, reportPrefix, portableDesired = portable[0].state, portable[0].target, portable[0].reportPrefix, portable[0].desired
 	}
-	report := TargetReport{OutDir: skillsDir}
+	report := TargetReport{OutDir: skillsDir, ResourceByPath: make(map[string]string, len(links))}
 	desired := make(map[string]string, len(links))
 	desiredDigests := make(map[string]string, len(links))
 	linkMeta := make(map[string]skillLink, len(links))
@@ -4170,6 +4222,9 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		}
 		desired[link.name] = link.target
 		linkMeta[link.name] = link
+		if link.resourceName != "" {
+			report.ResourceByPath[link.name] = link.resourceName
+		}
 	}
 
 	if !dryRun {
@@ -4328,7 +4383,7 @@ func ensureDirectoryReplacingSymlink(path string) error {
 // not follow symlinked command files. Remove it (and TargetInfo.FileCopyKinds)
 // once Factory resolves symlink loading for commands.
 func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries bool) (TargetReport, error) {
-	report := TargetReport{OutDir: dir}
+	report := TargetReport{OutDir: dir, ResourceByPath: make(map[string]string, len(links))}
 	desired := make(map[string][]byte, len(links))
 	linkMeta := make(map[string]skillLink, len(links))
 	for _, link := range links {
@@ -4337,6 +4392,9 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 		}
 		desired[link.name] = injectManagedByFrontmatter(link.artifacts[0].Bytes)
 		linkMeta[link.name] = link
+		if link.resourceName != "" {
+			report.ResourceByPath[link.name] = link.resourceName
+		}
 	}
 
 	if !dryRun {
@@ -4669,6 +4727,177 @@ func CodexMachineManagedPaths(repoRoot string) (map[string][]string, error) {
 	return result, nil
 }
 
+const maxMaterializationIssueMessage = 1024
+
+func resourceMapForPaths(paths []string, prefix string, metadata map[string]skillLink) map[string]string {
+	if len(metadata) == 0 {
+		return nil
+	}
+	resources := make(map[string]string)
+	for _, path := range paths {
+		path = filepath.ToSlash(path)
+		for artifactPath, meta := range metadata {
+			artifactPath = filepath.ToSlash(artifactPath)
+			if artifactPath == path || filepath.ToSlash(filepath.Join(prefix, path)) == artifactPath {
+				if meta.resourceName != "" {
+					resources[path] = meta.resourceName
+				}
+				break
+			}
+		}
+	}
+	return resources
+}
+
+func materializationScope(machine bool) string {
+	if machine {
+		return "machine"
+	}
+	return "project"
+}
+
+func boundedMaterializationMessage(message string) string {
+	message = strings.Map(func(r rune) rune {
+		if r < 0x20 && r != '\t' {
+			return ' '
+		}
+		return r
+	}, strings.TrimSpace(message))
+	if len(message) <= maxMaterializationIssueMessage {
+		return message
+	}
+	cut := maxMaterializationIssueMessage - len("…(truncated)")
+	for cut > 0 && !utf8.ValidString(message[:cut]) {
+		cut--
+	}
+	return message[:cut] + "…(truncated)"
+}
+
+func (tr *TargetReport) buildIssues() {
+	if tr == nil {
+		return
+	}
+	issues := make([]MaterializationIssue, 0, len(tr.Written)+len(tr.Skipped)+len(tr.Removed)+len(tr.Diags))
+	addPath := func(path string, operation MaterializationOperation, outcome MaterializationOutcome) {
+		path = filepath.ToSlash(path)
+		issues = append(issues, MaterializationIssue{
+			Resource: tr.ResourceByPath[path], Target: tr.Target, Scope: materializationScope(tr.MachineScope),
+			RootID: tr.RootID, Path: path, Operation: operation, Outcome: outcome,
+			Severity: diag.SeverityInfo,
+		})
+	}
+	for _, path := range tr.Written {
+		addPath(path, MaterializationOperationWrite, MaterializationOutcomeWritten)
+	}
+	for _, path := range tr.Skipped {
+		addPath(path, MaterializationOperationSkip, MaterializationOutcomeSkipped)
+	}
+	for _, path := range tr.Removed {
+		addPath(path, MaterializationOperationRemove, MaterializationOutcomeRemoved)
+	}
+	for _, d := range tr.Diags {
+		message := boundedMaterializationMessage(d.Message)
+		if !d.IsError() {
+			matchedSkip := false
+			for i := range issues {
+				if issues[i].Operation == MaterializationOperationSkip && issues[i].Resource == d.Resource {
+					issues[i].Code, issues[i].Severity, issues[i].Message = d.Code, d.Severity, message
+					issues[i].Outcome = MaterializationOutcomeWarning
+					matchedSkip = true
+					break
+				}
+			}
+			if matchedSkip {
+				continue
+			}
+		}
+		operation, outcome := MaterializationOperationFailure, MaterializationOutcomeFailed
+		if !d.IsError() {
+			operation, outcome = MaterializationOperationSkip, MaterializationOutcomeWarning
+		}
+		issues = append(issues, MaterializationIssue{
+			Resource: d.Resource, Target: tr.Target, Scope: materializationScope(tr.MachineScope), RootID: tr.RootID,
+			Code: d.Code, Severity: d.Severity, Message: message,
+			Operation: operation, Outcome: outcome,
+		})
+	}
+	tr.Issues = issues
+}
+
+func materializationIssueKey(issue MaterializationIssue) string {
+	return strings.Join([]string{
+		string(issue.Target), issue.Scope, issue.RootID, issue.Resource, issue.Path,
+		string(issue.Operation), string(issue.Outcome), issue.Code, issue.Message,
+	}, "\x00")
+}
+
+func (r *Report) rebuildIssues() {
+	if r == nil {
+		return
+	}
+	issues := make([]MaterializationIssue, 0)
+	seen := make(map[string]struct{})
+	for _, tr := range r.TargetReports() {
+		if len(tr.Issues) == 0 && (len(tr.Written) > 0 || len(tr.Skipped) > 0 || len(tr.Removed) > 0 || len(tr.Diags) > 0) {
+			tr.buildIssues()
+		}
+		for _, issue := range tr.Issues {
+			key := materializationIssueKey(issue)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			issues = append(issues, issue)
+		}
+	}
+	// Diagnostics are also retained when no target report was produced (for
+	// example, a compile or destination failure). Preserve their stable code,
+	// severity, and bounded text while attaching any subject/root known from a
+	// target report.
+	for _, d := range r.Diags {
+		issue := MaterializationIssue{
+			Resource: d.Resource, Target: hcc.Target(d.Target), Code: d.Code, Severity: d.Severity,
+			Message: boundedMaterializationMessage(d.Message), Operation: MaterializationOperationFailure,
+			Outcome: MaterializationOutcomeFailed,
+		}
+		for _, tr := range r.TargetReports() {
+			if issue.Target != "" && tr.Target != issue.Target {
+				continue
+			}
+			if issue.Resource != "" && !reportHasResource(tr, issue.Resource) {
+				continue
+			}
+			issue.Scope = materializationScope(tr.MachineScope)
+			issue.RootID = tr.RootID
+			break
+		}
+		key := materializationIssueKey(issue)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		issues = append(issues, issue)
+	}
+	r.Issues = issues
+}
+
+func reportHasResource(tr TargetReport, resource string) bool {
+	if resource == "" {
+		return true
+	}
+	for _, candidate := range tr.ResourceByPath {
+		if candidate == resource {
+			return true
+		}
+	}
+	for _, issue := range tr.Issues {
+		if issue.Resource == resource {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Report) TargetReports() []TargetReport {
 	if r == nil {
 		return nil
@@ -4680,6 +4909,18 @@ func (r *Report) TargetReports() []TargetReport {
 	for _, tr := range r.PerTarget {
 		reports = append(reports, tr)
 	}
+	slices.SortFunc(reports, func(a, b TargetReport) int {
+		if a.Target != b.Target {
+			return strings.Compare(string(a.Target), string(b.Target))
+		}
+		if a.MachineScope != b.MachineScope {
+			if a.MachineScope {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(a.RootID, b.RootID)
+	})
 	return reports
 }
 
@@ -4693,6 +4934,15 @@ func mergeTargetReports(a, b TargetReport) TargetReport {
 	a.Skipped = append(a.Skipped, b.Skipped...)
 	a.Removed = append(a.Removed, b.Removed...)
 	a.Diags = append(a.Diags, b.Diags...)
+	a.Issues = append(a.Issues, b.Issues...)
+	if len(b.ResourceByPath) > 0 {
+		if a.ResourceByPath == nil {
+			a.ResourceByPath = make(map[string]string, len(b.ResourceByPath))
+		}
+		for path, resource := range b.ResourceByPath {
+			a.ResourceByPath[path] = resource
+		}
+	}
 	return a
 }
 

@@ -139,6 +139,8 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	// diagnostic. File mode returns manifest and containment problems here as
 	// hard errors.
 	var materializeErrs []error
+	var materializationWarnings []error
+	var materializationErrors []error
 	modes, err := config.ResolveMaterializationModes(result.GlobalCfg, result.RepoCfg, result.LocalCfg)
 	if err != nil {
 		materializeErrs = append(materializeErrs, err)
@@ -151,6 +153,9 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			slog.Warn("status drift check failed", "error", dryRunErr)
 			materializeErrs = append(materializeErrs, dryRunErr)
 		}
+	}
+	if dryRunReport != nil {
+		materializationWarnings, materializationErrors = materializationIssueErrors(dryRunReport)
 	}
 
 	// Build orphaned rows from files that would be removed.
@@ -234,7 +239,9 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		}
 	}
 
-	errorRows := buildErrorRows(materializeErrs, result.Errors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
+	warnings := append([]error(nil), result.Warnings...)
+	warnings = append(warnings, materializationWarnings...)
+	errorRows := buildErrorRows(materializeErrs, materializationErrors, result.Errors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
 
 	targetHarnesses := make([]string, len(result.TargetHarnesses))
 	for i, t := range result.TargetHarnesses {
@@ -248,7 +255,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 
 	if err := writeStatusSections(out, statusView{
 		diag:                result.Diagnostics,
-		warnings:            result.Warnings,
+		warnings:            warnings,
 		statusRows:          statusRows,
 		locallyExcluded:     locallyExcluded,
 		localRegistries:     localRegistries,
