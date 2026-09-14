@@ -141,16 +141,11 @@ func TestCompilerRejectsUnknownKind(t *testing.T) {
 	}
 }
 
-// TestCompilerDropsRulesAsAnOutOfScopeWarning pins the outcome of bead
-// agent-marketplace-5exj.22: a rule still produces no Devin artifact, but the
-// diagnostic is a WARNING describing a scope decision, not an ERROR claiming a
-// Devin capability limit. The D12 probe
-// (internal/devinprobe.TestProbeRulesDiscoveryUnderDevinRoots) falsified the
-// capability claim on 3000.3.27, so the message must not restate it.
-func TestCompilerDropsRulesAsAnOutOfScopeWarning(t *testing.T) {
+func TestCompilerEmitsNativeRules(t *testing.T) {
 	tests := []struct {
-		name string
-		rule *ir.Rule
+		name     string
+		rule     *ir.Rule
+		wantDiag string
 	}{
 		{
 			name: "bare rule",
@@ -161,6 +156,7 @@ func TestCompilerDropsRulesAsAnOutOfScopeWarning(t *testing.T) {
 			name: "rule with description, globs and alwaysApply",
 			rule: ir.NewRule("typescript", "TypeScript conventions", "# Body\n",
 				[]string{"*.ts"}, true, nil, ir.SourceRef{File: ".cursor/rules/typescript.mdc", Line: 1}),
+			wantDiag: diag.CodeRuleDevinGlobsDropped,
 		},
 	}
 
@@ -170,59 +166,20 @@ func TestCompilerDropsRulesAsAnOutOfScopeWarning(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Compile(rule, Devin): %v", err)
 			}
-			if len(result.Artifacts) != 0 {
-				t.Errorf("artifacts = %d, want 0: rules remain out of scope for Devin", len(result.Artifacts))
+			if len(result.Artifacts) != 1 {
+				t.Fatalf("artifacts = %d, want 1", len(result.Artifacts))
 			}
-			if len(result.Diagnostics) != 1 {
-				t.Fatalf("diagnostics = %d, want 1", len(result.Diagnostics))
+			if result.Artifacts[0].Path != "rules/"+tt.rule.Name()+".md" {
+				t.Errorf("path = %q", result.Artifacts[0].Path)
 			}
-			d := result.Diagnostics[0]
-			if d.Code != diag.CodeRuleDevinUnsupported {
-				t.Errorf("code = %q, want %q", d.Code, diag.CodeRuleDevinUnsupported)
+			if !strings.Contains(string(result.Artifacts[0].Bytes), tt.rule.Body) {
+				t.Errorf("body = %q, want content %q", result.Artifacts[0].Bytes, tt.rule.Body)
 			}
-			// The severity has to agree with the catalog, and the catalog has
-			// to agree with the Claude and Gemini rule codes: the same class of
-			// loss on three targets cannot carry three different severities.
-			doc, ok := diag.DocForCode(diag.CodeRuleDevinUnsupported)
-			if !ok {
-				t.Fatalf("%s is not in the diagnostic catalog", diag.CodeRuleDevinUnsupported)
+			if tt.wantDiag == "" && len(result.Diagnostics) != 0 {
+				t.Fatalf("diagnostics = %v, want none", result.Diagnostics)
 			}
-			if d.Severity != doc.Severity {
-				t.Errorf("severity = %v, want the catalogued %v", d.Severity, doc.Severity)
-			}
-			if d.Severity != diag.SeverityWarning {
-				t.Errorf("severity = %v, want %v (a scope decision must not fail the run)", d.Severity, diag.SeverityWarning)
-			}
-			for _, sibling := range []string{diag.CodeRuleClaudeNoPrimitive, diag.CodeRuleGeminiNoPrimitive} {
-				siblingDoc, ok := diag.DocForCode(sibling)
-				if !ok {
-					t.Fatalf("%s is not in the diagnostic catalog", sibling)
-				}
-				if siblingDoc.Severity != d.Severity {
-					t.Errorf("severity = %v but %s is %v; the rule-dropped codes must agree", d.Severity, sibling, siblingDoc.Severity)
-				}
-			}
-			// The falsified rationale must not come back in any form.
-			for _, phrase := range []string{"no rules directory primitive", "has no rules"} {
-				if strings.Contains(strings.ToLower(d.Message+" "+d.Hint), phrase) {
-					t.Errorf("diagnostic restates the falsified capability claim %q: message=%q hint=%q", phrase, d.Message, d.Hint)
-				}
-			}
-			if !strings.Contains(strings.ToLower(d.Message), "out of scope") {
-				t.Errorf("message = %q, want it to name the scope decision", d.Message)
-			}
-			if d.Target != string(compile.TargetDevin) {
-				t.Errorf("target = %q, want %q", d.Target, compile.TargetDevin)
-			}
-			if d.Resource != tt.rule.Name() {
-				t.Errorf("resource = %q, want %q", d.Resource, tt.rule.Name())
-			}
-			if d.Source.File != tt.rule.Source.File {
-				t.Errorf("source file = %q, want %q", d.Source.File, tt.rule.Source.File)
-			}
-			// A rule body is user content and must never reach a diagnostic.
-			if strings.Contains(d.Message+d.Hint, tt.rule.Body) {
-				t.Errorf("diagnostic leaked the rule body: message=%q hint=%q", d.Message, d.Hint)
+			if tt.wantDiag != "" && (len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != tt.wantDiag) {
+				t.Fatalf("diagnostics = %v, want %s", result.Diagnostics, tt.wantDiag)
 			}
 		})
 	}

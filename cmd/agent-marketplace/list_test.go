@@ -15,8 +15,19 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+func TestMalformedKindLabelPreservesRuleIdentity(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	got := skill.MalformedKindLabel(skill.MalformedSkill{Kind: ir.KindRule.String()})
+	if got != "rule" {
+		t.Fatalf("malformed Rule kind label = %q, want rule", got)
+	}
+}
 
 func TestBuildListRowsUsesLoadedExactCatalogKey(t *testing.T) {
 	if isolateCommandTest(t) {

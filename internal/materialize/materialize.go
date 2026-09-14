@@ -1237,9 +1237,10 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		if info, ok := harness.TargetInfoMap[key.target]; ok {
 			for _, installDirRel := range info.ResourceDirs {
 				installDirRel = machineSkillInstallDirRel(key.target, key.machineScope, installDirRel)
-				dir := filepath.Join(outDir, filepath.FromSlash(installDirRel))
+				resourceRoot, scopedRel := resourceInstallRoot(key, outDir, installDirRel)
+				dir := filepath.Join(resourceRoot, filepath.FromSlash(scopedRel))
 				if outputDirExists(dir) {
-					if _, err := validatePortableOutputDir(outDir, installDirRel); err != nil {
+					if _, err := validatePortableOutputDir(resourceRoot, scopedRel); err != nil {
 						report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource cleanup directory %s: %v", dir, err)})
 						continue
 					}
@@ -1301,13 +1302,14 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	copyDirsCovered := make(map[string]bool)
 
 	for _, group := range orderedSkillLinkGroups(skillLinks[key]) {
-		groupDir := filepath.Join(outDir, filepath.FromSlash(group.installDirRel))
+		resourceRoot, scopedRel := resourceInstallRoot(key, outDir, group.installDirRel)
+		groupDir := filepath.Join(resourceRoot, filepath.FromSlash(scopedRel))
 		if mode == config.MaterializationModeFile {
 			validate := validatePortableOutputDir
 			if !dryRun {
 				validate = ensurePortableOutputDir
 			}
-			if _, err := validate(outDir, group.installDirRel); err != nil {
+			if _, err := validate(resourceRoot, scopedRel); err != nil {
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource directory %s: %v", groupDir, err)})
 				continue
 			}
@@ -1386,6 +1388,15 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	}
 
 	return report
+}
+
+func resourceInstallRoot(key outputKey, defaultRoot, installDirRel string) (string, string) {
+	if key.target == hcc.TargetDevin && key.machineScope && filepath.ToSlash(installDirRel) == "rules" {
+		if ruleDir, err := harness.DevinMachineRuleDir(); err == nil {
+			return filepath.Dir(ruleDir), filepath.Base(ruleDir)
+		}
+	}
+	return defaultRoot, installDirRel
 }
 
 // pruneUncoveredFileCopyDirs removes orphaned managed file-copy resources from
@@ -1501,6 +1512,9 @@ func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Art
 	if target == hcc.Target(targetmeta.TargetCodex) {
 		return codexMaterializePlans(outDir, artifacts, linkedSkills, machineScope)
 	}
+	if target == hcc.TargetDevin && machineScope {
+		return devinMachineMaterializePlans(outDir, artifacts, linkedSkills)
+	}
 	info, ok := harness.TargetInfoMap[target]
 	if !ok {
 		return subtreeMaterializePlans(outDir, artifacts, generatedComponents(target), artifactRootPrefix(target), noPruneComponents(target, linkedSkills))
@@ -1509,6 +1523,32 @@ func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Art
 		return windsurfMaterializePlans(outDir, artifacts, machineScope, noPruneComponents(target, linkedSkills))
 	}
 	return subtreeMaterializePlans(outDir, artifacts, info.Components, info.ArtifactRootPrefix, noPruneComponents(target, linkedSkills))
+}
+
+func devinMachineMaterializePlans(configRoot string, artifacts []artifact.Artifact, linkedSkills map[string]bool) []materializePlan {
+	var rules, config []artifact.Artifact
+	for _, candidate := range artifacts {
+		if strings.HasPrefix(filepath.ToSlash(candidate.Path), "rules/") {
+			rules = append(rules, candidate)
+		} else {
+			config = append(config, candidate)
+		}
+	}
+	info := harness.TargetInfoMap[hcc.TargetDevin]
+	plans := subtreeMaterializePlans(configRoot, config, []string{"skills", "agents"}, info.ArtifactRootPrefix, noPruneComponents(hcc.TargetDevin, linkedSkills))
+
+	ruleDir, err := harness.DevinMachineRuleDir()
+	if err != nil {
+		slog.Error("resolve Devin rule destination", "code", "materialize.destination.error", "error", err)
+		return plans
+	}
+	ruleRoot := filepath.Dir(ruleDir)
+	rulePlans := subtreeMaterializePlans(ruleRoot, rules, []string{filepath.Base(ruleDir)}, "", noPruneComponents(hcc.TargetDevin, linkedSkills))
+	for i := range rulePlans {
+		rulePlans[i].root = ruleRoot
+		rulePlans[i].rootID = "machine-devin-rules"
+	}
+	return append(plans, rulePlans...)
 }
 
 func codexMaterializePlans(repoRoot string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
@@ -2912,6 +2952,13 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 }
 
 func portableEntryDestination(key outputKey, outDir, repoRoot, entryPath string) (string, string, string, error) {
+	if key.target == hcc.TargetDevin && key.machineScope && strings.HasPrefix(filepath.ToSlash(entryPath), "rules/") {
+		ruleDir, err := harness.DevinMachineRuleDir()
+		if err != nil {
+			return "", "", "", err
+		}
+		return "machine-devin-rules", filepath.Dir(ruleDir), entryPath, nil
+	}
 	if key.target != hcc.Target(targetmeta.TargetCodex) {
 		return "default", outDir, entryPath, nil
 	}

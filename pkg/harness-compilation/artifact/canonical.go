@@ -605,6 +605,8 @@ func irToCanonicalKind(k ir.ResourceKind) string {
 		return "hook"
 	case ir.KindMcpServer:
 		return "mcpserver"
+	case ir.KindRule:
+		return "rule"
 	}
 	return ""
 }

@@ -54,14 +54,14 @@ func (f *factoryCompiler) TranslateWithOptions(r ir.Resource, opts compile.Optio
 // rule body is emitted verbatim.
 func (f *factoryCompiler) translateRule(r *ir.Rule) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	var diags []diag.Diagnostic
-	if len(r.Globs) > 0 || r.AlwaysApply || r.Description != "" {
+	if len(r.Globs) > 0 || r.AlwaysApply || r.Description != "" || r.Trigger != "" || len(r.Extra) > 0 {
 		diags = append(diags, diag.Diagnostic{
 			Code:     diag.CodeRuleFactoryMetadataDropped,
 			Severity: diag.SeverityWarning,
 			Target:   string(mapping.TargetFactory),
 			Resource: r.Name(),
-			Message:  "Factory rules are plain markdown; description/globs/alwaysApply metadata was dropped",
-			Hint:     "Factory does not support rule frontmatter (description or conditional glob-scoped application); the rule body is emitted verbatim",
+			Message:  "Factory rules are plain markdown; rule frontmatter metadata was dropped",
+			Hint:     "Factory does not support rule frontmatter; the rule body is emitted verbatim",
 			Source:   compile.DiagSource(r.Source),
 		})
 	}

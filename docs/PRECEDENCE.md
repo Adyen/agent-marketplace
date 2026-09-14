@@ -1,6 +1,6 @@
 # Selection & Precedence Reference
 
-This document describes how `agent-marketplace` decides which resources are enabled, where they are sourced from, and which excludes/removals win. All five target-materialized kinds (skills, commands, subagents, hooks, and MCP servers) follow the same rules; collections are catalog-selectable bundles, not materialized resources.
+This document describes how `agent-marketplace` decides which resources are enabled, where they are sourced from, and which excludes/removals win. All six target-materialized kinds (skills, commands, subagents, hooks, MCP servers, and rules) follow the same rules; collections are catalog-selectable bundles, not materialized resources.
 
 ## Schema requirement
 

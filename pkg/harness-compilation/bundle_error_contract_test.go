@@ -42,9 +42,7 @@ type bundleErrorCase struct {
 	// wantErrors maps resource name to the error code it must report.
 	wantErrors map[string]string
 	// wantWarnings maps resource name to a warning code it must report while
-	// NOT being skipped. It exists so a lossy-but-clean resource (a Devin rule
-	// dropped as out of scope) can be proven not to participate in the error
-	// contract at all.
+	// NOT being skipped.
 	wantWarnings map[string]string
 	wantSkipped  []SkippedResource
 }
@@ -52,9 +50,7 @@ type bundleErrorCase struct {
 func bundleErrorCases() []bundleErrorCase {
 	isolatedAgent := ir.NewSubagent("isolated", "Isolated reviewer", "Body\n", "sonnet", nil, "", nil, "worktree", nil, ir.SourceRef{File: "agents/isolated.md", Line: 1})
 	// A subagent whose name shadows a Devin built-in is the second independent
-	// Devin resource error. It replaced the rule here in bead
-	// agent-marketplace-5exj.22: a Devin rule is now a WARNING (an out-of-scope
-	// drop, not a failure), so it can no longer stand in for an error.
+	// Devin resource error.
 	builtinAgent := ir.NewSubagent("subagent_explore", "Shadows a built-in", "Body\n", "sonnet", nil, "", nil, "", nil, ir.SourceRef{File: "agents/subagent_explore.md", Line: 1})
 	rule := ir.NewRule("style", "House style", "Use tabs\n", nil, true, nil, ir.SourceRef{File: "rules/style.md", Line: 1})
 	validSkill := ir.NewSkill("deploy", "Deploy the service", "Deploy body\n", nil, nil, ir.SourceRef{})
@@ -63,18 +59,17 @@ func bundleErrorCases() []bundleErrorCase {
 	return []bundleErrorCase{
 		{
 			// The headline case: one erroring Devin resource costs itself and
-			// nothing else. An out-of-scope rule rides along to prove it is not
-			// implicated — it emits no artifact, but it is not skipped and does
-			// not contribute to the failure.
+			// nothing else. A native rule rides along to prove it is not
+			// implicated and does not contribute to the failure.
 			name:      "an erroring devin subagent is skipped while a valid devin skill is published",
 			target:    TargetDevin,
 			resources: []ir.Resource{isolatedAgent, rule, validSkill},
 			wantArtifacts: map[string]string{
 				"skills/deploy/SKILL.md": validSkillBytes,
+				"rules/style.md":         "---\ntrigger: always_on\ndescription: House style\n---\nUse tabs\n",
 			},
-			wantAbsent:   []string{"agents/isolated.md", "rules/style.md", "rules/style.mdc"},
-			wantErrors:   map[string]string{"isolated": diag.CodeSubagentSecurityRestrictionUnsupported},
-			wantWarnings: map[string]string{"style": diag.CodeRuleDevinUnsupported},
+			wantAbsent: []string{"agents/isolated.md"},
+			wantErrors: map[string]string{"isolated": diag.CodeSubagentSecurityRestrictionUnsupported},
 			wantSkipped: []SkippedResource{
 				{Kind: KindSubagent, Name: "isolated", Codes: []string{diag.CodeSubagentSecurityRestrictionUnsupported}},
 			},
@@ -261,25 +256,16 @@ func TestBundleErrorContract_SkipsOnlyFailingResources(t *testing.T) {
 	}
 }
 
-// TestDevinRuleIsALossyButCleanCompile is the behavioural half of bead
-// agent-marketplace-5exj.22. Before it, a rule selected for Devin made the whole
-// bundle a partial result and `sync` exit non-zero, on the strength of a claim
-// the D12 probe falsified ("Devin has no rule primitive"). Rules are still out
-// of scope and still emit nothing, but that is a scope decision, so the run is
-// now clean — exactly as it already was on Claude and Gemini, whose
-// `rule.*.no-primitive` codes describe the same class of loss.
-//
-// The table runs the same rule against all three drop targets so the three can
-// never drift apart again.
-func TestDevinRuleIsALossyButCleanCompile(t *testing.T) {
+func TestRuleLossIsCleanCompile(t *testing.T) {
 	tests := []struct {
-		name     string
-		target   Target
-		wantCode string
+		name      string
+		target    Target
+		wantCode  string
+		emitsRule bool
 	}{
-		{"devin", TargetDevin, diag.CodeRuleDevinUnsupported},
-		{"claude", TargetClaude, diag.CodeRuleClaudeNoPrimitive},
-		{"gemini", TargetGemini, diag.CodeRuleGeminiNoPrimitive},
+		{"devin", TargetDevin, "", true},
+		{"claude", TargetClaude, diag.CodeRuleClaudeNoPrimitive, false},
+		{"gemini", TargetGemini, diag.CodeRuleGeminiNoPrimitive, false},
 	}
 
 	rule := ir.NewRule("style", "House style", "Use tabs\n", nil, true, nil, ir.SourceRef{File: "rules/style.md", Line: 1})
@@ -292,7 +278,7 @@ func TestDevinRuleIsALossyButCleanCompile(t *testing.T) {
 				t.Fatalf("compileBundleFromIR(%s): %v", tt.target, err)
 			}
 			if result.HasErrors() {
-				t.Errorf("HasErrors() = true, want false: dropping an out-of-scope rule is not a failure; diagnostics = %+v", result.Diagnostics)
+				t.Errorf("HasErrors() = true, want false: rule handling is not a failure; diagnostics = %+v", result.Diagnostics)
 			}
 			if len(result.Skipped) != 0 {
 				t.Errorf("Skipped = %+v, want none", result.Skipped)
@@ -304,16 +290,20 @@ func TestDevinRuleIsALossyButCleanCompile(t *testing.T) {
 					warned = true
 				}
 			}
-			if !warned {
+			if tt.wantCode != "" && !warned {
 				t.Errorf("missing %s warning for the dropped rule: %+v", tt.wantCode, result.Diagnostics)
 			}
+			if tt.wantCode == "" && warned {
+				t.Errorf("unexpected rule warning: %+v", result.Diagnostics)
+			}
 
-			// The loss is real: no rule artifact under any spelling, while the
-			// sibling skill is still published.
+			// Devin preserves the body while reporting metadata loss. Targets
+			// without a rule primitive publish no rule artifact.
 			var skillPublished bool
+			var rulePublished bool
 			for _, a := range result.Artifacts {
 				if strings.HasPrefix(a.Path, "rules/") || strings.Contains(a.Path, "/rules/") {
-					t.Errorf("a rule artifact %q was published by %s", a.Path, tt.target)
+					rulePublished = true
 				}
 				if strings.Contains(a.Path, "deploy") {
 					skillPublished = true
@@ -321,6 +311,9 @@ func TestDevinRuleIsALossyButCleanCompile(t *testing.T) {
 			}
 			if !skillPublished {
 				t.Errorf("the valid sibling skill was not published by %s", tt.target)
+			}
+			if rulePublished != tt.emitsRule {
+				t.Errorf("rule published = %v, want %v for %s", rulePublished, tt.emitsRule, tt.target)
 			}
 
 			// Materialize must agree: no partial result, nothing held back.
@@ -400,9 +393,8 @@ func TestBundleErrorContract_LogsSkipDecisionsWithoutSensitiveValues(t *testing.
 	}
 
 	resources := []ir.Resource{
-		// A rule whose body must never be logged. It is dropped as out of scope
-		// with a warning rather than skipped, so it also proves the privacy rule
-		// holds on the lossy-but-clean path, not just on the skip path.
+		// A native rule whose body must never be logged. It proves the privacy
+		// rule on a successful compile path, not just on the skip path.
 		ir.NewRule("style", "House style", "super-secret-body\n", nil, true, nil, ir.SourceRef{}),
 		// A subagent that fails on a security restriction, carrying a denied
 		// tool and a permission-shaped value.
@@ -424,7 +416,7 @@ func TestBundleErrorContract_LogsSkipDecisionsWithoutSensitiveValues(t *testing.
 		t.Fatalf("compileBundleFromIR(devin): %v", err)
 	}
 	if len(result.Skipped) != 1 || result.Skipped[0].Name != "isolated" {
-		t.Fatalf("skipped = %+v, want only the isolated subagent (the rule is a warning, not a skip)", result.Skipped)
+		t.Fatalf("skipped = %+v, want only the isolated subagent (the rule is native output, not a skip)", result.Skipped)
 	}
 
 	logs := buf.String()
@@ -437,10 +429,9 @@ func TestBundleErrorContract_LogsSkipDecisionsWithoutSensitiveValues(t *testing.
 	if !strings.Contains(logs, diag.CodeSubagentSecurityRestrictionUnsupported) {
 		t.Errorf("log does not carry code %q:\n%s", diag.CodeSubagentSecurityRestrictionUnsupported, logs)
 	}
-	// The out-of-scope rule is still logged, as a compile decision rather than
-	// a skip, and still by name only.
+	// The rule is logged as a successful compile decision and still by name only.
 	if !strings.Contains(logs, "resource=style") {
-		t.Errorf("log does not record the dropped rule:\n%s", logs)
+		t.Errorf("log does not record the compiled rule:\n%s", logs)
 	}
 	for _, secret := range secrets {
 		if strings.Contains(logs, secret) {

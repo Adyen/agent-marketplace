@@ -11,7 +11,7 @@ import (
 
 // DecodeResource reconstructs an ir.Resource from the canonical JSON payload
 // produced by resourceJSON. kind must be one of the Marketplace-selectable
-// resource kind strings: skill, command, subagent, hook, or mcpserver.
+// resource kind strings: skill, command, subagent, hook, mcpserver, or rule.
 func DecodeResource(kind string, payload []byte) (ir.Resource, error) {
 	k, ok := canonicalToIRKind(kind)
 	if !ok {
@@ -40,6 +40,8 @@ func DecodeResource(kind string, payload []byte) (ir.Resource, error) {
 		resource = &ir.Hook{}
 	case ir.KindMcpServer:
 		resource = &ir.McpServer{}
+	case ir.KindRule:
+		resource = &ir.Rule{}
 	default:
 		return nil, fmt.Errorf("unsupported resource kind %q for DecodeResource", kind)
 	}
@@ -67,6 +69,8 @@ func canonicalToIRKind(kind string) (ir.ResourceKind, bool) {
 		return ir.KindHook, true
 	case "mcpserver":
 		return ir.KindMcpServer, true
+	case "rule":
+		return ir.KindRule, true
 	}
 	return 0, false
 }
@@ -83,6 +87,8 @@ func setName(r ir.Resource, name string) {
 		v.SetName(name)
 	case *ir.McpServer:
 		v.SetName(name)
+	case *ir.Rule:
+		v.SetName(name)
 	}
 }
 
@@ -97,6 +103,8 @@ func setExtra(r ir.Resource, extra map[string]any) {
 	case *ir.Hook:
 		v.Extra = extra
 	case *ir.McpServer:
+		v.Extra = extra
+	case *ir.Rule:
 		v.Extra = extra
 	}
 }

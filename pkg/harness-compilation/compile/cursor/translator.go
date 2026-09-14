@@ -54,7 +54,7 @@ func (c *cursorCompiler) TranslateWithOptions(r ir.Resource, opts compile.Option
 
 // translateRule emits rules/<name>.mdc (materialized under .cursor/rules/) with
 // YAML frontmatter (description, globs, alwaysApply) followed by the Markdown
-// body. Cursor and Windsurf share the .mdc rule format.
+// body. This is Cursor's format; Windsurf uses a distinct trigger-based schema.
 func (c *cursorCompiler) translateRule(r *ir.Rule) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	body, diags, err := mdc.RenderWithDiagnostics(r, mapping.TargetCursor)
 	if err != nil {

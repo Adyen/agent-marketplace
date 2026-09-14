@@ -32,12 +32,12 @@ func TestRule_IngestFactory(t *testing.T) {
 	}
 }
 
-// TestRule_ConvertWindsurfToFactory verifies a Windsurf .mdc rule converts to a
+// TestRule_ConvertWindsurfToFactory verifies a native Windsurf rule converts to a
 // plain-markdown Factory rule (frontmatter stripped) and materializes to
 // rules/<name>.md.
 func TestRule_ConvertWindsurfToFactory(t *testing.T) {
 	src := fstest.MapFS{
-		".windsurf/rules/typescript.mdc": {Data: []byte("---\ndescription: TS\nglobs: '*.ts'\nalwaysApply: true\n---\n# TS Rules\nUse interfaces.\n")},
+		".windsurf/rules/typescript.md": {Data: []byte("---\ntrigger: glob\nglobs:\n  - '*.ts'\n---\n# TS Rules\nUse interfaces.\n")},
 	}
 
 	result, err := Convert(src, HarnessWindsurf, HarnessFactory)
@@ -63,7 +63,7 @@ func TestRule_ConvertWindsurfToFactory(t *testing.T) {
 }
 
 // TestRule_ConvertFactoryToWindsurf verifies a plain-markdown Factory rule
-// converts to a Windsurf .mdc file with frontmatter.
+// converts to a native Windsurf .md file with trigger frontmatter.
 func TestRule_ConvertFactoryToWindsurf(t *testing.T) {
 	src := fstest.MapFS{
 		".factory/rules/typescript.md": {Data: []byte("# TypeScript Rules\nUse interfaces.\n")},
@@ -78,12 +78,12 @@ func TestRule_ConvertFactoryToWindsurf(t *testing.T) {
 	if _, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite)); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
-	got := readFile(t, filepath.Join(outDir, ".windsurf", "rules", "typescript.mdc"))
+	got := readFile(t, filepath.Join(outDir, ".windsurf", "rules", "typescript.md"))
 	if !strings.HasPrefix(got, "---\n") {
-		t.Errorf("Windsurf rule must be .mdc with frontmatter, got %q", got)
+		t.Errorf("Windsurf rule must have native frontmatter, got %q", got)
 	}
-	if !strings.Contains(got, "alwaysApply: false\n") {
-		t.Errorf("Windsurf rule missing alwaysApply, got %q", got)
+	if !strings.Contains(got, "trigger: manual\n") {
+		t.Errorf("Windsurf rule missing manual trigger, got %q", got)
 	}
 	if !strings.Contains(got, "# TypeScript Rules") {
 		t.Errorf("Windsurf rule missing body, got %q", got)

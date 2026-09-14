@@ -744,7 +744,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 				MaxDays:   backupCfg.MaxDays,
 				MaxPerDay: backupCfg.MaxPerDay,
 			}
-			managed := CollectManagedPaths(resolved.Resolved)
+			managed := CollectManagedPaths(resolved.Resolved, resolved.TargetHarnesses)
 			codexPartitions, codexErr := CollectCodexBackupPartitions(resolved.Resolved)
 			if codexErr != nil {
 				result.addMaterializeError(fmt.Errorf("backup: %w", codexErr))
@@ -848,8 +848,21 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 //
 // TestCollectManagedPathsIsMachineScopeOnlyByDecision pins the filter so
 // widening it is a deliberate act that fails a test naming the decision.
-func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]backup.ManagedPaths {
+func CollectManagedPaths(resolved []resolver.ResolvedArtifact, configuredTargets ...[]hcc.Target) map[hcc.Target]backup.ManagedPaths {
 	seen := make(map[hcc.Target]bool)
+	for _, targets := range configuredTargets {
+		for _, target := range targets {
+			if target != hcc.TargetDevin {
+				continue
+			}
+			ruleDir, err := harness.DevinMachineRuleDir()
+			if err == nil {
+				if info, statErr := os.Lstat(ruleDir); statErr == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+					seen[target] = true
+				}
+			}
+		}
+	}
 	for _, r := range resolved {
 		if !r.Source.IsMachineScope() {
 			continue
@@ -894,6 +907,17 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			slog.Error("resolve native aggregate backup files", "target", t, "error", mappingErr)
 			continue
 		}
+		if t == hcc.TargetDevin {
+			ruleDir, err := harness.DevinMachineRuleDir()
+			if err != nil {
+				slog.Error("resolve Devin machine rule backup directory", "target", t, "error", err)
+				continue
+			}
+			result[t] = backup.ManagedPaths{
+				Root:              root,
+				MappedDirectories: map[string]string{harness.DevinMachineRuleArchivePrefix: ruleDir},
+			}
+		}
 		if len(harness.NativeAggregateInstalls(t)) > 0 {
 			destinations, err := harness.ResolveDestinations(t, true, ".")
 			if err != nil {
@@ -919,7 +943,11 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			}
 			relPaths = append(relPaths, rel)
 		}
-		result[t] = backup.ManagedPaths{Root: root, RelPaths: relPaths, MappedFiles: mappedFiles}
+		managed := result[t]
+		managed.Root = root
+		managed.RelPaths = relPaths
+		managed.MappedFiles = mappedFiles
+		result[t] = managed
 	}
 	return result
 }

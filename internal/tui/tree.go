@@ -214,7 +214,7 @@ func appendKindRegistrySections(out []flatItem, parentPath string, rows []row, f
 }
 
 func orderedResourceKinds(buckets map[ir.ResourceKind][]row) []ir.ResourceKind {
-	known := []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer}
+	known := []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindRule}
 	out := make([]ir.ResourceKind, 0, len(buckets))
 	seen := make(map[ir.ResourceKind]struct{}, len(known))
 	for _, kind := range known {
@@ -248,6 +248,8 @@ func resourceKindSectionPath(kind ir.ResourceKind) string {
 		return "hooks"
 	case ir.KindMcpServer:
 		return "mcp-servers"
+	case ir.KindRule:
+		return "rules"
 	default:
 		return kind.String()
 	}
@@ -265,6 +267,8 @@ func resourceKindSectionTitle(kind ir.ResourceKind) string {
 		return "Hooks"
 	case ir.KindMcpServer:
 		return "MCP servers"
+	case ir.KindRule:
+		return "Rules"
 	default:
 		return kind.String()
 	}

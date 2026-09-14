@@ -302,6 +302,8 @@ func parseKind(s string) (ir.ResourceKind, error) {
 		return ir.KindHook, nil
 	case "mcp", "mcpserver":
 		return ir.KindMcpServer, nil
+	case "rule", "rules":
+		return ir.KindRule, nil
 	default:
 		return ir.KindSkill, fmt.Errorf("unsupported resource kind %q", s)
 	}

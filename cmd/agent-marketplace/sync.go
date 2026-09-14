@@ -333,7 +333,7 @@ func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) [
 			entries = layer.Local.Registries
 		}
 		for _, entry := range entries {
-			for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindCollection} {
+			for _, kind := range config.AllKinds {
 				for _, name := range entry.SelectorForKind(kind).Include {
 					seen[fmt.Sprintf("%s %q", skill.KindLabel(kind), name)] = struct{}{}
 				}

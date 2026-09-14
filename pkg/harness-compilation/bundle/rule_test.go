@@ -142,8 +142,8 @@ func TestLoadRule(t *testing.T) {
 	}
 }
 
-// TestLoadRule_LenientUnquotedGlobs verifies that real-world Cursor/Windsurf
-// .mdc rules with unquoted glob patterns (invalid strict YAML) still ingest via
+// TestLoadRule_LenientUnquotedGlobs verifies that real-world Cursor .mdc rules
+// with unquoted glob patterns (invalid strict YAML) still ingest via
 // the lenient line-based fallback.
 func TestLoadRule_LenientUnquotedGlobs(t *testing.T) {
 	src := fstest.MapFS{

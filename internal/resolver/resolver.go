@@ -2812,17 +2812,6 @@ func indexCatalog(entries []catalog.Entry) map[resourceSelection]catalog.Entry {
 	return byName
 }
 
-// kindSelectorKey maps a resource kind to the canonical YAML config key used in
-// per-registry KindSelector fields (e.g. skills, commands, subagents, hooks, mcp).
-var kindSelectorKey = map[ir.ResourceKind]string{
-	ir.KindSkill:      "skills",
-	ir.KindCommand:    "commands",
-	ir.KindSubagent:   "subagents",
-	ir.KindHook:       "hooks",
-	ir.KindMcpServer:  "mcp",
-	ir.KindCollection: "collections",
-}
-
 // kindMismatchHint checks whether the given name exists under a different kind
 // in the catalog index. If so, it returns a hint string suggesting the correct
 // selector field (e.g. "resource exists as command; use commands: include: [X]").
@@ -2833,7 +2822,7 @@ func kindMismatchHint(byName map[resourceSelection]catalog.Entry, selected resou
 		}
 		if _, ok := byName[resourceSelection{kind: kind, name: selected.name}]; ok {
 			label := skill.KindLabel(kind)
-			selectorKey := kindSelectorKey[kind]
+			selectorKey := skill.ConfigKeyForKind(kind)
 			return fmt.Sprintf("resource exists as %s; use %s: include: [%s]", label, selectorKey, selected.name)
 		}
 	}

@@ -228,7 +228,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 
 	for _, malformed := range resolvedResult.CatalogLoad.Malformed {
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, fmt.Errorf("malformed skill %q (%s): %w", malformed.DirName, malformed.Path, malformed.Error))
+		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, fmt.Errorf("malformed %s %q (%s): %w", skill.MalformedKindLabel(malformed), malformed.DirName, malformed.Path, malformed.Error))
 	}
 	for _, err := range resolvedResult.ResolveErrors {
 		if isSoftResolutionIssue(err) {
@@ -417,8 +417,11 @@ func localSelectorCounts(cfg *config.LocalConfig) (enabledCount int, excludedCou
 	if cfg == nil {
 		return 0, 0
 	}
-	enabledCount += len(cfg.Skills.Include) + len(cfg.Commands.Include) + len(cfg.Subagents.Include) + len(cfg.Hooks.Include) + len(cfg.MCP.Include)
-	excludedCount += len(cfg.Skills.Exclude) + len(cfg.Commands.Exclude) + len(cfg.Subagents.Exclude) + len(cfg.Hooks.Exclude) + len(cfg.MCP.Exclude)
+	for _, kind := range config.AllKinds {
+		selector := cfg.SelectorForKind(kind)
+		enabledCount += len(selector.Include)
+		excludedCount += len(selector.Exclude)
+	}
 	return enabledCount, excludedCount
 }
 
@@ -609,11 +612,13 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		addLocalKindSelections(localEnabledAny, ir.KindSubagent, localCfg.Subagents.Include)
 		addLocalKindSelections(localEnabledAny, ir.KindHook, localCfg.Hooks.Include)
 		addLocalKindSelections(localEnabledAny, ir.KindMcpServer, localCfg.MCP.Include)
+		addLocalKindSelections(localEnabledAny, ir.KindRule, localCfg.Rules.Include)
 		addLocalKindSelections(localExcludedAny, ir.KindSkill, localCfg.Skills.Exclude)
 		addLocalKindSelections(localExcludedAny, ir.KindCommand, localCfg.Commands.Exclude)
 		addLocalKindSelections(localExcludedAny, ir.KindSubagent, localCfg.Subagents.Exclude)
 		addLocalKindSelections(localExcludedAny, ir.KindHook, localCfg.Hooks.Exclude)
 		addLocalKindSelections(localExcludedAny, ir.KindMcpServer, localCfg.MCP.Exclude)
+		addLocalKindSelections(localExcludedAny, ir.KindRule, localCfg.Rules.Exclude)
 
 		// Registry-scoped local selections (install --scope local and the TUI
 		// now write these instead of the top-level selector). Key them by the
@@ -775,12 +780,13 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 	}
 
-	// Add malformed skills. Deduplicate by (catalogKey, DirName) so
+	// Add malformed resources. Deduplicate by (kind, catalogKey, DirName) so
 	// same-name malformed entries from different catalogs each appear.
 	for catalogKey, cat := range catalogs {
 		for _, m := range cat.Malformed {
 			name := m.DirName
-			seenKey := name + "\x01" + catalogKey
+			kind := skill.MalformedKind(m)
+			seenKey := skill.ResourceKey(kind, name) + "\x01" + catalogKey
 			if _, dup := seen[seenKey]; dup {
 				continue
 			}
@@ -790,7 +796,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 				IsMalformed:  true,
 				MalformedMsg: m.Error.Error(),
 				Artifact: resolver.ResolvedArtifact{
-					Entry: catalog.Entry{Name: name, Path: m.Path},
+					Entry: catalog.Entry{Kind: kind, Name: name, Path: m.Path},
 				},
 			})
 		}

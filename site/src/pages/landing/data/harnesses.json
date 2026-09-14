@@ -310,9 +310,9 @@
         ]
       },
       "devin": {
-        "status": "none",
-        "codes": [
-          "rule.devin.unsupported"
+        "status": "native",
+        "paths": [
+          "rules/example.md"
         ]
       },
       "factory": {
@@ -333,7 +333,7 @@
       "windsurf": {
         "status": "native",
         "paths": [
-          ".windsurf/rules/example.mdc"
+          ".windsurf/rules/example.md"
         ]
       }
     },

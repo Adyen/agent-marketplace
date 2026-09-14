@@ -1,7 +1,7 @@
 // Package ir defines the intermediate representation for compilable AI-agent
 // configuration resources. Each resource type (Skill, Command, Subagent, Hook,
-// McpServer) implements the Resource interface so it can be uniformly processed
-// by the compilation pipeline.
+// McpServer, Rule) implements the Resource interface so it can be uniformly
+// processed by the compilation pipeline.
 package ir
 
 import (
@@ -238,14 +238,16 @@ func (c *Command) SetName(name string) { c.name = name }
 
 // Rule represents a compilable rule resource: a coding convention or standard
 // that a harness applies to guide how code is written. Rules can be authored
-// either as plain Markdown (Factory-native) or as .mdc files with YAML
-// frontmatter (Cursor/Windsurf-native, carrying globs/alwaysApply/description).
+// either as plain Markdown (Factory-native), as .mdc files with Cursor
+// frontmatter, or as trigger-based Markdown used independently by Windsurf and
+// Devin.
 type Rule struct {
 	name        string         // Unique kebab-case name
 	Description string         // One-line description (empty for plain-markdown rules)
 	Body        string         // Markdown body content
 	Globs       []string       // Optional file glob patterns the rule applies to
 	AlwaysApply bool           // Whether the rule always applies regardless of globs
+	Trigger     string         // Native trigger when explicitly represented
 	Ext         extpkg.Bag     // Optional target-specific sidecars
 	Extra       map[string]any // Preserved unknown frontmatter fields
 	Source      SourceRef      // Origin in the source bundle

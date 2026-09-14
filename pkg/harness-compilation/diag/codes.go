@@ -65,7 +65,9 @@ const (
 	CodeMcpInterpolationUnsupported   = "mcp.interpolation-unsupported"           // A single MCP value used an interpolation style the target cannot represent
 	CodeRuleClaudeNoPrimitive         = "rule.claude.no-primitive"                // Claude has no rules directory primitive
 	CodeRuleGeminiNoPrimitive         = "rule.gemini.no-primitive"                // Gemini has no rules directory primitive
-	CodeRuleDevinUnsupported          = "rule.devin.unsupported"                  // Rules are out of scope for the Devin target (a scope decision, not a Devin limit)
+	CodeRuleDevinUnsupported          = "rule.devin.unsupported"                  // Deprecated compatibility code; the Devin compiler no longer emits it
+	CodeRuleDevinGlobsDropped         = "rule.devin.globs-dropped"                // Globs omitted because the selected native trigger cannot represent them
+	CodeRuleDevinAlwaysApplyDropped   = "rule.devin.always-apply-dropped"         // AlwaysApply omitted because the selected native trigger conflicts
 	CodeRuleCodexUnsupported          = "rule.codex.unsupported"                  // Codex rules and AGENTS.md generation are out of scope
 	CodeCodexFieldDropped             = "compile.codex.field-dropped"             // Benign IR field has no documented Codex equivalent
 	CodeSubagentCodexModelDropped     = "subagent.codex.model-dropped"            // Codex-only model omitted for a non-Codex target
@@ -75,6 +77,8 @@ const (
 	CodeIngestCodexPromptDeprecated   = "ingest.codex.prompt-deprecated"          // Deprecated prompt ingested as command
 	CodeIngestCodexFieldDropped       = "ingest.codex.field-dropped"              // Benign native Codex field omitted
 	CodeRuleFactoryMetadataDropped    = "rule.factory.metadata-dropped"           // Factory rules are plain markdown; globs/alwaysApply dropped
+	CodeRuleCursorTriggerDropped      = "rule.cursor.trigger-dropped"             // Native trigger omitted from Cursor MDC output
+	CodeRuleWindsurfMetadataDropped   = "rule.windsurf.metadata-dropped"          // Metadata incompatible with the selected Windsurf trigger was dropped
 	CodeCanonicalFieldOverridesExtra  = "compile.canonical-field-overrides-extra" // Canonical field wins over conflicting preserved extra
 	CodeHookPromptUnsupported         = "hook.prompt.unsupported"                 // Target cannot represent prompt hooks
 	CodeHookGeminiEventUnmappable     = "hook.gemini.event-unmappable"            // Gemini has no equivalent event
@@ -333,6 +337,8 @@ const (
 	CodeIngestGeminiLoadHookFailed               = "ingest.gemini.load-hook-failed"               // Failed to load a hook from the source layout
 	CodeIngestFactoryLoadRuleFailed              = "ingest.factory.load-rule-failed"              // Failed to load a rule from the source layout
 	CodeIngestCursorLoadRuleFailed               = "ingest.cursor.load-rule-failed"               // Failed to load a rule from the source layout
+	CodeIngestDevinLoadRuleFailed                = "ingest.devin.load-rule-failed"                // Failed to load one rule from the source layout
+	CodeIngestWindsurfDuplicateRule              = "ingest.windsurf.duplicate-rule"               // Native and legacy rules share one identity
 	// skill.devin.tool-unknown, subagent.devin.tool-unknown, and
 	// subagent.factory.tool-unknown are warnings and live in the warning block
 	// above, which carries the rationale. Gemini and Cursor siblings still fail
@@ -489,14 +495,9 @@ var codeCatalog = []CodeDoc{
 	{CodeMcpInterpolationUnsupported, SeverityWarning, "One MCP value uses an interpolation style the target cannot represent; that value was omitted and the entry was still emitted", "Replace the interpolated value with a literal value, or use an interpolation style the target documents"},
 	{CodeRuleClaudeNoPrimitive, SeverityWarning, "Claude Code has no rules directory primitive; rule dropped", "Claude reads project guidance from CLAUDE.md; reference the rule content there instead"},
 	{CodeRuleGeminiNoPrimitive, SeverityWarning, "Gemini CLI has no rules directory primitive; rule dropped", "Gemini reads project guidance from GEMINI.md; reference the rule content there instead"},
-	// rule.devin.unsupported sits with its Claude and Gemini siblings on
-	// purpose. It is the same class of loss — the run drops a rule and
-	// continues — but the reason is different and must not be conflated: this
-	// is a SCOPE decision, not a Devin capability limit. On 3000.3.27 a rule at
-	// .devin/rules/<name>.md IS discovered even though `devin rules paths` does
-	// not advertise it
-	// (internal/devinprobe.TestProbeRulesDiscoveryUnderDevinRoots).
-	{CodeRuleDevinUnsupported, SeverityWarning, "Rules are out of scope for the Devin target; no rule artifact was emitted", "This is a scope decision, not a Devin limitation: on 3000.3.27 a rule placed at .devin/rules/<name>.md is discovered even though `devin rules paths` does not advertise it. Compile the rule to a target with a supported rules primitive (factory, cursor, windsurf), or place it under .devin/rules by hand"},
+	{CodeRuleDevinUnsupported, SeverityWarning, "Deprecated Devin rule-drop diagnostic", "Upgrade consumers to handle native Devin rule artifacts"},
+	{CodeRuleDevinGlobsDropped, SeverityWarning, "Rule globs cannot be represented by the selected Devin trigger and were omitted", "Use trigger: glob to preserve glob-scoped application"},
+	{CodeRuleDevinAlwaysApplyDropped, SeverityWarning, "Rule alwaysApply metadata conflicts with the selected Devin trigger and was omitted", "Use trigger: always_on to preserve always-on application"},
 	{CodeRuleCodexUnsupported, SeverityWarning, "Rules are out of scope for the Codex target; no rule or AGENTS.md content was emitted", "Use a supported resource kind or manage AGENTS.md separately"},
 	{CodeCodexFieldDropped, SeverityWarning, "A benign IR field has no documented Codex equivalent and was omitted", "Remove the field or choose a target that represents it"},
 	{CodeSubagentCodexModelDropped, SeverityWarning, "A Codex-only subagent model was omitted for a non-Codex target", "Compile to Codex to preserve the native-only model, or choose a portable canonical model"},
@@ -506,6 +507,8 @@ var codeCatalog = []CodeDoc{
 	{CodeIngestCodexPromptDeprecated, SeverityWarning, "A deprecated Codex prompt was ingested as a command", "Move the prompt to a command skill under .agents/skills"},
 	{CodeIngestCodexFieldDropped, SeverityWarning, "A benign native Codex field has no canonical equivalent and was omitted", "Remove the field or keep the resource in Codex format"},
 	{CodeRuleFactoryMetadataDropped, SeverityWarning, "Factory rules are plain markdown; globs/alwaysApply metadata dropped", "Factory does not support conditional (glob-scoped) rule application; the rule body is emitted verbatim"},
+	{CodeRuleCursorTriggerDropped, SeverityWarning, "Native rule trigger cannot be represented in Cursor MDC frontmatter and was omitted", "Use alwaysApply, globs, or description to express Cursor rule activation"},
+	{CodeRuleWindsurfMetadataDropped, SeverityWarning, "Canonical rule metadata incompatible with the selected Windsurf trigger was dropped", "Use description with model_decision, globs with glob, or remove metadata for always_on/manual"},
 	{CodeCanonicalFieldOverridesExtra, SeverityWarning, "Canonical field overrides a conflicting preserved extra", "The canonical modeled value wins; rename the extension field to preserve both values"},
 	{CodeHookPromptUnsupported, SeverityWarning, "Target cannot represent prompt hooks; hook dropped", "Use a command hook on this target"},
 	{CodeHookGeminiEventUnmappable, SeverityWarning, "Gemini has no equivalent hook event; hook dropped", "Use a Gemini-supported event such as PreToolUse, PostToolUse, or PreCompact"},
@@ -585,6 +588,8 @@ var codeCatalog = []CodeDoc{
 	{CodeIngestGeminiLoadHookFailed, SeverityError, "Failed to load a hook from the Gemini source layout", "Check the settings.json hook structure"},
 	{CodeIngestFactoryLoadRuleFailed, SeverityError, "Failed to load a rule from the Factory source layout", "Check the .factory/rules/*.md file structure"},
 	{CodeIngestCursorLoadRuleFailed, SeverityError, "Failed to load a rule from the Cursor source layout", "Check the .cursor/rules/*.mdc file structure and frontmatter"},
+	{CodeIngestDevinLoadRuleFailed, SeverityError, "Failed to load one rule from the Devin source layout", "Fix the named rules/*.md file; valid sibling resources remain available"},
+	{CodeIngestWindsurfDuplicateRule, SeverityWarning, "Native .md and legacy .mdc Windsurf rules share one identity; the native rule was used", "Remove or rename the legacy duplicate"},
 	{CodeSubagentDevinBuiltinNameConflict, SeverityError, "Subagent name collides with a Devin built-in subagent, which cannot be replaced; artifact suppressed", "Rename the subagent so it does not shadow a Devin built-in such as subagent_explore or subagent_general"},
 	{CodeSubagentDevinNestedNameUnsupported, SeverityError, "Subagent name expresses nesting, which Devin's flat agents directory cannot represent; artifact suppressed", "Rename the subagent to a flat name: Devin discovers only agents/<name>.md, and flattening the name could collide with another subagent"},
 	{CodeHookDevinEventUnmappable, SeverityError, "Hook event is not documented by Devin; the hook entry was skipped and sync exits non-zero", "Use a Devin-documented hook event: PreToolUse, PostToolUse, PermissionRequest, UserPromptSubmit, Stop, SessionStart, SessionEnd, or PostCompaction"},

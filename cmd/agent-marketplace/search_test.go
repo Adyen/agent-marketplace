@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
@@ -330,5 +331,18 @@ func TestSearchCommandNoMarketplaceConfigured(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no marketplaces") {
 		t.Fatalf("expected no marketplaces error, got: %v\n%s", err, output)
+	}
+}
+
+func TestSearchRejectsRuleKindForHostedMarketplace(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	err := validateHostedSearchKind(ir.KindRule)
+	if err == nil || !strings.Contains(err.Error(), "unsupported hosted Marketplace kind") {
+		t.Fatalf("validateHostedSearchKind(rule) error = %v, want clear unsupported hosted Marketplace kind error", err)
+	}
+	if err := validateHostedSearchKind(ir.KindSkill); err != nil {
+		t.Fatalf("validateHostedSearchKind(skill) = %v, want accepted control", err)
 	}
 }

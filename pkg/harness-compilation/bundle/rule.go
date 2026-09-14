@@ -13,12 +13,12 @@ import (
 
 // LoadRule reads a rule file from src at the given path. Rules may be authored
 // either as plain Markdown (Factory-native, typically .md, no frontmatter) or
-// as .mdc files with YAML frontmatter (Cursor/Windsurf-native, carrying
+// as .mdc files with YAML frontmatter (Cursor-native, carrying
 // description/globs/alwaysApply). Frontmatter is parsed only for .mdc files;
 // plain .md rules are treated as pure body so a leading `---` Markdown
 // horizontal rule is never mistaken for a frontmatter delimiter.
 //
-// Real-world Cursor/Windsurf .mdc rules frequently write unquoted glob patterns
+// Real-world Cursor .mdc rules frequently write unquoted glob patterns
 // (e.g. `globs: *.ts`) which are not valid strict YAML. When strict parsing
 // fails, LoadRule falls back to a lenient line-based frontmatter parse so those
 // files still ingest correctly.
@@ -75,9 +75,9 @@ func LoadRule(src fs.FS, rulePath string) (*ir.Rule, error) {
 	return ir.NewRule(name, description, body, globs, alwaysApply, extra, source), nil
 }
 
-// isFrontmatterRule reports whether a rule path uses the .mdc convention that
-// carries YAML frontmatter (Cursor/Windsurf). Plain .md rules (Factory) are
-// pure Markdown bodies and must not be parsed for frontmatter.
+// isFrontmatterRule reports whether a rule path uses Cursor's .mdc convention.
+// Plain .md rules are parsed by the target-specific Factory, Windsurf, or Devin
+// ingester rather than being conflated here.
 func isFrontmatterRule(rulePath string) bool {
 	return strings.HasSuffix(rulePath, ".mdc")
 }
