@@ -23,7 +23,7 @@ func TestBlockedComponentsForMapsResourcesToTheirOwnedOutput(t *testing.T) {
 		{name: "a devin skill blocks skills", target: hcc.TargetDevin, resource: ir.NewSkill("s", "d", "b", nil, nil, ir.SourceRef{}), want: []string{"skills"}},
 		{name: "a devin command blocks skills", target: hcc.TargetDevin, resource: ir.NewCommand("c", "d", "b", nil, ir.SourceRef{}), want: []string{"skills"}},
 		{name: "a devin subagent blocks agents", target: hcc.TargetDevin, resource: ir.NewSubagent("a", "d", "b", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), want: []string{"agents"}},
-		{name: "an unmapped devin rule fails closed", target: hcc.TargetDevin, resource: ir.NewRule("r", "d", "b", nil, false, nil, ir.SourceRef{}), want: []string{blockedAllComponents}},
+		{name: "a devin rule blocks rules", target: hcc.TargetDevin, resource: ir.NewRule("r", "d", "b", nil, false, nil, ir.SourceRef{}), want: []string{"rules"}},
 		{name: "a claude hook blocks hooks", target: hcc.TargetClaude, resource: ir.NewHook("h", "PostToolUse", "echo", "command", nil, ir.SourceRef{}), want: []string{"hooks"}},
 		{name: "an unmapped claude mcp fails closed", target: hcc.TargetClaude, resource: ir.NewMcpServer("m", "bin", nil, nil, nil, ir.SourceRef{}), want: []string{blockedAllComponents}},
 		{name: "a machine windsurf command blocks global workflows", target: hcc.TargetWindsurf, machineScope: true, resource: ir.NewCommand("c", "d", "b", nil, ir.SourceRef{}), want: []string{"global_workflows"}},

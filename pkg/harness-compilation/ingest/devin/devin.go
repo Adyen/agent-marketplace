@@ -58,6 +58,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/rulefmt"
 )
 
 // Canonical Devin 3000.3 path components, relative to a Devin root. They mirror
@@ -73,6 +74,7 @@ const (
 
 	skillsDir       = "skills"
 	agentsDir       = "agents"
+	rulesDir        = "rules"
 	skillFile       = "SKILL.md"
 	subagentSuffix  = ".md"
 	subagentDirFile = "AGENT.md"
@@ -170,7 +172,7 @@ func (r root) String() string {
 // materialize into or read from.
 var (
 	workspaceMarkerFiles = []string{projectHooksFile, mcpConfigFile, configFile}
-	workspaceMarkerDirs  = []string{skillsDir, agentsDir}
+	workspaceMarkerDirs  = []string{skillsDir, agentsDir, rulesDir}
 )
 
 func hasWorkspaceMarkers(src fs.FS) bool {
@@ -233,6 +235,13 @@ func (*devinIngester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 	diags = append(diags, subagentDiags...)
 	resources = append(resources, subagents...)
 
+	rules, ruleDiags, err := loadRules(src, r)
+	if err != nil {
+		return nil, err
+	}
+	diags = append(diags, ruleDiags...)
+	resources = append(resources, rules...)
+
 	hooks, hookDiags := loadHooks(src, r)
 	diags = append(diags, hookDiags...)
 	resources = append(resources, hooks...)
@@ -244,6 +253,38 @@ func (*devinIngester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 	slog.Info("devin ingest end", "source", ingest.HarnessDevin, "root_form", r.String(),
 		"resources", len(resources), "diagnostics", len(diags))
 	return &ingest.Bundle{Resources: resources, Diagnostics: diags}, nil
+}
+
+func loadRules(src fs.FS, r root) ([]ir.Resource, []diag.Diagnostic, error) {
+	dir := r.join(rulesDir)
+	entries, err := fs.ReadDir(src, dir)
+	if isNotExist(err) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("ingest/devin: read rules: %w", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+	resources := make([]ir.Resource, 0, len(names))
+	var diags []diag.Diagnostic
+	for _, name := range names {
+		file := path.Join(dir, name)
+		rule, err := rulefmt.Load(src, file, workspaceDir+"/", "devin")
+		if err != nil {
+			diags = append(diags, ingest.LoadFailure(diag.CodeIngestDevinLoadRuleFailed, "rule", strings.TrimSuffix(name, ".md"), file, err))
+			continue
+		}
+		rule.Source.File = strings.TrimPrefix(rule.Source.File, workspaceDir+"/")
+		resources = append(resources, rule)
+	}
+	slog.Debug("devin rules ingested", "root_form", r.String(), "count", len(resources))
+	return resources, diags, nil
 }
 
 // resolveRoot picks the single root this run reads from.

@@ -34,6 +34,7 @@ const maxFrontmatterLines = 512
 // directory (which names the resource itself).
 var resourceFileExtensions = map[string]struct{}{
 	".md":   {},
+	".mdc":  {},
 	".json": {},
 	".yaml": {},
 	".yml":  {},

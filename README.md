@@ -1,7 +1,7 @@
 # agent-marketplace
 
 `agent-marketplace` is a single Go binary that distributes shared AI agent
-resources — skills, commands, subagents, hooks, and MCP servers — from
+resources — skills, commands, subagents, hooks, MCP servers, and rules — from
 **registries** into the native layout of whichever AI coding harness you use
 (Factory Droid, Claude Code, Cursor, Windsurf, Gemini CLI, Devin CLI, and
 Codex).
@@ -203,6 +203,8 @@ registries:
       include: [deploy-service]
     subagents:
       include: [incident-responder]
+    rules:
+      include: [secure-coding]
 ```
 
 The full precedence and selection rules — including edge cases and error
@@ -461,8 +463,8 @@ harnesses: [factory, devin]
 ```
 
 Devin writes to its canonical roots — `<repo>/.devin` for repo scope and
-`~/.config/devin` for machine scope — and covers all five target-materialized
-kinds:
+`~/.config/devin` for machine scope — and covers five target-materialized
+kinds in both scopes, plus project-only Rule support:
 
 | Resource kind | Devin output |
 |---------------|--------------|
@@ -471,9 +473,13 @@ kinds:
 | Subagent | `agents/<name>.md` (file symlink) |
 | Hook | repo: `hooks.v1.json`; machine: the `hooks` member of `config.json` |
 | MCP server | `mcp_config.json` (same relative path in both scopes) |
+| Rule | project: `rules/<name>.md`; machine: unsupported (`rule.devin.unsupported`) |
 
-Rules are not a marketplace-selectable kind and are not supported by this
-target; a rule produces a diagnostic instead of an artifact.
+Devin rules use native trigger frontmatter. A description selects
+`model_decision` and is preserved, globs select `glob` and are preserved, and
+always-apply selects `always_on`. Explicit conflicting trigger metadata is
+preserved where representable, while omitted conflicting globs or always-apply
+metadata produce a targeted warning.
 
 Devin is also a full **conversion** target, so `agent-marketplace convert --from
 devin`, `convert --to devin`, and `source_harness: devin` on a registry entry
@@ -599,6 +605,7 @@ target harness on `sync`.
 | **Command** | Supported |
 | **Subagent** | Supported (dropped on harnesses with no equivalent, e.g. Windsurf, with a diagnostic) |
 | **MCP server** | Supported |
+| **Rule** | Supported on Factory, Cursor, Windsurf, and Devin; dropped with a warning on Claude, Gemini, and Codex |
 | **Hook** | Experimental — materializes, but output fidelity is still being finalized |
 | **Collection** | Supported (not a resource itself — a named bundle of the kinds above) |
 
@@ -612,11 +619,24 @@ When a target harness cannot represent a resource, the compiler emits a
 structured diagnostic (visible in `status`) and skips that artifact rather than
 silently dropping it.
 
+Windsurf rules are emitted as native `.windsurf/rules/<name>.md` files. Their
+frontmatter trigger is derived deterministically: `always_on` when
+`alwaysApply` is true, `glob` when globs are present, `model_decision` when
+only a description is present, and `manual` otherwise. Metadata that cannot be
+represented by the selected trigger is reported with
+`rule.windsurf.metadata-dropped`. Explicit `agent` triggers and descriptions
+with any trigger are preserved. Devin uses the same trigger frontmatter at
+project `.devin/rules/<name>.md`. Machine-scope Devin Rules are intentionally
+omitted rather than written to either `~/.devin/rules` or
+`~/.config/devin/rules`, with `rule.devin.unsupported` reported. Other
+machine-scope resources continue to materialize normally.
+
 ### Collections
 
 A collection is **not a target-materialized resource itself** — it is a named
-bundle that points at the five target-materialized kinds: skills, commands,
-subagents, hooks, and MCP servers (possibly spanning multiple registries).
+bundle that points at the six target-materialized kinds: skills, commands,
+subagents, hooks, MCP servers, and rules (possibly spanning multiple
+registries).
 Think of it as a curated install list: enabling a collection enables all of its
 members, and the members are still the real resources that get materialized.
 
@@ -705,7 +725,7 @@ and integration are not implemented.
 
 ```
 agent-marketplace list                          Browse resources from configured registries
-agent-marketplace list --kind command           Browse one kind: skill, command, subagent, hook, mcp, collection
+agent-marketplace list --kind command           Browse one kind: skill, command, subagent, hook, mcp, rule, collection
 agent-marketplace list --from <url> --ref <ref>  Browse an ad-hoc registry (nothing written)
 
 agent-marketplace install <name> --from <url> --ref <ref>   Install one resource from a registry

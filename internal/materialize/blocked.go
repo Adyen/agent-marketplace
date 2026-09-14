@@ -115,6 +115,9 @@ func blockedComponentsFor(key outputKey, w skillTarget) []string {
 		return []string{blockedAllComponents}
 	}
 	kind := w.skill.Resource.Kind()
+	if !info.ResourceSupportedForScope(kind, key.machineScope) {
+		return nil
+	}
 	if handler := ownedAggregateHandlerFor(key.target); handler != nil && len(handler.aggregateRels(kind, key.machineScope)) > 0 {
 		return nil
 	}

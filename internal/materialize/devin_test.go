@@ -540,9 +540,8 @@ func TestDevinPartialFailureCommitsSiblingsAndPostponesPrune(t *testing.T) {
 	// (subagent.devin.builtin-name-conflict), so this run is partial. It also
 	// drops both stale resources.
 	//
-	// This used to be a rule: bead agent-marketplace-5exj.22 made
-	// rule.devin.unsupported a WARNING, because dropping an out-of-scope rule is
-	// not a failure, so a rule can no longer produce a resource-level error. The
+	// This used to be a rule before Devin gained native rule support, so a rule
+	// can no longer produce this resource-level error. The
 	// contract under test — an erroring resource that contributes to NO
 	// aggregate file must not suppress pruning of any aggregate file — is
 	// unchanged; only the resource that carries it moved.
@@ -586,19 +585,9 @@ func TestDevinPartialFailureCommitsSiblingsAndPostponesPrune(t *testing.T) {
 	}
 }
 
-// TestDevinRuleWarnsWithoutFailingTheRun is the consumer-side half of bead
-// agent-marketplace-5exj.22. A rule selected for Devin still materializes
-// nothing, but the diagnostic is a warning, so:
-//
-//   - internal/pipeline turns it into a printed `warning:` line rather than an
-//     entry in Result.Errors, so `sync` exits zero;
-//   - the run is not partial, so stale entries in unrelated aggregate files
-//     still prune.
-//
-// The old ERROR was justified by "Devin has no rule primitive", which the D12
-// probe falsified on 3000.3.27; the drop itself is a scope decision, and a
-// scope decision must not fail a user's sync.
-func TestDevinRuleWarnsWithoutFailingTheRun(t *testing.T) {
+// Native Devin rules preserve trigger frontmatter and do not make the run
+// partial, so stale entries in unrelated aggregate files still prune.
+func TestDevinRuleMaterializesWithoutMetadataLoss(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)
 
@@ -618,13 +607,6 @@ func TestDevinRuleWarnsWithoutFailingTheRun(t *testing.T) {
 		t.Fatalf("second Run: %v", err)
 	}
 
-	d, ok := findDiag(report.Diags, diag.CodeRuleDevinUnsupported)
-	if !ok {
-		t.Fatalf("expected %s, got %v", diag.CodeRuleDevinUnsupported, report.Diags)
-	}
-	if d.Severity != diag.SeverityWarning {
-		t.Errorf("severity = %v, want %v: an out-of-scope drop must not fail sync", d.Severity, diag.SeverityWarning)
-	}
 	for _, other := range report.Diags {
 		if other.Severity == diag.SeverityError {
 			t.Errorf("a rule selected for Devin produced an error diagnostic %s: %v", other.Code, other)
@@ -633,10 +615,8 @@ func TestDevinRuleWarnsWithoutFailingTheRun(t *testing.T) {
 	if _, postponed := findDiag(report.Diags, diag.CodeMaterializeDevinAggregatePrunePostponed); postponed {
 		t.Error("a warning-only run must not postpone pruning")
 	}
-	// The loss is still real: nothing is written for the rule anywhere under
-	// the Devin root.
-	if _, statErr := os.Stat(filepath.Join(root, "rules")); !os.IsNotExist(statErr) {
-		t.Errorf("stat %s = %v, want the rule to remain unmaterialized", filepath.Join(root, "rules"), statErr)
+	if got := readFileString(t, filepath.Join(root, "rules", "a-rule.md")); !strings.Contains(got, "trigger: model_decision") || !strings.Contains(got, "description: desc") || !strings.Contains(got, "body") {
+		t.Errorf("native Devin rule did not preserve trigger metadata: %q", got)
 	}
 	// And a genuinely deselected entry still prunes, because nothing was skipped.
 	if got := readFileString(t, filepath.Join(root, harness.DevinMcpConfigFile)); strings.Contains(got, `"mcp-drop"`) {

@@ -563,18 +563,29 @@ func filterRequirementWarnings(warnings []error, installed []resourceIdentity) [
 	requirementWarnings := make([]error, 0)
 	for _, warning := range warnings {
 		var requirement *resolver.UnmetRequirementWarning
-		if !errors.As(warning, &requirement) {
+		if errors.As(warning, &requirement) {
+			if installedResources != nil {
+				resource := resourceIdentity{kind: requirement.ResourceKind, name: strings.TrimSpace(requirement.ResourceName)}
+				if _, ok := installedResources[resource]; !ok {
+					continue
+				}
+			}
+			requirementWarnings = append(requirementWarnings, warning)
+			continue
+		}
+		var compilerWarning *diagIssue
+		if !errors.As(warning, &compilerWarning) || !strings.HasPrefix(compilerWarning.code, "rule.") {
 			continue
 		}
 		if installedResources != nil {
-			resource := resourceIdentity{kind: requirement.ResourceKind, name: strings.TrimSpace(requirement.ResourceName)}
+			resource := resourceIdentity{kind: ir.KindRule, name: strings.TrimSpace(compilerWarning.resource)}
 			if _, ok := installedResources[resource]; !ok {
 				continue
 			}
 		}
 		requirementWarnings = append(requirementWarnings, warning)
 	}
-	slog.Debug("install requirement warnings filtered",
+	slog.Debug("install warnings filtered",
 		"warnings", len(warnings),
 		"installed_resources", len(installed),
 		"kept", len(requirementWarnings),

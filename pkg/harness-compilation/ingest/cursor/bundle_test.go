@@ -78,6 +78,29 @@ func TestCursorIngester_Detect_WorkspaceForm(t *testing.T) {
 	}
 }
 
+func TestCursorIngester_LoadBundle_RulesOnlyPlugin(t *testing.T) {
+	ing, ok := ingest.For(ingest.HarnessCursor)
+	if !ok {
+		t.Fatal("Cursor ingester not registered")
+	}
+	src := fstest.MapFS{
+		".cursor-plugin/plugin.json": {Data: []byte(`{"name":"rules-only"}`)},
+		"rules/secure-coding.mdc":    {Data: []byte("---\ndescription: Secure coding\nalwaysApply: true\n---\n# Secure\n")},
+	}
+	if !ing.Detect(src) {
+		t.Fatal("Detect() = false for rules-only plugin, want true")
+	}
+	bundle, err := ing.LoadBundle(src)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	if rule := findRule(bundle.Resources, "secure-coding"); rule == nil {
+		t.Fatalf("expected rules-only plugin resource, got %v", bundle.Resources)
+	} else if rule.Source.File != "rules/secure-coding.mdc" {
+		t.Fatalf("rule source = %q, want rules/secure-coding.mdc", rule.Source.File)
+	}
+}
+
 func TestCursorIngester_LoadBundle_PluginForm(t *testing.T) {
 	ing, ok := ingest.For(ingest.HarnessCursor)
 	if !ok {

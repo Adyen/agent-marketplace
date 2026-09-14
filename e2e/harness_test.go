@@ -96,6 +96,28 @@ func (c Command) CommandPath() string {
 	return fmt.Sprintf("commands/%s.md", c.Name)
 }
 
+// ---------- rule fixture builder ----------
+
+// Rule describes a coding-convention rule resource for fixture creation.
+type Rule struct {
+	Name string
+	Body string
+}
+
+// RuleFile returns a Factory-compatible plain Markdown rule file.
+func (r Rule) RuleFile() string {
+	body := r.Body
+	if body == "" {
+		body = "# " + r.Name + "\n"
+	}
+	return body
+}
+
+// RulePath returns the path within a registry for this rule.
+func (r Rule) RulePath() string {
+	return fmt.Sprintf("rules/%s.md", r.Name)
+}
+
 // ---------- subagent fixture builder ----------
 
 // Subagent describes a subagent resource for fixture creation.
@@ -227,11 +249,21 @@ func RegistryFiles(skills []Skill, commands []Command, subagents []Subagent) map
 	return files
 }
 
-// RegistryFilesEx builds a files map from all resource kinds including
-// MCP servers. When multiple MCP servers are present, they are merged
-// into a single mcp.json file.
+// RegistryFilesEx builds a files map from the original structured resource
+// kinds, including MCP servers. Rules are available through RegistryFilesAll;
+// this helper remains source-compatible with existing fixtures.
 func RegistryFilesEx(skills []Skill, commands []Command, subagents []Subagent, mcps []MCPServer) map[string]string {
+	return RegistryFilesAll(skills, commands, subagents, nil, mcps)
+}
+
+// RegistryFilesAll builds a registry fixture from every supported resource kind.
+// Rules use the plain Markdown convention so the fixture can be ingested by
+// Factory and compiled into each target's native rule layout.
+func RegistryFilesAll(skills []Skill, commands []Command, subagents []Subagent, rules []Rule, mcps []MCPServer) map[string]string {
 	files := RegistryFiles(skills, commands, subagents)
+	for _, r := range rules {
+		files[r.RulePath()] = r.RuleFile()
+	}
 	if len(mcps) > 0 {
 		files[".mcp.json"] = MergeMCPFile(mcps)
 	}

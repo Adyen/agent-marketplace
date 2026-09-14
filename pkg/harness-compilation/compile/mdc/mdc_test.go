@@ -6,6 +6,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -92,6 +94,39 @@ func TestRender_PreservesExtraSorted(t *testing.T) {
 	zi := strings.Index(got, "zeta:")
 	if ai < 0 || zi < 0 || ai > zi {
 		t.Errorf("expected extra keys in sorted order (alpha before zeta), got %q", got)
+	}
+}
+
+func TestRenderWithDiagnosticsWarnsOnlyForTriggerSemanticLoss(t *testing.T) {
+	tests := []struct {
+		name        string
+		trigger     string
+		globs       []string
+		alwaysApply bool
+		wantWarning bool
+	}{
+		{name: "unspecified", trigger: "", wantWarning: false},
+		{name: "always on retained", trigger: "always_on", alwaysApply: true, wantWarning: false},
+		{name: "always on mismatched", trigger: "always_on", alwaysApply: false, wantWarning: true},
+		{name: "glob retained", trigger: "glob", globs: []string{"*.go"}, wantWarning: false},
+		{name: "glob missing globs", trigger: "glob", wantWarning: true},
+		{name: "glob overridden by always apply", trigger: "glob", globs: []string{"*.go"}, alwaysApply: true, wantWarning: true},
+		{name: "manual", trigger: "manual", wantWarning: true},
+		{name: "agent", trigger: "agent", wantWarning: true},
+		{name: "model decision", trigger: "model_decision", wantWarning: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rule := ir.NewRule("probe", "description", "Body\n", tt.globs, tt.alwaysApply, nil, ir.SourceRef{})
+			rule.Trigger = tt.trigger
+			_, diagnostics, err := RenderWithDiagnostics(rule, compile.TargetCursor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := diag.HasCode(diagnostics, diag.CodeRuleCursorTriggerDropped); got != tt.wantWarning {
+				t.Fatalf("trigger-loss warning = %v, want %v; diagnostics: %#v", got, tt.wantWarning, diagnostics)
+			}
+		})
 	}
 }
 

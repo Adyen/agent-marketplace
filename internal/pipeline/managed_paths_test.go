@@ -117,8 +117,8 @@ func TestCollectManagedPathsCoversMachineScopeOutputs(t *testing.T) {
 }
 
 // TestCollectManagedPathsWindsurfMachineComponents pins the exact machine-scope
-// Windsurf relative paths: global_workflows (not workflows), skills and hooks at
-// the Windsurf machine root, plus the managed root config file.
+// Windsurf relative paths: global_workflows (not workflows), skills, rules, and
+// hooks at the Windsurf machine root, plus the managed root config file.
 func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -136,9 +136,28 @@ func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 	if !ok {
 		t.Fatal("CollectManagedPaths has no entry for windsurf")
 	}
-	want := []string{"skills", "global_workflows", "hooks", "mcp_config.json"}
+	want := []string{"skills", "global_workflows", "hooks", "rules", "mcp_config.json"}
 	if !slices.Equal(mp.RelPaths, want) {
 		t.Errorf("windsurf machine-scope managed rel paths = %v, want %v", mp.RelPaths, want)
+	}
+}
+
+func TestCollectManagedPathsExcludesMachineDevinRules(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	managed := CollectManagedPaths(machineScopeSkill(hcc.TargetDevin))
+	mp, ok := managed[hcc.TargetDevin]
+	if !ok {
+		t.Fatal("CollectManagedPaths has no entry for devin")
+	}
+	if slices.Contains(mp.RelPaths, "rules") {
+		t.Fatalf("machine Devin rules directory must not be backed up: %v", mp.RelPaths)
+	}
+	for _, want := range []string{"skills", "agents"} {
+		if !slices.Contains(mp.RelPaths, want) {
+			t.Errorf("machine Devin sibling component %q missing from managed paths: %v", want, mp.RelPaths)
+		}
 	}
 }
 

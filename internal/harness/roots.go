@@ -182,6 +182,12 @@ type TargetInfo struct {
 	// materializer and is selected by configuration for every harness target.
 	OwnershipReconciledAggregates bool
 
+	// MachineExcludedComponents lists native component names that are part of
+	// the project layout but are not consumer-managed in machine scope. Keeping
+	// this policy beside the target topology lets planning, cleanup, and backup
+	// coverage agree without changing the scope-neutral compiler metadata.
+	MachineExcludedComponents map[string]bool
+
 	// MachineComponentDirs renames component directories for machine (user)
 	// scope, for targets whose machine layout diverges from their repo layout.
 	// Keys are repo-scope component/install-dir names, values are the directory
@@ -232,14 +238,38 @@ func (t TargetInfo) ComponentDirForScope(component string, machineScope bool) st
 	return component
 }
 
+// ComponentExcludedForScope reports whether a target component is outside the
+// consumer-managed layout for the given scope.
+func (t TargetInfo) ComponentExcludedForScope(component string, machineScope bool) bool {
+	return machineScope && t.MachineExcludedComponents[component]
+}
+
 // ComponentsForScope returns the target's component directory names as they
 // appear on disk in the given scope.
 func (t TargetInfo) ComponentsForScope(machineScope bool) []string {
-	components := make([]string, len(t.Components))
-	for i, component := range t.Components {
-		components[i] = t.ComponentDirForScope(component, machineScope)
+	components := make([]string, 0, len(t.Components))
+	for _, component := range t.Components {
+		if t.ComponentExcludedForScope(component, machineScope) {
+			continue
+		}
+		components = append(components, t.ComponentDirForScope(component, machineScope))
 	}
 	return components
+}
+
+// ExcludedComponentsForScope returns excluded component directory names as
+// they would appear on disk in the given scope.
+func (t TargetInfo) ExcludedComponentsForScope(machineScope bool) []string {
+	if !machineScope {
+		return nil
+	}
+	excluded := make([]string, 0, len(t.MachineExcludedComponents))
+	for _, component := range t.Components {
+		if t.ComponentExcludedForScope(component, machineScope) {
+			excluded = append(excluded, t.ComponentDirForScope(component, machineScope))
+		}
+	}
+	return excluded
 }
 
 // UsesSkillDir reports whether a resource kind materializes as a skill
@@ -268,6 +298,45 @@ func (t TargetInfo) ResourceInstallDir(kind ir.ResourceKind) string {
 		return ""
 	}
 	return t.ResourceDirs[kind]
+}
+
+// ResourceSupportedForScope reports whether the target consumer manages the
+// resource's directory in the given scope. ResourceInstallDir remains
+// scope-neutral so project Rule metadata continues to describe `rules`; this
+// method applies the consumer policy only where materialization needs it.
+func (t TargetInfo) ResourceSupportedForScope(kind ir.ResourceKind, machineScope bool) bool {
+	if !machineScope {
+		return true
+	}
+	installDir := t.ResourceInstallDir(kind)
+	if installDir == "" {
+		return true
+	}
+	for _, component := range t.Components {
+		if !t.ComponentExcludedForScope(component, machineScope) {
+			continue
+		}
+		installDir = filepath.ToSlash(path.Clean(installDir))
+		if installDir == component || strings.HasPrefix(installDir, component+"/") {
+			return false
+		}
+	}
+	return true
+}
+
+// PathExcludedForScope reports whether a target-relative artifact or manifest
+// path belongs to a component excluded by the consumer policy.
+func (t TargetInfo) PathExcludedForScope(rel string, machineScope bool) bool {
+	if !machineScope {
+		return false
+	}
+	rel = filepath.ToSlash(path.Clean(rel))
+	for _, component := range t.ExcludedComponentsForScope(machineScope) {
+		if rel == component || strings.HasPrefix(rel, component+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateRelPath checks that a target-metadata relative path is safe to join
@@ -398,9 +467,10 @@ func appendAggregateFiles(set *AggregateFileSet, prefix string, aggregates []tar
 // SkillDirKinds, and AggregateFiles. The consumer-side table then cannot
 // drift from the layout the compilers emit. Fields that are consumer policy
 // rather than compiler topology stay literal at the call site: Roots,
-// OwnershipReconciledAggregates, FileCopyKinds, MachineComponentDirs,
-// ArtifactRootPrefix, and SkillPathPattern, which materialize reads to decide
-// frontmatter injection. PlanStrategy defaults to PlanSubtree here.
+// OwnershipReconciledAggregates, FileCopyKinds, MachineExcludedComponents,
+// MachineComponentDirs, ArtifactRootPrefix, and SkillPathPattern, which
+// materialize reads to decide frontmatter injection. PlanStrategy defaults to
+// PlanSubtree here.
 func targetInfoFromLayout(t targetmeta.Target) (TargetInfo, error) {
 	layout, ok := targetmeta.LookupNativeLayout(t)
 	if !ok {
@@ -495,19 +565,25 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	// The original plan's "no real-file fallback" was delivery scope,
 	// not a limitation on Devin's ability to read regular files.
 	devinInfo.OwnershipReconciledAggregates = true
+	// Devin exposes Rules only in its project layout. Keep the compiler's
+	// scope-neutral Rule topology intact for project metadata and installation,
+	// while making every machine-scope consumer refuse the unsupported
+	// component.
+	devinInfo.MachineExcludedComponents = map[string]bool{"rules": true}
 
 	m := map[hcc.Target]TargetInfo{
 		codex:            codexInfo,
 		hcc.TargetClaude: claudeInfo,
 		hcc.TargetFactory: {
 			Roots:            roots[hcc.TargetFactory],
-			Components:       []string{"skills", "commands", "droids", "hooks", ".factory-plugin"},
+			Components:       []string{"skills", "commands", "droids", "hooks", "rules", ".factory-plugin"},
 			PlanStrategy:     PlanSubtree,
 			SkillPathPattern: "skills/%s/SKILL.md",
 			ResourceDirs: map[ir.ResourceKind]string{
 				ir.KindCommand:  "commands",
 				ir.KindSubagent: "droids",
 				ir.KindHook:     "hooks",
+				ir.KindRule:     "rules",
 			},
 			// TEMPORARY WORKAROUND: Factory's droid CLI does not follow
 			// symlinked command files, so commands must be materialized as
@@ -527,13 +603,14 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 		},
 		hcc.TargetCursor: {
 			Roots:            roots[hcc.TargetCursor],
-			Components:       []string{"skills", "commands", "agents", "hooks"},
+			Components:       []string{"skills", "commands", "agents", "hooks", "rules"},
 			PlanStrategy:     PlanSubtree,
 			SkillPathPattern: "skills/%s/SKILL.md",
 			ResourceDirs: map[ir.ResourceKind]string{
 				ir.KindCommand:  "commands",
 				ir.KindSubagent: "agents",
 				ir.KindHook:     "hooks",
+				ir.KindRule:     "rules",
 			},
 			AggregateFiles: AggregateFileSet{
 				Project: []string{"hooks/hooks.json", "mcp.json"},
@@ -542,7 +619,7 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 		},
 		hcc.TargetWindsurf: {
 			Roots:            roots[hcc.TargetWindsurf],
-			Components:       []string{"skills", "workflows", "hooks"},
+			Components:       []string{"skills", "workflows", "hooks", "rules"},
 			PlanStrategy:     PlanWindsurf,
 			SkillPathPattern: ".windsurf/skills/%s/SKILL.md",
 			// Windsurf only discovers machine-wide slash commands under
@@ -554,6 +631,7 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 			ResourceDirs: map[ir.ResourceKind]string{
 				ir.KindCommand: ".windsurf/workflows",
 				ir.KindHook:    ".windsurf/hooks",
+				ir.KindRule:    ".windsurf/rules",
 			},
 			// Windsurf's aggregate path is genuinely scope-dependent, like its
 			// component directories: the repo-scope install root is the

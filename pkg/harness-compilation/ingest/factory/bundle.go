@@ -421,7 +421,7 @@ func listMDFiles(src fs.FS, root string) ([]string, error) {
 }
 
 // listRuleFiles lists rule files in root. Factory rules are plain Markdown
-// (.md), but .mdc files (Cursor/Windsurf-authored) are also accepted so a
+// (.md), but Cursor-authored .mdc files are also accepted so a
 // bare rules/ directory ingests correctly regardless of authoring harness.
 func listRuleFiles(src fs.FS, root string) ([]string, error) {
 	entries, err := fs.ReadDir(src, root)

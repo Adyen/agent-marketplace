@@ -36,6 +36,7 @@ Flags named `--kind` accept the following values unless a command states otherwi
 | `subagent` | Subagent definition |
 | `hook` | Harness hook |
 | `mcp` | MCP server definition |
+| `rule` | Harness coding rule |
 | `collection` | Named resource collection; accepted only by `list` |
 
 When `install` or `remove` receives a name shared by multiple resource kinds, `--kind` selects the intended kind.
@@ -82,7 +83,7 @@ agent-marketplace list [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--kind` | string | no | all kinds | Filters by `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection`. |
+| `--kind` | string | no | all kinds | Filters by `skill`, `command`, `subagent`, `hook`, `mcp`, `rule`, or `collection`. |
 | `--from` | string | no | configured registries | Uses an ad hoc Git URL, GitHub web URL, or GitLab web URL without writing it to configuration. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
@@ -137,7 +138,7 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--scope` | string | no | endpoint: `user`; resource: `repo` | Configuration layer: `repo`, `user`, or `local`. |
-| `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`; also disambiguates a named registry resource. |
+| `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp` for Marketplace locators; registry resources additionally support `rule` and `collection`. |
 | `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Mutually exclusive with a resource name, `--all`, `--from`, and Marketplace locators. |
 | `--all` | boolean | no | `false` | Installs every discovered registry resource of the selected kind. Valid only in `repo` scope. |
 | `--registry` | string | no | all configured registries | Limits `--all` to one configured Git registry URL. |
@@ -177,7 +178,7 @@ agent-marketplace remove --from <registry> [<resource-name>] [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--scope` | string | no | `repo` | Configuration layer: `repo`, `user`, or `local`. |
-| `--kind` | string | no | inferred | Selects `skill`, `command`, `subagent`, `hook`, or `mcp` when a name is ambiguous. |
+| `--kind` | string | no | inferred | Selects `skill`, `command`, `subagent`, `hook`, `mcp`, `rule`, or `collection` when a name is ambiguous. |
 | `--from` | string | no | configured registries | Targets an ad hoc registry entry. Without a resource name, removes or excludes the entire entry for the selected scope. |
 | `--ref` | string | no | none | Refines the registry entry selected by `--from`. Requires `--from`. |
 | `--path` | string | no | none | Refines the registry entry selected by `--from`. Requires `--from`. |

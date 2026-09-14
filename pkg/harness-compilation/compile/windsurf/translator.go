@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mdc"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/rulefmt"
 )
 
 const claudePluginRootToken = "${CLAUDE_PLUGIN_ROOT}"
@@ -66,15 +67,16 @@ func (Compiler) translateWithOptions(r ir.Resource, opts compilepkg.Options) ([]
 	}
 }
 
-// translateRule emits .windsurf/rules/<name>.mdc with YAML frontmatter
-// (description, globs, alwaysApply) followed by the Markdown body. Windsurf
-// rules use the same .mdc format as Cursor.
+// translateRule emits Windsurf's native .md rule schema. Canonical activation
+// maps in priority order: AlwaysApply -> always_on, Globs -> glob,
+// Description -> model_decision, and an otherwise unscoped rule -> manual.
 func translateRule(rule *ir.Rule) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	body, diags, err := mdc.RenderWithDiagnostics(rule, compilepkg.TargetWindsurf)
+	body, trigger, diags, err := rulefmt.RenderWithDiagnostics(rule, compilepkg.TargetWindsurf)
 	if err != nil {
-		return nil, nil, fmt.Errorf("windsurf: render rule frontmatter: %w", err)
+		return nil, nil, fmt.Errorf("windsurf: %w", err)
 	}
-	return []artifact.Artifact{{Path: ".windsurf/rules/" + rule.Name() + ".mdc", Bytes: []byte(body)}}, diags, nil
+	slog.Debug("windsurf rule compiled", "resource", rule.Name(), "trigger", trigger, "diagnostics", len(diags))
+	return []artifact.Artifact{{Path: ".windsurf/rules/" + rule.Name() + ".md", Bytes: body}}, diags, nil
 }
 
 func translateSkill(skill *ir.Skill) ([]artifact.Artifact, []diag.Diagnostic, error) {

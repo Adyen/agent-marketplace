@@ -4,6 +4,5 @@
 // mcp.json.
 //
 // Cursor also has a 'rules' (.mdc) primitive: ir.Rule resources compile to
-// rules/<name>.mdc with YAML frontmatter (description, globs, alwaysApply). This
-// is the same .mdc format Windsurf uses (see compile/mdc).
+// rules/<name>.mdc with YAML frontmatter (description, globs, alwaysApply).
 package cursor

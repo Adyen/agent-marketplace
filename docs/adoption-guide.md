@@ -258,8 +258,8 @@ Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompati
 2. Validate existing locks, retain compatible Git resolutions, and reconcile stale writable locks unless locked/check mode forbids writes.
 3. Open each Git source by exact commit and verify its source manifest; read plain directory registries live.
 4. Ingest registry content through `harness-compilation`.
-5. Resolve the five target-materialized kinds (skills, commands, subagents,
-   hooks, and MCP servers), plus collections, tags, and excludes.
+5. Resolve the six target-materialized kinds (skills, commands, subagents,
+   hooks, MCP servers, and Rules), plus collections, tags, and excludes.
 6. Compile each resolved resource to each configured harness.
 7. Materialize native harness files and prune stale generated output.
 

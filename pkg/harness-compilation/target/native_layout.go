@@ -155,11 +155,12 @@ var nativeLayouts = map[Target]NativeLayout{
 			Prefix: ".",
 			// Project hooks merge into a root-level file (hooks.v1.json),
 			// never a hooks directory, so hooks is not a component.
-			Components: []string{"skills", "agents"},
+			Components: []string{"skills", "agents", "rules"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "skills/%s/SKILL.md",
 				ir.KindSubagent: "agents/%s.md",
+				ir.KindRule:     "rules/%s.md",
 			},
 			SkillDirKinds: map[ir.ResourceKind]bool{ir.KindCommand: true},
 			Aggregates: []NativeAggregate{

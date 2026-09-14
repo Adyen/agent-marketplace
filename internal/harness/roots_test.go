@@ -33,10 +33,12 @@ func TestComponentsForScope(t *testing.T) {
 		machineScope bool
 		want         []string
 	}{
-		{"windsurf repo scope keeps workflows", hcc.TargetWindsurf, false, []string{"skills", "workflows", "hooks"}},
-		{"windsurf machine scope renames workflows", hcc.TargetWindsurf, true, []string{"skills", "global_workflows", "hooks"}},
+		{"windsurf repo scope keeps workflows", hcc.TargetWindsurf, false, []string{"skills", "workflows", "hooks", "rules"}},
+		{"windsurf machine scope renames workflows", hcc.TargetWindsurf, true, []string{"skills", "global_workflows", "hooks", "rules"}},
 		{"claude machine scope unchanged", hcc.TargetClaude, true, []string{"skills", "commands", "agents", "hooks", ".claude-plugin"}},
 		{"gemini machine scope unchanged", hcc.TargetGemini, true, []string{"skills", "commands"}},
+		{"devin project keeps rules", hcc.TargetDevin, false, []string{"skills", "agents", "rules"}},
+		{"devin machine excludes rules", hcc.TargetDevin, true, []string{"skills", "agents"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -286,6 +288,15 @@ func TestDevinTargetInfo(t *testing.T) {
 	}
 	if !info.UsesSkillDir(hcc.KindCommand) {
 		t.Error("devin commands must materialize as skill directories")
+	}
+	if got := info.ResourceInstallDir(ir.KindRule); got != "rules" {
+		t.Fatalf("devin project Rule install directory = %q, want rules", got)
+	}
+	if info.ResourceSupportedForScope(ir.KindRule, true) {
+		t.Fatal("devin machine Rules must be excluded by consumer policy")
+	}
+	if !info.ResourceSupportedForScope(ir.KindRule, false) {
+		t.Fatal("devin project Rules must remain supported")
 	}
 	for _, c := range info.Components {
 		if c == "hooks" {

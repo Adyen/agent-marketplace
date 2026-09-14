@@ -705,6 +705,27 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 
 	for _, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
+		if w.machineScope && w.target == hcc.TargetDevin && w.skill.Resource.Kind() == ir.KindRule {
+			// Devin's user root is ~/.config/devin. Rules are not part of
+			// that machine layout, and the undocumented ~/.devin/rules
+			// location is deliberately not a materialization destination.
+			// Keep this refusal at the resource/component boundary so sibling
+			// skills, agents, hooks, and MCP entries still materialize.
+			allDiags = append(allDiags, diag.Diagnostic{
+				Code:     diag.CodeRuleDevinUnsupported,
+				Severity: diag.SeverityWarning,
+				Target:   string(w.target),
+				Resource: w.skill.Name,
+				Source:   compilepkg.SourceOf(w.skill.Resource),
+				Message:  "Devin machine-scope Rules are unsupported; no machine Rule artifact was emitted",
+				Hint:     "Use a project-scope Devin Rule or manage machine Rules outside Agent Marketplace",
+			})
+			// This component is outside the machine consumer layout, so there
+			// is no valid output whose pruning needs suppression. In
+			// particular, do not let an unsupported Rule block sibling
+			// resources' file-mode manifest cleanup.
+			continue
+		}
 		aggregateHandler := ownedAggregateHandlerFor(w.target)
 		compileOptions := []hcc.Option{}
 		if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
@@ -1235,11 +1256,15 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	// directory is still cleaned on an empty desired run.
 	if mode == config.MaterializationModeFile {
 		if info, ok := harness.TargetInfoMap[key.target]; ok {
-			for _, installDirRel := range info.ResourceDirs {
+			for kind, installDirRel := range info.ResourceDirs {
+				if !info.ResourceSupportedForScope(kind, key.machineScope) {
+					continue
+				}
 				installDirRel = machineSkillInstallDirRel(key.target, key.machineScope, installDirRel)
-				dir := filepath.Join(outDir, filepath.FromSlash(installDirRel))
+				resourceRoot, scopedRel := resourceInstallRoot(key, outDir, installDirRel)
+				dir := filepath.Join(resourceRoot, filepath.FromSlash(scopedRel))
 				if outputDirExists(dir) {
-					if _, err := validatePortableOutputDir(outDir, installDirRel); err != nil {
+					if _, err := validatePortableOutputDir(resourceRoot, scopedRel); err != nil {
 						report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource cleanup directory %s: %v", dir, err)})
 						continue
 					}
@@ -1267,7 +1292,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	if key.target == hcc.Target(targetmeta.TargetCodex) {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	} else if !componentBlocked(blocked, "") {
-		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, nativeAggregatePruneFence(key.target, key.machineScope))
+		pruneReport, pruneDiags = pruneUncoveredManagedMergeFilesForTarget(pruneOutDir, dirsCoveredByMergePlans, dryRun, nativeAggregatePruneFence(key.target, key.machineScope), key.target, key.machineScope)
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}
@@ -1301,13 +1326,14 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	copyDirsCovered := make(map[string]bool)
 
 	for _, group := range orderedSkillLinkGroups(skillLinks[key]) {
-		groupDir := filepath.Join(outDir, filepath.FromSlash(group.installDirRel))
+		resourceRoot, scopedRel := resourceInstallRoot(key, outDir, group.installDirRel)
+		groupDir := filepath.Join(resourceRoot, filepath.FromSlash(scopedRel))
 		if mode == config.MaterializationModeFile {
 			validate := validatePortableOutputDir
 			if !dryRun {
 				validate = ensurePortableOutputDir
 			}
-			if _, err := validate(outDir, group.installDirRel); err != nil {
+			if _, err := validate(resourceRoot, scopedRel); err != nil {
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource directory %s: %v", groupDir, err)})
 				continue
 			}
@@ -1388,6 +1414,10 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	return report
 }
 
+func resourceInstallRoot(key outputKey, defaultRoot, installDirRel string) (string, string) {
+	return defaultRoot, installDirRel
+}
+
 // pruneUncoveredFileCopyDirs removes orphaned managed file-copy resources from
 // the target's file-copy install dirs that were not handled by any copy group.
 func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, covered map[string]bool, blocked map[string]bool, dryRun bool) *Report {
@@ -1397,6 +1427,9 @@ func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, co
 	}
 	seen := make(map[string]bool)
 	for kind := range info.FileCopyKinds {
+		if !info.ResourceSupportedForScope(kind, key.machineScope) {
+			continue
+		}
 		installDirRel := info.ResourceInstallDir(kind)
 		if installDirRel == "" {
 			continue
@@ -1503,12 +1536,13 @@ func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Art
 	}
 	info, ok := harness.TargetInfoMap[target]
 	if !ok {
-		return subtreeMaterializePlans(outDir, artifacts, generatedComponents(target), artifactRootPrefix(target), noPruneComponents(target, linkedSkills))
+		return subtreeMaterializePlans(outDir, artifacts, generatedComponents(target, machineScope), artifactRootPrefix(target), noPruneComponents(target, linkedSkills))
 	}
+	artifacts = filterArtifactsForScope(info, artifacts, machineScope)
 	if info.PlanStrategy == harness.PlanWindsurf {
 		return windsurfMaterializePlans(outDir, artifacts, machineScope, noPruneComponents(target, linkedSkills))
 	}
-	return subtreeMaterializePlans(outDir, artifacts, info.Components, info.ArtifactRootPrefix, noPruneComponents(target, linkedSkills))
+	return subtreeMaterializePlans(outDir, artifacts, info.ComponentsForScope(machineScope), info.ArtifactRootPrefix, noPruneComponents(target, linkedSkills))
 }
 
 func codexMaterializePlans(repoRoot string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
@@ -1533,7 +1567,7 @@ func codexMaterializePlans(repoRoot string, artifacts []artifact.Artifact, linke
 			candidate.Path = rel
 			routed = append(routed, candidate)
 		}
-		destinationPlans := subtreeMaterializePlans(destination.Root, routed, destination.Info.Components, destination.Info.ArtifactRootPrefix, noPruneComponents(hcc.Target(targetmeta.TargetCodex), linkedSkills))
+		destinationPlans := subtreeMaterializePlans(destination.Root, routed, destination.Info.ComponentsForScope(machineScope), destination.Info.ArtifactRootPrefix, noPruneComponents(hcc.Target(targetmeta.TargetCodex), linkedSkills))
 		for i := range destinationPlans {
 			destinationPlans[i].root = destination.Root
 			destinationPlans[i].rootID = destination.ID
@@ -1585,12 +1619,25 @@ func subtreeMaterializePlans(outDir string, artifacts []artifact.Artifact, compo
 	return plans
 }
 
-func generatedComponents(target hcc.Target) []string {
+func generatedComponents(target hcc.Target, machineScope bool) []string {
 	info, ok := harness.TargetInfoMap[target]
 	if !ok {
 		return nil
 	}
-	return info.Components
+	return info.ComponentsForScope(machineScope)
+}
+
+func filterArtifactsForScope(info harness.TargetInfo, artifacts []artifact.Artifact, machineScope bool) []artifact.Artifact {
+	if !machineScope || len(info.MachineExcludedComponents) == 0 {
+		return artifacts
+	}
+	filtered := make([]artifact.Artifact, 0, len(artifacts))
+	for _, a := range artifacts {
+		if !info.PathExcludedForScope(a.Path, machineScope) {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
 }
 
 func writeModeForComponent(component string, noPrune map[string]bool) hcc.WriteMode {
@@ -1655,7 +1702,9 @@ func windsurfMaterializePlans(outDir string, artifacts []artifact.Artifact, mach
 	}
 
 	var plans []materializePlan
-	for _, component := range orderedComponents(generatedComponents(hcc.TargetWindsurf), scoped) {
+	// Keep the compiler-relative component names here. MachineComponentDirs is
+	// applied below when each plan gets its on-disk destination.
+	for _, component := range orderedComponents(generatedComponents(hcc.TargetWindsurf, false), scoped) {
 		componentArtifacts := scoped[component]
 		componentOutDir := filepath.Join(outDir, windsurfDir, component)
 		reportPrefix := filepath.Join(windsurfDir, component)
@@ -2141,6 +2190,10 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 // decided for the refusal itself and bead .20 decided for skipped Devin
 // aggregate entries.
 func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected map[string]bool) (*hcc.WriteReport, []diag.Diagnostic) {
+	return pruneUncoveredManagedMergeFilesForTarget(outDir, dirsCoveredByMergePlans, dryRun, protected, "", false)
+}
+
+func pruneUncoveredManagedMergeFilesForTarget(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected map[string]bool, target hcc.Target, machineScope bool) (*hcc.WriteReport, []diag.Diagnostic) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
 	info, err := os.Stat(outDir)
@@ -2155,6 +2208,12 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			return nil
 		}
 		if d.IsDir() {
+			if targetInfo, ok := harness.TargetInfoMap[target]; ok {
+				rel, relErr := filepath.Rel(outDir, path)
+				if relErr == nil && targetInfo.PathExcludedForScope(rel, machineScope) {
+					return filepath.SkipDir
+				}
+			}
 			// Skip directories that were already handled by a
 			// merge-artifact plan (materializeMergeArtifacts).
 			if dirsCoveredByMergePlans[path] {
@@ -2170,6 +2229,9 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 		}
 		rel, relErr := filepath.Rel(outDir, path)
 		if relErr != nil {
+			return nil
+		}
+		if targetInfo, ok := harness.TargetInfoMap[target]; ok && targetInfo.PathExcludedForScope(rel, machineScope) {
 			return nil
 		}
 		// A target's declared aggregate files are reconciled by an
@@ -2853,6 +2915,9 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 	for _, stateKey := range keys {
 		entry := state.entries[stateKey]
 		if entry.Target != string(key.target) || desired[entry.Path] {
+			continue
+		}
+		if info, ok := harness.TargetInfoMap[key.target]; ok && info.PathExcludedForScope(entry.Path, key.machineScope) {
 			continue
 		}
 		if key.target == hcc.Target(targetmeta.TargetCodex) && !state.matchesCodexRoot(entry) {

@@ -1,10 +1,6 @@
-// Package mdc renders ir.Rule resources into the .mdc format shared by the
-// Cursor and Windsurf harnesses: YAML frontmatter (description, globs,
-// alwaysApply, plus any preserved extra keys) followed by the Markdown body.
-//
-// Both harnesses emit byte-identical rule content; only the artifact path
-// differs (Cursor: rules/<name>.mdc, Windsurf: .windsurf/rules/<name>.mdc),
-// so the renderer lives in one place to keep them in lock-step.
+// Package mdc renders ir.Rule resources into Cursor's .mdc format: YAML
+// frontmatter (description, globs, alwaysApply, plus preserved extra keys)
+// followed by the Markdown body.
 package mdc
 
 import (
@@ -56,6 +52,14 @@ func RenderWithDiagnostics(r *ir.Rule, target compile.Target) (string, []diag.Di
 		present[field.key] = field.show
 	}
 	extraKeys, diags := compile.ExtraKeys(r.Extra, compile.PresentFields(present), target, r.Name(), diag.SourceRef(r.Source))
+	if cursorLosesTriggerSemantics(r) {
+		diags = append(diags, diag.Diagnostic{
+			Code: diag.CodeRuleCursorTriggerDropped, Severity: diag.SeverityWarning,
+			Target: string(target), Resource: r.Name(), Source: diag.SourceRef(r.Source),
+			Message: "Native rule trigger cannot be represented in Cursor MDC frontmatter and was omitted",
+			Hint:    "Use alwaysApply, globs, or description to express Cursor rule activation",
+		})
+	}
 	for _, k := range extraKeys {
 		line, err := compile.RenderYAMLKey(k, r.Extra[k])
 		if err != nil {
@@ -71,4 +75,17 @@ func RenderWithDiagnostics(r *ir.Rule, target compile.Target) (string, []diag.Di
 		body += "\n"
 	}
 	return body, diags, nil
+}
+
+func cursorLosesTriggerSemantics(r *ir.Rule) bool {
+	switch r.Trigger {
+	case "":
+		return false
+	case "always_on":
+		return !r.AlwaysApply
+	case "glob":
+		return len(r.Globs) == 0 || r.AlwaysApply
+	default:
+		return true
+	}
 }

@@ -542,6 +542,7 @@ func configAsLocal(cfg *Config) *LocalConfig {
 		Subagents:       cfg.Subagents,
 		Hooks:           cfg.Hooks,
 		MCP:             cfg.MCP,
+		Rules:           cfg.Rules,
 		Collections:     cfg.Collections,
 		Materialization: cfg.Materialization,
 	}

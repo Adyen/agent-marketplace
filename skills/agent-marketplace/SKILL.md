@@ -45,7 +45,7 @@ agent-marketplace sync
 agent-marketplace status
 ```
 
-The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, and MCP servers. Configuration is the source of selection policy and generated locks provide exact Git acquisition; standalone artifacts are recreated by `agent-marketplace sync`, while shared native files are reconciled entry by entry. Keep generated harness output out of source control:
+The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, MCP servers, and rules. Configuration is the source of selection policy and generated locks provide exact Git acquisition; standalone artifacts are recreated by `agent-marketplace sync`, while shared native files are reconciled entry by entry. Keep generated harness output out of source control:
 
 ```gitignore
 .agents/skills/
@@ -62,7 +62,7 @@ The canonical v2 schema materializes native harness files instead of the old def
 
 - **Layered target harness set** — project-level `harnesses:` takes precedence; when absent, targets fall back to `~/.agents/config.yaml` and `/etc/agent-marketplace/config.yaml`.
 - **Native harness targets** — set `harnesses: [factory, claude, cursor, windsurf, gemini, devin, codex]` to compile resources into each harness' layout.
-- **Multi-resource selection** — select `skills`, `commands`, `subagents`, `hooks`, and `mcp` entries from the same registry catalog.
+- **Multi-resource selection** — select `skills`, `commands`, `subagents`, `hooks`, `mcp`, and `rules` entries from the same registry catalog.
 - **Source harness ingestion** — use `source_harness: claude` when autodetection is not enough; registries are ingested through `harness-compilation`.
 - **Repo and machine scope outputs** — repo config materializes under repo roots like `.factory/`; global config materializes under machine roots like `~/.factory/`.
 - **Dry-run drift reporting** — `status` and `sync --check` report the same native files that `sync` writes or prunes.
@@ -125,8 +125,16 @@ Roots are `<repo>/.devin` and `~/.config/devin`. Outputs:
 | Subagent | `agents/<name>.md` (file symlink) |
 | Hook | repo `hooks.v1.json`; machine `config.json` → `hooks` member |
 | MCP server | `mcp_config.json` (same relative path in both scopes) |
+| Rule | project `.devin/rules/<name>.md`; machine scope unsupported |
 
-Rules are not a selectable kind and are unsupported by this target. The links shown above are the default; `materialization.mode: file` installs regular skill/command trees and subagent files through the same generic materializer used by other targets. Shared hooks and MCP configuration retain ownership-safe reconciliation in both modes.
+Project Rules are selectable and native in Devin. Machine-scope Rules are
+unsupported and emit `rule.devin.unsupported` without writing either Devin
+machine Rule path. Project Rules preserve Markdown content and
+the Windsurf-compatible `always_on`, `manual`, `model_decision`, `agent`, and
+`glob` trigger frontmatter. The links shown above are the default;
+`materialization.mode: file` installs regular resource files and trees through
+the same generic materializer used by other targets. Shared hooks and MCP
+configuration retain ownership-safe reconciliation in both modes.
 
 Devin is also a full conversion target: `convert --from devin`, `convert --to devin`, and `source_harness: devin` all work. Autodetection prefers a `.devin` workspace marker over compatibility layouts; a direct user-shaped root (`skills/`, `agents/`, `config.json`, `mcp_config.json` at the top level) is never autodetected and needs an explicit `--from devin`.
 
@@ -148,7 +156,7 @@ Remote Git registries resolve into generated locks owned by the organization, us
 
 ```bash
 agent-marketplace list                         # Browse resources and collections
-agent-marketplace list --kind command          # Browse commands, subagents, hooks, or mcp
+agent-marketplace list --kind command          # Browse commands, subagents, hooks, mcp, or rules
 agent-marketplace install <skill>              # Add a skill and sync
 agent-marketplace install --kind command X     # Add a non-skill resource and sync
 agent-marketplace install <collection>         # Add a collection and sync
@@ -241,7 +249,7 @@ tags:
 - **`apiVersion`** should be `agent-marketplace/v2`; `agent-marketplace/v3` remains accepted as a compatibility alias.
 - **`harnesses`** may be declared in project or user configuration. Project values take precedence over user and organization defaults. Valid values include `factory`, `claude`, `cursor`, `windsurf`, `gemini`, `devin`, and `codex`.
 - **`source_harness`** is optional per registry entry; empty means autodetect.
-- **`skills`**, **`commands`**, **`subagents`**, **`hooks`**, **`mcp`**, **`collections`**, and **`tags`** select what materializes via `KindSelector` (`include`/`exclude` lists or a shorthand sequence treated as `include`).
+- **`skills`**, **`commands`**, **`subagents`**, **`hooks`**, **`mcp`**, **`rules`**, **`collections`**, and **`tags`** select what materializes via `KindSelector` (`include`/`exclude` lists or a shorthand sequence treated as `include`).
 - **Per-registry selections** override top-level `skills`, `commands`, `subagents`, `hooks`, `mcp`, and `tags`; per-entry `harnesses` narrows the effective target set.
 - **Nested collections** are resolved from configured registry ownership. The legacy `skills:` member list and typed `resources:` list are both supported and merged. Once selected, the nested owner's URL, path, ref, and required policy flow to its recursively expanded members. Its effective harness targets inherit from the containing collection unless the owner explicitly narrows them; it cannot widen the parent's targets, and an explicit empty list opts out. Shared nested collections are valid across sibling include branches; only a repeated ancestor on one branch is a cycle.
 - **`--kind`** disambiguates names that exist in multiple resource kinds and selects non-skill resources for `install --all` or `install --tag`.
@@ -309,7 +317,7 @@ metadata:
 Use `"<kind>:<name>"` shorthand, or a map with required `name` and
 optional `kind`, `registry`, and `path`. A bare `"name"` or an omitted
 `kind` means `skill`. Supported kinds are `skill`, `command`,
-`subagent`, `hook`, and `mcp`; `collection` is not supported.
+`subagent`, `hook`, `mcp`, and `rule`; `collection` is not supported.
 
 Prerequisites are satisfied by selected kind and name. `registry` and
 `path` only refine the suggested install command. They do not constrain

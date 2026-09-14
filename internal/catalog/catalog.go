@@ -235,8 +235,10 @@ func collectionParseKind(s string) (ir.ResourceKind, error) {
 		return ir.KindHook, nil
 	case "mcp", "mcpserver":
 		return ir.KindMcpServer, nil
+	case "rule", "rules":
+		return ir.KindRule, nil
 	default:
-		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp)", s)
+		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp, rule)", s)
 	}
 }
 
@@ -278,9 +280,9 @@ func markdownBody(content string) string {
 	return content
 }
 
-// Load discovers resources from a directory on disk using HCC IngestBundle,
-// filtered to KindSkill. The sourceHarness parameter controls the ingest
-// format; empty string triggers autodetection via ingest.Autodetect.
+// Load discovers resources from a directory on disk using HCC IngestBundle.
+// The sourceHarness parameter controls the ingest format; empty string triggers
+// autodetection via ingest.Autodetect.
 //
 // On autodetect failure, Load falls back to HarnessClaude and records
 // a diagnostic.
@@ -296,10 +298,29 @@ func Load(dir string, sourceHarness string) (*Catalog, error) {
 	}
 	for i := range cat.Entries {
 		if cat.Entries[i].Path != "" && !filepath.IsAbs(cat.Entries[i].Path) {
-			cat.Entries[i].Path = filepath.Join(root, cat.Entries[i].Path)
+			if cat.Entries[i].Kind == ir.KindRule {
+				cat.Entries[i].Path = catalogSourcePath(root, cat.SourceHarness, cat.Entries[i].Path)
+			} else {
+				cat.Entries[i].Path = filepath.Join(root, cat.Entries[i].Path)
+			}
 		}
 	}
 	return cat, nil
+}
+
+func catalogSourcePath(dir, sourceHarness, sourcePath string) string {
+	direct := filepath.Join(dir, sourcePath)
+	workspace := filepath.Join(dir, "."+sourceHarness, sourcePath)
+	candidates := []string{direct, workspace}
+	if sourceHarness == HarnessWindsurf || sourceHarness == HarnessDevin {
+		candidates[0], candidates[1] = candidates[1], candidates[0]
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return direct
 }
 
 // LoadFS discovers resources from an fs.FS using HCC IngestBundle.
@@ -497,6 +518,8 @@ func descriptionFromResource(r ir.Resource) string {
 		return v.Event + " " + v.Type
 	case *ir.McpServer:
 		return v.Command
+	case *ir.Rule:
+		return v.Description
 	case *ir.Collection:
 		return v.Description
 	default:
@@ -523,6 +546,8 @@ func extraFromResource(r ir.Resource) map[string]any {
 	case *ir.Hook:
 		return v.Extra
 	case *ir.McpServer:
+		return v.Extra
+	case *ir.Rule:
 		return v.Extra
 	case *ir.Collection:
 		return v.Extra
@@ -564,7 +589,9 @@ func preserveResourceSourcePath(r ir.Resource, sourcePath string) {
 func SourcePath(entry Entry) string {
 	if entry.Resource != nil {
 		if source, ok := sourceRefFromResource(entry.Resource); ok {
-			return source
+			if filepath.IsAbs(source) || !filepath.IsAbs(entry.Path) {
+				return source
+			}
 		}
 	}
 	return entry.Path
@@ -598,6 +625,10 @@ func sourceRefFromResource(r ir.Resource) (string, bool) {
 	case ir.KindMcpServer:
 		if mcp, ok := r.(*ir.McpServer); ok && mcp.Source.File != "" {
 			return mcp.Source.File, true
+		}
+	case ir.KindRule:
+		if rule, ok := r.(*ir.Rule); ok && rule.Source.File != "" {
+			return rule.Source.File, true
 		}
 	case ir.KindCollection:
 		if col, ok := r.(*ir.Collection); ok && col.Source.File != "" {

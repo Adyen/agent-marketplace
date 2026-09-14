@@ -128,7 +128,7 @@ type Layer struct {
 }
 
 // AllKinds returns the set of resource kinds that have dedicated KindSelector
-// fields on LocalConfig and RegistryEntry. Adding a new kind requires:
+// fields on Config, LocalConfig, and RegistryEntry. Adding a new kind requires:
 // 1) Adding a field to LocalConfig
 // 2) Adding a field to RegistryEntry
 // 3) Adding a case to SelectorForKind/SelectorForKindPtr (used by entryResourcesForKind)
@@ -140,6 +140,7 @@ var AllKinds = []ir.ResourceKind{
 	ir.KindHook,
 	ir.KindMcpServer,
 	ir.KindCollection,
+	ir.KindRule,
 }
 
 // CollectionRef is a legacy type kept for backward compatibility with test
@@ -463,6 +464,7 @@ type Config struct {
 	Subagents KindSelector `yaml:"subagents,omitempty"`
 	Hooks     KindSelector `yaml:"hooks,omitempty"`
 	MCP       KindSelector `yaml:"mcp,omitempty"`
+	Rules     KindSelector `yaml:"rules,omitempty"`
 
 	Tags            []string               `yaml:"tags,omitempty"`
 	Backup          *BackupConfig          `yaml:"backup,omitempty"`
@@ -515,6 +517,8 @@ func (c *Config) SelectorForKindPtr(kind ir.ResourceKind) *KindSelector {
 		return &c.Hooks
 	case ir.KindMcpServer:
 		return &c.MCP
+	case ir.KindRule:
+		return &c.Rules
 	case ir.KindCollection:
 		return &c.Collections
 	default:
@@ -548,6 +552,7 @@ type LocalConfig struct {
 	Subagents    KindSelector       `yaml:"subagents,omitempty"`
 	Hooks        KindSelector       `yaml:"hooks,omitempty"`
 	MCP          KindSelector       `yaml:"mcp,omitempty"`
+	Rules        KindSelector       `yaml:"rules,omitempty"`
 	Collections  KindSelector       `yaml:"collections,omitempty"`
 	// Materialization is a project-only override. It never changes the
 	// user-wide policy resolved from ~/.agents/config.yaml.
@@ -584,6 +589,8 @@ func (c *LocalConfig) SelectorForKindPtr(kind ir.ResourceKind) *KindSelector {
 		return &c.Hooks
 	case ir.KindMcpServer:
 		return &c.MCP
+	case ir.KindRule:
+		return &c.Rules
 	case ir.KindCollection:
 		return &c.Collections
 	default:
@@ -625,6 +632,7 @@ type RegistryEntry struct {
 	Subagents   KindSelector `yaml:"subagents,omitempty"`
 	Hooks       KindSelector `yaml:"hooks,omitempty"`
 	MCP         KindSelector `yaml:"mcp,omitempty"`
+	Rules       KindSelector `yaml:"rules,omitempty"`
 	Collections KindSelector `yaml:"collections,omitempty"`
 
 	// SourceHarness specifies the harness layout of this registry's content.
@@ -681,6 +689,7 @@ func (e *RegistryEntry) UnmarshalYAML(value *yaml.Node) error {
 		Subagents     KindSelector `yaml:"subagents,omitempty"`
 		Hooks         KindSelector `yaml:"hooks,omitempty"`
 		MCP           KindSelector `yaml:"mcp,omitempty"`
+		Rules         KindSelector `yaml:"rules,omitempty"`
 		Collections   KindSelector `yaml:"collections,omitempty"`
 		SourceHarness string       `yaml:"source_harness,omitempty"`
 		Harnesses     []string     `yaml:"harnesses,omitempty"`
@@ -710,6 +719,7 @@ func (e *RegistryEntry) UnmarshalYAML(value *yaml.Node) error {
 	e.Subagents = raw.Subagents
 	e.Hooks = raw.Hooks
 	e.MCP = raw.MCP
+	e.Rules = raw.Rules
 	e.Collections = raw.Collections
 	e.SourceHarness = raw.SourceHarness
 	e.Harnesses = raw.Harnesses
@@ -741,6 +751,8 @@ func (e *RegistryEntry) SelectorForKindPtr(kind ir.ResourceKind) *KindSelector {
 		return &e.Hooks
 	case ir.KindMcpServer:
 		return &e.MCP
+	case ir.KindRule:
+		return &e.Rules
 	case ir.KindCollection:
 		return &e.Collections
 	default:

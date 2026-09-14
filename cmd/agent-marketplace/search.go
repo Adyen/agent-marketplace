@@ -14,6 +14,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
@@ -61,6 +62,9 @@ func runSearchContext(ctx context.Context, out io.Writer, errOut io.Writer, args
 	}
 	apiKind := ""
 	if hasKind {
+		if err := validateHostedSearchKind(kind); err != nil {
+			return err
+		}
 		apiKind = mpapi.FromIR(kind)
 	}
 
@@ -110,6 +114,13 @@ func runSearchContext(ctx context.Context, out io.Writer, errOut io.Writer, args
 			errs[i] = e
 		}
 		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func validateHostedSearchKind(kind ir.ResourceKind) error {
+	if kind == ir.KindRule {
+		return fmt.Errorf("unsupported hosted Marketplace kind %q: search supports skill, command, subagent, hook, mcp, or collection", kind.String())
 	}
 	return nil
 }

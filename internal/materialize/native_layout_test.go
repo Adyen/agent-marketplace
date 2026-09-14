@@ -117,12 +117,10 @@ func TestNativeLayoutMatchesCompiledArtifactPaths(t *testing.T) {
 	}
 }
 
-// TestDescribedTargetsDeclareNoRuleTopology pins that the three described
-// targets declare no rule resource path or aggregate: rules are an explicit
-// scope-out for Devin and Codex and a no-primitive diagnostic for Claude, so
-// the descriptor declares no rule topology.
+// TestDescribedTargetsDeclareNoRuleTopology pins that targets without native
+// Rule support do not advertise a path or aggregate.
 func TestDescribedTargetsDeclareNoRuleTopology(t *testing.T) {
-	for _, target := range []targetmeta.Target{targetmeta.TargetClaude, targetmeta.TargetDevin, targetmeta.TargetCodex} {
+	for _, target := range []targetmeta.Target{targetmeta.TargetClaude, targetmeta.TargetCodex} {
 		if _, ok := targetmeta.NativeResourcePattern(target, ir.KindRule); ok {
 			t.Errorf("%s declares a rule resource path, but no compiler emits one", target)
 		}

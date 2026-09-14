@@ -107,7 +107,7 @@ func newInstallCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&installAll, "all", false, "Install every discovered skill from the configured registries")
 	cmd.Flags().StringVar(&registry, "registry", "", "Limit --all to one configured registry URL")
 	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo, user, or local (Marketplace endpoints default to user; resources default to repo)")
-	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, or mcp")
+	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, mcp, rule, or collection")
 	cmd.Flags().StringVar(&fromURL, "from", "", "Install directly from a registry URL; skill name is inferred from web URLs pointing to a specific resource")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref (branch/tag/sha) for --from registry; requires --from")
 	cmd.Flags().StringVar(&fromPath, "path", "", "Subdirectory within the --from registry; requires --from")
