@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitepress'
-import { GITHUB_REPOSITORY_URL } from '../src/shared/site'
+import { GITHUB_REPOSITORY_URL, MARKETPLACE_PATH } from '../src/shared/site'
 
 // The hosting target is deliberately undecided. SITE_BASE lets a project-path
 // deployment (e.g. GitHub Pages at /agent-marketplace/) be selected at build
@@ -26,6 +26,7 @@ export default defineConfig({
   },
 
   head: [
+    ['link', { rel: 'prefetch', href: MARKETPLACE_PATH }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'agent-marketplace — built at Adyen' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }]
@@ -35,10 +36,16 @@ export default defineConfig({
     siteTitle: 'agent-marketplace',
 
     nav: [
-      { text: 'Docs', link: '/#install' },
-      { text: 'Marketplace', link: '/#flow' }
+      // Resolve from the site path to the sibling app at the shared origin root.
+      // target keeps VitePress from handling the sibling app as an SPA route.
+      { text: 'Marketplace', link: `..${MARKETPLACE_PATH}`, target: '_self' },
+      { text: 'Docs', link: '/#install' }
     ],
 
-    socialLinks: [{ icon: 'github', link: repo }]
+    socialLinks: [{
+      icon: 'github',
+      link: repo,
+      ariaLabel: 'View agent-marketplace on GitHub'
+    }]
   }
 })

@@ -10,11 +10,11 @@ Route these exact paths to the Go API without rewriting the path:
 - `/api/`
 - `/healthz`
 
-Route `/r/` (including both `/r/{registry}/{kind}/{name}` and `/r/{registry}/{kind}/{name}/revisions/{revision}`) and `/` to Nuxt. Nuxt owns the browser pages, while its same-origin API calls use `/api/v1`; the Go API must not be used as a fallback for `/r/**`. Preserve `Host`, `X-Real-IP`, `X-Forwarded-For`, and `X-Forwarded-Proto`. Set sensible proxy read, body-size, connection, and rate limits for the environment.
+Route `/marketplace/` to Nuxt and `/` to the static VitePress site. Redirect the exact `/marketplace` path to `/marketplace/`, so Nuxt's asset and router base remains unambiguous. Marketplace browser pages therefore live at `/marketplace/r/{registry}/{kind}/{name}` and `/marketplace/r/{registry}/{kind}/{name}/revisions/{revision}`. Nuxt's same-origin API calls still use `/api/v1`; the Go API must not be used as a fallback for `/marketplace/**`. Preserve `Host`, `X-Real-IP`, `X-Forwarded-For`, and `X-Forwarded-Proto`. Set sensible proxy read, body-size, connection, and rate limits for the environment.
 
 Do not route or publish `/readyz` or `/metrics`. Public requests to those exact paths are explicitly rejected with 404, while the paths are served on the operations listener and should be reachable only by a private monitoring/admin network. If a monitoring proxy is required, use a separate private listener and an explicit allowlist/authentication policy.
 
-The examples in `deploy/compose/sqlite-filesystem` and `deploy/compose/postgres-s3` implement this contract with Nginx. Their published port is an example bind only; replace it with the organization's TLS and identity-aware edge. Do not add a public launch URL to initialization or committed example configuration.
+The examples in `deploy/compose/sqlite-filesystem` and `deploy/compose/postgres-s3` implement this contract with Nginx. Set `instance.browser_base` to the public origin plus `/marketplace`, so well-known browser route templates match the proxy path. Their published port is an example bind only; replace it with the organization's TLS and identity-aware edge. Do not add a public launch URL to initialization or committed example configuration.
 
 ## Header and cache guidance
 

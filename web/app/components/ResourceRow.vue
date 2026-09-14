@@ -40,9 +40,9 @@ const commandLabel = computed(() => {
 
       <div class="min-w-0">
         <div class="flex min-w-0 items-baseline gap-2">
-          <span class="shrink-0 font-mono text-xs text-muted">{{ kindLabel(item.kind) }}</span>
+          <span class="shrink-0 font-mono text-xs font-medium text-muted">{{ kindLabel(item.kind) }}</span>
           <span class="text-xs text-dimmed" aria-hidden="true">·</span>
-          <h2 class="min-w-0 truncate font-mono text-sm leading-5 tracking-tight">
+          <h2 class="min-w-0 truncate font-mono text-sm font-medium leading-5 tracking-tight">
             <NuxtLink
               v-if="browserUrl"
               :to="browserUrl"
@@ -54,7 +54,7 @@ const commandLabel = computed(() => {
           </h2>
         </div>
 
-        <p v-if="item.description" class="mt-1 truncate text-sm leading-5 text-toned">{{ item.description }}</p>
+        <p v-if="item.description" class="mt-1 truncate text-sm font-medium leading-5 text-toned">{{ item.description }}</p>
         <p v-else class="mt-1 truncate text-sm italic leading-5 text-dimmed">No description provided.</p>
       </div>
 
