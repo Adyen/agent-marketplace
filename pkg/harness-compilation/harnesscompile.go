@@ -157,6 +157,13 @@ var (
 	errSourceEmpty          = errors.New("source layout contains no resources")
 )
 
+// allowsIntentionalZeroResourceBundle preserves Windsurf's documented AGENTS.md
+// drop. Windsurf does not synthesize a subagent for AGENTS.md, so the ingester
+// emits this diagnostic with no resources.
+func allowsIntentionalZeroResourceBundle(diagnostics []Diagnostic) bool {
+	return diag.HasCode(diagnostics, diag.CodeIngestWindsurfSubagentViaAgentsMDSkipped)
+}
+
 // Re-export types from sub-packages for convenience.
 type (
 	ResourceKind = ir.ResourceKind
@@ -239,7 +246,7 @@ func Convert(srcFS fs.FS, from, to Harness, opts ...Option) (*Result, error) {
 		}
 		return nil, fmt.Errorf("harnesscompile.Convert: ingest %s: %w", from, err)
 	}
-	if len(b.Resources) == 0 && len(b.Diagnostics) == 0 {
+	if len(b.Resources) == 0 && !allowsIntentionalZeroResourceBundle(b.Diagnostics) {
 		return nil, fmt.Errorf("harnesscompile.Convert: source %q: %w", from, errSourceEmpty)
 	}
 	slog.Info("harness ingest end", "from", from, "resources", len(b.Resources), "diagnostics", len(b.Diagnostics))

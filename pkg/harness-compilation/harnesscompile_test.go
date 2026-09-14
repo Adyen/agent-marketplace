@@ -196,6 +196,59 @@ func TestConvert_RefusesEmptySource(t *testing.T) {
 	}
 }
 
+func TestConvert_RefusesEmptyWorkspaceWithInformationalDiagnostic(t *testing.T) {
+	src := fstest.MapFS{
+		".claude/.mcp.json": {Data: []byte(`{"mcpServers":{}}`)},
+	}
+
+	bundle, err := IngestBundle(src, HarnessClaude)
+	if err != nil {
+		t.Fatalf("IngestBundle(Claude workspace): %v", err)
+	}
+	if len(bundle.Resources) != 0 {
+		t.Fatalf("empty workspace resources = %d, want 0", len(bundle.Resources))
+	}
+	if len(bundle.Diagnostics) != 1 || bundle.Diagnostics[0].Code != diag.CodeIngestClaudeManifestSynthesized || bundle.Diagnostics[0].Severity != SeverityInfo {
+		t.Fatalf("empty workspace diagnostics = %#v, want one informational synthesized-manifest diagnostic", bundle.Diagnostics)
+	}
+
+	_, err = Convert(src, HarnessClaude, HarnessFactory)
+	if err == nil {
+		t.Fatal("Convert should refuse an empty recognized workspace even with informational diagnostics")
+	}
+	if !errors.Is(err, errSourceEmpty) {
+		t.Fatalf("Convert error = %v, want errSourceEmpty", err)
+	}
+}
+
+func TestConvert_AllowsIntentionalWindsurfAgentsMDDrop(t *testing.T) {
+	src := fstest.MapFS{
+		"AGENTS.md": {Data: []byte("# Existing project guidance\n")},
+	}
+
+	bundle, err := IngestBundle(src, HarnessWindsurf)
+	if err != nil {
+		t.Fatalf("IngestBundle(Windsurf AGENTS.md): %v", err)
+	}
+	if len(bundle.Resources) != 0 {
+		t.Fatalf("Windsurf AGENTS.md resources = %d, want 0", len(bundle.Resources))
+	}
+	if !diag.HasCode(bundle.Diagnostics, diag.CodeIngestWindsurfSubagentViaAgentsMDSkipped) {
+		t.Fatalf("Windsurf AGENTS.md diagnostics = %#v, want intentional-drop diagnostic", bundle.Diagnostics)
+	}
+
+	result, err := Convert(src, HarnessWindsurf, HarnessFactory)
+	if err != nil {
+		t.Fatalf("Convert(Windsurf AGENTS.md): %v", err)
+	}
+	if len(result.Artifacts) != 0 {
+		t.Fatalf("Convert(Windsurf AGENTS.md) artifacts = %d, want 0", len(result.Artifacts))
+	}
+	if !diag.HasCode(result.Diagnostics, diag.CodeIngestWindsurfSubagentViaAgentsMDSkipped) {
+		t.Fatalf("Convert(Windsurf AGENTS.md) diagnostics = %#v, want intentional-drop diagnostic", result.Diagnostics)
+	}
+}
+
 func TestConvert_AllRegisteredSources(t *testing.T) {
 	// Verify that Convert works for all 6 registered source harnesses
 	// when given appropriate input fixtures.

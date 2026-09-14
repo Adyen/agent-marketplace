@@ -108,6 +108,14 @@ func TestConvertCommandRefusesInvalidSourcesWithoutChangingSyncDestination(t *te
 				return src
 			},
 		},
+		{
+			name: "empty recognized Claude workspace with synthesized diagnostic",
+			setup: func(t *testing.T) string {
+				src := t.TempDir()
+				writeFile(t, filepath.Join(src, ".claude", ".mcp.json"), `{"mcpServers":{}}`)
+				return src
+			},
+		},
 	}
 
 	for _, tt := range tests {
