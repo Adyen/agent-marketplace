@@ -60,6 +60,12 @@ jobs:
       - name: Build worker image
         run: docker build --pull --target worker --tag agent-marketplace-worker:ci --file Dockerfile.marketplace .
 
+      - name: Build web image
+        run: make WEB_CONTAINER_IMAGE=agent-marketplace-web:ci container-web
+
+      - name: Build site image
+        run: make SITE_CONTAINER_IMAGE=agent-marketplace-site:ci container-site
+
   test:
     name: Test
     runs-on: ubuntu-latest

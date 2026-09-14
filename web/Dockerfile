@@ -1,11 +1,14 @@
 ARG NODE_IMAGE=node:24-alpine
 
 FROM ${NODE_IMAGE} AS build
+ARG NPM_CONFIG_REGISTRY
 WORKDIR /src/web
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN if ! command -v pnpm >/dev/null 2>&1; then corepack enable; fi
 COPY --chown=1000:1000 package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile --ignore-scripts
+RUN npm install --global "$(node -p 'require("./package.json").packageManager')" && npm cache clean --force
+RUN if [ -n "${NPM_CONFIG_REGISTRY}" ]; then \
+        export PNPM_CONFIG_REGISTRY="${NPM_CONFIG_REGISTRY}"; \
+    fi; \
+    pnpm install --frozen-lockfile --ignore-scripts
 COPY --chown=1000:1000 . .
 COPY --from=design --chown=1000:1000 semantic-colors.css /src/design/semantic-colors.css
 COPY --from=design --chown=1000:1000 marketplace-navigation.css /src/design/marketplace-navigation.css
