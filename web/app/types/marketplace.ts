@@ -3,8 +3,6 @@ import type { components, operations } from '~/generated/api'
 export const RESOURCE_KINDS = ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection'] as const
 
 export type ResourceKind = (typeof RESOURCE_KINDS)[number]
-export const ALL_RESOURCE_KINDS = 'all' as const
-export type ResourceKindFilter = ResourceKind | typeof ALL_RESOURCE_KINDS
 
 type Schemas = components['schemas']
 type JsonResponse<Operation extends keyof operations> = operations[Operation]['responses'] extends Record<200, { content: { 'application/json': infer Response } }>

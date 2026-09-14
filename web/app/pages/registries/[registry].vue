@@ -34,10 +34,9 @@ useHead(() => ({
 <template>
   <NuxtPage v-if="route.path === historyPath" />
   <div v-else class="min-h-screen bg-muted/30 text-default">
-    <MarketplaceSkipLink target="registry-content" />
     <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Registry' }]" />
 
-    <main id="registry-content" ref="mainContent" class="mx-auto max-w-5xl rounded px-4 py-10 focus-visible:outline-2 focus-visible:outline-primary sm:px-6 lg:px-8" tabindex="-1">
+    <main id="main-content" ref="mainContent" class="mx-auto max-w-5xl rounded px-4 py-10 focus-visible:outline-2 focus-visible:outline-primary sm:px-6 lg:px-8" tabindex="-1">
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-default p-8">
         <h1 tabindex="-1" class="text-2xl font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Loading registry</h1>
         <p class="mt-3 text-sm text-muted">Fetching registry identity and acquisition metadata.</p>

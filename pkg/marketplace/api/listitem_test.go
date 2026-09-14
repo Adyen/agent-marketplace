@@ -151,8 +151,8 @@ func TestResourceAvailability(t *testing.T) {
 	}{
 		{"mirrored allow is installable", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionAllow), mirror, AvailabilityAvailable},
 		{"warning stays installable", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionWarn), mirror, AvailabilityAvailable},
-		{"explicit reject blocks with archive", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionReject), mirror, AvailabilityBlocked},
-		{"missing mirrored artifact blocks", revision(KindSkill, "", store.AssessmentDecisionAllow), mirror, AvailabilityBlocked},
+		{"explicit reject blocks with archive", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionReject), mirror, AvailabilityPolicyBlocked},
+		{"missing mirrored artifact blocks", revision(KindSkill, "", store.AssessmentDecisionAllow), mirror, AvailabilityNoArtifact},
 		{"index-only needs no archive", revision(KindSkill, "", store.AssessmentDecisionAllow), indexOnly, AvailabilityAvailable},
 		{"collection needs no archive", revision(KindCollection, "", store.AssessmentDecisionAllow), mirror, AvailabilityAvailable},
 		{"revocation outranks reject", revoked, mirror, AvailabilityRevoked},
@@ -173,8 +173,8 @@ func TestSearchReportsAvailabilityForPolicyRejectedResources(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("got %d items, want 1", len(items))
 	}
-	if items[0].Availability != AvailabilityBlocked {
-		t.Fatalf("availability = %q, want %q", items[0].Availability, AvailabilityBlocked)
+	if items[0].Availability != AvailabilityPolicyBlocked {
+		t.Fatalf("availability = %q, want %q", items[0].Availability, AvailabilityPolicyBlocked)
 	}
 	// A blocked resource stays listed, and keeps a usable description.
 	if items[0].Description != listItemDescription {

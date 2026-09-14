@@ -94,8 +94,16 @@ const (
 	AvailabilityAvailable Availability = "available"
 
 	// AvailabilityBlocked means the revision is listed for transparency but is
-	// not installable: policy rejected it, so its artifact was never published.
+	// not installable for a reason an older peer did not distinguish.
 	AvailabilityBlocked Availability = "blocked"
+
+	// AvailabilityPolicyBlocked means the current assessment rejected the
+	// revision, so its artifact cannot be served.
+	AvailabilityPolicyBlocked Availability = "policy-blocked"
+
+	// AvailabilityNoArtifact means a mirrored revision has no artifact that
+	// this instance can serve for installation.
+	AvailabilityNoArtifact Availability = "no-artifact"
 
 	// AvailabilityRevoked means an operator revoked the revision.
 	AvailabilityRevoked Availability = "revoked"

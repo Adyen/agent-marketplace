@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, registryLabel } from '~/lib/presentation'
+import CopyButton from '~/components/CopyButton.vue'
+import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, resourceRoute, registryLabel } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import type { InspectionFile, InspectionManifest, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
@@ -85,13 +86,13 @@ const {
 } = useResourceInspectionPreview(props)
 
 function revisionURL(revision: ResourceRevision): string {
-  return resourceLocator({
+  return resourceRoute({
     registry_id: props.registry,
     kind: props.kind,
     name: props.name,
     revision: revision.content_digest,
     content_digest: revision.content_digest,
-  }, props.canonicalUrl)
+  })
 }
 
 function isCurrentRevision(revision: ResourceRevision): boolean {
@@ -195,7 +196,7 @@ function formatValue(value: unknown): string {
             <span v-else class="break-all font-mono text-sm text-muted">{{ revision.content_digest }}</span>
             <span v-if="isCurrentRevision(revision)" class="ml-2 text-xs font-medium text-muted">Current</span>
           </div>
-          <UBadge :color="resourceAvailabilityCopy(revision).color" variant="subtle">{{ resourceAvailabilityCopy(revision).label }}</UBadge>
+          <UBadge :color="resourceAvailabilityCopy(revision, acquisition, kind).color" variant="subtle">{{ resourceAvailabilityCopy(revision, acquisition, kind).label }}</UBadge>
         </li>
       </ol>
     </section>
@@ -275,18 +276,24 @@ function formatValue(value: unknown): string {
     </section>
 
     <section class="pt-6" aria-labelledby="acquisition-heading">
-      <h2 id="acquisition-heading" class="text-lg font-semibold text-highlighted">Copy exact pin</h2>
-      <p class="mt-2 text-sm leading-6 text-muted">The command and browser URL include this revision's content digest. Installation remains a local CLI action.</p>
+      <h2 id="acquisition-heading" class="text-lg font-semibold text-highlighted">Install exact revision</h2>
+      <p class="mt-2 text-sm leading-6 text-muted">Copy the digest-pinned command to install this exact revision. Copy the detail URL to share this page. Installation remains a local CLI action.</p>
       <div class="mt-4 grid gap-3">
         <CommandBlock :command="command" :label="`pinned CLI install command for ${name}`" :disabled="!commandAvailable" />
         <p v-if="installNotice" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">{{ installNotice }}</p>
         <div class="flex flex-wrap gap-2">
-          <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-link" :aria-label="`Copy pinned browser URL for ${name}`" :disabled="!browserAvailable" @click="copy(browserUrl, 'url')">
-            {{ copied === 'url' ? 'Copied URL' : 'Copy pinned URL' }}
-          </UButton>
+          <CopyButton
+            :copied="copied === 'url'"
+            :copy-label="`Copy detail URL for ${name}`"
+            :copied-label="`Detail URL copied for ${name}`"
+            copy-text="Copy detail URL"
+            copied-text="Detail URL copied"
+            :disabled="!browserAvailable"
+            @click="copy(browserUrl, 'url')"
+          />
         </div>
         <p v-if="browserAvailable && copyError === 'url'" role="alert" class="text-sm text-error">Clipboard access failed. Copy the displayed value manually.</p>
-        <p class="sr-only" aria-live="polite">{{ copied === 'url' ? 'Pinned browser URL copied.' : '' }}</p>
+        <p class="sr-only" aria-live="polite">{{ copied === 'url' ? 'Detail URL copied.' : '' }}</p>
       </div>
     </section>
   </article>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import CopyButton from '~/components/CopyButton.vue'
 import { useCopyText } from '~/composables/useCopyText'
 
 type Props = {
@@ -22,14 +23,13 @@ const { copied, copyError, copy } = useCopyText()
 // availability is one idea rather than two coinciding conditions.
 const available = computed(() => Boolean(props.command) && !props.disabled)
 const isCopied = computed(() => copied.value === 'command')
-const actionLabel = computed(() => (isCopied.value ? `${props.label} copied` : `Copy ${props.label}`))
 </script>
 
 <template>
   <div>
     <!-- Filled, unbordered, prompt-prefixed: a command is output to be taken,
          not a field to be typed in, so it must not borrow input chrome. -->
-    <div class="flex items-start gap-3 rounded-xl bg-muted px-4 py-3">
+    <div class="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 rounded-xl bg-muted px-4 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
       <span class="select-none font-mono text-sm leading-6 text-dimmed" aria-hidden="true">$</span>
       <code
         v-if="available"
@@ -38,29 +38,14 @@ const actionLabel = computed(() => (isCopied.value ? `${props.label} copied` : `
       >{{ command }}</code>
       <span v-else class="min-w-0 flex-1 font-mono text-sm leading-6 text-dimmed">command unavailable</span>
 
-      <!-- The block is bg-muted, and this theme resolves bg-elevated to the same
-           ink-100 as bg-muted, so a ghost button's hover fill would be literally
-           invisible here. The control gets its own lighter resting surface and
-           darkens on hover instead.
-           Saturation is reserved for install verdicts, so a successful copy is
-           confirmed with a check and full ink, never a colour. -->
-      <UButton
-        type="button"
-        size="xs"
-        color="neutral"
-        variant="ghost"
-        :icon="isCopied ? 'i-lucide-check' : 'i-lucide-copy'"
-        :class="[
-          'shrink-0 cursor-pointer rounded border bg-default font-mono text-[11px] uppercase tracking-[0.12em] transition-colors hover:border-accented hover:bg-accented hover:text-highlighted disabled:cursor-not-allowed motion-reduce:transition-none',
-          isCopied ? 'border-accented bg-accented text-highlighted' : 'border-default text-muted',
-        ]"
-        :aria-label="actionLabel"
-        :title="actionLabel"
+      <CopyButton
+        class="col-start-2 justify-self-start sm:col-start-3 sm:row-start-1 sm:justify-self-end"
+        :copied="isCopied"
+        :copy-label="`Copy ${label}`"
+        :copied-label="`${label} copied`"
         :disabled="!available"
         @click="copy(command, 'command')"
-      >
-        {{ isCopied ? 'Copied' : 'Copy' }}
-      </UButton>
+      />
     </div>
 
     <p v-if="copyError === 'command'" role="alert" class="mt-2 text-xs text-error">Clipboard access failed. Select the command and copy it manually.</p>
