@@ -114,8 +114,8 @@ func SupportFileDiagnostics(skill *ir.Skill, target Target) []diag.Diagnostic {
 
 // McpCredentialDiagnostics warns about literal credential-like MCP values
 // without ever copying their values into a diagnostic. Canonical-looking keys
-// preserved in Extra are inspected too, because JSON ingestion represents
-// their object values as map[string]any rather than typed IR fields.
+// in Extra are inspected too, because JSON ingestion represents their object
+// values as map[string]any rather than typed IR fields.
 func McpCredentialDiagnostics(server *ir.McpServer, target Target, opts ...Option) []diag.Diagnostic {
 	return mcpCredentialDiagnosticsForFields(
 		server.Name(), diag.SourceRef(server.Source), target,

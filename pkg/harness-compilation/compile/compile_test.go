@@ -520,19 +520,14 @@ func TestMcpCredentialDiagnostics_CanonicalExtras(t *testing.T) {
 		"x-extension":       map[string]any{"preserve": true},
 	}, ir.SourceRef{})
 
-	diags := McpCredentialDiagnostics(server, TargetClaude)
-	if len(diags) == 0 {
-		t.Fatal("diagnostics are empty; want one literal-secret diagnostic")
-	}
-	if strings.Contains(diags[0].Message, literalSecret) || strings.Contains(diags[0].Hint, literalSecret) {
-		t.Fatal("credential value leaked into the diagnostic")
-	}
-
 	for _, target := range []Target{TargetClaude, TargetFactory, TargetCursor, TargetWindsurf, TargetGemini, TargetDevin, TargetCodex} {
 		t.Run(string(target), func(t *testing.T) {
 			diags := McpCredentialDiagnostics(server, target)
 			if len(diags) != 1 || diags[0].Code != diag.CodeMcpLiteralCredential {
 				t.Fatalf("diagnostics = %#v, want one literal-secret diagnostic", diags)
+			}
+			if strings.Contains(diags[0].Message, literalSecret) || strings.Contains(diags[0].Hint, literalSecret) {
+				t.Fatal("credential value leaked into the diagnostic")
 			}
 		})
 	}
