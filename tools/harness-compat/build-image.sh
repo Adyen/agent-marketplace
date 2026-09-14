@@ -16,7 +16,7 @@ cli=$(jq -er .cli "$artifacts/release.json")
 package=$(jq -r .npm_package "$artifacts/release.json")
 bundle=$(jq -r .bundle_url "$artifacts/release.json")
 checksum=$(jq -r .bundle_sha256 "$artifacts/release.json")
-go_version=$(go list -m -f '{{.GoVersion}}')
+go_version=$(GOWORK=off go list -m -f '{{.GoVersion}}')
 
 for base in "golang:${go_version}-bookworm" node:24-bookworm-slim; do
   docker pull --platform linux/amd64 "$base"
