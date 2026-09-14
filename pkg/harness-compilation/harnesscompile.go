@@ -157,9 +157,8 @@ var (
 	errSourceEmpty          = errors.New("source layout contains no resources")
 )
 
-// allowsIntentionalZeroResourceBundle preserves Windsurf's documented AGENTS.md
-// drop. Windsurf does not synthesize a subagent for AGENTS.md, so the ingester
-// emits this diagnostic with no resources.
+// Windsurf intentionally drops AGENTS.md instead of synthesizing a subagent,
+// so its ingester emits this diagnostic with no resources.
 func allowsIntentionalZeroResourceBundle(diagnostics []Diagnostic) bool {
 	return diag.HasCode(diagnostics, diag.CodeIngestWindsurfSubagentViaAgentsMDSkipped)
 }

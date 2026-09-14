@@ -133,7 +133,7 @@ func TestCompileBundle_AllTargets(t *testing.T) {
 	}
 }
 
-func TestCompileBundle_EmptyFS(t *testing.T) {
+func TestCompileBundle_RefusesMissingOrUnrecognizedLayout(t *testing.T) {
 	tests := []struct {
 		name string
 		src  fstest.MapFS
@@ -155,8 +155,7 @@ func TestCompileBundle_EmptyFS(t *testing.T) {
 
 			result, err := CompileBundle(tt.src, TargetClaude)
 			if err == nil {
-				// This is the destructive behavior the regression guards: an empty
-				// successful result would be treated as clean by sync materialization.
+				// An empty successful result could prune existing output during sync materialization.
 				if _, materializeErr := Materialize(result, outDir, WithWriteMode(WriteModeSync)); materializeErr != nil {
 					t.Fatalf("Materialize refused the empty result: %v", materializeErr)
 				}
