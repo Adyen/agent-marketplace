@@ -303,11 +303,7 @@ func Autodetect(srcFS fs.FS) (Harness, bool) {
 // All results are merged, fragments are coalesced, and duplicate artifact
 // paths produce an error diagnostic (bundle.conflict.duplicate-artifact-path).
 func CompileBundle(src fs.FS, t Target, opts ...Option) (*Result, error) {
-	result, err := Convert(src, HarnessClaude, Harness(t), opts...)
-	if errors.Is(err, errSourceLayoutNotFound) {
-		return &Result{}, nil
-	}
-	return result, err
+	return Convert(src, HarnessClaude, Harness(t), opts...)
 }
 
 // resourceOutput records which bundle resource produced which artifacts so
