@@ -93,6 +93,7 @@ container-marketplace:
 
 container-web:
 	docker build \
+		--build-context design=design \
 		--build-arg NODE_IMAGE="$(NODE_IMAGE)" \
 		--build-arg NPM_CONFIG_REGISTRY="$(NPM_CONFIG_REGISTRY)" \
 		-t "$(WEB_CONTAINER_IMAGE)" web
@@ -120,7 +121,7 @@ container-check: secrets-check
 	@for path in site/.vitepress/cache site/.vitepress/dist site/node_modules; do grep -Fxq "$$path" .dockerignore || exit 1; done
 	@for path in .vitepress/cache .vitepress/dist node_modules; do grep -Fxq "$$path" site/.dockerignore || exit 1; done
 	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.6-bookworm$$/{goarg=1} /^ARG RUNTIME_IMAGE=gcr.io\/distroless\/static-debian12:nonroot$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS git-runtime/{gitstage=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{RUNTIME_IMAGE\} AS worker/{worker=1} /command -v git/{git=1} /command -v ssh/{ssh=1} /USER 1000:1000/{users++} /(apk|apt-get|dnf|yum) (add|install)/{packageadds++} END {if (!goarg || !runtimearg || !build || !gitstage || !flags || !api || !worker || !git || !ssh || packageadds != 0 || users < 2) exit 1}' Dockerfile.marketplace
-	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /^ARG NPM_CONFIG_REGISTRY$$/{registryarg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /npm install --global/{pnpm=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !registryarg || !build || !runtime || !workspace || !pnpm || !install || !user || !health) exit 1}' web/Dockerfile
+	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /^ARG NPM_CONFIG_REGISTRY$$/{registryarg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /npm install --global/{pnpm=1} /export PNPM_CONFIG_REGISTRY="\$$\{NPM_CONFIG_REGISTRY\}"/{registrymap=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !registryarg || !build || !runtime || !workspace || !pnpm || !registrymap || !install || !user || !health) exit 1}' web/Dockerfile
 	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{nodearg=1} /^ARG NGINX_IMAGE=nginxinc\/nginx-unprivileged:1.29-alpine$$/{nginxarg=1} /FROM .*\$\{NODE_IMAGE\} AS build/{build=1} /FROM .*\$\{NGINX_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml/{workspace=1} /COPY --from=design .*semantic-colors.css/{colors=1} /USER 1000/{user=1} /ARG SITE_BASE=\//{sitebase=1} /HEALTHCHECK/{health=1} END {if (!nodearg || !nginxarg || !build || !runtime || !workspace || !colors || !user || !sitebase || !health) exit 1}' site/Dockerfile
 	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
@@ -130,6 +131,7 @@ container-check: secrets-check
 	@test "$$(grep -Fc -- 'POSTGRES_IMAGE' deploy/compose/postgres-s3/compose.yaml)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg GO_BUILD_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg RUNTIME_IMAGE=' Makefile)" -eq 1
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-context design=design' Makefile)" -eq 2
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 2
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NPM_CONFIG_REGISTRY=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NGINX_IMAGE=' Makefile)" -eq 1

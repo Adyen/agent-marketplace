@@ -5,7 +5,10 @@ ARG NPM_CONFIG_REGISTRY
 WORKDIR /src/web
 COPY --chown=1000:1000 package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN npm install --global "$(node -p 'require("./package.json").packageManager')" && npm cache clean --force
-RUN pnpm install --frozen-lockfile --ignore-scripts
+RUN if [ -n "${NPM_CONFIG_REGISTRY}" ]; then \
+        export PNPM_CONFIG_REGISTRY="${NPM_CONFIG_REGISTRY}"; \
+    fi; \
+    pnpm install --frozen-lockfile --ignore-scripts
 COPY --chown=1000:1000 . .
 COPY --from=design --chown=1000:1000 semantic-colors.css /src/design/semantic-colors.css
 COPY --from=design --chown=1000:1000 marketplace-navigation.css /src/design/marketplace-navigation.css
