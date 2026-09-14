@@ -41,6 +41,18 @@ if (!existsSync(chromiumPath)) fail(`the ${configuredChromiumPath ? 'configured 
 const build = spawnSync('pnpm', ['run', 'build'], { stdio: 'inherit' })
 if (build.error || build.status !== 0) process.exit(build.status || 1)
 
+const siteInstall = spawnSync('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], {
+  cwd: resolve('..', 'site'),
+  stdio: 'inherit',
+})
+if (siteInstall.error || siteInstall.status !== 0) process.exit(siteInstall.status || 1)
+
+const siteBuild = spawnSync('pnpm', ['run', 'build'], {
+  cwd: resolve('..', 'site'),
+  stdio: 'inherit',
+})
+if (siteBuild.error || siteBuild.status !== 0) process.exit(siteBuild.status || 1)
+
 const result = spawnSync('pnpm', ['exec', 'playwright', 'test', '--config=tests/e2e/playwright.config.ts', ...process.argv.slice(3)], {
   stdio: 'inherit',
   env: { ...process.env, PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: chromiumPath },

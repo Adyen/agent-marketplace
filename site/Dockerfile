@@ -7,7 +7,7 @@ USER root
 
 RUN npm install --global pnpm@10.26.0 && npm cache clean --force
 
-RUN mkdir -p /site && chown -R 1000:1000 /site
+RUN mkdir -p /site /design && chown -R 1000:1000 /site /design
 WORKDIR /site
 USER 1000
 
@@ -15,12 +15,13 @@ COPY --chown=1000:1000 package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY --chown=1000:1000 . .
+COPY --from=design --chown=1000:1000 semantic-colors.css /design/semantic-colors.css
 
 ARG SITE_BASE=/
 ENV SITE_BASE=${SITE_BASE}
 RUN pnpm run build
 
-FROM ${NGINX_IMAGE}
+FROM ${NGINX_IMAGE} AS runtime
 
 ARG SITE_BASE=/
 
@@ -36,3 +37,5 @@ RUN printf 'server {\n\
 COPY --from=build /site/.vitepress/dist/ /usr/share/nginx/html${SITE_BASE}
 
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O - -T 5 http://127.0.0.1:8080/ >/dev/null || exit 1

@@ -1,5 +1,5 @@
 import type { Theme } from 'vitepress'
-import DefaultTheme from 'vitepress/theme'
+import DefaultTheme from 'vitepress/theme-without-fonts'
 
 import LandingPage from '../../src/pages/landing/LandingPage.vue'
 
