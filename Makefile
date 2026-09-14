@@ -60,7 +60,7 @@ lint-common:
 		$(MAKE) tidy; \
 		$(GO) fmt ./...; \
 	else \
-		$(GO) mod tidy -diff; \
+		GOWORK=off $(GO) mod tidy -diff; \
 		test -z "$$(gofmt -l ./cmd ./internal)" || { echo "ERROR: gofmt found formatting issues - please run 'make lint' and commit the results"; gofmt -d ./cmd ./internal; exit 1; }; \
 	fi
 	$(GO) vet ./...
