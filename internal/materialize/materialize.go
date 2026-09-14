@@ -1726,7 +1726,7 @@ func splitSkillArtifacts(target hcc.Target, skillName string, artifacts []artifa
 	var installDirRel string
 	for _, a := range artifacts {
 		a.Path = trimArtifactRootPrefix(a.Path, artifactRootPrefix(target))
-		currentInstallDirRel, skillRel, ok := splitSkillArtifactPath(skillName, a.Path)
+		currentInstallDirRel, skillRel, ok := splitSkillArtifactPath(target, skillName, a.Path)
 		if !ok {
 			rest = append(rest, a)
 			continue
@@ -1811,7 +1811,21 @@ func renderSkillFrontmatter(s *ir.Skill) string {
 	return "---\n" + string(data) + "---\n\n"
 }
 
-func splitSkillArtifactPath(skillName, path string) (string, string, bool) {
+// splitSkillArtifactPath splits a skill-directory artifact path into the
+// install directory (the resource root the target's native layout declares
+// for skills — including a partition prefix, e.g. Codex's ".agents/skills")
+// and the path within the named resource's directory. Anchoring on the
+// declared root keeps the split coupled to the topology authority instead of
+// a literal element; targets without a registered layout keep the historical
+// scan for a "skills" element.
+func splitSkillArtifactPath(target hcc.Target, skillName, path string) (string, string, bool) {
+	if root, ok := targetmeta.NativeResourceRoot(target, ir.KindSkill); ok && root != "." {
+		prefix := root + "/" + skillName + "/"
+		if artifactRel, found := strings.CutPrefix(path, prefix); found && artifactRel != "" {
+			return root, artifactRel, true
+		}
+		return "", "", false
+	}
 	parts := strings.Split(path, "/")
 	for i := 0; i+2 < len(parts); i++ {
 		if parts[i] != "skills" || parts[i+1] != skillName {

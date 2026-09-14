@@ -29,7 +29,7 @@ func TestDevinOwnedLegacyHooksUpgradeWithoutChangingHandwrittenGroups(t *testing
 				root, rel = devinUserRoot(home), harness.DevinUserConfigFile
 				legacy = `{"hooks":` + legacy + `}`
 			}
-			entries, err := devinFragmentEntries(rel, []byte(legacy), "managed-hook")
+			entries, err := devinFragmentEntries(rel, []byte(legacy), machine, "managed-hook")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -84,7 +84,7 @@ func devinMcpDesired(t *testing.T, key, command string) ownedJSONEntry {
 	return ownedJSONEntry{
 		rel:       harness.DevinMcpConfigFile,
 		kind:      ownership.KindMcpServer,
-		container: devinMcpServersKey,
+		container: "mcpServers",
 		key:       key,
 		raw:       raw,
 		identity:  ownership.McpIdentityDigest(key),

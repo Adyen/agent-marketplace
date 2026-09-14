@@ -129,6 +129,25 @@ func TestSkillDir_CodexDestinationResolutionErrorFailsClosed(t *testing.T) {
 	}
 }
 
+// TestSkillDir_UsesDescriptorPattern pins that the skill directory probe reads
+// the target's native-layout descriptor rather than a second literal copy:
+// Claude deliberately leaves TargetInfo.SkillPathPattern unset, so this path
+// only resolves because the descriptor declares skills/%s/SKILL.md.
+func TestSkillDir_UsesDescriptorPattern(t *testing.T) {
+	repoRoot := t.TempDir()
+	if got, want := skillDir(hcc.TargetClaude, repoRoot, "demo"), filepath.Join(repoRoot, ".claude", "skills", "demo"); got != want {
+		t.Fatalf("skillDir(claude) = %q, want %q", got, want)
+	}
+	if got, want := skillDir(hcc.TargetDevin, repoRoot, "demo"), filepath.Join(repoRoot, ".devin", "skills", "demo"); got != want {
+		t.Fatalf("skillDir(devin) = %q, want %q", got, want)
+	}
+	// A target with no registered layout still resolves through the literal
+	// TargetInfo pattern.
+	if got, want := skillDir(hcc.TargetFactory, repoRoot, "demo"), filepath.Join(repoRoot, ".factory", "skills", "demo"); got != want {
+		t.Fatalf("skillDir(factory) = %q, want %q", got, want)
+	}
+}
+
 func TestDetectAncestorExcludes_NoWarningWhenSkillNotMaterializedInAncestor(t *testing.T) {
 	repoRoot := t.TempDir()
 	sub := filepath.Join(repoRoot, "subdir")

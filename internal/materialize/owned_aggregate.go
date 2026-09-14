@@ -21,10 +21,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-const (
-	ownedHooksContainer    = "hooks"
-	ownedJSONEmptyDocument = "{}\n"
-)
+const ownedJSONEmptyDocument = "{}\n"
 
 // ownedJSONEntry is one desired JSON aggregate entry with its ownership
 // identity and canonical value bytes.

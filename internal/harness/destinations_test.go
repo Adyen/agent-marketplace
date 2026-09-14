@@ -78,13 +78,18 @@ func TestCodexTargetInfoAdaptsNativeLayout(t *testing.T) {
 		if got.SkillPathPattern != wantSkillPath || !reflect.DeepEqual(got.SkillDirKinds, partition.SkillDirKinds) {
 			t.Errorf("partition %q skill layout = %q/%v, want %q/%v", partition.ID, got.SkillPathPattern, got.SkillDirKinds, wantSkillPath, partition.SkillDirKinds)
 		}
-		wantAggregates := make([]string, 0, len(partition.Aggregates))
+		var wantProjectAggregates, wantUserAggregates []string
 		for _, aggregate := range partition.Aggregates {
-			wantAggregates = append(wantAggregates, aggregate.Path)
+			wantProjectAggregates = append(wantProjectAggregates, aggregate.Project.Path)
+			wantUserAggregates = append(wantUserAggregates, aggregate.User.Path)
 		}
-		slices.Sort(wantAggregates)
-		if gotAggregates := got.AggregateFilesForScope(false); !reflect.DeepEqual(gotAggregates, wantAggregates) {
-			t.Errorf("partition %q aggregates = %v, want %v", partition.ID, gotAggregates, wantAggregates)
+		slices.Sort(wantProjectAggregates)
+		slices.Sort(wantUserAggregates)
+		if gotAggregates := got.AggregateFilesForScope(false); !reflect.DeepEqual(gotAggregates, wantProjectAggregates) {
+			t.Errorf("partition %q project aggregates = %v, want %v", partition.ID, gotAggregates, wantProjectAggregates)
+		}
+		if gotAggregates := got.AggregateFilesForScope(true); !reflect.DeepEqual(gotAggregates, wantUserAggregates) {
+			t.Errorf("partition %q user aggregates = %v, want %v", partition.ID, gotAggregates, wantUserAggregates)
 		}
 	}
 }
@@ -110,7 +115,7 @@ func TestCodexVirtualTargetInfoAdaptsAllNativePartitions(t *testing.T) {
 			}
 		}
 		for _, aggregate := range partition.Aggregates {
-			wantAggregates = append(wantAggregates, path.Join(partition.Prefix, aggregate.Path))
+			wantAggregates = append(wantAggregates, path.Join(partition.Prefix, aggregate.Project.Path))
 		}
 	}
 	slices.Sort(wantAggregates)

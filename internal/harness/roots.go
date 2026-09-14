@@ -1,15 +1,22 @@
 // Package harness maps harness target names to their install-root paths
 // for both repo-scoped and machine-scoped skill materialization.
 //
-// In Phase 0 this package is only used by the catalog layer and list/TUI
-// for informational output. Phase 3 (internal/materialize) will consume
-// it to drive hcc.Materialize into the correct per-target output directory.
+// internal/materialize consumes TargetInfoMap, ResolveDestinations, the
+// install roots, and the Devin aggregate file names to drive
+// hcc.Materialize into the correct per-target output directories;
+// internal/pipeline consumes the same metadata for managed-path and
+// safety-backup coverage. The TUI and CLI surfaces (status, doctor,
+// backup, init, migrate) consume install-root and detection info such as
+// DetectInstalled for informational output.
 package harness
 
 import (
 	"fmt"
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -47,25 +54,40 @@ const (
 )
 
 // Canonical Devin 3000.3 aggregate file names, relative to a Devin install
-// root. They mirror the unexported constants in
-// pkg/harness-compilation/compile/devin (which are that package's internal path
-// contract, not public API); materialization needs its own copy to route
-// reconciliation, and TestDevinAggregateNamesMatchCompiledArtifactPaths pins
-// them against the paths the compiler really emits so the two cannot drift.
-const (
+// root. They are read from the target's registered native-layout descriptor
+// (pkg/harness-compilation/target), which is the topology authority:
+// TestDevinAggregateNamesMatchCompiledArtifactPaths pins them against the
+// paths the compiler really emits so the two cannot drift.
+var (
 	// DevinProjectHooksFile holds the hook object directly at project scope.
-	DevinProjectHooksFile = devinProjectHooksFile
+	DevinProjectHooksFile = mustNativeAggregatePath(targetmeta.TargetDevin, ir.KindHook, false)
 	// DevinUserConfigFile carries hooks under its `hooks` member at user scope.
-	DevinUserConfigFile = devinUserConfigFile
+	DevinUserConfigFile = mustNativeAggregatePath(targetmeta.TargetDevin, ir.KindHook, true)
 	// DevinMcpConfigFile holds mcpServers at the same relative path in both scopes.
-	DevinMcpConfigFile = devinMcpConfigFile
+	DevinMcpConfigFile = mustNativeAggregatePath(targetmeta.TargetDevin, ir.KindMcpServer, false)
 )
 
-const (
-	devinProjectHooksFile = "hooks.v1.json"
-	devinUserConfigFile   = "config.json"
-	devinMcpConfigFile    = "mcp_config.json"
-)
+// mustNativeAggregatePath resolves an aggregate file from the target's
+// registered native-layout descriptor. A missing declaration is a programming
+// error in the registry, not a runtime condition, so it panics the way
+// mustCodexAggregatePath does in internal/materialize.
+func mustNativeAggregatePath(t targetmeta.Target, kind ir.ResourceKind, machineScope bool) string {
+	file, ok := targetmeta.NativeAggregateFileForScope(t, kind, machineScope)
+	if !ok || file.Path == "" {
+		panic(fmt.Sprintf("%s native aggregate for %s at machine_scope=%v is not registered", t, kind, machineScope))
+	}
+	return file.Path
+}
+
+// mustNativeResourcePattern resolves a resource path pattern from the
+// target's registered native-layout descriptor.
+func mustNativeResourcePattern(t targetmeta.Target, kind ir.ResourceKind) string {
+	pattern, ok := targetmeta.NativeResourcePattern(t, kind)
+	if !ok {
+		panic(fmt.Sprintf("%s native resource path for %s is not registered", t, kind))
+	}
+	return pattern
+}
 
 // AggregateFileSet holds a target's shared aggregate configuration files per
 // scope. The two scopes are separate lists rather than one list because Devin's
@@ -125,7 +147,10 @@ type TargetInfo struct {
 	// artifact-path-to-output-path mapping lives in internal/materialize's
 	// planner and the compilers live in pkg/harness-compilation; a copy of
 	// either here would be the parallel implementation this field exists to
-	// avoid. Instead the declaration is VERIFIED against reality by
+	// avoid. For targets with a registered native-layout descriptor (Codex,
+	// Devin, Claude) the set is DERIVED from that descriptor instead of being
+	// declared here at all. Either way the declaration is VERIFIED against
+	// reality by
 	// materialize.TestAggregateFilesMatchMaterializedMergeArtifacts, which
 	// compiles one resource of every ir.ResourceKind for every target and scope,
 	// runs the production planner, and fails when this list and the artifacts
@@ -339,6 +364,104 @@ func MakeInstallRoots() map[hcc.Target]Roots {
 	return roots
 }
 
+// appendUnique appends rel to list unless already present, keeping declaration
+// order deterministic while collapsing kinds that share one aggregate file
+// (Claude skills and subagents both contribute to .claude-plugin/plugin.json).
+func appendUnique(list []string, rel string) []string {
+	if slices.Contains(list, rel) {
+		return list
+	}
+	return append(list, rel)
+}
+
+// appendAggregateFiles collects every aggregate's per-scope file path into
+// set, deduplicated via appendUnique and sorted for a stable,
+// declaration-independent order. prefix roots each path under a partition
+// sub-root (Codex's .agents/.codex split); an empty prefix records the path
+// exactly as the descriptor declares it.
+func appendAggregateFiles(set *AggregateFileSet, prefix string, aggregates []targetmeta.NativeAggregate) {
+	for _, aggregate := range aggregates {
+		project, user := aggregate.Project.Path, aggregate.User.Path
+		if prefix != "" {
+			project = path.Join(prefix, project)
+			user = path.Join(prefix, user)
+		}
+		set.Project = appendUnique(set.Project, project)
+		set.User = appendUnique(set.User, user)
+	}
+	slices.Sort(set.Project)
+	slices.Sort(set.User)
+}
+
+// targetInfoFromLayout derives a TargetInfo's compiler-topology fields from
+// the target's registered native-layout descriptor: Components, ResourceDirs,
+// SkillDirKinds, and AggregateFiles. The consumer-side table then cannot
+// drift from the layout the compilers emit. Fields that are consumer policy
+// rather than compiler topology stay literal at the call site: Roots,
+// OwnershipReconciledAggregates, FileCopyKinds, MachineComponentDirs,
+// ArtifactRootPrefix, and SkillPathPattern, which materialize reads to decide
+// frontmatter injection. PlanStrategy defaults to PlanSubtree here.
+func targetInfoFromLayout(t targetmeta.Target) (TargetInfo, error) {
+	layout, ok := targetmeta.LookupNativeLayout(t)
+	if !ok {
+		return TargetInfo{}, fmt.Errorf("harness: %s native layout is not registered", t)
+	}
+	if len(layout.Partitions) != 1 {
+		return TargetInfo{}, fmt.Errorf("harness: %s native layout has %d partitions; a legacy single-root target declares exactly one", t, len(layout.Partitions))
+	}
+	partition := layout.Partitions[0]
+	if partition.Prefix != "." {
+		return TargetInfo{}, fmt.Errorf("harness: %s native layout partition %q has prefix %q; a legacy single-root partition covers the whole root", t, partition.ID, partition.Prefix)
+	}
+	return targetInfoFromPartition(partition), nil
+}
+
+// targetInfoFromPartition derives a TargetInfo's compiler-topology fields from
+// one whole-root native-layout partition.
+func targetInfoFromPartition(partition targetmeta.NativePartition) TargetInfo {
+	info := TargetInfo{
+		Components:    slices.Clone(partition.Components),
+		PlanStrategy:  PlanSubtree,
+		SkillDirKinds: maps.Clone(partition.SkillDirKinds),
+	}
+	// A kind whose name placeholder is a directory element (skills/%s/SKILL.md)
+	// materializes as a resource directory, not under a flat install dir, so it
+	// contributes no ResourceDirs entry. The shape predicate is the
+	// descriptor's own — validation guarantees it agrees with SkillDirKinds.
+	for kind, pattern := range partition.ResourcePaths {
+		if targetmeta.IsDirShapedPattern(pattern) {
+			continue
+		}
+		if info.ResourceDirs == nil {
+			info.ResourceDirs = make(map[ir.ResourceKind]string)
+		}
+		info.ResourceDirs[kind] = path.Dir(pattern)
+	}
+	// A kind with no per-resource path still has an install directory when its
+	// aggregate file lives under a component (Claude's hooks/hooks.json keeps
+	// hook resources under the hooks/ component). An aggregate at the
+	// partition root, like Devin's hooks.v1.json, contributes none.
+	// ResourceDirs is scope-neutral, so the fallback derives only when the
+	// project and user paths share one directory: a scope-variant aggregate
+	// whose directories diverge has no single install dir to describe, and
+	// borrowing the project directory would mis-describe user scope.
+	for _, aggregate := range partition.Aggregates {
+		if _, ok := partition.ResourcePaths[aggregate.Kind]; ok {
+			continue
+		}
+		dir := path.Dir(aggregate.Project.Path)
+		if dir == "." || dir != path.Dir(aggregate.User.Path) {
+			continue
+		}
+		if info.ResourceDirs == nil {
+			info.ResourceDirs = make(map[ir.ResourceKind]string)
+		}
+		info.ResourceDirs[aggregate.Kind] = dir
+	}
+	appendAggregateFiles(&info.AggregateFiles, "", partition.Aggregates)
+	return info
+}
+
 func MachineRoot(target hcc.Target) (string, bool) {
 	roots, ok := MakeInstallRoots()[target]
 	return roots.Machine, ok
@@ -351,27 +474,31 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	claudeInfo, err := targetInfoFromLayout(targetmeta.TargetClaude)
+	if err != nil {
+		return nil, err
+	}
+	claudeInfo.Roots = roots[hcc.TargetClaude]
+	// Claude deliberately leaves SkillPathPattern unset: materialize
+	// activates frontmatter injection when a pattern is declared, and the
+	// Claude compiler already renders it.
+	devinInfo, err := targetInfoFromLayout(targetmeta.TargetDevin)
+	if err != nil {
+		return nil, err
+	}
+	devinInfo.Roots = roots[hcc.TargetDevin]
+	devinInfo.SkillPathPattern = mustNativeResourcePattern(targetmeta.TargetDevin, ir.KindSkill)
+	// Devin's aggregates go through internal/ownership (see
+	// internal/materialize/devin.go): no `_managed_by` marker is ever
+	// written into a Devin file, so the marker-strip walk must not touch
+	// them. This applies in both file and symlink materialization modes.
+	// The original plan's "no real-file fallback" was delivery scope,
+	// not a limitation on Devin's ability to read regular files.
+	devinInfo.OwnershipReconciledAggregates = true
 
 	m := map[hcc.Target]TargetInfo{
-		codex: codexInfo,
-		hcc.TargetClaude: {
-			Roots:        roots[hcc.TargetClaude],
-			Components:   []string{"skills", "commands", "agents", "hooks", ".claude-plugin"},
-			PlanStrategy: PlanSubtree,
-			ResourceDirs: map[ir.ResourceKind]string{
-				ir.KindCommand:  "commands",
-				ir.KindSubagent: "agents",
-				ir.KindHook:     "hooks",
-			},
-			// Skills and subagents both contribute entries to
-			// .claude-plugin/plugin.json, hooks merge into hooks/hooks.json, and
-			// MCP servers merge into .mcp.json. The same three files are written
-			// in both scopes.
-			AggregateFiles: AggregateFileSet{
-				Project: []string{".claude-plugin/plugin.json", ".mcp.json", "hooks/hooks.json"},
-				User:    []string{".claude-plugin/plugin.json", ".mcp.json", "hooks/hooks.json"},
-			},
-		},
+		codex:            codexInfo,
+		hcc.TargetClaude: claudeInfo,
 		hcc.TargetFactory: {
 			Roots:            roots[hcc.TargetFactory],
 			Components:       []string{"skills", "commands", "droids", "hooks", ".factory-plugin"},
@@ -456,52 +583,11 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 				User:    []string{"gemini-extension.json", "settings.json"},
 			},
 		},
-		hcc.TargetDevin: {
-			Roots: roots[hcc.TargetDevin],
-			// Devin project hooks are a single aggregate FILE (hooks.v1.json) at
-			// the root of the target, not a "hooks" directory, so "hooks" must
-			// not be listed as a prunable component.
-			Components:       []string{"skills", "agents"},
-			PlanStrategy:     PlanSubtree,
-			SkillPathPattern: "skills/%s/SKILL.md",
-			ResourceDirs: map[ir.ResourceKind]string{
-				// Subagents are flat files (agents/<name>.md), which is exactly
-				// what ResourceDirs models.
-				ir.KindSubagent: "agents",
-				// KindCommand is deliberately absent from ResourceDirs: a Devin
-				// command compiles to a skill DIRECTORY (skills/<name>/SKILL.md),
-				// while ResourceDirs means "<dir>/<name>.<ext>" (see
-				// resourceArtifactMatches in internal/materialize, which rejects
-				// nested artifact paths). D10 expresses it as a SkillDirKinds entry
-				// instead, which routes it through the directory-symlink path that
-				// already materializes ir.KindSkill.
-				//
-				// KindHook is deliberately absent: hooks are merged into the
-				// aggregate hooks.v1.json / config.json#hooks files, not into a
-				// per-hook install directory. D10 expresses those in AggregateFiles.
-			},
-			// A Devin command IS a skill directory carrying
-			// `x-agent-marketplace-kind: command`, so it is materialized as a
-			// directory symlink at skills/<name>/, exactly like a native skill.
-			// That is also why "skills" needs prune coverage for entries owned by
-			// commands: syncSkillLinks prunes any managed symlink under skills/
-			// that is not desired this run, regardless of which kind created it.
-			SkillDirKinds: map[ir.ResourceKind]bool{ir.KindCommand: true},
-			// Plan, resource mapping: "Hook | Project: hooks.v1.json; user:
-			// config.json#hooks" and "MCP server | mcp_config.json". MCP is at the
-			// same relative path under BOTH roots.
-			AggregateFiles: AggregateFileSet{
-				Project: []string{devinProjectHooksFile, devinMcpConfigFile},
-				User:    []string{devinUserConfigFile, devinMcpConfigFile},
-			},
-			// Devin's aggregates go through internal/ownership (see
-			// internal/materialize/devin.go): no `_managed_by` marker is ever
-			// written into a Devin file, so the marker-strip walk must not touch
-			// them. This applies in both file and symlink materialization modes.
-			// The original plan's "no real-file fallback" was delivery scope,
-			// not a limitation on Devin's ability to read regular files.
-			OwnershipReconciledAggregates: true,
-		},
+		// Devin's topology is derived from its native-layout descriptor; its
+		// aggregates are scope-variant, with project hooks in a root-level
+		// hooks.v1.json file and user hooks under config.json's `hooks`
+		// member.
+		hcc.TargetDevin: devinInfo,
 	}
 
 	// Validate every declared aggregate path before it is ever joined onto an

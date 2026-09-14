@@ -133,7 +133,12 @@ func DevinRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 				}
 				store = opened
 			}
-			file, fileDiags := previewOwnedJSONAggregateFile(store, key, outDir, devinOwnedJSONFile(rel), devinOwnedJSONOptions(), false, desiredByRel[rel])
+			fileSpec, err := devinOwnedJSONFile(rel, key.machineScope)
+			if err != nil {
+				preview.Diags = append(preview.Diags, ownedJSONShapeDiag(diag.CodeMaterializeDevinAggregateShape, key, outDir, rel, err))
+				continue
+			}
+			file, fileDiags := previewOwnedJSONAggregateFile(store, key, outDir, fileSpec, devinOwnedJSONOptions(), false, desiredByRel[rel])
 			preview.Diags = append(preview.Diags, fileDiags...)
 			if file != nil {
 				preview.Files = append(preview.Files, file)

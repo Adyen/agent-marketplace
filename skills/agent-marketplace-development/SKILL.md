@@ -129,7 +129,7 @@ Preserve these invariants:
 - **Skills link by default; file mode copies.** Default-mode harness skill
   entries are symlinks to files/directories under
   `~/.cache/agent-marketplace`. File mode writes regular files/trees for
-  targets that support it; Devin deliberately refuses file mode.
+  every target through the generic materializer.
 - **Non-skills are compiled artifacts, unless a target declares
   otherwise.** Commands, subagents, hooks, and MCP servers are selected
   like skills and are normally materialized through HCC into the target
@@ -138,19 +138,23 @@ Preserve these invariants:
   the kinds that take the skill-directory path instead. Devin and Codex set it
   for `ir.KindCommand`, because their commands are skill directories containing
   `SKILL.md` with `x-agent-marketplace-kind: command`. Default mode links those
-  directories; Codex file mode writes them as regular trees, while Devin
-  refuses file mode.
+  directories; file mode writes them as regular trees for both targets
+  through the generic materializer.
 - **No harness-specific skill-link allowlists.** Decide whether a
   resource is a skill by the compiled/source artifact shape, the
   resource kind, and declarative `harness.TargetInfo` metadata — not by
   hard-coded target names like Claude, Factory, Cursor, Windsurf,
   Gemini, Devin, or Codex.
 - **`AggregateFiles` must match what the compilers emit.**
-  `harness.TargetInfo.AggregateFiles` is the single source of truth for
-  which files a target merges into, per scope; both materialization
-  routing and `pipeline.CollectManagedPaths` (safety backup coverage)
-  read it. All seven targets declare it, and the declaration is not
-  editorial: it must equal "every compiled artifact with
+  `harness.TargetInfo.AggregateFiles` is the single declaration both
+  materialization routing and `pipeline.CollectManagedPaths` (safety
+  backup coverage) read for which files a target merges into, per
+  scope. Codex, Devin, and Claude derive the set from their registered
+  native-layout descriptor in
+  `pkg/harness-compilation/target/native_layout.go`, the topology
+  authority; the remaining targets declare it literally in
+  `internal/harness/roots.go`. Either way the value is not editorial:
+  it must equal "every compiled artifact with
   `MergeWithExisting == true`, at the output-root-relative path the
   planner writes it to, in that scope".
   `materialize.TestAggregateFilesMatchMaterializedMergeArtifacts`

@@ -881,9 +881,10 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 		// Shared aggregate configuration files used to live in a hand-maintained
 		// rootConfigFiles map here, which had no Devin entry and therefore left
 		// hooks.v1.json, config.json, and mcp_config.json outside backup coverage.
-		// TargetInfo.AggregateFilesForScope is now the single source of truth that
-		// both materialization and this collector read, so a target cannot declare
-		// an aggregate file that backups do not cover. Bead
+		// TargetInfo.AggregateFilesForScope is now the single declaration both
+		// materialization and this collector read, populated from the target's
+		// native-layout descriptor where one is registered, so a target cannot
+		// declare an aggregate file that backups do not cover. Bead
 		// agent-marketplace-5exj.27 made that declaration truthful — until then
 		// Gemini's settings.json was merged into on every sync with no backup at
 		// all, because it is not inside any Gemini component directory.
