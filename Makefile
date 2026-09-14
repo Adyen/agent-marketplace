@@ -94,6 +94,7 @@ container-marketplace:
 container-web:
 	docker build \
 		--build-arg NODE_IMAGE="$(NODE_IMAGE)" \
+		--build-arg NPM_CONFIG_REGISTRY="$(NPM_CONFIG_REGISTRY)" \
 		-t "$(WEB_CONTAINER_IMAGE)" web
 
 container-site:
@@ -130,6 +131,7 @@ container-check: secrets-check
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg GO_BUILD_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg RUNTIME_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 2
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NPM_CONFIG_REGISTRY=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NGINX_IMAGE=' Makefile)" -eq 1
 	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.6-bookworm$$/{go=1} /^RUNTIME_IMAGE \?= gcr.io\/distroless\/static-debian12:nonroot$$/{runtime=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} /^SITE_NGINX_IMAGE \?= nginxinc\/nginx-unprivileged:1.29-alpine$$/{site_nginx=1} END {if (!go || !runtime || !node || !postgres || !nginx || !site_nginx) exit 1}' Makefile
 	@if git grep -nE 'is\.adyen\.(com|cloud)' -- Dockerfile.marketplace web/Dockerfile deploy/compose ':!deploy/compose/postgres-s3/README.md'; then \
