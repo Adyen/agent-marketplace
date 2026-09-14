@@ -36,9 +36,9 @@ export default defineConfig({
     siteTitle: 'agent-marketplace',
 
     nav: [
-      // The Marketplace is always served at /marketplace/ under the shared origin.
+      // Resolve from the site path to the sibling app at the shared origin root.
       // target keeps VitePress from handling the sibling app as an SPA route.
-      { text: 'Marketplace', link: MARKETPLACE_PATH, target: '_self' },
+      { text: 'Marketplace', link: `..${MARKETPLACE_PATH}`, target: '_self' },
       { text: 'Docs', link: '/#install' }
     ],
 

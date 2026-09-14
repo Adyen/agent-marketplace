@@ -7,6 +7,7 @@ const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>
 const mockURL = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '4311'}`
 const appURL = `http://127.0.0.1:${process.env.E2E_APP_PORT || '4321'}`
 const relativeAppURL = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || '4322'}`
+const relativeAppBaseURL = `${relativeAppURL}/marketplace/`
 const sharedOriginURL = `http://127.0.0.1:${process.env.E2E_SHARED_ORIGIN_PORT || '4323'}`
 const sharedAppearanceKey = 'vitepress-theme-appearance'
 
@@ -461,7 +462,7 @@ test.describe('Marketplace browser discovery', () => {
       contentType: 'application/json',
       body: JSON.stringify(searchResult()),
     }))
-    await relativePage.goto(relativeAppURL)
+    await relativePage.goto(relativeAppBaseURL)
     await expect(relativePage.getByText('· 2 total', { exact: true })).toBeVisible()
     await relativePage.getByLabel('Search', { exact: true }).fill('secure')
     await expect(relativePage.getByText('· 1 total', { exact: true })).toBeVisible()
