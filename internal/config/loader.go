@@ -771,15 +771,26 @@ func LoadUserLoggingConfig() (*LoggingConfig, error) {
 	return cfg.Logging, nil
 }
 
-func LoadRootConfigFromPath(path string) (*Config, error) {
-	kind := repoLayer
-	requireAPIVersion := true
+func configLayerForPath(path string) layerKind {
 	if isLocalConfigPath(path) {
-		kind = localLayer
-		requireAPIVersion = false
-	} else if isGlobalConfigPath(path) {
-		kind = userLayer
+		return localLayer
 	}
+	if isOrganizationConfigPath(path) {
+		return organizationLayer
+	}
+	if isGlobalConfigPath(path) {
+		return userLayer
+	}
+	return repoLayer
+}
+
+func isOrganizationConfigPath(path string) bool {
+	return filepath.Clean(path) == filepath.Clean(OrganizationConfigPath())
+}
+
+func LoadRootConfigFromPath(path string) (*Config, error) {
+	kind := configLayerForPath(path)
+	requireAPIVersion := kind != localLayer
 	data, err := readConfigFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -808,8 +819,9 @@ func LoadRootConfigFromPath(path string) (*Config, error) {
 // LoadConfigFromPath loads an explicit config and its includes.
 // Harnesses is optional. Local configs may also omit apiVersion.
 func LoadConfigFromPath(path string) (*Config, error) {
-	if isLocalConfigPath(path) {
-		cfg, err := loadConfigTree(path, localLayer)
+	kind := configLayerForPath(path)
+	if kind == localLayer {
+		cfg, err := loadConfigTree(path, kind)
 		if err != nil {
 			if rootConfigNotExist(path, err) {
 				slog.Debug("config skipped", "path", path, "reason", "not_found")
@@ -820,13 +832,6 @@ func LoadConfigFromPath(path string) (*Config, error) {
 
 		slog.Debug("config loaded", "path", path, "registries", len(cfg.Registries))
 		return cfg, nil
-	}
-
-	var kind layerKind
-	if isGlobalConfigPath(path) {
-		kind = userLayer
-	} else {
-		kind = repoLayer
 	}
 
 	cfg, err := loadV3OrV2Config(path, kind, false)

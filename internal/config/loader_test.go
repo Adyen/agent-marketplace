@@ -161,6 +161,35 @@ tags:
 	}
 }
 
+func TestExplicitOrganizationLoadersUseOrganizationValidation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v3
+telemetry:
+  level: detailed
+registries: []
+`))
+	SetTestOrganizationConfigPath(t, path)
+
+	for _, load := range []struct {
+		name string
+		fn   func(string) (*Config, error)
+	}{
+		{name: "expanded", fn: LoadConfigFromPath},
+		{name: "root", fn: LoadRootConfigFromPath},
+	} {
+		t.Run(load.name, func(t *testing.T) {
+			cfg, err := load.fn(path)
+			if err != nil {
+				t.Fatalf("load organization config: %v", err)
+			}
+			if cfg == nil || cfg.Telemetry == nil || cfg.Telemetry.Level != "detailed" {
+				t.Fatalf("telemetry = %#v, want detailed organization telemetry", cfg)
+			}
+		})
+	}
+}
+
 func TestDefaultHarnesses(t *testing.T) {
 	harnesses := DefaultHarnesses()
 	if len(harnesses) == 0 {
