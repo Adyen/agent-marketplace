@@ -162,6 +162,40 @@ func TestConvert_UnregisteredSource_ReturnsNotImplementedError(t *testing.T) {
 	}
 }
 
+func TestConvert_RefusesMissingOrUnrecognizedSource(t *testing.T) {
+	tests := []struct {
+		name string
+		src  fstest.MapFS
+	}{
+		{name: "missing layout", src: fstest.MapFS{}},
+		{name: "unrecognized layout", src: fstest.MapFS{"README.md": {Data: []byte("not a harness")}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Convert(tt.src, HarnessClaude, HarnessFactory)
+			if err == nil {
+				t.Fatal("Convert should refuse a source without a recognized layout")
+			}
+			if !errors.Is(err, errSourceLayoutNotFound) {
+				t.Fatalf("Convert error = %v, want errSourceLayoutNotFound", err)
+			}
+		})
+	}
+}
+
+func TestConvert_RefusesIntentionallyEmptySource(t *testing.T) {
+	src := fstest.MapFS{
+		".claude-plugin/plugin.json": {Data: []byte(`{"name":"empty-plugin"}`)},
+	}
+	_, err := Convert(src, HarnessClaude, HarnessFactory)
+	if err == nil {
+		t.Fatal("Convert should refuse a recognized source with no resources")
+	}
+	if !errors.Is(err, errSourceEmpty) {
+		t.Fatalf("Convert error = %v, want errSourceEmpty", err)
+	}
+}
+
 func TestConvert_AllRegisteredSources(t *testing.T) {
 	// Verify that Convert works for all 6 registered source harnesses
 	// when given appropriate input fixtures.

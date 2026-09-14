@@ -149,6 +149,14 @@ func ValidateTargetRegistrations() error {
 // source harness has no registered ingester.
 var errSourceNotImplemented = errors.New("source harness not implemented — no ingester registered")
 
+// These errors distinguish unsafe conversion inputs from compilation failures.
+// Conversion callers must refuse before materialization when the source cannot
+// be identified or contains no resources.
+var (
+	errSourceLayoutNotFound = errors.New("source layout not found")
+	errSourceEmpty          = errors.New("source layout contains no resources")
+)
+
 // Re-export types from sub-packages for convenience.
 type (
 	ResourceKind = ir.ResourceKind
@@ -226,13 +234,13 @@ func Convert(srcFS fs.FS, from, to Harness, opts ...Option) (*Result, error) {
 	slog.Info("harness ingest start", "from", from)
 	b, err := ing.LoadBundle(srcFS)
 	if err != nil {
-		// If the ingester cannot find the expected layout, return an empty
-		// result rather than an error. This preserves backward compatibility
-		// with CompileBundle, which returned an empty result for an empty FS.
 		if !ing.Detect(srcFS) {
-			return &Result{}, nil
+			return nil, fmt.Errorf("harnesscompile.Convert: source %q: %w", from, errSourceLayoutNotFound)
 		}
 		return nil, fmt.Errorf("harnesscompile.Convert: ingest %s: %w", from, err)
+	}
+	if len(b.Resources) == 0 && len(b.Diagnostics) == 0 {
+		return nil, fmt.Errorf("harnesscompile.Convert: source %q: %w", from, errSourceEmpty)
 	}
 	slog.Info("harness ingest end", "from", from, "resources", len(b.Resources), "diagnostics", len(b.Diagnostics))
 
@@ -288,7 +296,11 @@ func Autodetect(srcFS fs.FS) (Harness, bool) {
 // All results are merged, fragments are coalesced, and duplicate artifact
 // paths produce an error diagnostic (bundle.conflict.duplicate-artifact-path).
 func CompileBundle(src fs.FS, t Target, opts ...Option) (*Result, error) {
-	return Convert(src, HarnessClaude, Harness(t), opts...)
+	result, err := Convert(src, HarnessClaude, Harness(t), opts...)
+	if errors.Is(err, errSourceLayoutNotFound) {
+		return &Result{}, nil
+	}
+	return result, err
 }
 
 // resourceOutput records which bundle resource produced which artifacts so
