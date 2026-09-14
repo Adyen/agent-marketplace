@@ -183,7 +183,7 @@ func TestConvert_RefusesMissingOrUnrecognizedSource(t *testing.T) {
 	}
 }
 
-func TestConvert_RefusesIntentionallyEmptySource(t *testing.T) {
+func TestConvert_RefusesEmptySource(t *testing.T) {
 	src := fstest.MapFS{
 		".claude-plugin/plugin.json": {Data: []byte(`{"name":"empty-plugin"}`)},
 	}

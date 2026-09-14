@@ -101,7 +101,7 @@ func TestConvertCommandRefusesInvalidSourcesWithoutChangingSyncDestination(t *te
 			},
 		},
 		{
-			name: "intentionally empty source layout",
+			name: "empty source layout",
 			setup: func(t *testing.T) string {
 				src := t.TempDir()
 				writeFile(t, filepath.Join(src, ".claude-plugin", "plugin.json"), `{"name":"empty-plugin"}`)
