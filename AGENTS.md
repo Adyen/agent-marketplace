@@ -83,6 +83,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - **Cache:** `~/.cache/agent-marketplace/<registry-hash>/<ref>/` — disposable; deleting it has no effect on aggregate ownership
 - **Durable state:** `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`) — journaled Devin/Codex aggregate-ownership records and mandatory safety backups (`internal/ownership`)
 - **Materialization:** `harness-compilation` for multi-harness compilation (Factory, Claude, Cursor, Windsurf, Gemini, Devin, and Codex). All seven are bidirectional compile/ingest/convert targets; the authoritative registry is `pkg/harness-compilation/target`
+- **Workspace:** the committed `go.work` couples the root module and the `e2e` module, so bumping dependencies in one module never requires `go mod tidy` in the other for CI to pass. `e2e/go.mod` pins are hygiene: refresh every module with `make tidy` (module-mode tidy of each), or realign them to the workspace with `go work sync`.
 
 ## Known Gaps
 

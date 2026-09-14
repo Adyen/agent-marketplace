@@ -115,7 +115,7 @@ jobs:
           if docker pull --platform linux/amd64 "$IMAGE" > "$HARNESS_COMPAT_REPORT_DIR/pull.log" 2>&1; then
             docker image inspect "$IMAGE" > "$HARNESS_COMPAT_REPORT_DIR/image.json"
             recipe=$(sha256sum tools/harness-compat/Dockerfile tools/harness-compat/.dockerignore tools/harness-compat/install.sh tools/harness-compat/build-image.sh | sha256sum | cut -d ' ' -f 1)
-            go_version=$(go list -m -f '{{.GoVersion}}')
+            go_version=$(GOWORK=off go list -m -f '{{.GoVersion}}')
             if jq -e --arg target "$TARGET" --arg recipe "$recipe" --arg go "$go_version" \
               '.[0].Config.Labels | .["io.agent-marketplace.target"] == $target and .["io.agent-marketplace.recipe-sha"] == $recipe and .["io.agent-marketplace.go-version"] == $go' \
               "$HARNESS_COMPAT_REPORT_DIR/image.json" >/dev/null; then

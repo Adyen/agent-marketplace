@@ -22,7 +22,7 @@ export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_N
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e marketplace-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common tidy version release clean e2e marketplace-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -59,14 +59,25 @@ ci-lint: lint-common
 
 lint-common:
 	@if [ "$(LINT_MODE)" = "fix" ]; then \
-		$(GO) mod tidy; \
+		$(MAKE) tidy; \
 		$(GO) fmt ./...; \
 	else \
-		$(GO) mod tidy -diff; \
+		GOWORK=off $(GO) mod tidy -diff; \
 		test -z "$$(gofmt -l ./cmd ./internal)" || { echo "ERROR: gofmt found formatting issues - please run 'make lint' and commit the results"; gofmt -d ./cmd ./internal; exit 1; }; \
 	fi
 	$(GO) vet ./...
 	$(run_golangci_lint)
+
+# Every Go module in the repository. `make tidy` refreshes each module's
+# go.mod/go.sum in module mode (GOWORK=off). The committed go.work workspace
+# already lets CI build across modules without cross-module tidy, so these
+# targets are hygiene: a stale e2e/go.mod never blocks a dependency bump.
+GO_MODULES := . e2e
+
+tidy:
+	@set -e; for module in $(GO_MODULES); do \
+		GOWORK=off $(GO) -C "$$module" mod tidy; \
+	done
 
 version:
 	@echo $(VERSION)
