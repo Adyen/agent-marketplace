@@ -113,11 +113,13 @@ func SupportFileDiagnostics(skill *ir.Skill, target Target) []diag.Diagnostic {
 }
 
 // McpCredentialDiagnostics warns about literal credential-like MCP values
-// without ever copying their values into a diagnostic.
+// without ever copying their values into a diagnostic. Canonical-looking keys
+// preserved in Extra are inspected too, because JSON ingestion represents
+// their object values as map[string]any rather than typed IR fields.
 func McpCredentialDiagnostics(server *ir.McpServer, target Target, opts ...Option) []diag.Diagnostic {
-	return McpCredentialDiagnosticsForFields(
+	return mcpCredentialDiagnosticsForFields(
 		server.Name(), diag.SourceRef(server.Source), target,
-		server.Env, server.Headers, server.OAuthClientSecret, "", opts...,
+		server.Env, server.Headers, server.OAuthClientSecret, server.Extra, "", opts...,
 	)
 }
 
@@ -125,6 +127,10 @@ func McpCredentialDiagnostics(server *ir.McpServer, target Target, opts ...Optio
 // target-native inline MCP definitions. fieldPrefix identifies nested values
 // in logs only; secret values are never included in diagnostics or logs.
 func McpCredentialDiagnosticsForFields(resource string, source diag.SourceRef, target Target, env, headers map[string]string, oauthClientSecret, fieldPrefix string, opts ...Option) []diag.Diagnostic {
+	return mcpCredentialDiagnosticsForFields(resource, source, target, env, headers, oauthClientSecret, nil, fieldPrefix, opts...)
+}
+
+func mcpCredentialDiagnosticsForFields(resource string, source diag.SourceRef, target Target, env, headers map[string]string, oauthClientSecret string, extra map[string]any, fieldPrefix string, opts ...Option) []diag.Diagnostic {
 	cfg := Options{}
 	for _, opt := range opts {
 		if opt != nil {
@@ -146,6 +152,7 @@ func McpCredentialDiagnosticsForFields(resource string, source diag.SourceRef, t
 	if oauthClientSecret != "" && !cfg.isInterpolation(oauthClientSecret) {
 		fields = append(fields, fieldPrefix+"oauthClientSecret")
 	}
+	fields = append(fields, mcpCredentialExtraFields(extra, fieldPrefix, cfg)...)
 	if len(fields) == 0 {
 		return nil
 	}
@@ -160,6 +167,35 @@ func McpCredentialDiagnosticsForFields(resource string, source diag.SourceRef, t
 		Hint:     "Use environment interpolation or an external secret reference instead of embedding credentials",
 		Source:   source,
 	}}
+}
+
+func mcpCredentialExtraFields(extra map[string]any, fieldPrefix string, cfg Options) []string {
+	fields := make([]string, 0)
+	for _, field := range []string{"env", "headers"} {
+		value, ok := extra[field]
+		if !ok {
+			continue
+		}
+		switch values := value.(type) {
+		case map[string]any:
+			for key, raw := range values {
+				value, ok := raw.(string)
+				if ok && cfg.isCredentialKey(key) && value != "" && !cfg.isInterpolation(value) {
+					fields = append(fields, fieldPrefix+field+"."+key)
+				}
+			}
+		case map[string]string:
+			for key, value := range values {
+				if cfg.isCredentialKey(key) && value != "" && !cfg.isInterpolation(value) {
+					fields = append(fields, fieldPrefix+field+"."+key)
+				}
+			}
+		}
+	}
+	if value, ok := extra["oauthClientSecret"].(string); ok && value != "" && !cfg.isInterpolation(value) {
+		fields = append(fields, fieldPrefix+"oauthClientSecret")
+	}
+	return fields
 }
 
 func (o Options) isCredentialKey(key string) bool {
