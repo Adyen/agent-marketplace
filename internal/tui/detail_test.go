@@ -284,6 +284,60 @@ func TestDetailBundleSkipsSymlinkedFiles(t *testing.T) {
 	}
 }
 
+func TestRenderDetailFullReadsWorkspaceRuleSource(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		sourceHarness string
+		workspaceDir  string
+	}{
+		{name: "cursor", sourceHarness: catalog.HarnessCursor, workspaceDir: ".cursor"},
+		{name: "windsurf", sourceHarness: catalog.HarnessWindsurf, workspaceDir: ".windsurf"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			extension := ".mdc"
+			content := "---\nalwaysApply: true\n---\n# Secure coding\n"
+			if tc.sourceHarness == catalog.HarnessWindsurf {
+				extension = ".md"
+				content = "---\ntrigger: always_on\n---\n# Secure coding\n"
+			}
+			rulePath := filepath.Join(root, tc.workspaceDir, "rules", "secure-coding"+extension)
+			if err := os.MkdirAll(filepath.Dir(rulePath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(rulePath, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.sourceHarness == catalog.HarnessWindsurf {
+				directPath := filepath.Join(root, "rules", "secure-coding.md")
+				if err := os.MkdirAll(filepath.Dir(directPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(directPath, []byte("# Wrong source\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			loaded, err := catalog.Load(root, tc.sourceHarness)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(loaded.Entries) != 1 {
+				t.Fatalf("catalog entries = %d, want 1", len(loaded.Entries))
+			}
+			entry := loaded.Entries[0]
+			sourcePath := catalog.SourcePath(entry)
+			out := ansi.Strip(renderDetailFullContent(row{
+				Artifact:     resolver.ResolvedArtifact{Entry: entry},
+				DetailSource: captureDetailSource(sourcePath),
+			}, 80))
+			if !contains(out, "Secure coding") || contains(out, "Wrong source") || contains(out, "Error reading resource") {
+				t.Fatalf("workspace Rule detail could not read its source:\n%s", out)
+			}
+		})
+	}
+}
+
 // --- Viewport scroll tests ---
 
 func TestDetailViewportScrollsDownWithJ(t *testing.T) {

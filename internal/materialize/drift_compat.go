@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"fmt"
+	slashpath "path"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -73,16 +74,13 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 
 	var dr DriftReport
 
-	resolvedByName := make(map[string]string, len(resolvedNames))
-	for _, name := range resolvedNames {
-		resolvedByName[resourceKeyName(name)] = name
-	}
+	resolvedByName, resolvedKeys := resolvedIndexes(resolvedNames)
 
 	// Artifacts that would be written = missing from disk (need sync)
 	writtenNames := make(map[string]bool)
 	for _, tr := range report.TargetReports() {
 		for _, w := range tr.Written {
-			writtenNames[resourceKeyForPath(w, resolvedByName)] = true
+			writtenNames[resourceKeyForPath(w, resolvedByName, resolvedKeys)] = true
 		}
 	}
 	for name := range writtenNames {
@@ -92,19 +90,20 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 	// Removed files = orphaned
 	for _, tr := range report.TargetReports() {
 		for _, r := range tr.Removed {
-			dr.Orphaned = append(dr.Orphaned, DriftItem{Name: resourceKeyForPath(r, resolvedByName), Reason: DriftOrphaned})
+			dr.Orphaned = append(dr.Orphaned, DriftItem{Name: resourceKeyForPath(r, resolvedByName, resolvedKeys), Reason: DriftOrphaned})
 		}
 	}
 
 	// Skills with error diagnostics = broken
 	brokenSet := make(map[string]bool)
+	neutralBrokenNames := make(map[string]bool)
 	for _, d := range report.Diags {
 		if !d.IsError() || d.Resource == "" {
 			continue
 		}
-		resource := d.Resource
-		if key, ok := resolvedByName[d.Resource]; ok {
-			resource = key
+		resource := diagnosticResourceKey(d.Resource, d.Source.File, resolvedByName, resolvedKeys)
+		if resource == d.Resource {
+			neutralBrokenNames[d.Resource] = true
 		}
 		if !brokenSet[resource] {
 			brokenSet[resource] = true
@@ -113,12 +112,8 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 	}
 
 	// Remaining resolved skills are in sync
-	resolvedSet := make(map[string]bool, len(resolvedNames))
-	for _, name := range resolvedNames {
-		resolvedSet[name] = true
-	}
-	for name := range resolvedSet {
-		if !writtenNames[name] && !brokenSet[name] {
+	for name := range resolvedKeys {
+		if !writtenNames[name] && !brokenSet[name] && !neutralBrokenNames[resourceKeyName(name)] {
 			dr.Synced = append(dr.Synced, DriftItem{Name: name, Reason: DriftInSync})
 		}
 	}
@@ -126,14 +121,52 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 	return dr
 }
 
-func resourceKeyForPath(path string, resolvedByName map[string]string) string {
-	name := filePathToSkillName(path)
+func resolvedIndexes(resolvedNames []string) (map[string]string, map[string]bool) {
+	unique := make(map[string]string, len(resolvedNames))
+	ambiguous := make(map[string]bool)
+	keys := make(map[string]bool, len(resolvedNames))
+	for _, key := range resolvedNames {
+		keys[key] = true
+		name := resourceKeyName(key)
+		if prior, ok := unique[name]; ok && prior != key {
+			delete(unique, name)
+			ambiguous[name] = true
+			continue
+		}
+		if !ambiguous[name] {
+			unique[name] = key
+		}
+	}
+	return unique, keys
+}
+
+func diagnosticResourceKey(name, sourcePath string, resolvedByName map[string]string, resolvedKeys map[string]bool) string {
+	if kind := filePathResourceKind(sourcePath); kind >= ir.KindSkill && kind <= ir.KindRule {
+		key := skill.ResourceKey(kind, name)
+		if resolvedKeys[key] {
+			return key
+		}
+	}
 	if key, ok := resolvedByName[name]; ok {
 		return key
 	}
+	return name
+}
+
+func resourceKeyForPath(path string, resolvedByName map[string]string, resolvedKeys map[string]bool) string {
+	name := filePathToSkillName(path)
 	kind := filePathResourceKind(path)
+	if kind >= ir.KindSkill && kind <= ir.KindRule {
+		key := skill.ResourceKey(kind, name)
+		if resolvedKeys[key] {
+			return key
+		}
+	}
+	if key, ok := resolvedByName[name]; ok {
+		return key
+	}
 	switch kind {
-	case ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer:
+	case ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindRule:
 		return skill.ResourceKey(kind, name)
 	default:
 		return name
@@ -149,7 +182,7 @@ func resourceKeyName(key string) string {
 }
 
 func filePathResourceKind(path string) ir.ResourceKind {
-	parts := strings.Split(path, "/")
+	parts := resourcePathParts(path)
 	if len(parts) == 0 {
 		return -1
 	}
@@ -162,6 +195,8 @@ func filePathResourceKind(path string) ir.ResourceKind {
 		return ir.KindSubagent
 	case "hooks":
 		return ir.KindHook
+	case "rules":
+		return ir.KindRule
 	default:
 		return -1
 	}
@@ -171,12 +206,15 @@ func filePathResourceKind(path string) ir.ResourceKind {
 // For Claude target, paths look like "skills/<name>/<name>.md" or
 // similar harness-specific layouts. We use the top-level directory name.
 func filePathToSkillName(path string) string {
-	parts := strings.Split(path, "/")
+	parts := resourcePathParts(path)
 	if len(parts) >= 2 {
 		// If the path starts with a known directory like "skills/",
 		// return the next component.
-		for _, prefix := range []string{"skills", "agents", "commands"} {
+		for _, prefix := range []string{"skills", "agents", "commands", "rules"} {
 			if parts[0] == prefix {
+				if prefix == "rules" {
+					return strings.TrimSuffix(parts[1], slashpath.Ext(parts[1]))
+				}
 				return parts[1]
 			}
 		}
@@ -185,4 +223,12 @@ func filePathToSkillName(path string) string {
 		return parts[0]
 	}
 	return path
+}
+
+func resourcePathParts(artifactPath string) []string {
+	parts := strings.Split(strings.TrimPrefix(artifactPath, "./"), "/")
+	if len(parts) >= 3 && (parts[0] == ".windsurf" || parts[0] == ".cursor" || parts[0] == ".factory") && parts[1] == "rules" {
+		return parts[1:]
+	}
+	return parts
 }

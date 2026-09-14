@@ -42,7 +42,6 @@ func assertCompatibilityRules(t *testing.T, e *Env, f compatibilityFixture, bina
 	unsupported := map[string]string{
 		"claude": "rule.claude.no-primitive",
 		"gemini": "rule.gemini.no-primitive",
-		"devin":  "rule.devin.unsupported",
 		"codex":  "rule.codex.unsupported",
 	}
 	if code := unsupported[row.Harness]; code != "" {
@@ -76,7 +75,8 @@ func assertCompatibilityRules(t *testing.T, e *Env, f compatibilityFixture, bina
 	path := map[string]string{
 		"factory":  "rules/" + f.name("rule") + ".md",
 		"cursor":   "rules/" + f.name("rule") + ".mdc",
-		"windsurf": ".windsurf/rules/" + f.name("rule") + ".mdc",
+		"windsurf": ".windsurf/rules/" + f.name("rule") + ".md",
+		"devin":    "rules/" + f.name("rule") + ".md",
 	}[row.Harness]
 	if len(result.Artifacts) != 1 || result.Artifacts[0].Path != path {
 		t.Fatalf("wrong rule compiler output: %+v", result.Artifacts)

@@ -16,11 +16,12 @@ func TestDevinNativeLayoutIsAvailable(t *testing.T) {
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "agents"},
+			Components: []string{"skills", "agents", "rules"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "skills/%s/SKILL.md",
 				ir.KindSubagent: "agents/%s.md",
+				ir.KindRule:     "rules/%s.md",
 			},
 			SkillDirKinds: map[ir.ResourceKind]bool{ir.KindCommand: true},
 			Aggregates: []NativeAggregate{
@@ -56,6 +57,7 @@ func TestDevinNativeLayoutIsAvailable(t *testing.T) {
 		{kind: ir.KindSkill, name: "review", want: "skills/review/SKILL.md"},
 		{kind: ir.KindCommand, name: "release", want: "skills/release/SKILL.md"},
 		{kind: ir.KindSubagent, name: "planner", want: "agents/planner.md"},
+		{kind: ir.KindRule, name: "guardrails", want: "rules/guardrails.md"},
 	} {
 		if got, ok := NativeResourcePath(TargetDevin, tt.kind, tt.name); !ok || got != tt.want {
 			t.Errorf("NativeResourcePath(devin, %s, %q) = %q, %v; want %q, true", tt.kind, tt.name, got, ok, tt.want)

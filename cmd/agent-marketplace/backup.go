@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -75,7 +76,7 @@ func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error
 		return nil
 	}
 
-	managed := pipeline.CollectManagedPaths(resolved.Resolved)
+	managed := pipeline.CollectManagedPaths(resolved.Resolved, resolved.TargetHarnesses)
 	codexPartitions, err := pipeline.CollectCodexBackupPartitions(resolved.Resolved)
 	if err != nil {
 		return fmt.Errorf("resolve Codex backup partitions: %w", err)
@@ -185,6 +186,16 @@ func runBackupRestore(out io.Writer, target string) error {
 	if err != nil {
 		return err
 	}
+	if t == hcc.TargetDevin {
+		ruleDir, err := harness.DevinMachineRuleDir()
+		if err != nil {
+			return err
+		}
+		if err := ensureRestoreDirectory(ruleDir); err != nil {
+			return err
+		}
+		mappedFiles[harness.DevinMachineRuleArchivePrefix] = ruleDir
+	}
 	timestamp, err := backup.Restore(t, dstDir, mappedFiles)
 	if err != nil {
 		return err
@@ -192,6 +203,26 @@ func runBackupRestore(out io.Writer, target string) error {
 
 	_, err = fmt.Fprintf(out, "Overlay-restored %s from backup %s\n", target, timestamp)
 	return err
+}
+
+func ensureRestoreDirectory(directory string) error {
+	parent := filepath.Dir(directory)
+	for _, candidate := range []string{parent, directory} {
+		info, err := os.Lstat(candidate)
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(candidate, 0o755); err != nil {
+				return fmt.Errorf("create restore directory %s: %w", candidate, err)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("stat restore directory %s: %w", candidate, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing unsafe restore directory %s", candidate)
+		}
+	}
+	return nil
 }
 
 func runBackupList(out io.Writer) error {

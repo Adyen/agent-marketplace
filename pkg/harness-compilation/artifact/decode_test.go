@@ -14,6 +14,17 @@ func TestDecodeResourceRoundTrip(t *testing.T) {
 	subagentExtra := map[string]any{"owner": "platform"}
 	hookExtra := map[string]any{"priority": float64(1)}
 	mcpExtra := map[string]any{"transport": "stdio"}
+	ruleExtra := map[string]any{"owner": "security"}
+	rule := ir.NewRule(
+		"secure-coding",
+		"Apply secure coding practices",
+		"# Secure coding\n",
+		[]string{"**/*.go"},
+		false,
+		ruleExtra,
+		ir.SourceRef{File: "rules/secure-coding.md", Line: 2},
+	)
+	rule.Trigger = "glob"
 
 	cases := []struct {
 		name string
@@ -90,6 +101,10 @@ func TestDecodeResourceRoundTrip(t *testing.T) {
 				ir.WithMcpDisabled(true),
 				ir.WithMcpOAuth("client-id", "client-secret", "resource"),
 			),
+		},
+		{
+			name: "rule",
+			r:    rule,
 		},
 	}
 

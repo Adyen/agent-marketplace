@@ -44,10 +44,11 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 			skills[name] = skill
 		}
 
-		loadedRules, err := loadRules(root)
+		loadedRules, ruleDiags, err := loadRules(root)
 		if err != nil {
 			return nil, err
 		}
+		diags = append(diags, ruleDiags...)
 		for name, rule := range loadedRules {
 			rules[name] = rule
 		}
@@ -135,20 +136,45 @@ func loadSkills(root workspaceRoot) (map[string]*ir.Skill, error) {
 	return resources, nil
 }
 
-func loadRules(root workspaceRoot) (map[string]*ir.Rule, error) {
+func loadRules(root workspaceRoot) (map[string]*ir.Rule, []diag.Diagnostic, error) {
 	files, err := listRuleFiles(root.fs, path.Join(root.base, "rules"))
 	if err != nil && !isNotExist(err) {
-		return nil, fmt.Errorf("ingest/windsurf: walk rules: %w", err)
+		return nil, nil, fmt.Errorf("ingest/windsurf: walk rules: %w", err)
 	}
 	resources := map[string]*ir.Rule{}
+	var diags []diag.Diagnostic
+	nativeFiles := make(map[string]string)
 	for _, file := range files {
+		if strings.HasSuffix(file, ".md") {
+			nativeFiles[strings.TrimSuffix(path.Base(file), ".md")] = file
+		}
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file, ".mdc") {
+			name := strings.TrimSuffix(path.Base(file), ".mdc")
+			if nativeFile, exists := nativeFiles[name]; exists {
+				diags = append(diags, duplicateRuleDiagnostic(name, strings.TrimPrefix(nativeFile, windsurfWorkspaceRoot)))
+				continue
+			}
+		}
 		rule, err := LoadRule(root.fs, file)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		resources[rule.Name()] = rule
 	}
-	return resources, nil
+	return resources, diags, nil
+}
+
+func duplicateRuleDiagnostic(name, nativeFile string) diag.Diagnostic {
+	return diag.Diagnostic{
+		Code:     diag.CodeIngestWindsurfDuplicateRule,
+		Severity: diag.SeverityWarning,
+		Resource: name,
+		Message:  "native .md and legacy .mdc rules share this identity; the native rule was used",
+		Hint:     "remove or rename the legacy .mdc duplicate",
+		Source:   diag.SourceRef{File: nativeFile, Line: 1},
+	}
 }
 
 func loadWorkflows(root workspaceRoot) (map[string]*ir.Command, []diag.Diagnostic, error) {
@@ -282,7 +308,7 @@ func listMDFiles(src fs.FS, root string) ([]string, error) {
 	return files, nil
 }
 
-// listRuleFiles lists Windsurf rule files (.mdc, plus .md for tolerance) in root.
+// listRuleFiles lists native Windsurf .md rules and legacy-compatible .mdc rules.
 func listRuleFiles(src fs.FS, root string) ([]string, error) {
 	entries, err := fs.ReadDir(src, root)
 	if err != nil {
@@ -293,7 +319,7 @@ func listRuleFiles(src fs.FS, root string) ([]string, error) {
 		if entry.IsDir() {
 			continue
 		}
-		if strings.HasSuffix(entry.Name(), ".mdc") || strings.HasSuffix(entry.Name(), ".md") {
+		if strings.HasSuffix(entry.Name(), ".md") || strings.HasSuffix(entry.Name(), ".mdc") {
 			files = append(files, path.Join(root, entry.Name()))
 		}
 	}

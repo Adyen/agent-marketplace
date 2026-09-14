@@ -10,7 +10,7 @@ The primary consumer is [`agent-marketplace`](https://github.com/Adyen/agent-mar
 
 ### Intent
 
-- **Resource-centric.** The atomic unit is one skill, one command, one subagent, one hook, or one MCP server. A "plugin" is just a bundle of such resources.
+- **Resource-centric.** The atomic unit is one skill, one command, one subagent, one hook, one MCP server, or one Rule. A "plugin" is just a bundle of such resources.
 - **Pure core, optional I/O.** `Compile` is pure (`Resource` → `[]Artifact` + `[]Diagnostic`); `Materialize` is the only layer that touches disk (atomic staged-then-rename, with dry-run and optional prune).
 - **Honest about loss.** When a target cannot represent a resource, emit a structured `Diagnostic` with a stable code and skip the artifact — never silently drop or fake it.
 - **Business logic concentrated in mapping tables** (models, tools, env tokens, MCP interpolation), each overridable via `Option`s so consumers don't have to wait on the library for new vendor IDs.
@@ -21,7 +21,7 @@ The primary consumer is [`agent-marketplace`](https://github.com/Adyen/agent-mar
 - Claude → IR → Claude round-trip must be byte-stable.
 - Stable public API: `Compile`, `CompileBundle`, `Materialize`, per-resource `Load*` functions.
 - A versioned diagnostic-code catalog (`diag/codes.md`) that consumer UIs can key off.
-- Day-1 resource coverage: **Skills, Commands, Subagents, Hooks, MCP servers** (~95% of real plugins). **Rules** (coding conventions) are also supported: Factory `.factory/rules/*.md` (plain markdown), Cursor/Windsurf `.mdc` (frontmatter with globs/alwaysApply, shared via `compile/mdc`), no-primitive diagnostics for Claude/Gemini, and explicit scope diagnostics for Devin/Codex.
+- Day-1 resource coverage: **Skills, Commands, Subagents, Hooks, MCP servers** (~95% of real plugins). **Rules** (coding conventions) are also supported: Factory `.factory/rules/*.md` (plain Markdown), Cursor `.mdc`, Windsurf `.windsurf/rules/*.md`, and Devin `rules/*.md` (native trigger frontmatter), with no-primitive diagnostics for Claude/Gemini and an explicit unsupported diagnostic for Codex.
 - Per-resource compile is canonical; bundle compile is a thin wrapper and merges fragment artifacts (e.g. multiple MCP entries → one `mcp.json`).
 
 ### Non-goals

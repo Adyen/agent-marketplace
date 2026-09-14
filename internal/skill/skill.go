@@ -39,6 +39,19 @@ type MalformedSkill struct {
 
 type catalog map[string]Skill
 
+// MalformedKind returns a malformed resource's classified kind. Missing and
+// unknown classifications retain the historical Skill fallback.
+func MalformedKind(malformed MalformedSkill) ir.ResourceKind {
+	if kind, ok := ParseKind(malformed.Kind); ok && strings.TrimSpace(malformed.Kind) != "" {
+		return kind
+	}
+	return ir.KindSkill
+}
+
+func MalformedKindLabel(malformed MalformedSkill) string {
+	return KindLabel(MalformedKind(malformed))
+}
+
 func KindOf(s Skill) ir.ResourceKind {
 	return s.Kind
 }
@@ -57,6 +70,8 @@ func KindLabel(kind ir.ResourceKind) string {
 		return "mcp"
 	case ir.KindCollection:
 		return "collection"
+	case ir.KindRule:
+		return "rule"
 	default:
 		return kind.String()
 	}
@@ -78,6 +93,8 @@ func ParseKind(value string) (ir.ResourceKind, bool) {
 		return ir.KindMcpServer, true
 	case "collection", "collections":
 		return ir.KindCollection, true
+	case "rule", "rules":
+		return ir.KindRule, true
 	default:
 		return 0, false
 	}
@@ -97,6 +114,8 @@ func ConfigKeyForKind(kind ir.ResourceKind) string {
 		return "mcp"
 	case ir.KindCollection:
 		return "collections"
+	case ir.KindRule:
+		return "rules"
 	default:
 		return ""
 	}

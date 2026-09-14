@@ -117,8 +117,8 @@ func TestCollectManagedPathsCoversMachineScopeOutputs(t *testing.T) {
 }
 
 // TestCollectManagedPathsWindsurfMachineComponents pins the exact machine-scope
-// Windsurf relative paths: global_workflows (not workflows), skills and hooks at
-// the Windsurf machine root, plus the managed root config file.
+// Windsurf relative paths: global_workflows (not workflows), skills, rules, and
+// hooks at the Windsurf machine root, plus the managed root config file.
 func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -136,9 +136,30 @@ func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 	if !ok {
 		t.Fatal("CollectManagedPaths has no entry for windsurf")
 	}
-	want := []string{"skills", "global_workflows", "hooks", "mcp_config.json"}
+	want := []string{"skills", "global_workflows", "hooks", "rules", "mcp_config.json"}
 	if !slices.Equal(mp.RelPaths, want) {
 		t.Errorf("windsurf machine-scope managed rel paths = %v, want %v", mp.RelPaths, want)
+	}
+}
+
+func TestCollectManagedPathsIncludesDevinMachineRules(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rulePath := filepath.Join(home, ".devin", "rules", "secure-coding.md")
+	handwrittenPath := filepath.Join(home, ".devin", "rules", "handwritten.md")
+	if err := os.MkdirAll(filepath.Dir(handwrittenPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(handwrittenPath, []byte("Handwritten\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	managed := CollectManagedPaths(nil, []hcc.Target{hcc.TargetDevin})[hcc.TargetDevin]
+	const archivePrefix = ".agent-marketplace-native/devin-rules/"
+	if got := managed.MappedDirectories[archivePrefix]; got != filepath.Dir(rulePath) {
+		t.Fatalf("mapped Devin rule directory = %q, want %q", got, filepath.Dir(rulePath))
+	}
+	if len(managed.MappedFiles) != 0 {
+		t.Fatalf("Devin rule exact mappings = %#v, want directory scan only", managed.MappedFiles)
 	}
 }
 

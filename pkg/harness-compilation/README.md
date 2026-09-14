@@ -156,11 +156,10 @@ Devin-specific notes:
   ingester never walks ancestors or nested `.devin` directories.
 - Round-trip equality is semantic, not byte-for-byte; every irreversible case is
   a declared entry in the loss matrix.
-- Rules are out of scope for this target and produce a stable
-  `rule.devin.unsupported` warning: no artifact, run still clean. That is a
-  scope decision, not a Devin limit — 3000.3.27 does discover
-  `.devin/rules/<name>.md` even though `devin rules paths` does not advertise
-  it. See `diag/codes.md`.
+- Rules compile to `rules/<name>.md`; the consumer routes that relative artifact
+  to project `.devin/rules` or machine `~/.devin/rules`. Ingestion accepts
+  workspace and explicit direct roots. Rule bodies and native trigger
+  frontmatter round-trip semantically with Windsurf.
 
 Codex-specific notes:
 

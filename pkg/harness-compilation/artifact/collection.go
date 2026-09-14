@@ -563,12 +563,12 @@ func validCollectionDigest(value string) bool {
 }
 
 func isMaterializedCollectionKind(kind string) bool {
-	return kind == "skill" || kind == "command" || kind == "subagent" || kind == "hook" || kind == "mcpserver"
+	return kind == "skill" || kind == "command" || kind == "subagent" || kind == "hook" || kind == "mcpserver" || kind == "rule"
 }
 
 func isCollectionKind(kind string) bool {
 	switch kind {
-	case "skill", "command", "subagent", "hook", "mcpserver", "collection":
+	case "skill", "command", "subagent", "hook", "mcpserver", "rule", "collection":
 		return true
 	}
 	return false
@@ -594,6 +594,8 @@ func CollectionFromIR(c *ir.Collection) (CollectionManifest, error) {
 			kind = "hook"
 		case ir.KindMcpServer:
 			kind = "mcpserver"
+		case ir.KindRule:
+			kind = "rule"
 		case ir.KindCollection:
 			kind = "collection"
 		default:

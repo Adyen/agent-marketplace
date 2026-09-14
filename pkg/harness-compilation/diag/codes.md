@@ -66,7 +66,9 @@ comparison in non-test code.
 | `mcp.interpolation-unsupported` | One MCP value uses an interpolation style the target cannot represent; that value was omitted and the entry was still emitted | Replace the interpolated value with a literal value, or use an interpolation style the target documents |
 | `rule.claude.no-primitive` | Claude Code has no rules directory primitive; rule dropped | Claude reads project guidance from CLAUDE.md; reference the rule content there instead |
 | `rule.gemini.no-primitive` | Gemini CLI has no rules directory primitive; rule dropped | Gemini reads project guidance from GEMINI.md; reference the rule content there instead |
-| `rule.devin.unsupported` | Rules are out of scope for the Devin target; no rule artifact was emitted | This is a scope decision, not a Devin limitation: on 3000.3.27 a rule placed at `.devin/rules/<name>.md` is discovered even though `devin rules paths` does not advertise it. Compile the rule to a target with a supported rules primitive (factory, cursor, windsurf), or place it under `.devin/rules` by hand |
+| `rule.devin.unsupported` | Deprecated compatibility code; the Devin compiler no longer emits it | Use Devin's native trigger-based rules |
+| `rule.devin.globs-dropped` | Rule globs cannot be represented by the selected Devin trigger and were omitted | Use `trigger: glob` to preserve glob-scoped application |
+| `rule.devin.always-apply-dropped` | Rule alwaysApply metadata conflicts with the selected Devin trigger and was omitted | Use `trigger: always_on` to preserve always-on application |
 | `rule.codex.unsupported` | Rules are out of scope for the Codex target; no rule or AGENTS.md content was emitted | Use a supported resource kind or manage AGENTS.md separately |
 | `compile.codex.field-dropped` | A benign IR field has no documented Codex equivalent and was omitted | Remove the field or choose a target that represents it |
 | `subagent.codex.model-dropped` | A Codex-only subagent model was omitted for a non-Codex target | Compile to Codex to preserve the native-only model, or choose a portable canonical model |
@@ -76,6 +78,8 @@ comparison in non-test code.
 | `ingest.codex.prompt-deprecated` | A deprecated Codex prompt was ingested as a command | Move the prompt to a command skill under `.agents/skills` |
 | `ingest.codex.field-dropped` | A benign native Codex field has no canonical equivalent and was omitted | Remove the field or keep the resource in Codex format |
 | `rule.factory.metadata-dropped` | Factory rules are plain markdown; description/globs/alwaysApply metadata dropped | Factory does not support rule frontmatter (description or conditional glob-scoped application); the rule body is emitted verbatim |
+| `rule.cursor.trigger-dropped` | Native rule trigger cannot be represented in Cursor MDC frontmatter and was omitted | Use alwaysApply, globs, or description to express Cursor rule activation |
+| `rule.windsurf.metadata-dropped` | Rule metadata cannot be represented by the selected Windsurf trigger and was omitted | Use a compatible native trigger |
 | `compile.canonical-field-overrides-extra` | Canonical field overrides a conflicting preserved extra | The canonical modeled value wins; rename the extension field to preserve both values |
 | `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook dropped | Use a command hook on this target |
 | `hook.gemini.event-unmappable` | Gemini has no equivalent hook event; hook dropped | Use a documented Gemini hook event |
@@ -144,49 +148,6 @@ they preserve malformed or unpatchable shared files, refuse duplicate desired
 identities, and report repository trust review without changing Codex trust
 state. Check-only drift uses `materialize.codex.trust-review-pending`; only an
 actual repo hooks/MCP mutation uses `materialize.codex.trust-review`.
-
-### `rule.devin.unsupported` is a scope decision, not a capability limit
-
-`rule.claude.no-primitive` and `rule.gemini.no-primitive` say what their names
-say: those harnesses have no rules directory at all, so a rule can only be
-dropped. `rule.devin.unsupported` shares their severity and their outcome but
-**not** their reason, and the difference is deliberate.
-
-The claim this code used to carry — "Devin has no rules directory primitive" —
-is false on Devin 3000.3.27. The D12 runtime probe
-(`internal/devinprobe.TestProbeRulesDiscoveryUnderDevinRoots`, reproduced
-independently of the suite) observed both halves of the situation:
-
-- `devin rules paths` advertises only `.windsurf/rules/*.md (always-on)` and
-  `.cursor/rules/*.md (conditional)`. It does **not** mention `.devin/rules`.
-- A file written to `.devin/rules/<name>.md` **is** discovered: `devin rules
-  list` reports it as `<name> [Devin] manual`.
-
-Emitting nothing is still correct, for two reasons that no runtime observation
-can falsify. First, rules are not marketplace-selectable at all
-(`internal/config.AllKinds` has no rule kind) and "marketplace-selectable rules"
-is an explicit non-goal of the promoted Devin plan; that non-goal is about the
-selection model, not about Devin. Second, `.devin/rules` is undocumented and
-unadvertised, and this target's standing rule is to refuse dependence on
-undocumented Devin behaviour — the same reason `mcp.devin.transport-unsupported`
-skips an undocumented transport instead of accepting Devin's silent default, and
-the same reason `ingest.devin.tool-unreversible` refuses an unenforced tool
-restriction.
-
-Severity is a **warning**, matching the Claude and Gemini siblings, because the
-outcome is the same class of loss: one rule is dropped, nothing unsafe is
-written, no aggregate entry is at risk, and every other resource compiles. It
-does *not* belong to the Devin error family below, every member of which marks
-output that would be actively wrong if emitted (a hook that runs something else,
-a server contacted without authorization, a restriction advertised through a
-field Devin does not have, a silent transport fallback, a shadowed built-in).
-"A broadened privilege" used to be the first item in that list; since bead
-`agent-marketplace-pu6b` it is not, because the two Devin `allowed-tools` codes
-broaden the emitted restriction and are warnings (see their section below).
-Failing a whole `sync` or `convert` over a scope decision would also overstate
-the situation, given that a user can place the same file by hand and Devin will
-read it. If Devin ever starts advertising a `.devin` rules path, the probe fails
-loudly and this decision must be revisited as rule support.
 
 ### `skill.devin.tool-unknown` / `subagent.devin.tool-unknown` omit the key instead of suppressing the resource
 
@@ -575,6 +536,8 @@ key or a hook event name), the resource name, and content digests are reported.
 | `ingest.gemini.load-hook-failed` | Failed to load a hook from the Gemini source layout | Check the settings.json hook structure |
 | `ingest.factory.load-rule-failed` | Failed to load a rule from the Factory source layout | Check the .factory/rules/*.md file structure |
 | `ingest.cursor.load-rule-failed` | Failed to load a rule from the Cursor source layout | Check the .cursor/rules/*.mdc file structure and frontmatter |
+| `ingest.devin.load-rule-failed` | Failed to load one rule from the Devin source layout | Fix the named rules/*.md file; valid sibling resources remain available |
+| `ingest.windsurf.duplicate-rule` | Native .md and legacy .mdc Windsurf rules share one identity; the native rule was used | Remove or rename the legacy duplicate |
 | `subagent.devin.builtin-name-conflict` | Subagent name collides with a Devin built-in subagent, which cannot be replaced; artifact suppressed | Rename the subagent so it does not shadow a Devin built-in such as subagent_explore or subagent_general |
 | `subagent.devin.nested-name-unsupported` | Subagent name expresses nesting, which Devin's flat agents directory cannot represent; artifact suppressed | Rename the subagent to a flat name: Devin discovers only `agents/<name>.md`, and flattening the name could collide with another subagent |
 | `hook.devin.event-unmappable` | Hook event is not documented by Devin; the hook entry was skipped and sync exits non-zero | Use a Devin-documented hook event: PreToolUse, PostToolUse, PermissionRequest, UserPromptSubmit, Stop, SessionStart, SessionEnd, or PostCompaction |

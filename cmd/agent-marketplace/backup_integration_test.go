@@ -144,6 +144,80 @@ registries:
 	}
 }
 
+func TestBackupRestoreDevinRuleSymlinkAfterConfigRemoval(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "rules.git")
+	ruleSource := filepath.Join(working, ".factory", "rules", "backup-rule.md")
+	if err := os.MkdirAll(filepath.Dir(ruleSource), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ruleSource, []byte("# Backed up rule\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commitAndPushAll(t, working, "Add backup rule")
+
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+harnesses: [devin]
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--scope", "user", "--kind", "rule", "backup-rule")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, output)
+	}
+	rulePath := filepath.Join(homeDir, ".devin", "rules", "backup-rule.md")
+	info, err := os.Lstat(rulePath)
+	if err != nil {
+		t.Fatalf("lstat installed rule: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("installed rule mode = %v, want symlink", info.Mode())
+	}
+	linkTarget, err := os.Readlink(rulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installedContent, err := os.ReadFile(rulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lastBackup := filepath.Join(homeDir, ".agent-marketplace", "backups", ".last_backup")
+	if err := os.Remove(lastBackup); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove backup throttle: %v", err)
+	}
+	output, err = executeCommand("remove", "--scope", "user", "--kind", "rule", "backup-rule")
+	if err != nil {
+		t.Fatalf("remove failed: %v\n%s", err, output)
+	}
+	if _, err := os.Lstat(rulePath); !os.IsNotExist(err) {
+		t.Fatalf("rule was not pruned after config removal: %v", err)
+	}
+
+	output, err = executeCommand("backup", "restore", "--target", "devin")
+	if err != nil {
+		t.Fatalf("backup restore failed: %v\n%s", err, output)
+	}
+	if got, err := os.Readlink(rulePath); err != nil || got != linkTarget {
+		t.Fatalf("restored Rule symlink target = %q, %v; want %q", got, err, linkTarget)
+	}
+	if got, err := os.ReadFile(rulePath); err != nil || string(got) != string(installedContent) {
+		t.Fatalf("restored Rule content = %q, %v", got, err)
+	}
+}
+
 func TestBackupListCommand(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

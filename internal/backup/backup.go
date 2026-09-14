@@ -124,9 +124,10 @@ func Dir() (string, error) {
 // ManagedPaths describes which paths within a machine-scope harness root
 // should be backed up.
 type ManagedPaths struct {
-	Root        string
-	RelPaths    []string
-	MappedFiles map[string]string
+	Root              string
+	RelPaths          []string
+	MappedFiles       map[string]string
+	MappedDirectories map[string]string
 }
 
 // Create backs up the given managed paths into timestamped tar.gz archives
@@ -148,6 +149,16 @@ func Create(managed map[hcc.Target]ManagedPaths) error {
 		mapped, err := existingMappedFiles(mp.MappedFiles)
 		if err != nil {
 			return fmt.Errorf("backup: scan mapped %s: %w", target, err)
+		}
+		mappedDirectories, err := existingMappedDirectories(mp.MappedDirectories)
+		if err != nil {
+			return fmt.Errorf("backup: scan mapped directories %s: %w", target, err)
+		}
+		for archivePath, sourcePath := range mappedDirectories {
+			if _, exists := mapped[archivePath]; exists {
+				return fmt.Errorf("backup: duplicate mapped archive path %q", archivePath)
+			}
+			mapped[archivePath] = sourcePath
 		}
 		if len(existing) == 0 && len(mapped) == 0 {
 			continue
@@ -407,7 +418,18 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 			if err != nil {
 				return err
 			}
-			if !info.Mode().IsRegular() {
+			if info.Mode()&fs.ModeSymlink != 0 {
+				if !strings.HasPrefix(key, devinRulesArchivePrefix) {
+					return fmt.Errorf("backup: mapped file is not regular")
+				}
+				link, err := os.Readlink(files[key])
+				if err != nil {
+					return err
+				}
+				if err := validateSymlinkTarget(link); err != nil {
+					return err
+				}
+			} else if !info.Mode().IsRegular() {
 				return fmt.Errorf("backup: mapped file is not regular")
 			}
 			if err := writeTarEntry(tw, files[key], key, info); err != nil {

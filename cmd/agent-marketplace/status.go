@@ -166,6 +166,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			len(localCfg.Subagents.Exclude) > 0 ||
 			len(localCfg.Hooks.Exclude) > 0 ||
 			len(localCfg.MCP.Exclude) > 0 ||
+			len(localCfg.Rules.Exclude) > 0 ||
 			len(localCfg.Collections.Exclude) > 0
 		if anyExcludes && result.LoadedCfg != nil {
 			// Re-resolve keeping local Skills but dropping Excludes to compute the diff.
@@ -175,6 +176,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 				Subagents:   config.KindSelector{Include: localCfg.Subagents.Include},
 				Hooks:       config.KindSelector{Include: localCfg.Hooks.Include},
 				MCP:         config.KindSelector{Include: localCfg.MCP.Include},
+				Rules:       config.KindSelector{Include: localCfg.Rules.Include},
 				Collections: config.KindSelector{Include: localCfg.Collections.Include},
 			}
 			secondResolveOpts := []resolver.ResolveOption{

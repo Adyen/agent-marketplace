@@ -85,7 +85,7 @@ func TestCollectionManifestValidation(t *testing.T) {
 		t.Fatalf("expected validation error for unsupported schema")
 	}
 
-	m = CollectionManifest{SchemaVersion: CollectionSchemaV1, Members: []CollectionMemberEntry{{Kind: "rule", Name: "x"}}}
+	m = CollectionManifest{SchemaVersion: CollectionSchemaV1, Members: []CollectionMemberEntry{{Kind: "plugin", Name: "x"}}}
 	if _, _, err := EncodeCollectionManifest(m); err == nil {
 		t.Fatalf("expected validation error for invalid kind")
 	}
@@ -98,6 +98,7 @@ func TestCollectionFromIRAllKinds(t *testing.T) {
 		{Kind: ir.KindSubagent, Name: "planner"},
 		{Kind: ir.KindHook, Name: "pre-tool"},
 		{Kind: ir.KindMcpServer, Name: "server"},
+		{Kind: ir.KindRule, Name: "secure-coding"},
 		{Kind: ir.KindCollection, Name: "base"},
 	}, []string{"base"}, nil, ir.SourceRef{})
 
@@ -112,6 +113,7 @@ func TestCollectionFromIRAllKinds(t *testing.T) {
 		"subagent":   "planner",
 		"hook":       "pre-tool",
 		"mcpserver":  "server",
+		"rule":       "secure-coding",
 		"collection": "base",
 	}
 	if len(m.Members) != len(want) {

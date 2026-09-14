@@ -272,7 +272,7 @@ func hasWorkspaceForm(src fs.FS) bool {
 }
 
 func hasPluginResources(src fs.FS) bool {
-	checks := []string{"skills", "commands", "agents", "hooks"}
+	checks := []string{"skills", "commands", "agents", "hooks", "rules"}
 	for _, dir := range checks {
 		if entries, err := fs.ReadDir(src, dir); err == nil && len(entries) > 0 {
 			return true

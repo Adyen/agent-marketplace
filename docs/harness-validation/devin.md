@@ -6,11 +6,18 @@ Devin uses:
 
 - Project root: `<repo>/.devin`
 - User root: `~/.config/devin`
+- Project rules: `<repo>/.devin/rules/<name>.md`
+- User rules: `~/.devin/rules/<name>.md` (resource-specific preferred root)
 - Skills and converted commands: `skills/<name>/SKILL.md`
 - Subagents: `agents/<name>.md`
 - Project hooks: `hooks.v1.json`
 - User hooks: the `hooks` member of `config.json`
 - MCP: `mcp_config.json`
+
+Rules use the Windsurf-compatible trigger frontmatter. Supported triggers are
+`always_on`, `manual`, `model_decision`, `agent`, and `glob`; `.devin` is the
+preferred native location and remains separate from compatibility
+`.windsurf/rules` roots.
 
 Native hook groups contain an event-level matcher group with a nested `hooks` array. Legacy flat hook input remains ingestible. Sync upgrades only entries supported by durable ownership evidence and preserves handwritten groups/settings.
 
@@ -24,6 +31,8 @@ devin skills list
 devin skills show <name>
 devin mcp list
 devin mcp get <name>
+devin rules list
+devin rules show <name>
 ```
 
 Skills and converted commands are natively inspected by name, description, and source path. MCP entries are inspected for names and configured fields; transport execution is not claimed by the offline probe.
@@ -32,7 +41,6 @@ Skills and converted commands are natively inspected by name, description, and s
 
 - **Hooks:** Devin documents `/hooks` as an in-session inventory. There is no documented standalone hook-listing subcommand for the credential-free driver. SDK-provided hooks or merely parsing user settings would not prove discovery of the project hook file.
 - **Subagents:** custom profiles are used by `run_subagent`; the inspected CLI reference does not expose a standalone profile-definition inventory. Starting an agent is not a metadata-only check.
-- **Rules:** `devin rules list/show` exists, but this compiler intentionally does not emit Devin rules. The suite tests the explicit omission diagnostic rather than pretending that a negative-only rule check proves support.
 - **Collections:** virtual Marketplace selections, not native resources.
 
 The ACP interface was also considered: it documents credential acquisition and a session command palette, not a credential-free hook/profile inventory. Hooks and subagents therefore remain covered by generated-file and compiler/ingester contracts; they are not certified as natively invoked.
