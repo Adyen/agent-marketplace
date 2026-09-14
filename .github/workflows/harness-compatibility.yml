@@ -93,6 +93,12 @@ jobs:
           echo "HARNESS_COMPAT_REPORT_DIR=$HARNESS_COMPAT_REPORT_DIR" >> "$GITHUB_ENV"
           mkdir -p "$HARNESS_COMPAT_REPORT_DIR"
           go mod download
+          # The offline probe containers mount the module cache read-only, so
+          # every module the e2e package imports must be downloaded here; the
+          # root build list does not include e2e-only test dependencies such
+          # as creack/pty. Without this the probe jobs depended on a shared
+          # GOMODCACHE that only the Marketplace gate job happened to populate.
+          go -C e2e mod download
       - name: Authenticate read-only image consumer
         if: matrix.mode == 'probe'
         uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1
