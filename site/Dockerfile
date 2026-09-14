@@ -38,4 +38,4 @@ COPY --from=build /site/.vitepress/dist/ /usr/share/nginx/html${SITE_BASE}
 
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD nginx -t
+    CMD wget -q -O - -T 5 http://127.0.0.1:8080/ >/dev/null || exit 1
