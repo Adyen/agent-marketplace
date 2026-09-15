@@ -4,6 +4,11 @@
 
 The documentation is organized by what you are trying to do.
 
+## Start here
+
+- [Install](./install.md) — get the binary onto your `PATH`.
+- [Quick start](./quick-start.md) — pick a harness, point a project at a registry, and toggle skills in the interactive UI.
+
 ## Tutorials
 
 Step-by-step lessons that take you from nothing to a working result.
@@ -26,6 +31,6 @@ Precise descriptions of commands, flags, files, and fields.
 
 ## Elsewhere
 
-- [README](https://github.com/Adyen/agent-marketplace#readme) — installation and an overview of every feature.
+- [README](https://github.com/Adyen/agent-marketplace#readme) — an overview of every feature.
 - [Adoption guide](https://github.com/Adyen/agent-marketplace/blob/main/docs/adoption-guide.md) — adding `agent-marketplace` to a repository.
 - [Selection and precedence](https://github.com/Adyen/agent-marketplace/blob/main/docs/PRECEDENCE.md) — how layered configuration merges.
