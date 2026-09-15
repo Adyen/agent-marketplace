@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/cgi"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -495,13 +496,29 @@ func TestTokenWorkspaceNeedsNoExecutableTemporaryFiles(t *testing.T) {
 }
 
 func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
-	repo := createGitRepo(t, map[string]string{
+	sourceRepo := createGitRepo(t, map[string]string{
 		"README.md": "hello",
 	})
-	runGitTestCommand(t, repo, "git", "update-server-info")
+	projectRoot := t.TempDir()
+	repo := filepath.Join(projectRoot, "group", "repo.git")
+	if err := os.MkdirAll(filepath.Dir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, projectRoot, "git", "clone", "-q", "--bare", "--", sourceRepo, repo)
+
+	gitExecPath, err := exec.Command("git", "--exec-path").Output()
+	if err != nil {
+		t.Fatalf("git --exec-path: %v", err)
+	}
+	backend := &cgi.Handler{
+		Path: filepath.Join(strings.TrimSpace(string(gitExecPath)), "git-http-backend"),
+		Env: []string{
+			"GIT_PROJECT_ROOT=" + projectRoot,
+			"GIT_HTTP_EXPORT_ALL=1",
+		},
+	}
 
 	const repoPath = "/group/repo.git"
-	files := http.StripPrefix(repoPath, http.FileServer(http.Dir(filepath.Join(repo, ".git"))))
 	var accepted, challenged atomic.Int64
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
@@ -512,7 +529,7 @@ func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
 			return
 		}
 		accepted.Add(1)
-		files.ServeHTTP(w, r)
+		backend.ServeHTTP(w, r)
 	})
 	server := httptest.NewTLSServer(handler)
 	defer server.Close()
