@@ -2,12 +2,16 @@ package acquire
 
 import (
 	"context"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -201,7 +205,7 @@ func TestEnforceTreeLimitsDoesNotFetchMissingBlobs(t *testing.T) {
 	})
 	runGitTestCommand(t, repo, "git", "config", "uploadpack.allowFilter", "true")
 	cloneDir := filepath.Join(t.TempDir(), "clone")
-	workspace, err := newWorkspace(Credentials{})
+	workspace, err := newWorkspace(Credentials{}, "file://"+repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +397,7 @@ func TestCloneContextCancel(t *testing.T) {
 
 func TestGitEnvUsesSourceCAFile(t *testing.T) {
 	t.Setenv("GIT_SSL_CAINFO", "/ambient/ca.pem")
-	env, err := gitEnv(Credentials{CAFile: "/source/ca.pem"}, "")
+	env, err := gitEnv(Credentials{CAFile: "/source/ca.pem"}, "https://example.invalid/group/repo.git")
 	if err != nil {
 		t.Fatalf("gitEnv: %v", err)
 	}
@@ -415,7 +419,7 @@ func TestGitEnvUsesSourceCAFile(t *testing.T) {
 
 func TestGitEnvDoesNotInheritAmbientCA(t *testing.T) {
 	t.Setenv("GIT_SSL_CAINFO", "/ambient/ca.pem")
-	env, err := gitEnv(Credentials{}, "")
+	env, err := gitEnv(Credentials{}, "https://example.invalid/group/repo.git")
 	if err != nil {
 		t.Fatalf("gitEnv: %v", err)
 	}
@@ -431,7 +435,7 @@ func TestWorkspaceCopiesSourceCAFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	workspace, err := newWorkspace(Credentials{CAFile: caFile})
+	workspace, err := newWorkspace(Credentials{CAFile: caFile}, "https://example.invalid/group/repo.git")
 	if err != nil {
 		t.Fatalf("newWorkspace: %v", err)
 	}
@@ -447,6 +451,100 @@ func TestWorkspaceCopiesSourceCAFile(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Fatalf("copied CA bytes = %q, want %q", got, want)
+	}
+}
+
+func TestGitEnvUsesURLScopedAuthorizationWithoutAskpass(t *testing.T) {
+	t.Setenv("GIT_ASKPASS", "/missing/ambient-askpass")
+	origin := "https://example.invalid/group/repo.git"
+	env, err := gitEnv(Credentials{Token: "synthetic-token"}, origin)
+	if err != nil {
+		t.Fatalf("gitEnv: %v", err)
+	}
+	got := envMap(env)
+	if got["GIT_CONFIG_COUNT"] != "1" {
+		t.Fatalf("GIT_CONFIG_COUNT = %q, want 1", got["GIT_CONFIG_COUNT"])
+	}
+	if got["GIT_CONFIG_KEY_0"] != "http.https://example.invalid/group/repo.git.extraHeader" {
+		t.Fatalf("GIT_CONFIG_KEY_0 = %q", got["GIT_CONFIG_KEY_0"])
+	}
+	if got["GIT_CONFIG_VALUE_0"] != "Authorization: Basic c3ludGhldGljLXRva2VuOnN5bnRoZXRpYy10b2tlbg==" {
+		t.Fatalf("GIT_CONFIG_VALUE_0 = %q", got["GIT_CONFIG_VALUE_0"])
+	}
+	if _, ok := got["GIT_ASKPASS"]; ok {
+		t.Fatal("GIT_ASKPASS survived acquisition filtering")
+	}
+	if _, ok := got["AGENT_MARKETPLACE_GIT_TOKEN"]; ok {
+		t.Fatal("AGENT_MARKETPLACE_GIT_TOKEN survived acquisition filtering")
+	}
+}
+
+func TestTokenWorkspaceNeedsNoExecutableTemporaryFiles(t *testing.T) {
+	workspace, err := newWorkspace(Credentials{Token: "synthetic-token"}, "https://example.invalid/group/repo.git")
+	if err != nil {
+		t.Fatalf("newWorkspace: %v", err)
+	}
+	defer func() { _ = workspace.cleanup() }()
+	if workspace.tempDir != "" {
+		t.Fatalf("tempDir = %q, want empty for token-only credentials", workspace.tempDir)
+	}
+	got := envMap(workspace.env())
+	if got["GIT_CONFIG_VALUE_0"] != "Authorization: Basic c3ludGhldGljLXRva2VuOnN5bnRoZXRpYy10b2tlbg==" {
+		t.Fatalf("GIT_CONFIG_VALUE_0 = %q", got["GIT_CONFIG_VALUE_0"])
+	}
+}
+
+func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
+	repo := createGitRepo(t, map[string]string{
+		"README.md": "hello",
+	})
+	runGitTestCommand(t, repo, "git", "update-server-info")
+
+	const repoPath = "/group/repo.git"
+	files := http.StripPrefix(repoPath, http.FileServer(http.Dir(filepath.Join(repo, ".git"))))
+	var accepted, challenged atomic.Int64
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "synthetic-token" || pass != "synthetic-token" {
+			challenged.Add(1)
+			w.Header().Set("WWW-Authenticate", `Basic realm="repo"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		accepted.Add(1)
+		files.ServeHTTP(w, r)
+	})
+	server := httptest.NewTLSServer(handler)
+	defer server.Close()
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, caPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origin := server.URL + repoPath
+	res, err := Clone(context.Background(), origin, "main", Credentials{Token: "  synthetic-token\n", CAFile: caFile}, Limits{}, time.Minute)
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	defer func() { _ = res.Release() }()
+
+	if accepted.Load() == 0 {
+		t.Fatal("no request carried valid Basic authorization")
+	}
+	if challenged.Load() != 0 {
+		t.Fatalf("server issued %d auth challenges, want preemptive authorization", challenged.Load())
+	}
+	config, err := os.ReadFile(filepath.Join(res.Dir, ".git", "config"))
+	if err != nil {
+		t.Fatalf("read cloned config: %v", err)
+	}
+	if strings.Contains(string(config), "synthetic-token") {
+		t.Fatal("plaintext token persisted in .git/config")
+	}
+	if strings.Contains(string(config), "c3ludGhldGljLXRva2VuOnN5bnRoZXRpYy10b2tlbg==") {
+		t.Fatal("Basic authorization payload persisted in .git/config")
 	}
 }
 
