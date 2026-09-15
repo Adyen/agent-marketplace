@@ -20,7 +20,7 @@ On first launch there is no personal configuration yet, so the UI asks which cod
 
 ![First-run modal listing the seven harnesses, with Claude Code pre-selected](./images/quick-start/first-run-harness-modal.png)
 
-Move with `j`/`k`, toggle with `space`, and press `enter`. The choice is saved to `~/.agents/config.yaml`. The rest of this page assumes Claude Code; substitute your own harness where paths mention `.claude`.
+Move with `j`/`k`, toggle with `space`, and press `enter`. The choice is saved to `~/.agents/config.yaml`. Where a path starts with `.claude`, substitute the directory for your selected harness.
 
 Press `q` to leave the UI for a moment.
 
