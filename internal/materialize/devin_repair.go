@@ -83,65 +83,80 @@ func DevinRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 	aggregates, keys, diags := devinDesiredAggregates(repoRoot, resolved)
 	preview.Diags = append(preview.Diags, diags...)
 
-	roots, ok := harness.MakeInstallRoots()[hcc.TargetDevin]
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("construct Devin repair adapter: %w", err)
+	}
+	adapter, ok := registry.Lookup(hcc.TargetDevin)
 	if !ok {
-		return preview, nil
+		return nil, fmt.Errorf("devin repair adapter is not registered")
 	}
 
 	for _, key := range keys {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		outDir := roots.For(key.machineScope, repoRoot)
-		info, ok := harness.TargetInfoMap[hcc.TargetDevin]
-		if !ok {
-			continue
+		home := ""
+		if key.machineScope {
+			home, err = os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("resolve Devin repair home directory: %w", err)
+			}
 		}
-		rels := append([]string(nil), info.AggregateFilesForScope(key.machineScope)...)
-		sort.Strings(rels)
-
-		desiredByRel := make(map[string][]ownedJSONEntry, len(rels))
+		destinations, err := adapter.Resolve(key.machineScope, repoRoot, home)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Devin repair destinations: %w", err)
+		}
+		if len(destinations) == 0 {
+			return nil, fmt.Errorf("devin repair adapter returned no destinations")
+		}
+		desiredByRel := make(map[string][]ownedJSONEntry)
 		if work := aggregates[key]; work != nil {
 			for _, entry := range work.entries {
 				desiredByRel[entry.rel] = append(desiredByRel[entry.rel], entry)
 			}
 		}
 
-		var store *ownership.Store
-		for _, rel := range rels {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			abs := filepath.Join(outDir, rel)
-			if _, err := os.Lstat(abs); err != nil {
-				// No aggregate on disk means there is nothing to adopt and
-				// nothing to remove. An absent file is not a repair candidate.
-				continue
-			}
-			if store == nil {
-				// The observer is installed on the PREVIEW's store because that
-				// is the store the three mutators later act through: a
-				// RepairFile carries it. The preview itself takes no lock, so
-				// installing one here is also how a test asserts that — a
-				// preview that produced a single lock event would be a
-				// side-effecting read.
-				opened, err := ownership.Open(outDir, ownership.WithLockObserver(observeRepairLock))
-				if err != nil {
-					preview.Diags = append(preview.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "",
-						fmt.Sprintf("open ownership store for %s: %v", outDir, err)))
-					break
+		for _, destination := range destinations {
+			outDir := destination.Root
+			rels := append([]string(nil), destination.Info.AggregateFilesForScope(key.machineScope)...)
+			sort.Strings(rels)
+			var store *ownership.Store
+			for _, rel := range rels {
+				if err := ctx.Err(); err != nil {
+					return nil, err
 				}
-				store = opened
-			}
-			fileSpec, err := devinOwnedJSONFile(rel, key.machineScope)
-			if err != nil {
-				preview.Diags = append(preview.Diags, ownedJSONShapeDiag(diag.CodeMaterializeDevinAggregateShape, key, outDir, rel, err))
-				continue
-			}
-			file, fileDiags := previewOwnedJSONAggregateFile(store, key, outDir, fileSpec, devinOwnedJSONOptions(), false, desiredByRel[rel])
-			preview.Diags = append(preview.Diags, fileDiags...)
-			if file != nil {
-				preview.Files = append(preview.Files, file)
+				abs := filepath.Join(outDir, rel)
+				if _, err := os.Lstat(abs); err != nil {
+					// No aggregate on disk means there is nothing to adopt and
+					// nothing to remove. An absent file is not a repair candidate.
+					continue
+				}
+				if store == nil {
+					// The observer is installed on the PREVIEW's store because that
+					// is the store the three mutators later act through: a
+					// RepairFile carries it. The preview itself takes no lock, so
+					// installing one here is also how a test asserts that — a
+					// preview that produced a single lock event would be a
+					// side-effecting read.
+					opened, err := ownership.Open(outDir, ownership.WithLockObserver(observeRepairLock))
+					if err != nil {
+						preview.Diags = append(preview.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "",
+							fmt.Sprintf("open ownership store for %s: %v", outDir, err)))
+						break
+					}
+					store = opened
+				}
+				fileSpec, err := devinOwnedJSONFile(rel, key.machineScope)
+				if err != nil {
+					preview.Diags = append(preview.Diags, ownedJSONShapeDiag(diag.CodeMaterializeDevinAggregateShape, key, outDir, rel, err))
+					continue
+				}
+				file, fileDiags := previewOwnedJSONAggregateFile(store, key, outDir, fileSpec, devinOwnedJSONOptions(), false, desiredByRel[rel])
+				preview.Diags = append(preview.Diags, fileDiags...)
+				if file != nil {
+					preview.Files = append(preview.Files, file)
+				}
 			}
 		}
 	}
@@ -160,7 +175,13 @@ func DevinRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 // make "exact match" mean two different things in two commands.
 func devinDesiredAggregates(repoRoot string, resolved []resolver.ResolvedArtifact) (map[outputKey]*ownedJSONAggregateWork, []outputKey, []diag.Diagnostic) {
 	compiled, keys := compileRepairTarget(repoRoot, resolved, hcc.TargetDevin)
-	return compiled.devinAggregates, keys, compiled.allDiags
+	aggregates := make(map[outputKey]*ownedJSONAggregateWork)
+	for key, value := range compiled.ownedState {
+		if work, ok := value.(*ownedJSONAggregateWork); ok {
+			aggregates[key] = work
+		}
+	}
+	return aggregates, keys, compiled.allDiags
 }
 
 // compileRepairTarget reuses sync's compile phases for one repair provider.

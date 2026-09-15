@@ -216,13 +216,11 @@ func TestCodexPreflightRefusesAncestorDesiredWrites(t *testing.T) {
 			repoKey:    {artifacts: []artifact.Artifact{{Path: ".codex/agents/reviewer.toml", Bytes: []byte("parent")}}},
 			machineKey: {artifacts: []artifact.Artifact{{Path: ".codex/agents/reviewer.toml/child", Bytes: []byte("child")}}},
 		},
-		skillLinks:      make(map[outputKey]map[string]*skillLinkGroup),
-		allOutputs:      map[outputKey]bool{repoKey: true, machineKey: true},
-		blocked:         make(blockedOutputs),
-		artifactMeta:    make(map[outputKey]map[string]skillLink),
-		codexAggregates: make(map[outputKey]*ownedJSONAggregateWork),
-		codexMCP:        make(map[outputKey][]codexMCPEntry),
-		codexMCPBlocked: make(map[outputKey]bool),
+		skillLinks:   make(map[outputKey]map[string]*skillLinkGroup),
+		allOutputs:   map[outputKey]bool{repoKey: true, machineKey: true},
+		blocked:      make(blockedOutputs),
+		artifactMeta: make(map[outputKey]map[string]skillLink),
+		ownedState:   make(map[outputKey]any),
 	}
 	if _, d := preflightCodexDestinations(&result, repo, config.DefaultMaterializationModes()); d == nil || d.Code != diag.CodeMaterializeDestinationOverlap {
 		t.Fatalf("ancestor desired writes were accepted: %+v", d)

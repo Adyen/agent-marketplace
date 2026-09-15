@@ -118,22 +118,42 @@ func sortedKinds(m map[ir.ResourceKind]ir.Resource) []ir.ResourceKind {
 	return kinds
 }
 
-// sortedTargets returns every target that has TargetInfo, so a target added to
-// the registry is covered by the tests below without being listed here.
+// sortedTargets returns every legacy target plus every validated installation
+// adapter target.
 func sortedTargets(t *testing.T) []hcc.Target {
 	t.Helper()
 	if err := harness.TargetInfoError(); err != nil {
 		t.Fatalf("harness.TargetInfoError: %v", err)
 	}
-	targets := make([]hcc.Target, 0, len(harness.TargetInfoMap))
+	seen := make(map[hcc.Target]bool)
 	for target := range harness.TargetInfoMap {
+		seen[target] = true
+	}
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		t.Fatalf("installation adapter registry: %v", err)
+	}
+	for _, target := range registry.Targets() {
+		seen[target] = true
+	}
+	targets := make([]hcc.Target, 0, len(seen))
+	for target := range seen {
 		targets = append(targets, target)
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
 	if len(targets) == 0 {
-		t.Fatal("harness.TargetInfoMap is empty; the inventory tests would be vacuous")
+		t.Fatal("no target metadata or adapters; the inventory tests would be vacuous")
 	}
 	return targets
+}
+
+func targetInfoForTest(t *testing.T, target hcc.Target) harness.TargetInfo {
+	t.Helper()
+	info, ok := harness.TargetInfoFor(target)
+	if !ok {
+		t.Fatalf("target %q has no validated TargetInfo", target)
+	}
+	return info
 }
 
 // TestAggregateProbeCoversEveryCompilableKind keeps materializedAggregateFiles
@@ -165,11 +185,12 @@ func TestAggregateProbeCoversEveryCompilableKind(t *testing.T) {
 // TestAggregateFilesMatchMaterializedMergeArtifacts is the regression guard for
 // bead agent-marketplace-5exj.27.
 //
-// harness.TargetInfo.AggregateFiles is documented as the single source of truth
-// for the files a target merges into, and both safety-backup collection
-// (pipeline.CollectManagedPaths) and Devin's marker-strip fence
-// (aggregateProtectedPaths) read it. Four of six declarations had drifted from
-// what the compilers actually emit: Claude omitted hooks/hooks.json and
+// The TargetInfo returned by either the legacy map or an installation adapter
+// carries AggregateFiles as the single source of truth for the files a target
+// merges into. Both safety-backup collection (pipeline.CollectManagedPaths) and
+// the ownership-reconciled aggregate fence (aggregateProtectedPaths) read it.
+// Four of six declarations had drifted from what the compilers actually emit:
+// Claude omitted hooks/hooks.json and
 // .claude-plugin/plugin.json, Cursor omitted hooks/hooks.json, Factory declared
 // a settings.json nothing writes and omitted hooks/hooks.json, Gemini declared
 // an mcp.json nothing writes and omitted the settings.json it does write, and
@@ -188,14 +209,14 @@ func TestAggregateFilesMatchMaterializedMergeArtifacts(t *testing.T) {
 					t.Fatalf("no merge artifact was produced for %s at machine_scope=%v; every current target has at least one, so the probe bundle is broken rather than the declaration", target, machineScope)
 				}
 
-				declared := append([]string(nil), harness.TargetInfoMap[target].AggregateFilesForScope(machineScope)...)
+				declared := append([]string(nil), targetInfoForTest(t, target).AggregateFilesForScope(machineScope)...)
 				for i, rel := range declared {
 					declared[i] = filepath.ToSlash(rel)
 				}
 				sort.Strings(declared)
 
 				if !reflect.DeepEqual(declared, want) {
-					t.Errorf("harness.TargetInfoMap[%q].AggregateFiles (machine_scope=%v):\n declared = %v\n produced = %v\nDeclare exactly the files the compilers merge into: undeclared files are mutated with no safety backup, and declared files nothing emits are backed up for no reason.",
+					t.Errorf("target metadata for %q has incorrect AggregateFiles (machine_scope=%v):\n declared = %v\n produced = %v\nDeclare exactly the files the compilers merge into: undeclared files are mutated with no safety backup, and declared files nothing emits are backed up for no reason.",
 						target, machineScope, declared, want)
 				}
 			})
@@ -210,7 +231,7 @@ func TestAggregateFilesMatchMaterializedMergeArtifacts(t *testing.T) {
 func TestAggregateFilesDeclarationIsCanonical(t *testing.T) {
 	for _, target := range sortedTargets(t) {
 		for _, machineScope := range []bool{false, true} {
-			rels := harness.TargetInfoMap[target].AggregateFilesForScope(machineScope)
+			rels := targetInfoForTest(t, target).AggregateFilesForScope(machineScope)
 			if !sort.StringsAreSorted(rels) {
 				t.Errorf("%s (machine_scope=%v): AggregateFiles %v is not sorted", target, machineScope, rels)
 			}
@@ -225,26 +246,25 @@ func TestAggregateFilesDeclarationIsCanonical(t *testing.T) {
 	}
 }
 
-// TestAggregateProtectedPathsStaysDevinOnly pins the fence against the REAL
-// registry: aggregateProtectedPaths keeps a target's aggregates out of the
-// marker-strip prune walk, and today exactly one target — Devin — is fenced.
-// Widening AggregateFiles for the five marker-merge targets (bead
-// agent-marketplace-5exj.27) must NOT widen that fence: excluding their
-// aggregates from the walk would silently stop pruning stale managed entries out
-// of hooks.json, mcp.json, plugin.json and settings.json.
+// aggregateProtectedPaths keeps a target's aggregates out of the marker-strip
+// prune walk, and today Devin and Codex are fenced. Widening AggregateFiles for
+// the five marker-merge targets (bead agent-marketplace-5exj.27) must NOT widen
+// that fence: excluding their aggregates from the walk would silently stop
+// pruning stale managed entries out of hooks.json, mcp.json, plugin.json and
+// settings.json.
 //
-// Bead agent-marketplace-5exj.29 changed WHY Devin is the only fenced target:
-// the predicate is now harness.TargetInfo.OwnershipReconciledAggregates rather
-// than SymlinkOnly. This test stays a statement about the registry as it stands;
-// TestAggregateProtectedPathsKeysOffOwnership below is the statement about the
-// predicate itself, over targets that do not exist yet.
+// Bead agent-marketplace-5exj.29 changed why ownership-reconciled targets are
+// fenced: the predicate is now harness.TargetInfo.OwnershipReconciledAggregates
+// rather than SymlinkOnly. This test stays a statement about the registry as it
+// stands; TestAggregateProtectedPathsKeysOffOwnership below is the statement
+// about the predicate itself, over targets that do not exist yet.
 func TestAggregateProtectedPathsCoversOwnershipTargets(t *testing.T) {
 	codex := hcc.Target(targetmeta.TargetCodex)
 	for _, target := range sortedTargets(t) {
 		for _, machineScope := range []bool{false, true} {
 			protected := aggregateProtectedPaths(target, machineScope)
 			if target == hcc.TargetDevin || target == codex {
-				declared := harness.TargetInfoMap[target].AggregateFilesForScope(machineScope)
+				declared := targetInfoForTest(t, target).AggregateFilesForScope(machineScope)
 				if len(protected) != len(declared) {
 					t.Errorf("%s (machine_scope=%v): protected %v does not cover declared %v", target, machineScope, protected, declared)
 				}
@@ -265,7 +285,7 @@ func TestAggregateProtectedPathsCoversOwnershipTargets(t *testing.T) {
 func TestOwnedAggregateHandlerInventoryMatchesOwnershipTargets(t *testing.T) {
 	for _, target := range sortedTargets(t) {
 		hasHandler := ownedAggregateHandlerFor(target) != nil
-		wantHandler := harness.TargetInfoMap[target].OwnershipReconciledAggregates
+		wantHandler := targetInfoForTest(t, target).OwnershipReconciledAggregates
 		if hasHandler != wantHandler {
 			t.Errorf("%s: owned aggregate handler = %v, ownership-reconciled metadata = %v", target, hasHandler, wantHandler)
 		}
@@ -353,7 +373,7 @@ func TestAggregateProtectedPathsKeysOffOwnership(t *testing.T) {
 func TestAggregateFenceFollowsOwnership(t *testing.T) {
 	ownership := make([]hcc.Target, 0, len(harness.TargetInfoMap))
 	for _, target := range sortedTargets(t) {
-		info := harness.TargetInfoMap[target]
+		info := targetInfoForTest(t, target)
 		if info.OwnershipReconciledAggregates {
 			ownership = append(ownership, target)
 		}

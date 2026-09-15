@@ -37,19 +37,35 @@ var (
 
 type codexOwnedAggregateHandler struct{}
 
+type codexOwnedAggregateState struct {
+	hooks   *ownedJSONAggregateWork
+	mcps    []codexMCPEntry
+	blocked bool
+}
+
+func codexState(state ownedAggregateState, key outputKey) *codexOwnedAggregateState {
+	current, _ := state.get(key).(*codexOwnedAggregateState)
+	if current == nil {
+		current = &codexOwnedAggregateState{}
+		state.put(key, current)
+	}
+	return current
+}
+
 func (codexOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, error) {
 	rest, hooks, mcps, err := splitCodexOwnedArtifacts(artifacts, resource)
 	if err != nil {
 		return nil, err
 	}
-	state.codexMCP[key] = append(state.codexMCP[key], mcps...)
+	current := codexState(state, key)
+	current.mcps = append(current.mcps, mcps...)
 	if len(hooks) == 0 {
 		return rest, nil
 	}
-	aggregate := state.codex[key]
+	aggregate := current.hooks
 	if aggregate == nil {
 		aggregate = &ownedJSONAggregateWork{}
-		state.codex[key] = aggregate
+		current.hooks = aggregate
 	}
 	for _, entry := range hooks {
 		aggregate.add(entry)
@@ -58,16 +74,17 @@ func (codexOwnedAggregateHandler) extract(state ownedAggregateState, key outputK
 }
 
 func (codexOwnedAggregateHandler) markIncomplete(state ownedAggregateState, key outputKey, kind ir.ResourceKind) {
+	current := codexState(state, key)
 	switch kind {
 	case ir.KindHook:
-		aggregate := state.codex[key]
+		aggregate := current.hooks
 		if aggregate == nil {
 			aggregate = &ownedJSONAggregateWork{}
-			state.codex[key] = aggregate
+			current.hooks = aggregate
 		}
 		aggregate.markIncomplete(codexHooksFile)
 	case ir.KindMcpServer:
-		state.codexMCPBlocked[key] = true
+		current.blocked = true
 	}
 }
 
@@ -87,6 +104,10 @@ func (codexOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource st
 }
 
 func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, _ string, destinations []harness.Destination, dryRun bool) *Report {
+	current, _ := state.get(key).(*codexOwnedAggregateState)
+	if current == nil {
+		current = &codexOwnedAggregateState{}
+	}
 	for _, destination := range destinations {
 		if !destination.Info.OwnershipReconciledAggregates {
 			continue
@@ -95,8 +116,8 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 		hookOptions.rootID = destination.ID
 		hookOptions.onWrite = appendCodexTrustReviewDiagnostic
 		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
-		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, state.codex[key], hookOptions, dryRun)
-		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, state.codexMCP[key], state.codexMCPBlocked[key], dryRun)
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
+		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, current.mcps, current.blocked, dryRun)
 	}
 	return report
 }

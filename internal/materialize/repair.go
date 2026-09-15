@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -180,22 +181,25 @@ type TargetRepairPreview struct {
 	Preview *RepairPreview
 }
 
-// RepairPreviews enumerates the ownership-reconciled targets in stable order.
+// RepairPreviews enumerates the materialization adapters in stable target order.
 func RepairPreviews(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact) ([]TargetRepairPreview, error) {
-	providers := []struct {
-		target  hcc.Target
-		preview func(context.Context, string, []resolver.ResolvedArtifact) (*RepairPreview, error)
-	}{
-		{target: hcc.TargetDevin, preview: DevinRepairPreview},
-		{target: hcc.TargetCodex, preview: CodexRepairPreview},
+	composition, err := newMaterializeAdapterComposition()
+	if err != nil {
+		return nil, err
 	}
-	out := make([]TargetRepairPreview, 0, len(providers))
-	for _, provider := range providers {
-		preview, err := provider.preview(ctx, repoRoot, resolved)
+	targets := composition.registry.Targets()
+	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
+	out := make([]TargetRepairPreview, 0, len(targets))
+	for _, target := range targets {
+		binding, ok := composition.bindings[target]
+		if !ok {
+			return nil, fmt.Errorf("installation adapter %q has no repair binding", target)
+		}
+		preview, err := binding.repair(ctx, repoRoot, resolved)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, TargetRepairPreview{Target: provider.target, Preview: preview})
+		out = append(out, TargetRepairPreview{Target: target, Preview: preview})
 	}
 	return out, nil
 }

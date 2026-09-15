@@ -131,6 +131,9 @@ func TestRepoPathsAreRelative(t *testing.T) {
 
 func TestTargetInfoMapCoversAllInstallRoots(t *testing.T) {
 	for target := range InstallRoots {
+		if IsInstallationAdapterTarget(target) {
+			continue
+		}
 		info, ok := TargetInfoMap[target]
 		if !ok {
 			t.Errorf("TargetInfoMap missing entry for target %q present in InstallRoots", target)
@@ -277,9 +280,9 @@ func TestMakeTargetInfo(t *testing.T) {
 }
 
 func TestDevinTargetInfo(t *testing.T) {
-	info, ok := TargetInfoMap[hcc.TargetDevin]
+	info, ok := TargetInfoFor(hcc.TargetDevin)
 	if !ok {
-		t.Fatal("no TargetInfo for devin")
+		t.Fatal("no adapter TargetInfo for devin")
 	}
 	if !info.OwnershipReconciledAggregates {
 		t.Error("devin aggregates must be ownership-reconciled")

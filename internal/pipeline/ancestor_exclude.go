@@ -155,11 +155,12 @@ func skillMaterializedAt(root, name string, targets []hcc.Target) (hcc.Target, b
 // materialized for target under root (repo scope). Returns "" if the target is
 // unknown.
 func skillDir(target hcc.Target, root, name string) string {
-	roots, ok := harness.InstallRoots[target]
-	if !ok {
-		if target != hcc.TargetCodex {
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		if harness.IsInstallationAdapterTarget(target) {
 			return ""
 		}
+	} else if _, migrated := registry.Lookup(target); migrated {
 		destinations, err := harness.ResolveDestinations(target, false, root)
 		if err != nil {
 			return ""
@@ -173,6 +174,10 @@ func skillDir(target hcc.Target, root, name string) string {
 		}
 		return ""
 	}
+	roots, ok := harness.InstallRoots[target]
+	if !ok {
+		return ""
+	}
 	installRoot := roots.For(false, root)
 	// The native-layout descriptor is the topology authority for targets that
 	// declare one — Claude deliberately leaves TargetInfo.SkillPathPattern
@@ -181,7 +186,7 @@ func skillDir(target hcc.Target, root, name string) string {
 	pattern := "skills/%s/SKILL.md"
 	if declared, ok := targetmeta.NativeResourcePattern(target, ir.KindSkill); ok {
 		pattern = declared
-	} else if info, ok := harness.TargetInfoMap[target]; ok && info.SkillPathPattern != "" {
+	} else if info, ok := harness.TargetInfoFor(target); ok && info.SkillPathPattern != "" {
 		pattern = info.SkillPathPattern
 	}
 	skillRel := filepath.Dir(fmt.Sprintf(pattern, name))

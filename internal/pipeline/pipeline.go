@@ -868,7 +868,7 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 		if !ok {
 			continue
 		}
-		info, ok := harness.TargetInfoMap[t]
+		info, ok := harness.TargetInfoFor(t)
 		if !ok {
 			continue
 		}

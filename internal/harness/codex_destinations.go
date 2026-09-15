@@ -8,14 +8,9 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
-	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
-
-var resolvedLayoutProviders = map[hcc.Target]resolvedLayoutProvider{
-	hcc.Target(targetmeta.TargetCodex): resolveCodexDestinations,
-}
 
 func resolveCodexDestinations(machineScope bool, repoRoot, homeDir string) ([]Destination, error) {
 	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
