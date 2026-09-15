@@ -1,6 +1,6 @@
 # How to validate a registry in CI
 
-This guide shows how to check that a registry builds and produces no unexpected diagnostics before tagging a release.
+Check that a registry builds and produces no unexpected diagnostics before tagging a release.
 
 ## Prerequisites
 

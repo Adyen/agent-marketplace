@@ -1,6 +1,6 @@
 # How to revoke a resource
 
-This guide shows how to remove a resource or a specific revision from a hosted Marketplace.
+Remove a resource or a specific revision from a hosted Marketplace.
 
 ## Prerequisites
 

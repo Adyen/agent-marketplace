@@ -1,6 +1,6 @@
 # How to configure a reverse proxy
 
-This guide shows how to route public traffic to the Go API and Nuxt Marketplace UI while keeping operations endpoints private.
+Route public traffic to the Go API and Nuxt Marketplace UI while keeping operations endpoints private.
 
 ## Prerequisites
 

@@ -1,6 +1,6 @@
 # How to deploy a production Marketplace
 
-This guide shows how to deploy the hosted Marketplace in the recommended multi-process topology.
+Deploy the hosted Marketplace in the recommended multi-process topology.
 
 ## Prerequisites
 

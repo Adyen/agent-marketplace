@@ -1,7 +1,5 @@
 # Collections reference
 
-This page describes the collection definition format and how consumers select collections.
-
 ## Collection structure
 
 A collection is a named bundle declared in a registry. The collection file lives at `collections/<name>/COLLECTION.yaml`.

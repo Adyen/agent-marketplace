@@ -1,6 +1,6 @@
 # How to migrate configuration
 
-This guide shows how to remediate structurally invalid `agent-marketplace` configuration.
+Remediate structurally invalid `agent-marketplace` configuration.
 
 ## Prerequisites
 

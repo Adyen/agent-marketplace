@@ -1,7 +1,5 @@
 # Marketplace resource locators reference
 
-This page describes the formats used to identify and install resources from a hosted Marketplace.
-
 ## Compact form
 
 ```text

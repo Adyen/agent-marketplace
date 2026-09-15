@@ -1,6 +1,6 @@
 # How to reindex and monitor a Marketplace
 
-This guide shows how to refresh registry data and observe Marketplace health.
+Refresh registry data and observe Marketplace health.
 
 ## Reindex one registry
 

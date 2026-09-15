@@ -1,6 +1,6 @@
 # Run a local Marketplace
 
-In this tutorial, you will run a single-process `agent-marketplace` Marketplace on your machine using Docker and the repository's root `compose.yaml`.
+Run a single-process `agent-marketplace` Marketplace on your machine using Docker and the repository's root `compose.yaml`.
 
 ## Before you begin
 

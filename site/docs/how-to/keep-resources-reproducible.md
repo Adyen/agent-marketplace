@@ -1,6 +1,6 @@
 # How to keep resources reproducible
 
-This guide shows how to keep a repository's generated resources locked to exact Git commits so every clone produces the same files.
+Keep a repository's generated resources locked to exact Git commits so every clone produces the same files.
 
 ## Prerequisites
 

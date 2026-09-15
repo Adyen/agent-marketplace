@@ -1,6 +1,6 @@
 # How to declare tags and prerequisites
 
-This guide shows how to annotate `SKILL.md` resources with tags and prerequisites so consumers can discover and install them more easily.
+Annotate `SKILL.md` resources with tags and prerequisites so consumers can discover and install them more easily.
 
 ## Prerequisites
 

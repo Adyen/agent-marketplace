@@ -1,7 +1,5 @@
 # Diagnostics reference
 
-This page describes the structured diagnostics `agent-marketplace` emits during sync, materialization, and conversion.
-
 ## Diagnostic structure
 
 Every diagnostic has:

@@ -1,6 +1,6 @@
 # How to configure multiple harnesses
 
-This guide shows how to target more than one coding harness at the same time.
+Target more than one coding harness at the same time.
 
 ## Prerequisites
 

@@ -1,6 +1,6 @@
 # How to convert a harness layout
 
-This guide shows how to convert a resource from one harness layout to another for inspection or migration.
+Convert a resource from one harness layout to another for inspection or migration.
 
 ## Prerequisites
 

@@ -1,6 +1,6 @@
 # Install your first skill for Claude Code
 
-In this tutorial, you will install Anthropic's `frontend-design` skill for Claude Code. The skill will be available machine-wide to projects that use your personal Claude Code target.
+Install Anthropic's `frontend-design` skill for Claude Code. The skill will be available machine-wide to projects that use your personal Claude Code target.
 
 You will use a public GitHub repository as the registry, save the selection in your user configuration, and verify the generated Claude Code skill.
 

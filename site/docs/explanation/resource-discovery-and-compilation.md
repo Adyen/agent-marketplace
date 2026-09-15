@@ -1,7 +1,5 @@
 # Resource discovery and compilation
 
-This page explains how `agent-marketplace` turns files in a Git repository into files a coding harness can use.
-
 ## Discovery
 
 For each configured registry, the CLI:

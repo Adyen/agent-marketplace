@@ -1,6 +1,6 @@
 # How to manage ingestion policy
 
-This guide shows how to configure license and content policy for a hosted Marketplace.
+Configure license and content policy for a hosted Marketplace.
 
 ## Prerequisites
 

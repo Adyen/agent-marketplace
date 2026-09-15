@@ -1,6 +1,6 @@
 # How to install resource bundles
 
-This guide shows how to install a named collection of resources, or all resources from a registry, in one command.
+Install a named collection of resources, or all resources from a registry, in one command.
 
 ## Prerequisites
 

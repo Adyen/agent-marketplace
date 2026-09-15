@@ -1,6 +1,6 @@
 # How to version and release a registry
 
-This guide shows how to tag a registry release and update consumers safely.
+Tag a registry release and update consumers safely.
 
 ## Prerequisites
 

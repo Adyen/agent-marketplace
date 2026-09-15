@@ -1,7 +1,5 @@
 # Configuration layers reference
 
-This page describes the four configuration layers, the files that belong to each, and which fields are authoritative at each layer.
-
 ## Layer order
 
 Layers merge from lowest to highest precedence. A higher layer overrides a lower layer where the rules allow it.

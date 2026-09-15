@@ -1,6 +1,6 @@
 # How to add a resource to a registry
 
-This guide shows how to add a new skill or command to a Git registry. Subagent, hook, and MCP files follow source-harness-specific native formats; see the [registry layout reference](../../reference/registry-layout.md).
+Add a new skill or command to a Git registry. Subagent, hook, and MCP files follow source-harness-specific native formats; see the [registry layout reference](../../reference/registry-layout.md).
 
 ## Prerequisites
 

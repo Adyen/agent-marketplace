@@ -1,6 +1,6 @@
 # How to configure telemetry
 
-This guide shows how to enable, disable, and inspect telemetry for an unmanaged or organization-managed installation.
+Enable, disable, and inspect telemetry for an unmanaged or organization-managed installation.
 
 ## Prerequisites
 

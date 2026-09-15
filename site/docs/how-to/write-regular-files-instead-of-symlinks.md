@@ -1,6 +1,6 @@
 # How to write regular files instead of symlinks
 
-This guide shows how to switch from the default symlink mode to regular files for repository output.
+Switch from the default symlink mode to regular files for repository output.
 
 ## Prerequisites
 
