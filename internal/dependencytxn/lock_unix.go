@@ -16,8 +16,26 @@ type heldLock struct {
 	file *os.File
 }
 
-func acquireLocks(ctx context.Context, stateDir string, paths []string) ([]heldLock, error) {
-	lockDir, err := prepareStateDir(filepath.Join(stateDir, "locks"))
+func coordinationLockDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("dependency transaction: resolve home directory: %w", err)
+	}
+	canonical, err := filepath.EvalSymlinks(home)
+	if err == nil {
+		home = canonical
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("dependency transaction: resolve home directory: %w", err)
+	}
+	return filepath.Join(home, ".local", "state", "agent-marketplace", "dependencies", "locks"), nil
+}
+
+func acquireLocks(ctx context.Context, paths []string) ([]heldLock, error) {
+	lockDir, err := coordinationLockDir()
+	if err != nil {
+		return nil, err
+	}
+	lockDir, err = prepareStateDir(lockDir)
 	if err != nil {
 		return nil, err
 	}
