@@ -47,6 +47,8 @@ export default defineConfig({
     sidebar: {
       [DOCS_PATH]: [
         { text: 'Overview', link: DOCS_PATH },
+        { text: 'Install', link: `${DOCS_PATH}install` },
+        { text: 'Quick start', link: `${DOCS_PATH}quick-start` },
         {
           text: 'Tutorials',
           items: [
