@@ -110,7 +110,7 @@ func blockedComponentsFor(key outputKey, w skillTarget) []string {
 	if w.skill.Resource == nil {
 		return []string{blockedAllComponents}
 	}
-	info, ok := harness.TargetInfoMap[key.target]
+	info, ok := harness.TargetInfoFor(key.target)
 	if !ok {
 		return []string{blockedAllComponents}
 	}

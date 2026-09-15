@@ -359,7 +359,7 @@ func nativeAggregateHasManagedEntries(target hcc.Target, destination harness.Des
 
 func nativeAggregatePruneFence(target hcc.Target, machineScope bool) map[string]bool {
 	protected := aggregateProtectedPaths(target, machineScope)
-	info := harness.TargetInfoMap[target]
+	info, _ := harness.TargetInfoFor(target)
 	for _, install := range harness.NativeAggregateInstalls(target) {
 		if protected == nil {
 			protected = make(map[string]bool)

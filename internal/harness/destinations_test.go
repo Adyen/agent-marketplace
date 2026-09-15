@@ -25,33 +25,6 @@ func TestResolveDestinationsExistingTargetUsesSingleRoot(t *testing.T) {
 	}
 }
 
-func TestResolveDestinationsUsesRegisteredProvider(t *testing.T) {
-	target := hcc.Target("partitioned-test")
-	repo := t.TempDir()
-	want := []Destination{{ID: "repo-test", Root: t.TempDir(), Prefix: ".test"}}
-	resolvedLayoutProviders[target] = func(machineScope bool, repoRoot, homeDir string) ([]Destination, error) {
-		if machineScope {
-			t.Fatal("provider received machine scope")
-		}
-		if repoRoot != repo {
-			t.Fatalf("provider repo root = %q, want %q", repoRoot, repo)
-		}
-		if homeDir != "" {
-			t.Fatalf("provider home directory = %q, want empty", homeDir)
-		}
-		return want, nil
-	}
-	t.Cleanup(func() { delete(resolvedLayoutProviders, target) })
-
-	got, err := ResolveDestinations(target, false, repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("ResolveDestinations() = %#v, want %#v", got, want)
-	}
-}
-
 func TestCodexTargetInfoAdaptsNativeLayout(t *testing.T) {
 	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
 	if !ok {

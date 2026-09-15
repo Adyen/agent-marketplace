@@ -28,26 +28,42 @@ func CodexRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 	preview := &RepairPreview{}
 	compiled, keys := compileRepairTarget(repoRoot, resolved, hcc.Target(targetmeta.TargetCodex))
 	preview.Diags = append(preview.Diags, redactCodexRepairDiags(repoRoot, compiled.allDiags)...)
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("construct Codex repair adapter: %w", err)
+	}
+	adapter, ok := registry.Lookup(hcc.Target(targetmeta.TargetCodex))
+	if !ok {
+		return nil, fmt.Errorf("codex repair adapter is not registered")
+	}
 
 	for _, key := range keys {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+		home := ""
+		if key.machineScope {
+			home, err = os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("resolve Codex repair home directory: %w", err)
+			}
+		}
+		destinations, err := adapter.Resolve(key.machineScope, repoRoot, home)
 		if err != nil {
-			preview.Diags = append(preview.Diags, diag.Diagnostic{
-				Code:     "materialize.destination.error",
-				Severity: diag.SeverityError,
-				Target:   string(key.target),
-				Message:  fmt.Sprintf("resolve Codex repair destination: %v", err),
-			})
-			continue
+			return nil, fmt.Errorf("resolve Codex repair destinations: %w", err)
+		}
+		if len(destinations) == 0 {
+			return nil, fmt.Errorf("codex repair adapter returned no destinations")
 		}
 		for _, destination := range destinations {
 			if !destination.Info.OwnershipReconciledAggregates {
 				continue
 			}
-			previewCodexRoot(preview, key, destination.Root, compiled.codexAggregates[key], compiled.codexMCP[key])
+			state, _ := compiled.ownedState[key].(*codexOwnedAggregateState)
+			if state == nil {
+				state = &codexOwnedAggregateState{}
+			}
+			previewCodexRoot(preview, key, destination.Root, state.hooks, state.mcps)
 		}
 	}
 
