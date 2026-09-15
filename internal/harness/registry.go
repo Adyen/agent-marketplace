@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -42,8 +43,8 @@ func (a InstallationAdapter) Resolve(machineScope bool, repoRoot, homeDir string
 }
 
 // InstallationAdapterRegistry contains the application adapters for targets
-// using owned aggregate installation. It is built on demand so descriptor
-// validation happens before adapter construction.
+// using owned aggregate installation. Descriptor validation happens before
+// adapter construction.
 type InstallationAdapterRegistry struct {
 	adapters map[hcc.Target]InstallationAdapter
 }
@@ -63,10 +64,22 @@ func IsInstallationAdapterTarget(target hcc.Target) bool {
 	return isInstallationAdapterTarget(target)
 }
 
+var (
+	installationAdapterRegistry     InstallationAdapterRegistry
+	installationAdapterRegistryErr  error
+	installationAdapterRegistryOnce sync.Once
+)
+
 // NewInstallationAdapterRegistry validates native-layout descriptors and builds
 // the Devin and Codex adapters. Other targets continue to use legacy metadata.
 func NewInstallationAdapterRegistry() (InstallationAdapterRegistry, error) {
-	return newInstallationAdapterRegistry(targetmeta.ValidateNativeLayouts)
+	installationAdapterRegistryOnce.Do(func() {
+		installationAdapterRegistry, installationAdapterRegistryErr = newInstallationAdapterRegistry(targetmeta.ValidateNativeLayouts)
+	})
+	if installationAdapterRegistryErr != nil {
+		return InstallationAdapterRegistry{}, installationAdapterRegistryErr
+	}
+	return bindMachineRoots(installationAdapterRegistry, os.UserHomeDir), nil
 }
 
 func newInstallationAdapterRegistry(validateLayouts func() error) (InstallationAdapterRegistry, error) {
@@ -82,11 +95,7 @@ func newInstallationAdapterRegistry(validateLayouts func() error) (InstallationA
 		if definition.PartitionedRoots {
 			continue
 		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return InstallationAdapterRegistry{}, fmt.Errorf("resolve home directory for %s adapter: %w", target, err)
-		}
-		roots[hcc.Target(target)] = Roots{Repo: definition.RepoRoot, Machine: filepath.Join(home, definition.UserRoot)}
+		roots[hcc.Target(target)] = Roots{Repo: definition.RepoRoot}
 	}
 	adapters := make(map[hcc.Target]InstallationAdapter, 2)
 	for _, target := range []targetmeta.Target{targetmeta.TargetDevin, targetmeta.TargetCodex} {
@@ -127,6 +136,30 @@ func newInstallationAdapterRegistry(validateLayouts func() error) (InstallationA
 		adapters[t] = adapter
 	}
 	return InstallationAdapterRegistry{adapters: adapters}, nil
+}
+
+func bindMachineRoots(registry InstallationAdapterRegistry, resolveHome func() (string, error)) InstallationAdapterRegistry {
+	home, err := resolveHome()
+	if err != nil || home == "" {
+		return registry
+	}
+	definition, ok := targetmeta.Lookup(string(targetmeta.TargetDevin))
+	if !ok {
+		return registry
+	}
+	adapter, ok := registry.adapters[hcc.TargetDevin]
+	if !ok {
+		return registry
+	}
+	bound := InstallationAdapterRegistry{adapters: make(map[hcc.Target]InstallationAdapter, len(registry.adapters))}
+	for target, existing := range registry.adapters {
+		bound.adapters[target] = existing
+	}
+	info := adapter.info
+	info.Roots.Machine = filepath.Join(home, definition.UserRoot)
+	adapter.info = info
+	bound.adapters[hcc.TargetDevin] = adapter
+	return bound
 }
 
 func (r InstallationAdapterRegistry) Lookup(target hcc.Target) (InstallationAdapter, bool) {

@@ -995,8 +995,8 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		var roots harness.Roots
 		var ok bool
 		var adapterDestinations []harness.Destination
+		var home string
 		if adapter, migrated := adapters.Lookup(key.target); migrated {
-			var home string
 			if key.machineScope {
 				var err error
 				home, err = os.UserHomeDir()
@@ -1031,7 +1031,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			if len(adapterDestinations) == 1 {
 				outDir = adapterDestinations[0].Root
 			} else if key.machineScope {
-				outDir, _ = os.UserHomeDir()
+				outDir = home
 			}
 		} else {
 			outDir = roots.For(key.machineScope, repoRoot)

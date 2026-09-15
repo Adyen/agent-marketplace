@@ -86,6 +86,31 @@ func TestRegistryFailsClosedOnDescriptorValidationError(t *testing.T) {
 	}
 }
 
+func TestRegistryAllowsRepoResolutionWithoutHome(t *testing.T) {
+	registry, err := newInstallationAdapterRegistry(func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry = bindMachineRoots(registry, func() (string, error) {
+		return "", errors.New("home unavailable")
+	})
+	adapter, ok := registry.Lookup(hcc.TargetDevin)
+	if !ok {
+		t.Fatal("Devin adapter is missing")
+	}
+	if got := adapter.Info().Roots.Machine; got != "" {
+		t.Fatalf("Devin machine root = %q, want empty when home is unavailable", got)
+	}
+	repoRoot := t.TempDir()
+	destinations, err := adapter.Resolve(false, repoRoot, "")
+	if err != nil {
+		t.Fatalf("repo destination resolution failed without a home: %v", err)
+	}
+	if len(destinations) != 1 || destinations[0].Root != filepath.Join(repoRoot, ".devin") {
+		t.Fatalf("repo destinations = %#v, want one destination under .devin", destinations)
+	}
+}
+
 func TestMigratedTargetsHaveNoLegacyMetadataFallback(t *testing.T) {
 	for _, target := range []hcc.Target{hcc.TargetDevin, hcc.TargetCodex} {
 		if _, ok := TargetInfoMap[target]; ok {
