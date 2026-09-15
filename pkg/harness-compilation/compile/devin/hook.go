@@ -338,9 +338,11 @@ func hookArtifact(event string, rule map[string]any, opts compile.Options) (arti
 		Fragment:              true,
 		FragmentKey:           path,
 		DedupeFragmentEntries: true,
+		Reconciliation: artifact.ReconciliationPolicy{
+			Mode: artifact.ReconciliationExternal,
+		},
+		ExternalReconciliationRequired: true,
 	}
-	art.ManagedByField, art.ManagedByValue = opts.ManagedBy()
-	art.MergeWithExisting = art.ManagedByField != ""
 	return art, nil
 }
 

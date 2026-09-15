@@ -612,9 +612,11 @@ func mcpArtifact(name string, entry map[string]any, opts compile.Options) (artif
 		Bytes:       bytes,
 		Fragment:    true,
 		FragmentKey: mcpConfig,
+		Reconciliation: artifact.ReconciliationPolicy{
+			Mode: artifact.ReconciliationExternal,
+		},
+		ExternalReconciliationRequired: true,
 	}
-	art.ManagedByField, art.ManagedByValue = opts.ManagedBy()
-	art.MergeWithExisting = art.ManagedByField != ""
 	return art, nil
 }
 

@@ -32,7 +32,9 @@ package devin_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
@@ -319,6 +321,72 @@ Body of the command.
 
 func file(data string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(data)} }
 
+// materializeNonOwningConversion is a test-only fixture for conversion tests
+// whose isolated temporary destination has no owning consumer adapter. It
+// first proves that generic Materialize refuses the complete result, then
+// materializes ordinary artifacts and stages the externally reconciled files
+// as a non-owning conversion publisher would. Convert has already merged
+// fragments, so the aggregate bytes written here are the complete result.
+func materializeNonOwningConversion(t *testing.T, result *hcc.Result, outDir string) {
+	t.Helper()
+
+	ordinary := &hcc.Result{Diagnostics: result.Diagnostics, Skipped: result.Skipped}
+	var external []hcc.Artifact
+	for _, candidate := range result.Artifacts {
+		policy, err := candidate.Policy()
+		if err != nil {
+			t.Fatalf("artifact %q policy: %v", candidate.Path, err)
+		}
+		if policy.IsExternal() {
+			external = append(external, candidate)
+			continue
+		}
+		ordinary.Artifacts = append(ordinary.Artifacts, candidate)
+	}
+	if len(external) == 0 {
+		if _, err := hcc.Materialize(result, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
+			t.Fatalf("Materialize ordinary conversion: %v", err)
+		}
+		return
+	}
+
+	if entries, err := os.ReadDir(outDir); err != nil {
+		t.Fatalf("read empty conversion destination: %v", err)
+	} else if len(entries) != 0 {
+		t.Fatalf("conversion destination is not empty: %v", entries)
+	}
+	if _, err := hcc.Materialize(result, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); !errors.Is(err, hcc.ErrExternalReconciliationRequired) {
+		t.Fatalf("generic Materialize error = %v, want %v", err, hcc.ErrExternalReconciliationRequired)
+	}
+	if entries, err := os.ReadDir(outDir); err != nil {
+		t.Fatalf("read destination after refused conversion: %v", err)
+	} else if len(entries) != 0 {
+		t.Fatalf("generic Materialize wrote %d entries before refusing conversion", len(entries))
+	}
+
+	if len(ordinary.Artifacts) > 0 {
+		if _, err := hcc.Materialize(ordinary, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
+			t.Fatalf("Materialize ordinary conversion artifacts: %v", err)
+		}
+	}
+	for _, candidate := range external {
+		if err := candidate.Validate(); err != nil {
+			t.Fatalf("validate external conversion artifact %q: %v", candidate.Path, err)
+		}
+		path := filepath.Join(outDir, filepath.FromSlash(candidate.Path))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create external conversion artifact directory %q: %v", filepath.Dir(path), err)
+		}
+		mode := candidate.Mode
+		if mode == 0 {
+			mode = 0o644
+		}
+		if err := os.WriteFile(path, candidate.Bytes, mode); err != nil {
+			t.Fatalf("write external conversion artifact %q: %v", candidate.Path, err)
+		}
+	}
+}
+
 // TestDevinSemanticRoundTripMatrix is the identity half of the matrix: one
 // canonical Devin workspace root, ingested, compiled back to Devin,
 // materialized, and re-ingested, with per-kind semantic equality asserted for
@@ -351,9 +419,7 @@ func TestDevinSemanticRoundTripMatrix(t *testing.T) {
 			t.Fatalf("compile reported an error for canonical input: %s: %s", d.Code, d.Message)
 		}
 	}
-	if _, err := hcc.Materialize(result, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
-		t.Fatalf("Materialize: %v", err)
-	}
+	materializeNonOwningConversion(t, result, outDir)
 
 	// The materialized output is the DIRECT root shape, because the Devin
 	// compiler writes relative to the target root rather than under `.devin/`.
@@ -565,9 +631,7 @@ func TestDevinLossMatrix(t *testing.T) {
 				t.Fatalf("Convert(claude->devin): %v", err)
 			}
 			outDir := t.TempDir()
-			if _, err := hcc.Materialize(result, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
-				t.Fatalf("Materialize: %v", err)
-			}
+			materializeNonOwningConversion(t, result, outDir)
 			after, err := hcc.IngestBundle(os.DirFS(outDir), hcc.HarnessDevin)
 			if err != nil {
 				t.Fatalf("IngestBundle(devin): %v", err)

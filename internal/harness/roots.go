@@ -89,11 +89,8 @@ func mustNativeResourcePattern(t targetmeta.Target, kind ir.ResourceKind) string
 }
 
 // AggregateFileSet holds a target's shared aggregate configuration files per
-// scope. The two scopes are separate lists rather than one list because Devin's
-// hook aggregate genuinely differs by scope: project scope writes
-// hooks.v1.json, while user scope patches the `hooks` member of config.json
-// (plan, resource mapping: "Hook | Project: hooks.v1.json; user:
-// config.json#hooks").
+// scope. Project and user lists differ for targets such as Devin, whose project
+// hooks are in hooks.v1.json while user hooks are under config.json#hooks.
 type AggregateFileSet struct {
 	// Project lists output-root-relative paths written at repository scope.
 	Project []string
@@ -113,24 +110,16 @@ type TargetInfo struct {
 	ResourceDirs       map[ir.ResourceKind]string // per-kind install subdirectory (relative to install root)
 	SkillPathPattern   string                     // format for skill SKILL.md path (e.g. "skills/%s/SKILL.md")
 
-	// SkillDirKinds lists the resource kinds whose compiled artifacts live in a
-	// skill DIRECTORY (skills/<name>/SKILL.md plus support files) rather than in
-	// the flat `<dir>/<name>.<ext>` shape ResourceDirs models. A kind listed here
-	// is materialized as a directory symlink through the same code path as
-	// ir.KindSkill, which is what lets a Devin command compile to
-	// skills/<name>/SKILL.md (plan, resource mapping: "Command |
-	// skills/<name>/SKILL.md | User-triggered skill with
-	// x-agent-marketplace-kind: command"). ir.KindSkill is always implied and
-	// need not be listed.
+	// SkillDirKinds lists resource kinds whose compiled artifacts live in a
+	// skill directory (skills/<name>/SKILL.md plus support files) rather than in
+	// the flat `<dir>/<name>.<ext>` shape. Listed kinds use the same materializer
+	// path as ir.KindSkill; ir.KindSkill is always implied.
 	SkillDirKinds map[ir.ResourceKind]bool
 
-	// AggregateFiles names the shared aggregate configuration FILES the target
-	// merges into, per scope, as paths relative to that scope's install root.
-	// They are real files that coexist with handwritten content, so they are
-	// neither components (which are directories) nor ResourceDirs entries (which
-	// are per-resource files). A path may name a file inside a component
-	// directory (Claude's "hooks/hooks.json") or under a nested prefix
-	// (Windsurf's repo-scope ".windsurf/mcp_config.json").
+	// AggregateFiles names the shared aggregate configuration files a target
+	// reconciles, per scope, relative to the install root. These are files that
+	// coexist with handwritten content, including files nested under a component
+	// directory or prefix.
 	//
 	// This is the single source of truth for the set: materialization reads it to
 	// route aggregate reconciliation, and internal/pipeline's managed-path
@@ -140,8 +129,10 @@ type TargetInfo struct {
 	// hooks.v1.json, config.json, and mcp_config.json outside backup coverage.
 	//
 	// The authoritative definition of the set is behavioural, not editorial:
-	// "every compiled artifact with MergeWithExisting == true, at the
-	// output-root-relative path materialization writes it to, in that scope".
+	// "every compiled artifact whose reconciliation policy identifies a shared
+	// aggregate, at the output-root-relative path materialization writes it to,
+	// in that scope". Shared aggregates may use marker reconciliation or external
+	// ownership reconciliation; the declaration does not choose between them.
 	// The declaration below is not the derivation of that set, because the
 	// artifact-path-to-output-path mapping lives in internal/materialize's
 	// planner and the compilers live in pkg/harness-compilation; a copy of
@@ -158,27 +149,13 @@ type TargetInfo struct {
 	// declarations here had drifted from what the compilers emit.
 	AggregateFiles AggregateFileSet
 
-	// OwnershipReconciledAggregates declares that this target's AggregateFiles
-	// are reconciled through internal/ownership — durable, journaled proof of
-	// which entries this tool wrote — instead of through the in-file
-	// `_managed_by` marker that materialize's marker-merge path infers ownership
-	// from. It is the property internal/materialize's prune fence
-	// (aggregateProtectedPaths) keys off: an ownership-reconciled target's
-	// aggregates are kept out of the marker-strip walk, because that walk decodes
-	// and rewrites the whole file and would destroy user-owned entries the
-	// ownership path is responsible for preserving. A target that does NOT set it
-	// keeps the marker-merge path, and excluding its aggregates from the walk
-	// would silently stop pruning stale managed entries.
-	//
-	// Ownership is independent of whether generated resources are copied or
-	// symlinked. Before bead agent-marketplace-5exj.29, aggregateProtectedPaths
-	// incorrectly used the former SymlinkOnly flag as a proxy for this field.
-	// Flip only this field when a target moves to internal/ownership (see
-	// docs/plans/2026-08-04-marker-to-ownership-migration.md).
-	//
-	// The former symlink-only restriction reflected the initial Devin delivery
-	// scope, not a runtime limitation. Installation mode belongs to the generic
-	// materializer and is selected by configuration for every harness target.
+	// OwnershipReconciledAggregates marks targets whose AggregateFiles use
+	// durable ownership state in internal/ownership instead of in-file
+	// `_managed_by` markers. materialize uses this flag to keep those files out
+	// of the marker-strip prune walk, which would rewrite user-owned entries.
+	// Targets without the flag retain marker-based reconciliation and pruning.
+	// The flag is independent of whether generated resources are copied or
+	// symlinked.
 	OwnershipReconciledAggregates bool
 
 	// MachineComponentDirs renames component directories for machine (user)
@@ -188,16 +165,6 @@ type TargetInfo struct {
 	// by materialization (which writes those directories) and by backup managed
 	// path collection (which must cover exactly what materialization writes).
 	MachineComponentDirs map[string]string
-
-	// MachineSkillDirRel was declared and validated but never read by any code
-	// path: machineSkillInstallDirRel derives the Windsurf machine skill
-	// directory from the install root instead, and the recorded value
-	// (".codeium/windsurf/skills") is relative to HOME rather than to the
-	// Windsurf machine root, so using it as-is would have written to
-	// ~/.codeium/windsurf/.codeium/windsurf/skills. Work package D10 deleted the
-	// field rather than wiring up a value that was wrong for its only plausible
-	// use; its path validator survives as ValidateRelPath, which now guards the
-	// AggregateFiles paths that ARE joined onto an output root.
 
 	// FileCopyKinds lists resource kinds materialized as real files (with an
 	// injected `_managed_by` marker) instead of symlinks.
@@ -510,11 +477,8 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 			FileCopyKinds: map[ir.ResourceKind]bool{
 				ir.KindCommand: true,
 			},
-			// The Factory compiler emits no .factory-plugin/plugin.json and no
-			// settings.json; hooks and MCP servers are its only merge artifacts.
-			// settings.json was declared here until bead
-			// agent-marketplace-5exj.27 and was backed up despite nothing ever
-			// writing it.
+			// The Factory compiler emits no .factory-plugin/plugin.json or
+			// settings.json; hooks and MCP servers are its merge artifacts.
 			AggregateFiles: AggregateFileSet{
 				Project: []string{"hooks/hooks.json", "mcp.json"},
 				User:    []string{"hooks/hooks.json", "mcp.json"},
@@ -570,9 +534,7 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 			},
 			// MCP servers merge into gemini-extension.json and hooks merge into
 			// settings.json (compiled as ".gemini/settings.json", which the
-			// ArtifactRootPrefix above strips). Gemini emits no mcp.json at all;
-			// it was declared here until bead agent-marketplace-5exj.27, while
-			// the settings.json that IS mutated had no backup coverage.
+			// ArtifactRootPrefix above strips).
 			AggregateFiles: AggregateFileSet{
 				Project: []string{"gemini-extension.json", "settings.json"},
 				User:    []string{"gemini-extension.json", "settings.json"},

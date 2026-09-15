@@ -154,9 +154,11 @@ type (
 	ResourceKind = ir.ResourceKind
 	Resource     = ir.Resource
 
-	Artifact   = artifact.Artifact
-	Diagnostic = diag.Diagnostic
-	Severity   = diag.Severity
+	Artifact             = artifact.Artifact
+	Diagnostic           = diag.Diagnostic
+	Severity             = diag.Severity
+	ReconciliationMode   = artifact.ReconciliationMode
+	ReconciliationPolicy = artifact.ReconciliationPolicy
 )
 
 // Severity constants re-exported from diag.
@@ -164,6 +166,10 @@ const (
 	SeverityError   = diag.SeverityError
 	SeverityWarning = diag.SeverityWarning
 	SeverityInfo    = diag.SeverityInfo
+
+	ReconciliationReplace  = artifact.ReconciliationReplace
+	ReconciliationMarker   = artifact.ReconciliationMarker
+	ReconciliationExternal = artifact.ReconciliationExternal
 )
 
 // ResourceKind constants re-exported from ir.
@@ -427,30 +433,18 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 //
 // # Bundle error contract
 //
-// Suppression is PER RESOURCE, never bundle-wide. The promoted Devin plan
-// (docs/plans/2026-08-03-devin-first-class-harness.md, "Error behavior") states
-// it directly: "Resources with error diagnostics are skipped, valid resources
-// continue, and sync exits non-zero if any error occurred."
+// Suppression is resource-attributable, never bundle-wide:
 //
-//   - A resource that emitted at least one ERROR diagnostic (or whose compiler
-//     returned an error) contributes NO artifacts — not its own files and not
-//     its fragments of a shared aggregate. It is listed in Result.Skipped.
-//   - A resource that emitted only warnings or info contributes ALL of its
-//     artifacts.
-//   - Diagnostics that are not attributable to a single resource must suppress
-//     at the point of emission and never suppress an unrelated resource.
-//     There are exactly two sources of them, and both already do:
-//     ingest/loader failures carried in b.Diagnostics describe a resource that
-//     never reached b.Resources and therefore has no artifacts to suppress;
-//     bundle-level artifact path conflicts are resolved by
-//     resolveArtifactPathConflicts, which suppresses both named producers.
-//     A future bundle-level error code must state its own suppression rule for
-//     the same reason: a diagnostic with no resource to blame cannot be allowed
-//     to delete resources it says nothing about.
+//   - An ERROR diagnostic or compiler error suppresses that resource's complete
+//     output, including its fragments of a shared aggregate, and records it in
+//     Result.Skipped. Warnings and info retain all of the resource's artifacts.
+//   - A bundle-level diagnostic suppresses only the explicitly implicated
+//     producers. Ingest failures refer to resources with no artifacts; artifact
+//     path conflicts suppress both named producers. No unrelated resource is
+//     suppressed.
 //
-// Errors stay fully visible. Result.Diagnostics keeps every diagnostic and
-// Result.HasErrors reports that the run was not clean, so a caller can — and
-// must — fail the run while still publishing what compiled.
+// Result.Diagnostics retains every diagnostic and Result.HasErrors reports any
+// error, so callers can fail the run while still publishing valid output.
 func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, error) {
 	cfg := &config{}
 	for _, o := range opts {
@@ -592,17 +586,32 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		}
 	}
 
+	// Resolve ownership before fragment processing. Policy() translates old
+	// Artifact literals, while an explicit typed policy remains authoritative;
+	// refusing here guarantees no filesystem mutation for either representation.
+	for _, candidate := range r.Artifacts {
+		// Preserve the stable refusal for legacy external artifacts, including
+		// old literals that omit fragment metadata. A non-zero typed policy is
+		// authoritative and therefore intentionally ignores this stale field.
+		if candidate.Reconciliation == (artifact.ReconciliationPolicy{}) && candidate.ExternalReconciliationRequired {
+			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
+		}
+		if candidate.Reconciliation != (artifact.ReconciliationPolicy{}) {
+			policy, policyErr := candidate.Policy()
+			if policyErr != nil {
+				return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: invalid reconciliation policy: %w", candidate.Path, policyErr)
+			}
+			if policy.IsExternal() {
+				return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
+			}
+		}
+	}
+
 	// Merge fragment artifacts before processing.
 	artifacts, err := artifact.MergeFragments(r.Artifacts)
 	if err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: merge fragments: %w", err)
 	}
-	for _, candidate := range artifacts {
-		if candidate.ExternalReconciliationRequired {
-			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
-		}
-	}
-
 	// Validate all artifact paths and reject symlinked destination parents
 	// before any reads, writes, or stale-file discovery can follow them.
 	if err := rejectSymlinkedPathComponents(outDir); err != nil {
@@ -676,7 +685,17 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		if err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: find stale: %w", err)
 		}
-		report.Removed = stale
+		report.StaleCandidates = stale
+		for _, candidate := range stale {
+			report.Removed = append(report.Removed, candidate.Path)
+		}
+	}
+	rootSnapshot, err := snapshotMaterializeRoot(outDir)
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: snapshot output root: %w", err)
+	}
+	if err := revalidateMaterializeRoot(outDir, rootSnapshot); err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: output root changed during planning: %w", err)
 	}
 
 	// Dry-run: return report without any I/O.
@@ -684,6 +703,9 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		return report, partialError(report)
 	}
 
+	if err := revalidateMaterializeRoot(outDir, rootSnapshot); err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: output root changed before publication: %w", err)
+	}
 	// Ensure outDir exists.
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: create outDir: %w", err)
@@ -694,6 +716,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	if err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: create staging dir: %w", err)
 	}
+	defer func() { _ = os.RemoveAll(stagingDir) }()
 
 	// Write artifacts to staging directory.
 	for _, a := range artifacts {
@@ -736,22 +759,33 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		}
 	}
 
-	// Remove stale files.
+	// Remove stale files only when the no-follow identity captured during
+	// discovery still matches. A concurrent writer's replacement is preserved
+	// and reported instead of being silently deleted.
 	if prune {
-		for _, p := range report.Removed {
-			stalePath := filepath.Join(outDir, filepath.FromSlash(p))
+		var pruneConflicts []string
+		for _, candidate := range report.StaleCandidates {
+			stalePath := filepath.Join(outDir, filepath.FromSlash(candidate.Path))
 			if err := rejectSymlinkedParentComponents(outDir, stalePath); err != nil {
-				return nil, fmt.Errorf("harnesscompile.Materialize: stale file %q: %w", p, err)
+				report.PruneConflicts = append(report.PruneConflicts, candidate.Path)
+				return report, fmt.Errorf("harnesscompile.Materialize: stale file %q: %w: %v", candidate.Path, ErrStalePruneConflict, err)
 			}
-			if err := os.Remove(stalePath); err != nil {
-				// Non-fatal: stale file may have already been removed or be a directory.
-				if !os.IsNotExist(err) {
-					// Try removing empty parent directories.
-					_ = os.Remove(filepath.Dir(filepath.Join(outDir, filepath.FromSlash(p))))
+			if err := RemoveStaleFileCandidate(stalePath, candidate); err != nil {
+				if errors.Is(err, ErrStalePruneConflict) {
+					pruneConflicts = append(pruneConflicts, candidate.Path)
+					slog.Warn("materialize stale prune preserved changed output", "out_dir", outDir, "path", candidate.Path)
+					continue
 				}
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, fmt.Errorf("harnesscompile.Materialize: remove stale file %q: %w", candidate.Path, err)
 			}
-			// Clean up empty parent directories.
-			cleanEmptyDirs(outDir, filepath.Dir(filepath.FromSlash(p)))
+			cleanEmptyDirs(outDir, filepath.Dir(filepath.FromSlash(candidate.Path)), candidate.parents)
+		}
+		if len(pruneConflicts) > 0 {
+			report.PruneConflicts = pruneConflicts
+			return report, fmt.Errorf("harnesscompile.Materialize: %w: %s", ErrStalePruneConflict, strings.Join(pruneConflicts, ", "))
 		}
 	}
 
@@ -797,16 +831,18 @@ func coalesceDuplicateArtifacts(artifacts []Artifact) ([]Artifact, error) {
 }
 
 func sameArtifact(a, b Artifact) bool {
+	aPolicy, aErr := a.Policy()
+	bPolicy, bErr := b.Policy()
+	if aErr != nil || bErr != nil {
+		return false
+	}
 	return a.Path == b.Path &&
 		bytes.Equal(a.Bytes, b.Bytes) &&
 		a.Mode == b.Mode &&
 		a.Fragment == b.Fragment &&
 		a.FragmentKey == b.FragmentKey &&
 		a.FragmentOrderKey == b.FragmentOrderKey &&
-		a.MergeWithExisting == b.MergeWithExisting &&
-		a.ExternalReconciliationRequired == b.ExternalReconciliationRequired &&
-		a.ManagedByField == b.ManagedByField &&
-		a.ManagedByValue == b.ManagedByValue &&
+		aPolicy == bPolicy &&
 		a.DedupeFragmentEntries == b.DedupeFragmentEntries
 }
 
@@ -814,7 +850,11 @@ func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteRep
 	var regular []Artifact
 	var merged []Artifact
 	for _, a := range artifacts {
-		if !a.MergeWithExisting {
+		policy, err := a.Policy()
+		if err != nil {
+			return nil, nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: invalid reconciliation policy: %w", a.Path, err)
+		}
+		if policy.Mode != artifact.ReconciliationMarker {
 			regular = append(regular, a)
 			continue
 		}
@@ -823,7 +863,7 @@ func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteRep
 		if err != nil && !os.IsNotExist(err) {
 			return nil, nil, fmt.Errorf("harnesscompile.Materialize: read %s: %w", a.Path, err)
 		}
-		result, mergeReport, err := artifact.MergeWithExistingJSON(existing, a.Bytes, a.ManagedByField, a.ManagedByValue)
+		result, mergeReport, err := artifact.MergeWithExistingJSON(existing, a.Bytes, policy.MarkerField, policy.MarkerValue)
 		if err != nil {
 			// The merge layer only sees bytes, so the destination path is added
 			// here — both to the error and to the log. The duplicated value is
@@ -952,28 +992,89 @@ func fileMatchesBytes(path string, expected []byte) (bool, bool, error) {
 	return bytes.Equal(data, expected), true, nil
 }
 
-// findStaleFiles walks outDir and returns relative paths of files not in
-// the artifactPaths set.
-func findStaleFiles(outDir string, artifactPaths map[string]struct{}) ([]string, error) {
-	var stale []string
+type materializeRootSnapshot struct {
+	exists bool
+	info   fs.FileInfo
+}
+
+func snapshotMaterializeRoot(path string) (materializeRootSnapshot, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return materializeRootSnapshot{}, nil
+	}
+	if err != nil {
+		return materializeRootSnapshot{}, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return materializeRootSnapshot{}, fmt.Errorf("output root is not a real directory")
+	}
+	return materializeRootSnapshot{exists: true, info: info}, nil
+}
+
+func revalidateMaterializeRoot(path string, snapshot materializeRootSnapshot) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		if !snapshot.exists {
+			return nil
+		}
+		return errors.New("output root disappeared")
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("output root is no longer a real directory")
+	}
+	if !snapshot.exists || !os.SameFile(snapshot.info, info) {
+		return errors.New("output root identity changed")
+	}
+	return nil
+}
+
+func isMaterializeTransactionDir(name string) bool {
+	for _, prefix := range []string{".tmp-", ".agent-marketplace-convert-", ".agent-marketplace-recovery-", ".agent-marketplace-stale-"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isMaterializeTransactionFile(name string) bool {
+	return isMaterializeTransactionDir(name) || strings.HasPrefix(name, ".agent-marketplace-stale-")
+}
+
+// findStaleFiles walks outDir and returns no-follow identity snapshots for
+// paths not in the artifactPaths set.
+func findStaleFiles(outDir string, artifactPaths map[string]struct{}) ([]StaleFileCandidate, error) {
+	var stale []StaleFileCandidate
 	err := filepath.WalkDir(outDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
+			if path != outDir && isMaterializeTransactionDir(d.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		rel, err := filepath.Rel(outDir, path)
 		if err != nil {
 			return err
 		}
-		// Skip staging directories.
-		if strings.HasPrefix(filepath.Base(rel), ".tmp-") {
+		if isMaterializeTransactionFile(filepath.Base(rel)) {
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
 		if _, ok := artifactPaths[relSlash]; !ok {
-			stale = append(stale, relSlash)
+			candidate, snapshotErr := snapshotStaleFileCandidate(path, relSlash)
+			if snapshotErr != nil {
+				if os.IsNotExist(snapshotErr) {
+					return nil
+				}
+				return snapshotErr
+			}
+			stale = append(stale, candidate)
 		}
 		return nil
 	})
@@ -983,23 +1084,42 @@ func findStaleFiles(outDir string, artifactPaths map[string]struct{}) ([]string,
 		}
 		return nil, err
 	}
-	sort.Strings(stale)
+	sort.Slice(stale, func(i, j int) bool { return stale[i].Path < stale[j].Path })
 	return stale, nil
 }
 
-// cleanEmptyDirs removes empty parent directories of relPath from outDir upward.
-func cleanEmptyDirs(outDir, relPath string) {
+// cleanEmptyDirs removes empty parent directories of relPath from outDir
+// upward, but only while each directory still has the inode captured during
+// stale discovery. This prevents a root or parent replacement from turning
+// post-prune cleanup into a deletion of a user's replacement tree.
+func cleanEmptyDirs(outDir, relPath string, parents []staleParentSnapshot) {
 	parts := strings.Split(relPath, "/")
 	for i := len(parts); i >= 1; i-- {
 		dirPath := filepath.Join(outDir, filepath.FromSlash(strings.Join(parts[:i], "/")))
 		if dirPath == outDir {
 			break
 		}
+		current, err := os.Lstat(dirPath)
+		if err != nil {
+			break
+		}
+		var expected fs.FileInfo
+		for _, parent := range parents {
+			if parent.path == dirPath {
+				expected = parent.info
+				break
+			}
+		}
+		if expected == nil || !current.IsDir() || current.Mode()&os.ModeSymlink != 0 || !os.SameFile(expected, current) {
+			break
+		}
 		entries, err := os.ReadDir(dirPath)
 		if err != nil || len(entries) > 0 {
 			break
 		}
-		_ = os.Remove(dirPath)
+		if err := os.Remove(dirPath); err != nil {
+			break
+		}
 	}
 }
 
@@ -1099,6 +1219,15 @@ type WriteReport struct {
 	// PruneSuppressed is true when pruning was requested but not performed
 	// because the result was partial. Removed is empty in that case.
 	PruneSuppressed bool
+
+	// StaleCandidates carries the no-follow identity snapshots captured during
+	// stale discovery. A delayed publisher must revalidate these candidates
+	// before removing them.
+	StaleCandidates []StaleFileCandidate
+
+	// PruneConflicts lists stale paths preserved because their identity or bytes
+	// changed after discovery.
+	PruneConflicts []string
 }
 
 type MergeFileReport struct {

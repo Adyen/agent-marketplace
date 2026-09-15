@@ -26,6 +26,13 @@ func MergeFragments(artifacts []Artifact) ([]Artifact, error) {
 	var result []Artifact
 
 	for _, a := range artifacts {
+		// Explicit policies are validated here; legacy compatibility metadata is
+		// validated by Materialize after duplicate-path coalescing.
+		if a.Reconciliation != (ReconciliationPolicy{}) {
+			if err := a.ValidatePolicy(); err != nil {
+				return nil, fmt.Errorf("validating artifact %q: %w", a.Path, err)
+			}
+		}
 		if !a.Fragment {
 			result = append(result, a)
 			continue
@@ -38,14 +45,36 @@ func MergeFragments(artifacts []Artifact) ([]Artifact, error) {
 			return nil, fmt.Errorf("merging fragments for %q: %w", path, err)
 		}
 		fragmentKey := fragments[0].FragmentKey
+		policy, err := fragments[0].Policy()
+		if err != nil {
+			return nil, fmt.Errorf("merging fragments for %q: %w", path, err)
+		}
+		hasExplicitPolicy := fragments[0].Reconciliation != (ReconciliationPolicy{})
 		for _, fragment := range fragments[1:] {
 			if fragment.FragmentKey != fragmentKey {
 				return nil, fmt.Errorf("merging fragments for %q: fragments have different FragmentKey values %q and %q", path, fragmentKey, fragment.FragmentKey)
 			}
+			other, policyErr := fragment.Policy()
+			if policyErr != nil {
+				return nil, fmt.Errorf("merging fragments for %q: %w", path, policyErr)
+			}
+			if other != policy {
+				return nil, fmt.Errorf("merging fragments for %q: fragments have incompatible reconciliation policies", path)
+			}
+			hasExplicitPolicy = hasExplicitPolicy || fragment.Reconciliation != (ReconciliationPolicy{})
 		}
 		merged, err := mergeGroup(path, fragments)
 		if err != nil {
 			return nil, fmt.Errorf("merging fragments for %q: %w", path, err)
+		}
+		if hasExplicitPolicy {
+			// Preserve the typed decision on the aggregate. In particular, an
+			// external policy must not disappear during fragment coalescing and
+			// later be mistaken for a legacy marker merge.
+			merged.Reconciliation = policy
+		}
+		if policy.Mode != ReconciliationReplace {
+			merged.MergeWithExisting = true
 		}
 		result = append(result, merged)
 	}

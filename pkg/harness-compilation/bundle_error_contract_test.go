@@ -339,9 +339,57 @@ func TestDevinRuleIsALossyButCleanCompile(t *testing.T) {
 	}
 }
 
+func ordinaryArtifactsOnly(t *testing.T, result *Result) (*Result, bool) {
+	t.Helper()
+	ordinary := &Result{Diagnostics: result.Diagnostics, Skipped: result.Skipped}
+	hasExternal := false
+	for _, candidate := range result.Artifacts {
+		policy, err := candidate.Policy()
+		if err != nil {
+			t.Fatalf("artifact %q policy: %v", candidate.Path, err)
+		}
+		if policy.IsExternal() {
+			hasExternal = true
+			continue
+		}
+		ordinary.Artifacts = append(ordinary.Artifacts, candidate)
+	}
+	return ordinary, hasExternal
+}
+
+func stageExternalArtifacts(t *testing.T, result *Result, outDir string) {
+	t.Helper()
+	for _, candidate := range result.Artifacts {
+		policy, err := candidate.Policy()
+		if err != nil {
+			t.Fatalf("artifact %q policy: %v", candidate.Path, err)
+		}
+		if !policy.IsExternal() {
+			continue
+		}
+		if err := candidate.Validate(); err != nil {
+			t.Fatalf("validate external artifact %q: %v", candidate.Path, err)
+		}
+		path := filepath.Join(outDir, filepath.FromSlash(candidate.Path))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create external artifact directory %q: %v", filepath.Dir(path), err)
+		}
+		mode := candidate.Mode
+		if mode == 0 {
+			mode = 0o644
+		}
+		if err := os.WriteFile(path, candidate.Bytes, mode); err != nil {
+			t.Fatalf("write external artifact %q: %v", candidate.Path, err)
+		}
+	}
+}
+
 // TestBundleErrorContract_MaterializesPartialResults is the disk half of the
 // same table: the valid resources' bytes land, the failing resources' paths do
-// not, pruning is held back, and the caller is told the run was partial.
+// not, pruning is held back, and the caller is told the run was partial. A
+// result containing an externally reconciled aggregate is checked separately:
+// generic Materialize must refuse it, while its ordinary artifacts retain the
+// partial-result contract.
 func TestBundleErrorContract_MaterializesPartialResults(t *testing.T) {
 	for _, tt := range bundleErrorCases() {
 		t.Run(tt.name, func(t *testing.T) {
@@ -350,10 +398,11 @@ func TestBundleErrorContract_MaterializesPartialResults(t *testing.T) {
 				t.Fatalf("compileBundleFromIR(%s): %v", tt.target, err)
 			}
 
+			ordinary, hasExternal := ordinaryArtifactsOnly(t, result)
 			outDir := t.TempDir()
-			report, err := Materialize(result, outDir, WithWriteMode(WriteModeSync), WithPruneStale(true))
+			report, err := Materialize(ordinary, outDir, WithWriteMode(WriteModeSync), WithPruneStale(true))
 			if !errors.Is(err, ErrPartialResult) {
-				t.Fatalf("Materialize error = %v, want ErrPartialResult", err)
+				t.Fatalf("Materialize ordinary artifacts error = %v, want ErrPartialResult", err)
 			}
 			if !report.Partial {
 				t.Error("report.Partial = false, want true")
@@ -363,6 +412,21 @@ func TestBundleErrorContract_MaterializesPartialResults(t *testing.T) {
 			}
 			if len(report.SkippedResources) != len(tt.wantSkipped) {
 				t.Errorf("report.SkippedResources = %+v, want %d entries", report.SkippedResources, len(tt.wantSkipped))
+			}
+
+			if hasExternal {
+				refusedDir := t.TempDir()
+				if _, err := Materialize(result, refusedDir, WithWriteMode(WriteModeSync), WithPruneStale(true)); !errors.Is(err, ErrExternalReconciliationRequired) {
+					t.Fatalf("Materialize external aggregate error = %v, want %v", err, ErrExternalReconciliationRequired)
+				}
+				entries, readErr := os.ReadDir(refusedDir)
+				if readErr != nil {
+					t.Fatalf("read refused materialization directory: %v", readErr)
+				}
+				if len(entries) != 0 {
+					t.Fatalf("Materialize wrote %d entries before refusing external reconciliation", len(entries))
+				}
+				stageExternalArtifacts(t, result, outDir)
 			}
 
 			for path, wantBytes := range tt.wantArtifacts {
