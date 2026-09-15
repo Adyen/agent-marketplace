@@ -391,6 +391,21 @@ type runConfig struct {
 	dryRun      bool
 	scopeFilter *bool // nil = all scopes; true = machine only; false = repo only
 	modes       config.MaterializationModes
+	pruneFences []PruneFence
+}
+
+// PruneFence preserves managed output for one target/scope/resource-kind
+// partition whose selected resource could not be materialized.
+type PruneFence struct {
+	Target       hcc.Target
+	MachineScope bool
+	Kind         ir.ResourceKind
+}
+
+// WithPruneFences preserves affected target/scope/component partitions while
+// allowing unrelated valid partitions to materialize and prune normally.
+func WithPruneFences(fences []PruneFence) RunOption {
+	return func(c *runConfig) { c.pruneFences = append([]PruneFence(nil), fences...) }
 }
 
 // WithMaterializationModes supplies the already-resolved scope policy. Keeping
@@ -452,16 +467,33 @@ func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
 }
 
 // Run compiles and materializes the given resolved skills into their
-// per-target install roots. It groups skills by hcc.Target (defaulting
-// to [TargetClaude] when Harnesses is nil), calls hcc.Compile per-skill-
-// per-target, merges fragments, then calls hcc.Materialize with
-// WriteModeSync and prune-stale enabled.
+// explicit per-target install roots. It groups skills by hcc.Target, calls
+// hcc.Compile per-skill-per-target, merges fragments, then calls hcc.Materialize
+// with WriteModeSync and prune-stale enabled.
 //
-// Skills with Resource==nil are skipped with a warning diagnostic.
+// invalidTargetIntent rejects artifacts whose target partition is unspecified.
+func invalidTargetIntent(resolved []resolver.ResolvedArtifact) *diag.Diagnostic {
+	for _, resource := range resolved {
+		if resource.Harnesses != nil {
+			continue
+		}
+		return &diag.Diagnostic{
+			Code:     "materialize.target.nil",
+			Severity: diag.SeverityError,
+			Resource: resource.Name,
+			Message:  fmt.Sprintf("resource %q has no explicit target intent; refusing materialization", resource.Name),
+		}
+	}
+	return nil
+}
+
 func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, opts ...RunOption) (*Report, error) {
 	start := time.Now()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if diagnostic := invalidTargetIntent(resolved); diagnostic != nil {
+		return &Report{PerTarget: make(map[hcc.Target]TargetReport), Diags: []diag.Diagnostic{*diagnostic}}, nil
 	}
 
 	var rc runConfig
@@ -474,7 +506,9 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	// Phase 1: Group skills by target and track all output keys.
 	work, allOutputs, blocked, allDiags := buildWorkItems(resolved, repoRoot)
-	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "diagnostics", len(allDiags))
+	aggregateFences := make(map[outputKey]map[ir.ResourceKind]bool)
+	applyPruneFences(allOutputs, blocked, aggregateFences, rc.pruneFences)
+	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "prune_fences", len(rc.pruneFences), "aggregate_fences", len(aggregateFences), "diagnostics", len(allDiags))
 
 	// Apply scope filter: remove output keys that don't match the requested scope.
 	if rc.scopeFilter != nil {
@@ -488,6 +522,11 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 				delete(blocked, key)
 			}
 		}
+		for key := range aggregateFences {
+			if key.machineScope != *rc.scopeFilter {
+				delete(aggregateFences, key)
+			}
+		}
 		filtered := work[:0]
 		for _, w := range work {
 			if w.machineScope == *rc.scopeFilter {
@@ -498,7 +537,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	}
 
 	// Phase 2: Compile each work item and collect artifacts per target.
-	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, repoRoot)
+	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, aggregateFences, repoRoot)
 	slog.Debug("materialize compile complete", "targets", len(compileResult.byTarget), "diagnostics", len(compileResult.allDiags))
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
@@ -511,8 +550,33 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	return report, nil
 }
 
-// buildWorkItems groups resolved skills by target and identifies all output
-// keys (including empty targets that need pruning).
+// applyPruneFences adds narrow component or aggregate-file prune protection
+// for selections present but malformed during resolution. It only fences
+// outputs that already exist.
+func applyPruneFences(allOutputs map[outputKey]bool, blocked blockedOutputs, aggregateFences map[outputKey]map[ir.ResourceKind]bool, fences []PruneFence) {
+	for _, fence := range fences {
+		if fence.Target == "" {
+			continue
+		}
+		key := outputKey{target: fence.Target, machineScope: fence.MachineScope}
+		// buildWorkItems already discovers existing output roots and native
+		// aggregate keys. A fence must never create a new empty root merely
+		// because a malformed selection named its partition.
+		if !allOutputs[key] {
+			continue
+		}
+		blocked.mark(key, blockedComponentsForKind(key, fence.Kind, true)...)
+		if handler := ownedAggregateHandlerFor(key.target); handler != nil && len(handler.aggregateRels(fence.Kind, key.machineScope)) > 0 {
+			kinds := aggregateFences[key]
+			if kinds == nil {
+				kinds = make(map[ir.ResourceKind]bool)
+				aggregateFences[key] = kinds
+			}
+			kinds[fence.Kind] = true
+		}
+	}
+}
+
 func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
 	var work []skillTarget
 	var allDiags []diag.Diagnostic
@@ -526,9 +590,6 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 			continue
 		}
 		targets := s.Harnesses
-		if targets == nil {
-			targets = []hcc.Target{hcc.TargetClaude}
-		}
 		if len(targets) == 0 {
 			continue
 		}
@@ -558,15 +619,39 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 		}
 	}
 
-	// Include previously materialized targets even when they have no
-	// resolved artifacts in this run, so stale managed files get pruned.
-	addExistingOutputKeys(repoRoot, allOutputs)
-	addExistingNativeAggregateKeys(repoRoot, allOutputs)
-	// A file-mode manifest may be the only remaining record after a harness
-	// root is deleted. Include its known targets so deinit can still process
-	// that state instead of silently skipping it.
-	addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
-	addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
+	// Include previously materialized targets for cleanup when the
+	// resolved list is empty or contains a non-empty target intent. Explicit
+	// empty intents fence only the sibling target+scope partitions that have no
+	// non-empty intent in this run; valid non-empty siblings must still prune.
+	nonEmptyIntentKeys := make(map[outputKey]bool)
+	hasNonEmptyIntent := false
+	emptyIntentScopes := make(map[bool]bool)
+	for _, resource := range resolved {
+		if resource.Harnesses != nil && len(resource.Harnesses) == 0 {
+			emptyIntentScopes[resource.Source.IsMachineScope()] = true
+		}
+		if resource.Unresolved || len(resource.Harnesses) == 0 {
+			continue
+		}
+		hasNonEmptyIntent = true
+		for _, target := range resource.Harnesses {
+			nonEmptyIntentKeys[outputKey{target: target, machineScope: resource.Source.IsMachineScope()}] = true
+		}
+	}
+	if hasNonEmptyIntent || len(resolved) == 0 {
+		addExistingOutputKeys(repoRoot, allOutputs)
+		addExistingNativeAggregateKeys(repoRoot, allOutputs)
+		// A file-mode manifest may be the only remaining record after a harness
+		// root is deleted. Include its known targets so deinit can still process
+		// that state instead of silently skipping it.
+		addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
+		addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
+		for key := range allOutputs {
+			if emptyIntentScopes[key.machineScope] && !nonEmptyIntentKeys[key] {
+				blocked.blockAll(key)
+			}
+		}
+	}
 
 	return work, allOutputs, blocked, allDiags
 }
@@ -692,12 +777,13 @@ func outputDirExists(path string) bool {
 
 // compileWorkItems compiles each skill-target pair, splits artifacts by kind,
 // and groups results by output key.
-func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs map[outputKey]bool, blocked blockedOutputs, repoRoot string) compilePhaseResult {
+func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs map[outputKey]bool, blocked blockedOutputs, aggregateFences map[outputKey]map[ir.ResourceKind]bool, repoRoot string) compilePhaseResult {
 	byTarget := make(map[outputKey]*targetWork)
 	skillLinks := make(map[outputKey]map[string]*skillLinkGroup)
 	artifactMeta := make(map[outputKey]map[string]skillLink)
 	ownedState := make(map[outputKey]any)
 	ownedAggregates := ownedAggregateState{values: ownedState}
+	markOwnedAggregateFences(ownedAggregates, aggregateFences)
 
 	for _, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
@@ -935,6 +1021,22 @@ func usesSkillDir(target hcc.Target, kind ir.ResourceKind) bool {
 		return kind == ir.KindSkill
 	}
 	return info.UsesSkillDir(kind)
+}
+
+// markOwnedAggregateFences carries resolver-level malformed selections into
+// the ownership reconciler. Such a selection has no work item to reach the
+// compile-time skip paths, but its aggregate contribution is still incomplete
+// and must not make a stale owned entry look removed from configuration.
+func markOwnedAggregateFences(state ownedAggregateState, fences map[outputKey]map[ir.ResourceKind]bool) {
+	for key, kinds := range fences {
+		handler := ownedAggregateHandlerFor(key.target)
+		if handler == nil {
+			continue
+		}
+		for kind := range kinds {
+			handler.markIncomplete(state, key, kind)
+		}
+	}
 }
 
 // markOwnedAggregateIncomplete records that a skipped resource may have

@@ -966,6 +966,27 @@ func TestExplicitPathMemberFiltersLocalExcludesAndHarnessesBeforePreference(t *t
 	}
 }
 
+func TestVersionedCollectionCycleReportsBackEdgeBeforeRepeatedExpansion(t *testing.T) {
+	root := ir.NewCollection("root", "1.0.0", "root", nil, []string{"root", "missing"}, nil, ir.SourceRef{})
+	cfg := &config.Config{Registries: []config.RegistryEntry{{URL: collectionsHost, Ref: "main", Collections: ks("root")}}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "root", Resource: root}}}
+
+	_, errs := Resolve(cfg, catalogs, nil)
+	var cycles, missing int
+	for _, err := range errs {
+		if strings.Contains(err.Error(), "cycle detected") {
+			cycles++
+		}
+		if strings.Contains(err.Error(), `includes "missing" which was not found`) {
+			missing++
+		}
+	}
+	if cycles != 1 || missing != 1 {
+		t.Fatalf("versioned cycle diagnostics = %v, want one cycle back-edge and one independent missing include", errs)
+	}
+}
+
 func TestSharedNestedCollectionIsNotReportedAsCycle(t *testing.T) {
 	root := ir.NewCollection("root", "1.0.0", "root", nil, []string{"left", "right"}, nil, ir.SourceRef{})
 	left := ir.NewCollection("left", "1.0.0", "left", nil, []string{"shared"}, nil, ir.SourceRef{})
