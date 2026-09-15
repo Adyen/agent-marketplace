@@ -1,0 +1,60 @@
+{{- include "agent-marketplace.validate" . -}}
+{{- if or (eq .Values.mode "all") .Values.api.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "api") }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.service.api.type }}
+  selector:
+    {{- include "agent-marketplace.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ include "agent-marketplace.apiComponent" . }}
+  ports:
+    - name: http
+      port: {{ .Values.service.api.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+{{- if .Values.web.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "web") }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.service.web.type }}
+  selector:
+    {{- include "agent-marketplace.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: {{ .Values.service.web.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+{{- if .Values.site.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "site") }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: site
+spec:
+  type: {{ .Values.service.site.type }}
+  selector:
+    {{- include "agent-marketplace.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: site
+  ports:
+    - name: http
+      port: {{ .Values.service.site.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

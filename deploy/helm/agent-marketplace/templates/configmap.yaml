@@ -1,0 +1,12 @@
+{{- include "agent-marketplace.validate" . -}}
+{{- if and .Values.config.enabled (not .Values.config.existingConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agent-marketplace.configMapName" . }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+{{ .Values.config.content | nindent 4 }}
+{{- end }}

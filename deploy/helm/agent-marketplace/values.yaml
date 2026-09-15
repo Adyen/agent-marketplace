@@ -1,0 +1,244 @@
+mode: split
+
+image:
+  repository: agent-marketplace
+  tag: latest
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+
+terminationGracePeriodSeconds: 30
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+extraVolumes: []
+extraVolumeMounts: []
+
+config:
+  enabled: true
+  existingConfigMap: ""
+  mountPath: /etc/agent-marketplace/config.yaml
+  content: |
+    apiVersion: agent-marketplace.io/marketplace/v1
+    instance:
+      id: example-marketplace
+      name: Example Agent Marketplace
+      canonical_url: https://marketplace.example.invalid
+    listen: 0.0.0.0:8080
+    operations_listen: 0.0.0.0:9090
+    storage:
+      metadata:
+        driver: sqlite
+        dsn: /var/lib/agent-marketplace/marketplace.db
+      blobs:
+        driver: filesystem
+        path: /var/lib/agent-marketplace/blobs
+    registries: []
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  storageClassName: ""
+  mountPath: /var/lib/agent-marketplace
+
+storage:
+  dsnSecret:
+    name: ""
+    key: dsn
+    envName: MARKETPLACE_POSTGRES_DSN
+
+api:
+  enabled: true
+  replicas: 1
+  image: {}
+  args:
+    - serve
+    - --config
+    - /etc/agent-marketplace/config.yaml
+    - --role
+    - api
+  env: []
+  envFrom: []
+  resources: {}
+  probes:
+    liveness:
+      enabled: true
+      path: /healthz
+      port: http
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      enabled: true
+      path: /readyz
+      port: operations
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+worker:
+  enabled: true
+  replicas: 1
+  image: {}
+  args:
+    - serve
+    - --config
+    - /etc/agent-marketplace/config.yaml
+    - --role
+    - worker
+  env: []
+  envFrom: []
+  resources: {}
+  probes:
+    liveness:
+      enabled: false
+    readiness:
+      enabled: false
+
+all:
+  replicas: 1
+  image: {}
+  args:
+    - serve
+    - --config
+    - /etc/agent-marketplace/config.yaml
+    - --role
+    - all
+  env: []
+  envFrom: []
+  resources: {}
+  probes:
+    liveness:
+      enabled: true
+      path: /healthz
+      port: http
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      enabled: true
+      path: /readyz
+      port: operations
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+web:
+  enabled: false
+  replicas: 1
+  image:
+    repository: agent-marketplace-web
+    tag: latest
+    digest: ""
+    pullPolicy: IfNotPresent
+  basePath: /marketplace/
+  publicApiBase: /
+  env: []
+  envFrom: []
+  resources: {}
+  probes:
+    liveness:
+      enabled: true
+      path: /
+      port: http
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      enabled: true
+      path: /
+      port: http
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+site:
+  enabled: false
+  replicas: 1
+  image:
+    repository: agent-marketplace-site
+    tag: latest
+    digest: ""
+    pullPolicy: IfNotPresent
+  env: []
+  envFrom: []
+  resources: {}
+  probes:
+    liveness:
+      enabled: true
+      path: /
+      port: http
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      enabled: true
+      path: /
+      port: http
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+service:
+  api:
+    type: ClusterIP
+    port: 8080
+  web:
+    type: ClusterIP
+    port: 3000
+  site:
+    type: ClusterIP
+    port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  tls: []
+  hosts: []
+
+networkPolicy:
+  enabled: false
+  allowSameNamespace: true
+  ingressNamespaces: []
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  additionalLabels: {}

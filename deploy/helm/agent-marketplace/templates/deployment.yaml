@@ -1,0 +1,20 @@
+{{- include "agent-marketplace.validate" . -}}
+{{- if eq .Values.mode "all" }}
+{{ include "agent-marketplace.deployment" (dict "root" . "role" "all" "component" .Values.all) }}
+{{- else }}
+{{- if .Values.api.enabled }}
+{{ include "agent-marketplace.deployment" (dict "root" . "role" "api" "component" .Values.api) }}
+{{- end }}
+{{- if .Values.worker.enabled }}
+---
+{{ include "agent-marketplace.deployment" (dict "root" . "role" "worker" "component" .Values.worker) }}
+{{- end }}
+{{- end }}
+{{- if .Values.web.enabled }}
+---
+{{ include "agent-marketplace.deployment" (dict "root" . "role" "web" "component" .Values.web) }}
+{{- end }}
+{{- if .Values.site.enabled }}
+---
+{{ include "agent-marketplace.deployment" (dict "root" . "role" "site" "component" .Values.site) }}
+{{- end }}
