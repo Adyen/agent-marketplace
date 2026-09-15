@@ -1,10 +1,12 @@
 package pipeline
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/Adyen/agent-marketplace/internal/diagnosticidentity"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -21,21 +23,19 @@ import (
 // line. Their sum is the guaranteed bound on a rendered line.
 const (
 	maxDiagMessageLen  = 1024
+	maxDiagCodeLen     = 256
 	maxDiagResourceLen = 256
 	maxDiagSourceLen   = 256
 	maxDiagHintLen     = 512
-	diagTruncatedMark  = "…(truncated)"
+	maxDiagIdentityLen = 4096
 )
 
-// diagIssue is the error value a materialize diagnostic is promoted to,
-// whatever its severity. ONE type serves the warning and the error path on
-// purpose: bead agent-marketplace-oc2r exists because they had diverged —
-// warnings kept d.Resource and were deduplicated, while errors were flattened
-// with fmt.Errorf("%s: %s", d.Code, d.Message) and printed once per occurrence.
-// A beta tester's sync therefore printed three byte-identical lines for three
-// DIFFERENT skills, and neither they nor support could tell which of ~40
-// selected resources were at fault. Any future divergence has to be a
-// deliberate second type, not an accident of two call sites.
+// diagIssue is the error value used for generic HCC diagnostics, whatever
+// their severity. ONE type serves the warning and error paths on purpose: it
+// keeps resource, source, hint, and the full dedup identity consistent for
+// every caller of PromoteDiagnostic. Structured materialization report issues
+// use their own projection so output scope/root context is not smuggled into
+// the generic HCC Diagnostic model.
 //
 // What the rendered line may contain is not a style choice. The reporting
 // policy in pkg/harness-compilation/diag/codes.go (see the Devin ingest and
@@ -68,22 +68,30 @@ type diagIssue struct {
 // ONCE and threaded into the message rather than formatted again there
 // (BenchmarkNewDiagIssue is the guard).
 func newDiagIssue(d diag.Diagnostic) *diagIssue {
+	code := sanitizeDiagText(d.Code, maxDiagCodeLen)
 	source := sanitizeDiagText(formatDiagSource(d.Source), maxDiagSourceLen)
 	resource := sanitizeDiagText(d.Resource, maxDiagResourceLen)
 	message := sanitizeDiagText(d.Message, maxDiagMessageLen)
 	hint := sanitizeDiagText(d.Hint, maxDiagHintLen)
 	issue := &diagIssue{
-		code:             d.Code,
+		code:             code,
 		resource:         resource,
 		source:           source,
 		hint:             hint,
-		msg:              renderDiagMessage(d.Code, message, resource, source),
+		msg:              renderDiagMessage(code, message, resource, source),
 		message:          message,
-		presentationText: renderDiagMessage(d.Code, message, "", ""),
+		presentationText: renderDiagMessage(code, message, "", ""),
 	}
 	issue.key = diagDedupKey(d, issue)
-	if d.Code != "" && resource != "" {
-		issue.presentationKey = strings.Join([]string{d.Code, strings.ReplaceAll(d.Hint, "\x00", ""), normalizeDiagMessageForKey(d.Message)}, "\x00")
+	if code != "" && resource != "" {
+		presentationIdentity := diagnosticidentity.Canonical(
+			diagnosticidentity.Field{Label: "code", Value: diagnosticidentity.FullText(d.Code)},
+			diagnosticidentity.Field{Label: "hint", Value: diagnosticidentity.FullText(d.Hint)},
+			diagnosticidentity.Field{Label: "message", Value: diagnosticidentity.NormalizeMessage(diagnosticidentity.FullText(d.Message))},
+		)
+		// PresentationText is the bounded display form; the grouping identity
+		// must not retain an arbitrarily large registry message either.
+		issue.presentationKey = hashedDiagIdentity(presentationIdentity)
 	}
 	return issue
 }
@@ -91,36 +99,63 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 // diagDedupKey computes the identity described on DedupKey.
 //
 // The structured key carries the message with target-specific absolute paths
-// folded away (normalizeDiagMessageForKey). The FULL, untruncated message is
+// folded away by diagnosticidentity.NormalizeMessage. The FULL, untruncated message is
 // used, never issue.msg: two 8 KB messages that differ only past the render
 // budget are still two different failures, and keying on the truncated render
 // would collapse them.
 //
-// The fallback is issue.msg — the rendered line — because that is exactly what
-// the pre-diagIssue code deduplicated on for a diagnostic with no resource, and
-// TestDiagIssueDedupKeyKeepsResourcelessDiagnosticsApart pins the equivalence.
+// Every identity field is full, sanitized, and explicitly framed. Target and
+// severity are always present, including empty/default values, without entering
+// the user-facing line. Long identities use a stable digest so hostile registry
+// content cannot grow memory or output bounds.
 func diagDedupKey(d diag.Diagnostic, issue *diagIssue) string {
-	if d.Code == "" || issue.resource == "" {
-		return issue.msg
+	fullIdentity := diagnosticidentity.Canonical(
+		diagnosticidentity.Field{Label: "code", Value: diagnosticidentity.FullText(d.Code)},
+		diagnosticidentity.Field{Label: "resource", Value: diagnosticidentity.FullText(d.Resource)},
+		diagnosticidentity.Field{Label: "source.file", Value: diagnosticidentity.FullText(d.Source.File)},
+		diagnosticidentity.Field{Label: "source.line", Value: strconv.Itoa(d.Source.Line)},
+		diagnosticidentity.Field{Label: "hint", Value: diagnosticidentity.FullText(d.Hint)},
+		// Path normalization is intentionally scoped to this one identity
+		// component; producer-provided scope/root fields are not involved here.
+		diagnosticidentity.Field{Label: "message", Value: diagnosticidentity.NormalizeMessage(diagnosticidentity.FullText(d.Message))},
+		diagnosticidentity.Field{Label: "target", Value: diagnosticidentity.FullText(d.Target)},
+		diagnosticidentity.Field{Label: "severity", Value: strconv.Itoa(int(d.Severity))},
+	)
+	// Preserve the historical resource-less default fallback's rendered key,
+	// while every non-default target/severity value still gets an explicit
+	// framed identity. Structured diagnostics always use all framed fields.
+	if issue.code == "" || issue.resource == "" {
+		if d.Target == "" && d.Severity == diag.SeverityError {
+			return boundedDiagIdentity(renderDiagMessage(issue.code, diagnosticidentity.FullText(d.Message), issue.resource, issue.source))
+		}
 	}
-	return strings.Join([]string{
-		d.Code,
-		issue.resource,
-		issue.source,
-		strings.ReplaceAll(d.Hint, "\x00", ""),
-		normalizeDiagMessageForKey(d.Message),
-	}, "\x00")
+	return hashedDiagIdentity(fullIdentity)
+}
+
+func hashedDiagIdentity(identity string) string {
+	sum := sha256.Sum256([]byte(identity))
+	parts := make([]string, 0, 4)
+	for offset := 0; offset < len(sum); offset += 8 {
+		parts = append(parts, strconv.FormatUint(binary.BigEndian.Uint64(sum[offset:offset+8]), 10))
+	}
+	return strings.Join(parts, ":")
+}
+
+func boundedDiagIdentity(identity string) string {
+	if len(identity) <= maxDiagIdentityLen {
+		return identity
+	}
+	return hashedDiagIdentity(identity)
 }
 
 // PromoteDiagnostic is the ONE way anything outside this package turns a
-// materialize diagnostic into an error value.
+// generic HCC diagnostic into an error value.
 //
-// It exists because "one type serves both severities" (see diagIssue) was only
-// half true: Sync went through diagIssue while internal/tui's update path kept
-// its own fmt.Errorf("%s: %s", d.Code, d.Message), so the TUI still printed the
-// anonymous, resource-less, hint-less lines bead agent-marketplace-oc2r exists
-// to remove. Exporting the promotion is what makes the invariant enforceable
-// instead of aspirational.
+// It exists because "one type serves both severities" (see diagIssue) must be
+// enforced at the generic HCC boundary. Sync and TUI use this promotion for
+// compiler-owned diagnostics; materialization-owned report issues instead use
+// Report.SurfaceIssues and FormatIssue so their output-root context remains
+// structured without extending the generic HCC Diagnostic model.
 func PromoteDiagnostic(d diag.Diagnostic) error { return newDiagIssue(d) }
 
 // DedupIssues drops later occurrences of the same underlying problem while
@@ -179,7 +214,7 @@ func (i *diagIssue) Remediation() string { return i.hint }
 // same-named command apart, since both report skill.devin.tool-unknown.
 //
 // The message is part of the key with ABSOLUTE PATHS FOLDED AWAY
-// (normalizeDiagMessageForKey). Both halves of that sentence are load-bearing
+// (diagnosticidentity.NormalizeMessage). Both halves of that sentence are load-bearing
 // and each fixes a different failure mode:
 //
 //   - Excluding the message entirely under-reports. Several emitters build the
@@ -201,17 +236,12 @@ func (i *diagIssue) Remediation() string { return i.hint }
 //     only part of a message that is a property of the OUTPUT ROOT rather than
 //     of the failure.
 //
-// KNOWN GAP (bead agent-marketplace-oc2r, adversarial review): folding absolute
-// paths means two diagnostics whose messages differ ONLY by an absolute path
-// still collapse. That is right for a marketplace resource reported once per
-// target, and wrong for the consumer-side emitters whose Resource is itself an
-// output-root-relative FILE PATH — internal/materialize's managedMergePruneDiag
-// names `settings.json` for both `<repo>/.claude/settings.json` and
-// `~/.claude/settings.json`. Those are two files, two failures and one printed
-// line. diag.Diagnostic carries no output-scope field, so the distinction does
-// not exist at this layer and the fix belongs in the emitter, which must make
-// the scope part of the diagnostic's identity.
-// TestDiagIssueKeepsSameFileInTwoOutputScopesApart is the skipped repro.
+// Absolute paths are intentionally folded in generic HCC diagnostic identity:
+// they describe an output root rather than a distinct compiler failure. The
+// materialization producer supplies scope/root identity through
+// MaterializationIssue instead, so same-relative-file failures in project and
+// machine roots remain distinct in Report.SurfaceIssues.
+// TestDiagIssueKeepsSameFileInTwoOutputScopesApart pins that boundary.
 //
 // The HINT is part of the key too. One code can cover two materially
 // different failures of the same resource at the same source location: the
@@ -287,144 +317,9 @@ func formatDiagSource(source diag.SourceRef) string {
 	return source.File
 }
 
-// sanitizeDiagText makes one registry-supplied field safe to put on a terminal
-// line, and bounds it.
-//
-// `sync` prints `Errors N` and then one line per error (errors.Join separates
-// with "\n"). The user, `e2e`'s OutContains assertions and support reading a
-// pasted transcript all count lines. Message and Source.File reach the rendered
-// line UNQUOTED — Resource goes through strconv.Quote and is already safe — so a
-// newline in either forges an extra line, and a forged line can carry a
-// convincing `Error:` or `warning:` prefix and claim a failure that never
-// happened or downgrade one that did. A carriage return does the same thing
-// invisibly by rewriting the line in place.
-//
-// Unicode bidi controls (RLO and friends) are dropped rather than escaped: they
-// reorder the glyphs AROUND them, so leaving one in a message lets a registry
-// make `resource "alpha"` render as some other resource's name.
-//
-// Nothing here can add information: it only removes bytes the diagnostic policy
-// never authorized a field to carry.
+// sanitizeDiagText is kept as the pipeline-local name for the shared
+// diagnostic policy. Materialization reports use the same implementation so
+// identity and command output cannot disagree about hostile bytes or bounds.
 func sanitizeDiagText(s string, limit int) string {
-	if s == "" {
-		return ""
-	}
-	if !needsDiagSanitizing(s) {
-		return truncateDiagText(s, limit)
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case isDiagBidiControl(r):
-			// Dropped entirely; see above.
-		case r == utf8.RuneError, r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
-			b.WriteByte(' ')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return truncateDiagText(b.String(), limit)
-}
-
-// needsDiagSanitizing is the fast path: almost every diagnostic in a real run
-// is printable ASCII, and this runs three times per diagnostic on every sync
-// (BenchmarkNewDiagIssue is the guard). It therefore scans BYTES, not runes, and
-// only pays for a rune decode once it leaves ASCII. UTF-8 continuation bytes are
-// always >= 0x80, so the single-byte C0/DEL test can never fire inside a
-// multi-byte character.
-func needsDiagSanitizing(s string) bool {
-	for i := 0; i < len(s); i++ {
-		b := s[i]
-		if b < 0x20 || b == 0x7f {
-			return true
-		}
-		if b >= 0x80 {
-			r, size := utf8.DecodeRuneInString(s[i:])
-			if r == utf8.RuneError || (r >= 0x80 && r <= 0x9f) || isDiagBidiControl(r) {
-				return true
-			}
-			i += size - 1
-		}
-	}
-	return false
-}
-
-// isDiagBidiControl reports whether r is one of the Unicode bidirectional
-// formatting characters: the embedding/override block U+202A..U+202E and the
-// isolate block U+2066..U+2069.
-func isDiagBidiControl(r rune) bool {
-	return (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069)
-}
-
-// truncateDiagText cuts s to at most limit bytes on a rune boundary and marks
-// the cut, so a reader can tell a truncated field from a short one.
-func truncateDiagText(s string, limit int) string {
-	if len(s) <= limit {
-		return s
-	}
-	cut := limit - len(diagTruncatedMark)
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + diagTruncatedMark
-}
-
-// diagKeyPathPlaceholder stands in for an absolute path inside a dedup key.
-const diagKeyPathPlaceholder = "<path>"
-
-// normalizeDiagMessageForKey folds absolute filesystem paths in a message to a
-// placeholder so the message can take part in the dedup identity without
-// re-expanding the cross-target collapse.
-//
-// An absolute path in a diagnostic message is always a property of the OUTPUT
-// ROOT the run is writing to (internal/materialize builds several messages with
-// fmt.Sprintf over an output directory), never of the failure itself: the same
-// resource failing the same way for two harnesses differs only there. Every
-// other part of a message — the field name, the tool name, the hook event,
-// the reason — is a property of the failure and stays in the key.
-//
-// Only whole space-delimited tokens are folded, and only after stripping the
-// punctuation Go's %q and English prose wrap them in, so a registry-relative
-// path such as `skills/alpha/SKILL.md` (no leading separator) is untouched.
-func normalizeDiagMessageForKey(message string) string {
-	if !strings.Contains(message, "/") && !strings.Contains(message, `\`) {
-		return message
-	}
-	fields := strings.Split(message, " ")
-	folded := false
-	for i, field := range fields {
-		lead := 0
-		for lead < len(field) && strings.IndexByte(`"'`+"`"+`(<[`, field[lead]) >= 0 {
-			lead++
-		}
-		trail := len(field)
-		for trail > lead && strings.IndexByte(`"'`+"`"+`)>],.:;`, field[trail-1]) >= 0 {
-			trail--
-		}
-		if !isAbsolutePathToken(field[lead:trail]) {
-			continue
-		}
-		fields[i] = field[:lead] + diagKeyPathPlaceholder + field[trail:]
-		folded = true
-	}
-	if !folded {
-		return message
-	}
-	return strings.Join(fields, " ")
-}
-
-// isAbsolutePathToken reports whether token is a POSIX absolute path, a Windows
-// drive-letter path, or a `~`-rooted home path.
-func isAbsolutePathToken(token string) bool {
-	switch {
-	case len(token) > 1 && token[0] == '/':
-		return true
-	case len(token) > 2 && token[0] == '~' && (token[1] == '/' || token[1] == '\\'):
-		return true
-	case len(token) > 2 && token[1] == ':' && (token[2] == '\\' || token[2] == '/'):
-		return true
-	default:
-		return false
-	}
+	return diag.SanitizeText(s, limit)
 }

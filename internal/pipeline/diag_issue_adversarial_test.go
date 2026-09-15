@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/materialize"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -11,54 +13,22 @@ import (
 // Attack 1: hide a real distinct failure behind the structured dedup key.
 // ---------------------------------------------------------------------------
 
-// TestDiagIssueKeepsSameFileInTwoOutputScopesApart is the under-reporting hole
-// the structured key opens for the CONSUMER-SIDE emitters.
-//
-// internal/materialize's managedMergePruneDiag reports a per-file prune refusal
-// with Resource AND Source.File both set to the OUTPUT-ROOT-RELATIVE path of the
-// offending file, an empty (or catalogue-constant) Hint, and a Message built
-// with fmt.Sprintf over the ABSOLUTE path. That function runs once per
-// outputKey, i.e. once per (target, machineScope) pair — and the same relative
-// name exists in both scopes: `<repo>/.claude/settings.json` and
-// `~/.claude/settings.json`, `<repo>/.cursor/mcp.json` and `~/.cursor/mcp.json`.
-//
-// Two SEPARATE files on disk, each with its own duplicate key, therefore produce
-// two diagnostics whose code, resource, source and hint are byte-identical and
-// whose messages differ only in the absolute path. The structured key collapses
-// them, `Errors N` counts one, and the user fixes the repo file, re-runs, and
-// meets the home file — the whack-a-mole this bead exists to end.
-//
-// KNOWN GAP, deliberately left failing-free by t.Skip rather than "fixed" by
-// weakening something else. The two diagnostics below are indistinguishable
-// from the pair TestDiagIssueDedupKeyIncludesResource requires to COLLAPSE (one
-// resource, one code, one source, one hint, messages differing only in an
-// absolute path) — including in Target, which is "devin" for both halves of
-// that fixture. The two requirements are therefore contradictory at this layer,
-// and no key computable from diag.Diagnostic can satisfy both.
-//
-// The fix belongs in internal/materialize: a diagnostic whose Resource is an
-// output-root-relative FILE PATH must carry the output scope in that identity
-// (retargetPruneDiags already rewrites Resource and Source.File and has
-// key.machineScope in hand at both call sites). Until it does, `Errors N`
-// under-reports this class by one per extra scope.
+// TestDiagIssueKeepsSameFileInTwoOutputScopesApart verifies that output-root
+// scope is retained by materialization identity rather than added to the
+// generic HCC Diagnostic model. Both scopes may contain the same relative file
+// while their absolute message paths are intentionally normalized together.
 func TestDiagIssueKeepsSameFileInTwoOutputScopesApart(t *testing.T) {
-	t.Skip("KNOWN GAP (agent-marketplace-hyc8): diag.Diagnostic carries no output scope; fix belongs in internal/materialize.retargetPruneDiags; unskip when that issue lands")
-
-	repoScope := diag.Diagnostic{
-		Code:     diag.CodeJSONDuplicateKey,
-		Severity: diag.SeverityError,
-		Target:   "claude",
-		Resource: "settings.json",
-		Message:  `/work/repo/.claude/settings.json: duplicate object key "hooks" at $ [json.duplicate-key]`,
-		Hint:     "Remove the duplicated key and re-run sync",
-		Source:   diag.SourceRef{File: "settings.json", Line: 7},
+	report := &materialize.Report{Issues: []materialize.MaterializationIssue{
+		{Target: hcc.TargetClaude, Scope: "project", RootID: "project-claude", Resource: "settings.json", Path: "settings.json", Code: "materialize.write.error", Severity: diag.SeverityError, Message: "failed at /work/repo/.claude/settings.json"},
+		{Target: hcc.TargetClaude, Scope: "machine", RootID: "machine-claude", Resource: "settings.json", Path: "settings.json", Code: "materialize.write.error", Severity: diag.SeverityError, Message: "failed at /home/dev/.claude/settings.json"},
+	}}
+	if got := len(report.SurfaceIssues()); got != 2 {
+		t.Fatalf("project/machine same-relative-file diagnostics collapsed to %d records", got)
 	}
-	machineScope := repoScope
-	machineScope.Message = `/home/dev/.claude/settings.json: duplicate object key "hooks" at $ [json.duplicate-key]`
-
-	if newDiagIssue(repoScope).DedupKey() == newDiagIssue(machineScope).DedupKey() {
-		t.Fatalf("the repo-scope and machine-scope copies of %q share dedup key %q; one real failure is hidden and Errors N under-counts",
-			repoScope.Resource, newDiagIssue(repoScope).DedupKey())
+	for _, issue := range report.SurfaceIssues() {
+		if issue.Scope == "" || issue.RootID == "" {
+			t.Fatalf("scope/root attribution was lost: %#v", issue)
+		}
 	}
 }
 
@@ -209,6 +179,61 @@ func TestDiagIssueKeyUsesTheUntruncatedMessage(t *testing.T) {
 	}
 }
 
+// TestDiagIssueResourcelessErrorKeyUsesTheUntruncatedMessage covers the
+// fallback path used by aggregate diagnostics that have no resource. The
+// display line is bounded, but two failures that differ only after that bound
+// must remain distinct in the dedup identity.
+func TestDiagIssueResourcelessErrorKeyUsesTheUntruncatedMessage(t *testing.T) {
+	prefix := strings.Repeat("x", maxDiagMessageLen+512)
+	base := diag.Diagnostic{
+		Code:     diag.CodeMaterializeDevinAggregateShape,
+		Severity: diag.SeverityError,
+		Source:   diag.SourceRef{File: "mcp_config.json"},
+		Message:  prefix + " first shape",
+	}
+	other := base
+	other.Message = prefix + " second shape"
+	a := newDiagIssue(base)
+	b := newDiagIssue(other)
+	if a.Error() != b.Error() {
+		t.Fatalf("sanity: bounded renders should match, got %q and %q", a.Error(), b.Error())
+	}
+	if a.DedupKey() == b.DedupKey() {
+		t.Fatalf("resource-less errors differing after the display bound share dedup key %q", a.DedupKey())
+	}
+	if len(a.DedupKey()) > maxDiagIdentityLen || len(b.DedupKey()) > maxDiagIdentityLen {
+		t.Fatalf("resource-less dedup identity exceeded bound: %d, %d", len(a.DedupKey()), len(b.DedupKey()))
+	}
+}
+
+// TestDiagIssuePresentationIdentityIsBounded keeps warning grouping keys from
+// retaining unbounded registry text while preserving exact-message grouping.
+func TestDiagIssuePresentationIdentityIsBounded(t *testing.T) {
+	message := strings.Repeat("x", maxDiagIdentityLen+1024)
+	base := diag.Diagnostic{
+		Code:     "materialize.warning",
+		Severity: diag.SeverityWarning,
+		Resource: "resource",
+		Hint:     "repair the resource",
+		Message:  message,
+	}
+	issue := newDiagIssue(base)
+	if len(issue.PresentationKey()) > maxDiagIdentityLen {
+		t.Fatalf("presentation key retained unbounded registry text: %d bytes", len(issue.PresentationKey()))
+	}
+	if len(issue.PresentationText()) > maxDiagIdentityLen {
+		t.Fatalf("presentation text exceeded display bound: %d bytes", len(issue.PresentationText()))
+	}
+	if issue.PresentationKey() != newDiagIssue(base).PresentationKey() {
+		t.Fatalf("identical warning presentations must retain the same grouping key")
+	}
+	other := base
+	other.Message += "-different"
+	if issue.PresentationKey() == newDiagIssue(other).PresentationKey() {
+		t.Fatalf("distinct warning presentations must retain distinct grouping keys")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Attack 2: the fallback boundary.
 // ---------------------------------------------------------------------------
@@ -266,10 +291,10 @@ func TestDiagIssueDedupKeyIsNotForgeable(t *testing.T) {
 	}
 }
 
-// TestDiagIssueSourceLineSurvivesWithoutAFile pins that a source location whose
-// File is empty but whose Line is set does not silently lose the line. Today
-// formatDiagSource returns "" for an empty File whatever the Line is, so two
-// failures of one resource at two different lines collapse.
+// TestDiagIssueSourceLineSurvivesWithoutAFile is a regression guard for a
+// source location whose File is empty but whose Line is set. The line remains
+// part of the source identity, so two failures of one resource at different
+// lines stay distinct.
 func TestDiagIssueSourceLineSurvivesWithoutAFile(t *testing.T) {
 	first := diag.Diagnostic{Code: "c", Resource: "r", Message: "line 4 is bad", Source: diag.SourceRef{Line: 4}}
 	second := diag.Diagnostic{Code: "c", Resource: "r", Message: "line 9 is bad", Source: diag.SourceRef{Line: 9}}
@@ -291,8 +316,8 @@ func TestDiagIssueSourceLineSurvivesWithoutAFile(t *testing.T) {
 // and a forged line can impersonate an `Error:` or `warning:` prefix and claim a
 // failure was a warning (or invent one that never happened).
 //
-// Resource is run through strconv.Quote and is safe. Message and Source.File are
-// interpolated raw.
+// Resource is run through strconv.Quote and is safe; Message and Source.File
+// are sanitized before interpolation.
 func TestDiagIssueRenderStaysOnOneLine(t *testing.T) {
 	tests := []struct {
 		name string

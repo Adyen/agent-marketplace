@@ -844,13 +844,30 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	if report != nil {
 		result.Report = report
 		slog.Debug("materialization report received", "targets", len(report.PerRoot), "diagnostics", len(report.Diags))
+		// Materialization owns output scope/root identity, so surface its
+		// warning/error projection instead of flattening it into the generic HCC
+		// diagnostic renderer. Compiler diagnostics retain the normal promotion
+		// path below; this keeps their resource/source/hint contract unchanged.
+		for _, issue := range report.SurfaceIssues() {
+			rendered := materialize.SurfaceIssueError(issue)
+			switch issue.Severity {
+			case diag.SeverityError:
+				slog.Warn("materialization issue promoted to error",
+					"code", issue.Code, "target", issue.Target, "scope", issue.Scope, "root", issue.RootID)
+				result.addMaterializeError(rendered)
+			case diag.SeverityWarning:
+				result.Warnings = append(result.Warnings, rendered)
+			}
+		}
 		for _, d := range report.Diags {
-			// Both severities are promoted through the SAME type so an error
-			// keeps the resource, source location and hint that a warning has
-			// always kept (bead agent-marketplace-oc2r).
+			if materialize.IsMaterializationDiagnostic(d) {
+				continue
+			}
+			// Generic HCC diagnostics use one promotion type for both
+			// severities, preserving the normal compiler renderer.
 			switch d.Severity {
 			case diag.SeverityError:
-				slog.Warn("materialize diagnostic promoted to error",
+				slog.Warn("compiler diagnostic promoted to error",
 					"code", d.Code, "resource", d.Resource,
 					"source_file", d.Source.File, "source_line", d.Source.Line)
 				result.addMaterializeError(newDiagIssue(d))

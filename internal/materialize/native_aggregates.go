@@ -51,6 +51,7 @@ func planNativeAggregates(key outputKey, destinations []harness.Destination, art
 			}
 			remaining = kept
 		}
+
 		rels := destination.Info.AggregateFilesForScope(key.machineScope)
 		if routeErr != nil {
 			return nil, nil, routeErr
@@ -75,7 +76,7 @@ func executeNativeAggregatePlans(ctx context.Context, report *Report, key output
 		if key.target == hcc.TargetGemini {
 			var diagnostics []diag.Diagnostic
 			tr, diagnostics, routeErr = syncGeminiNativeAggregate(ctx, key, plan.destination, plan.desired, dryRun, plan.pruneStaleEntries)
-			report.Diags = append(report.Diags, diagnostics...)
+			appendTargetDiagnostics(report, key, plan.destination.ID, diagnostics)
 		} else {
 			tr, routeErr = syncNativeAggregate(key, plan.destination, plan.rel, plan.desired, dryRun, plan.pruneStaleEntries)
 		}
@@ -85,7 +86,7 @@ func executeNativeAggregatePlans(ctx context.Context, report *Report, key output
 		}
 		if routeErr != nil {
 			slog.Error("native aggregate preserved after refusal", "target", key.target, "destination", plan.destination.ID, "file", plan.rel)
-			report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, plan.destination.Root, plan.rel, routeErr, "materialize.write.error"))
+			appendTargetDiagnostic(report, key, plan.destination.ID, ownedAggregateCodedDiag(key, plan.destination.Root, plan.rel, routeErr, "materialize.write.error"), plan.rel)
 		}
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
@@ -139,6 +140,8 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	// diagnostic. File mode returns manifest and containment problems here as
 	// hard errors.
 	var materializeErrs []error
+	var materializationWarnings []error
+	var materializationErrors []error
 	modes, err := config.ResolveMaterializationModes(result.GlobalCfg, result.RepoCfg, result.LocalCfg)
 	if err != nil {
 		materializeErrs = append(materializeErrs, err)
@@ -151,6 +154,12 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			slog.Warn("status drift check failed", "error", dryRunErr)
 			materializeErrs = append(materializeErrs, dryRunErr)
 		}
+	}
+	var compilerWarnings, compilerErrors []error
+	if dryRunReport != nil {
+		materializationWarnings, materializationErrors = materializationIssueErrors(dryRunReport)
+		compilerWarnings = reportDiagnosticErrors(dryRunReport, diag.SeverityWarning)
+		compilerErrors = reportDiagnosticErrors(dryRunReport, diag.SeverityError)
 	}
 
 	// Build orphaned rows from files that would be removed.
@@ -234,7 +243,10 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		}
 	}
 
-	errorRows := buildErrorRows(materializeErrs, result.Errors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
+	warnings := append([]error(nil), result.Warnings...)
+	warnings = append(warnings, materializationWarnings...)
+	warnings = append(warnings, compilerWarnings...)
+	errorRows := buildErrorRows(materializeErrs, materializationErrors, compilerErrors, result.Errors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
 
 	targetHarnesses := make([]string, len(result.TargetHarnesses))
 	for i, t := range result.TargetHarnesses {
@@ -248,7 +260,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 
 	if err := writeStatusSections(out, statusView{
 		diag:                result.Diagnostics,
-		warnings:            result.Warnings,
+		warnings:            warnings,
 		statusRows:          statusRows,
 		locallyExcluded:     locallyExcluded,
 		localRegistries:     localRegistries,

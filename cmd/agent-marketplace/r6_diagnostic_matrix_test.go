@@ -1,0 +1,262 @@
+package main
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+)
+
+func TestR6DiagnosticProjectionMatrix(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	alphaPath := "registry/alpha/SKILL.md"
+	report := &materialize.Report{
+		PerRoot: []materialize.TargetReport{
+			{
+				Target: hcc.TargetClaude, RootID: "project-claude",
+				ResourceByPath: map[string]string{"skills/alpha/SKILL.md": "alpha"},
+			},
+			{
+				Target: hcc.TargetClaude, MachineScope: true, RootID: "machine-claude",
+				ResourceByPath: map[string]string{"skills/alpha/SKILL.md": "alpha"},
+			},
+			{
+				Target: hcc.TargetFactory, RootID: "project-factory",
+				ResourceByPath: map[string]string{"skills/beta/SKILL.md": "beta"},
+				Diags: []diag.Diagnostic{{
+					Code: diag.CodeOwnershipStateCorrupt, Severity: diag.SeverityError,
+					Resource: "beta", Message: "ownership state is corrupt", Source: diag.SourceRef{File: "registry/beta/SKILL.md"},
+				}},
+			},
+		},
+		Diags: []diag.Diagnostic{
+			{
+				Code: diag.CodeOwnershipStateCorrupt, Severity: diag.SeverityError,
+				Target: string(hcc.TargetClaude), Resource: "alpha", Message: "ownership state is corrupt", Source: diag.SourceRef{File: alphaPath},
+			},
+			{
+				Code: diag.CodeRuleDevinUnsupported, Severity: diag.SeverityWarning,
+				Target: string(hcc.TargetDevin), Resource: "generic", Message: "generic compiler warning",
+			},
+		},
+		Issues: []materialize.MaterializationIssue{{
+			Resource: "hostile\nresource", Target: hcc.TargetClaude, Scope: "project", RootID: "hostile-root",
+			Operation: materialize.MaterializationOperationSkip, Outcome: materialize.MaterializationOutcomeWarning,
+			Code: diag.CodeOwnershipUnmanagedKey, Severity: diag.SeverityWarning,
+			Message: "preserve\x00 this\u202e entry",
+		}},
+	}
+	repeatedPrefix := strings.Repeat("x", 1100)
+	report.Issues = append(report.Issues,
+		materialize.MaterializationIssue{Resource: "long", Target: hcc.TargetClaude, Code: diag.CodeOwnershipEntryDrift, Severity: diag.SeverityError, Operation: materialize.MaterializationOperationFailure, Outcome: materialize.MaterializationOutcomeFailed, Message: repeatedPrefix + "A"},
+		materialize.MaterializationIssue{Resource: "long", Target: hcc.TargetClaude, Code: diag.CodeOwnershipEntryDrift, Severity: diag.SeverityError, Operation: materialize.MaterializationOperationFailure, Outcome: materialize.MaterializationOutcomeFailed, Message: repeatedPrefix + "B"},
+	)
+
+	base := diag.Diagnostic{Code: "compiler.same", Resource: "identity", Message: "same fact"}
+	identityDiagnostics := []error{
+		pipeline.PromoteDiagnostic(withTargetAndSeverity(base, string(hcc.TargetClaude), diag.SeverityError)),
+		pipeline.PromoteDiagnostic(withTargetAndSeverity(base, string(hcc.TargetFactory), diag.SeverityWarning)),
+	}
+	if got := len(pipeline.DedupIssues(identityDiagnostics)); got != 2 {
+		t.Fatalf("DedupIssues collapsed target/severity distinctions: got %d, want 2", got)
+	}
+
+	surfaced := report.SurfaceIssues()
+	if len(surfaced) != 5 {
+		t.Fatalf("SurfaceIssues = %#v, want hostile, two long-identity, alpha, and beta issues", surfaced)
+	}
+	longIssues := 0
+	var alpha, beta, hostile materialize.MaterializationIssue
+	for _, issue := range surfaced {
+		if issue.Resource == "long" {
+			longIssues++
+		}
+		switch issue.Resource {
+		case "alpha":
+			alpha = issue
+		case "beta":
+			beta = issue
+		case "hostile resource":
+			hostile = issue
+		}
+	}
+	if longIssues != 2 {
+		t.Fatalf("long diagnostics collapsed after display bounding: got %d, want 2", longIssues)
+	}
+	if alpha.Path != alphaPath || alpha.Scope != "" || alpha.RootID != "" {
+		t.Fatalf("ambiguous alpha attribution = %#v, want source path and no scope/root", alpha)
+	}
+	if beta.Path != "registry/beta/SKILL.md" || beta.Scope != "project" || beta.RootID != "project-factory" {
+		t.Fatalf("unique beta attribution = %#v, want source path and unique root attribution", beta)
+	}
+	if strings.ContainsAny(hostile.Resource+hostile.Message, "\x00\n") || strings.Contains(hostile.Resource, "\u202e") || strings.Contains(hostile.Message, "\u202e") {
+		t.Fatalf("pre-populated issue was not sanitized: %#v", hostile)
+	}
+
+	warnings, failures := materializationIssueErrors(report)
+	if len(warnings) != 1 || len(failures) != 4 {
+		t.Fatalf("materializationIssueErrors = %d warnings, %d failures, want 1/4", len(warnings), len(failures))
+	}
+	for _, issue := range append(warnings, failures...) {
+		if strings.Contains(issue.Error(), diag.CodeRuleDevinUnsupported) {
+			t.Fatalf("generic compiler diagnostic entered structured renderer: %v", issue)
+		}
+	}
+	normal := reportDiagnosticErrors(report, diag.SeverityWarning)
+	if len(normal) != 1 || !strings.Contains(normal[0].Error(), diag.CodeRuleDevinUnsupported) {
+		t.Fatalf("generic compiler diagnostic did not remain on normal renderer: %#v", normal)
+	}
+
+	drift := materialize.DriftReportFromReport(report, []string{"skill\x00alpha", "skill\x00beta", "skill\x00gamma"})
+	if !containsDrift(drift.Broken, "skill\x00alpha") || !containsDrift(drift.Broken, "skill\x00beta") {
+		t.Fatalf("DriftReportFromReport lost ownership failures: %#v", drift)
+	}
+	if !containsDrift(drift.Synced, "skill\x00gamma") || len(drift.Missing) != 0 {
+		t.Fatalf("DriftReportFromReport projection = %#v, want only gamma synced and no missing", drift)
+	}
+}
+
+func TestR6DiagnosticIdentityRegressionFixture(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	longTail := strings.Repeat("x", 300)
+	base := diag.Diagnostic{
+		Code: longTail + "-code", Resource: longTail + "-resource",
+		Source: diag.SourceRef{File: longTail + "/source.md"}, Hint: longTail + "-hint",
+		Message: longTail + "-message", Severity: diag.SeverityError,
+	}
+	cases := []struct {
+		name         string
+		left, right  diag.Diagnostic
+		wantDistinct bool
+	}{
+		{"code long tail", base, func() diag.Diagnostic { d := base; d.Code += "-other"; return d }(), true},
+		{"resource long tail", base, func() diag.Diagnostic { d := base; d.Resource += "-other"; return d }(), true},
+		{"source long tail", base, func() diag.Diagnostic { d := base; d.Source.File += "-other"; return d }(), true},
+		{"hint long tail", base, func() diag.Diagnostic { d := base; d.Hint += "-other"; return d }(), true},
+		{"message long tail", base, func() diag.Diagnostic { d := base; d.Message += "-other"; return d }(), true},
+		{"target severity presence", withTargetAndSeverity(base, "", diag.SeverityWarning), withTargetAndSeverity(base, "target-1", diag.SeverityError), true},
+		{"same resource absolute message paths", func() diag.Diagnostic {
+			d := base
+			d.Target = ""
+			d.Severity = diag.SeverityWarning
+			d.Message = "cannot write /project/.claude/settings.json"
+			return d
+		}(), func() diag.Diagnostic {
+			d := base
+			d.Target = ""
+			d.Severity = diag.SeverityWarning
+			d.Message = "cannot write /machine/.claude/settings.json"
+			return d
+		}(), false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := len(pipeline.DedupIssues([]error{pipeline.PromoteDiagnostic(tt.left), pipeline.PromoteDiagnostic(tt.right)}))
+			want := 1
+			if tt.wantDistinct {
+				want = 2
+			}
+			if got != want {
+				t.Fatalf("deduplicated %d diagnostics, want %d", got, want)
+			}
+		})
+	}
+
+	report := &materialize.Report{PerRoot: []materialize.TargetReport{{
+		Target: hcc.TargetClaude, RootID: "project-root", Issues: []materialize.MaterializationIssue{{
+			Resource: "existing", Target: hcc.TargetClaude, Scope: "project", RootID: "project-root",
+			Code: diag.CodeOwnershipUnmanagedKey, Severity: diag.SeverityWarning, Message: "preserved",
+		}}, Diags: []diag.Diagnostic{{
+			Code: "materialize.write.error", Resource: "generated", Severity: diag.SeverityError,
+			Source: diag.SourceRef{File: "settings.json"}, Message: "failed",
+		}},
+	}}}
+	if report.InSync() {
+		t.Fatal("mixed pre-populated issue and TargetReport.Diags incorrectly reported in sync")
+	}
+	surfaced := report.SurfaceIssues()
+	if len(surfaced) != 2 {
+		t.Fatalf("mixed TargetReport issues/diags projection = %#v, want union of two records", surfaced)
+	}
+	for _, issue := range surfaced {
+		if issue.Scope != "project" || issue.RootID != "project-root" {
+			t.Fatalf("report-level attribution lost producer scope/root: %#v", issue)
+		}
+	}
+
+	scoped := &materialize.Report{Issues: []materialize.MaterializationIssue{
+		{Resource: "settings.json", Target: hcc.TargetClaude, Scope: "project", RootID: "project-root", Path: "settings.json", Code: "materialize.write.error", Severity: diag.SeverityError, Message: "failed at /project/.claude/settings.json"},
+		{Resource: "settings.json", Target: hcc.TargetClaude, Scope: "machine", RootID: "machine-root", Path: "settings.json", Code: "materialize.write.error", Severity: diag.SeverityError, Message: "failed at /machine/.claude/settings.json"},
+	}}
+	if got := len(scoped.SurfaceIssues()); got != 2 {
+		t.Fatalf("project/machine producer diagnostics collapsed: %d", got)
+	}
+}
+
+func TestR6SurfaceIssueErrorsKeepLongTailIdentity(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	prefix := strings.Repeat("x", 1100)
+	issue := func(tail string) materialize.MaterializationIssue {
+		return materialize.MaterializationIssue{
+			Resource: "long", Target: hcc.TargetClaude, Scope: "project", RootID: "project-claude",
+			Operation: materialize.MaterializationOperationFailure, Outcome: materialize.MaterializationOutcomeFailed,
+			Code: diag.CodeOwnershipEntryDrift, Severity: diag.SeverityError, Message: prefix + tail,
+		}
+	}
+	report := &materialize.Report{Issues: []materialize.MaterializationIssue{issue("A"), issue("B")}}
+	surfaced := report.SurfaceIssues()
+	if len(surfaced) != 2 {
+		t.Fatalf("SurfaceIssues collapsed long-tail failures: %#v", surfaced)
+	}
+	errors := []error{materialize.SurfaceIssueError(surfaced[0]), materialize.SurfaceIssueError(surfaced[1])}
+	if errors[0].Error() != errors[1].Error() {
+		t.Fatalf("sanity: display-bound renders should match, got %q and %q", errors[0], errors[1])
+	}
+	if got := len(dedupIssues(errors)); got != 2 {
+		t.Fatalf("CLI dedup collapsed long-tail materialization failures to %d errors", got)
+	}
+
+	reversed := &materialize.Report{Issues: []materialize.MaterializationIssue{issue("B"), issue("A")}}
+	firstKeys := surfaceIssueErrorKeys(surfaced)
+	secondKeys := surfaceIssueErrorKeys(reversed.SurfaceIssues())
+	if len(firstKeys) != len(secondKeys) || firstKeys[0] != secondKeys[0] || firstKeys[1] != secondKeys[1] {
+		t.Fatalf("SurfaceIssues order is not digest-stable: first=%v second=%v", firstKeys, secondKeys)
+	}
+}
+
+func surfaceIssueErrorKeys(issues []materialize.MaterializationIssue) []string {
+	keys := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		err := materialize.SurfaceIssueError(issue)
+		keyer, ok := err.(interface{ DedupKey() string })
+		if !ok {
+			keys = append(keys, err.Error())
+			continue
+		}
+		keys = append(keys, keyer.DedupKey())
+	}
+	return keys
+}
+
+func withTargetAndSeverity(d diag.Diagnostic, target string, severity diag.Severity) diag.Diagnostic {
+	d.Target, d.Severity = target, severity
+	return d
+}
+
+func containsDrift(items []materialize.DriftItem, name string) bool {
+	for _, item := range items {
+		if item.Name == name {
+			return true
+		}
+	}
+	return false
+}

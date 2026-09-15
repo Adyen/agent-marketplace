@@ -97,9 +97,16 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 	if !anyWork {
 		return report
 	}
+	rootID := options.rootID
+	if rootID == "" {
+		rootID = materializationRootID(key)
+	}
+	appendOwnedDiagnostics := func(diagnostics ...diag.Diagnostic) {
+		appendTargetDiagnostics(report, key, rootID, diagnostics)
+	}
 	if !dryRun {
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
-			report.Diags = append(report.Diags, ownedAggregateDiag(options.writeCode, key, "", fmt.Sprintf("create aggregate root %s: %v", outDir, err)))
+			appendOwnedDiagnostics(ownedAggregateDiag(options.writeCode, key, "", fmt.Sprintf("create aggregate root %s: %v", outDir, err)))
 			return report
 		}
 	}
@@ -111,7 +118,7 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 	lockReport := newOwnedAggregateLockReporter(key, outDir)
 	store, err := ownership.Open(outDir, ownership.WithLockObserver(lockReport.observe))
 	if err != nil {
-		report.Diags = append(report.Diags, ownedAggregateDiag(options.writeCode, key, "",
+		appendOwnedDiagnostics(ownedAggregateDiag(options.writeCode, key, "",
 			fmt.Sprintf("open ownership store for %s: %v", outDir, err)))
 		return report
 	}
@@ -127,12 +134,12 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 		// INSIDE the section so exactly one process ever resolves a journal.
 		outcomes, recoverErr := store.Recover()
 		for _, outcome := range outcomes {
-			report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File,
+			appendOwnedDiagnostics(ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File,
 				fmt.Sprintf("recovered an incomplete ownership generation %d for %q (phase %s, action %s)",
 					outcome.Generation, ownedAggregateLabel(outDir, outcome.File), outcome.Phase, outcome.Action)))
 		}
 		if recoverErr != nil {
-			report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, outDir, "", recoverErr, options.writeCode))
+			appendOwnedDiagnostics(ownedAggregateCodedDiag(key, outDir, "", recoverErr, options.writeCode))
 			return nil
 		}
 		report = appendOwnedJSONAggregateReports(report, store, key, outDir, files, desiredByRel, work, options, false)
@@ -143,10 +150,10 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 	// was skipped without a byte written. Report it against this root and let
 	// every other root continue.
 	if sessionErr != nil {
-		report.Diags = append(report.Diags, ownedAggregateLockSessionDiag(key, outDir, sessionErr, options.writeCode))
+		appendOwnedDiagnostics(ownedAggregateLockSessionDiag(key, outDir, sessionErr, options.writeCode))
 		return report
 	}
-	report.Diags = append(report.Diags, lockReport.diags()...)
+	appendOwnedDiagnostics(lockReport.diags()...)
 	return report
 }
 
@@ -155,9 +162,13 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 // path can reuse it verbatim without a session around it.
 func appendOwnedJSONAggregateReports(report *Report, store *ownership.Store, key outputKey, outDir string, files []ownedJSONFileSpec,
 	desiredByRel map[string][]ownedJSONEntry, work *ownedJSONAggregateWork, options ownedJSONReconcileOptions, dryRun bool) *Report {
+	rootID := options.rootID
+	if rootID == "" {
+		rootID = materializationRootID(key)
+	}
 	for _, file := range files {
 		fileReport := reconcileOwnedJSONAggregateFile(store, key, outDir, file, desiredByRel[file.rel], work != nil && work.incomplete[file.rel], options, dryRun)
-		report.Diags = append(report.Diags, fileReport.diags...)
+		appendTargetDiagnostics(report, key, rootID, fileReport.diags)
 		if !fileReport.written {
 			continue
 		}

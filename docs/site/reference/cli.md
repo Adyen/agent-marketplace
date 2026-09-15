@@ -95,6 +95,8 @@ When configured output is out of sync, the command appends a summary with this f
 3 resources out of sync — run 'agent-marketplace sync'
 ```
 
+The configured-registry path also performs a read-only materialization drift probe. Materialization warnings and errors are written to standard error with bounded, structured identity: the diagnostic code and severity are retained, together with any known resource, target, scope, root, path, operation, and outcome fields. Generic harness-compilation diagnostics remain in their normal diagnostic form.
+
 ## `search`
 
 Searches hosted Marketplace endpoints without editing configuration. An empty query lists the endpoint's default result page.
@@ -242,7 +244,7 @@ Normal synchronization prints counts for installed, removed, malformed, and fail
 Installed 3  Removed 1  Malformed 0  Errors 0
 ```
 
-With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. `--check` is read-only across config, locks, caches, transaction state, and materialized output: it neither recovers pending transactions nor fetches a cold exact snapshot, and reports `lock.snapshot-unavailable` when required snapshot bytes are absent. `--prune-stale` cannot be combined with `--locked` or `--offline` because pruning changes configuration.
+With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. Materialization warnings and errors retain the same bounded structured identity used by `list`; generic harness-compilation diagnostics remain in their normal diagnostic form. Warnings do not change the drift verdict, while materialization errors are printed with their stable code and make the check fail. `--check` is read-only across config, locks, caches, transaction state, and materialized output: it neither recovers pending transactions nor fetches a cold exact snapshot, and reports `lock.snapshot-unavailable` when required snapshot bytes are absent. `--prune-stale` cannot be combined with `--locked` or `--offline` because pruning changes configuration.
 
 Pending dependency transactions cause `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` to fail with `dependency.recovery-required` before loading configuration or registry state. These commands leave config, locks, journal evidence, and transaction-state permissions unchanged. Run a writing `sync` or `lock` without those flags to recover, then retry the inspection. An absent transaction-state directory does not require recovery and is not created by inspection.
 
@@ -293,9 +295,10 @@ The report can contain these sections:
 | `ORPHANED SYMLINKS` | Generated links that a sync would remove. |
 | `NAME COLLISIONS` | Registry overlap and resource-name collision diagnostics. |
 | `UNMET REQUIREMENTS` | Advisory resource prerequisites and install hints. |
-| `ERRORS` | Configuration, catalog, or drift-inspection failures. |
+| `WARNINGS` | Resolver, compiler, and materialization warnings. Materialization entries retain bounded identity fields such as code, resource, target, scope, root, path, operation, and outcome; generic harness-compilation diagnostics use their normal diagnostic form. |
+| `ERRORS` | Configuration, catalog, compiler, drift-inspection, or materialization failures. |
 
-Fatal resolution errors return exit status 1 after the report is printed.
+Fatal resolution errors return exit status 1 after the report is printed. Generic harness-compilation diagnostics remain distinct from materialization issue identity and use the normal diagnostic renderer; status surfaces materialization issues in the `WARNINGS` or `ERRORS` section according to severity.
 
 ## `migrate`
 

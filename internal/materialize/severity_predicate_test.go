@@ -51,6 +51,34 @@ func TestReportInSyncTrueWithNoDiagnostics(t *testing.T) {
 	}
 }
 
+// TestReportInSyncAccountsForRetainedStructuredErrors covers issues retained
+// by callers before the report projection is rebuilt. Both report-level and
+// target-report issues must make sync --check report drift.
+func TestReportInSyncAccountsForRetainedStructuredErrors(t *testing.T) {
+	errorIssue := MaterializationIssue{
+		Target:    "claude",
+		Operation: MaterializationOperationFailure,
+		Outcome:   MaterializationOutcomeFailed,
+		Code:      "materialize.write.error",
+		Severity:  diag.SeverityError,
+		Message:   "pre-populated materialization failure",
+	}
+	tests := []struct {
+		name   string
+		report *Report
+	}{
+		{name: "report issue", report: &Report{Issues: []MaterializationIssue{errorIssue}}},
+		{name: "target report issue", report: &Report{PerRoot: []TargetReport{{Issues: []MaterializationIssue{errorIssue}}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.report.InSync(); got {
+				t.Fatalf("InSync() = true for retained structured error, want false")
+			}
+		})
+	}
+}
+
 // TestDriftReportFromReportOnlyErrorsAreBroken covers DriftReportFromReport:
 // a resource carrying a warning is still in sync, only an error-severity
 // diagnostic marks it broken.
