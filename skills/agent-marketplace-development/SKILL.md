@@ -163,6 +163,12 @@ Preserve these invariants:
   measures that set from real compilation and fails on any difference in
   either direction — never satisfy it by restating a list. An
   undeclared aggregate is a file mutated with no safety backup.
+- **Plan before configured backup.** `materialize.BuildPlan` is no-write and
+  must discover resolved and stale output keys, native aggregates, manifests,
+  routes, prune fences, and writes before `pipeline` derives machine-scope
+  configured backup inventory from that same plan. Do not reintroduce a
+  resolved-only collector or repo-scope configured archives; mandatory
+  ownership safety backups remain a separate policy.
 - **Shared aggregate files use an explicit reconciliation policy.**
   Marker-reconciled targets use their declared marker metadata and remain
   eligible for marker-based stale-entry pruning. Devin and Codex instead

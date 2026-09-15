@@ -144,6 +144,14 @@ agent-marketplace list          # browse resources from your configured registri
 > recreated from those snapshots. Use `sync --locked` when config or lock
 > changes must be refused, and `sync --check` for a non-mutating CI check.
 
+A writing `sync` first builds one no-write materialization plan and uses that
+same plan for execution and configured backups. The plan includes stale
+machine-scope output recovered from existing managed roots or file-mode
+manifests, so a stale-only removal is covered by the configured pre-sync
+backup. Configured archives remain machine-scope only; mandatory ownership
+safety backups for shared aggregates are separate and remain active with
+`--no-backup`.
+
 ---
 
 ## Configuration and precedence layers
@@ -555,9 +563,10 @@ about *where* you put it. Empirically:
   untouched** by `sync`.
 - **Loose files are different.** An unmanaged regular file dropped directly into
   a managed component directory — e.g. a `.md` you put in `.factory/commands/`,
-  or a stray file inside `.factory/skills/` — **is pruned** by `sync` and shown
-  under **ORPHANED FILES** in `status`. Sync preserves directories you own, not
-  stray files sitting in directories it manages.
+  or a stray file inside `.factory/skills/` — is preserved by `sync`. Regular
+  files are eligible for pruning only when they carry the Agent Marketplace
+  ownership marker; user-owned directories and symlinks outside the cache are
+  preserved as well.
 - Otherwise, pruning applies only to artifacts `agent-marketplace` materialized:
   drop a resource from config and re-sync, and only that managed artifact is
   removed (`Removed N`).

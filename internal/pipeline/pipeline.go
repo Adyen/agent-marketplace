@@ -760,6 +760,14 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		return result
 	}
 
+	materializationPlan, planErr := materialize.BuildPlan(ctx, matRoot, resolved.Resolved,
+		materialize.WithMaterializationModes(resolved.MaterializationModes),
+		materialize.WithPruneFences(resolved.MalformedPruneFences))
+	if planErr != nil {
+		result.addMaterializeError(fmt.Errorf("materialization planning: %w", planErr))
+		return result
+	}
+
 	if !opts.NoBackup {
 		backupCfg, err := resolved.MergedCfg.ToBackupConfig()
 		if err != nil {
@@ -772,12 +780,8 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 				MaxDays:   backupCfg.MaxDays,
 				MaxPerDay: backupCfg.MaxPerDay,
 			}
-			managed := CollectManagedPaths(resolved.Resolved)
-			codexPartitions, codexErr := CollectCodexBackupPartitions(resolved.Resolved)
-			if codexErr != nil {
-				result.addMaterializeError(fmt.Errorf("backup: %w", codexErr))
-				return result
-			}
+			managed := materializationPlan.ManagedPaths
+			codexPartitions := materializationPlan.CodexParts
 			if len(managed) > 0 || len(codexPartitions) > 0 {
 				var backupSpan telemetry.Span
 				if tel != nil {
@@ -832,9 +836,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
 		})
 	}
-	report, err := materialize.Run(ctx, matRoot, resolved.Resolved,
-		materialize.WithMaterializationModes(resolved.MaterializationModes),
-		materialize.WithPruneFences(resolved.MalformedPruneFences))
+	report, err := materializationPlan.Execute(ctx)
 	if materializeSpan != (telemetry.Span{}) {
 		materializeSpan.SetAttributes(materializationResultAttrs(report, err))
 		materializeSpan.End()
@@ -878,13 +880,17 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 //
 // TestCollectManagedPathsIsMachineScopeOnlyByDecision pins the filter so
 // widening it is a deliberate act that fails a test naming the decision.
-func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]backup.ManagedPaths {
+func CollectManagedPaths(resolved []resolver.ResolvedArtifact) (map[hcc.Target]backup.ManagedPaths, error) {
 	seen := make(map[hcc.Target]bool)
 	for _, r := range resolved {
 		if !r.Source.IsMachineScope() {
 			continue
 		}
-		for _, t := range r.Harnesses {
+		targets := r.Harnesses
+		if targets == nil {
+			targets = []hcc.Target{hcc.TargetClaude}
+		}
+		for _, t := range targets {
 			seen[t] = true
 		}
 	}
@@ -895,12 +901,12 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			continue
 		}
 		root, ok := harness.MachineRoot(t)
-		if !ok {
-			continue
+		if !ok || root == "" {
+			return nil, fmt.Errorf("target %q has no machine root", t)
 		}
 		info, ok := harness.TargetInfoFor(t)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("target %q has no target metadata", t)
 		}
 		// Machine-scope component directories can diverge from the repo-scope
 		// component names (e.g. Windsurf writes machine-wide workflows to
@@ -921,20 +927,23 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 		machineAggregates := info.AggregateFilesForScope(true)
 		mappedFiles, mappingErr := harness.NativeAggregateBackupFiles(t)
 		if mappingErr != nil {
-			slog.Error("resolve native aggregate backup files", "target", t, "error", mappingErr)
-			continue
+			return nil, fmt.Errorf("resolve %s aggregate backup mapping: %w", t, mappingErr)
 		}
 		if len(harness.NativeAggregateInstalls(t)) > 0 {
 			destinations, err := harness.ResolveDestinations(t, true, ".")
 			if err != nil {
-				slog.Error("resolve native aggregate backup destinations", "target", t, "error", err)
-				continue
+				return nil, fmt.Errorf("resolve %s native aggregate backup destinations: %w", t, err)
 			}
 			machineAggregates = nil
+			found := false
 			for _, destination := range destinations {
 				if destination.Root == root {
 					machineAggregates = append(machineAggregates, destination.Info.AggregateFilesForScope(true)...)
+					found = true
 				}
+			}
+			if !found {
+				return nil, fmt.Errorf("resolve %s native aggregate backup destination: machine root %q is not mapped", t, root)
 			}
 		}
 		relPaths := make([]string, 0, len(machineComponents)+len(machineAggregates))
@@ -951,7 +960,7 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 		}
 		result[t] = backup.ManagedPaths{Root: root, RelPaths: relPaths, MappedFiles: mappedFiles}
 	}
-	return result
+	return result, nil
 }
 
 // CollectCodexBackupPartitions resolves the two native machine roots as one

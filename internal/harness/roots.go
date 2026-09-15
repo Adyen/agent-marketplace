@@ -315,9 +315,9 @@ func TargetInfoError() error {
 }
 
 func MakeInstallRoots() map[hcc.Target]Roots {
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		home = "/tmp"
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
 	}
 
 	definitions := targetmeta.Definitions()

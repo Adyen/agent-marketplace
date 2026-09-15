@@ -85,7 +85,10 @@ func TestCollectManagedPathsCoversMachineScopeOutputs(t *testing.T) {
 				t.Fatalf("materialize.Run: %v", err)
 			}
 
-			managed := CollectManagedPaths(resolved)
+			managed, err := CollectManagedPaths(resolved)
+			if err != nil {
+				t.Fatalf("CollectManagedPaths: %v", err)
+			}
 			mp, ok := managed[target]
 			if !ok {
 				t.Fatalf("CollectManagedPaths has no entry for %s", target)
@@ -127,7 +130,10 @@ func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 		},
 	}
 
-	managed := CollectManagedPaths(resolved)
+	managed, err := CollectManagedPaths(resolved)
+	if err != nil {
+		t.Fatalf("CollectManagedPaths: %v", err)
+	}
 	mp, ok := managed[hcc.TargetWindsurf]
 	if !ok {
 		t.Fatal("CollectManagedPaths has no entry for windsurf")
@@ -135,6 +141,53 @@ func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 	want := []string{"skills", "global_workflows", "hooks", "mcp_config.json"}
 	if !slices.Equal(mp.RelPaths, want) {
 		t.Errorf("windsurf machine-scope managed rel paths = %v, want %v", mp.RelPaths, want)
+	}
+}
+
+func TestCollectManagedPathsRejectsHomeFailureWithoutWrongRoot(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	managed, err := CollectManagedPaths(machineScopeSkill(hcc.TargetFactory))
+	if err == nil {
+		t.Fatal("CollectManagedPaths succeeded without HOME; want root resolution error")
+	}
+	if managed != nil {
+		t.Fatalf("CollectManagedPaths returned managed paths after HOME failure: %#v", managed)
+	}
+}
+
+func TestBackupCreateDefaultsNilHarnessesToClaude(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	claudeRoot := filepath.Join(homeDir, ".claude")
+	if err := os.MkdirAll(filepath.Join(claudeRoot, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeRoot, "skills", "handwritten"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:  catalog.Entry{Kind: ir.KindSkill, Name: "managed-skill", Resource: ir.NewSkill("managed-skill", "Test", "Body", nil, nil, ir.SourceRef{})},
+		Source: config.UserPersonal,
+	}}
+
+	managed, err := CollectManagedPaths(resolved)
+	if err != nil {
+		t.Fatalf("CollectManagedPaths: %v", err)
+	}
+	if _, ok := managed[hcc.TargetClaude]; !ok {
+		t.Fatalf("CollectManagedPaths omitted default Claude target: %#v", managed)
+	}
+	if err := backup.Create(managed); err != nil {
+		t.Fatalf("backup.Create: %v", err)
+	}
+	backups, err := backup.ListBackups()
+	if err != nil {
+		t.Fatalf("backup.ListBackups: %v", err)
+	}
+	if got := backups[hcc.TargetClaude]; len(got) != 1 {
+		t.Fatalf("Claude backups = %v, want one archive", got)
 	}
 }
 
@@ -252,7 +305,10 @@ func TestCollectManagedPathsCoversEveryDeclaredAggregate(t *testing.T) {
 		t.Run(string(target), func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 
-			managed := CollectManagedPaths(machineScopeSkill(target))
+			managed, err := CollectManagedPaths(machineScopeSkill(target))
+			if err != nil {
+				t.Fatalf("CollectManagedPaths: %v", err)
+			}
 			mp, ok := managed[target]
 			if !ok {
 				t.Fatalf("CollectManagedPaths has no entry for %s", target)
@@ -307,7 +363,11 @@ func TestDeclaredAggregatesAreRecoverableFromBackup(t *testing.T) {
 				handwritten[rel] = content
 			}
 
-			if err := backup.Create(CollectManagedPaths(machineScopeSkill(target))); err != nil {
+			managed, err := CollectManagedPaths(machineScopeSkill(target))
+			if err != nil {
+				t.Fatalf("CollectManagedPaths: %v", err)
+			}
+			if err := backup.Create(managed); err != nil {
 				t.Fatalf("backup.Create: %v", err)
 			}
 			for rel := range handwritten {

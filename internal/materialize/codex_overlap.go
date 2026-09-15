@@ -32,6 +32,23 @@ type codexManagedPath struct {
 // deliberately called before executeMaterializePlans performs its first mkdir.
 func preflightCodexDestinations(result *compilePhaseResult, repoRoot string, modes config.MaterializationModes) (map[string]bool, *diag.Diagnostic) {
 	codex := hcc.Target(targetmeta.TargetCodex)
+	destinationsByKey := make(map[outputKey][]harness.Destination, 2)
+	for _, machineScope := range []bool{false, true} {
+		key := outputKey{target: codex, machineScope: machineScope}
+		if !result.allOutputs[key] {
+			continue
+		}
+		resolved, err := harness.ResolveDestinations(codex, machineScope, repoRoot)
+		if err != nil {
+			return nil, &diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(codex), Message: err.Error()}
+		}
+		destinationsByKey[key] = resolved
+	}
+	return preflightCodexDestinationsFrozen(result, destinationsByKey, modes)
+}
+
+func preflightCodexDestinationsFrozen(result *compilePhaseResult, destinationsByKey map[outputKey][]harness.Destination, modes config.MaterializationModes) (map[string]bool, *diag.Diagnostic) {
+	codex := hcc.Target(targetmeta.TargetCodex)
 	hasCodexOutput := false
 	for key := range result.allOutputs {
 		if key.target == codex {
@@ -50,19 +67,17 @@ func preflightCodexDestinations(result *compilePhaseResult, repoRoot string, mod
 		if !result.allOutputs[key] {
 			continue
 		}
-		destinations, err := harness.ResolveDestinations(codex, machineScope, repoRoot)
-		if err != nil {
+		resolved[machineScope] = destinationsByKey[key]
+		if len(resolved[machineScope]) == 0 {
 			d := diag.Diagnostic{
 				Code:     "materialize.destination.error",
 				Severity: diag.SeverityError,
 				Target:   string(codex),
-				Message:  fmt.Sprintf("resolve Codex %s destinations before materialization: %v", codexScopeName(machineScope), err),
-				Hint:     "fix the repository, HOME, or CODEX_HOME path and retry; no destination was changed",
+				Message:  fmt.Sprintf("no frozen Codex %s destinations before materialization", codexScopeName(machineScope)),
+				Hint:     "rebuild the materialization plan from the current repository and environment",
 			}
-			slog.Error("Codex destination overlap preflight failed", "scope", codexScopeName(machineScope), "code", d.Code, "error", err)
 			return nil, &d
 		}
-		resolved[machineScope] = destinations
 	}
 
 	bindings := make([]codexDestinationBinding, 0, 4)

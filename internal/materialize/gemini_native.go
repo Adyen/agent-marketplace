@@ -16,27 +16,40 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
-func geminiNativeHasOwnedMCP(destination harness.Destination) bool {
+func geminiNativeHasOwnedMCP(destination harness.Destination) (bool, error) {
 	store, err := ownership.Open(destination.Root)
 	if err != nil {
-		return false
+		return false, err
 	}
 	proof, err := store.Proof(destination.AggregateFile)
+	if errors.Is(err, ownership.ErrStateMissing) {
+		return false, nil
+	}
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, id := range proof.OwnedIDs() {
 		if id.Kind == ownership.KindMcpServer && id.Container == "mcpServers" {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination harness.Destination, desired map[string]json.RawMessage, dryRun, prune bool) (TargetReport, []diag.Diagnostic, error) {
 	rel := destination.AggregateFile
 	report := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: destination.ID, OutDir: destination.Root}
-	if !hasNativeDesiredEntries(desired) && (!prune || !nativeAggregateHasManagedEntries(key.target, destination)) {
+	hasDesired := hasNativeDesiredEntries(desired)
+	if !hasDesired && prune {
+		managed, err := nativeAggregateHasManagedEntries(key.target, destination)
+		if err != nil {
+			return report, nil, err
+		}
+		if !managed {
+			return report, nil, nil
+		}
+	}
+	if !hasDesired && !prune {
 		return report, nil, nil
 	}
 	if rel == "" || harness.ValidateRelPath(rel) != nil {

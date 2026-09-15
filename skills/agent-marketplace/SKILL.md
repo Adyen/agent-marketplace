@@ -66,6 +66,7 @@ The canonical v2 schema materializes native harness files instead of the old def
 - **Source harness ingestion** — use `source_harness: claude` when autodetection is not enough; registries are ingested through `harness-compilation`.
 - **Repo and machine scope outputs** — repo config materializes under repo roots like `.factory/`; global config materializes under machine roots like `~/.factory/`.
 - **Dry-run drift reporting** — `status` and `sync --check` report the same native files that `sync` writes or prunes.
+- **Plan-before-backup sync** — a writing `sync` builds one no-write plan for resolved and stale output, then derives configured machine-scope backup coverage from that plan before execution; stale-only removals are covered, while configured archives remain out of repo scope.
 - **Resource prerequisites** — resources declare `metadata.requires`; unmet prerequisites produce warnings but are never installed automatically.
 - **Conversion and diagnostics** — `convert` translates one harness layout to another; `doctor` shows harness/root diagnostics.
 
