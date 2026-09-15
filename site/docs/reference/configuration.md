@@ -42,7 +42,7 @@ include:
 
 Relative paths resolve from the directory containing the file that declares them. Absolute paths are also accepted. Includes are recursive, so an included fragment may include other fragments. The same file contributes only at its first position when reached more than once; canonical paths are used for this check. Glob patterns and remote URLs are not supported.
 
-Included fragments have lower precedence than their containing file. For an ordered list, the first fragment is merged first, later fragments merge over earlier fragments, and the containing file merges last. The normal field-specific merge rules still apply; `include` does not make every field a simple replacement. See the [selection and precedence reference](../../../docs/PRECEDENCE.md) for the complete merge rules.
+Included fragments have lower precedence than their containing file. For an ordered list, the first fragment is merged first, later fragments merge over earlier fragments, and the containing file merges last. The normal field-specific merge rules still apply; `include` does not make every field a simple replacement. See the [selection and precedence reference](https://github.com/Adyen/agent-marketplace/blob/main/docs/PRECEDENCE.md) for the complete merge rules.
 
 The loader rejects a layer when an include is missing, unreadable, malformed, invalid for that layer, or part of a direct or indirect cycle. Included fragments may omit `apiVersion`, but they must use fields allowed by the layer that includes them. A regular organization, user, or repository root still requires `apiVersion: agent-marketplace/v2` (or the accepted `agent-marketplace/v3` compatibility alias); a local root may omit it.
 

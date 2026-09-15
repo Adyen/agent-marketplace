@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitepress'
-import { GITHUB_REPOSITORY_URL, MARKETPLACE_PATH } from '../src/shared/site'
+import { DOCS_PATH, GITHUB_REPOSITORY_URL, MARKETPLACE_PATH } from '../src/shared/site'
 
 // The hosting target is deliberately undecided. SITE_BASE lets a project-path
 // deployment (e.g. GitHub Pages at /agent-marketplace/) be selected at build
@@ -39,8 +39,43 @@ export default defineConfig({
       // Resolve from the site path to the sibling app at the shared origin root.
       // target keeps VitePress from handling the sibling app as an SPA route.
       { text: 'Marketplace', link: `..${MARKETPLACE_PATH}`, target: '_self' },
-      { text: 'Docs', link: '/#install' }
+      { text: 'Docs', link: DOCS_PATH, activeMatch: `^${DOCS_PATH}` }
     ],
+
+    // One entry per page, ordered by hand. Add a line here when adding a page
+    // under site/docs/.
+    sidebar: {
+      [DOCS_PATH]: [
+        { text: 'Overview', link: DOCS_PATH },
+        {
+          text: 'Tutorials',
+          items: [
+            { text: 'Install your first skill', link: `${DOCS_PATH}tutorials/install-your-first-skill` }
+          ]
+        },
+        {
+          text: 'How-to guides',
+          items: [
+            { text: 'Install from a hosted Marketplace', link: `${DOCS_PATH}how-to/install-from-a-marketplace` }
+          ]
+        },
+        {
+          text: 'Reference',
+          items: [
+            { text: 'Command line', link: `${DOCS_PATH}reference/cli` },
+            { text: 'Repository configuration', link: `${DOCS_PATH}reference/configuration` },
+            { text: 'Marketplace operator configuration', link: `${DOCS_PATH}reference/marketplace-operator-configuration` }
+          ]
+        }
+      ]
+    },
+
+    search: { provider: 'local' },
+
+    editLink: {
+      pattern: `${repo}/edit/main/site/:path`,
+      text: 'Edit this page on GitHub'
+    },
 
     socialLinks: [{
       icon: 'github',

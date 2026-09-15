@@ -66,7 +66,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('target', '_self')
     await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '../marketplace/')
-    await expect(landingNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(landingNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(page.locator('link[rel="prefetch"][href="/marketplace/"]')).toHaveCount(1)
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
     await expect.poll(fontStatus).toEqual({
@@ -95,7 +95,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('aria-current', 'page')
-    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
     await expect(page.locator('link[href*="nuxt-fonts-global"]')).toHaveCount(0)
     await expect.poll(fontStatus).toEqual({

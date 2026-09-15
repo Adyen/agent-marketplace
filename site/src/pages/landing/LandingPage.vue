@@ -8,7 +8,6 @@ import NativeOutputSection from './sections/NativeOutputSection.vue'
 import ScopesPolicySection from './sections/ScopesPolicySection.vue'
 import SafeSyncSection from './sections/SafeSyncSection.vue'
 import GetStartedSection from './sections/GetStartedSection.vue'
-import SiteFooter from '../../shared/components/SiteFooter.vue'
 </script>
 
 <template>
@@ -20,6 +19,5 @@ import SiteFooter from '../../shared/components/SiteFooter.vue'
     <ScopesPolicySection />
     <SafeSyncSection />
     <GetStartedSection />
-    <SiteFooter />
   </div>
 </template>

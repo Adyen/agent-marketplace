@@ -188,10 +188,12 @@ agent-marketplace/
 ├── AGENTS.md          ← project context and agent workflow
 ├── CODING_STANDARDS.md ← code-change requirements
 ├── go.mod
-├── docs/
+├── docs/              ← internal design notes (not published)
 │   ├── adoption-guide.md         ← v3 onboarding guide
 │   ├── PRECEDENCE.md             ← selection & precedence reference
 │   └── plans/                    ← phased implementation plans
+├── site/              ← VitePress landing page (/) and public docs (site/docs → /docs/)
+├── web/               ← Nuxt Marketplace UI (/marketplace/)
 ├── e2e/              ← declarative E2E test suite (required Ubuntu CI; Docker locally)
 ├── internal/
 │   ├── config/        ← config model, loader, merge, editor, migration

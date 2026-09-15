@@ -10,7 +10,7 @@ You need:
 
 - Claude Code;
 - Git; and
-- `agent-marketplace` on your `PATH`. Download a published binary from [GitHub Releases](https://github.com/Adyen/agent-marketplace/releases), or follow the [source build instructions](../../../README.md#build-from-source).
+- `agent-marketplace` on your `PATH`. Download a published binary from [GitHub Releases](https://github.com/Adyen/agent-marketplace/releases), or follow the [source build instructions](https://github.com/Adyen/agent-marketplace#build-from-source).
 
 Confirm that the CLI is available:
 
@@ -142,8 +142,8 @@ Configuration remains the source of selection policy, while `~/.agents/lock.yaml
 
 ## Next steps
 
-- Learn the everyday [`list`, `install`, `remove`, `sync`, and `update` commands](../../../README.md#quick-start).
-- [Add agent-marketplace to a repository](../../adoption-guide.md) to share selections with a team.
+- Learn the everyday [`list`, `install`, `remove`, `sync`, and `update` commands](../reference/cli.md).
+- [Add agent-marketplace to a repository](https://github.com/Adyen/agent-marketplace/blob/main/docs/adoption-guide.md) to share selections with a team.
 - Read the [configuration reference](../reference/configuration.md) when you need to edit `.agents/config.yaml` directly.
 
 The tutorial follows the repository's `main` branch for an approachable first installation. For reproducible setups, configure a stable tag or commit as the registry ref.
