@@ -144,26 +144,10 @@ agent-marketplace sync
 
 In CI, `agent-marketplace sync --check` exits non-zero if the config, lock, and generated output disagree.
 
-## Keys you will use
-
-| Action | Key |
-|---|---|
-| Move | `j` / `k` |
-| Switch tab (Scope, Registry, Status) | `1` / `2` / `3` |
-| Fuzzy search | `/` |
-| Toggle the selected resource | `space` |
-| View a resource's files | `enter` |
-| Sync pending changes | `s` |
-| Refresh registry caches | `u` |
-| Change target harnesses | `H` |
-| Open a config file in `$EDITOR` | `E` |
-| View errors and warnings | `e` |
-| Every binding | `?` |
-| Quit | `q` |
-
 ## Where next
 
-- [Install your first skill for Claude Code](./tutorials/install-your-first-skill.md) — the same flow, CLI only, installed user-wide instead of per project.
-- [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md) — search and install verified resources from a Marketplace server instead of a raw Git URL.
-- [Command-line reference](./reference/cli.md) — `list`, `install`, `remove`, `sync`, `update`, `status`, and every flag.
-- [Repository configuration reference](./reference/configuration.md) — everything `.agents/config.yaml` accepts, including per-registry harness narrowing, excludes, and tags.
+- [Install your first skill for Claude Code](./tutorials/install-your-first-skill.md): the same flow, CLI only, installed user-wide instead of per project.
+- [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md): search and install verified resources from a Marketplace server instead of a raw Git URL.
+- [TUI reference](./reference/tui.md): every key binding and modal action.
+- [Command-line reference](./reference/cli.md): `list`, `install`, `remove`, `sync`, `update`, `status`, and every flag.
+- [Repository configuration reference](./reference/configuration.md): everything `.agents/config.yaml` accepts, including per-registry harness narrowing, excludes, and tags.

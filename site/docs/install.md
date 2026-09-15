@@ -51,17 +51,7 @@ A released build prints its version, for example `v3.1.1`. A build from source p
 
 ## Supported harnesses
 
-`agent-marketplace` writes into the native layout of these coding harnesses. Install at least one before you continue; the [quick start](./quick-start.md) detects installed harnesses on first launch.
-
-| Harness | Identifier |
-|---|---|
-| Claude Code | `claude` |
-| Codex | `codex` |
-| Cursor | `cursor` |
-| Devin CLI | `devin` |
-| Factory Droid | `factory` |
-| Gemini CLI | `gemini` |
-| Windsurf | `windsurf` |
+`agent-marketplace` supports seven coding harnesses. The [harnesses and output paths reference](./reference/harnesses-and-output-paths.md) lists their identifiers and native output paths.
 
 ## Next
 

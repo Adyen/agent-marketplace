@@ -92,7 +92,7 @@ The table columns are `REGISTRY`, `KIND`, `NAME`, `TAGS (metadata)`, and `STATUS
 When configured output is out of sync, the command appends a summary with this form:
 
 ```text
-3 resources out of sync — run 'agent-marketplace sync'
+3 resources out of sync: run 'agent-marketplace sync'
 ```
 
 ## `search`
