@@ -1,4 +1,4 @@
-mode: split
+mode: all
 
 image:
   repository: agent-marketplace

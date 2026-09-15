@@ -79,7 +79,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.serviceMonitor.enabled (eq .Values.mode "split") (not .Values.api.enabled) }}
 {{- fail "serviceMonitor.enabled requires api.enabled in split mode" }}
 {{- end }}
-{{- if and .Values.networkPolicy.enabled (not (or .Values.networkPolicy.allowSameNamespace (gt (len .Values.networkPolicy.ingressNamespaces) 0))) }}
+{{- if and .Values.networkPolicy.enabled (not (or .Values.networkPolicy.allowSameNamespace .Values.networkPolicy.ingressNamespaces)) }}
 {{- fail "networkPolicy requires allowSameNamespace or at least one ingressNamespaces entry" }}
 {{- end }}
 {{- end }}
@@ -174,7 +174,7 @@ spec:
               protocol: TCP
           {{- end }}
           {{- end }}
-          {{- if or (and $isMarketplace $root.Values.storage.dsnSecret.name) (eq $role "web") (gt (len $component.env) 0) }}
+          {{- if or (and $isMarketplace $root.Values.storage.dsnSecret.name) (eq $role "web") $component.env }}
           env:
             {{- if and $isMarketplace $root.Values.storage.dsnSecret.name }}
             - name: {{ $root.Values.storage.dsnSecret.envName }}

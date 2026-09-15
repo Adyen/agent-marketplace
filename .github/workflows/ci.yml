@@ -93,10 +93,46 @@ jobs:
             enabled: true
           EOF
 
+          null_env_values_file="$RUNNER_TEMP/helm-null-env-values.yaml"
+          null_network_values_file="$RUNNER_TEMP/helm-null-network-values.yaml"
+          cat > "$null_env_values_file" <<'EOF'
+          mode: all
+          persistence:
+            enabled: false
+          all:
+            env: null
+          EOF
+          cat > "$null_network_values_file" <<'EOF'
+          mode: all
+          persistence:
+            enabled: false
+          networkPolicy:
+            enabled: true
+            allowSameNamespace: false
+            ingressNamespaces: null
+          EOF
+
           helm lint --strict "$CHART_DIR"
           helm lint --strict "$CHART_DIR" --values "$values_file"
           helm template marketplace "$CHART_DIR" --namespace marketplace > "$package_dir/default-rendered.yaml"
           helm template marketplace "$CHART_DIR" --namespace marketplace --values "$values_file" > "$package_dir/configured-rendered.yaml"
+          if [[ "$(grep -c '^kind: Deployment$' "$package_dir/default-rendered.yaml")" -ne 1 ]]; then
+            echo "default chart should render exactly one Deployment" >&2
+            exit 1
+          fi
+          helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_env_values_file" > "$package_dir/null-env-rendered.yaml"
+          if helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_network_values_file" > /dev/null 2>"$package_dir/null-network-error.txt"; then
+            echo "null ingressNamespaces should fail network policy validation" >&2
+            exit 1
+          fi
+          if ! grep -Fq "networkPolicy requires allowSameNamespace or at least one ingressNamespaces entry" "$package_dir/null-network-error.txt"; then
+            cat "$package_dir/null-network-error.txt" >&2
+            exit 1
+          fi
+          if grep -Fq "len of nil pointer" "$package_dir/null-network-error.txt"; then
+            cat "$package_dir/null-network-error.txt" >&2
+            exit 1
+          fi
           helm package "$CHART_DIR" --destination "$package_dir"
           package_paths=("$package_dir"/*.tgz)
           if (( ${#package_paths[@]} != 1 )) || [[ ! -f "${package_paths[0]}" ]]; then

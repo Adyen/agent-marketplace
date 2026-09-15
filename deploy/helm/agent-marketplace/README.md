@@ -1,6 +1,6 @@
 # Deploy Agent Marketplace on Kubernetes
 
-This guide shows how to deploy the Agent Marketplace service with the reusable Helm chart in this directory. The chart defaults to separate API and worker Deployments, with optional web and documentation frontends.
+This guide shows how to deploy the Agent Marketplace service with the reusable Helm chart in this directory. The chart defaults to one all-in-one Deployment, with optional web and documentation frontends. Use split mode for external shared storage and separate API and worker scaling.
 
 ## Prerequisites
 
