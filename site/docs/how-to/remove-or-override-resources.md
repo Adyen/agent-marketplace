@@ -1,6 +1,6 @@
 # How to remove or override resources
 
-This guide shows how to remove a selected resource, exclude an auto-selected one, or override a resource from a different configuration layer.
+Remove a selected resource, exclude an auto-selected one, or override a resource from a different configuration layer.
 
 ## Prerequisites
 

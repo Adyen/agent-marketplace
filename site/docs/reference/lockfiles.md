@@ -1,7 +1,5 @@
 # Lockfiles reference
 
-This page describes the generated lockfiles, their location, and their role in reproducible sync.
-
 ## Layer-owned lockfiles
 
 | Layer | Configuration | Generated lock |

@@ -1,6 +1,6 @@
 # How to back up and restore a Marketplace
 
-This guide shows how to back up a hosted Marketplace and restore it to a consistent point.
+Back up a hosted Marketplace and restore it to a consistent point.
 
 ## Prerequisites
 

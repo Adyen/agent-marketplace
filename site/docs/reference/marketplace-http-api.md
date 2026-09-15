@@ -1,6 +1,6 @@
 # Marketplace HTTP API reference
 
-This page lists the HTTP routes served by `agent-marketplace serve`. All routes are `GET` or `HEAD` only; other methods return `405 Method Not Allowed`.
+All routes are `GET` or `HEAD` only; other methods return `405 Method Not Allowed`.
 
 ## Listeners
 

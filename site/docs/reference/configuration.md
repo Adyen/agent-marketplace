@@ -21,7 +21,7 @@ Other configuration layers use related schemas:
 
 Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. Hosted Marketplace resources use exact pins under `marketplaces[].resources` and do not appear in the generated Git lockfiles.
 
-This page describes the committed repository file. Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
+Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
 
 ## `include`
 

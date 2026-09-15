@@ -1,6 +1,6 @@
 # How to repair owned shared configuration
 
-This guide shows how to reconcile Devin or Codex shared configuration files when `agent-marketplace` cannot prove ownership of an existing entry.
+Reconcile Devin or Codex shared configuration files when `agent-marketplace` cannot prove ownership of an existing entry.
 
 ## Prerequisites
 

@@ -1,6 +1,6 @@
 # How to use a local registry
 
-This guide shows how to use a directory on the local machine as a registry.
+Use a directory on the local machine as a registry.
 
 ## Prerequisites
 

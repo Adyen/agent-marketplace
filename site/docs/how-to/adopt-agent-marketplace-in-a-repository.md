@@ -1,6 +1,6 @@
 # How to adopt agent-marketplace in a repository
 
-This guide shows how to add `agent-marketplace` to a repository and share the same skills and resources with everyone on the team.
+Add `agent-marketplace` to a repository and share the same skills and resources with everyone on the team.
 
 ## Prerequisites
 

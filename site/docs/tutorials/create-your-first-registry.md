@@ -1,6 +1,6 @@
 # Create your first registry
 
-In this tutorial, you will create a Git registry from scratch, add one skill with valid `SKILL.md` frontmatter, and verify that `agent-marketplace` can install it.
+Create a Git registry from scratch, add one skill with valid `SKILL.md` frontmatter, and verify that `agent-marketplace` can install it.
 
 ## Before you begin
 

@@ -1,6 +1,6 @@
 # Harnesses and output paths reference
 
-This page lists the supported harness targets and the native paths where `agent-marketplace` materializes each kind of resource. The roots and per-kind paths are derived from `pkg/harness-compilation/target` and `internal/harness/roots.go`.
+The roots and per-kind paths are derived from `pkg/harness-compilation/target` and `internal/harness/roots.go`.
 
 ## Supported harness identifiers
 

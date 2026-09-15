@@ -1,7 +1,5 @@
 # Terminal UI reference
 
-This page lists the keyboard actions supported by the `agent-marketplace` TUI.
-
 ## Launch
 
 - `agent-marketplace` starts the TUI when stdin is a terminal and `AGENT_MARKETPLACE_NO_TUI` is not set.

@@ -1,6 +1,6 @@
 # How to troubleshoot sync drift
 
-This guide shows how to diagnose and fix the most common causes of `agent-marketplace sync --check` failures.
+Diagnose and fix the most common causes of `agent-marketplace sync --check` failures.
 
 ## Prerequisites
 

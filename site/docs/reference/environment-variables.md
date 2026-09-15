@@ -1,7 +1,5 @@
 # Environment variables reference
 
-This page lists environment variables that influence `agent-marketplace` behavior.
-
 ## Logging
 
 | Variable | Effect |

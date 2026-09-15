@@ -1,6 +1,6 @@
 # How to publish resource collections
 
-This guide shows how to define a named collection in a registry so consumers can install a bundle of resources at once.
+Define a named collection in a registry so consumers can install a bundle of resources at once.
 
 ## Prerequisites
 

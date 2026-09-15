@@ -1,6 +1,6 @@
 # How to configure private Git registries
 
-This guide shows how to authenticate `agent-marketplace` to a private Git registry without storing credentials in the `agent-marketplace` configuration or lock.
+Authenticate `agent-marketplace` to a private Git registry without storing credentials in the `agent-marketplace` configuration or lock.
 
 ## Prerequisites
 

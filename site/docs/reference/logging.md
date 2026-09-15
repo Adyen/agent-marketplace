@@ -1,7 +1,5 @@
 # Logging reference
 
-This page describes how `agent-marketplace` configures operational logging.
-
 ## Strategy
 
 - Defaults live in code (`internal/config/config.go`).

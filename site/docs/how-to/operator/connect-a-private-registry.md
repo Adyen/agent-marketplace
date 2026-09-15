@@ -1,6 +1,6 @@
 # How to connect a private registry
 
-This guide shows how to configure a hosted Marketplace to clone a private Git registry.
+Configure a hosted Marketplace to clone a private Git registry.
 
 ## Prerequisites
 

@@ -1,6 +1,6 @@
 # How to use personal repository overrides
 
-This guide shows how to keep project-wide configuration committed while making checkout-only choices in a gitignored local file.
+Keep project-wide configuration committed while making checkout-only choices in a gitignored local file.
 
 ## Prerequisites
 

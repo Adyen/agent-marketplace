@@ -1,7 +1,5 @@
 # Telemetry reference
 
-This page describes the telemetry signals, configuration fields, and commands.
-
 ## Levels
 
 | Level | Signals |

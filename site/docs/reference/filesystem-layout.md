@@ -1,6 +1,6 @@
 # Filesystem layout reference
 
-This page describes the directories and files `agent-marketplace` creates on a machine and in a repository. The `XDG_*` defaults below apply only when those variables are not set.
+The `XDG_*` defaults below apply only when those variables are not set.
 
 ## Repository paths
 

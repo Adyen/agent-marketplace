@@ -1,7 +1,5 @@
 # Marketplace health and metrics reference
 
-This page describes the health, readiness, and Prometheus metrics endpoints exposed by the hosted Marketplace.
-
 ## Endpoints
 
 | Path | Listener | Purpose |

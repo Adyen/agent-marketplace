@@ -1,7 +1,5 @@
 # Registry layout reference
 
-This page describes the directory structure a Git registry can use so `agent-marketplace` discovers its resources.
-
 ## Layout by kind
 
 | Kind | Directory | Expected files |
