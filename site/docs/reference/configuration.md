@@ -2,7 +2,7 @@
 
 The committed `.agents/config.yaml` file defines which registries a repository uses, which resources it selects, and which coding harnesses receive those resources. A configuration file can compose local YAML fragments with the `include` field.
 
-Agent Marketplace treats configuration as the source of selection policy and generated layer locks as the exact Git acquisition record. After editing the selected root file, run `agent-marketplace sync` to reconcile its writable lock and generated harness files, or `agent-marketplace sync --check` to report lock and output drift without changing files.
+For task-oriented guidance, see [How to adopt agent-marketplace in a repository](../how-to/adopt-agent-marketplace-in-a-repository.md) and [How to keep resources reproducible](../how-to/keep-resources-reproducible.md).
 
 ## File location and scope
 
@@ -347,7 +347,7 @@ allowed_marketplaces:
   - '^https://marketplace\.example\.com$'
 ```
 
-The first layer that declares this field controls it, in authority order: organization, user, repository, then repository-personal. Lower-authority layers cannot relax a policy selected by a higher-authority layer.
+The first layer that declares this field controls it, in authority order: organization, user, repository. `LocalConfig` cannot declare this authority. Lower-authority layers cannot relax a policy selected by a higher-authority layer.
 
 | Configuration | Effect |
 |---|---|
@@ -357,7 +357,7 @@ The first layer that declares this field controls it, in authority order: organi
 
 The policy is checked before endpoint registration, search, acquisition, and synchronization.
 
-For the workflow that creates these entries, see [How to install a resource from a hosted Marketplace](../how-to/install-from-a-marketplace.md).
+For the workflow that creates these entries, see [How to install a resource from a hosted Marketplace](../how-to/install-from-a-marketplace.md) and the [Marketplace resource locators reference](./marketplace-resource-locators.md).
 
 ## Registry allowlist
 
