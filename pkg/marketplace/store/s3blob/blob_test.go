@@ -3,6 +3,8 @@ package s3blob_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -25,6 +27,99 @@ func testStore(t *testing.T) *s3blob.Store {
 		t.Fatalf("New: %v", err)
 	}
 	return s
+}
+
+type recordedRequest struct {
+	method  string
+	path    string
+	headers http.Header
+}
+
+// newEndpointStore returns a store pointed at an isolated httptest server
+// along with the requests the server observed. Credentials and region are
+// test-scoped statics; no real AWS environment or network is required.
+func newEndpointStore(t *testing.T, handler http.HandlerFunc) (*s3blob.Store, *[]recordedRequest) {
+	t.Helper()
+
+	var requests []recordedRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, recordedRequest{method: r.Method, path: r.URL.Path, headers: r.Header.Clone()})
+		handler(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+
+	s, err := s3blob.New(context.Background(), "test-bucket", "us-east-1", s3blob.WithEndpoint(server.URL))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return s, &requests
+}
+
+func TestProbeHeadsBucketOnce(t *testing.T) {
+	ctx := context.Background()
+	bs, requests := newEndpointStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead || r.URL.Path != "/test-bucket" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	if err := bs.Probe(ctx); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if len(*requests) != 1 {
+		t.Fatalf("Probe made %d requests, want 1", len(*requests))
+	}
+	got := (*requests)[0]
+	if got.method != http.MethodHead || got.path != "/test-bucket" {
+		t.Fatalf("Probe request = %s %s, want HEAD /test-bucket", got.method, got.path)
+	}
+}
+
+func TestProbeReturnsBackendError(t *testing.T) {
+	ctx := context.Background()
+	bs, requests := newEndpointStore(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	if err := bs.Probe(ctx); err == nil {
+		t.Fatalf("Probe against failing backend returned nil error")
+	}
+	if len(*requests) != 1 {
+		t.Fatalf("Probe made %d requests after a backend error, want 1", len(*requests))
+	}
+}
+
+func TestGetWithoutChecksumModeHeader(t *testing.T) {
+	ctx := context.Background()
+	data := []byte("custom endpoint blob bytes")
+	digest := store.ArchiveDigest("sha256:abcdef1234567890")
+	bs, requests := newEndpointStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/test-bucket/"+string(digest) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write(data)
+	})
+
+	got, err := bs.Get(ctx, digest)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("Get returned %q, want %q", got, data)
+	}
+	if len(*requests) != 1 {
+		t.Fatalf("Get made %d requests, want 1", len(*requests))
+	}
+	if mode := (*requests)[0].headers.Get("x-amz-checksum-mode"); mode != "" {
+		t.Fatalf("Get sent x-amz-checksum-mode %q to a custom endpoint", mode)
+	}
 }
 
 func TestBlobRoundTrip(t *testing.T) {

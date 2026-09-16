@@ -31,6 +31,22 @@ func (s *Store) path(digest store.ArchiveDigest) string {
 	return filepath.Join(s.root, d[:2], d[2:])
 }
 
+// Probe verifies that the blob root is usable. A missing root is valid for a
+// new empty store; it is created on the first write.
+func (s *Store) Probe(ctx context.Context) error {
+	info, err := os.Stat(s.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat blob root: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%w: blob root %q is not a directory", store.ErrTopology, s.root)
+	}
+	return nil
+}
+
 // Get returns the blob bytes for digest. It returns [store.ErrNotFound] when
 // the blob does not exist.
 func (s *Store) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {

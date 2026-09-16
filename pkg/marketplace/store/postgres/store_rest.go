@@ -574,9 +574,9 @@ func (s *Store) leaseError(ctx context.Context, id store.JobID, workerID string,
 	return sentinel
 }
 
-// -- Readiness --
+// -- Integrity --
 
-func (s *Store) ReadyCheck(ctx context.Context, blobs store.BlobStore) error {
+func (s *Store) CheckIntegrity(ctx context.Context, blobs store.BlobStore) error {
 	rows, err := s.q.QueryContext(ctx,
 		`SELECT DISTINCT archive_digest AS digest, 0 AS inspection
 		 FROM resource_revisions
