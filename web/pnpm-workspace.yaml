@@ -1,3 +1,4 @@
 overrides:
   "nanoid": "6.0.1"
   "semver@^6.0.0": "7.7.3"
+  "undici": "8.10.2"
