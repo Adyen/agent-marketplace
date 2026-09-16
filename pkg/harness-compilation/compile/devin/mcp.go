@@ -169,18 +169,17 @@ func translateMcpServer(m *ir.McpServer, opts compile.Options) ([]artifact.Artif
 	// dropped in favour of the compiler's own decision. The reason each key is
 	// reserved even when its typed field is absent:
 	//
-	//   - oauthClientSecret is the sensitive value the plan singles out. Typing
-	//     it in the IR is worthless if an untyped extension map can put a
-	//     secret straight into the artifact behind the compiler's back, so the
-	//     key can never be written from Extra. oauthClientId and oauthResource
-	//     are reserved with it: together they select WHICH identity provider
-	//     and WHICH protected resource the credential is presented to.
+	//   - oauthClientSecret is the sensitive value the plan singles out. A
+	//     literal extension-form value is inspected before reserved-field
+	//     suppression, then the key can never be written from Extra. oauthClientId
+	//     and oauthResource are reserved with it: together they select WHICH
+	//     identity provider and WHICH protected resource receives the credential.
 	//   - command and args ARE the executed process, and url is the endpoint
 	//     the agent talks to. An extension copy would run or contact something
 	//     that never passed the form and interpolation checks below.
-	//   - env and headers carry credentials and are the two fields the literal-
-	//     credential scan above covers. An extension copy would bypass that
-	//     scan entirely.
+	//   - env and headers carry credentials and are inspected by the shared
+	//     literal-credential scan before ExtraKeys suppresses reserved keys.
+	//     An extension-form literal is reported without being emitted from Extra.
 	//   - transport selects the wire protocol and is validated against a closed
 	//     documented vocabulary; an extension copy would bypass that check.
 	//   - disabled is the activation switch. An extension copy could re-enable
