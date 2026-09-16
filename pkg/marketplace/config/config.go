@@ -111,17 +111,25 @@ func (d Duration) Duration() time.Duration { return time.Duration(d) }
 
 // Config is the top-level Marketplace operator configuration.
 type Config struct {
-	APIVersion         string      `yaml:"apiVersion"`
-	Instance           Instance    `yaml:"instance"`
-	Listen             string      `yaml:"listen"`
-	OperationsListen   string      `yaml:"operations_listen"`
-	Storage            Storage     `yaml:"storage"`
-	AcquisitionDefault string      `yaml:"acquisition_default"`
-	Refresh            Refresh     `yaml:"refresh"`
-	RefreshConcurrency int         `yaml:"refresh_concurrency,omitempty"`
-	Policy             Policy      `yaml:"policy"`
-	Registries         []Registry  `yaml:"registries"`
-	Revocations        Revocations `yaml:"revocations"`
+	APIVersion         string            `yaml:"apiVersion"`
+	Instance           Instance          `yaml:"instance"`
+	Listen             string            `yaml:"listen"`
+	OperationsListen   string            `yaml:"operations_listen"`
+	Storage            Storage           `yaml:"storage"`
+	AcquisitionDefault string            `yaml:"acquisition_default"`
+	Refresh            Refresh           `yaml:"refresh"`
+	RefreshConcurrency int               `yaml:"refresh_concurrency,omitempty"`
+	Policy             Policy            `yaml:"policy"`
+	Registries         []Registry        `yaml:"registries"`
+	Revocations        Revocations       `yaml:"revocations"`
+	CatalogProjection  CatalogProjection `yaml:"catalog_projection"`
+}
+
+// CatalogProjection controls the optional catalog projection API. It is
+// disabled by default because its repository provenance requires an operator
+// to explicitly expose it through an appropriate boundary.
+type CatalogProjection struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // Instance describes the Marketplace deployment.

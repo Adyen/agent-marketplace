@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-var migrations = []string{migration0}
+var migrations = []string{migration0, migration1, migration2}
 
 const migrationTable = "marketplace_metadata_v2_schema_migrations"
 
@@ -206,4 +206,23 @@ CREATE TABLE jobs (
 );
 CREATE UNIQUE INDEX idx_jobs_idempotency ON jobs(kind, idempotency_key) WHERE idempotency_key <> '';
 CREATE INDEX idx_jobs_lease ON jobs(status, lease_until, kind, attempt, max_attempts, created_at);
+`
+
+// migration1 adds nullable occurrence provenance and the single durable
+// catalog version row without rewriting legacy metadata.
+const migration1 = `
+ALTER TABLE registry_occurrences ADD COLUMN source_origin TEXT;
+ALTER TABLE resource_occurrences ADD COLUMN source_path TEXT;
+
+CREATE TABLE catalog_versions (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    version BIGINT NOT NULL
+);
+INSERT INTO catalog_versions (singleton, version) VALUES (1, 0);
+`
+
+// migration2 preserves the direct collection include declaration separately
+// from direct resource members.
+const migration2 = `
+ALTER TABLE collection_revisions ADD COLUMN includes TEXT NOT NULL DEFAULT '[]';
 `

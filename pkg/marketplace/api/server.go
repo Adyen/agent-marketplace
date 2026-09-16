@@ -3,18 +3,21 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -44,8 +47,7 @@ type Server struct {
 	public        *http.Server
 	ops           *http.Server
 
-	requestsTotal  atomic.Int64
-	activeRequests atomic.Int64
+	metrics *serverMetrics
 }
 
 // PublicHandler returns the public API handler, useful for tests.
@@ -67,37 +69,44 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 		revocationErr: evaluatorErr,
 	}
 
+	s.metrics = newServerMetrics()
+
 	publicMux := http.NewServeMux()
-	publicMux.HandleFunc("/.well-known/agent-marketplace.json", s.methodGet(s.handleWellKnown))
-	publicMux.HandleFunc("/api/v1/capabilities", s.methodGet(s.handleCapabilities))
-	publicMux.HandleFunc("/api/v1/instance", s.methodGet(s.handleInstance))
-	publicMux.HandleFunc("/api/v1/search", s.methodGet(s.handleSearch))
-	publicMux.HandleFunc("/api/v1/registries", s.methodGet(s.handleRegistryList))
-	publicMux.HandleFunc("/api/v1/registries/", s.methodGet(s.handleRegistries))
-	publicMux.HandleFunc("/api/v1/resources/", s.methodGet(s.handleResources))
-	publicMux.HandleFunc("/api/v1/manifests/", s.methodGet(s.handleManifests))
-	publicMux.HandleFunc("/api/v1/assessments/", s.methodGet(s.handleAssessmentDigest))
-	publicMux.HandleFunc("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
-	publicMux.HandleFunc("/api/v1/content/", s.methodGet(s.handleContentDigest))
-	publicMux.HandleFunc("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
-	publicMux.HandleFunc("/healthz", s.methodGet(s.handleHealthz))
+	publicMux.Handle("/.well-known/agent-marketplace.json", s.methodGet(s.handleWellKnown))
+	publicMux.Handle("/api/v1/capabilities", s.methodGet(s.handleCapabilities))
+	publicMux.Handle("/api/v1/instance", s.methodGet(s.handleInstance))
+	publicMux.Handle("/api/v1/search", s.methodGet(s.handleSearch))
+	if cfg.CatalogProjection.Enabled {
+		publicMux.Handle("/api/v1/catalog", s.methodGet(s.handleCatalogProjection))
+	}
+	publicMux.Handle("/api/v1/registries", s.methodGet(s.handleRegistryList))
+	publicMux.Handle("/api/v1/registries/", s.methodGet(s.handleRegistries))
+	publicMux.Handle("/api/v1/resources/", s.methodGet(s.handleResources))
+	publicMux.Handle("/api/v1/manifests/", s.methodGet(s.handleManifests))
+	publicMux.Handle("/api/v1/assessments/", s.methodGet(s.handleAssessmentDigest))
+	publicMux.Handle("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
+	publicMux.Handle("/api/v1/content/", s.methodGet(s.handleContentDigest))
+	publicMux.Handle("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
+	publicMux.Handle("/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
 	// listener directly; the operations listener remains the only route.
-	publicMux.HandleFunc("/readyz", s.handlePublicOperationsNotFound)
-	publicMux.HandleFunc("/metrics", s.handlePublicOperationsNotFound)
+	publicMux.Handle("/readyz", http.HandlerFunc(s.handlePublicOperationsNotFound))
+	publicMux.Handle("/metrics", http.HandlerFunc(s.handlePublicOperationsNotFound))
 
 	opsMux := http.NewServeMux()
-	opsMux.HandleFunc("/readyz", s.methodGet(s.handleReadyz))
-	opsMux.HandleFunc("/metrics", s.methodGet(s.handleMetrics))
+	opsMux.Handle("/readyz", s.methodGet(s.handleReadyz))
+	opsMux.Handle("/metrics", s.methodGet(s.metrics.scrape.ServeHTTP))
 
+	// Each mux is instrumented as a whole, not per route, so responses the
+	// mux itself generates are counted too; see serverMetrics.handler.
 	s.public = &http.Server{
-		Handler:      s.withMetrics(publicMux),
+		Handler:      s.metrics.handler(publicListener, publicMux),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 	s.ops = &http.Server{
-		Handler:      s.withMetrics(opsMux),
+		Handler:      s.metrics.handler(operationsListener, opsMux),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -166,22 +175,416 @@ func (s *Server) methodGet(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) withMetrics(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.activeRequests.Add(1)
-		defer s.activeRequests.Add(-1)
-		s.requestsTotal.Add(1)
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
 	wk := DefaultWellKnown(s.cfg.Instance.ID, s.cfg.Instance.CanonicalURL, s.cfg.Instance.BrowserBase)
+	wk.Capabilities = s.capabilities()
 	writeJSON(w, http.StatusOK, wk)
 }
 
 func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, DefaultCapabilities())
+	writeJSON(w, http.StatusOK, s.capabilities())
+}
+
+func (s *Server) capabilities() Capabilities {
+	caps := DefaultCapabilities()
+	if !s.cfg.CatalogProjection.Enabled {
+		caps.Features = slices.DeleteFunc(caps.Features, func(feature string) bool {
+			return feature == CatalogProjectionV1Alpha1Feature
+		})
+	}
+	return caps
+}
+
+const (
+	defaultCatalogProjectionLimit = 500
+	maxCatalogProjectionLimit     = 500
+	maxCatalogCursorBytes         = 4096
+	maxIfNoneMatchBytes           = 8192
+)
+
+// catalogCursorWire is deliberately a small versioned value rather than a
+// signed session token: the cursor is only an ordering hint, has no authority,
+// and is validated against the configured Marketplace on every request.
+type catalogCursorWire struct {
+	Version     int    `json:"v"`
+	Marketplace string `json:"m"`
+	Registry    string `json:"r"`
+	Kind        string `json:"k"`
+	Name        string `json:"n"`
+}
+
+func (s *Server) handleCatalogProjection(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	continuation := false
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		s.writeCatalogError(w, "invalid catalog query", started, continuation)
+		return
+	}
+	for key := range q {
+		if key != "after" && key != "limit" {
+			s.writeCatalogError(w, "invalid catalog query parameter", started, continuation)
+			return
+		}
+	}
+	limit, err := parseCatalogLimit(q["limit"])
+	if err != nil {
+		s.writeCatalogError(w, err.Error(), started, continuation)
+		return
+	}
+	after, continuation, err := s.parseCatalogCursor(q["after"])
+	if err != nil {
+		s.writeCatalogError(w, err.Error(), started, continuation)
+		return
+	}
+	if continuation && r.Header.Get("If-None-Match") != "" {
+		s.writeCatalogError(w, "If-None-Match is only accepted on the first page", started, continuation)
+		return
+	}
+
+	page, err := s.meta.ReadCatalogProjectionPage(r.Context(), store.CatalogProjectionPageRequest{
+		Marketplace: s.mpID,
+		After:       after,
+		Limit:       limit,
+	})
+	if err != nil {
+		slog.Error("catalog projection read failed", "continuation", continuation, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
+		return
+	}
+	etag := s.catalogETag(page.CatalogVersion)
+	setCatalogHeaders(w, etag)
+	if !continuation {
+		matches, err := ifNoneMatchMatches(r.Header.Get("If-None-Match"), etag)
+		if err != nil {
+			s.writeCatalogError(w, err.Error(), started, continuation)
+			return
+		}
+		if matches {
+			slog.Debug("catalog projection not modified", "catalog_version", page.CatalogVersion, "duration", time.Since(started))
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
+	response, err := s.catalogPageDTO(page)
+	if err != nil {
+		slog.Error("catalog projection contained invalid public data", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
+		return
+	}
+	slog.Debug("catalog projection read", "catalog_version", page.CatalogVersion, "continuation", continuation, "rows", len(response.Resources), "complete", response.Complete, "duration", time.Since(started))
+	writeCatalogJSON(w, r.Method, response)
+}
+
+func (s *Server) writeCatalogError(w http.ResponseWriter, message string, started time.Time, continuation bool) {
+	slog.Debug("catalog projection rejected request", "continuation", continuation, "error", message, "duration", time.Since(started))
+	writeError(w, http.StatusBadRequest, message)
+}
+
+func parseCatalogLimit(values []string) (int, error) {
+	if len(values) == 0 {
+		return defaultCatalogProjectionLimit, nil
+	}
+	if len(values) != 1 || values[0] == "" {
+		return 0, errors.New("invalid catalog limit")
+	}
+	for _, c := range values[0] {
+		if c < '0' || c > '9' {
+			return 0, errors.New("invalid catalog limit")
+		}
+	}
+	value, err := strconv.ParseUint(values[0], 10, 16)
+	if err != nil || value == 0 || value > maxCatalogProjectionLimit {
+		return 0, errors.New("invalid catalog limit")
+	}
+	return int(value), nil
+}
+
+func (s *Server) parseCatalogCursor(values []string) (*store.CatalogProjectionCursor, bool, error) {
+	if len(values) == 0 {
+		return nil, false, nil
+	}
+	if len(values) != 1 || values[0] == "" || len(values[0]) > maxCatalogCursorBytes {
+		return nil, true, errors.New("invalid catalog cursor")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(values[0])
+	if err != nil || len(payload) == 0 {
+		return nil, true, errors.New("invalid catalog cursor")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var cursor catalogCursorWire
+	if err := decoder.Decode(&cursor); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, true, errors.New("invalid catalog cursor")
+	}
+	coordinate := store.ResourceCoordinate{
+		Marketplace: store.MarketplaceID(cursor.Marketplace),
+		Registry:    store.RegistryID(cursor.Registry),
+		Kind:        cursor.Kind,
+		Name:        cursor.Name,
+	}
+	if cursor.Version != 1 || coordinate.Marketplace != s.mpID || coordinate.Registry == "" ||
+		coordinate.Name == "" || !IsMarketplaceKind(coordinate.Kind) {
+		return nil, true, errors.New("invalid catalog cursor")
+	}
+	return &store.CatalogProjectionCursor{Coordinate: coordinate}, true, nil
+}
+
+func encodeCatalogCursor(cursor *store.CatalogProjectionCursor) (CatalogKeysetCursor, error) {
+	if cursor == nil {
+		return "", nil
+	}
+	coordinate := cursor.Coordinate
+	if coordinate.Marketplace == "" || coordinate.Registry == "" || coordinate.Name == "" || !IsMarketplaceKind(coordinate.Kind) {
+		return "", errors.New("invalid catalog cursor")
+	}
+	payload, err := json.Marshal(catalogCursorWire{
+		Version: 1, Marketplace: coordinate.Marketplace.String(), Registry: coordinate.Registry.String(),
+		Kind: coordinate.Kind, Name: coordinate.Name,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode catalog cursor: %w", err)
+	}
+	return CatalogKeysetCursor(base64.RawURLEncoding.EncodeToString(payload)), nil
+}
+
+func (s *Server) catalogETag(version store.CatalogVersion) CatalogETag {
+	var declarations []store.Revocation
+	if s.revocations != nil {
+		declarations = s.revocations.Declarations()
+	}
+	return catalogETag(version, declarations)
+}
+
+// catalogETag hashes the catalog version together with the live revocation
+// declarations. Declarations are sorted by kind and target ID first so the
+// hash depends only on the declaration set, never on the order the source
+// returned; otherwise replicas of the same deployment would derive different
+// ETags for identical state and lose If-None-Match hits.
+func catalogETag(version store.CatalogVersion, declarations []store.Revocation) CatalogETag {
+	sorted := append([]store.Revocation(nil), declarations...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Kind != sorted[j].Kind {
+			return sorted[i].Kind < sorted[j].Kind
+		}
+		return sorted[i].TargetID < sorted[j].TargetID
+	})
+	hash := sha256.New()
+	for _, declaration := range sorted {
+		_, _ = io.WriteString(hash, string(declaration.Kind))
+		_, _ = hash.Write([]byte{0})
+		_, _ = io.WriteString(hash, declaration.TargetID)
+		_, _ = hash.Write([]byte{0})
+	}
+	return CatalogETag(fmt.Sprintf(`"catalog-%s-%x"`, version, hash.Sum(nil)))
+}
+
+func setCatalogHeaders(w http.ResponseWriter, etag CatalogETag) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("ETag", string(etag))
+}
+
+func ifNoneMatchMatches(raw string, etag CatalogETag) (bool, error) {
+	if raw == "" {
+		return false, nil
+	}
+	if len(raw) > maxIfNoneMatchBytes {
+		return false, errors.New("invalid If-None-Match")
+	}
+	remaining := raw
+	matched := false
+	for {
+		remaining = strings.TrimLeft(remaining, " \t")
+		if remaining == "" {
+			return false, errors.New("invalid If-None-Match")
+		}
+		if remaining[0] == '*' {
+			if strings.TrimSpace(remaining[1:]) != "" {
+				return false, errors.New("invalid If-None-Match")
+			}
+			return true, nil
+		}
+		remaining = strings.TrimPrefix(remaining, "W/")
+		if len(remaining) < 2 || remaining[0] != '"' {
+			return false, errors.New("invalid If-None-Match")
+		}
+		end := 1
+		for end < len(remaining) && remaining[end] != '"' {
+			if remaining[end] == '\\' || remaining[end] < 0x21 || remaining[end] == 0x7f {
+				return false, errors.New("invalid If-None-Match")
+			}
+			end++
+		}
+		if end == len(remaining) {
+			return false, errors.New("invalid If-None-Match")
+		}
+		candidate := remaining[:end+1]
+		// If-None-Match uses weak comparison for GET and HEAD. Our generated
+		// validator is strong, but a weak form supplied by a compliant client
+		// still compares equal.
+		if candidate == string(etag) {
+			matched = true
+		}
+		remaining = strings.TrimLeft(remaining[end+1:], " \t")
+		if remaining == "" {
+			return matched, nil
+		}
+		if remaining[0] != ',' {
+			return false, errors.New("invalid If-None-Match")
+		}
+		remaining = remaining[1:]
+		if strings.TrimSpace(remaining) == "" {
+			return false, errors.New("invalid If-None-Match")
+		}
+	}
+}
+
+func (s *Server) catalogPageDTO(page store.CatalogProjectionPage) (CatalogPage, error) {
+	resources := make([]CatalogResource, 0, len(page.Resources))
+	for _, resource := range page.Resources {
+		dto, err := s.catalogResourceDTO(resource)
+		if err != nil {
+			return CatalogPage{}, err
+		}
+		resources = append(resources, dto)
+	}
+	next, err := encodeCatalogCursor(page.Next)
+	if err != nil {
+		return CatalogPage{}, err
+	}
+	return CatalogPage{
+		APIVersion: CatalogAPIVersionV1Alpha1, MarketplaceID: s.mpID.String(),
+		CatalogVersion: page.CatalogVersion.String(), Complete: page.Next == nil,
+		NextCursor: next, Resources: resources,
+	}, nil
+}
+
+func (s *Server) catalogResourceDTO(resource store.CatalogProjectionResource) (CatalogResource, error) {
+	rev := resource.AssessedResourceRevision
+	if err := validatePublicResourceRevision(rev); err != nil {
+		return CatalogResource{}, err
+	}
+	if rev.Coordinate.Marketplace != s.mpID || resource.RegistrySlug == "" {
+		return CatalogResource{}, errors.New("catalog resource identity is invalid")
+	}
+	availability, err := catalogAvailabilityDTO(resource.Availability)
+	if err != nil {
+		return CatalogResource{}, err
+	}
+	rev = s.applyEffectiveRevocation(rev)
+	if rev.Revocation != nil {
+		availability = AvailabilityRevoked
+	}
+	out := CatalogResource{
+		RegistryID: resource.Coordinate.Registry.String(), RegistrySlug: resource.RegistrySlug,
+		Kind: resource.Coordinate.Kind, Name: resource.Coordinate.Name,
+		Description: store.BoundDescription(resource.Description), Revision: resource.ContentDigest.String(),
+		License: resource.License, Availability: availability,
+	}
+	if resource.Source != nil {
+		source, ok := publicCatalogSource(*resource.Source)
+		if ok {
+			out.Source = &source
+		}
+	}
+	if resource.Coordinate.Kind == KindCollection {
+		collection, err := catalogCollectionDTO(resource.Collection, s.mpID)
+		if err != nil {
+			return CatalogResource{}, err
+		}
+		out.Collection = &collection
+	}
+	return out, nil
+}
+
+func catalogAvailabilityDTO(value store.CatalogAvailability) (Availability, error) {
+	switch value {
+	case store.CatalogAvailabilityAvailable:
+		return AvailabilityAvailable, nil
+	case store.CatalogAvailabilityBlocked:
+		return AvailabilityBlocked, nil
+	case store.CatalogAvailabilityRevoked:
+		return AvailabilityRevoked, nil
+	default:
+		return "", errors.New("catalog resource availability is invalid")
+	}
+}
+
+func publicCatalogSource(source store.CatalogProjectionSource) (CatalogSource, bool) {
+	repositoryURL := publicurl.Sanitize(source.RepositoryURL)
+	sourcePath, err := store.NormalizeSourcePath(source.Path)
+	if publicurl.Validate(repositoryURL) != nil || err != nil || !IsCanonicalGitCommit(source.Commit) {
+		return CatalogSource{}, false
+	}
+	return CatalogSource{RepositoryURL: repositoryURL, Path: sourcePath, Commit: source.Commit}, true
+}
+
+func catalogCollectionDTO(collection *store.CatalogCollectionProjection, marketplace store.MarketplaceID) (CatalogCollection, error) {
+	out := CatalogCollection{
+		Resources:            make([]CatalogCollectionResourceReference, 0),
+		Includes:             make([]CatalogCollectionIncludeReference, 0),
+		UnresolvedReferences: make([]CatalogUnresolvedReference, 0),
+	}
+	if collection == nil {
+		return out, nil
+	}
+	for _, coordinate := range collection.Resources {
+		if err := validateCatalogReference(coordinate, marketplace, false); err != nil {
+			return CatalogCollection{}, err
+		}
+		out.Resources = append(out.Resources, CatalogCollectionResourceReference{
+			RegistryID: coordinate.Registry.String(), Kind: coordinate.Kind, Name: coordinate.Name,
+		})
+	}
+	for _, coordinate := range collection.Includes {
+		if err := validateCatalogReference(coordinate, marketplace, true); err != nil {
+			return CatalogCollection{}, err
+		}
+		out.Includes = append(out.Includes, CatalogCollectionIncludeReference{
+			RegistryID: coordinate.Registry.String(), Kind: coordinate.Kind, Name: coordinate.Name,
+		})
+	}
+	for _, unresolved := range collection.UnresolvedReferences {
+		referenceType := unresolved.ReferenceType
+		switch referenceType {
+		case "resource":
+		case "include":
+		default:
+			return CatalogCollection{}, errors.New("catalog unresolved reference type is invalid")
+		}
+		if err := validateCatalogReference(unresolved.Coordinate, marketplace, referenceType == "include"); err != nil ||
+			strings.TrimSpace(unresolved.Reason) == "" {
+			return CatalogCollection{}, errors.New("catalog unresolved reference is invalid")
+		}
+		out.UnresolvedReferences = append(out.UnresolvedReferences, CatalogUnresolvedReference{
+			ReferenceType: referenceType, RegistryID: unresolved.Coordinate.Registry.String(),
+			Kind: unresolved.Coordinate.Kind, Name: unresolved.Coordinate.Name, Reason: unresolved.Reason,
+		})
+	}
+	return out, nil
+}
+
+func validateCatalogReference(coordinate store.ResourceCoordinate, marketplace store.MarketplaceID, mustBeCollection bool) error {
+	if coordinate.Marketplace != marketplace || coordinate.Registry == "" || coordinate.Name == "" || !IsMarketplaceKind(coordinate.Kind) {
+		return errors.New("catalog collection reference is invalid")
+	}
+	if mustBeCollection && coordinate.Kind != KindCollection {
+		return errors.New("catalog collection include is invalid")
+	}
+	return nil
+}
+
+func writeCatalogJSON(w http.ResponseWriter, method string, page CatalogPage) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if method == http.MethodHead {
+		return
+	}
+	if err := json.NewEncoder(w).Encode(page); err != nil {
+		slog.Error("failed to encode catalog projection response", "err", err)
+	}
 }
 
 func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
@@ -1061,16 +1464,6 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
-}
-
-func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	_, _ = fmt.Fprintf(w, "# HELP agent_marketplace_requests_total Total HTTP requests\n")
-	_, _ = fmt.Fprintf(w, "# TYPE agent_marketplace_requests_total counter\n")
-	_, _ = fmt.Fprintf(w, "agent_marketplace_requests_total %d\n", s.requestsTotal.Load())
-	_, _ = fmt.Fprintf(w, "# HELP agent_marketplace_active_requests Active HTTP requests\n")
-	_, _ = fmt.Fprintf(w, "# TYPE agent_marketplace_active_requests gauge\n")
-	_, _ = fmt.Fprintf(w, "agent_marketplace_active_requests %d\n", s.activeRequests.Load())
 }
 
 func (s *Server) resolveRegistry(ctx context.Context, slugOrID string) (store.Registry, error) {

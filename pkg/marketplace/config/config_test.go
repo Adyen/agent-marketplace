@@ -62,6 +62,20 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Refresh.Interval.Duration() == 0 {
 		t.Fatalf("refresh interval did not default")
 	}
+	if cfg.CatalogProjection.Enabled {
+		t.Fatal("catalog projection is enabled by default")
+	}
+}
+
+func TestLoadConfigCatalogProjectionGate(t *testing.T) {
+	yaml := validConfigYAML() + "\ncatalog_projection:\n  enabled: true\n"
+	cfg, err := LoadConfig(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.CatalogProjection.Enabled {
+		t.Fatal("catalog projection gate was not enabled")
+	}
 }
 
 func TestLoadConfigUnknownField(t *testing.T) {
