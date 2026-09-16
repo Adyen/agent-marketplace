@@ -7,12 +7,12 @@ The roots and per-kind paths are derived from `pkg/harness-compilation/target` a
 | Harness | Identifier |
 |---|---|
 | Claude Code | `claude` |
-| Codex | `codex` |
-| Cursor | `cursor` |
-| Devin CLI | `devin` |
 | Factory Droid | `factory` |
-| Gemini CLI | `gemini` |
+| Cursor | `cursor` |
 | Windsurf | `windsurf` |
+| Gemini CLI | `gemini` |
+| Devin CLI | `devin` |
+| Codex | `codex` |
 
 Unknown identifiers are rejected. Target names are lowercase.
 
@@ -21,12 +21,12 @@ Unknown identifiers are rejected. Target names are lowercase.
 | Harness | Repository root | Machine root |
 |---|---|---|
 | Claude Code | `<repo>/.claude` | `~/.claude` |
-| Codex | `<repo>/.agents` (skills, commands) and `<repo>/.codex` (subagents, hooks, mcp) | `~/.agents` (skills, commands) and `~/.codex` or `$CODEX_HOME` (subagents, hooks, mcp) |
-| Cursor | `<repo>/.cursor` | `~/.cursor` |
-| Devin CLI | `<repo>/.devin` | `~/.config/devin` |
 | Factory Droid | `<repo>/.factory` | `~/.factory` |
-| Gemini CLI | `<repo>/.gemini` | `~/.gemini` |
+| Cursor | `<repo>/.cursor` | `~/.cursor` |
 | Windsurf | `<repo>` | `~/.codeium/windsurf` |
+| Gemini CLI | `<repo>/.gemini` | `~/.gemini` |
+| Devin CLI | `<repo>/.devin` | `~/.config/devin` |
+| Codex | `<repo>/.agents` (skills, commands) and `<repo>/.codex` (subagents, hooks, mcp) | `~/.agents` (skills, commands) and `~/.codex` or `$CODEX_HOME` (subagents, hooks, mcp) |
 
 `$CODEX_HOME` must be absolute and relocates only the `.codex` machine partition; it never moves the skill partition.
 
