@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -436,6 +437,119 @@ func TestServerRoutes(t *testing.T) {
 	}
 	if !strings.Contains(body, "agent_marketplace_requests_total") {
 		t.Fatalf("metrics missing requests_total: %s", body)
+	}
+}
+
+type probingBlobStore struct {
+	store.BlobStore
+	probeErr      error
+	probes        int
+	gets          int
+	exists        int
+	probeDeadline time.Time
+}
+
+func (s *probingBlobStore) Probe(ctx context.Context) error {
+	s.probes++
+	s.probeDeadline, _ = ctx.Deadline()
+	return s.probeErr
+}
+
+func (s *probingBlobStore) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
+	s.gets++
+	return s.BlobStore.Get(ctx, digest)
+}
+
+func (s *probingBlobStore) Exists(ctx context.Context, digest store.ArchiveDigest) (bool, error) {
+	s.exists++
+	return s.BlobStore.Exists(ctx, digest)
+}
+
+func setupReadyzServer(t *testing.T, revisions int) (*probingBlobStore, http.Handler) {
+	t.Helper()
+	ctx := context.Background()
+
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+
+	cfg := config.Config{Instance: config.Instance{ID: "mp-readyz", Name: "Readyz"}}
+	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: store.MarketplaceID(cfg.Instance.ID), Name: cfg.Instance.Name}); err != nil {
+		t.Fatalf("put marketplace: %v", err)
+	}
+	src := store.Registry{
+		ID:          store.RegistryID("src-readyz"),
+		Slug:        "readyz-source",
+		Ref:         "main",
+		Origins:     []string{"https://example.com/repo.git"},
+		Acquisition: store.AcquisitionMirror,
+		Listed:      true,
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+	if err := meta.PutRegistry(ctx, src); err != nil {
+		t.Fatalf("put registry: %v", err)
+	}
+	for i := 0; i < revisions; i++ {
+		rev := store.ResourceRevision{
+			Coordinate: store.ResourceCoordinate{
+				Marketplace: store.MarketplaceID(cfg.Instance.ID),
+				Registry:    src.ID,
+				Kind:        KindSkill,
+				Name:        fmt.Sprintf("skill-%04d", i),
+			},
+			ContentDigest: store.RevisionDigest(fmt.Sprintf("sha256:%064x", i+1)),
+			ArchiveDigest: store.ArchiveDigest(fmt.Sprintf("sha256:%064x", i+1001)),
+		}
+		if err := meta.PutResourceRevision(ctx, rev); err != nil {
+			t.Fatalf("put resource revision %d: %v", i, err)
+		}
+	}
+
+	// The blob root intentionally stays empty: readiness must not enumerate
+	// catalog blobs.
+	blobs := &probingBlobStore{BlobStore: fsblob.New(t.TempDir())}
+	return blobs, NewServer(cfg, meta, blobs).OpsHandler()
+}
+
+func TestReadyzProbesBlobStoreOnce(t *testing.T) {
+	blobs, handler := setupReadyzServer(t, 100)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("readyz status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if blobs.probes != 1 {
+		t.Fatalf("readyz probed %d times, want 1", blobs.probes)
+	}
+	if blobs.probeDeadline.IsZero() {
+		t.Fatalf("probe context has no deadline")
+	}
+	if d := time.Until(blobs.probeDeadline); d > blobProbeTimeout {
+		t.Fatalf("probe deadline %s exceeds %s", d, blobProbeTimeout)
+	}
+	if blobs.gets != 0 || blobs.exists != 0 {
+		t.Fatalf("readyz read catalog blobs: gets=%d exists=%d, want 0/0", blobs.gets, blobs.exists)
+	}
+}
+
+func TestReadyzFailsWhenBlobProbeFails(t *testing.T) {
+	blobs, handler := setupReadyzServer(t, 1)
+	blobs.probeErr = errors.New("blob backend unavailable")
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readyz status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if blobs.probes != 1 {
+		t.Fatalf("readyz probed %d times, want 1", blobs.probes)
+	}
+	if blobs.gets != 0 || blobs.exists != 0 {
+		t.Fatalf("readyz read catalog blobs: gets=%d exists=%d, want 0/0", blobs.gets, blobs.exists)
 	}
 }
 

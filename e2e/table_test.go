@@ -3697,7 +3697,7 @@ registries:
 	},
 	{
 		Name: "deinit/purge_config_removes_repo_config",
-		Desc: "Given a synced repo with config and a generated lock, When deinit --scope repo --purge-config is run, Then both files are deleted and transaction coordination files remain",
+		Desc: "Given a synced repo with config and a generated lock, When deinit --scope repo --purge-config is run, Then both files are deleted without transaction coordination files in the repository",
 		Registries: []RegistryDef{
 			{Name: "deinit-purge-reg", Skills: []Skill{
 				{Name: "purge-skill", Description: "Skill for purge test"},
@@ -3715,8 +3715,7 @@ registries:
 				FilesExist: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
 			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, MustPass: true,
 				OutContains: []string{"Removed config", "Removed lock"},
-				FilesAbsent: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"},
-				FilesExist:  []string{"/workspace/.agents/.config.yaml.dependencytxn.lock", "/workspace/.agents/.lock.yaml.dependencytxn.lock"}},
+				FilesAbsent: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/.config.yaml.dependencytxn.lock", "/workspace/.agents/.lock.yaml.dependencytxn.lock"}},
 		},
 	},
 	// ===== devin =====
