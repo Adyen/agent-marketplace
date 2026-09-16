@@ -377,6 +377,14 @@ func TestCompileHookToSettingsJSON(t *testing.T) {
 	if !ok {
 		t.Fatalf("BeforeTool[0] is not a map: %#v", beforeTool[0])
 	}
+	groupHooks, ok := entry["hooks"].([]any)
+	if !ok || len(groupHooks) != 1 {
+		t.Fatalf("native group hooks = %#v", entry["hooks"])
+	}
+	entry, ok = groupHooks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("native hook is not an object: %#v", groupHooks[0])
+	}
 	if entry["command"] != "${extensionPath}/scripts/check.sh" {
 		t.Fatalf("command = %q, want %q", entry["command"], "${extensionPath}/scripts/check.sh")
 	}

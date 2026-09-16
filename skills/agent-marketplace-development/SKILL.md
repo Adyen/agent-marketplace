@@ -5,7 +5,8 @@ description: >
   tour, testing workflow, TUI (Bubble Tea) and CLI (Cobra) conventions,
   and the config/resolver/materialization invariants that every change
   must preserve. Use when adding features, fixing bugs, or reviewing
-  changes to the agent-marketplace Go binary, or running local TUI QA.
+  changes to the agent-marketplace Go binary, running local TUI QA,
+  or maintaining harness compatibility validation.
 metadata:
   tags:
     - development
@@ -128,7 +129,7 @@ Preserve these invariants:
 - **Skills link by default; file mode copies.** Default-mode harness skill
   entries are symlinks to files/directories under
   `~/.cache/agent-marketplace`. File mode writes regular files/trees for
-  targets that support it; Devin deliberately refuses file mode.
+  every target through the generic materializer.
 - **Non-skills are compiled artifacts, unless a target declares
   otherwise.** Commands, subagents, hooks, and MCP servers are selected
   like skills and are normally materialized through HCC into the target
@@ -137,19 +138,23 @@ Preserve these invariants:
   the kinds that take the skill-directory path instead. Devin and Codex set it
   for `ir.KindCommand`, because their commands are skill directories containing
   `SKILL.md` with `x-agent-marketplace-kind: command`. Default mode links those
-  directories; Codex file mode writes them as regular trees, while Devin
-  refuses file mode.
+  directories; file mode writes them as regular trees for both targets
+  through the generic materializer.
 - **No harness-specific skill-link allowlists.** Decide whether a
   resource is a skill by the compiled/source artifact shape, the
   resource kind, and declarative `harness.TargetInfo` metadata — not by
   hard-coded target names like Claude, Factory, Cursor, Windsurf,
   Gemini, Devin, or Codex.
 - **`AggregateFiles` must match what the compilers emit.**
-  `harness.TargetInfo.AggregateFiles` is the single source of truth for
-  which files a target merges into, per scope; both materialization
-  routing and `pipeline.CollectManagedPaths` (safety backup coverage)
-  read it. All seven targets declare it, and the declaration is not
-  editorial: it must equal "every compiled artifact with
+  `harness.TargetInfo.AggregateFiles` is the single declaration both
+  materialization routing and `pipeline.CollectManagedPaths` (safety
+  backup coverage) read for which files a target merges into, per
+  scope. Codex, Devin, and Claude derive the set from their registered
+  native-layout descriptor in
+  `pkg/harness-compilation/target/native_layout.go`, the topology
+  authority; the remaining targets declare it literally in
+  `internal/harness/roots.go`. Either way the value is not editorial:
+  it must equal "every compiled artifact with
   `MergeWithExisting == true`, at the output-root-relative path the
   planner writes it to, in that scope".
   `materialize.TestAggregateFilesMatchMaterializedMergeArtifacts`
@@ -421,6 +426,24 @@ signals.
 
 ## Testing Playbook
 
+### Harness validation and CI (on demand)
+
+Use this section only when adding a harness, changing native resource
+compilation/materialization, or investigating the `Harness Compatibility`
+check. Ordinary CLI/TUI work does not require loading the CI guides.
+
+From the agent-marketplace checkout, read `docs/harness-validation/README.md`,
+then only the relevant harness guide in that directory. Resolve these paths
+from the checkout, not from an installed or cached copy of this skill.
+The guide owns the probe contracts, coverage gaps, image/release policy,
+required merge gate, fixture trust boundaries, and artifact diagnostics;
+do not duplicate that policy here or in always-loaded project guidance.
+
+For local verification, use `make harness-compat-check` and
+`make harness-compat-config`. Neither invokes vendor CLIs. Native executables
+and containers run only in GitHub Actions, with no model credentials or
+model turns; synchronization must never grant real workspace trust.
+
 ### Local TUI QA (real terminal)
 
 Use this workflow to verify user interactions through a real PTY, separately
@@ -508,6 +531,33 @@ snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
 
 Never let tests reach the real `~/.agents/` or `~/.cache/` — always
 mock via the swap helpers.
+
+### The organization layer is already isolated — don't re-arrange it
+
+`testutil.IsolatedHome()` covers `~`, but the organization layer sits at
+a fixed absolute path (`/etc/agent-marketplace/config.yaml`) that no
+`HOME` override reaches. So under `go test` an unset override resolves
+to a nonexistent path instead of the real file
+(`config.organizationConfigPath`), and a test that loads effective
+config sees an absent organization layer.
+
+Do not reproduce this per package. It used to be a per-package chore,
+which meant one omission was enough: a test reaching the real file
+inherited that machine's registries and cloned them over the network,
+presenting as a ten-minute hang rather than a failure.
+
+To exercise an organization config, name one explicitly:
+
+```go
+config.SetTestOrganizationConfigPath(t, orgPath)       // package-level, restored on cleanup
+config.LoadEffective(ctx, config.LoadEffectiveOptions{ // or per call
+    OrganizationPath: orgPath,
+})
+```
+
+E2E is separate: it drives the built binary rather than a test binary,
+so the sandbox points it at its own `etc/` through
+`AGENT_MARKETPLACE_V3_ORG_CONFIG` under the `e2e` build tag.
 
 ## Debugging Recipes
 

@@ -19,7 +19,7 @@ func SetUserTelemetryLevel(configPath, level string) error {
 	if err != nil {
 		return err
 	}
-	return updateTelemetryScalar(configPath, "level", scalarNode("!!str", normalized))
+	return updateTelemetryScalar(configPath, "level", scalarNode(normalized))
 }
 
 // SetUserTelemetryEndpoint sets the telemetry.endpoint value in the user-personal
@@ -35,7 +35,7 @@ func SetUserTelemetryEndpoint(configPath, endpoint string) error {
 	if err := tmcfg.ValidateEndpoint(endpoint, false); err != nil {
 		return err
 	}
-	return updateTelemetryScalar(configPath, "endpoint", scalarNode("!!str", endpoint))
+	return updateTelemetryScalar(configPath, "endpoint", scalarNode(endpoint))
 }
 
 // SetUserTelemetryCommunityReporting sets telemetry.community_reporting in the
@@ -57,7 +57,7 @@ func DisableTelemetry(configPath string) error {
 		slog.Debug("disable telemetry: user config does not exist; nothing to do")
 		return nil
 	}
-	return updateTelemetryScalar(configPath, "level", scalarNode("!!str", tmcfg.LevelOff))
+	return updateTelemetryScalar(configPath, "level", scalarNode(tmcfg.LevelOff))
 }
 
 func updateTelemetryScalar(configPath, key string, value *yaml.Node) error {
@@ -98,17 +98,4 @@ func updateTelemetryScalar(configPath, key string, value *yaml.Node) error {
 		return fmt.Errorf("config written to %q is not valid: %w", configPath, err)
 	}
 	return nil
-}
-
-func scalarNode(tag, value string) *yaml.Node {
-	return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value}
-}
-
-func boolNode(value bool) *yaml.Node {
-	tag := "!!bool"
-	s := "false"
-	if value {
-		s = "true"
-	}
-	return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: s}
 }

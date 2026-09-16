@@ -2,9 +2,13 @@
   "hooks": {
     "BeforeTool": [
       {
-        "command": "${extensionPath}/scripts/check.sh",
-        "matcher": "Read",
-        "type": "command"
+        "hooks": [
+          {
+            "command": "${extensionPath}/scripts/check.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Read"
       }
     ]
   }

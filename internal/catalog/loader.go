@@ -55,6 +55,7 @@ type LoadedCatalog struct {
 	Malformed   []skill.MalformedSkill
 	Collections []collection.Collection
 	Resources   map[string]ir.Resource
+	Diagnostics []diag.Diagnostic
 	// SubBundles holds per-sub-bundle results when recursive discovery was
 	// triggered for a meta-directory. Keyed by sub-bundle absolute path.
 	// When non-empty, discoverAll splits them into separate catalogs (each
@@ -279,9 +280,10 @@ func (cat *Catalog) Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	}
 
 	return LoadedCatalog{
-		Entries:   slices.Clone(cat.Entries),
-		Malformed: malformed,
-		Resources: Resources(cat),
+		Entries:     slices.Clone(cat.Entries),
+		Malformed:   malformed,
+		Resources:   Resources(cat),
+		Diagnostics: cat.Diagnostics,
 	}, nil
 }
 
@@ -668,9 +670,10 @@ func discoverSubBundles(subBundles []subBundle) (LoadedCatalog, error) {
 		}
 
 		subLoaded := LoadedCatalog{
-			Entries:   subCat.Entries,
-			Malformed: normalizeMalformedPaths(subDir, malformedFromDiagnostics(subCat.Diagnostics)),
-			Resources: Resources(subCat),
+			Entries:     subCat.Entries,
+			Malformed:   normalizeMalformedPaths(subDir, malformedFromDiagnostics(subCat.Diagnostics)),
+			Resources:   Resources(subCat),
+			Diagnostics: subCat.Diagnostics,
 		}
 		subCats[subDir] = subLoaded
 
@@ -684,6 +687,7 @@ func discoverSubBundles(subBundles []subBundle) (LoadedCatalog, error) {
 		}
 
 		merged.Malformed = append(merged.Malformed, subLoaded.Malformed...)
+		merged.Diagnostics = append(merged.Diagnostics, subLoaded.Diagnostics...)
 
 		if merged.Resources == nil {
 			merged.Resources = make(map[string]ir.Resource)
@@ -724,6 +728,16 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 	if cfg == nil {
 		return result
 	}
+
+	// Preserve Marketplace entries in the loaded config so downstream resolver
+	// and pipeline consumers can resolve configured Marketplace pins.
+	result.Config.Marketplaces = cfg.Marketplaces
+	result.Config.AllowedMarketplaces = cfg.AllowedMarketplaces
+	// Marketplace resolution happens after registry loading. Preserve the
+	// effective origin policy on the config returned by this loader; otherwise
+	// the downstream resolver would see only the Marketplace pins and could
+	// acquire an index-only source without the configured allowlist.
+	result.Config.AllowedRegistries = cfg.AllowedRegistries
 
 	// Phase 1: Prepare fetch jobs from registry entries.
 	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir, lc.exactSnapshot)
@@ -827,17 +841,22 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 			entry.CatalogKey = catalogKey
 			cfg.Registries[i].CatalogKey = catalogKey
 
-			// Stat the local registry path before attempting ingest so a missing
-			// directory is reported clearly instead of falling through to the
-			// autodetect/ingest failure path (which can yield a misleading
-			// "no recognizable Claude layout" error).
-			if err := config.ValidateLocalRegistryPath(catalogKey); err != nil {
-				if mode == LoadModeCachedNoFetch {
-					// No local registry present and we are forbidden from fetching;
-					// skip it so teardown/dry-run paths remain read-only.
-					slog.Debug("local registry skipped in no-fetch mode", "path", catalogKey, "error", err)
+			if mode == LoadModeInspect || mode == LoadModeCachedNoFetch {
+				allowMissing := mode == LoadModeCachedNoFetch
+				localExists, err := inspectLocalRegistryPath(localPath, catalogKey, allowMissing)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("inspect local registry %q: %w", catalogKey, err))
 					continue
 				}
+				if !localExists {
+					// CachedNoFetch deliberately skips missing local registries;
+					// Inspect treats them as hard errors via allowMissing=false.
+					continue
+				}
+			} else if err := config.ValidateLocalRegistryPath(catalogKey); err != nil {
+				// Stat the local registry path before attempting ingest so a missing
+				// directory is reported clearly instead of falling through to the
+				// autodetect/ingest failure path.
 				slog.Warn("local registry validation failed", "path", catalogKey, "error", err)
 				errs = append(errs, err)
 				continue
@@ -878,7 +897,37 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 
 		bundlePath := entry.BundlePath(cachePath)
 		bundleExists := false
-		if info, err := os.Stat(bundlePath); err == nil && info.IsDir() {
+		if mode == LoadModeInspect || mode == LoadModeCachedNoFetch {
+			allowCacheMissing := mode == LoadModeCachedNoFetch
+			cacheExists, err := inspectRemoteGitCachePath(cachePath, allowCacheMissing)
+			if err != nil {
+				job, ok := jobsByKey[cachePath]
+				if !ok {
+					job = &fetchJob{url: entry.URL, ref: entry.Ref, cachePath: cachePath}
+					jobsByKey[cachePath] = job
+				}
+				job.err = fmt.Errorf("inspect cache %q: %w", cachePath, err)
+				requests = append(requests, loadRequest{entry: entry, catalogKey: catalogKey, job: job})
+				continue
+			}
+			if !cacheExists && mode == LoadModeCachedNoFetch {
+				// No cache on disk and we are forbidden from fetching; skip it so
+				// teardown/dry-run paths remain read-only.
+				continue
+			}
+
+			bundleExists, err = inspectRemoteGitCachePath(bundlePath, true)
+			if err != nil {
+				job, ok := jobsByKey[cachePath]
+				if !ok {
+					job = &fetchJob{url: entry.URL, ref: entry.Ref, cachePath: cachePath}
+					jobsByKey[cachePath] = job
+				}
+				job.err = fmt.Errorf("inspect cache bundle %q: %w", bundlePath, err)
+				requests = append(requests, loadRequest{entry: entry, catalogKey: catalogKey, job: job})
+				continue
+			}
+		} else if info, err := os.Stat(bundlePath); err == nil && info.IsDir() {
 			bundleExists = true
 		}
 
@@ -917,6 +966,62 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 	return requests, jobs, errs
 }
 
+func inspectLocalRegistryPath(root, path string, allowMissing bool) (bool, error) {
+	exists, inspectErr := inspectDirectoryPath(root, path, allowMissing)
+	if inspectErr == nil || (allowMissing && errors.Is(inspectErr, os.ErrNotExist)) {
+		return exists, inspectErr
+	}
+
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return exists, inspectErr
+	}
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		if localErr := config.ValidateLocalRegistryPath(path); localErr != nil {
+			return false, fmt.Errorf("%w: %v", localErr, inspectErr)
+		}
+	}
+	return exists, inspectErr
+}
+
+func inspectRemoteGitCachePath(path string, allowMissing bool) (bool, error) {
+	cacheRoot := cache.CacheDir()
+	cacheBoundary := cacheRoot
+	if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		cacheBoundary = homeDir
+	}
+	if err := cache.ValidateDirectoryAncestry(cacheBoundary, cacheRoot); err != nil {
+		if allowMissing && errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return inspectDirectoryPath(cacheRoot, path, allowMissing)
+}
+
+func inspectDirectoryPath(root, path string, allowMissing bool) (bool, error) {
+	if err := cache.ValidateDirectoryAncestry(root, path); err != nil {
+		if allowMissing && errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		if allowMissing && errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("path %q is a symlink", path)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("path %q is not a directory", path)
+	}
+	return true, nil
+}
+
 // runFetches executes fetch jobs according to the load mode.
 func runFetches(jobs []*fetchJob, mode LoadMode, cloneOrPull CloneOrPullFunc) {
 	switch mode {
@@ -932,13 +1037,8 @@ func runFetches(jobs []*fetchJob, mode LoadMode, cloneOrPull CloneOrPullFunc) {
 		runFetchJobs(cold, cloneOrPull)
 	case LoadModeInspect:
 		for _, job := range jobs {
-			info, err := os.Stat(job.cachePath)
-			if err != nil {
+			if _, err := inspectRemoteGitCachePath(job.cachePath, false); err != nil {
 				job.err = fmt.Errorf("inspect cache %q: %w", job.cachePath, err)
-				continue
-			}
-			if !info.IsDir() {
-				job.err = fmt.Errorf("inspect cache %q: not a directory", job.cachePath)
 			}
 		}
 	case LoadModeCachedNoFetch:

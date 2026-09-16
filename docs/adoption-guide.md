@@ -2,7 +2,7 @@
 
 For detailed precedence rules (layer order, excludes, collection behavior, collision/error cases), see [`docs/PRECEDENCE.md`](./PRECEDENCE.md).
 
-The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical. The loader accepts v3 as a compatibility alias and rejects v1 configs (no `apiVersion`). `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
+The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical. The loader accepts v3 as a compatibility alias and rejects v1 configs with no `apiVersion`. `agent-marketplace migrate` performs structural remediation without rewriting otherwise-valid v2 or v3 files; new or remediated files use canonical v2.
 
 ## 30-second setup
 
@@ -45,7 +45,7 @@ target set. Existing installs and `migrate` do not add it automatically:
 
 ```yaml
 # ~/.agents/config.yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 harnesses: [factory, codex]
 ```
 
@@ -82,9 +82,9 @@ allowed_registries:
   - "^gitlab\.example\.com/"
 ```
 
-## Remediating a legacy config
+## Remediating structurally invalid config
 
-v1 configs (no `apiVersion`) are rejected by the loader. Use `migrate` for structural issues such as legacy collection syntax; it preserves the canonical v2 apiVersion:
+v1 configs with no `apiVersion` are rejected and must first be converted to a v2 document. Use `migrate` for structural issues in v2/v3 files, such as legacy collection syntax:
 
 ```bash
 agent-marketplace migrate --harnesses factory,cursor
@@ -112,7 +112,7 @@ registries:
       include: [vm-lifecycle]
 ```
 
-`migrate` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config.
+`migrate` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config. Structurally remediated output uses canonical v2.
 
 Keep `.agents/skills/` ignored when `codex` is selected; otherwise remove legacy
 ignore entries when they are no longer needed. Do not commit generated
@@ -187,6 +187,26 @@ Normal sync retains compatible exact commits and minimally reconciles writable l
 Plain local-directory registries are read live and never locked. This foundation does not include hosted Marketplace lock records, acquisition adapters, or integration.
 
 When a non-required resource is enabled in both machine and repo scopes, `remove` without `--scope` reports the ambiguity. Use `remove --scope user` or `remove --scope repo` to remove only the selected occurrence; the other scope remains enabled. An explicit scope never falls back to another scope when that scope has no occurrence. A machine-owned occurrence targeted from repo or local scope produces a boundary error. `--scope local` is for checkout-local selections and excludes and cannot bypass the machine/repo boundary. An unscoped removal with one unambiguous occurrence infers its effective layer, except that a repo-scoped auto-selected resource not explicitly selected by committed repo config is recorded as a checkout-local exclusion. Use `--scope repo` to edit committed repo config.
+
+## Install from a Marketplace
+
+First install the CLI and configure at least one target harness as described in
+[30-second setup](#30-second-setup). A Marketplace resource page provides an
+install command with a full URL pinned to one exact revision:
+
+```bash
+agent-marketplace install "https://marketplace.example/r/example/skill/review/revisions/sha256%3A..."
+```
+
+Run that command directly. The Marketplace does not need to be registered
+first. To make the Marketplace available for later CLI discovery and shorter
+locators, optionally register its base URL:
+
+```bash
+agent-marketplace install "https://marketplace.example"
+```
+
+Registration adds a Marketplace source. It does not install a resource.
 
 ## Daily commands
 

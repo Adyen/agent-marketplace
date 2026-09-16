@@ -63,7 +63,7 @@ func renderHelp(m Model) string {
 }
 
 func renderErrors(m Model) string {
-	if len(m.errs) == 0 && len(m.warnings) == 0 {
+	if len(m.errs) == 0 && len(m.warnings) == 0 && len(m.discoveryErrs) == 0 {
 		return styleGlyphSynced.Render("No errors")
 	}
 
@@ -83,8 +83,20 @@ func renderErrors(m Model) string {
 		}
 	}
 
-	if len(m.warnings) > 0 {
+	if len(m.discoveryErrs) > 0 {
 		if len(m.errs) > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Marketplace discovery (%d)", len(m.discoveryErrs))))
+		b.WriteString("\n\n")
+		for _, discoveryErr := range m.discoveryErrs {
+			b.WriteString(styleWarningMsg.Render("• " + sanitizeTerminalData(discoveryErr.Error(), terminalSingleLine)))
+			b.WriteString("\n")
+		}
+	}
+
+	if len(m.warnings) > 0 {
+		if len(m.errs) > 0 || len(m.discoveryErrs) > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Warnings (%d)", len(m.warnings))))

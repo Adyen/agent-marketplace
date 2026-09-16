@@ -259,6 +259,9 @@ func runGitRawOutput(repoDir string, safeArgs []string, start time.Time) (string
 
 	trimmedOutput := redactSecrets(strings.TrimSpace(string(output)))
 	slog.Debug("git command end", "dir", repoDir, "args", redactedSafe, "duration_ms", time.Since(start).Milliseconds(), "success", false, "stderr", trimmedOutput)
+	if isGitTransportFailure(err) {
+		return "", err
+	}
 
 	redactedCmd := strings.Join(redactedSafe, " ")
 	if trimmedOutput == "" {
@@ -300,12 +303,14 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 	cmd.Env = gitEnv()
 	if source, acquisition := gitAcquisition(args); acquisition {
 		var err error
-		cmd.Env, err = gitAuthEnvironment(ctx, repoDir, cmd.Env, source)
+		var resolvedSource string
+		cmd.Env, resolvedSource, err = gitAuthEnvironment(ctx, repoDir, cmd.Env, source)
 		if err != nil {
 			return nil, err
 		}
 		if err := cmd.Run(); err != nil {
-			return []byte("git.auth-transport-failed: transport diagnostics withheld to protect authentication data"), err
+			diagnostic := gitTransportFailureDiagnostic(resolvedSource)
+			return []byte(diagnostic), &gitTransportFailure{message: diagnostic, cause: err}
 		}
 		return nil, nil
 	}
@@ -525,3 +530,15 @@ func truncateGitError(message string) string {
 	}
 	return string(runes[:maxGitErrorChars-1]) + "…"
 }
+
+// ValidateGitURL wraps validateGitURL for reuse by Marketplace acquisition.
+func ValidateGitURL(raw string) error { return validateGitURL(raw) }
+
+// ValidateGitRef wraps validateGitRef for reuse by Marketplace acquisition.
+func ValidateGitRef(raw string) error { return validateGitRef(raw) }
+
+// ResolveRemoteRef wraps resolveRemoteRef for reuse by Marketplace acquisition.
+func ResolveRemoteRef(repoDir, ref string) (string, error) { return resolveRemoteRef(repoDir, ref) }
+
+// GitEnv returns the hardened environment used for git subprocesses.
+func GitEnv() []string { return gitEnv() }

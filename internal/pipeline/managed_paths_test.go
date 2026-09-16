@@ -267,7 +267,7 @@ func TestCollectManagedPathsCoversEveryDeclaredAggregate(t *testing.T) {
 				t.Fatalf("CollectManagedPaths has no entry for %s", target)
 			}
 
-			aggregates := harness.TargetInfoMap[target].AggregateFilesForScope(true)
+			aggregates := expectedMachineRootAggregates(target)
 			if len(aggregates) == 0 {
 				t.Fatalf("%s declares no machine-scope aggregate files; every current target merges into at least one", target)
 			}
@@ -303,7 +303,7 @@ func TestDeclaredAggregatesAreRecoverableFromBackup(t *testing.T) {
 			if !ok {
 				t.Fatalf("no machine root for %s", target)
 			}
-			aggregates := harness.TargetInfoMap[target].AggregateFilesForScope(true)
+			aggregates := expectedMachineRootAggregates(target)
 			handwritten := make(map[string]string, len(aggregates))
 			for _, rel := range aggregates {
 				full := filepath.Join(machineRoot, filepath.FromSlash(rel))

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -59,30 +61,40 @@ type ResolveOptions struct {
 	// AllowMissingReadOnlyLocks lets read-only inspection fall back to the
 	// mutable registry cache for layers that have no lockfile. Present locks
 	// remain exact and malformed or stale locks still fail closed.
-	AllowMissingReadOnlyLocks bool
-	ExactLockLease            func(context.Context) (func(), error)
+	AllowMissingReadOnlyLocks   bool
+	ExactLockLease              func(context.Context) (func(), error)
+	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
+	// MarketplaceMode overrides the mode derived from CatalogMode when set,
+	// except that Offline always forces CachedNoFetch.
+	MarketplaceMode *resolver.MarketplaceResolveMode
+	// MarketplaceSourceFilter limits Marketplace resolution to entries owned by
+	// the selected sources. It is applied only to the resolver's view and does
+	// not change the effective configuration returned to callers.
+	MarketplaceSourceFilter func(config.Source) bool
 }
 
 type ResolveResult struct {
-	OrgCfg               *config.Config
-	GlobalCfg            *config.Config
-	RepoCfg              *config.Config
-	LocalCfg             *config.LocalConfig
-	MergedCfg            *config.Config
-	LoadedCfg            *config.Config
-	MaterializationModes config.MaterializationModes
-	CatalogLoad          catalog.LoadResult
-	Resolved             []resolver.ResolvedArtifact
-	LockMetadata         []LockMetadata
-	ConfigErrors         []error
-	CatalogErrors        []error
-	ResolveErrors        []error
-	Errors               []error
-	Warnings             []error
-	TargetHarnesses      []hcc.Target
-	TargetHarnessSource  config.Source
-	Managed              bool
-	Diagnostics          config.ManagedInstallationDiagnostics
+	OrgCfg                *config.Config
+	GlobalCfg             *config.Config
+	RepoCfg               *config.Config
+	LocalCfg              *config.LocalConfig
+	MergedCfg             *config.Config
+	LoadedCfg             *config.Config
+	MaterializationModes  config.MaterializationModes
+	CatalogLoad           catalog.LoadResult
+	Resolved              []resolver.ResolvedArtifact
+	LockMetadata          []LockMetadata
+	MarketplaceStatuses   []marketplace.PinStatus
+	MarketplaceInspection *marketplace.Inspection
+	ConfigErrors          []error
+	CatalogErrors         []error
+	ResolveErrors         []error
+	Errors                []error
+	Warnings              []error
+	TargetHarnesses       []hcc.Target
+	TargetHarnessSource   config.Source
+	Managed               bool
+	Diagnostics           config.ManagedInstallationDiagnostics
 }
 
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
@@ -95,7 +107,7 @@ func (e *TargetHarnessSetMissingError) Error() string {
 
 // Remediation returns a user-facing hint about how to configure the target set.
 func (e *TargetHarnessSetMissingError) Remediation() string {
-	return "add 'harnesses: [factory, claude, ...]' to ~/.agents/config.yaml"
+	return "add 'harnesses: [factory, claude, ...]' to the project or user config"
 }
 
 type SyncResult struct {
@@ -449,6 +461,9 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		}
 	}
 	result.MergedCfg = mergedCfg
+	if opts.Offline && mergedCfg != nil && len(mergedCfg.Marketplaces) > 0 {
+		result.Warnings = append(result.Warnings, errors.New("offline Marketplace sync cannot observe newer revocations; cached revocation metadata is used"))
+	}
 	materializationModes, modeErr := config.ResolveMaterializationModes(result.GlobalCfg, result.RepoCfg, result.LocalCfg)
 	if modeErr != nil {
 		result.ConfigErrors = append(result.ConfigErrors, modeErr)
@@ -456,12 +471,16 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		return result, releaseExactLease
 	}
 	result.MaterializationModes = materializationModes
+	registryCount := 0
+	if mergedCfg != nil {
+		registryCount = len(mergedCfg.Registries)
+	}
 	slog.Debug("config layers merged",
 		"org", result.OrgCfg != nil,
 		"user", result.GlobalCfg != nil,
 		"repo", result.RepoCfg != nil,
 		"local", result.LocalCfg != nil,
-		"registries", len(mergedCfg.Registries),
+		"registries", registryCount,
 	)
 
 	var selectionSpan telemetry.Span
@@ -502,26 +521,66 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	// Malformed resources are dropped from Entries by the ingesters, so the
 	// resolver needs them separately to tell "failed validation" apart from
 	// "removed upstream" for a selection it cannot find.
+	mpMode := marketplaceResolveMode(opts.CatalogMode, opts.Offline)
+	if opts.MarketplaceMode != nil && !opts.Offline {
+		mpMode = *opts.MarketplaceMode
+	}
+	if opts.Offline {
+		if opts.MarketplaceMode != nil && mpMode != resolver.MarketplaceResolveModeCachedNoFetch {
+			slog.Debug("offline Marketplace resolution overrides explicit mode", "requested_mode", mpMode, "effective_mode", resolver.MarketplaceResolveModeCachedNoFetch)
+		}
+		mpMode = resolver.MarketplaceResolveModeCachedNoFetch
+	}
+	marketplaceResolver := marketplace.NewResolver()
+	// Keep the effective registry origin policy on the Marketplace resolver as
+	// well as on the loaded config. PrepareLocator uses the resolver directly,
+	// while normal sync passes the loaded config through the generic resolver.
+	if mergedCfg != nil && mergedCfg.AllowedRegistries != nil {
+		marketplaceResolver.AllowedRegistries = *mergedCfg.AllowedRegistries
+	}
+	var mpResolver resolver.MarketplaceResolver = marketplaceResolver
+	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {
+		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, result.TargetHarnesses, mpMode)
+		result.MarketplaceStatuses = inspection.Pins
+		result.MarketplaceInspection = &inspection
+		mpResolver = inspection
+	}
+	marketplaceCfg := loadedCfg
+	if loadedCfg != nil && opts.MarketplaceSourceFilter != nil {
+		filtered := *loadedCfg
+		filtered.Marketplaces = make([]config.MarketplaceEntry, 0, len(loadedCfg.Marketplaces))
+		for _, entry := range loadedCfg.Marketplaces {
+			if opts.MarketplaceSourceFilter(entry.Source) {
+				filtered.Marketplaces = append(filtered.Marketplaces, entry)
+			}
+		}
+		marketplaceCfg = &filtered
+	}
 	resolved, resolveErrs := resolver.Resolve(
-		loadedCfg,
+		marketplaceCfg,
 		catalog.EntriesByKey(loadResult.Catalogs),
 		result.LocalCfg,
 		resolver.WithResources(loadResult.ResourceCatalogs),
 		resolver.WithMalformed(catalog.MalformedByKey(loadResult.Catalogs)),
+		resolver.WithContext(ctx),
 		resolver.WithTargetHarnesses(result.TargetHarnesses),
+		resolver.WithMarketplaceResolver(mpResolver),
+		resolver.WithMarketplaceResolveMode(mpMode),
+		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
 	)
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
 	result.ResolveErrors = append(resolveErrs, readOnlyView.errors...)
 	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(result.ResolveErrors))
 	for _, resolveErr := range result.ResolveErrors {
+		if opts.Offline && (resolver.IsSoftSelectedNotFound(resolveErr) || resolver.IsSoftSelectedMalformed(resolveErr)) {
+			errs = append(errs, resolveErr)
+			continue
+		}
 		if resolver.IsWarning(resolveErr) {
 			continue
 		}
-		if resolver.IsSoftSelectedNotFound(resolveErr) {
-			continue
-		}
-		if resolver.IsSoftSelectedMalformed(resolveErr) {
+		if resolver.IsSoftSelectedNotFound(resolveErr) || resolver.IsSoftSelectedMalformed(resolveErr) {
 			continue
 		}
 		errs = append(errs, resolveErr)
@@ -534,10 +593,28 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	return result, releaseExactLease
 }
 
+func marketplaceResolveMode(mode catalog.LoadMode, offline bool) resolver.MarketplaceResolveMode {
+	if offline {
+		return resolver.MarketplaceResolveModeCachedNoFetch
+	}
+	switch mode {
+	case catalog.LoadModeRefresh:
+		return resolver.MarketplaceResolveModeRefresh
+	case catalog.LoadModeInspect:
+		return resolver.MarketplaceResolveModeInspect
+	case catalog.LoadModeCachedNoFetch:
+		return resolver.MarketplaceResolveModeCachedNoFetch
+	default:
+		return resolver.MarketplaceResolveModeCached
+	}
+}
+
 func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	start := time.Now()
 	if !opts.Offline {
-		opts.CatalogMode = catalog.LoadModeRefresh
+		if opts.CatalogMode != catalog.LoadModeCached {
+			opts.CatalogMode = catalog.LoadModeRefresh
+		}
 		opts.Gitignore = true
 	}
 	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
@@ -603,7 +680,12 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	resolveOpts.ExactLockLease = nil
 	resolved := Resolve(ctx, resolveOpts)
 	result.ResolveResult = resolved
-	result.Warnings = append(result.Warnings, SoftWarnings(resolved)...)
+	for _, warning := range SoftWarnings(resolved) {
+		if opts.Offline && (resolver.IsSoftSelectedNotFound(warning) || resolver.IsSoftSelectedMalformed(warning)) {
+			continue
+		}
+		result.Warnings = append(result.Warnings, warning)
+	}
 
 	// Compute the materialization root once and reuse it for both the
 	// ancestor-exclude detection (below) and the actual materialize.Run
@@ -628,10 +710,10 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			if resolver.IsNameCollision(err) {
 				continue
 			}
-			if resolver.IsSoftSelectedNotFound(err) {
+			if !opts.Offline && resolver.IsSoftSelectedNotFound(err) {
 				continue
 			}
-			if resolver.IsSoftSelectedMalformed(err) {
+			if !opts.Offline && resolver.IsSoftSelectedMalformed(err) {
 				continue
 			}
 			filteredErrors = append(filteredErrors, err)
@@ -786,7 +868,7 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 		if !ok {
 			continue
 		}
-		info, ok := harness.TargetInfoMap[t]
+		info, ok := harness.TargetInfoFor(t)
 		if !ok {
 			continue
 		}
@@ -799,13 +881,32 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 		// Shared aggregate configuration files used to live in a hand-maintained
 		// rootConfigFiles map here, which had no Devin entry and therefore left
 		// hooks.v1.json, config.json, and mcp_config.json outside backup coverage.
-		// TargetInfo.AggregateFilesForScope is now the single source of truth that
-		// both materialization and this collector read, so a target cannot declare
-		// an aggregate file that backups do not cover. Bead
+		// TargetInfo.AggregateFilesForScope is now the single declaration both
+		// materialization and this collector read, populated from the target's
+		// native-layout descriptor where one is registered, so a target cannot
+		// declare an aggregate file that backups do not cover. Bead
 		// agent-marketplace-5exj.27 made that declaration truthful — until then
 		// Gemini's settings.json was merged into on every sync with no backup at
 		// all, because it is not inside any Gemini component directory.
 		machineAggregates := info.AggregateFilesForScope(true)
+		mappedFiles, mappingErr := harness.NativeAggregateBackupFiles(t)
+		if mappingErr != nil {
+			slog.Error("resolve native aggregate backup files", "target", t, "error", mappingErr)
+			continue
+		}
+		if len(harness.NativeAggregateInstalls(t)) > 0 {
+			destinations, err := harness.ResolveDestinations(t, true, ".")
+			if err != nil {
+				slog.Error("resolve native aggregate backup destinations", "target", t, "error", err)
+				continue
+			}
+			machineAggregates = nil
+			for _, destination := range destinations {
+				if destination.Root == root {
+					machineAggregates = append(machineAggregates, destination.Info.AggregateFilesForScope(true)...)
+				}
+			}
+		}
 		relPaths := make([]string, 0, len(machineComponents)+len(machineAggregates))
 		relPaths = append(relPaths, machineComponents...)
 		for _, rel := range machineAggregates {
@@ -818,7 +919,7 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			}
 			relPaths = append(relPaths, rel)
 		}
-		result[t] = backup.ManagedPaths{Root: root, RelPaths: relPaths}
+		result[t] = backup.ManagedPaths{Root: root, RelPaths: relPaths, MappedFiles: mappedFiles}
 	}
 	return result
 }

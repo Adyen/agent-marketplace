@@ -2,7 +2,7 @@
 
 ## Project: harness-compilation
 
-A Go library that compiles AI-agent configuration resources written in a single canonical source format (Claude-plugin layout) into vendor-specific harness layouts. Seven conversion targets — **Claude Code**, **Factory Droid**, **Cursor**, **Windsurf**, **Gemini CLI**, **Devin CLI**, and **Codex** — each register both a compiler and an ingester, so each is valid as a conversion source and a conversion destination. `target/target.go` is the authoritative registry and `ValidateTargetRegistrations()` enforces that the declared capabilities and the registered implementations agree in both directions.
+A Go library that compiles AI-agent configuration resources written in a single canonical source format (Claude-plugin layout) into vendor-specific harness layouts. Seven conversion targets — **Claude Code**, **Factory Droid**, **Cursor**, **Windsurf**, **Gemini CLI**, **Devin CLI**, and **Codex** — each register both a compiler and an ingester, so each is valid as a conversion source and a conversion destination. `target/target.go` is the authoritative registry and `ValidateTargetRegistrations()` enforces that the declared capabilities and the registered implementations agree in both directions. `target/native_layout.go` is the topology authority for targets that declare a `NativeLayout`: validated, scope-neutral descriptions of partitions, per-kind resource paths, and shared aggregate files, including scope-variant ones like Devin's project `hooks.v1.json` versus user `config.json#hooks`. `ValidateTargetRegistrations()` validates every declared layout at the same boundary.
 
 Whether a target is selected for a given user is consumer policy, not a library restriction.
 

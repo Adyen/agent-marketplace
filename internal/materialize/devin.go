@@ -42,22 +42,86 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
+	"slices"
+	"strings"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 )
 
-// Aggregate container member names. `mcpServers` is the object MCP entries are
-// keyed in; `hooks` is the config.json member that carries the hook object at
-// user scope. Both are fixed vocabulary, never user content.
-const (
-	devinMcpServersKey = "mcpServers"
-)
+// devinClaim is one kind's claim on a Devin aggregate file: the resource
+// kind and the declared envelope member — "" means the file's top level
+// carries the entries directly (project-scope hooks.v1.json).
+type devinClaim struct {
+	kind   ir.ResourceKind
+	member string
+}
+
+// devinAggregateClaimIn collects every distinct claim on the output-relative
+// path rel in the given scope from an explicit layout. The validator
+// deliberately permits a shared envelope — one path claimed by several kinds
+// under different members — so a single rel can hold several claims.
+//
+// The owned-JSON reconciler cannot route such an envelope: a file spec
+// patches exactly one member and a fragment decodes under exactly one
+// (kind, member) pair, so resolving to the first match would attribute every
+// kind's entries to that claim and silently drop the rest. Resolving by
+// resource kind is not cleanly feasible — a compiled fragment carries no
+// kind marker and the spec models one container per file — so more than one
+// distinct claim resolves to an error the caller must surface, not to the
+// first match.
+func devinAggregateClaimIn(layout targetmeta.NativeLayout, rel string, machineScope bool) (devinClaim, bool, error) {
+	var claims []devinClaim
+	seen := make(map[devinClaim]bool)
+	for _, partition := range layout.Partitions {
+		for _, aggregate := range partition.Aggregates {
+			file := aggregate.Project
+			if machineScope {
+				file = aggregate.User
+			}
+			if path.Join(partition.Prefix, file.Path) != rel {
+				continue
+			}
+			claim := devinClaim{kind: aggregate.Kind, member: file.Member}
+			if !seen[claim] {
+				seen[claim] = true
+				claims = append(claims, claim)
+			}
+		}
+	}
+	switch len(claims) {
+	case 0:
+		return devinClaim{}, false, nil
+	case 1:
+		return claims[0], true, nil
+	}
+	descriptions := make([]string, 0, len(claims))
+	for _, claim := range claims {
+		descriptions = append(descriptions, fmt.Sprintf("%s under member %q", claim.kind, claim.member))
+	}
+	slices.Sort(descriptions)
+	return devinClaim{}, false, fmt.Errorf("devin aggregate %q carries several kind claims in this scope (%s); the owned-JSON reconciler cannot route a shared envelope to one member", rel, strings.Join(descriptions, ", "))
+}
+
+// devinAggregateClaim resolves which declared Devin aggregate claims the
+// output-relative path rel in the given scope. The descriptor
+// (pkg/harness-compilation/target) is the topology authority, so the member
+// a file spec patches and a fragment decodes comes from the declaration
+// rather than a second literal copy here.
+func devinAggregateClaim(rel string, machineScope bool) (devinClaim, bool, error) {
+	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetDevin)
+	if !ok {
+		return devinClaim{}, false, nil
+	}
+	return devinAggregateClaimIn(layout, rel, machineScope)
+}
 
 // devinAggregateRels returns the aggregate files a Devin resource kind can
 // contribute to in the given scope. It is used to attribute a SKIPPED resource
@@ -77,17 +141,21 @@ func devinAggregateRels(kind ir.ResourceKind, machineScope bool) []string {
 	}
 }
 
-func devinOwnedJSONFile(rel string) ownedJSONFileSpec {
-	switch rel {
-	case harness.DevinProjectHooksFile:
-		return ownedJSONFileSpec{rel: rel}
-	case harness.DevinUserConfigFile:
-		return ownedJSONFileSpec{rel: rel, container: ownedHooksContainer}
-	case harness.DevinMcpConfigFile:
-		return ownedJSONFileSpec{rel: rel, container: devinMcpServersKey, keyed: true}
-	default:
-		return ownedJSONFileSpec{rel: rel}
+// devinOwnedJSONFile builds the reconcile spec for one declared Devin
+// aggregate file. The container member comes from the descriptor; the keyed
+// flag is entry-shape knowledge (MCP entries are a keyed object, hooks are
+// event arrays) that the descriptor does not model. An ambiguous claim — a
+// shared envelope several kinds claim under different members — returns an
+// error rather than a spec that would patch only the first claim's member.
+func devinOwnedJSONFile(rel string, machineScope bool) (ownedJSONFileSpec, error) {
+	claim, claimed, err := devinAggregateClaim(rel, machineScope)
+	if err != nil {
+		return ownedJSONFileSpec{}, err
 	}
+	if !claimed {
+		return ownedJSONFileSpec{rel: rel}, nil
+	}
+	return ownedJSONFileSpec{rel: rel, container: claim.member, keyed: claim.kind == ir.KindMcpServer}, nil
 }
 
 func devinOwnedJSONOptions() ownedJSONReconcileOptions {
@@ -111,10 +179,10 @@ func (devinOwnedAggregateHandler) extract(state ownedAggregateState, key outputK
 	if len(entries) == 0 {
 		return rest, nil
 	}
-	aggregate := state.devin[key]
+	aggregate, _ := state.get(key).(*ownedJSONAggregateWork)
 	if aggregate == nil {
 		aggregate = &ownedJSONAggregateWork{}
-		state.devin[key] = aggregate
+		state.put(key, aggregate)
 	}
 	for _, entry := range entries {
 		aggregate.add(entry)
@@ -127,10 +195,10 @@ func (devinOwnedAggregateHandler) markIncomplete(state ownedAggregateState, key 
 	if len(rels) == 0 {
 		return
 	}
-	aggregate := state.devin[key]
+	aggregate, _ := state.get(key).(*ownedJSONAggregateWork)
 	if aggregate == nil {
 		aggregate = &ownedJSONAggregateWork{}
-		state.devin[key] = aggregate
+		state.put(key, aggregate)
 	}
 	for _, rel := range rels {
 		aggregate.markIncomplete(rel)
@@ -151,34 +219,65 @@ func (devinOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource st
 	}
 }
 
-func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, outDir string, _ []harness.Destination, dryRun bool) *Report {
-	return reconcileDevinAggregates(ctx, report, key, outDir, state.devin[key], dryRun)
+// reconcileDevinAggregates preserves the format-specific test and benchmark
+// seam while keeping its adapter-owned destination metadata aligned with the
+// production reconciliation path.
+func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey, outDir string, work *ownedJSONAggregateWork, dryRun bool) *Report {
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "", err.Error()))
+		return report
+	}
+	adapter, ok := registry.Lookup(hcc.TargetDevin)
+	if !ok {
+		report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "", "Devin installation adapter is not registered"))
+		return report
+	}
+	destination := harness.Destination{ID: "default", Root: outDir, Info: adapter.Info(), InstallationEvidence: true}
+	return (devinOwnedAggregateHandler{}).reconcile(ctx, report, ownedAggregateState{values: map[outputKey]any{key: work}}, key, outDir, []harness.Destination{destination}, dryRun)
 }
 
-func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey, outDir string, work *ownedJSONAggregateWork, dryRun bool) *Report {
+func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, outDir string, destinations []harness.Destination, dryRun bool) *Report {
+	work, _ := state.get(key).(*ownedJSONAggregateWork)
 	if key.target != hcc.TargetDevin {
 		return report
 	}
-	info, ok := harness.TargetInfoMap[key.target]
-	if !ok {
+	if len(destinations) == 0 {
+		report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "", "no Devin adapter destination was resolved"))
 		return report
 	}
-	rels := append([]string(nil), info.AggregateFilesForScope(key.machineScope)...)
-	files := make([]ownedJSONFileSpec, 0, len(rels))
-	for _, rel := range rels {
-		files = append(files, devinOwnedJSONFile(rel))
+	for _, destination := range destinations {
+		info := destination.Info
+		rels := append([]string(nil), info.AggregateFilesForScope(key.machineScope)...)
+		options := devinOwnedJSONOptions()
+		files := make([]ownedJSONFileSpec, 0, len(rels))
+		for _, rel := range rels {
+			file, err := devinOwnedJSONFile(rel, key.machineScope)
+			if err != nil {
+				report.Diags = append(report.Diags, ownedJSONShapeDiag(options.shapeCode, key, destination.Root, rel, err))
+				continue
+			}
+			files = append(files, file)
+		}
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, files, work, options, dryRun)
 	}
-	return reconcileOwnedJSONAggregates(ctx, report, key, outDir, files, work, devinOwnedJSONOptions(), dryRun)
+	return report
 }
 
 func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, rel string, desired []ownedJSONEntry, incomplete, dryRun bool) ownedJSONAggregateReport {
-	return reconcileOwnedJSONAggregateFile(store, key, outDir, devinOwnedJSONFile(rel), desired, incomplete, devinOwnedJSONOptions(), dryRun)
+	var out ownedJSONAggregateReport
+	file, err := devinOwnedJSONFile(rel, key.machineScope)
+	if err != nil {
+		out.diags = append(out.diags, ownedJSONShapeDiag(diag.CodeMaterializeDevinAggregateShape, key, outDir, rel, err))
+		return out
+	}
+	return reconcileOwnedJSONAggregateFile(store, key, outDir, file, desired, incomplete, devinOwnedJSONOptions(), dryRun)
 }
 
 // isDevinAggregatePath reports whether an artifact path is one of the Devin
 // shared aggregate files for the given scope.
 func isDevinAggregatePath(path string, machineScope bool) bool {
-	info, ok := harness.TargetInfoMap[hcc.TargetDevin]
+	info, ok := harness.TargetInfoFor(hcc.TargetDevin)
 	if !ok {
 		return false
 	}
@@ -204,7 +303,7 @@ func splitDevinAggregateArtifacts(artifacts []artifact.Artifact, machineScope bo
 			rest = append(rest, a)
 			continue
 		}
-		parsed, err := devinFragmentEntries(a.Path, a.Bytes, resource)
+		parsed, err := devinFragmentEntries(a.Path, a.Bytes, machineScope, resource)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -214,28 +313,36 @@ func splitDevinAggregateArtifacts(artifacts []artifact.Artifact, machineScope bo
 }
 
 // devinFragmentEntries decodes one compiled aggregate fragment into desired
-// entries. The fragment shapes are fixed by the Devin compilers:
+// entries. The claiming kind and envelope member come from the layout
+// descriptor; the fragment shapes are fixed by the Devin compilers:
 //
-//	hooks.v1.json   {"<Event>": [ {rule} ]}
-//	config.json     {"hooks": {"<Event>": [ {rule} ]}}
-//	mcp_config.json {"mcpServers": {"<key>": {server}}}
-func devinFragmentEntries(rel string, data []byte, resource string) ([]ownedJSONEntry, error) {
-	switch rel {
-	case harness.DevinMcpConfigFile:
+//	hooks.v1.json   {"<Event>": [ {rule} ]}             — hook, no member
+//	config.json     {"<member>": {"<Event>": [ {rule} ]}} — hook envelope
+//	mcp_config.json {"<member>": {"<key>": {server}}}   — keyed envelope
+func devinFragmentEntries(rel string, data []byte, machineScope bool, resource string) ([]ownedJSONEntry, error) {
+	claim, claimed, err := devinAggregateClaim(rel, machineScope)
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, fmt.Errorf("unknown Devin aggregate %q", rel)
+	}
+	switch claim.kind {
+	case ir.KindMcpServer:
 		var doc map[string]map[string]json.RawMessage
 		if err := ownedJSONDecode(data, &doc); err != nil {
 			return nil, fmt.Errorf("decode %s fragment: %w", rel, err)
 		}
 		var entries []ownedJSONEntry
-		for _, key := range sortedKeys(doc[devinMcpServersKey]) {
-			raw, err := canonicalOwnedJSON(doc[devinMcpServersKey][key])
+		for _, key := range sortedKeys(doc[claim.member]) {
+			raw, err := canonicalOwnedJSON(doc[claim.member][key])
 			if err != nil {
 				return nil, fmt.Errorf("canonicalize %s entry: %w", rel, err)
 			}
 			entries = append(entries, ownedJSONEntry{
 				rel:       rel,
 				kind:      ownership.KindMcpServer,
-				container: devinMcpServersKey,
+				container: claim.member,
 				key:       key,
 				raw:       raw,
 				identity:  ownership.McpIdentityDigest(key),
@@ -243,18 +350,19 @@ func devinFragmentEntries(rel string, data []byte, resource string) ([]ownedJSON
 			})
 		}
 		return entries, nil
-	case harness.DevinProjectHooksFile:
-		var doc map[string][]json.RawMessage
-		if err := ownedJSONDecode(data, &doc); err != nil {
-			return nil, fmt.Errorf("decode %s fragment: %w", rel, err)
+	case ir.KindHook:
+		if claim.member == "" {
+			var doc map[string][]json.RawMessage
+			if err := ownedJSONDecode(data, &doc); err != nil {
+				return nil, fmt.Errorf("decode %s fragment: %w", rel, err)
+			}
+			return ownedJSONHookEntries(rel, doc, resource)
 		}
-		return ownedJSONHookEntries(rel, doc, resource)
-	case harness.DevinUserConfigFile:
 		var doc map[string]map[string][]json.RawMessage
 		if err := ownedJSONDecode(data, &doc); err != nil {
 			return nil, fmt.Errorf("decode %s fragment: %w", rel, err)
 		}
-		return ownedJSONHookEntries(rel, doc[ownedHooksContainer], resource)
+		return ownedJSONHookEntries(rel, doc[claim.member], resource)
 	default:
 		return nil, fmt.Errorf("unknown Devin aggregate %q", rel)
 	}

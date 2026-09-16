@@ -1,8 +1,8 @@
 # Website
 
 This directory contains the VitePress website for `agent-marketplace`. The
-landing page is available at `/`; the marketplace application will live at
-`/marketplace`.
+landing page is available at `/`; the separate Nuxt application in `web/` is
+served at `/marketplace/` by the combined Docker proxy.
 
 ## Prerequisites
 
@@ -56,7 +56,6 @@ pnpm run preview
 ```text
 site/
 ├── index.md                         # Route shell for /
-├── marketplace.md                   # Add with the /marketplace implementation
 ├── .vitepress/
 │   ├── config.mts                   # VitePress and navigation configuration
 │   └── theme/
@@ -69,12 +68,6 @@ site/
     │   │   ├── components/          # Landing-only building blocks
     │   │   ├── data/                # Landing-only fixtures and transforms
     │   │   └── sections/            # Top-level landing sections
-    │   └── marketplace/             # Add with the marketplace feature
-    │       ├── MarketplacePage.vue
-    │       ├── api/
-    │       ├── components/
-    │       ├── composables/
-    │       └── state/
     └── shared/
         ├── components/              # UI shared by multiple routes
         └── site.ts                  # Site-wide constants
@@ -89,5 +82,6 @@ Move code to `src/shared` only after more than one route uses it.
 - `site/src/pages/landing/data/harnesses.json` is currently a checked-in fixture. Keep
   it aligned with `pkg/harness-compilation/target` until generation and drift
   checking are added.
-- Docs and Marketplace currently link to landing-page sections. Point
-  Marketplace at `/marketplace` when that route is implemented.
+- Keep links to the Nuxt UI rooted at `/marketplace/`; the shared reverse proxy
+  owns that path in local and production-like deployments. Do not pass those
+  links through VitePress `withBase`, which would nest them below `SITE_BASE`.

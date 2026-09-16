@@ -929,6 +929,140 @@ func TestBuildRowsLabelsInheritedAndRegistryOverrideHarnesses(t *testing.T) {
 	}
 }
 
+func TestBuildRowsAttributesMarketplacePinsByScope(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	pin := config.MarketplaceResourcePin{
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
+		Acquisition: config.MarketplaceAcquisitionMirror, InstalledName: "team-review", Direct: true,
+	}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{
+		{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Resources: []config.MarketplaceResourcePin{pin}, Source: config.UserPersonal},
+		{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Resources: []config.MarketplaceResourcePin{pin}, Source: config.RepoCommitted},
+		{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Resources: []config.MarketplaceResourcePin{pin}, Source: config.RepoPersonal},
+	}}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:       pkgcatalog.Entry{Kind: ir.KindSkill, Name: "team-review"},
+		RegistryURL: "https://market.example", Ref: "v1", Source: config.RepoCommitted, CatalogKey: marketplaceCatalogKey(cfg.Marketplaces[0], pin),
+		IsMarketplace: true, MarketplaceURL: "https://market.example",
+		MarketplaceInstanceID: "market-id", MarketplaceRegistryID: "source-id", InstalledName: "team-review",
+	}}
+
+	rows := buildRows(cfg, nil, resolved, nil, materialize.DriftReport{})
+
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if !rows[0].EnabledGlobal || !rows[0].EnabledProject || !rows[0].EnabledLocal {
+		t.Fatalf("Marketplace scope flags = global:%v project:%v local:%v", rows[0].EnabledGlobal, rows[0].EnabledProject, rows[0].EnabledLocal)
+	}
+	if len(rows[0].MarketplaceSelections) != 3 {
+		t.Fatalf("Marketplace selections = %#v", rows[0].MarketplaceSelections)
+	}
+}
+
+func TestBuildRowsAttributesIndexOnlyPinAcrossEquivalentMarketplaceURLs(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("d", 64)
+	commit := strings.Repeat("e", 40)
+	pin := config.MarketplaceResourcePin{
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "revision-id", Digest: digest,
+		Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, Direct: true,
+	}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: "HTTPS://MARKET.example/", InstanceID: "market-id", Resources: []config.MarketplaceResourcePin{pin}, Source: config.RepoCommitted,
+	}}}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry: pkgcatalog.Entry{Kind: ir.KindSkill, Name: "review"}, RegistryURL: "https://market.example", Ref: commit, CatalogKey: marketplaceCatalogKey(cfg.Marketplaces[0], pin),
+		IsMarketplace: true, MarketplaceURL: "https://market.example", MarketplaceInstanceID: "market-id", MarketplaceRegistryID: "source-id",
+	}}
+
+	rows := buildRows(cfg, nil, resolved, nil, materialize.DriftReport{})
+
+	if len(rows) != 1 || !rows[0].EnabledProject || len(rows[0].MarketplaceSelections) != 1 {
+		t.Fatalf("index-only Marketplace row = %#v", rows)
+	}
+}
+
+func TestBuildRowsKeepsMarketplaceRevisionsScopedToExactArtifact(t *testing.T) {
+	userPin := config.MarketplaceResourcePin{
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v1",
+		Digest: "sha256:" + strings.Repeat("1", 64), Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
+	}
+	projectPin := userPin
+	projectPin.Revision = "v2"
+	projectPin.Digest = "sha256:" + strings.Repeat("2", 64)
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{
+		{URL: "https://market.example", InstanceID: "market-id", Resources: []config.MarketplaceResourcePin{userPin}, Source: config.UserPersonal},
+		{URL: "https://market.example", InstanceID: "market-id", Resources: []config.MarketplaceResourcePin{projectPin}, Source: config.RepoCommitted},
+	}}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry: pkgcatalog.Entry{Kind: ir.KindSkill, Name: "review"}, CatalogKey: marketplaceCatalogKey(cfg.Marketplaces[1], projectPin),
+		IsMarketplace: true, MarketplaceURL: "https://market.example", MarketplaceInstanceID: "market-id", MarketplaceRegistryID: "source-id",
+	}}
+
+	rows := buildRows(cfg, nil, resolved, nil, materialize.DriftReport{})
+
+	if len(rows) != 1 || rows[0].EnabledGlobal || !rows[0].EnabledProject || len(rows[0].MarketplaceSelections) != 1 {
+		t.Fatalf("exact-revision Marketplace row = %#v", rows)
+	}
+	if got := rows[0].MarketplaceSelections[config.RepoCommitted].Pin.Revision; got != "v2" {
+		t.Fatalf("selected Marketplace revision = %q, want v2", got)
+	}
+}
+
+func TestBuildRowsKeepsMarketplaceKindsSeparate(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("3", 64)
+	skillPin := config.MarketplaceResourcePin{
+		RegistryID: "source-id", Kind: "skill", Name: "skill-source-name", InstalledName: "shared", Revision: "v1",
+		Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
+	}
+	commandPin := skillPin
+	commandPin.Kind = "command"
+	commandPin.Name = "command-source-name"
+	entry := config.MarketplaceEntry{
+		URL: "https://market.example", InstanceID: "market-id", Resources: []config.MarketplaceResourcePin{skillPin, commandPin}, Source: config.RepoCommitted,
+	}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
+	catalogKey := marketplaceCatalogKey(entry, skillPin)
+	resolved := []resolver.ResolvedArtifact{
+		{Entry: pkgcatalog.Entry{Kind: ir.KindSkill, Name: "shared"}, CatalogKey: catalogKey, IsMarketplace: true},
+		{Entry: pkgcatalog.Entry{Kind: ir.KindCommand, Name: "shared"}, CatalogKey: catalogKey, IsMarketplace: true},
+	}
+
+	rows := buildRows(cfg, nil, resolved, nil, materialize.DriftReport{})
+
+	if len(rows) != 2 {
+		t.Fatalf("Marketplace rows = %#v", rows)
+	}
+	for _, row := range rows {
+		selection := row.MarketplaceSelections[config.RepoCommitted]
+		if selection.Pin.Kind != marketplaceProtocolKind(row.Artifact.Kind) {
+			t.Fatalf("%s row attributed to %s pin", row.Artifact.Kind, selection.Pin.Kind)
+		}
+	}
+}
+
+func TestBuildRowsMarksCollectionOnlyMarketplaceLeaf(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("c", 64)
+	pin := config.MarketplaceResourcePin{
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
+		Acquisition: config.MarketplaceAcquisitionMirror,
+		SelectedBy:  config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "collections", Name: "bundle", Revision: "v1"}}),
+	}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: "https://market.example", InstanceID: "market-id", Resources: []config.MarketplaceResourcePin{pin}, Source: config.RepoCommitted,
+	}}}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry: pkgcatalog.Entry{Kind: ir.KindSkill, Name: "review"}, RegistryURL: "https://market.example", Ref: "v1", CatalogKey: marketplaceCatalogKey(cfg.Marketplaces[0], pin),
+		IsMarketplace: true, MarketplaceURL: "https://market.example", MarketplaceInstanceID: "market-id", MarketplaceRegistryID: "source-id",
+	}}
+
+	rows := buildRows(cfg, nil, resolved, nil, materialize.DriftReport{})
+
+	if len(rows) != 1 || !rows[0].EnabledProject || !rows[0].MarketplaceCollectionOnly {
+		t.Fatalf("collection-only Marketplace row = %#v", rows)
+	}
+}
+
 func testTargets(names ...string) []hcc.Target {
 	targets := make([]hcc.Target, 0, len(names))
 	for _, name := range names {

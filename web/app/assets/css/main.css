@@ -1,0 +1,162 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+@import "./design-tokens.css";
+
+/*
+ * This instance is an index, not a storefront. Every entry is content-addressed
+ * and analyzed, and most are withheld. Two rules follow, and the rest of this
+ * file only makes sense with them in mind:
+ *
+ *   1. Saturated colour means an action or verdict. A coloured status mark in a
+ *      row is always a claim about whether that revision can be installed.
+ *   2. Identity is typeset in mono. A coordinate, a digest and a command are
+ *      the things a reader compares character by character or retypes.
+ *
+ * Shared colors and the Nuxt UI mappings live in design-tokens.css. This file
+ * owns Marketplace-specific document styling.
+ */
+
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
+.marketplace-markdown {
+  max-width: 72ch;
+  margin-inline: auto;
+  color: var(--ui-text);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.marketplace-markdown > :first-child {
+  margin-top: 0;
+}
+
+.marketplace-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.marketplace-markdown :where(h1, h2, h3, h4, h5, h6) {
+  margin-block: 1.75em 0.65em;
+  color: var(--ui-text-highlighted);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.marketplace-markdown h1 {
+  font-size: 1.75rem;
+}
+
+.marketplace-markdown h2 {
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid var(--ui-border);
+  font-size: 1.375rem;
+}
+
+.marketplace-markdown h3 {
+  font-size: 1.125rem;
+}
+
+.marketplace-markdown :where(h4, h5, h6) {
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.marketplace-markdown :where(p, ul, ol, blockquote, pre, hr) {
+  margin-block: 1em;
+}
+
+.marketplace-markdown :where(ul, ol) {
+  padding-left: 1.5rem;
+}
+
+.marketplace-markdown ul {
+  list-style: disc;
+}
+
+.marketplace-markdown ol {
+  list-style: decimal;
+}
+
+.marketplace-markdown :where(ul, ol) :where(ul, ol) {
+  margin-block: 0.35em;
+}
+
+.marketplace-markdown li + li {
+  margin-top: 0.35em;
+}
+
+.marketplace-markdown blockquote {
+  padding-left: 1rem;
+  border-left: 3px solid var(--ui-border);
+  color: var(--ui-text-muted);
+}
+
+.marketplace-markdown a {
+  color: var(--ui-primary);
+  font-weight: 550;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--ui-primary) 45%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.marketplace-markdown a:hover {
+  text-decoration-color: currentColor;
+}
+
+.marketplace-markdown a:focus-visible {
+  border-radius: 0.125rem;
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 3px;
+}
+
+.marketplace-markdown :not(pre) > code {
+  border: 1px solid var(--ui-border);
+  border-radius: 0.25rem;
+  background: var(--ui-bg-muted);
+  padding: 0.1em 0.35em;
+  color: var(--ui-text-highlighted);
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+
+.marketplace-markdown pre {
+  overflow-x: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: 0.375rem;
+  background: var(--ui-bg-muted);
+  padding: 1rem;
+  color: var(--ui-text-highlighted);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  overflow-wrap: normal;
+}
+
+.marketplace-markdown pre code {
+  font: inherit;
+}
+
+.marketplace-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--ui-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+::selection {
+  background: var(--am-color-action-selection);
+  color: var(--am-color-text-primary);
+}

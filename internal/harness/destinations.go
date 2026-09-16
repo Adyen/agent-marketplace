@@ -18,10 +18,10 @@ type Destination struct {
 	Root                 string
 	Prefix               string
 	InstallationEvidence bool
+	AggregateRoutes      []AggregateRoute
+	AggregateFile        string
 	Info                 TargetInfo
 }
-
-type resolvedLayoutProvider func(machineScope bool, repoRoot, homeDir string) ([]Destination, error)
 
 // RouteArtifact strips the destination's native prefix after validating that
 // the artifact remains within the destination root.
@@ -29,6 +29,17 @@ func (d Destination) RouteArtifact(path string) (string, error) {
 	path = filepath.ToSlash(path)
 	if err := ValidateRelPath(path); err != nil {
 		return "", err
+	}
+	if len(d.AggregateRoutes) > 0 {
+		for _, route := range d.AggregateRoutes {
+			if route.ArtifactPath == path {
+				if err := ValidateRelPath(d.AggregateFile); err != nil || d.AggregateFile == "" {
+					return "", fmt.Errorf("invalid native aggregate destination")
+				}
+				return d.AggregateFile, nil
+			}
+		}
+		return "", fmt.Errorf("artifact %q is not an allowed native aggregate", path)
 	}
 	if d.Prefix == "" {
 		return path, nil
@@ -45,8 +56,9 @@ func (d Destination) RouteArtifact(path string) (string, error) {
 }
 
 // ResolveDestinations returns the native output roots for a target and scope.
-// Legacy targets retain one default destination; partitioned targets resolve
-// their named native roots through a registered application layout provider.
+// Legacy targets retain one default destination; migrated targets resolve
+// through the application-owned installation adapter registry, regardless of
+// whether their native layout uses one root or multiple partitions.
 func ResolveDestinations(target hcc.Target, machineScope bool, repoRoot string) ([]Destination, error) {
 	homeDir := ""
 	if machineScope {
@@ -129,8 +141,12 @@ func resolveDestinations(target hcc.Target, machineScope bool, repoRoot, homeDir
 		}
 		slog.Debug("resolve harness destinations complete", "target", target, "machine_scope", machineScope, "count", len(destinations))
 	}()
-	if provider, ok := resolvedLayoutProviders[target]; ok {
-		return provider(machineScope, repoRoot, homeDir)
+	adapters, adapterErr := NewInstallationAdapterRegistry()
+	if adapterErr != nil {
+		return nil, adapterErr
+	}
+	if adapter, ok := adapters.Lookup(target); ok {
+		return adapter.Resolve(machineScope, repoRoot, homeDir)
 	}
 	definition, declared := targetmeta.Lookup(string(target))
 	info, configured := TargetInfoMap[target]
@@ -138,14 +154,14 @@ func resolveDestinations(target hcc.Target, machineScope bool, repoRoot, homeDir
 		return nil, fmt.Errorf("unknown harness target %q", target)
 	}
 	if definition.PartitionedRoots {
-		return nil, fmt.Errorf("target %q has no resolved-layout provider", target)
+		return nil, fmt.Errorf("target %q has no installation adapter", target)
 	}
 	info.Roots = Roots{Repo: definition.RepoRoot, Machine: filepath.Join(homeDir, definition.UserRoot)}
 	root, err := canonicalRoot(info.Roots.For(machineScope, repoRoot))
 	if err != nil {
 		return nil, err
 	}
-	return []Destination{{ID: "default", Root: root, InstallationEvidence: true, Info: info}}, nil
+	return nativeAggregateDestinations(target, machineScope, repoRoot, homeDir, Destination{ID: "default", Root: root, InstallationEvidence: true, Info: info})
 }
 
 func canonicalRoot(path string) (string, error) {

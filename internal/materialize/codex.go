@@ -26,23 +26,46 @@ var (
 	codexMCPArtifactPath   = mustCodexAggregatePath(ir.KindMcpServer)
 	codexHooksFile         = path.Base(codexHooksArtifactPath)
 	codexMCPFile           = path.Base(codexMCPArtifactPath)
+	// codexHooksContainer and codexMCPContainer are the declared envelope
+	// members carrying each kind's entries — hooks.json's "hooks" member and
+	// config.toml's "mcp_servers" table. mustCodexAggregatePath already
+	// refuses a scope-variant aggregate, so the member beside it is
+	// scope-invariant too.
+	codexHooksContainer = mustCodexAggregateMember(ir.KindHook)
+	codexMCPContainer   = mustCodexAggregateMember(ir.KindMcpServer)
 )
 
 type codexOwnedAggregateHandler struct{}
+
+type codexOwnedAggregateState struct {
+	hooks   *ownedJSONAggregateWork
+	mcps    []codexMCPEntry
+	blocked bool
+}
+
+func codexState(state ownedAggregateState, key outputKey) *codexOwnedAggregateState {
+	current, _ := state.get(key).(*codexOwnedAggregateState)
+	if current == nil {
+		current = &codexOwnedAggregateState{}
+		state.put(key, current)
+	}
+	return current
+}
 
 func (codexOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, error) {
 	rest, hooks, mcps, err := splitCodexOwnedArtifacts(artifacts, resource)
 	if err != nil {
 		return nil, err
 	}
-	state.codexMCP[key] = append(state.codexMCP[key], mcps...)
+	current := codexState(state, key)
+	current.mcps = append(current.mcps, mcps...)
 	if len(hooks) == 0 {
 		return rest, nil
 	}
-	aggregate := state.codex[key]
+	aggregate := current.hooks
 	if aggregate == nil {
 		aggregate = &ownedJSONAggregateWork{}
-		state.codex[key] = aggregate
+		current.hooks = aggregate
 	}
 	for _, entry := range hooks {
 		aggregate.add(entry)
@@ -51,16 +74,17 @@ func (codexOwnedAggregateHandler) extract(state ownedAggregateState, key outputK
 }
 
 func (codexOwnedAggregateHandler) markIncomplete(state ownedAggregateState, key outputKey, kind ir.ResourceKind) {
+	current := codexState(state, key)
 	switch kind {
 	case ir.KindHook:
-		aggregate := state.codex[key]
+		aggregate := current.hooks
 		if aggregate == nil {
 			aggregate = &ownedJSONAggregateWork{}
-			state.codex[key] = aggregate
+			current.hooks = aggregate
 		}
 		aggregate.markIncomplete(codexHooksFile)
 	case ir.KindMcpServer:
-		state.codexMCPBlocked[key] = true
+		current.blocked = true
 	}
 }
 
@@ -80,6 +104,10 @@ func (codexOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource st
 }
 
 func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, _ string, destinations []harness.Destination, dryRun bool) *Report {
+	current, _ := state.get(key).(*codexOwnedAggregateState)
+	if current == nil {
+		current = &codexOwnedAggregateState{}
+	}
 	for _, destination := range destinations {
 		if !destination.Info.OwnershipReconciledAggregates {
 			continue
@@ -87,9 +115,9 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 		hookOptions := codexHookJSONOptions()
 		hookOptions.rootID = destination.ID
 		hookOptions.onWrite = appendCodexTrustReviewDiagnostic
-		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: ownedHooksContainer, rawValueDigest: true}
-		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, state.codex[key], hookOptions, dryRun)
-		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, state.codexMCP[key], state.codexMCPBlocked[key], dryRun)
+		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
+		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, current.mcps, current.blocked, dryRun)
 	}
 	return report
 }
@@ -112,7 +140,7 @@ type codexMCPEntry struct {
 }
 
 func (e codexMCPEntry) id() ownership.EntryID {
-	return ownership.EntryID{Kind: ownership.KindMcpServer, Container: "mcp_servers", Key: e.name, IdentityDigest: ownership.Digest([]byte(e.name))}
+	return ownership.EntryID{Kind: ownership.KindMcpServer, Container: codexMCPContainer, Key: e.name, IdentityDigest: ownership.Digest([]byte(e.name))}
 }
 
 func (e codexMCPEntry) owned() ownership.Entry {
@@ -156,7 +184,7 @@ func codexHookFragmentEntries(data []byte, resource string) ([]ownedJSONEntry, e
 	if err := ownedJSONDecode(data, &document); err != nil {
 		return nil, fmt.Errorf("decode %s fragment: %w", codexHooksFile, err)
 	}
-	return ownedJSONHookEntries(codexHooksFile, document[ownedHooksContainer], resource)
+	return ownedJSONHookEntries(codexHooksFile, document[codexHooksContainer], resource)
 }
 
 func mustCodexAggregatePath(kind ir.ResourceKind) string {
@@ -165,6 +193,17 @@ func mustCodexAggregatePath(kind ir.ResourceKind) string {
 		panic(fmt.Sprintf("Codex native aggregate path for %s is not registered", kind))
 	}
 	return artifactPath
+}
+
+// mustCodexAggregateMember resolves the declared envelope member for a Codex
+// aggregate kind. Like the path, a missing declaration is a registry
+// programming error, not a runtime condition.
+func mustCodexAggregateMember(kind ir.ResourceKind) string {
+	file, ok := targetmeta.NativeAggregateFileForScope(targetmeta.TargetCodex, kind, false)
+	if !ok {
+		panic(fmt.Sprintf("Codex native aggregate member for %s is not registered", kind))
+	}
+	return file.Member
 }
 
 func codexDesiredMCP(raw []byte, resource string) ([]codexMCPEntry, error) {
@@ -210,11 +249,11 @@ func canonicalCodexMCPFragment(raw []byte, name string) ([]byte, error) {
 		for it.Next() {
 			keys = append(keys, string(it.Node().Data))
 		}
-		if len(keys) < 2 || keys[0] != "mcp_servers" || keys[1] != name {
+		if len(keys) < 2 || keys[0] != codexMCPContainer || keys[1] != name {
 			continue
 		}
 		var header bytes.Buffer
-		header.WriteString("[mcp_servers.")
+		header.WriteString("[" + codexMCPContainer + ".")
 		header.Write(quotedName)
 		for _, key := range keys[2:] {
 			header.WriteByte('.')
@@ -244,13 +283,13 @@ func codexMCPValues(raw []byte) (map[string]any, error) {
 	if err := toml.Unmarshal(raw, &document); err != nil {
 		return nil, err
 	}
-	value, ok := document["mcp_servers"]
+	value, ok := document[codexMCPContainer]
 	if !ok {
 		return map[string]any{}, nil
 	}
 	servers, ok := value.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("mcp_servers is not a table")
+		return nil, fmt.Errorf("%s is not a table", codexMCPContainer)
 	}
 	return servers, nil
 }
@@ -281,8 +320,8 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 				keys = append(keys, string(it.Node().Data))
 			}
 			current = ""
-			inMCPRoot = len(keys) == 1 && keys[0] == "mcp_servers"
-			if len(keys) < 2 || keys[0] != "mcp_servers" {
+			inMCPRoot = len(keys) == 1 && keys[0] == codexMCPContainer
+			if len(keys) < 2 || keys[0] != codexMCPContainer {
 				continue
 			}
 			inMCPRoot = false
@@ -313,7 +352,7 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 				continue
 			}
 			if current == "" {
-				if len(keys) >= 3 && keys[0] == "mcp_servers" {
+				if len(keys) >= 3 && keys[0] == codexMCPContainer {
 					name := keys[1]
 					section := sections[name]
 					start := bytes.LastIndexByte(raw[:node.Raw.Offset], '\n') + 1
@@ -344,7 +383,7 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 		if err != nil {
 			return nil, nil, err
 		}
-		id := ownership.EntryID{Kind: ownership.KindMcpServer, Container: "mcp_servers", Key: name, IdentityDigest: ownership.Digest([]byte(name))}
+		id := ownership.EntryID{Kind: ownership.KindMcpServer, Container: codexMCPContainer, Key: name, IdentityDigest: ownership.Digest([]byte(name))}
 		section.value = ownership.EntryValue{ID: id, ValueDigest: ownership.Digest(canonical)}
 		sections[name] = section
 		existing = append(existing, section.value)

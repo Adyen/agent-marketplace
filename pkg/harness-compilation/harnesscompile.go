@@ -104,9 +104,20 @@ func ValidateTargetRegistrations() error {
 		if definition.UI && definition.Label == "" {
 			errs = append(errs, fmt.Errorf("target %q has UI metadata without a label", t))
 		}
+		if definition.PartitionedRoots {
+			if _, ok := targetmeta.LookupNativeLayout(definition.Target); !ok {
+				errs = append(errs, fmt.Errorf("target %q declares partitioned roots but registers no native layout", t))
+			}
+		}
 	}
 	if len(definitions) == 0 {
 		errs = append(errs, errors.New("target registry must not be empty"))
+	}
+	// Validate every declared native layout at the registration boundary so a
+	// malformed descriptor fails here instead of surfacing as a mis-routed
+	// artifact at materialization time.
+	if err := targetmeta.ValidateNativeLayouts(); err != nil {
+		errs = append(errs, err)
 	}
 	// Reverse direction: a registration for an undeclared target, or for a
 	// target that does not declare the capability, is a wiring bug.

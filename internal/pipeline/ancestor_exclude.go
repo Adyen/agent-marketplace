@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // AncestorMaterializedExcludeWarning is emitted when a subdirectory's local
@@ -154,11 +155,12 @@ func skillMaterializedAt(root, name string, targets []hcc.Target) (hcc.Target, b
 // materialized for target under root (repo scope). Returns "" if the target is
 // unknown.
 func skillDir(target hcc.Target, root, name string) string {
-	roots, ok := harness.InstallRoots[target]
-	if !ok {
-		if target != hcc.TargetCodex {
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		if harness.IsInstallationAdapterTarget(target) {
 			return ""
 		}
+	} else if _, migrated := registry.Lookup(target); migrated {
 		destinations, err := harness.ResolveDestinations(target, false, root)
 		if err != nil {
 			return ""
@@ -172,9 +174,19 @@ func skillDir(target hcc.Target, root, name string) string {
 		}
 		return ""
 	}
+	roots, ok := harness.InstallRoots[target]
+	if !ok {
+		return ""
+	}
 	installRoot := roots.For(false, root)
+	// The native-layout descriptor is the topology authority for targets that
+	// declare one — Claude deliberately leaves TargetInfo.SkillPathPattern
+	// unset, so the descriptor is where its skill shape lives. The literal
+	// fallback only serves targets with no registered layout.
 	pattern := "skills/%s/SKILL.md"
-	if info, ok := harness.TargetInfoMap[target]; ok && info.SkillPathPattern != "" {
+	if declared, ok := targetmeta.NativeResourcePattern(target, ir.KindSkill); ok {
+		pattern = declared
+	} else if info, ok := harness.TargetInfoFor(target); ok && info.SkillPathPattern != "" {
 		pattern = info.SkillPathPattern
 	}
 	skillRel := filepath.Dir(fmt.Sprintf(pattern, name))

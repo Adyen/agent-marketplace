@@ -5,18 +5,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
-	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
-
-var resolvedLayoutProviders = map[hcc.Target]resolvedLayoutProvider{
-	hcc.Target(targetmeta.TargetCodex): resolveCodexDestinations,
-}
 
 func resolveCodexDestinations(machineScope bool, repoRoot, homeDir string) ([]Destination, error) {
 	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
@@ -81,14 +75,15 @@ func canonicalCodexRoot(path string) (string, error) {
 }
 
 func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
-	aggregates := make([]string, 0, len(partition.Aggregates))
-	for _, aggregate := range partition.Aggregates {
-		aggregates = append(aggregates, aggregate.Path)
-	}
-	slices.Sort(aggregates)
+	var files AggregateFileSet
+	appendAggregateFiles(&files, "", partition.Aggregates)
 	var resourceDirs map[ir.ResourceKind]string
 	for kind, pattern := range partition.ResourcePaths {
-		if kind == ir.KindSkill || kind == ir.KindCommand {
+		// A directory-shaped pattern (the %s placeholder is a directory
+		// element) materializes as a resource directory, so it contributes
+		// no flat ResourceDirs entry — the same predicate the validator
+		// enforces against SkillDirKinds.
+		if targetmeta.IsDirShapedPattern(pattern) {
 			continue
 		}
 		if resourceDirs == nil {
@@ -97,16 +92,13 @@ func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
 		resourceDirs[kind] = path.Dir(pattern)
 	}
 	return TargetInfo{
-		Components:       partition.Components,
-		PlanStrategy:     PlanSubtree,
-		ResourceDirs:     resourceDirs,
-		SkillPathPattern: partition.ResourcePaths[ir.KindSkill],
-		SkillDirKinds:    partition.SkillDirKinds,
-		AggregateFiles: AggregateFileSet{
-			Project: slices.Clone(aggregates),
-			User:    aggregates,
-		},
-		OwnershipReconciledAggregates: len(aggregates) > 0,
+		Components:                    partition.Components,
+		PlanStrategy:                  PlanSubtree,
+		ResourceDirs:                  resourceDirs,
+		SkillPathPattern:              partition.ResourcePaths[ir.KindSkill],
+		SkillDirKinds:                 partition.SkillDirKinds,
+		AggregateFiles:                files,
+		OwnershipReconciledAggregates: len(files.Project) > 0,
 	}
 }
 
@@ -130,11 +122,7 @@ func codexVirtualTargetInfo() (TargetInfo, error) {
 		for kind, directory := range partition.SkillDirKinds {
 			info.SkillDirKinds[kind] = directory
 		}
-		for _, aggregate := range partition.Aggregates {
-			info.AggregateFiles.Project = append(info.AggregateFiles.Project, path.Join(partition.Prefix, aggregate.Path))
-		}
+		appendAggregateFiles(&info.AggregateFiles, partition.Prefix, partition.Aggregates)
 	}
-	slices.Sort(info.AggregateFiles.Project)
-	info.AggregateFiles.User = slices.Clone(info.AggregateFiles.Project)
 	return info, nil
 }

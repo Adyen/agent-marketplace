@@ -86,11 +86,11 @@ defineExpose({
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #67746c;
+  background: var(--am-color-text-muted);
 }
 
 .window-controls i:nth-child(2) {
-  background: #8b7850;
+  background: var(--am-terminal-warning);
 }
 
 .window-controls i:nth-child(3) {

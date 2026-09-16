@@ -33,13 +33,11 @@ func BenchmarkCodexDestinationOverlapPreflight(b *testing.B) {
 				repoKey:    {artifacts: append([]artifact.Artifact(nil), repoArtifacts...)},
 				machineKey: {artifacts: append([]artifact.Artifact(nil), machineArtifacts...)},
 			},
-			skillLinks:      make(map[outputKey]map[string]*skillLinkGroup),
-			allOutputs:      map[outputKey]bool{repoKey: true, machineKey: true},
-			blocked:         make(blockedOutputs),
-			artifactMeta:    make(map[outputKey]map[string]skillLink),
-			codexAggregates: make(map[outputKey]*ownedJSONAggregateWork),
-			codexMCP:        make(map[outputKey][]codexMCPEntry),
-			codexMCPBlocked: make(map[outputKey]bool),
+			skillLinks:   make(map[outputKey]map[string]*skillLinkGroup),
+			allOutputs:   map[outputKey]bool{repoKey: true, machineKey: true},
+			blocked:      make(blockedOutputs),
+			artifactMeta: make(map[outputKey]map[string]skillLink),
+			ownedState:   make(map[outputKey]any),
 		}
 		if _, d := preflightCodexDestinations(&result, repoRoot, modes); d != nil {
 			b.Fatal(d.Message)

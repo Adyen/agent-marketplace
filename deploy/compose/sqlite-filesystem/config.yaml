@@ -1,0 +1,42 @@
+apiVersion: agent-marketplace.io/marketplace/v1
+instance:
+  id: example-marketplace
+  name: Example Agent Marketplace
+  canonical_url: https://marketplace.example.invalid
+  browser_base: https://marketplace.example.invalid/marketplace
+listen: 0.0.0.0:8080
+operations_listen: 127.0.0.1:9090
+storage:
+  metadata:
+    driver: sqlite
+    dsn: /var/lib/agent-marketplace/marketplace.db
+  blobs:
+    driver: filesystem
+    path: /var/lib/agent-marketplace/blobs
+acquisition_default: mirror
+refresh:
+  interval: 30m
+# SQLite is single-process in this example; keep refresh concurrency low.
+refresh_concurrency: 1
+policy:
+  hidden_content: warn
+  license_allowlist:
+    - MIT
+    - Apache-2.0
+    - BSD-2-Clause
+    - BSD-3-Clause
+  # A resource that declares no license is unknown, not disallowed.
+  # reject (default) | warn | allow
+  license_undeclared: reject
+  limits:
+    repository_bytes: 104857600
+    file_count: 1024
+    file_bytes: 2097152
+    artifact_bytes: 16777216
+    clone_duration: 300s
+    ingestion_duration: 120s
+registries: []
+revocations:
+  registry_ids: []
+  coordinates: []
+  revisions: []

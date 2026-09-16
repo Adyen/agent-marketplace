@@ -15,16 +15,14 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-const (
-	ownedHooksContainer    = "hooks"
-	ownedJSONEmptyDocument = "{}\n"
-)
+const ownedJSONEmptyDocument = "{}\n"
 
 // ownedJSONEntry is one desired JSON aggregate entry with its ownership
 // identity and canonical value bytes.
@@ -144,14 +142,23 @@ func ownedAggregateIDKey(id ownership.EntryID) string {
 	return string(id.Kind) + "\x00" + id.Container + "\x00" + id.Key + "\x00" + id.IdentityDigest
 }
 
-// ownedAggregateState keeps format-specific desired state behind the common
-// ownership-reconciliation boundary. JSON hook arrays and TOML MCP tables keep
-// their native patch models.
+// ownedAggregateState stores adapter-specific desired state outside generic
+// orchestration. JSON hooks and TOML MCP entries retain their native patch models.
 type ownedAggregateState struct {
-	devin           map[outputKey]*ownedJSONAggregateWork
-	codex           map[outputKey]*ownedJSONAggregateWork
-	codexMCP        map[outputKey][]codexMCPEntry
-	codexMCPBlocked map[outputKey]bool
+	values map[outputKey]any
+}
+
+func (s ownedAggregateState) get(key outputKey) any {
+	if s.values == nil {
+		return nil
+	}
+	return s.values[key]
+}
+
+func (s ownedAggregateState) put(key outputKey, value any) {
+	if s.values != nil {
+		s.values[key] = value
+	}
 }
 
 // ownedAggregateHandler lets the materializer orchestrate owned aggregate
@@ -164,15 +171,66 @@ type ownedAggregateHandler interface {
 	reconcile(context.Context, *Report, ownedAggregateState, outputKey, string, []harness.Destination, bool) *Report
 }
 
+type materializeAdapter struct {
+	handler   ownedAggregateHandler
+	repairKey string
+	repair    func(context.Context, string, []resolver.ResolvedArtifact) (*RepairPreview, error)
+}
+
+func materializeBindingCatalog() map[string]materializeAdapter {
+	return map[string]materializeAdapter{
+		harness.AdapterDevinOwnedJSON:     {handler: devinOwnedAggregateHandler{}, repairKey: harness.AdapterDevinRepair, repair: DevinRepairPreview},
+		harness.AdapterCodexOwnedJSONTOML: {handler: codexOwnedAggregateHandler{}, repairKey: harness.AdapterCodexRepair, repair: CodexRepairPreview},
+	}
+}
+
+type materializeAdapterComposition struct {
+	registry harness.InstallationAdapterRegistry
+	bindings map[hcc.Target]materializeAdapter
+}
+
+// newMaterializeAdapterComposition is the sole application binding boundary:
+// every validated installation adapter must have a complete aggregate and
+// repair binding before generic materialization or repair can select it.
+func newMaterializeAdapterComposition() (materializeAdapterComposition, error) {
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		return materializeAdapterComposition{}, err
+	}
+	catalog := materializeBindingCatalog()
+	bindings := make(map[hcc.Target]materializeAdapter, len(registry.Targets()))
+	for _, target := range registry.Targets() {
+		adapter, ok := registry.Lookup(target)
+		if !ok {
+			return materializeAdapterComposition{}, fmt.Errorf("installation adapter %q disappeared during composition", target)
+		}
+		binding, ok := catalog[adapter.AggregateHandlerKey()]
+		if !ok || binding.handler == nil || binding.repair == nil || binding.repairKey != adapter.RepairKey() {
+			return materializeAdapterComposition{}, fmt.Errorf("installation adapter %q has incomplete materialization binding", target)
+		}
+		bindings[target] = binding
+	}
+	return materializeAdapterComposition{registry: registry, bindings: bindings}, nil
+}
+
+func materializeAdapterFor(target hcc.Target) (materializeAdapter, bool, error) {
+	composition, err := newMaterializeAdapterComposition()
+	if err != nil {
+		if harness.IsInstallationAdapterTarget(target) {
+			return materializeAdapter{}, false, fmt.Errorf("construct installation adapter registry for %s: %w", target, err)
+		}
+		return materializeAdapter{}, false, nil
+	}
+	binding, ok := composition.bindings[target]
+	return binding, ok, nil
+}
+
 func ownedAggregateHandlerFor(target hcc.Target) ownedAggregateHandler {
-	switch target {
-	case hcc.TargetDevin:
-		return devinOwnedAggregateHandler{}
-	case hcc.TargetCodex:
-		return codexOwnedAggregateHandler{}
-	default:
+	adapter, ok, err := materializeAdapterFor(target)
+	if err != nil || !ok {
 		return nil
 	}
+	return adapter.handler
 }
 
 type ownedJSONReconcileOptions struct {

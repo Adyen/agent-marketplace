@@ -65,7 +65,7 @@ func TestMain(m *testing.M) {
 	// /etc/agent-marketplace/config.yaml does not leak into test execution.
 	// Use a private temp directory so the path cannot collide with another run.
 	// Individual tests that need an org config set the test override explicitly
-	// with config.SetTestV3OrganizationConfigPath.
+	// with config.SetTestOrganizationConfigPath.
 	orgDir, err := os.MkdirTemp("", "agent-marketplace-test-org-config-*")
 	if err != nil {
 		slog.Error("failed to create isolated org config directory", "err", err)
@@ -85,7 +85,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	config.SetTestV3OrganizationConfigPath(nil, orgConfigPath)
+	config.SetTestOrganizationConfigPath(nil, orgConfigPath)
 
 	if err := os.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", "false"); err != nil {
 		fail("failed to disable logging in cmd tests", err)
@@ -133,6 +133,64 @@ func TestVersionFlagPrintsVersion(t *testing.T) {
 
 	if output != defaultVersion+"\n" {
 		t.Fatalf("expected version output %q, got %q", defaultVersion+"\n", output)
+	}
+}
+
+func TestSyncFlagsAreDocumentedAndValidated(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	output, err := executeCommand("sync", "--help")
+	if err != nil {
+		t.Fatalf("expected sync help to succeed: %v", err)
+	}
+	for _, flag := range []string{"--offline", "--allow-revoked"} {
+		if !strings.Contains(output, flag) {
+			t.Fatalf("sync help missing %q: %q", flag, output)
+		}
+	}
+	output, err = executeCommand("sync", "--offline", "--allow-revoked", "not-a-coordinate")
+	if err == nil {
+		t.Fatalf("invalid --allow-revoked unexpectedly succeeded with output %q", output)
+	}
+	if !strings.Contains(err.Error(), "invalid --allow-revoked value") {
+		t.Fatalf("invalid --allow-revoked error = %v, output %q", err, output)
+	}
+}
+
+func TestSyncOfflineRejectsPruneStale(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	output, err := executeCommand("sync", "--offline", "--prune-stale")
+	if err == nil {
+		t.Fatalf("sync --offline --prune-stale unexpectedly succeeded with output %q", output)
+	}
+	if !strings.Contains(err.Error(), "--prune-stale cannot be used with --offline") {
+		t.Fatalf("unexpected offline prune error = %v, output %q", err, output)
+	}
+	if !strings.Contains(err.Error(), "cached snapshots must never drive destructive stale-selection pruning") {
+		t.Fatalf("offline prune error lacks safety explanation: %v", err)
+	}
+}
+
+func TestSyncCheckRejectsRevocationOverride(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	validOverride := "marketplace/source/skill/review@sha256:" + strings.Repeat("0", 64)
+	output, err := executeCommand("sync", "--offline", "--check", "--allow-revoked", validOverride)
+	if err == nil {
+		t.Fatalf("sync --check unexpectedly accepted --allow-revoked, output %q", output)
+	}
+	if !strings.Contains(err.Error(), "--allow-revoked cannot be used with --check") {
+		t.Fatalf("unexpected combination error = %v, output %q", err, output)
+	}
+	if !strings.Contains(err.Error(), "execution-only") || !strings.Contains(err.Error(), "checks must remain unhealthy") {
+		t.Fatalf("combination error lacks the execution-only/check-health explanation: %v", err)
+	}
+	if strings.Contains(err.Error(), "invalid --allow-revoked value") {
+		t.Fatalf("valid override was reported as invalid: %v", err)
 	}
 }
 
