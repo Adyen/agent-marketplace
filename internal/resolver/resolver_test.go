@@ -1013,6 +1013,141 @@ func TestResolveCatalogViewUsesResolutionWinners(t *testing.T) {
 	}
 }
 
+func TestResolveCatalogViewPreservesDistinctSelectedPaths(t *testing.T) {
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: "git@example.com:repo.git", Ref: "main", Path: "teams/a", Source: config.UserPersonal, Skills: ks("shared-skill")},
+			{URL: "git@example.com:repo.git", Ref: "main", Path: "teams/b", Source: config.RepoCommitted, Skills: ks("shared-skill")},
+		},
+	}
+	setCatalogKeys(cfg)
+
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "shared-skill", Path: "/cache/repo/teams/a/shared-skill"}},
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindSkill, Name: "shared-skill", Path: "/cache/repo/teams/b/shared-skill"}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve() errors = %v, want none", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("Resolve() returned %d artifacts, want 2", len(resolved))
+	}
+
+	view := ResolveCatalogView(cfg, catalogs, resolved)
+	if len(view) != 2 {
+		t.Fatalf("ResolveCatalogView() returned %d artifacts, want 2: %#v", len(view), view)
+	}
+
+	paths := make(map[string]bool, len(view))
+	for _, artifact := range view {
+		if !artifact.Selected {
+			t.Fatalf("ResolveCatalogView() artifact %q from %q should be selected", artifact.Name, artifact.RegistryPath)
+		}
+		paths[artifact.RegistryPath] = true
+	}
+	if !paths["teams/a"] || !paths["teams/b"] {
+		t.Fatalf("ResolveCatalogView() did not preserve both selected paths; got %v", paths)
+	}
+}
+
+func TestResolveCatalogViewKeepsExcludedResourceVisible(t *testing.T) {
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: "git@example.com:org.git", Ref: "main", Source: config.Organization, Skills: ks("excluded-skill")},
+			{URL: "git@example.com:user.git", Ref: "main", Source: config.UserPersonal, Skills: config.KindSelector{Exclude: []string{"excluded-skill"}}},
+		},
+	}
+	setCatalogKeys(cfg)
+
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "excluded-skill", Path: "/cache/org/excluded-skill"}},
+		cfg.Registries[1].CatalogKey: {},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve() errors = %v, want none", errs)
+	}
+	if len(resolved) != 0 {
+		t.Fatalf("Resolve() returned %d artifacts, want 0", len(resolved))
+	}
+
+	view := ResolveCatalogView(cfg, catalogs, resolved)
+	if len(view) != 1 {
+		t.Fatalf("ResolveCatalogView() returned %d artifacts, want 1: %#v", len(view), view)
+	}
+	if view[0].Name != "excluded-skill" || view[0].Selected {
+		t.Fatalf("ResolveCatalogView() got %#v, want one unselected excluded-skill", view[0])
+	}
+}
+
+func TestResolveCatalogViewCollapsesUnselectedScopeCopies(t *testing.T) {
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: "git@example.com:repo.git", Ref: "main", Path: "skills", Source: config.UserPersonal},
+			{URL: "git@example.com:repo.git", Ref: "main", Path: "skills", Source: config.RepoCommitted},
+		},
+	}
+	setCatalogKeys(cfg)
+
+	entries := []catalog.Entry{{Kind: ir.KindSkill, Name: "shared-skill", Path: "/cache/repo/skills/shared-skill"}}
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: entries,
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve() errors = %v, want none", errs)
+	}
+	if len(resolved) != 0 {
+		t.Fatalf("Resolve() returned %d artifacts, want 0 for unselected resource", len(resolved))
+	}
+
+	view := ResolveCatalogView(cfg, catalogs, resolved)
+	if len(view) != 1 {
+		t.Fatalf("ResolveCatalogView() returned %d artifacts, want 1: %#v", len(view), view)
+	}
+	if view[0].Selected {
+		t.Fatalf("ResolveCatalogView() got selected %q, want available", view[0].Name)
+	}
+}
+
+func TestResolveCatalogViewSelectedResourceSuppressesAvailableRunnerUp(t *testing.T) {
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: "git@example.com:org/primary.git", Ref: "main", Source: config.UserPersonal, Skills: ks("smith")},
+			{URL: "git@example.com:org/secondary.git", Ref: "main", Source: config.RepoCommitted},
+		},
+	}
+	setCatalogKeys(cfg)
+
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "smith", Path: "/cache/primary/smith"}},
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindSkill, Name: "smith", Path: "/cache/secondary/smith"}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve() errors = %v, want none", errs)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("Resolve() returned %d artifacts, want 1", len(resolved))
+	}
+
+	view := ResolveCatalogView(cfg, catalogs, resolved)
+	if len(view) != 1 {
+		t.Fatalf("ResolveCatalogView() returned %d artifacts, want 1: %#v", len(view), view)
+	}
+	if !view[0].Selected {
+		t.Fatalf("ResolveCatalogView() got unselected %q, want selected", view[0].Name)
+	}
+	if view[0].RegistryURL != "git@example.com:org/primary.git" {
+		t.Fatalf("ResolveCatalogView() winner registry = %q, want primary", view[0].RegistryURL)
+	}
+}
+
 func TestResolveDeduplicatePrefersHigherPrecedence(t *testing.T) {
 	global := &config.Config{
 		Registries: []config.RegistryEntry{

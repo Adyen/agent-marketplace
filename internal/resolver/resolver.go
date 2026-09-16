@@ -786,14 +786,29 @@ func ResolveCatalogView(cfg *config.Config, catalogs map[string][]catalog.Entry,
 		return nil
 	}
 
+	displayIdentity := func(a ResolvedArtifact) string {
+		if a.IsLocal() {
+			return a.CatalogKey
+		}
+		return normalizedRegistryURL(a.RegistryURL) + "\x00" + strings.TrimSpace(a.Ref) + "\x00" + normalizedEntryPath(a.RegistryPath)
+	}
+
+	type displayKey struct {
+		kind     ir.ResourceKind
+		name     string
+		identity string
+	}
 	selectedResources := make(map[resourceSelection]struct{}, len(resolved))
+	seen := make(map[displayKey]struct{}, len(resolved))
 	view := make([]CatalogArtifact, 0, len(resolved))
 	for _, artifact := range resolved {
-		key := resourceSelection{kind: artifact.Kind, name: strings.TrimSpace(artifact.Name)}
-		if _, duplicate := selectedResources[key]; duplicate {
+		selection := resourceSelection{kind: artifact.Kind, name: strings.TrimSpace(artifact.Name)}
+		key := displayKey{kind: selection.kind, name: selection.name, identity: displayIdentity(artifact)}
+		if _, duplicate := seen[key]; duplicate {
 			continue
 		}
-		selectedResources[key] = struct{}{}
+		selectedResources[selection] = struct{}{}
+		seen[key] = struct{}{}
 		view = append(view, CatalogArtifact{ResolvedArtifact: artifact, Selected: true})
 	}
 
@@ -804,30 +819,34 @@ func ResolveCatalogView(cfg *config.Config, catalogs map[string][]catalog.Entry,
 		if !ok {
 			continue
 		}
-		seen := make(map[resourceSelection]struct{}, len(entries))
+		seenEntries := make(map[resourceSelection]struct{}, len(entries))
 		for _, candidate := range entries {
 			name := strings.TrimSpace(candidate.Name)
 			key := resourceSelection{kind: candidate.Kind, name: name}
 			if name == "" {
 				continue
 			}
-			if _, duplicate := seen[key]; duplicate {
+			if _, duplicate := seenEntries[key]; duplicate {
 				continue
 			}
-			seen[key] = struct{}{}
+			seenEntries[key] = struct{}{}
 			occurrences[key] = append(occurrences[key], newSkillOccurrence(entry, entryIndex, candidate, nil, harnessTargetsFromEntry(entry), order))
 			order++
 		}
 	}
 
-	filterShadowedOccurrences(occurrences, cfg.Registries)
 	winners, _ := pickWinnersReporting(occurrences, false)
 	for _, winner := range winners {
 		artifact := winner.resolved
-		key := resourceSelection{kind: artifact.Kind, name: strings.TrimSpace(artifact.Name)}
-		if _, selected := selectedResources[key]; selected {
+		selection := resourceSelection{kind: artifact.Kind, name: strings.TrimSpace(artifact.Name)}
+		if _, selected := selectedResources[selection]; selected {
 			continue
 		}
+		key := displayKey{kind: selection.kind, name: selection.name, identity: displayIdentity(artifact)}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
 		view = append(view, CatalogArtifact{ResolvedArtifact: artifact})
 	}
 	return view
