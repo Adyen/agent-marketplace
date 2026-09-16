@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -43,8 +42,7 @@ type Server struct {
 	public        *http.Server
 	ops           *http.Server
 
-	requestsTotal  atomic.Int64
-	activeRequests atomic.Int64
+	metrics *serverMetrics
 }
 
 // PublicHandler returns the public API handler, useful for tests.
@@ -66,37 +64,41 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 		revocationErr: evaluatorErr,
 	}
 
+	s.metrics = newServerMetrics()
+
 	publicMux := http.NewServeMux()
-	publicMux.HandleFunc("/.well-known/agent-marketplace.json", s.methodGet(s.handleWellKnown))
-	publicMux.HandleFunc("/api/v1/capabilities", s.methodGet(s.handleCapabilities))
-	publicMux.HandleFunc("/api/v1/instance", s.methodGet(s.handleInstance))
-	publicMux.HandleFunc("/api/v1/search", s.methodGet(s.handleSearch))
-	publicMux.HandleFunc("/api/v1/registries", s.methodGet(s.handleRegistryList))
-	publicMux.HandleFunc("/api/v1/registries/", s.methodGet(s.handleRegistries))
-	publicMux.HandleFunc("/api/v1/resources/", s.methodGet(s.handleResources))
-	publicMux.HandleFunc("/api/v1/manifests/", s.methodGet(s.handleManifests))
-	publicMux.HandleFunc("/api/v1/assessments/", s.methodGet(s.handleAssessmentDigest))
-	publicMux.HandleFunc("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
-	publicMux.HandleFunc("/api/v1/content/", s.methodGet(s.handleContentDigest))
-	publicMux.HandleFunc("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
-	publicMux.HandleFunc("/healthz", s.methodGet(s.handleHealthz))
+	s.metrics.register(publicMux, publicListener, "/.well-known/agent-marketplace.json", s.methodGet(s.handleWellKnown))
+	s.metrics.register(publicMux, publicListener, "/api/v1/capabilities", s.methodGet(s.handleCapabilities))
+	s.metrics.register(publicMux, publicListener, "/api/v1/instance", s.methodGet(s.handleInstance))
+	s.metrics.register(publicMux, publicListener, "/api/v1/search", s.methodGet(s.handleSearch))
+	s.metrics.register(publicMux, publicListener, "/api/v1/registries", s.methodGet(s.handleRegistryList))
+	s.metrics.register(publicMux, publicListener, "/api/v1/registries/", s.methodGet(s.handleRegistries))
+	s.metrics.register(publicMux, publicListener, "/api/v1/resources/", s.methodGet(s.handleResources))
+	s.metrics.register(publicMux, publicListener, "/api/v1/manifests/", s.methodGet(s.handleManifests))
+	s.metrics.register(publicMux, publicListener, "/api/v1/assessments/", s.methodGet(s.handleAssessmentDigest))
+	s.metrics.register(publicMux, publicListener, "/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
+	s.metrics.register(publicMux, publicListener, "/api/v1/content/", s.methodGet(s.handleContentDigest))
+	s.metrics.register(publicMux, publicListener, "/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
+	s.metrics.register(publicMux, publicListener, "/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
 	// listener directly; the operations listener remains the only route.
-	publicMux.HandleFunc("/readyz", s.handlePublicOperationsNotFound)
-	publicMux.HandleFunc("/metrics", s.handlePublicOperationsNotFound)
+	s.metrics.register(publicMux, publicListener, "/readyz", http.HandlerFunc(s.handlePublicOperationsNotFound))
+	s.metrics.register(publicMux, publicListener, "/metrics", http.HandlerFunc(s.handlePublicOperationsNotFound))
+	s.metrics.registerUnmatched(publicMux, publicListener)
 
 	opsMux := http.NewServeMux()
-	opsMux.HandleFunc("/readyz", s.methodGet(s.handleReadyz))
-	opsMux.HandleFunc("/metrics", s.methodGet(s.handleMetrics))
+	s.metrics.register(opsMux, operationsListener, "/readyz", s.methodGet(s.handleReadyz))
+	s.metrics.register(opsMux, operationsListener, "/metrics", s.methodGet(s.metrics.scrape.ServeHTTP))
+	s.metrics.registerUnmatched(opsMux, operationsListener)
 
 	s.public = &http.Server{
-		Handler:      s.withMetrics(publicMux),
+		Handler:      publicMux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 	s.ops = &http.Server{
-		Handler:      s.withMetrics(opsMux),
+		Handler:      opsMux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -163,15 +165,6 @@ func (s *Server) methodGet(h http.HandlerFunc) http.HandlerFunc {
 		}
 		h(w, r)
 	}
-}
-
-func (s *Server) withMetrics(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.activeRequests.Add(1)
-		defer s.activeRequests.Add(-1)
-		s.requestsTotal.Add(1)
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
@@ -1058,16 +1051,6 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
-}
-
-func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	_, _ = fmt.Fprintf(w, "# HELP agent_marketplace_requests_total Total HTTP requests\n")
-	_, _ = fmt.Fprintf(w, "# TYPE agent_marketplace_requests_total counter\n")
-	_, _ = fmt.Fprintf(w, "agent_marketplace_requests_total %d\n", s.requestsTotal.Load())
-	_, _ = fmt.Fprintf(w, "# HELP agent_marketplace_active_requests Active HTTP requests\n")
-	_, _ = fmt.Fprintf(w, "# TYPE agent_marketplace_active_requests gauge\n")
-	_, _ = fmt.Fprintf(w, "agent_marketplace_active_requests %d\n", s.activeRequests.Load())
 }
 
 func (s *Server) resolveRegistry(ctx context.Context, slugOrID string) (store.Registry, error) {
