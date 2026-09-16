@@ -20,7 +20,8 @@ func expectedMachineRootAggregates(target hcc.Target) []string {
 	case hcc.TargetGemini:
 		return []string{"settings.json"}
 	default:
-		return harness.TargetInfoMap[target].AggregateFilesForScope(true)
+		info, _ := harness.TargetInfoFor(target)
+		return info.AggregateFilesForScope(true)
 	}
 }
 

@@ -1003,7 +1003,10 @@ func TestDevinCommandPrunesFromSkillsDirectory(t *testing.T) {
 func TestDevinAggregatesAreProtectedFromMarkerStripping(t *testing.T) {
 	for _, machineScope := range []bool{false, true} {
 		protected := aggregateProtectedPaths(hcc.TargetDevin, machineScope)
-		info := harness.TargetInfoMap[hcc.TargetDevin]
+		info, ok := harness.TargetInfoFor(hcc.TargetDevin)
+		if !ok {
+			t.Fatal("missing Devin adapter metadata")
+		}
 		for _, rel := range info.AggregateFilesForScope(machineScope) {
 			if !protected[rel] {
 				t.Fatalf("machine_scope=%v: %q is not protected from marker stripping", machineScope, rel)
