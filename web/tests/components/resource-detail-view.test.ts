@@ -65,6 +65,16 @@ describe('ResourceDetailView', () => {
     expect(wrapper.findAll('h2').length).toBeGreaterThan(1)
   })
 
+  it('keeps the install command but disables the detail URL when the browser base is empty', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: '' },
+      global: { stubs },
+    })
+
+    expect(wrapper.get('code').text()).toBe(`agent-marketplace install "https://market.example/r/team-tools/skill/review/revisions/${encodeURIComponent(digest)}"`)
+    expect(wrapper.get('button[aria-label^="Copy detail URL"]').attributes('disabled')).toBeDefined()
+  })
+
   it('renders exact digest revision links and preserves revoked history state', () => {
     const previousDigest = 'sha256:' + 'd'.repeat(64)
     const wrapper = mount(ResourceDetailView, {

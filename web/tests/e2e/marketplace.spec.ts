@@ -243,6 +243,8 @@ test.describe('Marketplace browser discovery', () => {
     const copyInstall = page.getByRole('button', { name: 'Copy install command for secure-review', exact: true })
     await copyInstall.click()
     await expect(page.getByRole('button', { name: 'Install command copied for secure-review', exact: true })).toHaveText('Copied')
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(`agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
     await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
     await expect(page.getByText('01 / connect', { exact: true })).toHaveCount(0)
     await expect(page.getByText('02 / discover', { exact: true })).toHaveCount(0)
@@ -324,7 +326,8 @@ test.describe('Marketplace browser discovery', () => {
     expect(exact?.headers()['content-type']).toContain('text/html')
   })
 
-  test('follows an exact resource link and exposes the same install pin', async ({ page }) => {
+  test('follows an exact resource link and exposes the same install pin', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: appURL })
     const previousDigest = `sha256:${'9'.repeat(64)}`
     await page.goto('/')
     await page.getByRole('link', { name: 'team-tools/secure-review', exact: true }).click()
@@ -336,7 +339,11 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('link', { name: previousDigest, exact: true })).toBeVisible()
     await expect(page.locator('code')).toHaveText(`agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeEnabled()
-    await expect(page.getByRole('button', { name: /Copy detail URL/ })).toBeEnabled()
+    const copyDetail = page.getByRole('button', { name: /Copy detail URL/ })
+    await expect(copyDetail).toBeEnabled()
+    await copyDetail.click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(`${appURL}/marketplace/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
     await expect(page.getByRole('heading', { name: 'Security findings', exact: true })).toBeVisible()
     await expect(page.getByText('e2e-analyzer-2', { exact: true })).toBeVisible()
     await expect(page.getByText(`sha256:${'6'.repeat(64)}`, { exact: true })).toBeVisible()
