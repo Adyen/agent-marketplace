@@ -33,6 +33,10 @@ type (
 
 	// JobID uniquely identifies a durable job.
 	JobID string
+
+	// CatalogVersion is the durable, monotonically increasing version of all
+	// catalog-visible state.
+	CatalogVersion uint64
 )
 
 func (m MarketplaceID) String() string    { return string(m) }
@@ -42,6 +46,7 @@ func (a ArchiveDigest) String() string    { return string(a) }
 func (a AssessmentDigest) String() string { return string(a) }
 func (p PolicyDigest) String() string     { return string(p) }
 func (j JobID) String() string            { return string(j) }
+func (c CatalogVersion) String() string   { return fmt.Sprintf("%d", c) }
 
 // ResourceCoordinate identifies a resource revision lineage.
 type ResourceCoordinate struct {
@@ -400,6 +405,22 @@ type ResourceOccurrence struct {
 	ContentDigest  RevisionDigest     `json:"content_digest"`
 	Commit         string             `json:"commit"`
 	ManifestDigest RevisionDigest     `json:"manifest_digest"`
+
+	// SourcePath is the normalized repository-relative path of this resource
+	// in this exact occurrence. It is optional for rows written before source
+	// provenance was captured.
+	SourcePath string `json:"source_path,omitempty"`
+}
+
+// Equal reports whether two resource occurrences have the same immutable
+// fields. Source provenance may be enriched once when legacy fields are null.
+func (o ResourceOccurrence) Equal(other ResourceOccurrence) bool {
+	if o.Coordinate != other.Coordinate || o.ContentDigest != other.ContentDigest ||
+		o.Commit != other.Commit || o.ManifestDigest != other.ManifestDigest ||
+		o.SourcePath != other.SourcePath {
+		return false
+	}
+	return true
 }
 
 // AssessedResourceRevision is the current read projection for one immutable resource revision.
@@ -432,6 +453,10 @@ type RegistryOccurrence struct {
 	// MirroredArtifactDigest is the artifact archive digest, when mirrored.
 	MirroredArtifactDigest ArchiveDigest `json:"mirrored_artifact_digest,omitempty"`
 
+	// SourceOrigin is the sanitized public repository origin used for this
+	// exact occurrence. It is optional for legacy rows.
+	SourceOrigin string `json:"source_origin,omitempty"`
+
 	// OccurredAt is when this occurrence was recorded.
 	OccurredAt time.Time `json:"occurred_at"`
 }
@@ -446,10 +471,12 @@ func (o RegistryOccurrence) Equal(other RegistryOccurrence) bool {
 		o.Commit == other.Commit &&
 		o.RegistryRevisionManifestDigest == other.RegistryRevisionManifestDigest &&
 		o.Acquisition == other.Acquisition &&
-		o.MirroredArtifactDigest == other.MirroredArtifactDigest
+		o.MirroredArtifactDigest == other.MirroredArtifactDigest &&
+		o.SourceOrigin == other.SourceOrigin
 }
 
-// CollectionRevision is an immutable manifest of exact member coordinates.
+// CollectionRevision is an immutable manifest of direct resource members and
+// direct collection includes.
 type CollectionRevision struct {
 	// ID is the collection revision identifier.
 	ID string `json:"id"`
@@ -463,6 +490,9 @@ type CollectionRevision struct {
 	// Members are the exact member resource coordinates.
 	Members []ResourceCoordinate `json:"members,omitempty"`
 
+	// Includes are the exact direct collection include coordinates.
+	Includes []ResourceCoordinate `json:"includes,omitempty"`
+
 	// CreatedAt is when this collection revision was published.
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -471,13 +501,9 @@ type CollectionRevision struct {
 // metadata. CreatedAt is assigned by the store on first publication and is
 // intentionally excluded so retries are idempotent.
 func (c CollectionRevision) Equal(other CollectionRevision) bool {
-	if c.ID != other.ID || c.RegistryID != other.RegistryID || c.ManifestDigest != other.ManifestDigest || len(c.Members) != len(other.Members) {
+	if c.ID != other.ID || c.RegistryID != other.RegistryID || c.ManifestDigest != other.ManifestDigest ||
+		!slices.Equal(c.Members, other.Members) || !slices.Equal(c.Includes, other.Includes) {
 		return false
-	}
-	for i := range c.Members {
-		if c.Members[i] != other.Members[i] {
-			return false
-		}
 	}
 	return true
 }

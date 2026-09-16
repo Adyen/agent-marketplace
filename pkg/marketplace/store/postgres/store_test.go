@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -84,6 +85,61 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 		}
 	}
 	dropSchema(t, dsn, schema)
+}
+
+func TestCollectionIncludesMigrationDefaultsExistingRows(t *testing.T) {
+	ctx := context.Background()
+	dsn := testDSN(t)
+	schema := testSchema(t)
+	quoted := pgx.Identifier{schema}.Sanitize()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	t.Cleanup(func() { dropSchema(t, dsn, schema) })
+	migrated := postgres.NewWithSchema(dsn, schema)
+	if err := migrated.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+SET search_path TO `+quoted+`;
+ALTER TABLE collection_revisions DROP COLUMN includes;
+DELETE FROM marketplace_metadata_v2_schema_migrations WHERE version = 2;
+INSERT INTO collection_revisions (id, registry_id, manifest_digest, members, created_at)
+VALUES ('legacy-collection', 'reg-1', 'sha256:legacy', '[]', 0);
+`); err != nil {
+		t.Fatal(err)
+	}
+
+	s := postgres.NewWithSchema(dsn, schema)
+	if err := s.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	collection, err := s.GetCollectionRevision(ctx, "legacy-collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(collection.Includes) != 0 {
+		t.Fatalf("migrated legacy collection includes = %+v, want empty", collection.Includes)
+	}
+	includes := []store.ResourceCoordinate{{Marketplace: "mp", Registry: "reg-1", Kind: "collection", Name: "base"}}
+	if err := s.PutCollectionRevision(ctx, store.CollectionRevision{
+		ID: "legacy-collection", RegistryID: "reg-1", ManifestDigest: "sha256:legacy", Members: []store.ResourceCoordinate{}, Includes: includes,
+	}); err != nil {
+		t.Fatalf("enrich migrated collection includes: %v", err)
+	}
+	collection, err = s.GetCollectionRevision(ctx, "legacy-collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(collection.Includes, includes) {
+		t.Fatalf("enriched legacy collection includes = %+v, want %+v", collection.Includes, includes)
+	}
 }
 
 func TestMigrationsSerializeConcurrentStartup(t *testing.T) {
@@ -197,6 +253,58 @@ func TestRegistryCRUD(t *testing.T) {
 	}
 	if len(listed) != 0 {
 		t.Fatalf("ListRegistries returned %d registries, want 0", len(listed))
+	}
+}
+
+func TestRegistryWithoutAliases(t *testing.T) {
+	ctx := context.Background()
+	s, schema := newTestStore(t)
+	reg := store.Registry{
+		ID:          "reg-no-aliases",
+		Slug:        "no-aliases",
+		Ref:         "main",
+		Acquisition: store.AcquisitionMirror,
+		Publisher:   store.Publisher{Name: "Example"},
+		Listed:      true,
+	}
+	if err := s.PutRegistry(ctx, reg); err != nil {
+		t.Fatalf("PutRegistry: %v", err)
+	}
+
+	got, err := s.GetRegistryBySlug(ctx, reg.Slug)
+	if err != nil {
+		t.Fatalf("GetRegistryBySlug current slug: %v", err)
+	}
+	if got.ID != reg.ID {
+		t.Fatalf("GetRegistryBySlug returned %q, want %q", got.ID, reg.ID)
+	}
+
+	db, err := sql.Open("pgx", testDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	quoted := pgx.Identifier{schema}.Sanitize()
+	var aliases string
+	if err := db.QueryRowContext(ctx, "SELECT aliases FROM "+quoted+".registries WHERE id=$1", reg.ID).Scan(&aliases); err != nil {
+		t.Fatal(err)
+	}
+	if aliases != "[]" {
+		t.Fatalf("stored aliases = %q, want []", aliases)
+	}
+
+	if _, err := db.ExecContext(ctx, "UPDATE "+quoted+".registries SET aliases='null' WHERE id=$1", reg.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetRegistryBySlug(ctx, reg.Slug)
+	if err != nil {
+		t.Fatalf("GetRegistryBySlug legacy scalar current slug: %v", err)
+	}
+	if got.ID != reg.ID {
+		t.Fatalf("GetRegistryBySlug legacy scalar returned %q, want %q", got.ID, reg.ID)
+	}
+	if _, err := s.GetRegistryBySlug(ctx, "missing"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetRegistryBySlug missing with legacy scalar = %v, want ErrNotFound", err)
 	}
 }
 
@@ -327,6 +435,9 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 		Members: []store.ResourceCoordinate{
 			{Marketplace: store.MarketplaceID("mp"), Registry: store.RegistryID("reg-1"), Kind: "skill", Name: "member"},
 		},
+		Includes: []store.ResourceCoordinate{
+			{Marketplace: store.MarketplaceID("mp"), Registry: store.RegistryID("reg-1"), Kind: "collection", Name: "included"},
+		},
 	}
 	if err := s.PutCollectionRevision(ctx, cr); err != nil {
 		t.Fatalf("PutCollectionRevision: %v", err)
@@ -338,6 +449,14 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 	if len(got.Members) != 1 || got.Members[0].Name != "member" {
 		t.Fatalf("collection members lost: %+v", got.Members)
 	}
+	if len(got.Includes) != 1 || got.Includes[0].Name != "included" {
+		t.Fatalf("collection includes lost: %+v", got.Includes)
+	}
+	changed := cr
+	changed.Includes = nil
+	if err := s.PutCollectionRevision(ctx, changed); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("conflicting collection includes write = %v, want ErrConflict", err)
+	}
 
 	all, err := s.ListCollectionRevisions(ctx, cr.RegistryID)
 	if err != nil {
@@ -345,6 +464,9 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 	}
 	if len(all) != 1 {
 		t.Fatalf("ListCollectionRevisions returned %d, want 1", len(all))
+	}
+	if len(all[0].Includes) != 1 || all[0].Includes[0].Name != "included" {
+		t.Fatalf("ListCollectionRevisions lost includes: %+v", all[0].Includes)
 	}
 
 	r := store.Revocation{

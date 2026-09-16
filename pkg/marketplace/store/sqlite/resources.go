@@ -19,7 +19,7 @@ const assessedResourceColumns = `
 	rr.archive_digest, rr.license, rr.description,
 	ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision,
 	ra.findings, ra.inspection_manifest_digest, ra.assessed_at,
-	ro.revision_commit, ro.manifest_digest,
+	ro.revision_commit, ro.manifest_digest, ro.source_path,
 	rv.kind, rv.target_id, rv.reason, rv.applied_at,
 	rc.kind, rc.target_id, rc.reason, rc.applied_at,
 	rg.kind, rg.target_id, rg.reason, rg.applied_at`
@@ -78,7 +78,7 @@ func (s *Store) GetResourceRevision(ctx context.Context, coord store.ResourceCoo
 
 func (s *Store) scanAssessedResource(sc rowScanner) (store.AssessedResourceRevision, error) {
 	var out store.AssessedResourceRevision
-	var archive, license sql.NullString
+	var archive, license, sourcePath sql.NullString
 	var findings string
 	var assessedAt int64
 	var revKind, revTarget, revReason sql.NullString
@@ -93,7 +93,7 @@ func (s *Store) scanAssessedResource(sc rowScanner) (store.AssessedResourceRevis
 		&out.ContentDigest, &archive, &license, &out.Description,
 		&out.Assessment.AssessmentDigest, &out.Assessment.AnalyzerVersion, &out.Assessment.PolicyDigest,
 		&out.Assessment.Decision, &findings, &out.Assessment.InspectionManifestDigest, &assessedAt,
-		&out.Occurrence.Commit, &out.Occurrence.ManifestDigest,
+		&out.Occurrence.Commit, &out.Occurrence.ManifestDigest, &sourcePath,
 		&revKind, &revTarget, &revReason, &revAt,
 		&coordKind, &coordTarget, &coordReason, &coordAt,
 		&registryKind, &registryTarget, &registryReason, &registryAt,
@@ -114,6 +114,7 @@ func (s *Store) scanAssessedResource(sc rowScanner) (store.AssessedResourceRevis
 	}
 	out.Occurrence.Coordinate = out.Coordinate
 	out.Occurrence.ContentDigest = out.ContentDigest
+	out.Occurrence.SourcePath = sourcePath.String
 	for _, candidate := range []struct {
 		kind, target, reason sql.NullString
 		at                   sql.NullInt64
@@ -139,6 +140,10 @@ func normalizedRevision(rev store.ResourceRevision) store.ResourceRevision {
 }
 
 func (s *Store) PutResourceRevision(ctx context.Context, rev store.ResourceRevision) error {
+	return s.withTx(ctx, func(tx *Store) error { return tx.putResourceRevision(ctx, rev) })
+}
+
+func (s *Store) putResourceRevision(ctx context.Context, rev store.ResourceRevision) error {
 	rev = normalizedRevision(rev)
 	_, err := s.q.ExecContext(ctx, `INSERT OR IGNORE INTO resource_revisions
 		(marketplace_id, registry_id, kind, name, content_digest, archive_digest, license, description)
@@ -155,6 +160,8 @@ func (s *Store) PutResourceRevision(ctx context.Context, rev store.ResourceRevis
 	if existing != rev {
 		return fmt.Errorf("%w: resource revision %q already has different immutable metadata", store.ErrConflict, rev.ContentDigest)
 	}
+	// An intrinsic revision is not catalog-visible until both a current
+	// occurrence and assessment point at it.
 	return nil
 }
 
@@ -178,26 +185,61 @@ func (s *Store) getIntrinsicResourceRevision(ctx context.Context, coord store.Re
 }
 
 func (s *Store) PutResourceOccurrence(ctx context.Context, occ store.ResourceOccurrence) error {
-	_, err := s.q.ExecContext(ctx, `INSERT OR IGNORE INTO resource_occurrences
-		(marketplace_id, registry_id, kind, name, content_digest, revision_commit, manifest_digest)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		occ.Coordinate.Marketplace, occ.Coordinate.Registry, occ.Coordinate.Kind, occ.Coordinate.Name,
-		occ.ContentDigest, occ.Commit, occ.ManifestDigest)
+	return s.withTx(ctx, func(tx *Store) error { return tx.putResourceOccurrence(ctx, occ) })
+}
+
+func (s *Store) putResourceOccurrence(ctx context.Context, occ store.ResourceOccurrence) error {
+	normalized, err := store.NormalizeResourceOccurrence(occ)
 	if err != nil {
 		return err
 	}
-	var manifest store.RevisionDigest
-	err = s.q.QueryRowContext(ctx, `SELECT manifest_digest FROM resource_occurrences
+	occ = normalized
+	result, err := s.q.ExecContext(ctx, `INSERT OR IGNORE INTO resource_occurrences
+		(marketplace_id, registry_id, kind, name, content_digest, revision_commit, manifest_digest, source_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
+		occ.Coordinate.Marketplace, occ.Coordinate.Registry, occ.Coordinate.Kind, occ.Coordinate.Name,
+		occ.ContentDigest, occ.Commit, occ.ManifestDigest, occ.SourcePath)
+	if err != nil {
+		return err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	changed := inserted > 0
+	var existing store.ResourceOccurrence
+	var sourcePath sql.NullString
+	err = s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest, revision_commit, manifest_digest, source_path FROM resource_occurrences
 		WHERE marketplace_id=? AND registry_id=? AND kind=? AND name=? AND content_digest=? AND revision_commit=?`,
 		occ.Coordinate.Marketplace, occ.Coordinate.Registry, occ.Coordinate.Kind, occ.Coordinate.Name,
-		occ.ContentDigest, occ.Commit).Scan(&manifest)
+		occ.ContentDigest, occ.Commit).Scan(&existing.Coordinate.Marketplace, &existing.Coordinate.Registry, &existing.Coordinate.Kind, &existing.Coordinate.Name, &existing.ContentDigest, &existing.Commit, &existing.ManifestDigest, &sourcePath)
 	if err != nil {
 		return err
 	}
-	if manifest != occ.ManifestDigest {
-		return fmt.Errorf("%w: resource occurrence for commit %q already has a different manifest", store.ErrConflict, occ.Commit)
+	existing.SourcePath = sourcePath.String
+	core := existing
+	core.SourcePath = occ.SourcePath
+	if !occ.Equal(core) {
+		return fmt.Errorf("%w: resource occurrence for commit %q already has different immutable fields", store.ErrConflict, occ.Commit)
 	}
-	return nil
+	if existing.SourcePath != "" && occ.SourcePath != "" && existing.SourcePath != occ.SourcePath {
+		return fmt.Errorf("%w: resource occurrence for commit %q already has a different source path", store.ErrConflict, occ.Commit)
+	}
+	if existing.SourcePath == "" && occ.SourcePath != "" {
+		result, err := s.q.ExecContext(ctx, `UPDATE resource_occurrences SET source_path=? WHERE marketplace_id=? AND registry_id=? AND kind=? AND name=? AND content_digest=? AND revision_commit=? AND source_path IS NULL`, occ.SourcePath, occ.Coordinate.Marketplace, occ.Coordinate.Registry, occ.Coordinate.Kind, occ.Coordinate.Name, occ.ContentDigest, occ.Commit)
+		if err != nil {
+			return err
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = changed || updated > 0
+	}
+	if !changed {
+		return nil
+	}
+	return s.advanceCatalogVersion(ctx)
 }
 
 func (s *Store) PutResourceAssessment(ctx context.Context, assessment store.ResourceAssessment) error {
@@ -230,6 +272,10 @@ func (s *Store) PutResourceAssessment(ctx context.Context, assessment store.Reso
 }
 
 func (s *Store) SetCurrentResourceAssessment(ctx context.Context, assessment store.ResourceAssessment) error {
+	return s.withTx(ctx, func(tx *Store) error { return tx.setCurrentResourceAssessment(ctx, assessment) })
+}
+
+func (s *Store) setCurrentResourceAssessment(ctx context.Context, assessment store.ResourceAssessment) error {
 	finalized, err := store.FinalizeResourceAssessment(assessment)
 	if err != nil {
 		return err
@@ -248,7 +294,10 @@ func (s *Store) SetCurrentResourceAssessment(ctx context.Context, assessment sto
 		DO UPDATE SET assessment_digest=excluded.assessment_digest`,
 		finalized.Coordinate.Marketplace, finalized.Coordinate.Registry, finalized.Coordinate.Kind, finalized.Coordinate.Name,
 		finalized.ContentDigest, finalized.AssessmentDigest)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.advanceCatalogVersion(ctx)
 }
 
 func (s *Store) GetResourceAssessment(ctx context.Context, digest store.AssessmentDigest) (store.ResourceAssessment, error) {

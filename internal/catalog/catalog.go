@@ -203,7 +203,7 @@ func EntriesFromCollections(cols []collection.Collection) ([]Entry, error) {
 		for _, inc := range col.Includes {
 			includes = append(includes, inc.Name)
 		}
-		irCol := ir.NewCollection(col.Name, col.Version, col.Description, members, includes, nil, ir.SourceRef{})
+		irCol := ir.NewCollection(col.Name, col.Version, col.Description, members, includes, nil, ir.SourceRef{File: col.SourceFile})
 		irCol.SourceRegistryURL = col.SourceRegistryURL
 		irCol.SourceRef = col.SourceRef
 		irCol.SourceCatalogKey = col.SourceCatalogKey
@@ -214,6 +214,7 @@ func EntriesFromCollections(cols []collection.Collection) ([]Entry, error) {
 			Name:        col.Name,
 			Description: col.Description,
 			Resource:    irCol,
+			Path:        col.SourceFile,
 		})
 	}
 	return entries, errors.Join(memberErrs...)

@@ -10,12 +10,40 @@ import (
 	"testing/fstest"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+func TestEntriesFromCollectionsPreservesExactSourceFile(t *testing.T) {
+	entries, err := EntriesFromCollections([]collection.Collection{{
+		Name:        "defaults",
+		Version:     "1.0.0",
+		Description: "Default resources",
+		SourcePath:  ".agents",
+		SourceFile:  "collections/defaults/COLLECTION.yaml",
+		Resources:   []collection.CollectionEntry{{Name: "review", Kind: "skill"}},
+	}})
+	if err != nil {
+		t.Fatalf("EntriesFromCollections: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v, want one collection", entries)
+	}
+	if entries[0].Path != "collections/defaults/COLLECTION.yaml" {
+		t.Fatalf("entry path = %q", entries[0].Path)
+	}
+	collectionResource, ok := entries[0].Resource.(*ir.Collection)
+	if !ok {
+		t.Fatalf("entry resource = %T, want collection", entries[0].Resource)
+	}
+	if collectionResource.Source.File != entries[0].Path {
+		t.Fatalf("collection source file = %q, want %q", collectionResource.Source.File, entries[0].Path)
+	}
+}
 
 // TestLoadFromClaudePlugin verifies that Load discovers skills from a
 // Claude-plugin-style directory using IngestBundle.

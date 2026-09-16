@@ -2,8 +2,10 @@ package sqlite_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -35,6 +37,60 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 		if err := s.Close(); err != nil {
 			t.Fatalf("Close %d: %v", i, err)
 		}
+	}
+}
+
+func TestCollectionIncludesMigrationDefaultsExistingRows(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "marketplace.db")
+	s := sqlite.New(path)
+	if err := s.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+ALTER TABLE collection_revisions DROP COLUMN includes;
+DELETE FROM marketplace_metadata_v2_migrations WHERE version = 2;
+INSERT INTO collection_revisions (id, registry_id, manifest_digest, members, created_at)
+VALUES ('legacy-collection', 'reg-1', 'sha256:legacy', '[]', 0);
+`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s = sqlite.New(path)
+	if err := s.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	collection, err := s.GetCollectionRevision(ctx, "legacy-collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(collection.Includes) != 0 {
+		t.Fatalf("migrated legacy collection includes = %+v, want empty", collection.Includes)
+	}
+	includes := []store.ResourceCoordinate{{Marketplace: "mp", Registry: "reg-1", Kind: "collection", Name: "base"}}
+	if err := s.PutCollectionRevision(ctx, store.CollectionRevision{
+		ID: "legacy-collection", RegistryID: "reg-1", ManifestDigest: "sha256:legacy", Members: []store.ResourceCoordinate{}, Includes: includes,
+	}); err != nil {
+		t.Fatalf("enrich migrated collection includes: %v", err)
+	}
+	collection, err = s.GetCollectionRevision(ctx, "legacy-collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(collection.Includes, includes) {
+		t.Fatalf("enriched legacy collection includes = %+v, want %+v", collection.Includes, includes)
 	}
 }
 
@@ -433,7 +489,7 @@ func TestRegistryHeadRejectsStalePublication(t *testing.T) {
 	}
 }
 
-func TestReadyCheckIncludesAssessmentInspectionManifest(t *testing.T) {
+func TestCheckIntegrityIncludesAssessmentInspectionManifest(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "reg", Kind: "skill", Name: "ready"}
@@ -457,20 +513,20 @@ func TestReadyCheckIncludesAssessmentInspectionManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	blobs := fsblob.New(filepath.Join(t.TempDir(), "blobs"))
-	if err := s.ReadyCheck(ctx, blobs); !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck without inspection blob error = %v, want ErrBlobMissing", err)
+	if err := s.CheckIntegrity(ctx, blobs); !errors.Is(err, store.ErrBlobMissing) {
+		t.Fatalf("CheckIntegrity without inspection blob error = %v, want ErrBlobMissing", err)
 	}
 	if err := blobs.Put(ctx, store.ArchiveDigest(inspectionDigest), projection.Payload); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReadyCheck(ctx, blobs); !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck without inspection body error = %v, want ErrBlobMissing", err)
+	if err := s.CheckIntegrity(ctx, blobs); !errors.Is(err, store.ErrBlobMissing) {
+		t.Fatalf("CheckIntegrity without inspection body error = %v, want ErrBlobMissing", err)
 	}
 	if err := blobs.Put(ctx, store.ArchiveDigest(inspection.Digest(body)), body); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReadyCheck(ctx, blobs); err != nil {
-		t.Fatalf("ReadyCheck with inspection projection: %v", err)
+	if err := s.CheckIntegrity(ctx, blobs); err != nil {
+		t.Fatalf("CheckIntegrity with inspection projection: %v", err)
 	}
 }
 
@@ -610,6 +666,9 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 		Members: []store.ResourceCoordinate{
 			{Marketplace: store.MarketplaceID("mp"), Registry: store.RegistryID("reg-1"), Kind: "skill", Name: "member"},
 		},
+		Includes: []store.ResourceCoordinate{
+			{Marketplace: store.MarketplaceID("mp"), Registry: store.RegistryID("reg-1"), Kind: "collection", Name: "included"},
+		},
 	}
 	if err := s.PutCollectionRevision(ctx, cr); err != nil {
 		t.Fatalf("PutCollectionRevision: %v", err)
@@ -621,10 +680,18 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 	if len(got.Members) != 1 || got.Members[0].Name != "member" {
 		t.Fatalf("collection members lost: %+v", got.Members)
 	}
+	if len(got.Includes) != 1 || got.Includes[0].Name != "included" {
+		t.Fatalf("collection includes lost: %+v", got.Includes)
+	}
 	if err := s.PutCollectionRevision(ctx, cr); err != nil {
 		t.Fatalf("idempotent collection retry failed: %v", err)
 	}
 	changed := cr
+	changed.Includes = nil
+	if err := s.PutCollectionRevision(ctx, changed); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("conflicting collection includes write = %v, want ErrConflict", err)
+	}
+	changed = cr
 	changed.ManifestDigest = store.RevisionDigest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err := s.PutCollectionRevision(ctx, changed); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("conflicting collection write = %v, want ErrConflict", err)
@@ -640,6 +707,9 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 	}
 	if len(all) != 1 {
 		t.Fatalf("ListCollectionRevisions returned %d, want 1", len(all))
+	}
+	if len(all[0].Includes) != 1 || all[0].Includes[0].Name != "included" {
+		t.Fatalf("ListCollectionRevisions lost includes: %+v", all[0].Includes)
 	}
 
 	r := store.Revocation{

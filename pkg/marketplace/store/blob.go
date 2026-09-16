@@ -6,6 +6,10 @@ import "context"
 // All digests are archive digests; callers verify digests before invoking
 // these methods.
 type BlobStore interface {
+	// Probe verifies that the blob backend is reachable using one bounded
+	// request. It must not enumerate or download catalog blobs.
+	Probe(ctx context.Context) error
+
 	// Get returns the blob bytes for the given digest.
 	// It returns [ErrNotFound] when the blob is missing.
 	Get(ctx context.Context, digest ArchiveDigest) ([]byte, error)

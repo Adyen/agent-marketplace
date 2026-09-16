@@ -108,18 +108,18 @@ func TestConformance(t *testing.T) {
 		t.Fatalf("PutResourceRevision: %v", err)
 	}
 
-	// Readiness should fail before blobs are uploaded.
-	err := meta.ReadyCheck(ctx, blobs)
+	// The integrity check should fail before blobs are uploaded.
+	err := meta.CheckIntegrity(ctx, blobs)
 	if !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck before blobs error = %v, want ErrBlobMissing", err)
+		t.Fatalf("CheckIntegrity before blobs error = %v, want ErrBlobMissing", err)
 	}
 
 	if err := blobs.Put(ctx, rev.ArchiveDigest, []byte("member archive bytes")); err != nil {
 		t.Fatalf("Put blob: %v", err)
 	}
 
-	if err := meta.ReadyCheck(ctx, blobs); err != nil {
-		t.Fatalf("ReadyCheck after blob: %v", err)
+	if err := meta.CheckIntegrity(ctx, blobs); err != nil {
+		t.Fatalf("CheckIntegrity after blob: %v", err)
 	}
 
 	occ := store.RegistryOccurrence{
@@ -135,26 +135,26 @@ func TestConformance(t *testing.T) {
 		t.Fatalf("PutRegistryOccurrence: %v", err)
 	}
 
-	err = meta.ReadyCheck(ctx, blobs)
+	err = meta.CheckIntegrity(ctx, blobs)
 	if !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck before occurrence blob error = %v, want ErrBlobMissing", err)
+		t.Fatalf("CheckIntegrity before occurrence blob error = %v, want ErrBlobMissing", err)
 	}
 
 	if err := blobs.Put(ctx, store.ArchiveDigest(occ.RegistryRevisionManifestDigest), []byte("manifest bytes")); err != nil {
 		t.Fatalf("Put manifest blob: %v", err)
 	}
 
-	err = meta.ReadyCheck(ctx, blobs)
+	err = meta.CheckIntegrity(ctx, blobs)
 	if !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck before occurrence blob error = %v, want ErrBlobMissing", err)
+		t.Fatalf("CheckIntegrity before occurrence blob error = %v, want ErrBlobMissing", err)
 	}
 
 	if err := blobs.Put(ctx, occ.MirroredArtifactDigest, []byte("occurrence archive bytes")); err != nil {
 		t.Fatalf("Put occurrence blob: %v", err)
 	}
 
-	if err := meta.ReadyCheck(ctx, blobs); err != nil {
-		t.Fatalf("ReadyCheck after all blobs: %v", err)
+	if err := meta.CheckIntegrity(ctx, blobs); err != nil {
+		t.Fatalf("CheckIntegrity after all blobs: %v", err)
 	}
 }
 
@@ -222,5 +222,211 @@ func TestConformanceJobLeaseExpiry(t *testing.T) {
 	}
 	if recovered.Attempt != 2 {
 		t.Fatalf("recovered attempt %d, want 2", recovered.Attempt)
+	}
+}
+
+func TestConformanceCatalogProjectionPersistsProvenanceAndPages(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	const (
+		marketplace = store.MarketplaceID("projection-mp")
+		registry    = store.RegistryID("projection-reg")
+		commit      = "projection-commit"
+	)
+	catalogVersion := func() (store.CatalogVersion, error) {
+		page, err := meta.ReadCatalogProjectionPage(ctx, store.CatalogProjectionPageRequest{Marketplace: marketplace, Limit: 1})
+		return page.CatalogVersion, err
+	}
+	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: marketplace, Name: "Projection", CanonicalURL: "https://marketplace.test"}); err != nil {
+		t.Fatal(err)
+	}
+	beforeRollback, err := catalogVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = meta.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
+		if err := tx.PutRegistry(txCtx, store.Registry{ID: "rolled-back", Slug: "rolled-back", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}); err != nil {
+			return err
+		}
+		return errors.New("rollback")
+	})
+	if err == nil {
+		t.Fatal("transaction unexpectedly succeeded")
+	}
+	afterRollback, err := catalogVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterRollback != beforeRollback {
+		t.Fatalf("rolled-back publication changed catalog version from %s to %s", beforeRollback, afterRollback)
+	}
+	if err := meta.PutRegistry(ctx, store.Registry{ID: registry, Slug: "projection", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}); err != nil {
+		t.Fatal(err)
+	}
+	manifest := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
+	legacyOccurrence := store.RegistryOccurrence{RegistryID: registry, Ref: "main", Commit: commit, RegistryRevisionManifestDigest: manifest, Acquisition: store.AcquisitionMirror}
+	if err := meta.PutRegistryOccurrence(ctx, legacyOccurrence); err != nil {
+		t.Fatal(err)
+	}
+	enrichedOccurrence := legacyOccurrence
+	enrichedOccurrence.SourceOrigin = "https://example.test/agents/resources.git?token=must-not-persist&ref=main"
+	if err := meta.PutRegistryOccurrence(ctx, enrichedOccurrence); err != nil {
+		t.Fatalf("enrich registry occurrence: %v", err)
+	}
+	gotOccurrence, err := meta.GetRegistryOccurrence(ctx, registry, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOccurrence.SourceOrigin != "https://example.test/agents/resources.git?ref=main" {
+		t.Fatalf("source origin = %q, want sanitized public URL", gotOccurrence.SourceOrigin)
+	}
+	beforeOccurrenceRetry, err := catalogVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutRegistryOccurrence(ctx, enrichedOccurrence); err != nil {
+		t.Fatalf("registry occurrence retry: %v", err)
+	}
+	afterOccurrenceRetry, err := catalogVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterOccurrenceRetry != beforeOccurrenceRetry {
+		t.Fatalf("idempotent registry occurrence changed catalog version from %s to %s", beforeOccurrenceRetry, afterOccurrenceRetry)
+	}
+	conflictingOccurrence := enrichedOccurrence
+	conflictingOccurrence.SourceOrigin = "https://other.test/agents/resources.git"
+	if err := meta.PutRegistryOccurrence(ctx, conflictingOccurrence); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("conflicting source origin error = %v, want ErrConflict", err)
+	}
+
+	putCurrent := func(kind, name, digestChar, sourcePath string) store.ResourceRevision {
+		t.Helper()
+		rev := store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: marketplace, Registry: registry, Kind: kind, Name: name}, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat(digestChar, 64)), Description: name}
+		if err := meta.PutResourceRevision(ctx, rev); err != nil {
+			t.Fatal(err)
+		}
+		if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, Commit: commit, ManifestDigest: manifest, SourcePath: sourcePath}); err != nil {
+			t.Fatal(err)
+		}
+		assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+			Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, AnalyzerVersion: "projection/v1",
+			PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("b", 64)), Decision: store.AssessmentDecisionAllow,
+			InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("c", 64)), AssessedAt: time.Unix(1, 0).UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := meta.PutResourceAssessment(ctx, assessment); err != nil {
+			t.Fatal(err)
+		}
+		if err := meta.SetCurrentResourceAssessment(ctx, assessment); err != nil {
+			t.Fatal(err)
+		}
+		return rev
+	}
+	member := putCurrent("skill", "member", "d", "")
+	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: member.Coordinate, ContentDigest: member.ContentDigest, Commit: commit, ManifestDigest: manifest, SourcePath: "skills/member/SKILL.md"}); err != nil {
+		t.Fatalf("enrich resource occurrence: %v", err)
+	}
+	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: member.Coordinate, ContentDigest: member.ContentDigest, Commit: commit, ManifestDigest: manifest, SourcePath: "other/member/SKILL.md"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("conflicting source path error = %v, want ErrConflict", err)
+	}
+	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: member.Coordinate, ContentDigest: member.ContentDigest, Commit: commit, ManifestDigest: manifest, SourcePath: "../outside/SKILL.md"}); err == nil {
+		t.Fatal("traversal source path unexpectedly accepted")
+	}
+	review := putCurrent("skill", "review", "e", "skills/review/SKILL.md")
+	beforeRetry, err := catalogVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: review.Coordinate, ContentDigest: review.ContentDigest, Commit: commit, ManifestDigest: manifest, SourcePath: "skills/review/SKILL.md"}); err != nil {
+		t.Fatalf("provenance retry: %v", err)
+	}
+	afterRetry, err := catalogVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterRetry != beforeRetry {
+		t.Fatalf("idempotent resource occurrence changed catalog version from %s to %s", beforeRetry, afterRetry)
+	}
+	collectionDigest := store.RevisionDigest("sha256:" + strings.Repeat("f", 64))
+	collection := putCurrent("collection", "bundle", "f", "collections/bundle/COLLECTION.yaml")
+	if collection.ContentDigest != collectionDigest {
+		t.Fatal("collection fixture digest changed unexpectedly")
+	}
+	memberCollection := putCurrent("collection", "member-collection", "a", "collections/member-collection/COLLECTION.yaml")
+	missingMember := store.ResourceCoordinate{Marketplace: marketplace, Registry: registry, Kind: "collection", Name: "missing-member"}
+	missingInclude := store.ResourceCoordinate{Marketplace: marketplace, Registry: registry, Kind: "collection", Name: "missing-include"}
+	if err := meta.PutCollectionRevision(ctx, store.CollectionRevision{
+		ID: string(collectionDigest), RegistryID: registry, ManifestDigest: collectionDigest,
+		Members:  []store.ResourceCoordinate{member.Coordinate, memberCollection.Coordinate, missingMember},
+		Includes: []store.ResourceCoordinate{collection.Coordinate, missingInclude},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := meta.ReadCatalogProjectionPage(ctx, store.CatalogProjectionPageRequest{Marketplace: marketplace, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Resources) != 1 || first.Next == nil {
+		t.Fatalf("first page = %+v, want one resource and a cursor", first)
+	}
+	second, err := meta.ReadCatalogProjectionPage(ctx, store.CatalogProjectionPageRequest{Marketplace: marketplace, After: first.Next, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.CatalogVersion != first.CatalogVersion || len(second.Resources) != 3 || second.Next != nil {
+		t.Fatalf("second page = %+v, want three final resources at version %s", second, first.CatalogVersion)
+	}
+	all := append(first.Resources, second.Resources...)
+	if all[0].Coordinate.Name != "bundle" || all[1].Coordinate.Name != "member-collection" || all[2].Coordinate.Name != "member" || all[3].Coordinate.Name != "review" {
+		t.Fatalf("coordinate order = %#v, want bundle, member-collection, member, review", []string{all[0].Coordinate.Name, all[1].Coordinate.Name, all[2].Coordinate.Name, all[3].Coordinate.Name})
+	}
+	if all[0].Collection == nil ||
+		len(all[0].Collection.Resources) != 2 ||
+		all[0].Collection.Resources[0] != member.Coordinate ||
+		all[0].Collection.Resources[1] != memberCollection.Coordinate ||
+		len(all[0].Collection.Includes) != 1 ||
+		all[0].Collection.Includes[0] != collection.Coordinate ||
+		len(all[0].Collection.UnresolvedReferences) != 2 ||
+		all[0].Collection.UnresolvedReferences[0] != (store.CatalogUnresolvedReference{ReferenceType: "resource", Coordinate: missingMember, Reason: "not_found"}) ||
+		all[0].Collection.UnresolvedReferences[1] != (store.CatalogUnresolvedReference{ReferenceType: "include", Coordinate: missingInclude, Reason: "not_found"}) {
+		t.Fatalf("direct collection relations = %+v, want distinct direct members, includes, and typed unresolved references", all[0].Collection)
+	}
+	if all[3].Source == nil || all[3].Source.RepositoryURL != gotOccurrence.SourceOrigin || all[3].Source.Path != "skills/review/SKILL.md" {
+		t.Fatalf("resource provenance = %+v, want sanitized source", all[3])
+	}
+	blocked, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate: member.Coordinate, ContentDigest: member.ContentDigest, AnalyzerVersion: "projection/v2",
+		PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("1", 64)), Decision: store.AssessmentDecisionReject,
+		InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("2", 64)), AssessedAt: time.Unix(2, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutResourceAssessment(ctx, blocked); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.SetCurrentResourceAssessment(ctx, blocked); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutRevocation(ctx, store.Revocation{Kind: store.RevocationCoordinate, TargetID: review.Coordinate.String(), Reason: "operator test"}); err != nil {
+		t.Fatal(err)
+	}
+	availability, err := meta.ReadCatalogProjectionPage(ctx, store.CatalogProjectionPageRequest{Marketplace: marketplace, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if availability.Resources[2].Availability != store.CatalogAvailabilityBlocked || availability.Resources[3].Availability != store.CatalogAvailabilityRevoked {
+		t.Fatalf("availability = %q, %q; want blocked, revoked", availability.Resources[2].Availability, availability.Resources[3].Availability)
+	}
+	afterPublication, err := catalogVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterPublication <= beforeRollback {
+		t.Fatalf("catalog version = %s, want a monotonic advance after visible publication", afterPublication)
 	}
 }

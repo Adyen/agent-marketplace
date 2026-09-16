@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -259,113 +257,42 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	return writeListTable(out, rows)
 }
 
-func listCatalogKey(entry config.RegistryEntry, repoRoot string) string {
-	if entry.CatalogKey != "" {
-		return entry.CatalogKey
-	}
-	if entry.IsLocal() {
-		localPath, _ := entry.ResolveLocalPath(repoRoot)
-		return entry.BundlePath(localPath)
-	}
-	return cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
-}
-
 func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolved []resolver.ResolvedArtifact) []listRow {
-	enabled := make(map[string]struct{}, len(resolved))
-	for _, resolvedSkill := range resolved {
-		enabled[resolvedSkill.CatalogKey+"\x00"+skill.ResourceKey(resolvedSkill.Kind, resolvedSkill.Name)] = struct{}{}
-	}
-
-	// Collapse registry entries that normalize to the same (URL, ref, path) — e.g.
-	// the global config referring to "<repo>.git" and the repo config
-	// referring to "<repo>" both resolve to the same upstream registry.
-	// Without this merge, every skill shows up twice in the list output
-	// (once per entry). Required status wins over non-required when merging.
-	// Path is included so entries with different subdirectories stay separate.
-	type mergedRegistry struct {
-		displayName string
-		cacheKey    string
-		required    bool
-	}
-	mergedEntries := make([]mergedRegistry, 0, len(cfg.Registries))
-	byNormalizedKey := make(map[string]int, len(cfg.Registries))
-
-	repoRoot := config.FindRepoRoot()
-
-	for _, entry := range cfg.Registries {
-		var normalizedKey string
-		if entry.IsLocal() {
-			localPath, _ := entry.ResolveLocalPath(repoRoot)
-			normalizedKey = "local\x00" + entry.BundlePath(localPath)
-		} else {
-			cleanPath := filepath.Clean(strings.TrimSpace(entry.Path))
-			if cleanPath == "." {
-				cleanPath = ""
-			}
-			normalizedKey = config.NormalizeGitURL(entry.URL) + "\x00" + entry.Ref + "\x00" + cleanPath
-		}
-
-		if idx, ok := byNormalizedKey[normalizedKey]; ok {
-			if entry.Required {
-				mergedEntries[idx].required = true
-			}
-			continue
-		}
-
-		catalogKey := listCatalogKey(entry, repoRoot)
-
-		byNormalizedKey[normalizedKey] = len(mergedEntries)
-		mergedEntries = append(mergedEntries, mergedRegistry{
-			displayName: registryDisplayName(entry.URL),
-			cacheKey:    catalogKey,
-			required:    entry.Required,
-		})
+	catalogEntries := make(map[string][]catalog.Entry, len(catalogs))
+	for key, loaded := range catalogs {
+		catalogEntries[key] = loaded.Entries
 	}
 
 	rows := make([]listRow, 0)
-	emittedNormalizedKeys := make(map[string]struct{}, len(mergedEntries))
-	for _, entry := range cfg.Registries {
-		var normalizedKey string
-		if entry.IsLocal() {
-			localPath, _ := entry.ResolveLocalPath(repoRoot)
-			normalizedKey = "local\x00" + entry.BundlePath(localPath)
-		} else {
-			cleanPath := filepath.Clean(strings.TrimSpace(entry.Path))
-			if cleanPath == "." {
-				cleanPath = ""
-			}
-			normalizedKey = config.NormalizeGitURL(entry.URL) + "\x00" + entry.Ref + "\x00" + cleanPath
+	for _, artifact := range resolver.ResolveCatalogView(cfg, catalogEntries, resolved) {
+		status := "available"
+		if artifact.Required {
+			status = "required (org)"
+		} else if artifact.Selected {
+			status = "enabled"
 		}
-		entryCatalogKey := listCatalogKey(entry, repoRoot)
+		rows = append(rows, listRow{
+			Registry: registryDisplayName(artifact.RegistryURL),
+			Kind:     skill.KindLabel(artifact.Kind),
+			Name:     artifact.Name,
+			Tags:     strings.Join(artifact.Tags, ","),
+			Status:   status,
+		})
+	}
 
-		if _, emitted := emittedNormalizedKeys[normalizedKey]; emitted {
+	emittedMalformed := make(map[string]struct{}, len(cfg.Registries))
+	for _, entry := range cfg.Registries {
+		identity := config.NormalizeGitURL(entry.URL) + "\x00" + strings.TrimSpace(entry.Ref) + "\x00" + config.NormalizeRegistryPath(entry.Path)
+		if entry.IsLocal() {
+			identity = entry.CatalogKey
+		}
+		if _, emitted := emittedMalformed[identity]; emitted {
 			continue
 		}
-		emittedNormalizedKeys[normalizedKey] = struct{}{}
-
-		idx := byNormalizedKey[normalizedKey]
-		merged := mergedEntries[idx]
-		catalog := catalogs[merged.cacheKey]
-		for _, discovered := range catalog.Entries {
-			status := "available"
-			if merged.required {
-				status = "required (org)"
-			} else if _, ok := enabled[entryCatalogKey+"\x00"+skill.ResourceKey(discovered.Kind, discovered.Name)]; ok {
-				status = "enabled"
-			}
-
+		emittedMalformed[identity] = struct{}{}
+		for _, malformed := range catalogs[entry.CatalogKey].Malformed {
 			rows = append(rows, listRow{
-				Registry: merged.displayName,
-				Kind:     skill.KindLabel(discovered.Kind),
-				Name:     discovered.Name,
-				Tags:     strings.Join(discovered.Tags, ","),
-				Status:   status,
-			})
-		}
-
-		for _, malformed := range catalog.Malformed {
-			rows = append(rows, listRow{
-				Registry: merged.displayName,
+				Registry: registryDisplayName(entry.URL),
 				Kind:     "skill",
 				Name:     malformed.DirName,
 				Tags:     "",

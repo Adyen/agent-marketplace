@@ -8,10 +8,11 @@ import (
 
 // Marketplace API and artifact schema version constants.
 const (
-	APIVersionV1            = "v1"
-	ArtifactSchemaVersionV1 = "v1"
-	AcquisitionMirror       = "mirror"
-	AcquisitionIndexOnly    = "index-only"
+	APIVersionV1                     = "v1"
+	ArtifactSchemaVersionV1          = "v1"
+	AcquisitionMirror                = "mirror"
+	AcquisitionIndexOnly             = "index-only"
+	CatalogProjectionV1Alpha1Feature = "catalog-projection-v1alpha1"
 )
 
 // DefaultCapabilities returns the capability block advertised by this version
@@ -23,7 +24,7 @@ func DefaultCapabilities() Capabilities {
 		ArtifactSchemaVersions: []string{ArtifactSchemaVersionV1},
 		ResourceKinds:          SupportedResourceKinds,
 		AcquisitionModes:       []string{AcquisitionIndexOnly, AcquisitionMirror},
-		Features:               []string{"inspection"},
+		Features:               []string{"inspection", CatalogProjectionV1Alpha1Feature},
 	}
 }
 
