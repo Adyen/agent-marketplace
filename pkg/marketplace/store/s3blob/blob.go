@@ -62,11 +62,26 @@ func New(ctx context.Context, bucket, region string, opts ...Option) (*Store, er
 		return nil, fmt.Errorf("load aws config: %w", err)
 	}
 
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		o.UsePathStyle = true
+	client := s3.NewFromConfig(awsCfg, func(clientOptions *s3.Options) {
+		clientOptions.UsePathStyle = true
+		if o.endpoint != "" {
+			clientOptions.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+		}
 	})
 
 	return &Store{client: client, bucket: bucket}, nil
+}
+
+// Probe verifies that the configured bucket is reachable with one bounded
+// HeadBucket request.
+func (s *Store) Probe(ctx context.Context) error {
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)}, func(options *s3.Options) {
+		options.RetryMaxAttempts = 1
+	})
+	if err != nil {
+		return fmt.Errorf("head bucket %q: %w", s.bucket, err)
+	}
+	return nil
 }
 
 // Get returns the blob bytes for digest. It returns [store.ErrNotFound] when

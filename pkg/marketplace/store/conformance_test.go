@@ -108,18 +108,18 @@ func TestConformance(t *testing.T) {
 		t.Fatalf("PutResourceRevision: %v", err)
 	}
 
-	// Readiness should fail before blobs are uploaded.
-	err := meta.ReadyCheck(ctx, blobs)
+	// The integrity check should fail before blobs are uploaded.
+	err := meta.CheckIntegrity(ctx, blobs)
 	if !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck before blobs error = %v, want ErrBlobMissing", err)
+		t.Fatalf("CheckIntegrity before blobs error = %v, want ErrBlobMissing", err)
 	}
 
 	if err := blobs.Put(ctx, rev.ArchiveDigest, []byte("member archive bytes")); err != nil {
 		t.Fatalf("Put blob: %v", err)
 	}
 
-	if err := meta.ReadyCheck(ctx, blobs); err != nil {
-		t.Fatalf("ReadyCheck after blob: %v", err)
+	if err := meta.CheckIntegrity(ctx, blobs); err != nil {
+		t.Fatalf("CheckIntegrity after blob: %v", err)
 	}
 
 	occ := store.RegistryOccurrence{
@@ -135,26 +135,26 @@ func TestConformance(t *testing.T) {
 		t.Fatalf("PutRegistryOccurrence: %v", err)
 	}
 
-	err = meta.ReadyCheck(ctx, blobs)
+	err = meta.CheckIntegrity(ctx, blobs)
 	if !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck before occurrence blob error = %v, want ErrBlobMissing", err)
+		t.Fatalf("CheckIntegrity before occurrence blob error = %v, want ErrBlobMissing", err)
 	}
 
 	if err := blobs.Put(ctx, store.ArchiveDigest(occ.RegistryRevisionManifestDigest), []byte("manifest bytes")); err != nil {
 		t.Fatalf("Put manifest blob: %v", err)
 	}
 
-	err = meta.ReadyCheck(ctx, blobs)
+	err = meta.CheckIntegrity(ctx, blobs)
 	if !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck before occurrence blob error = %v, want ErrBlobMissing", err)
+		t.Fatalf("CheckIntegrity before occurrence blob error = %v, want ErrBlobMissing", err)
 	}
 
 	if err := blobs.Put(ctx, occ.MirroredArtifactDigest, []byte("occurrence archive bytes")); err != nil {
 		t.Fatalf("Put occurrence blob: %v", err)
 	}
 
-	if err := meta.ReadyCheck(ctx, blobs); err != nil {
-		t.Fatalf("ReadyCheck after all blobs: %v", err)
+	if err := meta.CheckIntegrity(ctx, blobs); err != nil {
+		t.Fatalf("CheckIntegrity after all blobs: %v", err)
 	}
 }
 

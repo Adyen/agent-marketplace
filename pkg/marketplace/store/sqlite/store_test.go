@@ -433,7 +433,7 @@ func TestRegistryHeadRejectsStalePublication(t *testing.T) {
 	}
 }
 
-func TestReadyCheckIncludesAssessmentInspectionManifest(t *testing.T) {
+func TestCheckIntegrityIncludesAssessmentInspectionManifest(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "reg", Kind: "skill", Name: "ready"}
@@ -457,20 +457,20 @@ func TestReadyCheckIncludesAssessmentInspectionManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	blobs := fsblob.New(filepath.Join(t.TempDir(), "blobs"))
-	if err := s.ReadyCheck(ctx, blobs); !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck without inspection blob error = %v, want ErrBlobMissing", err)
+	if err := s.CheckIntegrity(ctx, blobs); !errors.Is(err, store.ErrBlobMissing) {
+		t.Fatalf("CheckIntegrity without inspection blob error = %v, want ErrBlobMissing", err)
 	}
 	if err := blobs.Put(ctx, store.ArchiveDigest(inspectionDigest), projection.Payload); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReadyCheck(ctx, blobs); !errors.Is(err, store.ErrBlobMissing) {
-		t.Fatalf("ReadyCheck without inspection body error = %v, want ErrBlobMissing", err)
+	if err := s.CheckIntegrity(ctx, blobs); !errors.Is(err, store.ErrBlobMissing) {
+		t.Fatalf("CheckIntegrity without inspection body error = %v, want ErrBlobMissing", err)
 	}
 	if err := blobs.Put(ctx, store.ArchiveDigest(inspection.Digest(body)), body); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReadyCheck(ctx, blobs); err != nil {
-		t.Fatalf("ReadyCheck with inspection projection: %v", err)
+	if err := s.CheckIntegrity(ctx, blobs); err != nil {
+		t.Fatalf("CheckIntegrity with inspection projection: %v", err)
 	}
 }
 

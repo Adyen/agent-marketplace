@@ -99,8 +99,8 @@ func TestRefreshEndToEnd(t *testing.T) {
 		}
 	}
 
-	if err := meta.ReadyCheck(ctx, blobs); err != nil {
-		t.Fatalf("ReadyCheck: %v", err)
+	if err := meta.CheckIntegrity(ctx, blobs); err != nil {
+		t.Fatalf("CheckIntegrity: %v", err)
 	}
 }
 
