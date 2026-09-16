@@ -52,3 +52,7 @@ e2e/e2e-report.json
 
 .agents/lock.local.yaml
 .agents/config.local.yaml
+!/.gemini/
+/.gemini/*
+!/.gemini/config.yaml
+!/.gemini/styleguide.md
