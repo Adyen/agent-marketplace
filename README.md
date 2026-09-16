@@ -177,10 +177,8 @@ How it works from a user's point of view:
   `status` can show you the exact origin (and `--scope` lets you pick which
   file an `install`/`remove` writes to).
 - `.agents/config.local.yaml` and `.agents/lock.local.yaml` are personal and
-  gitignored. The repository ignore rule also covers transient
-  `/.agents/*.dependencytxn.lock` handles used while config and lock pairs are
-  committed; those transaction handles are not lockfiles and must not be
-  committed.
+  gitignored. Persistent transaction coordination handles live under the XDG
+  state directory (`$XDG_STATE_HOME`, default `~/.local/state`), outside repositories.
 
 A minimal committed repo config looks like this — note that the resource
 selection lives **inside** the registry entry, namespaced by `url` + `ref`

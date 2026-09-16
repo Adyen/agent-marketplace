@@ -314,17 +314,20 @@ func TestMutableIndependentRegistryJobsOverlap(t *testing.T) {
 			}
 			barrier := t.TempDir()
 			bin := t.TempDir()
-			writeFile(t, filepath.Join(bin, "git"), "#!/bin/sh\nblock=0\nfor arg do\n  if [ \"$arg\" = \"$MUTABLE_BLOCK_URL\" ] || { [ \"$arg\" = fetch ] && [ \"$PWD\" = \"$MUTABLE_BLOCK_PATH\" ]; }; then block=1; fi\ndone\nif [ \"$block\" = 1 ]; then\n  : > \"$MUTABLE_BARRIER/entered\"\n  while [ ! -f \"$MUTABLE_BARRIER/release\" ]; do sleep 0.01; done\nfi\nexec \"$MUTABLE_REAL_GIT\" \"$@\"\n")
+			writeFile(t, filepath.Join(bin, "git"), "#!/bin/sh\nblock=0\nobserve=0\nfor arg do\n  if [ \"$arg\" = \"$MUTABLE_BLOCK_URL\" ] || { [ \"$arg\" = fetch ] && [ \"$PWD\" = \"$MUTABLE_BLOCK_PATH\" ]; }; then block=1; fi\n  if [ \"$arg\" = \"$MUTABLE_OBSERVE_URL\" ] || { [ \"$arg\" = fetch ] && [ \"$PWD\" = \"$MUTABLE_OBSERVE_PATH\" ]; }; then observe=1; fi\ndone\nif [ \"$observe\" = 1 ]; then : > \"$MUTABLE_BARRIER/observed\"; fi\nif [ \"$block\" = 1 ]; then\n  : > \"$MUTABLE_BARRIER/entered\"\n  while [ ! -f \"$MUTABLE_BARRIER/release\" ]; do sleep 0.01; done\nfi\nexec \"$MUTABLE_REAL_GIT\" \"$@\"\n")
 			if err := os.Chmod(filepath.Join(bin, "git"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("MUTABLE_REAL_GIT", realGit)
 			t.Setenv("MUTABLE_BLOCK_URL", first)
-			blockPath, err := filepath.EvalSymlinks(filepath.Dir(RegistryCachePath(first, "main")))
-			if warm && err != nil {
-				t.Fatal(err)
+			t.Setenv("MUTABLE_OBSERVE_URL", second)
+			blockPath, blockErr := filepath.EvalSymlinks(filepath.Dir(RegistryCachePath(first, "main")))
+			observePath, observeErr := filepath.EvalSymlinks(filepath.Dir(RegistryCachePath(second, "main")))
+			if warm && (blockErr != nil || observeErr != nil) {
+				t.Fatal(errors.Join(blockErr, observeErr))
 			}
 			t.Setenv("MUTABLE_BLOCK_PATH", filepath.Join(blockPath, "main"))
+			t.Setenv("MUTABLE_OBSERVE_PATH", filepath.Join(observePath, "main"))
 			t.Setenv("MUTABLE_BARRIER", barrier)
 			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 			firstDone, secondDone := make(chan error, 1), make(chan error, 1)
@@ -348,17 +351,25 @@ func TestMutableIndependentRegistryJobsOverlap(t *testing.T) {
 				}
 			}
 			go func() { _, err := CloneOrPull(second, "main"); secondDone <- err }()
-			select {
-			case err := <-secondDone:
-				if err != nil {
-					t.Fatal(err)
+			overlapCtx, overlapCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer overlapCancel()
+			for {
+				if _, err := os.Stat(filepath.Join(barrier, "observed")); err == nil {
+					break
 				}
-			case <-time.After(time.Second):
-				writeFile(t, filepath.Join(barrier, "release"), "")
-				if err := awaitMutable(t, secondDone); err != nil {
-					t.Fatal(err)
+				select {
+				case <-overlapCtx.Done():
+					writeFile(t, filepath.Join(barrier, "release"), "")
+					if err := awaitMutable(t, secondDone); err != nil {
+						t.Fatal(err)
+					}
+					t.Fatal("independent registry blocked behind unrelated Git operation")
+				case <-time.After(10 * time.Millisecond):
 				}
-				t.Fatal("independent registry blocked behind unrelated Git operation")
+			}
+			writeFile(t, filepath.Join(barrier, "release"), "")
+			if err := awaitMutable(t, secondDone); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

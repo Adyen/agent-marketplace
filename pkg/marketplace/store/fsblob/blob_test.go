@@ -39,6 +39,41 @@ func TestBlobRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProbe(t *testing.T) {
+	ctx := context.Background()
+
+	existingDir := t.TempDir()
+	missingRoot := filepath.Join(t.TempDir(), "blobs")
+	fileRoot := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(fileRoot, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		root    string
+		wantErr error
+	}{
+		{name: "existing directory", root: existingDir},
+		{name: "missing root", root: missingRoot},
+		{name: "regular file root", root: fileRoot, wantErr: store.ErrTopology},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fsblob.New(tc.root).Probe(ctx)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Probe: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Probe error = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestBlobMissing(t *testing.T) {
 	ctx := context.Background()
 	bs := fsblob.New(t.TempDir())

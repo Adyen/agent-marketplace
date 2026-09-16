@@ -120,7 +120,7 @@ type MetadataStore interface {
 	CompleteJob(ctx context.Context, id JobID, workerID string) error
 	FailJob(ctx context.Context, id JobID, workerID string, backoff time.Duration) error
 
-	// ReadyCheck verifies that every published artifact has a matching blob.
+	// CheckIntegrity verifies that every published artifact has a matching blob.
 	// It returns [ErrBlobMissing] for the first missing digest.
-	ReadyCheck(ctx context.Context, blobs BlobStore) error
+	CheckIntegrity(ctx context.Context, blobs BlobStore) error
 }

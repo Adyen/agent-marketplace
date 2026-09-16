@@ -475,10 +475,11 @@ func coalesceCodexHooks(result *compilePhaseResult, group []codexDestinationBind
 	seen := make(map[string]ownedJSONEntry)
 	hasWork := false
 	for _, binding := range group {
-		work := result.codexAggregates[binding.key]
-		if work == nil {
+		state, _ := result.ownedState[binding.key].(*codexOwnedAggregateState)
+		if state == nil || state.hooks == nil {
 			continue
 		}
+		work := state.hooks
 		hasWork = true
 		for rel := range work.incomplete {
 			merged.markIncomplete(rel)
@@ -503,7 +504,12 @@ func coalesceCodexHooks(result *compilePhaseResult, group []codexDestinationBind
 		merged = nil
 	}
 	for _, binding := range group {
-		result.codexAggregates[binding.key] = merged
+		state, _ := result.ownedState[binding.key].(*codexOwnedAggregateState)
+		if state == nil {
+			state = &codexOwnedAggregateState{}
+			result.ownedState[binding.key] = state
+		}
+		state.hooks = merged
 	}
 	return nil
 }
@@ -518,9 +524,14 @@ func coalesceCodexMCP(result *compilePhaseResult, group []codexDestinationBindin
 	seen := make(map[string]codexMCPEntry)
 	blocked := false
 	for _, binding := range group {
-		blocked = blocked || result.codexMCPBlocked[binding.key]
+		state, _ := result.ownedState[binding.key].(*codexOwnedAggregateState)
+		if state == nil {
+			state = &codexOwnedAggregateState{}
+			result.ownedState[binding.key] = state
+		}
+		blocked = blocked || state.blocked
 		local := make(map[string]bool)
-		for _, entry := range result.codexMCP[binding.key] {
+		for _, entry := range state.mcps {
 			if local[entry.name] {
 				d := diag.Diagnostic{
 					Code:     diag.CodeMaterializeCodexDuplicateIdentity,
@@ -549,8 +560,13 @@ func coalesceCodexMCP(result *compilePhaseResult, group []codexDestinationBindin
 	}
 	sort.Slice(merged, func(i, j int) bool { return merged[i].name < merged[j].name })
 	for _, binding := range group {
-		result.codexMCP[binding.key] = append([]codexMCPEntry(nil), merged...)
-		result.codexMCPBlocked[binding.key] = blocked
+		state, _ := result.ownedState[binding.key].(*codexOwnedAggregateState)
+		if state == nil {
+			state = &codexOwnedAggregateState{}
+			result.ownedState[binding.key] = state
+		}
+		state.mcps = append([]codexMCPEntry(nil), merged...)
+		state.blocked = blocked
 	}
 	return nil
 }

@@ -115,7 +115,10 @@ func runRepoScopeMerge(t *testing.T, target hcc.Target, outDir string, artifacts
 func TestRepoScopeAggregateMergePreservesHandwrittenContent(t *testing.T) {
 	exercised := 0
 	for _, target := range sortedTargets(t) {
-		info := harness.TargetInfoMap[target]
+		info, ok := harness.TargetInfoFor(target)
+		if !ok {
+			t.Fatalf("missing target metadata for %s", target)
+		}
 		if info.OwnershipReconciledAggregates {
 			// Its aggregates never reach this path; they are covered by
 			// TestDevinRepoScopeAggregateRecoverableFromOwnershipBackup.

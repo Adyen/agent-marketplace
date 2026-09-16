@@ -276,8 +276,8 @@ func TestPublishRegistryRevision(t *testing.T) {
 		t.Fatalf("PublishRegistryRevision: %v", err)
 	}
 
-	if err := meta.ReadyCheck(ctx, blobs); err != nil {
-		t.Fatalf("ReadyCheck after publish: %v", err)
+	if err := meta.CheckIntegrity(ctx, blobs); err != nil {
+		t.Fatalf("CheckIntegrity after publish: %v", err)
 	}
 
 	got, err := meta.GetResourceRevision(ctx, coord, rev.ContentDigest)
@@ -551,8 +551,8 @@ func TestPublishResourceRevision(t *testing.T) {
 		t.Fatalf("PublishResourceRevision: %v", err)
 	}
 
-	if err := meta.ReadyCheck(ctx, blobs); err != nil {
-		t.Fatalf("ReadyCheck: %v", err)
+	if err := meta.CheckIntegrity(ctx, blobs); err != nil {
+		t.Fatalf("CheckIntegrity: %v", err)
 	}
 
 	got, err := blobs.Get(ctx, archiveDigest)
