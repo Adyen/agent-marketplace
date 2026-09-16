@@ -4,6 +4,7 @@ package acquire
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -89,7 +89,7 @@ func clone(ctx context.Context, origin, ref, exactCommit string, roots []string,
 	redactedOrigin := redact.URL(origin)
 	slog.Debug("acquire clone start", "origin", redactedOrigin, "ref", ref, "dir", dir)
 
-	workspace, err := newWorkspace(cred)
+	workspace, err := newWorkspace(cred, origin)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
@@ -272,9 +272,9 @@ type workspace struct {
 	envSlice []string
 }
 
-func newWorkspace(cred Credentials) (*workspace, error) {
+func newWorkspace(cred Credentials, origin string) (*workspace, error) {
 	tempDir := ""
-	if strings.TrimSpace(cred.Token) != "" || strings.TrimSpace(cred.CAFile) != "" {
+	if strings.TrimSpace(cred.CAFile) != "" {
 		var err error
 		tempDir, err = os.MkdirTemp("", "marketplace-git-")
 		if err != nil {
@@ -293,7 +293,7 @@ func newWorkspace(cred Credentials) (*workspace, error) {
 			return nil, fmt.Errorf("copy source CA file: %w", err)
 		}
 	}
-	env, err := gitEnv(cred, tempDir)
+	env, err := gitEnv(cred, origin)
 	if err != nil {
 		_ = os.RemoveAll(tempDir)
 		return nil, err
@@ -310,7 +310,7 @@ func (w *workspace) cleanup() error {
 	return nil
 }
 
-func gitEnv(cred Credentials, askpassDir string) ([]string, error) {
+func gitEnv(cred Credentials, origin string) ([]string, error) {
 	base := cache.GitEnv()
 	env := make(map[string]string, len(base))
 	for _, e := range base {
@@ -321,6 +321,7 @@ func gitEnv(cred Credentials, askpassDir string) ([]string, error) {
 		}
 		env[key] = value
 	}
+	delete(env, "GIT_ASKPASS")
 	delete(env, "GIT_SSL_CAINFO")
 	delete(env, "GIT_SSL_CAPATH")
 
@@ -332,20 +333,11 @@ func gitEnv(cred Credentials, askpassDir string) ([]string, error) {
 		env["GIT_SSL_CAINFO"] = strings.TrimSpace(cred.CAFile)
 	}
 
-	if strings.TrimSpace(cred.Token) != "" {
-		if askpassDir == "" {
-			var err error
-			askpassDir, err = os.MkdirTemp("", "marketplace-askpass-")
-			if err != nil {
-				return nil, fmt.Errorf("create askpass dir: %w", err)
-			}
-		}
-		askpass, err := writeAskpass(askpassDir)
-		if err != nil {
-			return nil, err
-		}
-		env["GIT_ASKPASS"] = askpass
-		env["AGENT_MARKETPLACE_GIT_TOKEN"] = cred.Token
+	token := strings.TrimSpace(cred.Token)
+	if token != "" {
+		env["GIT_CONFIG_COUNT"] = "1"
+		env["GIT_CONFIG_KEY_0"] = "http." + origin + ".extraHeader"
+		env["GIT_CONFIG_VALUE_0"] = "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(token+":"+token))
 	}
 
 	// Do not download LFS objects during clone/checkout; pointer files are kept
@@ -357,26 +349,6 @@ func gitEnv(cred Credentials, askpassDir string) ([]string, error) {
 		out = append(out, k+"="+v)
 	}
 	return out, nil
-}
-
-func writeAskpass(dir string) (string, error) {
-	path := filepath.Join(dir, "askpass"+scriptExt())
-	script := "#!/bin/sh\nprintf '%s\\n' \"$AGENT_MARKETPLACE_GIT_TOKEN\"\n"
-	if runtime.GOOS == "windows" {
-		script = "@echo off\r\necho %AGENT_MARKETPLACE_GIT_TOKEN%\r\n"
-	}
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
-		_ = os.RemoveAll(dir)
-		return "", fmt.Errorf("write askpass script: %w", err)
-	}
-	return path, nil
-}
-
-func scriptExt() string {
-	if runtime.GOOS == "windows" {
-		return ".bat"
-	}
-	return ".sh"
 }
 
 func enforceTreeLimits(ctx context.Context, env []string, repoDir, commit string, roots []string, limits Limits) error {
