@@ -92,6 +92,7 @@ func TestRefreshEndToEnd(t *testing.T) {
 	}
 	if review == nil {
 		t.Fatal("review missing from catalog projection")
+		return
 	}
 	if review.Occurrence.SourcePath != ".agents/skills/review/SKILL.md" || review.Occurrence.Commit != commit {
 		t.Fatalf("review source occurrence = %#v", review.Occurrence)
