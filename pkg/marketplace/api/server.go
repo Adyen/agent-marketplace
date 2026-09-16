@@ -1052,8 +1052,8 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
-	if err := s.meta.ReadyCheck(ctx, s.blobs); err != nil {
-		slog.Error("readyz failed", "err", err)
+	if err := s.blobs.Probe(ctx); err != nil {
+		slog.Error("readyz failed: blob store unavailable", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
