@@ -199,8 +199,8 @@ registry is provided, all configured registries are reindexed.`,
 				return errors.New("accepts at most one registry slug or id")
 			}
 
-			if err := meta.ReadyCheck(ctx, blobs); err != nil {
-				slog.Error("reindex failed", "reason", "ready check", "error", err)
+			if err := meta.CheckIntegrity(ctx, blobs); err != nil {
+				slog.Error("reindex failed", "reason", "integrity check", "error", err)
 				reindexErrs = append(reindexErrs, err)
 			}
 			if err := errors.Join(reindexErrs...); err != nil {
