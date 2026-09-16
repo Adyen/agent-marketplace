@@ -48,7 +48,7 @@ Each `Server` owns a dedicated `prometheus.Registry`. The registry contains that
 
 Per-server ownership matters because unit tests and embedding callers construct many servers in one process. Global registration would either panic on duplicate collectors or mix measurements from unrelated server instances. A dedicated registry makes `NewServer` deterministic and keeps tests independent.
 
-The approved dependency is `github.com/prometheus/client_golang` v1.24.1. That release was published on 2026-07-23 and satisfies the repository's minimum release-age policy.
+The approved dependency is `github.com/prometheus/client_golang` v1.24.1.
 
 ## HTTP instrumentation architecture
 
@@ -129,4 +129,4 @@ The repository already uses OpenTelemetry elsewhere, but the requested operation
 
 ## Acceptance criteria
 
-The design is delivered when the private operations listener exposes the three Marketplace HTTP metric families with the approved labels, Go and process collectors are present, public isolation and existing HTTP behavior remain unchanged, metric state is isolated per server, focused tests pass, and the measured benchmark delta is recorded. No implementation work was started in the session that produced this document.
+The design is delivered when the private operations listener exposes the three Marketplace HTTP metric families with the approved labels, Go and process collectors are present, public isolation and existing HTTP behavior remain unchanged, metric state is isolated per server, focused tests pass, and the measured benchmark delta is recorded.
