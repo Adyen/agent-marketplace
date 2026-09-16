@@ -460,8 +460,11 @@ func TestMcpReservedExtrasAreNeverPassedThrough(t *testing.T) {
 			if got := string(result.Artifacts[0].Bytes); got != want {
 				t.Errorf("artifact bytes = %s, want %s", got, want)
 			}
-			assertMcpDiags(t, result.Diagnostics,
-				[]wantDiag{{diag.CodeCanonicalFieldOverridesExtra, diag.SeverityWarning}}, "demo")
+			wantDiags := []wantDiag{{diag.CodeCanonicalFieldOverridesExtra, diag.SeverityWarning}}
+			if tt.key == mcpKeyEnv || tt.key == mcpKeyHeaders || tt.key == mcpKeyOAuthClientSecret {
+				wantDiags = append([]wantDiag{{diag.CodeMcpLiteralCredential, diag.SeverityWarning}}, wantDiags...)
+			}
+			assertMcpDiags(t, result.Diagnostics, wantDiags, "demo")
 		})
 	}
 }
