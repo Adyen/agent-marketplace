@@ -10,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 
+	"github.com/Adyen/agent-marketplace/internal/harness"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -21,8 +22,9 @@ type hookSupportOutput struct {
 }
 
 type hookSupportSource struct {
-	path   string
-	target hcc.Target
+	path    string
+	target  hcc.Target
+	harness string
 }
 
 type hookSupportClaim struct {
@@ -40,10 +42,10 @@ func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[in
 		if w.skill.Resource == nil || w.skill.Resource.Kind() != ir.KindHook {
 			continue
 		}
-		source := hookSupportSource{path: materializationSourcePath(w.skill), target: w.target}
+		source := hookSupportSource{path: materializationSourcePath(w.skill), target: w.target, harness: w.skill.SourceHarness}
 		files, exists := cached[source]
 		if !exists {
-			files = collectHookSupportFiles(source.path, w.target)
+			files = collectHookSupportFiles(source.path, w.target, source.harness)
 			cached[source] = files
 		}
 		support[i] = files
@@ -72,6 +74,27 @@ func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[in
 		}
 	}
 	return support, conflicts
+}
+
+func hookSupportExclusions(sourcePath, sourceHarness string) map[string]bool {
+	primary := filepath.Base(sourcePath)
+	excluded := map[string]bool{primary: true}
+	info, ok := harness.TargetInfoFor(hcc.Target(sourceHarness))
+	if !ok {
+		return excluded
+	}
+	files := append(slices.Clone(info.AggregateFiles.Project), info.AggregateFiles.User...)
+	for _, source := range files {
+		if filepath.Base(source) != primary {
+			continue
+		}
+		for _, sibling := range files {
+			if filepath.Dir(source) == filepath.Dir(sibling) {
+				excluded[filepath.Base(sibling)] = true
+			}
+		}
+	}
+	return excluded
 }
 
 func retainBlockedHookArtifacts(outDir string, artifacts []artifact.Artifact) ([]artifact.Artifact, error) {

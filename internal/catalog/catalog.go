@@ -40,12 +40,13 @@ const (
 
 // Entry represents a single cataloged resource discovered from a registry.
 type Entry struct {
-	Kind        ir.ResourceKind
-	Name        string
-	Description string
-	Tags        []string
-	Resource    ir.Resource // underlying IR resource for downstream compile/materialize
-	Path        string      // source file path (from ir.SourceRef)
+	Kind          ir.ResourceKind
+	Name          string
+	Description   string
+	Tags          []string
+	Resource      ir.Resource // underlying IR resource for downstream compile/materialize
+	Path          string      // source file path (from ir.SourceRef)
+	SourceHarness string      `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -351,9 +352,10 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 	entries := make([]Entry, 0, len(bundle.Resources))
 	for _, r := range bundle.Resources {
 		entry := Entry{
-			Kind:     r.Kind(),
-			Name:     r.Name(),
-			Resource: r,
+			Kind:          r.Kind(),
+			Name:          r.Name(),
+			Resource:      r,
+			SourceHarness: string(from),
 		}
 
 		entry.Description = descriptionFromResource(r)

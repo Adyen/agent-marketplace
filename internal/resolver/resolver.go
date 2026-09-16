@@ -3108,8 +3108,39 @@ func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entr
 		}
 		return strings.Compare(a.name, b.name)
 	})
-
+	orderWindsurfHookSelections(resources, catalog)
 	return resources
+}
+
+func orderWindsurfHookSelections(resources resourceSelections, entries []catalog.Entry) {
+	var ranks map[resourceSelection]int
+	for i, candidate := range entries {
+		if candidate.Kind != ir.KindHook || candidate.SourceHarness != string(hcc.TargetWindsurf) {
+			continue
+		}
+		if ranks == nil {
+			ranks = make(map[resourceSelection]int)
+		}
+		key := resourceSelection{kind: candidate.Kind, name: strings.TrimSpace(candidate.Name)}
+		if _, exists := ranks[key]; !exists {
+			ranks[key] = i
+		}
+	}
+	if len(ranks) < 2 {
+		return
+	}
+	var positions []int
+	var hooks resourceSelections
+	for i, resource := range resources {
+		if _, ordered := ranks[resource]; ordered {
+			positions = append(positions, i)
+			hooks = append(hooks, resource)
+		}
+	}
+	slices.SortFunc(hooks, func(a, b resourceSelection) int { return ranks[a] - ranks[b] })
+	for i, position := range positions {
+		resources[position] = hooks[i]
+	}
 }
 
 func appendSelections(out resourceSelections, kind ir.ResourceKind, names []string) resourceSelections {

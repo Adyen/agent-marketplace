@@ -3,6 +3,7 @@ package materialize
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -61,4 +62,27 @@ func makeHookSupportSource(t *testing.T, script string, mode os.FileMode) string
 func resolverHook(path, name string) resolver.ResolvedArtifact {
 	hook := ir.NewHookWithMatcher(name, "PreToolUse", "Bash", "echo hook", "command", nil, ir.SourceRef{File: path})
 	return resolver.ResolvedArtifact{Entry: catalog.Entry{Name: name, Kind: ir.KindHook, Path: path, Resource: hook}, Source: config.RepoCommitted}
+}
+
+func TestHookSupportExclusions(t *testing.T) {
+	tests := []struct {
+		name          string
+		sourcePath    string
+		sourceHarness string
+		want          map[string]bool
+	}{
+		{name: "devin", sourcePath: "/tmp/.devin/hooks.v1.json", sourceHarness: "devin", want: map[string]bool{"hooks.v1.json": true, "config.json": true, "mcp_config.json": true}},
+		{name: "codex", sourcePath: "/tmp/.codex/hooks.json", sourceHarness: "codex", want: map[string]bool{"hooks.json": true, "config.toml": true}},
+		{name: "windsurf", sourcePath: "/tmp/.windsurf/hooks.json", sourceHarness: "windsurf", want: map[string]bool{"hooks.json": true, "mcp_config.json": true}},
+		{name: "factory", sourcePath: "/tmp/.factory/hooks/hooks.json", sourceHarness: "factory", want: map[string]bool{"hooks.json": true}},
+		{name: "unknown", sourcePath: "/tmp/custom.json", sourceHarness: "synthetic", want: map[string]bool{"custom.json": true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hookSupportExclusions(tt.sourcePath, tt.sourceHarness)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("exclusions = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
 }

@@ -69,11 +69,11 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 		}
 		diags = append(diags, hookDiags...)
 		if opts.LegacyHookInventory {
-			for name, hook := range loadedHooks {
-				hooks[name] = hook
+			for _, hook := range loadedHooks {
+				hooks[hook.Name()] = hook
 			}
 		} else {
-			currentHooks = append(currentHooks, sortHooks(loadedHooks)...)
+			currentHooks = append(currentHooks, loadedHooks...)
 		}
 
 		loadedServers, mcpDiags, err := loadMcpRoot(root)
@@ -98,11 +98,10 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 			})
 		}
 	}
-	if !opts.LegacyHookInventory {
+	if opts.LegacyHookInventory {
+		currentHooks = sortHooks(hooks)
+	} else {
 		distinctHookNames(currentHooks)
-		for _, hook := range currentHooks {
-			hooks[hook.Name()] = hook
-		}
 	}
 
 	var resources []ir.Resource
@@ -115,7 +114,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 	for _, command := range sortCommands(commands) {
 		resources = append(resources, command)
 	}
-	for _, hook := range sortHooks(hooks) {
+	for _, hook := range currentHooks {
 		resources = append(resources, hook)
 	}
 	for _, server := range sortServers(servers) {
@@ -181,7 +180,7 @@ func loadWorkflows(root workspaceRoot) (map[string]*ir.Command, []diag.Diagnosti
 	return resources, diags, nil
 }
 
-func loadHooksRoot(root workspaceRoot, opts LoadOptions) (map[string]*ir.Hook, []diag.Diagnostic, error) {
+func loadHooksRoot(root workspaceRoot, opts LoadOptions) ([]*ir.Hook, []diag.Diagnostic, error) {
 	var hooks []*ir.Hook
 	var diags []diag.Diagnostic
 	var err error
@@ -199,11 +198,7 @@ func loadHooksRoot(root workspaceRoot, opts LoadOptions) (map[string]*ir.Hook, [
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, err
 	}
-	resources := map[string]*ir.Hook{}
-	for _, hook := range hooks {
-		resources[hook.Name()] = hook
-	}
-	return resources, diags, nil
+	return hooks, diags, nil
 }
 
 func loadMcpRoot(root workspaceRoot) (map[string]*ir.McpServer, []diag.Diagnostic, error) {

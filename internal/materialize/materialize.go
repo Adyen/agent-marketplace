@@ -3378,7 +3378,7 @@ func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, 
 // These artifacts are symlinked into the hooks output directory alongside the
 // merged hooks.json, and are automatically pruned by staleArtifactLinks when
 // a hook is excluded (only symlinks are pruned, never the regular hooks.json).
-func collectHookSupportFiles(sourcePath string, target hcc.Target) []artifact.Artifact {
+func collectHookSupportFiles(sourcePath string, target hcc.Target, sourceHarness string) []artifact.Artifact {
 	if sourcePath == "" {
 		return nil
 	}
@@ -3391,8 +3391,12 @@ func collectHookSupportFiles(sourcePath string, target hcc.Target) []artifact.Ar
 	if hooksDirRel == "" {
 		return nil
 	}
+	excluded := hookSupportExclusions(sourcePath, sourceHarness)
 	var artifacts []artifact.Artifact
 	for _, name := range names {
+		if excluded[name] || (sourceHarness == string(hcc.TargetWindsurf) && filepath.Base(sourceDir) == "hooks" && strings.HasSuffix(name, ".json")) {
+			continue
+		}
 		srcPath := filepath.Join(sourceDir, name)
 		data, err := os.ReadFile(srcPath)
 		if err != nil {

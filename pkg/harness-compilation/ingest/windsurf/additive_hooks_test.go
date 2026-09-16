@@ -1,7 +1,9 @@
 package windsurf
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -108,7 +110,7 @@ func TestLoadWorkspaceCurrentCombinesUserAndProjectHooks(t *testing.T) {
 			got = append(got, hook.Name()+":"+hook.Command)
 		}
 	}
-	want := []string{"hooks:echo project", "hooks-2:echo user"}
+	want := []string{"hooks-2:echo user", "hooks:echo project"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("hooks = %v, want %v", got, want)
 	}
@@ -124,4 +126,57 @@ func TestDistinctHookNamesAvoidsExistingSuffix(t *testing.T) {
 	if hooks[0].Name() != "hooks-3" || hooks[1].Name() != "hooks-2" || hooks[2].Name() != "hooks" {
 		t.Fatalf("names = %q, %q, %q", hooks[0].Name(), hooks[1].Name(), hooks[2].Name())
 	}
+}
+
+func TestLoadWorkspaceCurrentPreservesUserThenProjectHandlerOrder(t *testing.T) {
+	project := fstest.MapFS{".windsurf/hooks.json": {Data: []byte(windsurfHandlerDocument("project", 12))}}
+	user := fstest.MapFS{"hooks.json": {Data: []byte(windsurfHandlerDocument("user", 12))}}
+	bundle, err := LoadWorkspace(project, LoadOptions{User: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	var names []string
+	for _, resource := range bundle.Resources {
+		if hook, ok := resource.(*ir.Hook); ok {
+			commands = append(commands, hook.Command)
+			names = append(names, hook.Name())
+		}
+	}
+	want := make([]string, 0, 24)
+	for _, prefix := range []string{"user", "project"} {
+		for i := 0; i < 12; i++ {
+			want = append(want, fmt.Sprintf("echo %s-%d", prefix, i))
+		}
+	}
+	if !slices.Equal(commands, want) {
+		t.Fatalf("commands = %v, want %v", commands, want)
+	}
+	if len(names) != 24 || len(boolFromStrings(names)) != len(names) {
+		t.Fatalf("names = %v, want 24 unique names", names)
+	}
+	if names[len(names)-1] != "hooks" {
+		t.Fatalf("last hook name = %q, want hooks", names[len(names)-1])
+	}
+}
+
+func windsurfHandlerDocument(prefix string, count int) string {
+	var body strings.Builder
+	body.WriteString(`{"hooks":{"pre_run_command":[`)
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			body.WriteByte(',')
+		}
+		fmt.Fprintf(&body, `{"command":"echo %s-%d"}`, prefix, i)
+	}
+	body.WriteString(`]}}`)
+	return body.String()
+}
+
+func boolFromStrings(values []string) map[string]bool {
+	result := make(map[string]bool, len(values))
+	for _, value := range values {
+		result[value] = true
+	}
+	return result
 }
