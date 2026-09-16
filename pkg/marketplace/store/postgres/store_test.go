@@ -256,6 +256,58 @@ func TestRegistryCRUD(t *testing.T) {
 	}
 }
 
+func TestRegistryWithoutAliases(t *testing.T) {
+	ctx := context.Background()
+	s, schema := newTestStore(t)
+	reg := store.Registry{
+		ID:          "reg-no-aliases",
+		Slug:        "no-aliases",
+		Ref:         "main",
+		Acquisition: store.AcquisitionMirror,
+		Publisher:   store.Publisher{Name: "Example"},
+		Listed:      true,
+	}
+	if err := s.PutRegistry(ctx, reg); err != nil {
+		t.Fatalf("PutRegistry: %v", err)
+	}
+
+	got, err := s.GetRegistryBySlug(ctx, reg.Slug)
+	if err != nil {
+		t.Fatalf("GetRegistryBySlug current slug: %v", err)
+	}
+	if got.ID != reg.ID {
+		t.Fatalf("GetRegistryBySlug returned %q, want %q", got.ID, reg.ID)
+	}
+
+	db, err := sql.Open("pgx", testDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	quoted := pgx.Identifier{schema}.Sanitize()
+	var aliases string
+	if err := db.QueryRowContext(ctx, "SELECT aliases FROM "+quoted+".registries WHERE id=$1", reg.ID).Scan(&aliases); err != nil {
+		t.Fatal(err)
+	}
+	if aliases != "[]" {
+		t.Fatalf("stored aliases = %q, want []", aliases)
+	}
+
+	if _, err := db.ExecContext(ctx, "UPDATE "+quoted+".registries SET aliases='null' WHERE id=$1", reg.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetRegistryBySlug(ctx, reg.Slug)
+	if err != nil {
+		t.Fatalf("GetRegistryBySlug legacy scalar current slug: %v", err)
+	}
+	if got.ID != reg.ID {
+		t.Fatalf("GetRegistryBySlug legacy scalar returned %q, want %q", got.ID, reg.ID)
+	}
+	if _, err := s.GetRegistryBySlug(ctx, "missing"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetRegistryBySlug missing with legacy scalar = %v, want ErrNotFound", err)
+	}
+}
+
 func TestResourceRevisionWithTwoAssessmentsAndCurrentPointer(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)

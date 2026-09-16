@@ -283,6 +283,9 @@ func (s *Store) putRegistry(ctx context.Context, registry store.Registry) error 
 	}
 	registry.UpdatedAt = now
 
+	if registry.Aliases == nil {
+		registry.Aliases = []string{}
+	}
 	aliasesJSON, err := marshalJSON(registry.Aliases)
 	if err != nil {
 		return err
@@ -368,7 +371,12 @@ func (s *Store) GetRegistryBySlug(ctx context.Context, slug string) (store.Regis
 		        refresh_status, refresh_error, refreshed_at, created_at, updated_at
 		 FROM registries
 		 WHERE slug=$1 OR EXISTS (
-		   SELECT 1 FROM jsonb_array_elements_text(aliases::jsonb) AS value WHERE value=$2
+		   SELECT 1 FROM jsonb_array_elements_text(
+		     CASE jsonb_typeof(aliases::jsonb)
+		       WHEN 'array' THEN aliases::jsonb
+		       ELSE '[]'::jsonb
+		     END
+		   ) AS value WHERE value=$2
 		 )`,
 		slug, slug,
 	)
