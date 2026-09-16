@@ -55,6 +55,10 @@ type ResolvedArtifact struct {
 	Stale                 bool   // true when the registry refresh is stale/unavailable
 }
 
+func HasAdditiveSources(kind ir.ResourceKind) bool {
+	return kind == ir.KindHook
+}
+
 type UnmetRequirementWarning struct {
 	ResourceKind ir.ResourceKind
 	ResourceName string
@@ -947,7 +951,7 @@ func ResolveCatalogView(cfg *config.Config, catalogs map[string][]catalog.Entry,
 	for _, winner := range winners {
 		artifact := winner.resolved
 		selection := resourceSelection{kind: artifact.Kind, name: strings.TrimSpace(artifact.Name)}
-		if _, selected := selectedResources[selection]; selected {
+		if _, selected := selectedResources[selection]; selected && !HasAdditiveSources(selection.kind) {
 			continue
 		}
 		key := displayKey{kind: selection.kind, name: selection.name, identity: displayIdentity(artifact)}
@@ -1137,6 +1141,7 @@ func propagateTopLevelCollections(cfg *config.Config) {
 func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
 	var out []ResolvedArtifact
 	var errs []error
+	expanded := false
 
 	// Build a set of directly-resolved resource names (kind:name) from
 	// non-collection artifacts. Collection members that are already directly
@@ -1221,6 +1226,7 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 			// No IR resource — skip silently (malformed collection).
 			continue
 		}
+		expanded = true
 
 		viaLabel := "collection:" + irCol.Label()
 
@@ -1229,7 +1235,46 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &errs, targetSet)
 	}
 
-	return out, suppressResolvedMemberMisses(errs, directResolved)
+	if !expanded {
+		return out, errs
+	}
+	reconciled, reconcileErrs := reconcileExpandedHooks(out)
+	errs = append(errs, reconcileErrs...)
+	return reconciled, suppressResolvedMemberMisses(errs, directResolved)
+}
+
+func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, []error) {
+	occurrences := make(map[resourceSelection][]skillOccurrence)
+	for i, a := range artifacts {
+		if !HasAdditiveSources(a.Kind) {
+			continue
+		}
+		order := i
+		if a.Via != "" {
+			order += len(artifacts)
+		}
+		url := a.RegistryURL
+		if a.IsMarketplace {
+			url = a.MarketplaceURL
+		}
+		key := resourceSelection{kind: a.Kind, name: a.Name}
+		occurrences[key] = append(occurrences[key], skillOccurrence{resolved: a, url: url, order: order})
+	}
+	if len(occurrences) == 0 {
+		return artifacts, nil
+	}
+	winners, errs := pickWinners(occurrences)
+	keep := make(map[int]bool, len(winners))
+	for _, winner := range winners {
+		keep[winner.order%len(artifacts)] = true
+	}
+	filtered := make([]ResolvedArtifact, 0, len(artifacts))
+	for i, a := range artifacts {
+		if !HasAdditiveSources(a.Kind) || keep[i] {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered, errs
 }
 
 // suppressResolvedMemberMisses drops "selected but not found" errors raised
@@ -1246,7 +1291,7 @@ func suppressResolvedMemberMisses(errs []error, resolvedNames map[string]struct{
 	filtered := errs[:0]
 	for _, err := range errs {
 		var snf *SelectedNotFoundError
-		if errors.As(err, &snf) && snf.Via != "" {
+		if errors.As(err, &snf) && snf.Via != "" && !HasAdditiveSources(snf.Kind) {
 			if _, resolved := resolvedNames[ViaMapKey(snf.Kind, snf.Name)]; resolved {
 				slog.Debug("collection member miss suppressed: resolved elsewhere",
 					"kind", snf.Kind.String(), "name", snf.Name, "via", snf.Via)
@@ -1685,7 +1730,7 @@ func expandMembersRecursive(
 		// Skip if already directly resolved (direct resolution takes
 		// precedence over collection expansion; no duplicates).
 		memberKey := ViaMapKey(member.Kind, memberName)
-		if _, direct := directResolved[memberKey]; direct {
+		if _, direct := directResolved[memberKey]; direct && !HasAdditiveSources(member.Kind) {
 			continue
 		}
 
@@ -2205,6 +2250,34 @@ func newNameCollisionWarning(winner skillOccurrence, occurrences []skillOccurren
 	}
 }
 
+func groupHookSourceVersions(occurrences []skillOccurrence) [][]skillOccurrence {
+	type sourceKey struct {
+		url, path, instance, registry string
+		machine                       bool
+	}
+	indices := make(map[sourceKey]int, len(occurrences))
+	groups := make([][]skillOccurrence, 0, len(occurrences))
+	for _, occurrence := range occurrences {
+		a := occurrence.resolved
+		key := sourceKey{url: normalizedRegistryURL(occurrence.url), path: normalizedEntryPath(a.RegistryPath), machine: a.Source.IsMachineScope()}
+		if a.IsLocal() {
+			key.url = occurrence.url
+		}
+		if a.IsMarketplace {
+			key.instance = strings.TrimSpace(a.MarketplaceInstanceID)
+			key.registry = strings.TrimSpace(a.MarketplaceRegistryID)
+		}
+		index, exists := indices[key]
+		if !exists {
+			index = len(groups)
+			indices[key] = index
+			groups = append(groups, nil)
+		}
+		groups[index] = append(groups[index], occurrence)
+	}
+	return groups
+}
+
 // pickWinners deduplicates occurrences and detects multi-registry collisions.
 // Returns the winning occurrences in insertion order.
 func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]skillOccurrence, []error) {
@@ -2230,6 +2303,19 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 	for _, key := range keys {
 		occurrences := occurrencesByName[key]
 		deduped := deduplicateOccurrences(occurrences)
+
+		if HasAdditiveSources(key.kind) {
+			for _, group := range groupHookSourceVersions(deduped) {
+				winner := pickCollisionWinner(group)
+				winners = append(winners, winner)
+				if len(group) > 1 && reportCollisions {
+					warning := newNameCollisionWarning(winner, group)
+					slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
+					errs = append(errs, warning)
+				}
+			}
+			continue
+		}
 
 		if hasMultiRegistryCollision(deduped) {
 			// Pick a deterministic winner instead of skipping the resource.

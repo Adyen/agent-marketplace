@@ -236,3 +236,7 @@ Full design rationale is in `docs/plans/2026-04-24-harness-compilation-integrati
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+## Additive hook selection
+
+Hooks retain registry-local names but resolve additively across independent registry sources; repeated same-source selections deduplicate and competing refs at one location/scope retain precedence. The policy lives in `internal/resolver`, including reconciliation after collection expansion, and install-all consumes `HasAdditiveSources`. Non-hook collisions remain winner-based. See `docs/plans/2026-09-16-additive-hooks.md` for the remaining Windsurf ingestion/native-output and lock-compatibility work. Focused CLI E2E: `go test ./e2e -run 'TestE2E/hooks/additive' -count=1`.

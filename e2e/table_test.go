@@ -244,6 +244,49 @@ registries:
 		},
 	},
 
+	{
+		Name: "hooks/additive_cross_registry",
+		Desc: "Given two Factory registries with same-named hooks, when install-all and removal run, then both providers materialize additively and removing one preserves the other",
+		Registries: []RegistryDef{
+			{Name: "first", Files: map[string]string{".factory/hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo first"}]}]}`}},
+			{Name: "second", Files: map[string]string{".factory/hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo second"}]}]}`}},
+		},
+		RepoCfg: `harnesses: [factory]
+registries:
+  - url: {{REG:first}}
+    ref: main
+    source_harness: factory
+  - url: {{REG:second}}
+    ref: main
+    source_harness: factory
+`,
+		Steps: []Step{
+			{Args: []string{"install", "--all", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, OutNotContains: []string{"multiple registries"}, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo first"}},
+			{Args: []string{"list", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo second"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json"}},
+			{Args: []string{"remove", "PreToolUse-command", "--kind", "hook", "--from", "{{REG:first}}"}, MustPass: true, FileNotContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo first"}, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo second"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json", "/workspace/.agents/lock.yaml"}},
+		},
+	},
+	{
+		Name:       "hooks/additive_session_start",
+		Desc:       "Given one Factory registry with two SessionStart handlers, when both generated names are selected, then both handlers remain stable across sync and check",
+		Registries: []RegistryDef{{Name: "session-start", Files: map[string]string{".factory/hooks/hooks.json": `{"SessionStart":[{"hooks":[{"type":"command","command":"echo first"}]},{"hooks":[{"type":"command","command":"echo second"}]}]}`}}},
+		RepoCfg: `harnesses: [factory]
+registries:
+  - url: {{REG:session-start}}
+    ref: main
+    source_harness: factory
+    hooks: [SessionStart-command, SessionStart-command-2]
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo first"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json", "/workspace/.agents/lock.yaml"}, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo second"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json"}},
+		},
+	},
+
 	// ===== collision =====
 	{
 		Name: "collision/same_name_different_registries",
