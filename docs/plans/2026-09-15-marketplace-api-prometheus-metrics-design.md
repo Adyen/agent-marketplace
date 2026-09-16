@@ -2,13 +2,13 @@
 
 **Status:** Approved and implemented on 2026-09-15.
 
-The Marketplace API already exposes `/metrics` on its private operations listener, but the endpoint manually formats two process-local atomic counters. This design replaces that placeholder with Prometheus-native HTTP RED metrics and standard Go runtime and process collectors while preserving the existing network boundary.
+Before this change, the Marketplace API exposed `/metrics` on its private operations listener, but the endpoint manually formatted two process-local atomic counters. The implementation replaced that placeholder with Prometheus-native HTTP RED metrics and standard Go runtime and process collectors while preserving the existing network boundary.
 
 ## Background
 
 `Server` owns separate public and operations `http.Server` instances. The public listener serves the Marketplace API and `/healthz`; the operations listener serves `/readyz` and `/metrics`. Public requests to `/readyz` and `/metrics` deliberately return `404` so deployment proxies cannot expose operational data accidentally.
 
-The current middleware increments `requestsTotal` and `activeRequests` for both listeners. The metrics handler renders those values as Prometheus text, but it cannot distinguish successful requests from errors, identify slow route families, or expose runtime and process health. It also implements exposition formatting directly rather than using the Prometheus client.
+Before this change, the middleware incremented `requestsTotal` and `activeRequests` for both listeners. The metrics handler rendered those values as Prometheus text, but it could not distinguish successful requests from errors, identify slow route families, or expose runtime and process health. It also implemented exposition formatting directly rather than using the Prometheus client.
 
 ## Goals
 
