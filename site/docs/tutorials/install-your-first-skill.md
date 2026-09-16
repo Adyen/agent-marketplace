@@ -1,6 +1,6 @@
 # Install your first skill for Claude Code
 
-In this tutorial, you will install Anthropic's `frontend-design` skill for Claude Code. The skill will be available machine-wide to projects that use your personal Claude Code target.
+Install Anthropic's `frontend-design` skill for Claude Code. The skill will be available machine-wide to projects that use your personal Claude Code target.
 
 You will use a public GitHub repository as the registry, save the selection in your user configuration, and verify the generated Claude Code skill.
 
@@ -10,7 +10,7 @@ You need:
 
 - Claude Code;
 - Git; and
-- `agent-marketplace` on your `PATH`. Download a published binary from [GitHub Releases](https://github.com/Adyen/agent-marketplace/releases), or follow the [source build instructions](../../../README.md#build-from-source).
+- `agent-marketplace` on your `PATH`. Download a published binary from [GitHub Releases](https://github.com/Adyen/agent-marketplace/releases), or follow the [source build instructions](https://github.com/Adyen/agent-marketplace#build-from-source).
 
 Confirm that the CLI is available:
 
@@ -38,13 +38,6 @@ The command creates `~/.agents/config.yaml` and reports its path:
 
 ```text
 Initialized user personal config: <home>/.agents/config.yaml
-```
-
-If `~/.agents/config.yaml` already exists, `init` leaves it unchanged. Keep its other settings and add `claude` to its top-level `harnesses` list:
-
-```yaml
-harnesses:
-  - claude
 ```
 
 Check the effective target:
@@ -93,7 +86,7 @@ The command confirms the installation:
 Installed frontend-design user-wide
 ```
 
-User scope records the selection in `~/.agents/config.yaml`, records its exact Git commit and source manifest in `~/.agents/lock.yaml`, and makes the skill available wherever Claude Code is an effective target. Config and lock are published as one dependency transaction. The install command also synchronizes the generated Claude Code files; you do not need to run `agent-marketplace sync` separately.
+User scope records the selection in `~/.agents/config.yaml` and synchronizes the generated Claude Code files. You do not need to run `agent-marketplace sync` separately.
 
 ## 4. Verify the installation
 
@@ -138,12 +131,12 @@ You completed three operations:
 2. added Anthropic's repository and the `frontend-design` selection to your user configuration; and
 3. materialized the skill in Claude Code's native user directory.
 
-Configuration remains the source of selection policy, while `~/.agents/lock.yaml` records the exact Git acquisition. From your home directory, `agent-marketplace sync` recreates the generated skill from that verified snapshot if it is missing, while `agent-marketplace sync --check` reports lock or output drift without changing files.
+For reproducible setups, use a stable tag or commit as the registry ref. The [reproducibility and lockfiles explanation](../explanation/reproducibility-and-lockfiles.md) describes how the lock keeps the exact Git acquisition.
 
 ## Next steps
 
-- Learn the everyday [`list`, `install`, `remove`, `sync`, and `update` commands](../../../README.md#quick-start).
-- [Add agent-marketplace to a repository](../../adoption-guide.md) to share selections with a team.
+- Learn the everyday [`list`, `install`, `remove`, `sync`, and `update` commands](../reference/cli.md).
+- [Add agent-marketplace to a repository](https://github.com/Adyen/agent-marketplace/blob/main/docs/adoption-guide.md) to share selections with a team.
 - Read the [configuration reference](../reference/configuration.md) when you need to edit `.agents/config.yaml` directly.
 
 The tutorial follows the repository's `main` branch for an approachable first installation. For reproducible setups, configure a stable tag or commit as the registry ref.

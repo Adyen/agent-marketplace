@@ -65,8 +65,8 @@ test.describe('Marketplace browser discovery', () => {
     const landingNav = page.getByRole('navigation', { name: 'Main Navigation' })
     await expect(page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('target', '_self')
-    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '../marketplace/')
-    await expect(landingNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
+    await expect(landingNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(page.locator('link[rel="prefetch"][href="/marketplace/"]')).toHaveCount(1)
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
     await expect.poll(fontStatus).toEqual({
@@ -88,6 +88,10 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
     await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('dark')
 
+    // The Marketplace link must hard-navigate to the origin root from nested
+    // documentation pages too, not only from the landing page.
+    await page.goto(`${sharedOriginURL}/docs/reference/cli`)
+    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
     await landingNav.getByRole('link', { name: 'Marketplace', exact: true }).click()
     await expect(page).toHaveURL(`${sharedOriginURL}/marketplace/`)
 
@@ -95,7 +99,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('aria-current', 'page')
-    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
     await expect(page.locator('link[href*="nuxt-fonts-global"]')).toHaveCount(0)
     await expect.poll(fontStatus).toEqual({

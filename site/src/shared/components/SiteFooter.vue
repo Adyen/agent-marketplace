@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { withBase } from 'vitepress'
 import {
-  DOCUMENTATION_URL,
+  DOCS_PATH,
   GITHUB_REPOSITORY_URL,
   MARKETPLACE_PATH,
 } from '../site'
 
 const links = [
-  { label: 'Documentation', href: DOCUMENTATION_URL, external: true },
+  { label: 'Documentation', href: withBase(DOCS_PATH), external: false },
   { label: 'Marketplace', href: MARKETPLACE_PATH, external: false, hardNavigation: true },
   { label: 'GitHub', href: GITHUB_REPOSITORY_URL, external: true },
 ]
@@ -15,7 +15,7 @@ const links = [
 
 <template>
   <footer class="utility-footer">
-    <div class="am-wrap footer-row">
+    <div class="footer-row">
       <a class="brand" :href="withBase('/')">agent-marketplace</a>
 
       <nav aria-label="Footer navigation">
@@ -49,6 +49,9 @@ const links = [
 }
 
 .footer-row {
+  max-width: var(--am-maxw);
+  margin: 0 auto;
+  padding: 0 24px;
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
