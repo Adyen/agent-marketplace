@@ -109,6 +109,92 @@ const (
 	AvailabilityRevoked Availability = "revoked"
 )
 
+// CatalogAPIVersionV1Alpha1 identifies the versioned, catalog-neutral
+// projection returned by GET /api/v1/catalog.
+const CatalogAPIVersionV1Alpha1 = "agent-marketplace.io/catalog/v1alpha1"
+
+// CatalogKeysetCursor is an opaque, stateless cursor for the final immutable
+// resource coordinate on the preceding catalog page. Clients must not inspect
+// or construct its value.
+type CatalogKeysetCursor string
+
+// CatalogETag is the strong, quoted validator for all catalog-visible current
+// state. It is an HTTP header value, not a resource revision digest.
+type CatalogETag string
+
+// CatalogPage is one stateless keyset page from GET /api/v1/catalog. A scan
+// starts without a cursor and continues until Complete is true. NextCursor is
+// omitted on the final page.
+type CatalogPage struct {
+	APIVersion     string              `json:"api_version"`
+	MarketplaceID  string              `json:"marketplace_id"`
+	CatalogVersion string              `json:"catalog_version"`
+	Complete       bool                `json:"complete"`
+	NextCursor     CatalogKeysetCursor `json:"next_cursor,omitempty"`
+	Resources      []CatalogResource   `json:"resources"`
+}
+
+// CatalogResource is one current catalog-visible Marketplace resource. Its
+// identity is registry ID, kind, and registry-local name; neither registry
+// slug, source provenance, nor revision changes that identity.
+type CatalogResource struct {
+	RegistryID   string             `json:"registry_id"`
+	RegistrySlug string             `json:"registry_slug"`
+	Kind         string             `json:"kind"`
+	Name         string             `json:"name"`
+	Description  string             `json:"description,omitempty"`
+	Revision     string             `json:"revision"`
+	License      string             `json:"license,omitempty"`
+	Availability Availability       `json:"availability"`
+	Source       *CatalogSource     `json:"source,omitempty"`
+	Collection   *CatalogCollection `json:"collection,omitempty"`
+}
+
+// CatalogSource records sanitized immutable repository provenance for a
+// catalog resource. It is absent for legacy occurrences that lack trustworthy
+// provenance.
+type CatalogSource struct {
+	RepositoryURL string `json:"repository_url"`
+	Path          string `json:"path"`
+	Commit        string `json:"commit"`
+}
+
+// CatalogCollection carries only direct collection relations. Resources and
+// Includes are never recursively flattened; unresolved declarations remain
+// explicit rather than becoming dangling coordinates.
+type CatalogCollection struct {
+	Resources            []CatalogCollectionResourceReference `json:"resources"`
+	Includes             []CatalogCollectionIncludeReference  `json:"includes"`
+	UnresolvedReferences []CatalogUnresolvedReference         `json:"unresolved_references"`
+}
+
+// CatalogCollectionResourceReference is a resolved direct collection resource
+// member. It identifies a catalog-visible resource by immutable Marketplace
+// coordinate.
+type CatalogCollectionResourceReference struct {
+	RegistryID string `json:"registry_id"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+}
+
+// CatalogCollectionIncludeReference is a resolved direct collection include.
+// Kind is always "collection" on the wire.
+type CatalogCollectionIncludeReference struct {
+	RegistryID string `json:"registry_id"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+}
+
+// CatalogUnresolvedReference preserves a direct collection declaration that
+// cannot be safely resolved. Reason is a stable machine-readable reason code.
+type CatalogUnresolvedReference struct {
+	ReferenceType string `json:"reference_type"`
+	RegistryID    string `json:"registry_id,omitempty"`
+	Kind          string `json:"kind"`
+	Name          string `json:"name"`
+	Reason        string `json:"reason"`
+}
+
 // ResourceListItem is a single resource returned by the listing endpoints.
 type ResourceListItem struct {
 	RegistryID    string `json:"registry_id"`

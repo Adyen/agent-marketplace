@@ -5,6 +5,69 @@ import (
 	"time"
 )
 
+// CatalogProjectionCursor is the final immutable coordinate from the preceding
+// page. Transport layers encode it opaquely; stores never retain it.
+type CatalogProjectionCursor struct {
+	Coordinate ResourceCoordinate
+}
+
+// CatalogProjectionPageRequest selects a bounded immutable-coordinate page.
+type CatalogProjectionPageRequest struct {
+	Marketplace MarketplaceID
+	After       *CatalogProjectionCursor
+	Limit       int
+}
+
+// CatalogProjectionSource is exact occurrence provenance for one resource.
+type CatalogProjectionSource struct {
+	RepositoryURL string
+	Path          string
+	Commit        string
+}
+
+// CatalogUnresolvedReference records a direct collection member or include
+// that is not a current catalog-visible anchor.
+type CatalogUnresolvedReference struct {
+	ReferenceType string
+	Coordinate    ResourceCoordinate
+	Reason        string
+}
+
+// CatalogCollectionProjection contains direct, non-recursive collection
+// relations. Resources and Includes only contain current catalog-visible
+// targets; missing declarations remain explicit in UnresolvedReferences.
+type CatalogCollectionProjection struct {
+	Resources            []ResourceCoordinate
+	Includes             []ResourceCoordinate
+	UnresolvedReferences []CatalogUnresolvedReference
+}
+
+// CatalogProjectionResource is the catalog-neutral current resource anchor.
+type CatalogProjectionResource struct {
+	AssessedResourceRevision
+	RegistrySlug string
+	Availability CatalogAvailability
+	Source       *CatalogProjectionSource
+	Collection   *CatalogCollectionProjection
+}
+
+// CatalogAvailability is the catalog-neutral current availability state.
+type CatalogAvailability string
+
+const (
+	CatalogAvailabilityAvailable CatalogAvailability = "available"
+	CatalogAvailabilityBlocked   CatalogAvailability = "blocked"
+	CatalogAvailabilityRevoked   CatalogAvailability = "revoked"
+)
+
+// CatalogProjectionPage is a moving, stateless scan page. CatalogVersion
+// represents the global catalog state observed when the page read began.
+type CatalogProjectionPage struct {
+	CatalogVersion CatalogVersion
+	Resources      []CatalogProjectionResource
+	Next           *CatalogProjectionCursor
+}
+
 // ResourceSearchFilter selects resource revisions for Marketplace discovery
 // endpoints.
 type ResourceSearchFilter struct {
@@ -92,6 +155,10 @@ type MetadataStore interface {
 	// filtered by registry, kind, and name. Callers apply live revocation policy
 	// and select the latest effective revision.
 	SearchResourceRevisions(ctx context.Context, filter ResourceSearchFilter) ([]AssessedResourceRevision, error)
+
+	// ReadCatalogProjectionPage returns current resource anchors in immutable
+	// coordinate order. The cursor is stateless and is never retained.
+	ReadCatalogProjectionPage(ctx context.Context, req CatalogProjectionPageRequest) (CatalogProjectionPage, error)
 
 	// Registry occurrences.
 	GetRegistryOccurrence(ctx context.Context, registry RegistryID, commit string) (RegistryOccurrence, error)

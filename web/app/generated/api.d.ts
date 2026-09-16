@@ -72,6 +72,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the current catalog projection
+         * @description Returns a stateless, bounded keyset page ordered by immutable resource coordinate. Start a scan without `after`; continue with the opaque `next_cursor` until `complete` is true. The scan is eventually consistent rather than snapshot-consistent: consumers compare the global ETag on the first and final pages and schedule a catch-up scan when it changes. `If-None-Match` is accepted only on a first-page request without `after`; continuation pages use only their cursor.
+         */
+        get: operations["listCatalogProjection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/content/sha256/{digest}": {
         parameters: {
             query?: never;
@@ -402,6 +422,90 @@ export interface components {
             features: string[];
             resource_kinds: ("skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection")[];
         };
+        /** @description Direct collection relations only. Resources and includes are not recursively flattened. */
+        CatalogCollection: {
+            /** @description Successfully resolved immediate collection declarations from the includes field. Every coordinate references a catalog-visible row when this collection row is read. */
+            includes: components["schemas"]["CatalogCollectionIncludeReference"][];
+            /** @description Successfully resolved immediate resource declarations from the collection's legacy skills or current resources fields. Every coordinate references a catalog-visible row when this collection row is read. */
+            resources: components["schemas"]["CatalogCollectionResourceReference"][];
+            /** @description Direct resource or include declarations that cannot be safely resolved. They are retained instead of becoming dangling coordinates. */
+            unresolved_references: components["schemas"]["CatalogUnresolvedReference"][];
+        };
+        CatalogCollectionIncludeReference: {
+            /** @enum {string} */
+            kind: "collection";
+            name: string;
+            registry_id: string;
+        };
+        CatalogCollectionResourceReference: {
+            /** @enum {string} */
+            kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
+            name: string;
+            registry_id: string;
+        };
+        /** @description Strong quoted validator representing all catalog-visible current state, not only one page. */
+        CatalogETag: string;
+        /** @description HTTP conditional validator value. It may be `*` or a comma-separated list of quoted entity tags. */
+        CatalogIfNoneMatch: string;
+        /** @description Opaque, stateless encoding of the final immutable resource coordinate from the preceding page. It contains no credentials or server-side session identifier. */
+        CatalogKeysetCursor: string;
+        CatalogPage: {
+            /** @enum {string} */
+            api_version: "agent-marketplace.io/catalog/v1alpha1";
+            /** @description Monotonic global catalog version for catalog-visible current state. */
+            catalog_version: string;
+            /** @description True only on the final page of the current scan. */
+            complete: boolean;
+            marketplace_id: string;
+            next_cursor?: components["schemas"]["CatalogKeysetCursor"];
+            resources: components["schemas"]["CatalogResource"][];
+        };
+        /** @description Current catalog-visible resource with embedded supporting registry identity and display metadata. */
+        CatalogResource: {
+            /**
+             * @description Blocked and revoked rows remain catalog-visible so consumers can distinguish them from removed resources.
+             * @enum {string}
+             */
+            availability: "available" | "blocked" | "revoked";
+            /** @description Present only when kind is collection; non-collection rows omit it. */
+            collection?: components["schemas"]["CatalogCollection"];
+            /** @description Optional normalized author-written resource summary. Collection description is omitted until it is covered by collection revision identity. */
+            description?: string;
+            /**
+             * @description Agent Marketplace resource kind. It is not a Backstage type.
+             * @enum {string}
+             */
+            kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
+            license?: string;
+            name: string;
+            registry_id: string;
+            registry_slug: string;
+            revision: string;
+            source?: components["schemas"]["CatalogSource"];
+        };
+        /** @description Immutable source provenance. It is omitted for legacy occurrences without trustworthy source data. */
+        CatalogSource: {
+            /** @description Exact full-length lowercase Git commit identifier. */
+            commit: string;
+            /** @description Normalized repository-relative path using slash separators. */
+            path: string;
+            /**
+             * Format: uri
+             * @description Safe HTTP(S) repository URL with userinfo, fragments, and credential/signature query values removed.
+             */
+            repository_url: string;
+        };
+        CatalogUnresolvedReference: {
+            /** @enum {string} */
+            kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
+            name: string;
+            /** @description Stable machine-readable resolution reason code. */
+            reason: string;
+            /** @enum {string} */
+            reference_type: "resource" | "include";
+            /** @description Declared registry identifier when it was safe to preserve. */
+            registry_id?: string;
+        };
         /** @description Exact registry occurrence plus the current operator-approved acquisition origin. */
         ExactRegistryOccurrence: {
             /** @enum {string} */
@@ -695,6 +799,49 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Capabilities"];
                 };
+            };
+        };
+    };
+    listCatalogProjection: {
+        parameters: {
+            query?: {
+                /** @description Opaque keyset cursor from the preceding page. Clients must not inspect or construct this value. */
+                after?: components["schemas"]["CatalogKeysetCursor"];
+                /** @description Maximum number of resource rows to return. */
+                limit?: number;
+            };
+            header?: {
+                /** @description HTTP If-None-Match value from the consumer's last completed ingestion. Accepted only on the first page, when `after` is absent. */
+                "If-None-Match"?: components["schemas"]["CatalogIfNoneMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current catalog projection page */
+            200: {
+                headers: {
+                    /** @description Catalog pages are revalidated before reuse. */
+                    "Cache-Control"?: "no-cache";
+                    /** @description Strong quoted validator for all catalog-visible current state, including changes outside this page. */
+                    ETag?: components["schemas"]["CatalogETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogPage"];
+                };
+            };
+            /** @description Catalog-visible state is unchanged since the supplied first-page If-None-Match validator. The response has no body. */
+            304: {
+                headers: {
+                    /** @description Catalog pages are revalidated before reuse. */
+                    "Cache-Control"?: "no-cache";
+                    /** @description Strong quoted validator for all catalog-visible current state. */
+                    ETag?: components["schemas"]["CatalogETag"];
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

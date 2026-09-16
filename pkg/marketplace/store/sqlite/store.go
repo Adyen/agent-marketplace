@@ -221,6 +221,10 @@ func (s *Store) GetMarketplace(ctx context.Context, id store.MarketplaceID) (sto
 }
 
 func (s *Store) PutMarketplace(ctx context.Context, m store.Marketplace) error {
+	return s.withTx(ctx, func(tx *Store) error { return tx.putMarketplace(ctx, m) })
+}
+
+func (s *Store) putMarketplace(ctx context.Context, m store.Marketplace) error {
 	mdJSON, err := marshalJSON(m.InstanceMetadata)
 	if err != nil {
 		return err
@@ -230,7 +234,10 @@ func (s *Store) PutMarketplace(ctx context.Context, m store.Marketplace) error {
 		 VALUES (?, ?, ?, ?)`,
 		m.ID, m.Name, m.CanonicalURL, mdJSON,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.advanceCatalogVersion(ctx)
 }
 
 // -- Registries --
@@ -300,6 +307,10 @@ func (s *Store) scanRegistry(row *sql.Row) (store.Registry, error) {
 }
 
 func (s *Store) PutRegistry(ctx context.Context, registry store.Registry) error {
+	return s.withTx(ctx, func(tx *Store) error { return tx.putRegistry(ctx, registry) })
+}
+
+func (s *Store) putRegistry(ctx context.Context, registry store.Registry) error {
 	if err := registry.Acquisition.Validate(); err != nil {
 		return err
 	}
@@ -350,7 +361,10 @@ func (s *Store) PutRegistry(ctx context.Context, registry store.Registry) error 
 		string(registry.RefreshStatus), registry.RefreshError, timeToMicro(registry.RefreshedAt),
 		timeToMicro(registry.CreatedAt), timeToMicro(registry.UpdatedAt),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.advanceCatalogVersion(ctx)
 }
 
 func (s *Store) ListRegistries(ctx context.Context) ([]store.Registry, error) {
@@ -439,7 +453,7 @@ func (s *Store) GetRegistryBySlug(ctx context.Context, slug string) (store.Regis
 func (s *Store) RegistryHistory(ctx context.Context, id store.RegistryID) ([]store.RegistryOccurrence, error) {
 	rows, err := s.q.QueryContext(ctx,
 		fmt.Sprintf(`SELECT registry_id, ref, roots, revision_commit, manifest_digest, acquisition,
-		        mirrored_artifact_digest, occurred_at
+		        mirrored_artifact_digest, source_origin, occurred_at
 		 FROM registry_occurrences WHERE registry_id=? ORDER BY occurred_at DESC, revision_commit DESC
 		 LIMIT %d`, store.MaxRegistryHistoryEntries),
 		id,

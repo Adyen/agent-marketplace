@@ -14,18 +14,19 @@ import (
 const migrationTable = "marketplace_metadata_v2_migrations"
 const legacyMigrationTable = "marketplace_schema_migrations"
 
-var migrations = []string{migration0}
+var migrations = []string{migration0, migration1, migration2}
 
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-func execWithBusyRetry(ctx context.Context, db execer, query string, args ...any) error {
+func execWithBusyRetry(ctx context.Context, db execer, query string, args ...any) (sql.Result, error) {
 	for attempt := 0; ; attempt++ {
-		if _, err := db.ExecContext(ctx, query, args...); err == nil {
-			return nil
+		result, err := db.ExecContext(ctx, query, args...)
+		if err == nil {
+			return result, nil
 		} else if !isBusy(err) || attempt >= 100 {
-			return err
+			return nil, err
 		}
 		delay := time.Duration(attempt+1) * 10 * time.Millisecond
 		if delay > 100*time.Millisecond {
@@ -33,7 +34,7 @@ func execWithBusyRetry(ctx context.Context, db execer, query string, args ...any
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(delay):
 		}
 	}
@@ -255,4 +256,23 @@ CREATE TABLE jobs (
 );
 CREATE UNIQUE INDEX idx_jobs_idempotency ON jobs(kind, idempotency_key) WHERE idempotency_key <> '';
 CREATE INDEX idx_jobs_lease ON jobs(status, lease_until, kind, attempt, max_attempts, created_at);
+`
+
+// migration1 adds nullable occurrence provenance and the single durable
+// catalog version row without rewriting legacy metadata.
+const migration1 = `
+ALTER TABLE registry_occurrences ADD COLUMN source_origin TEXT;
+ALTER TABLE resource_occurrences ADD COLUMN source_path TEXT;
+
+CREATE TABLE catalog_versions (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    version INTEGER NOT NULL
+);
+INSERT INTO catalog_versions (singleton, version) VALUES (1, 0);
+`
+
+// migration2 preserves the direct collection include declaration separately
+// from direct resource members.
+const migration2 = `
+ALTER TABLE collection_revisions ADD COLUMN includes TEXT NOT NULL DEFAULT '[]';
 `

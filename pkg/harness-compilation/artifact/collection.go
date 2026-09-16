@@ -607,6 +607,8 @@ func CollectionFromIR(c *ir.Collection) (CollectionManifest, error) {
 	m := CollectionManifest{
 		SchemaVersion:    CollectionSchemaV1,
 		Name:             c.Name(),
+		Version:          c.Version,
+		Description:      c.Description,
 		Members:          members,
 		Includes:         append([]string(nil), c.Includes...),
 		SupportedSchemas: []string{CollectionSchemaV1},

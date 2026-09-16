@@ -32,6 +32,13 @@ func TestDefaultCapabilitiesListsAcquisitionModes(t *testing.T) {
 	}
 }
 
+func TestDefaultCapabilitiesAdvertisesCatalogProjectionV1Alpha1(t *testing.T) {
+	caps := DefaultCapabilities()
+	if !slices.Contains(caps.Features, "catalog-projection-v1alpha1") {
+		t.Fatalf("Features %v does not advertise the catalog projection contract", caps.Features)
+	}
+}
+
 func TestDefaultWellKnownAdvertisesBrowserTemplatesOnlyWhenConfigured(t *testing.T) {
 	withoutBrowser := DefaultWellKnown("mp", "https://api.example")
 	if withoutBrowser.BrowserBase != "" || withoutBrowser.BrowserLatestRoute != "" || withoutBrowser.BrowserExactRoute != "" {

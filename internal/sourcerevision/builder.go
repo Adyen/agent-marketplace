@@ -311,7 +311,11 @@ func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRev
 }
 
 func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
-	if entry.Path != "" {
+	// Collections digest over their canonical IR serialization, never the raw
+	// collection definition file: entry.Path is populated for collections so
+	// consumers can locate the definition file, but hashing that file would
+	// change the source-revision compatibility basis.
+	if entry.Path != "" && entry.Kind != ir.KindCollection {
 		name, err := containedPath(root, entry.Path)
 		if err != nil {
 			return nil, err
@@ -331,6 +335,7 @@ func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
 		copy.SourceRef = ""
 		copy.SourceCatalogKey = ""
 		copy.SourcePath = ""
+		copy.Source = ir.SourceRef{}
 		resource = &copy
 	}
 	data, err := json.Marshal(resource)

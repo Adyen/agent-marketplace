@@ -3,6 +3,7 @@ package api
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -44,6 +45,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	requiredPaths := []string{
 		"/.well-known/agent-marketplace.json",
 		"/api/v1/capabilities",
+		"/api/v1/catalog",
 		"/api/v1/instance",
 		"/api/v1/search",
 		"/api/v1/registries",
@@ -79,11 +81,122 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("openapi schemas missing")
 	}
-	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Registry", "RegistryOccurrence", "ExactRegistryOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceAssessment", "AssessmentFinding", "ResourceOccurrence", "Revocation", "ResourceCoordinate", "InspectionManifest", "InspectionFile"} {
+	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Registry", "RegistryOccurrence", "ExactRegistryOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceAssessment", "AssessmentFinding", "ResourceOccurrence", "Revocation", "ResourceCoordinate", "InspectionManifest", "InspectionFile", "CatalogKeysetCursor", "CatalogETag", "CatalogIfNoneMatch", "CatalogPage", "CatalogResource", "CatalogSource", "CatalogCollection", "CatalogCollectionResourceReference", "CatalogCollectionIncludeReference", "CatalogUnresolvedReference"} {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
 		}
 	}
+}
+
+func TestOpenAPICatalogProjectionContract(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	paths := doc["paths"].(map[string]any)
+	operation := paths["/api/v1/catalog"].(map[string]any)["get"].(map[string]any)
+
+	params := operation["parameters"].([]any)
+	gotParams := map[string]map[string]any{}
+	for _, raw := range params {
+		param := raw.(map[string]any)
+		gotParams[param["in"].(string)+":"+param["name"].(string)] = param
+	}
+	for _, name := range []string{"query:after", "query:limit", "header:If-None-Match"} {
+		if _, ok := gotParams[name]; !ok {
+			t.Errorf("catalog endpoint missing %s parameter", name)
+		}
+	}
+	limit := gotParams["query:limit"]["schema"].(map[string]any)
+	if limit["minimum"] != 1 || limit["maximum"] != 500 || limit["default"] != 500 {
+		t.Errorf("catalog limit = %#v, want bounds 1..500 and default 500", limit)
+	}
+	if ref := gotParams["query:after"]["schema"].(map[string]any)["$ref"]; ref != "#/components/schemas/CatalogKeysetCursor" {
+		t.Errorf("catalog after schema ref = %#v", ref)
+	}
+	if ref := gotParams["header:If-None-Match"]["schema"].(map[string]any)["$ref"]; ref != "#/components/schemas/CatalogIfNoneMatch" {
+		t.Errorf("catalog If-None-Match schema ref = %#v", ref)
+	}
+
+	responses := operation["responses"].(map[string]any)
+	for _, status := range []string{"200", "304"} {
+		response, ok := responses[status].(map[string]any)
+		if !ok {
+			t.Errorf("catalog endpoint missing %s response", status)
+			continue
+		}
+		headers := response["headers"].(map[string]any)
+		if ref := headers["ETag"].(map[string]any)["schema"].(map[string]any)["$ref"]; ref != "#/components/schemas/CatalogETag" {
+			t.Errorf("catalog %s ETag ref = %#v", status, ref)
+		}
+		cache := headers["Cache-Control"].(map[string]any)["schema"].(map[string]any)["enum"].([]any)
+		if len(cache) != 1 || cache[0] != "no-cache" {
+			t.Errorf("catalog %s Cache-Control = %#v, want no-cache", status, cache)
+		}
+	}
+	if _, ok := responses["304"].(map[string]any)["content"]; ok {
+		t.Error("catalog 304 response must have no body")
+	}
+	if ref := responses["200"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]; ref != "#/components/schemas/CatalogPage" {
+		t.Errorf("catalog 200 schema ref = %#v", ref)
+	}
+
+	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	page := schemas["CatalogPage"].(map[string]any)
+	assertSchemaRequiredFields(t, "CatalogPage", page, []string{"api_version", "marketplace_id", "catalog_version", "complete", "resources"})
+	if page["additionalProperties"] != false {
+		t.Errorf("CatalogPage additionalProperties = %#v, want false", page["additionalProperties"])
+	}
+	resource := schemas["CatalogResource"].(map[string]any)
+	assertSchemaRequiredFields(t, "CatalogResource", resource, []string{"registry_id", "registry_slug", "kind", "name", "revision", "availability"})
+	properties := resource["properties"].(map[string]any)
+	if _, hasType := properties["type"]; hasType {
+		t.Error("CatalogResource must retain kind rather than introduce type")
+	}
+	if values := properties["kind"].(map[string]any)["enum"].([]any); !sameAnyStrings(values, []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"}) {
+		t.Errorf("catalog kind enum = %#v", values)
+	}
+	if values := properties["availability"].(map[string]any)["enum"].([]any); !sameAnyStrings(values, []string{"available", "blocked", "revoked"}) {
+		t.Errorf("catalog availability enum = %#v", values)
+	}
+	for _, schemaName := range []string{"CatalogSource", "CatalogCollection", "CatalogCollectionResourceReference", "CatalogCollectionIncludeReference", "CatalogUnresolvedReference"} {
+		if schemas[schemaName].(map[string]any)["additionalProperties"] != false {
+			t.Errorf("%s additionalProperties must be false", schemaName)
+		}
+	}
+	assertSchemaRequiredFields(t, "CatalogSource", schemas["CatalogSource"].(map[string]any), []string{"repository_url", "path", "commit"})
+	assertSchemaRequiredFields(t, "CatalogCollection", schemas["CatalogCollection"].(map[string]any), []string{"resources", "includes", "unresolved_references"})
+	assertSchemaRequiredFields(t, "CatalogCollectionResourceReference", schemas["CatalogCollectionResourceReference"].(map[string]any), []string{"registry_id", "kind", "name"})
+	assertSchemaRequiredFields(t, "CatalogCollectionIncludeReference", schemas["CatalogCollectionIncludeReference"].(map[string]any), []string{"registry_id", "kind", "name"})
+	assertSchemaRequiredFields(t, "CatalogUnresolvedReference", schemas["CatalogUnresolvedReference"].(map[string]any), []string{"reference_type", "kind", "name", "reason"})
+	if values := schemas["CatalogCollectionIncludeReference"].(map[string]any)["properties"].(map[string]any)["kind"].(map[string]any)["enum"].([]any); !sameAnyStrings(values, []string{"collection"}) {
+		t.Errorf("catalog collection include kind enum = %#v, want collection only", values)
+	}
+	if values := schemas["CatalogUnresolvedReference"].(map[string]any)["properties"].(map[string]any)["reference_type"].(map[string]any)["enum"].([]any); !sameAnyStrings(values, []string{"resource", "include"}) {
+		t.Errorf("catalog unresolved reference types = %#v", values)
+	}
+	if schema := schemas["CatalogETag"].(map[string]any); schema["pattern"] != `^"[^"]+"$` {
+		t.Errorf("catalog ETag schema = %#v, want strong quoted validator", schema)
+	}
+	if schema := schemas["CatalogIfNoneMatch"].(map[string]any); schema["description"] == nil {
+		t.Error("catalog If-None-Match schema must document HTTP list and wildcard syntax")
+	}
+}
+
+func assertSchemaRequiredFields(t *testing.T, schemaName string, schema map[string]any, want []string) {
+	t.Helper()
+	if got := requiredFields(schema); !slices.Equal(got, want) {
+		t.Errorf("%s required fields = %#v, want %#v", schemaName, got, want)
+	}
+}
+
+func sameAnyStrings(raw []any, want []string) bool {
+	if len(raw) != len(want) {
+		return false
+	}
+	for index, value := range raw {
+		if value != want[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {

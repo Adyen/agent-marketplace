@@ -43,6 +43,10 @@ type Collection struct {
 	// discovery. Used as the default path for collection skills that do not
 	// specify an explicit path.
 	SourcePath string `yaml:"-"`
+	// SourceFile is the path of this collection definition relative to
+	// SourcePath. It preserves the exact file from which the collection was
+	// indexed without exposing a workspace-local absolute path.
+	SourceFile string `yaml:"-"`
 }
 
 // Label returns the human-readable label for this collection.
@@ -119,6 +123,7 @@ func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([
 		col.SourceRef = ref
 		col.SourceCatalogKey = catalogKey
 		col.SourcePath = path
+		col.SourceFile = filepath.ToSlash(filepath.Join("collections", entry.Name(), collectionFileName))
 		results = append(results, *col)
 	}
 
