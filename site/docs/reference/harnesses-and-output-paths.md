@@ -91,9 +91,12 @@ Factory commands are materialized as regular files rather than symlinks because 
 | Kind | Repository path | Machine path |
 |---|---|---|
 | skill | `.gemini/skills/<name>/SKILL.md` | `~/.gemini/skills/<name>/SKILL.md` |
-| command | `.gemini/commands/<name>.md` | `~/.gemini/commands/<name>.md` |
-| hook | `.gemini/settings.json` | `~/.gemini/settings.json` |
-| mcp | `.gemini/gemini-extension.json` | `~/.gemini/gemini-extension.json` |
+| command | `.gemini/commands/<name>.toml` | `~/.gemini/commands/<name>.toml` |
+| subagent | `.gemini/agents/<name>.md` | `~/.gemini/agents/<name>.md` |
+| hook | `.gemini/settings.json` under `hooks` | `~/.gemini/settings.json` under `hooks` |
+| mcp | `.gemini/settings.json` under `mcpServers` | `~/.gemini/settings.json` under `mcpServers` |
+
+The Gemini compiler also emits a `gemini-extension.json` fragment, but that is a compilation artifact: native installation routes its `mcpServers` entries into the scope's `settings.json` and never installs `gemini-extension.json` itself.
 
 ### Windsurf
 

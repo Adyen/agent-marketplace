@@ -56,3 +56,8 @@ jobs:
           ! grep -Fq 'href="/agent-marketplace/marketplace/"' .vitepress/dist/index.html
           grep -Fq 'href="/agent-marketplace/docs/"' .vitepress/dist/index.html
           test -f .vitepress/dist/docs/index.html
+          # The navbar Marketplace link must resolve to the origin root from
+          # nested documentation pages as well as the landing page.
+          grep -Fq 'href="/marketplace/"' .vitepress/dist/docs/reference/cli.html
+          ! grep -Fq 'href="../marketplace/"' .vitepress/dist/docs/reference/cli.html
+          ! grep -Fq 'href="/agent-marketplace/marketplace/"' .vitepress/dist/docs/reference/cli.html

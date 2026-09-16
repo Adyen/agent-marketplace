@@ -36,9 +36,11 @@ export default defineConfig({
     siteTitle: 'agent-marketplace',
 
     nav: [
-      // Resolve from the site path to the sibling app at the shared origin root.
-      // target keeps VitePress from handling the sibling app as an SPA route.
-      { text: 'Marketplace', link: `..${MARKETPLACE_PATH}`, target: '_self' },
+      // The Marketplace is a sibling app at the shared origin root, outside
+      // SITE_BASE. Nav `link` values pass through VitePress's withBase/relative
+      // normalization, which misresolves from nested docs pages or a non-root
+      // base, so a component item renders the origin-root anchor directly.
+      { component: 'MarketplaceNavLink' },
       { text: 'Docs', link: DOCS_PATH, activeMatch: `^${DOCS_PATH}` }
     ],
 
