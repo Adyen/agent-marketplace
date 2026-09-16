@@ -442,14 +442,16 @@ func TestServerRoutes(t *testing.T) {
 
 type probingBlobStore struct {
 	store.BlobStore
-	probeErr error
-	probes   int
-	gets     int
-	exists   int
+	probeErr      error
+	probes        int
+	gets          int
+	exists        int
+	probeDeadline time.Time
 }
 
-func (s *probingBlobStore) Probe(context.Context) error {
+func (s *probingBlobStore) Probe(ctx context.Context) error {
 	s.probes++
+	s.probeDeadline, _ = ctx.Deadline()
 	return s.probeErr
 }
 
@@ -522,6 +524,12 @@ func TestReadyzProbesBlobStoreOnce(t *testing.T) {
 	}
 	if blobs.probes != 1 {
 		t.Fatalf("readyz probed %d times, want 1", blobs.probes)
+	}
+	if blobs.probeDeadline.IsZero() {
+		t.Fatalf("probe context has no deadline")
+	}
+	if d := time.Until(blobs.probeDeadline); d > blobProbeTimeout {
+		t.Fatalf("probe deadline %s exceeds %s", d, blobProbeTimeout)
 	}
 	if blobs.gets != 0 || blobs.exists != 0 {
 		t.Fatalf("readyz read catalog blobs: gets=%d exists=%d, want 0/0", blobs.gets, blobs.exists)
