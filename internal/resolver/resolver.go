@@ -1245,6 +1245,7 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 
 func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, []error) {
 	occurrences := make(map[resourceSelection][]skillOccurrence)
+	orderToIndex := make(map[int]int, len(artifacts))
 	for i, a := range artifacts {
 		if !HasAdditiveSources(a.Kind) {
 			continue
@@ -1253,6 +1254,7 @@ func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, [
 		if a.Via != "" {
 			order += len(artifacts)
 		}
+		orderToIndex[order] = i
 		url := a.RegistryURL
 		if a.IsMarketplace {
 			url = a.MarketplaceURL
@@ -1266,7 +1268,9 @@ func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, [
 	winners, errs := pickWinners(occurrences)
 	keep := make(map[int]bool, len(winners))
 	for _, winner := range winners {
-		keep[winner.order%len(artifacts)] = true
+		if index, ok := orderToIndex[winner.order]; ok {
+			keep[index] = true
+		}
 	}
 	filtered := make([]ResolvedArtifact, 0, len(artifacts))
 	for i, a := range artifacts {
@@ -3416,9 +3420,13 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 				if specificity < 0 {
 					continue
 				}
-				if config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) > 0 {
+				precedence := config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence)
+				if precedence > 0 {
 					winner = occ
 					continue
+				}
+				if precedence == 0 && HasAdditiveSources(occ.resolved.Kind) && occ.resolved.Via == "" && winner.resolved.Via != "" {
+					winner = occ
 				}
 			}
 		}

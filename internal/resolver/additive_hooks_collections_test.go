@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -228,4 +229,72 @@ func testHook(command string) *ir.Hook {
 
 func collectionWithHook(name string) *ir.Collection {
 	return ir.NewCollection(name, "", "", []ir.CollectionMember{{Name: "PreToolUse-command", Kind: ir.KindHook}}, nil, nil, ir.SourceRef{})
+}
+
+func TestResolveAdditiveHooksPreservesInterleavedOrder(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		direct             bool
+		requiredCollection bool
+	}{
+		{name: "collection only"},
+		{name: "collection before direct duplicate", direct: true},
+		{name: "required collection outranks optional direct duplicate", direct: true, requiredCollection: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			a, b, c := "git@example.com:collection.git", "git@example.com:middle.git", "git@example.com:independent.git"
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: a, Ref: "main", Source: config.RepoCommitted, Required: test.requiredCollection, Collections: ks("guards")},
+				{URL: b, Ref: "main", Source: config.RepoCommitted, Skills: ks("middle")},
+			}}
+			if test.direct {
+				cfg.Registries = append(cfg.Registries, config.RegistryEntry{URL: a, Ref: "main", Source: config.RepoCommitted, Hooks: ks("PreToolUse-command")})
+			}
+			cfg.Registries = append(cfg.Registries, config.RegistryEntry{URL: c, Ref: "main", Source: config.RepoCommitted, Hooks: ks("PreToolUse-command")})
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				ck(a, "main"): {
+					{Kind: ir.KindCollection, Name: "guards", Resource: collectionWithHook("guards")},
+					{Kind: ir.KindHook, Name: "PreToolUse-command", Resource: testHook("echo shared")},
+				},
+				ck(b, "main"): {{Kind: ir.KindSkill, Name: "middle", Resource: ir.NewSkill("middle", "", "body", nil, nil, ir.SourceRef{})}},
+				ck(c, "main"): {{Kind: ir.KindHook, Name: "PreToolUse-command", Resource: testHook("echo independent")}},
+			}
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(errs) != 0 {
+				t.Fatalf("Resolve errors: %v", errs)
+			}
+			var got []string
+			for _, artifact := range resolved {
+				got = append(got, artifact.Kind.String()+":"+artifact.Name+"|"+artifact.RegistryURL+"|"+artifact.Via)
+				if artifact.Kind == ir.KindHook {
+					if artifact.RegistryURL == a && artifact.Required != test.requiredCollection {
+						t.Fatalf("collection hook required=%v, want %v", artifact.Required, test.requiredCollection)
+					}
+					wantCommand := "echo shared"
+					if artifact.RegistryURL == c {
+						wantCommand = "echo independent"
+					}
+					if h, ok := artifact.Resource.(*ir.Hook); !ok || h.Command != wantCommand {
+						t.Fatalf("wrong hook payload for %s: %#v", artifact.RegistryURL, artifact.Resource)
+					}
+				}
+			}
+			want := []string{
+				"hook:PreToolUse-command|git@example.com:collection.git|collection:guards",
+				"skill:middle|git@example.com:middle.git|",
+				"hook:PreToolUse-command|git@example.com:independent.git|",
+			}
+			if test.direct && !test.requiredCollection {
+				want = []string{
+					"skill:middle|git@example.com:middle.git|",
+					"hook:PreToolUse-command|git@example.com:collection.git|",
+					"hook:PreToolUse-command|git@example.com:independent.git|",
+				}
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("resolved order/providers = %v, want %v", got, want)
+			}
+		})
+	}
 }
