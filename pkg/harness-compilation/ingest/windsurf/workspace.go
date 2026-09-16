@@ -1,6 +1,7 @@
 package windsurf
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -34,6 +35,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 	servers := map[string]*ir.McpServer{}
 	rules := map[string]*ir.Rule{}
 	var diags []diag.Diagnostic
+	var currentHooks []*ir.Hook
 
 	for _, root := range roots {
 		loadedSkills, err := loadSkills(root)
@@ -61,13 +63,17 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 			commands[name] = command
 		}
 
-		loadedHooks, hookDiags, err := loadHooksRoot(root)
+		loadedHooks, hookDiags, err := loadHooksRoot(root, opts)
 		if err != nil {
 			return nil, err
 		}
 		diags = append(diags, hookDiags...)
-		for name, hook := range loadedHooks {
-			hooks[name] = hook
+		if opts.LegacyHookInventory {
+			for name, hook := range loadedHooks {
+				hooks[name] = hook
+			}
+		} else {
+			currentHooks = append(currentHooks, sortHooks(loadedHooks)...)
 		}
 
 		loadedServers, mcpDiags, err := loadMcpRoot(root)
@@ -90,6 +96,12 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 				Message:  "AGENTS.md is handled by existing conventions; no Windsurf subagent resources were synthesized",
 				Source:   diag.SourceRef{File: agentsPath, Line: 1},
 			})
+		}
+	}
+	if !opts.LegacyHookInventory {
+		distinctHookNames(currentHooks)
+		for _, hook := range currentHooks {
+			hooks[hook.Name()] = hook
 		}
 	}
 
@@ -169,15 +181,22 @@ func loadWorkflows(root workspaceRoot) (map[string]*ir.Command, []diag.Diagnosti
 	return resources, diags, nil
 }
 
-func loadHooksRoot(root workspaceRoot) (map[string]*ir.Hook, []diag.Diagnostic, error) {
-	hooks, diags, err := LoadHooks(root.fs, path.Join(root.base, "hooks"))
-	if err != nil && !isNotExist(err) {
-		return nil, nil, err
+func loadHooksRoot(root workspaceRoot, opts LoadOptions) (map[string]*ir.Hook, []diag.Diagnostic, error) {
+	var hooks []*ir.Hook
+	var diags []diag.Diagnostic
+	var err error
+	if opts.LegacyHookInventory {
+		hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks"), opts)
+		if errors.Is(err, fs.ErrNotExist) {
+			hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks.json"), opts)
+		}
+	} else {
+		hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks.json"), opts)
+		if errors.Is(err, fs.ErrNotExist) {
+			hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks"), opts)
+		}
 	}
-	if isNotExist(err) {
-		hooks, diags, err = LoadHooks(root.fs, path.Join(root.base, "hooks.json"))
-	}
-	if err != nil && !isNotExist(err) {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, err
 	}
 	resources := map[string]*ir.Hook{}

@@ -698,8 +698,9 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	artifactMeta := make(map[outputKey]map[string]skillLink)
 	ownedState := make(map[outputKey]any)
 	ownedAggregates := ownedAggregateState{values: ownedState}
+	hookSupport, supportConflicts := prepareHookSupport(work)
 
-	for _, w := range work {
+	for index, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
 		binding, hasBinding, bindingErr := materializeAdapterFor(w.target)
 		if bindingErr != nil {
@@ -710,6 +711,12 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		var aggregateHandler ownedAggregateHandler
 		if hasBinding {
 			aggregateHandler = binding.handler
+		}
+		if paths := supportConflicts[index]; len(paths) > 0 {
+			blocked.blockResource(key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeMaterializeHookSupportConflict, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: fmt.Sprintf("hook support paths conflict across selected sources: %s; affected hooks were not emitted", strings.Join(paths, ", ")), Hint: "Rename the conflicting support files or exclude one hook provider", Source: compilepkg.SourceOf(w.skill.Resource)})
+			continue
 		}
 		compileOptions := []hcc.Option{}
 		if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
@@ -851,7 +858,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			// (which only removes symlinks, never the regular hooks.json file)
 			// when a hook is excluded.
 			if resourceKind == ir.KindHook {
-				result.Artifacts = append(result.Artifacts, collectHookSupportFiles(materializationSourcePath(w.skill), w.target)...)
+				result.Artifacts = append(result.Artifacts, hookSupport[index]...)
 			}
 			var linked []compiledResourceLink
 			result.Artifacts, linked = splitResourceArtifacts(w.target, resourceKind, w.skill.Name, result.Artifacts)
@@ -1110,6 +1117,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		if componentBlocked(blocked, plans[i].reportPrefix) {
 			plans[i].mode = hcc.WriteModeOverwrite
 			plans[i].prune = false
+			dirsCoveredByMergePlans[plans[i].outDir] = true
 		}
 	}
 	for _, plan := range plans {
@@ -1214,6 +1222,14 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 				writeDiags[i].Target = string(key.target)
 			}
 			report.Diags = append(report.Diags, writeDiags...)
+		}
+		if componentBlocked(blocked, plan.reportPrefix) && componentName(plan.reportPrefix) == componentName(resourceInstallDirRel(key.target, ir.KindHook)) {
+			retained, err := retainBlockedHookArtifacts(plan.outDir, mergeArtifacts)
+			if err != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("retain blocked hook entries in %s: %v", plan.outDir, err)})
+				continue
+			}
+			mergeArtifacts = retained
 		}
 		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, wantPrune)
 		if len(mergeArtifacts) > 0 {
@@ -2182,6 +2198,10 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 		if d.IsDir() {
 			// Skip directories that were already handled by a
 			// merge-artifact plan (materializeMergeArtifacts).
+			rel, relErr := filepath.Rel(outDir, path)
+			if relErr == nil && protected[filepath.ToSlash(rel)+"/"] {
+				return filepath.SkipDir
+			}
 			if dirsCoveredByMergePlans[path] {
 				return filepath.SkipDir
 			}
@@ -2881,6 +2901,9 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 			continue
 		}
 		if key.target == hcc.Target(targetmeta.TargetCodex) && !state.matchesCodexRoot(entry) {
+			continue
+		}
+		if info, ok := harness.TargetInfoFor(key.target); ok && info.PreservesLegacyPath(entry.Path, key.machineScope) {
 			continue
 		}
 		rootID, root, rel, err := portableEntryDestination(key, outDir, repoRoot, entry.Path)

@@ -1,6 +1,9 @@
 {
-  "command": "scripts/check-mcp.sh",
-  "event": "pre_mcp_tool_use",
-  "matcher": "mcp__myserver__mytool",
-  "type": "command"
+  "hooks": {
+    "pre_mcp_tool_use": [
+      {
+        "command": "scripts/check-mcp.sh"
+      }
+    ]
+  }
 }

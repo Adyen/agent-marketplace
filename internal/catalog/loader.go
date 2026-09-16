@@ -162,13 +162,17 @@ func WithLocalConfigDir(dir string) LoadOption {
 }
 
 func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
-	cat, err := Load(dir, sourceHarness)
+	return DiscoverWithOptions(dir, sourceHarness, IngestOptions{})
+}
+
+func DiscoverWithOptions(dir, sourceHarness string, opts IngestOptions) (LoadedCatalog, error) {
+	cat, err := LoadWithOptions(dir, sourceHarness, opts)
 	if err != nil {
 		// Load failed — likely no recognizable layout at this directory.
 		// Before falling back to DiscoverSkills, check for sub-bundles.
 		// If subdirectories contain bundle roots, load them recursively
 		// instead of relying on the legacy skill-only discovery.
-		subBundles := scanForSubBundles(dir, sourceHarness)
+		subBundles := scanForSubBundles(dir, sourceHarness, opts)
 		if len(subBundles) > 0 {
 			return discoverSubBundles(subBundles)
 		}
@@ -177,17 +181,21 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 		// original load error so the caller knows discovery failed.
 		return LoadedCatalog{}, err
 	}
-	return cat.Discover(dir, sourceHarness)
+	return cat.discoverWithOptions(dir, sourceHarness, opts)
 }
 
 func (cat *Catalog) Discover(dir, sourceHarness string) (LoadedCatalog, error) {
+	return cat.discoverWithOptions(dir, sourceHarness, IngestOptions{})
+}
+
+func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOptions) (LoadedCatalog, error) {
 	// Vacant-lot condition: zero entries and no warning/error diagnostics.
 	// HCC scanned the directory, found nothing, and had nothing to complain
 	// about. This can happen when the directory is a meta-directory containing
 	// multiple independent bundle subdirectories. Scan for sub-bundles and
 	// recurse into them.
 	if len(cat.Entries) == 0 && !hasWarningOrHigher(cat.Diagnostics) {
-		subBundles := scanForSubBundles(dir, sourceHarness)
+		subBundles := scanForSubBundles(dir, sourceHarness, opts)
 		if len(subBundles) > 0 {
 			return discoverSubBundles(subBundles)
 		}
@@ -265,7 +273,7 @@ func (cat *Catalog) Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	// contain any missed resources — the warning would be a false positive.
 	if len(cat.Entries) > 0 {
 		var ignored []string
-		for _, subBundle := range scanForSubBundles(dir, sourceHarness) {
+		for _, subBundle := range scanForSubBundles(dir, sourceHarness, opts) {
 			if !subBundle.coveredBy(cat.Entries, dir) {
 				ignored = append(ignored, subBundle.path)
 			}
@@ -394,9 +402,9 @@ func subPathRel(path, prefix string) bool {
 // when they yield resources, warning/error diagnostics, or a load error.
 // Retained candidates own their children; empty candidates are traversed.
 // Results retain the load outcome and are sorted deterministically by path.
-func scanForSubBundles(dir, sourceHarness string) []subBundle {
+func scanForSubBundles(dir, sourceHarness string, options ...IngestOptions) []subBundle {
 	var bundles []subBundle
-	scanSubBundlesWalk(dir, sourceHarness, &bundles)
+	scanSubBundlesWalk(dir, sourceHarness, &bundles, options...)
 	sort.Slice(bundles, func(i, j int) bool { return bundles[i].path < bundles[j].path })
 	return bundles
 }
@@ -407,8 +415,12 @@ type subBundle struct {
 	err     error
 }
 
-func loadSubBundle(path, sourceHarness string) subBundle {
-	cat, err := Load(path, sourceHarness)
+func loadSubBundle(path, sourceHarness string, options ...IngestOptions) subBundle {
+	var opts IngestOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	cat, err := LoadWithOptions(path, sourceHarness, opts)
 	return subBundle{path: path, catalog: cat, err: err}
 }
 
@@ -426,7 +438,7 @@ func (b subBundle) coveredBy(entries []Entry, dir string) bool {
 	return catalogCoversSubBundles(entries, dir, paths)
 }
 
-func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle) {
+func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle, options ...IngestOptions) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -441,7 +453,7 @@ func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle) {
 		}
 		subDir := filepath.Join(dir, name)
 		if hasBundleRoot(subDir) {
-			candidate := loadSubBundle(subDir, sourceHarness)
+			candidate := loadSubBundle(subDir, sourceHarness, options...)
 			if candidate.err != nil || len(candidate.catalog.Entries) > 0 || hasWarningOrHigher(candidate.catalog.Diagnostics) {
 				*bundles = append(*bundles, candidate)
 				continue
@@ -450,7 +462,7 @@ func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle) {
 		} else if hasRootSkill(os.DirFS(subDir)) {
 			continue
 		}
-		scanSubBundlesWalk(subDir, sourceHarness, bundles)
+		scanSubBundlesWalk(subDir, sourceHarness, bundles, options...)
 	}
 }
 

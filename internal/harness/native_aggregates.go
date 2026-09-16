@@ -22,8 +22,9 @@ type NativeAggregateInstall struct {
 }
 
 var nativeAggregateInstalls = map[hcc.Target][]NativeAggregateInstall{
-	hcc.TargetClaude: {{ID: "mcp", ProjectPath: ".mcp.json", UserPath: ".claude.json", ScopeRoot: true, Routes: []AggregateRoute{{ArtifactPath: ".mcp.json", Container: "mcpServers"}}}},
-	hcc.TargetGemini: {{ID: "settings", ProjectPath: "settings.json", UserPath: "settings.json", Routes: []AggregateRoute{{ArtifactPath: "gemini-extension.json", Container: "mcpServers"}, {ArtifactPath: ".gemini/settings.json", Container: "hooks"}}}},
+	hcc.TargetClaude:   {{ID: "mcp", ProjectPath: ".mcp.json", UserPath: ".claude.json", ScopeRoot: true, Routes: []AggregateRoute{{ArtifactPath: ".mcp.json", Container: "mcpServers"}}}},
+	hcc.TargetGemini:   {{ID: "settings", ProjectPath: "settings.json", UserPath: "settings.json", Routes: []AggregateRoute{{ArtifactPath: "gemini-extension.json", Container: "mcpServers"}, {ArtifactPath: ".gemini/settings.json", Container: "hooks"}}}},
+	hcc.TargetWindsurf: {{ID: "hooks", ProjectPath: ".windsurf/hooks.json", UserPath: "hooks.json", Routes: []AggregateRoute{{ArtifactPath: ".windsurf/hooks.json", Container: "hooks"}}}},
 }
 
 func NativeAggregateBackupFiles(target hcc.Target) (map[string]string, error) {
@@ -90,8 +91,8 @@ func nativeAggregateDestinations(target hcc.Target, machineScope bool, repoRoot,
 			if prefix := base.Info.ArtifactRootPrefix; prefix != "" {
 				old = strings.TrimPrefix(old, prefix+"/")
 			}
-			destinations[0].Info.AggregateFiles.Project = slices.DeleteFunc(slices.Clone(destinations[0].Info.AggregateFiles.Project), func(s string) bool { return s == old })
-			destinations[0].Info.AggregateFiles.User = slices.DeleteFunc(slices.Clone(destinations[0].Info.AggregateFiles.User), func(s string) bool { return s == old })
+			destinations[0].Info.AggregateFiles.Project = slices.DeleteFunc(slices.Clone(destinations[0].Info.AggregateFiles.Project), func(s string) bool { return s == old || (!install.ScopeRoot && s == install.ProjectPath) })
+			destinations[0].Info.AggregateFiles.User = slices.DeleteFunc(slices.Clone(destinations[0].Info.AggregateFiles.User), func(s string) bool { return s == old || (!install.ScopeRoot && s == install.UserPath) })
 		}
 	}
 	return destinations, nil

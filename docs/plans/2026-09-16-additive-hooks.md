@@ -75,6 +75,31 @@ Both work packages are required before closing the canonical issue. No new flags
 
 Completed in the first implementation checkpoint: cross-registry resolution, catalog provider visibility, collection expansion and reconciliation, `install --all`/`--from` and single-provider removal, with unit, integration, and declarative E2E coverage.
 
-Still pending: the remaining ingester audit and Windsurf unique aliases, native aggregate output with old-output preservation, source-revision compatibility, support-file basename collisions, full target/scope/mode verification, and real-terminal verification. Issue #11 remains open.
+At that checkpoint, the remaining work was the ingester audit and Windsurf unique aliases, native aggregate output with old-output preservation, source-revision compatibility, support-file basename collisions, full target/scope/mode verification, and real-terminal verification.
 
 Resolver benchmark on Apple M4 Max, darwin/arm64, 20 registries × 10 hook names, five 2-second repetitions, log output disabled and no filesystem/network I/O. Median direct resolution: 554824 → 737985 ns/op; 891870 → 1564506 B/op; 2371 → 2188 allocs/op. Median collection resolution: 225049 → 657873 ns/op; 185406 → 1463528 B/op; 616 → 1706 allocs/op. Both fixtures previously returned only 10 hooks and now retain 200; this measures the cost of retaining previously dropped work, not a speedup. Baseline was reconstructed from cb8d3bd in a detached worktree. The benchmark covers resolution only, not the entire sync lifecycle.
+
+## Completed implementation
+
+- Independent selected hooks remain additive through direct resolution, collection expansion, catalog views, install-all, and provider-specific removal. Non-hook winner selection is unchanged.
+- Windsurf now emits the documented native `hooks.json` event arrays. Current ingestion preserves all handlers and retains the previous last-handler survivor's selector; legacy per-event input remains supported. Existing `hooks/` output directories and their portable ownership records are preserved. New support files use `hook-support/`.
+- Source revision v3 selects corrected Windsurf ingestion. Supported v1/v2 inventories retain their original interpretation, verified by independent fixed vectors and a real CLI locked-sync/explicit-upgrade regression. No automatic old-lock migration occurs.
+- Support-file conflicts are checked before aggregate mutation. Different bytes or permissions at one target/scope output path refuse all affected hooks with `materialize.hook.support-conflict`. Prior installed hooks and scripts survive; valid independent hook contributions can still be merged.
+- Blocked hook components are protected from the later uncovered stale-file prune. Partial desired aggregates retain previous managed entries through the existing format-preserving reconciliation helpers.
+- Regression coverage includes all seven targets across both scopes and both materialization modes, malformed native aggregates, incomplete hook compilation, and authentic legacy portable ownership with a positive stale-prune control.
+
+Windsurf ingestion benchmark (100 handlers in one native input, five 2-second repetitions, Apple M4 Max): median 137365 → 168711 ns/op, approximately 268664 → 315920 B/op, 3238 → 3476 allocs/op. Old workspace ingestion retained one handler; current ingestion retains all 100. Per-base suffix cursors avoid quadratic name allocation.
+
+Mixed materialization dry-run benchmark (100 mixed resources, Factory target, five 2-second repetitions, existing log-discard helper enabled): median 1684079 → 1735174 ns/op, approximately 1477288 → 1493403 B/op, 17312 → 17328 allocs/op. Fixture preparation is outside the timed loop; the hook source path is intentionally absent. This is not a hook-support I/O or end-to-end sync benchmark, and no statistical speedup is claimed.
+
+## Verification results
+
+- Root Go suite exercised in full. Outdated Windsurf golden/backup-path expectations were corrected; both affected packages passed on re-run.
+- Full CLI E2E suite exercised serially. Its old current-revision assertion was updated to v3 and the affected lifecycle test passed on re-run; other cases passed in the full run.
+- `make ci-lint` and `make build` passed.
+- `make harness-compat-check` and `make harness-compat-config` passed.
+- `make tui-qa-check` and `make tui-qa` passed, including all eight documented user journeys.
+- Dedicated all-target/scope/mode additive-hook, support-conflict preservation, malformed aggregate, incomplete-hook retention, legacy portable-ownership, and CLI legacy-lock upgrade tests passed.
+- `git diff --check` passed.
+
+E2E gates share a test binary and must run sequentially. An initial concurrent run collided on that binary; the subsequent serial run and focused correction check are the relevant evidence. Native harness inspection remains CI-owned; configuration-only verification does not prove native hook execution. The PR remains draft for review and CI.

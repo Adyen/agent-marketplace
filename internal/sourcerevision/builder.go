@@ -93,10 +93,11 @@ func Build(input Input) (Result, error) {
 		return Result{}, err
 	}
 
-	cat, err := catalog.Load(root, input.SourceHarness)
+	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks}
+	cat, err := catalog.LoadWithOptions(root, input.SourceHarness, options)
 	loaded := cat
 	if err != nil {
-		discovered, discoverErr := catalog.Discover(root, input.SourceHarness)
+		discovered, discoverErr := catalog.DiscoverWithOptions(root, input.SourceHarness, options)
 		if discoverErr != nil {
 			return Result{}, fmt.Errorf("%w: load root %q: %w", ErrCatalog, input.RootPath, err)
 		}

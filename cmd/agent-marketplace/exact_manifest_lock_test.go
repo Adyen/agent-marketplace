@@ -51,7 +51,7 @@ func TestLegacyRevisionRetainedUntilExplicitUpgrade(t *testing.T) {
 	repoRoot, _, working, lockPath := setupExactManifestRegistry(t)
 	doc := readExactManifestLock(t, lockPath)
 	root := &doc.Registries[0].Roots[0]
-	if root.RevisionSchema != "v2" {
+	if root.RevisionSchema != "v3" {
 		t.Fatalf("new lock schema = %s", root.RevisionSchema)
 	}
 	legacy, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: working, RootPath: root.Path, SourceHarness: root.SourceHarness, RevisionSchema: "v1"})
@@ -78,17 +78,17 @@ func TestLegacyRevisionRetainedUntilExplicitUpgrade(t *testing.T) {
 		t.Fatalf("explicit upgrade: %v\n%s", err, output)
 	}
 	upgraded := readExactManifestLock(t, lockPath)
-	if upgraded.Registries[0].Commit != doc.Registries[0].Commit || upgraded.Registries[0].Roots[0].RevisionSchema != "v2" {
-		t.Fatalf("unchanged upstream should regenerate v2 at same commit: %+v", upgraded)
+	if upgraded.Registries[0].Commit != doc.Registries[0].Commit || upgraded.Registries[0].Roots[0].RevisionSchema != "v3" {
+		t.Fatalf("unchanged upstream should regenerate v3 at same commit: %+v", upgraded)
 	}
 	assertMaterializedSkillContains(t, repoRoot, "alpha", "Alpha locked")
 	current, err := os.ReadFile(lockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unknown := bytes.Replace(current, []byte("revision_schema: v2"), []byte("revision_schema: v99"), 1)
+	unknown := bytes.Replace(current, []byte("revision_schema: v3"), []byte("revision_schema: v99"), 1)
 	if bytes.Equal(current, unknown) {
-		t.Fatal("fixture lacks v2 schema")
+		t.Fatal("fixture lacks v3 schema")
 	}
 	if err := os.WriteFile(lockPath, unknown, 0o644); err != nil {
 		t.Fatal(err)

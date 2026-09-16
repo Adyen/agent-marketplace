@@ -85,7 +85,7 @@ func TestLockfileFileURLGitLifecycleRetainsExactCommitUntilUpdate(t *testing.T) 
 	}
 	lockBefore := fixture.env.ReadFile("/workspace/.agents/lock.yaml")
 	canonicalURL := strings.TrimSuffix(literalURL, ".git")
-	for _, want := range []string{"apiVersion: agent-marketplace-lock/v1", "scope: repo", "url: " + canonicalURL, "commit: sha1:", "revision_schema: v2"} {
+	for _, want := range []string{"apiVersion: agent-marketplace-lock/v1", "scope: repo", "url: " + canonicalURL, "commit: sha1:", "revision_schema: v3"} {
 		if !strings.Contains(lockBefore, want) {
 			t.Fatalf("first sync lock missing %q:\n%s", want, lockBefore)
 		}

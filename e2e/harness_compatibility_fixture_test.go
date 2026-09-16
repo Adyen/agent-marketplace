@@ -125,7 +125,7 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 		}
 		paths["command"] = []string{root + "/" + workflow + "/" + f.name("command") + ".md"}
 		paths["subagent"] = nil
-		paths["hook"] = []string{root + "/hooks/pre_run_command.json", root + "/hooks/pre_user_prompt.json"}
+		paths["hook"] = []string{root + "/hooks.json"}
 		paths["mcp"] = []string{root + "/mcp_config.json"}
 	case "devin":
 		paths["command"] = []string{root + "/skills/" + f.name("command") + "/SKILL.md"}

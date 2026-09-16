@@ -1,5 +1,9 @@
 {
-  "command": "scripts/on-prompt.sh",
-  "event": "pre_user_prompt",
-  "type": "command"
+  "hooks": {
+    "pre_user_prompt": [
+      {
+        "command": "scripts/on-prompt.sh"
+      }
+    ]
+  }
 }

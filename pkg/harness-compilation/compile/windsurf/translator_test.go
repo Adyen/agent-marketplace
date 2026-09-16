@@ -191,11 +191,14 @@ func TestTranslateHook_PreservesWindsurfSidecar(t *testing.T) {
 	if len(diags) != 0 || len(artifacts) != 1 {
 		t.Fatalf("Translate(hook) = artifacts %d, diags %#v", len(artifacts), diags)
 	}
-	var body map[string]any
-	if err := json.Unmarshal(artifacts[0].Bytes, &body); err != nil {
+	var doc map[string]any
+	if err := json.Unmarshal(artifacts[0].Bytes, &doc); err != nil {
 		t.Fatalf("unmarshal hook: %v", err)
 	}
-	if body["event"] != "post_setup_worktree" || body["powershell"] != "Write-Host setup" || body["show_output"] != false || body["working_dir"] != "/tmp/project" {
+	hooks := doc["hooks"].(map[string]any)
+	groups := hooks["post_setup_worktree"].([]any)
+	body := groups[0].(map[string]any)
+	if body["powershell"] != "Write-Host setup" || body["show_output"] != false || body["working_directory"] != "/tmp/project" {
 		t.Fatalf("native sidecar fields = %#v", body)
 	}
 }
@@ -220,8 +223,8 @@ func TestTranslateHook_WithPluginRoot(t *testing.T) {
 	}
 
 	artifact := singleArtifact(t, result.Artifacts)
-	if artifact.Path != ".windsurf/hooks/pre_read_code.json" {
-		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks/pre_read_code.json")
+	if artifact.Path != ".windsurf/hooks.json" {
+		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks.json")
 	}
 	assertGoldenFile(t, "testdata/hook_with_plugin_root.golden", artifact.Bytes)
 }
@@ -277,8 +280,8 @@ func TestTranslateHook_PreToolUse_Write(t *testing.T) {
 	}
 
 	artifact := singleArtifact(t, artifacts)
-	if artifact.Path != ".windsurf/hooks/pre_write_code.json" {
-		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks/pre_write_code.json")
+	if artifact.Path != ".windsurf/hooks.json" {
+		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks.json")
 	}
 	assertGoldenFile(t, "testdata/hook_pre_write_code.golden", artifact.Bytes)
 }
@@ -304,8 +307,8 @@ func TestTranslateHook_PreToolUse_Bash(t *testing.T) {
 	}
 
 	artifact := singleArtifact(t, artifacts)
-	if artifact.Path != ".windsurf/hooks/pre_run_command.json" {
-		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks/pre_run_command.json")
+	if artifact.Path != ".windsurf/hooks.json" {
+		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks.json")
 	}
 	assertGoldenFile(t, "testdata/hook_pre_run_command.golden", artifact.Bytes)
 }
@@ -331,8 +334,8 @@ func TestTranslateHook_PreToolUse_MCP(t *testing.T) {
 	}
 
 	artifact := singleArtifact(t, artifacts)
-	if artifact.Path != ".windsurf/hooks/pre_mcp_tool_use.json" {
-		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks/pre_mcp_tool_use.json")
+	if artifact.Path != ".windsurf/hooks.json" {
+		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks.json")
 	}
 	assertGoldenFile(t, "testdata/hook_pre_mcp_tool_use.golden", artifact.Bytes)
 }
@@ -357,8 +360,8 @@ func TestTranslateHook_UserPromptSubmit(t *testing.T) {
 	}
 
 	artifact := singleArtifact(t, artifacts)
-	if artifact.Path != ".windsurf/hooks/pre_user_prompt.json" {
-		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks/pre_user_prompt.json")
+	if artifact.Path != ".windsurf/hooks.json" {
+		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks.json")
 	}
 	assertGoldenFile(t, "testdata/hook_pre_user_prompt.golden", artifact.Bytes)
 }
@@ -383,8 +386,8 @@ func TestTranslateHook_Stop(t *testing.T) {
 	}
 
 	artifact := singleArtifact(t, artifacts)
-	if artifact.Path != ".windsurf/hooks/post_cascade_response.json" {
-		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks/post_cascade_response.json")
+	if artifact.Path != ".windsurf/hooks.json" {
+		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks.json")
 	}
 	assertGoldenFile(t, "testdata/hook_post_cascade_response.golden", artifact.Bytes)
 }
@@ -409,8 +412,8 @@ func TestTranslateHook_SubagentStop(t *testing.T) {
 	}
 
 	artifact := singleArtifact(t, artifacts)
-	if artifact.Path != ".windsurf/hooks/post_cascade_response.json" {
-		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks/post_cascade_response.json")
+	if artifact.Path != ".windsurf/hooks.json" {
+		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks.json")
 	}
 }
 

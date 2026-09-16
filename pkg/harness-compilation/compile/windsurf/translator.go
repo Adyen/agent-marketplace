@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 
@@ -225,6 +226,10 @@ func translateHook(hook *ir.Hook, opts compilepkg.Options) ([]artifact.Artifact,
 		windsurfEvent = mappedEvent
 	}
 
+	if hook.Timeout != nil {
+		return nil, []diag.Diagnostic{{Code: diag.CodeHookWindsurfTimeoutUnsupported, Severity: diag.SeverityError, Target: string(compilepkg.TargetWindsurf), Resource: hook.Name(), Message: "Windsurf cannot represent an explicit hook timeout; hook artifact suppressed", Hint: "Remove the timeout explicitly or use a target that supports it", Source: compilepkg.DiagSource(hook.Source)}}, nil
+	}
+
 	if strings.Contains(command, claudePluginRootToken) {
 		if pluginRoot := opts.PluginRoot(); pluginRoot != "" {
 			command = strings.ReplaceAll(command, claudePluginRootToken, pluginRoot)
@@ -246,16 +251,39 @@ func translateHook(hook *ir.Hook, opts compilepkg.Options) ([]artifact.Artifact,
 		}
 	}
 
-	body := map[string]any{"command": command, "event": windsurfEvent, "type": hook.Type}
-	if hook.Matcher != "" {
-		body["matcher"] = hook.Matcher
+	extra := maps.Clone(hook.Extra)
+	for _, field := range []struct {
+		name string
+		want string
+	}{
+		{name: "event", want: hook.Event},
+		{name: "type", want: hook.Type},
+		{name: "matcher", want: hook.Matcher},
+	} {
+		if raw, exists := extra[field.name]; exists {
+			value, ok := raw.(string)
+			if !ok || value != field.want {
+				return nil, []diag.Diagnostic{nativeFieldsUnsupportedDiagnostic(hook)}, nil
+			}
+			delete(extra, field.name)
+		}
 	}
-	if hook.Timeout != nil {
-		body["timeout"] = *hook.Timeout
+	if _, exists := extra["timeout"]; exists {
+		return nil, []diag.Diagnostic{nativeFieldsUnsupportedDiagnostic(hook)}, nil
 	}
-	extraKeys, extraDiags := compilepkg.ExtraKeys(hook.Extra, compilepkg.PresentFields(map[string]bool{"event": true, "matcher": hook.Matcher != "", "type": true, "command": true, "timeout": hook.Timeout != nil}), compilepkg.TargetWindsurf, hook.Name(), compilepkg.DiagSource(hook.Source))
+	if sidecar := hook.Ext.Windsurf; sidecar != nil && sidecar.HookWorkingDir != "" {
+		if raw, exists := extra["working_directory"]; exists {
+			value, ok := raw.(string)
+			if !ok || value != sidecar.HookWorkingDir {
+				return nil, []diag.Diagnostic{nativeFieldsUnsupportedDiagnostic(hook)}, nil
+			}
+		}
+	}
+
+	body := map[string]any{"command": command}
+	extraKeys, extraDiags := compilepkg.ExtraKeys(extra, compilepkg.PresentFields(map[string]bool{"command": true}), compilepkg.TargetWindsurf, hook.Name(), compilepkg.DiagSource(hook.Source))
 	for _, key := range extraKeys {
-		body[key] = hook.Extra[key]
+		body[key] = extra[key]
 	}
 	diags = append(diags, extraDiags...)
 	if sidecar := hook.Ext.Windsurf; sidecar != nil {
@@ -266,19 +294,22 @@ func translateHook(hook *ir.Hook, opts compilepkg.Options) ([]artifact.Artifact,
 			body["show_output"] = *sidecar.HookShowOutput
 		}
 		if sidecar.HookWorkingDir != "" {
-			body["working_dir"] = sidecar.HookWorkingDir
+			body["working_directory"] = sidecar.HookWorkingDir
 		}
 	}
 
-	content, err := marshalIndentedJSON(body)
+	content, err := marshalIndentedJSON(map[string]any{"hooks": map[string]any{windsurfEvent: []any{body}}})
 	if err != nil {
 		return nil, nil, err
 	}
+	a := artifact.Artifact{Path: ".windsurf/hooks.json", Bytes: content, Fragment: true, FragmentKey: "windsurf-hooks"}
+	a.ManagedByField, a.ManagedByValue = opts.ManagedBy()
+	a.MergeWithExisting = a.ManagedByField != ""
+	return []artifact.Artifact{a}, diags, nil
+}
 
-	return []artifact.Artifact{{
-		Path:  ".windsurf/hooks/" + windsurfEvent + ".json",
-		Bytes: content,
-	}}, diags, nil
+func nativeFieldsUnsupportedDiagnostic(hook *ir.Hook) diag.Diagnostic {
+	return diag.Diagnostic{Code: diag.CodeHookWindsurfNativeFieldsUnsupported, Severity: diag.SeverityError, Target: string(compilepkg.TargetWindsurf), Resource: hook.Name(), Message: "Windsurf cannot preserve conflicting native hook fields; hook artifact suppressed", Hint: "Remove the conflicting native fields explicitly or use a target that represents them", Source: compilepkg.DiagSource(hook.Source)}
 }
 
 func translateMcpServer(server *ir.McpServer, opts compilepkg.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {

@@ -114,6 +114,10 @@ func (h *hookFile) UnmarshalJSON(data []byte) error {
 }
 
 func LoadHooks(src fs.FS, dirOrFile string) ([]*ir.Hook, []diag.Diagnostic, error) {
+	return loadHooksWithOptions(src, dirOrFile, LoadOptions{})
+}
+
+func loadHooksWithOptions(src fs.FS, dirOrFile string, opts LoadOptions) ([]*ir.Hook, []diag.Diagnostic, error) {
 	entries, err := fs.ReadDir(src, dirOrFile)
 	if err == nil {
 		return loadHooksDir(src, dirOrFile, entries)
@@ -121,6 +125,9 @@ func LoadHooks(src fs.FS, dirOrFile string) ([]*ir.Hook, []diag.Diagnostic, erro
 	data, fileErr := fs.ReadFile(src, dirOrFile)
 	if fileErr != nil {
 		return nil, nil, fileErr
+	}
+	if opts.LegacyHookInventory {
+		return loadHooksAliasLegacy(data, dirOrFile)
 	}
 	return loadHooksAlias(data, dirOrFile)
 }
@@ -150,7 +157,7 @@ func loadHooksDir(src fs.FS, dir string, entries []fs.DirEntry) ([]*ir.Hook, []d
 	return hooks, diags, nil
 }
 
-func loadHooksAlias(data []byte, file string) ([]*ir.Hook, []diag.Diagnostic, error) {
+func loadHooksAliasLegacy(data []byte, file string) ([]*ir.Hook, []diag.Diagnostic, error) {
 	var payload struct {
 		Hooks map[string][]hookRule `json:"hooks"`
 	}
@@ -174,6 +181,44 @@ func loadHooksAlias(data []byte, file string) ([]*ir.Hook, []diag.Diagnostic, er
 		}
 	}
 	return hooks, diags, nil
+}
+
+func loadHooksAlias(data []byte, file string) ([]*ir.Hook, []diag.Diagnostic, error) {
+	hooks, diags, err := loadHooksAliasLegacy(data, file)
+	if err != nil {
+		return nil, nil, err
+	}
+	distinctHookNames(hooks)
+	return hooks, diags, nil
+}
+
+func distinctHookNames(hooks []*ir.Hook) {
+	last := make(map[string]int, len(hooks))
+	used := make(map[string]bool, len(hooks))
+	next := make(map[string]int, len(hooks))
+	for i, hook := range hooks {
+		last[hook.Name()] = i
+		used[hook.Name()] = true
+	}
+	for i, hook := range hooks {
+		base := hook.Name()
+		if last[base] == i {
+			continue
+		}
+		start := next[base]
+		if start < 2 {
+			start = 2
+		}
+		for suffix := start; ; suffix++ {
+			name := fmt.Sprintf("%s-%d", base, suffix)
+			if !used[name] {
+				hook.SetName(name)
+				used[name] = true
+				next[base] = suffix + 1
+				break
+			}
+		}
+	}
 }
 
 func canonicalizeHook(file string, rule hookFile) (*ir.Hook, []diag.Diagnostic) {

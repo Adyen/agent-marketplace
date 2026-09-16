@@ -156,7 +156,8 @@ type TargetInfo struct {
 	// actually produced differ in either direction. Bead
 	// agent-marketplace-5exj.27 introduced that test after four of six
 	// declarations here had drifted from what the compilers emit.
-	AggregateFiles AggregateFileSet
+	AggregateFiles      AggregateFileSet
+	PreservedLegacyDirs AggregateFileSet
 
 	// OwnershipReconciledAggregates declares that this target's AggregateFiles
 	// are reconciled through internal/ownership — durable, journaled proof of
@@ -258,6 +259,21 @@ func (t TargetInfo) AggregateFilesForScope(machineScope bool) []string {
 		return t.AggregateFiles.User
 	}
 	return t.AggregateFiles.Project
+}
+
+func (t TargetInfo) PreservesLegacyPath(rel string, machineScope bool) bool {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	paths := t.PreservedLegacyDirs.Project
+	if machineScope {
+		paths = t.PreservedLegacyDirs.User
+	}
+	for _, preserved := range paths {
+		preserved = filepath.ToSlash(filepath.Clean(preserved))
+		if rel == preserved || strings.HasPrefix(rel, preserved+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // ResourceInstallDir returns the install subdirectory for a given resource kind.
@@ -537,7 +553,7 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 		},
 		hcc.TargetWindsurf: {
 			Roots:            roots[hcc.TargetWindsurf],
-			Components:       []string{"skills", "workflows", "hooks"},
+			Components:       []string{"skills", "workflows", "hook-support"},
 			PlanStrategy:     PlanWindsurf,
 			SkillPathPattern: ".windsurf/skills/%s/SKILL.md",
 			// Windsurf only discovers machine-wide slash commands under
@@ -548,15 +564,19 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 			},
 			ResourceDirs: map[ir.ResourceKind]string{
 				ir.KindCommand: ".windsurf/workflows",
-				ir.KindHook:    ".windsurf/hooks",
+				ir.KindHook:    ".windsurf/hook-support",
 			},
 			// Windsurf's aggregate path is genuinely scope-dependent, like its
 			// component directories: the repo-scope install root is the
 			// repository itself, so the file lands under .windsurf/, while the
 			// machine-scope install root already IS ~/.codeium/windsurf.
 			AggregateFiles: AggregateFileSet{
-				Project: []string{".windsurf/mcp_config.json"},
-				User:    []string{"mcp_config.json"},
+				Project: []string{".windsurf/hooks.json", ".windsurf/mcp_config.json"},
+				User:    []string{"hooks.json", "mcp_config.json"},
+			},
+			PreservedLegacyDirs: AggregateFileSet{
+				Project: []string{".windsurf/hooks"},
+				User:    []string{"hooks"},
 			},
 		},
 		hcc.TargetGemini: {
@@ -584,6 +604,14 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	// output root. These paths name files this process MUTATES, so a traversal
 	// segment here would let target metadata write outside the install root.
 	for target, info := range m {
+		for _, rel := range append(slices.Clone(info.PreservedLegacyDirs.Project), info.PreservedLegacyDirs.User...) {
+			if rel == "" {
+				return nil, fmt.Errorf("target %q: empty preserved legacy path", target)
+			}
+			if err := ValidateRelPath(rel); err != nil {
+				return nil, fmt.Errorf("target %q: preserved legacy directory: %w", target, err)
+			}
+		}
 		for _, scope := range []bool{false, true} {
 			for _, rel := range info.AggregateFilesForScope(scope) {
 				if rel == "" {
