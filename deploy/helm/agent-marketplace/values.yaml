@@ -40,6 +40,8 @@ extraVolumeMounts: []
 config:
   enabled: true
   existingConfigMap: ""
+  nameOverride: ""
+  key: config.yaml
   mountPath: /etc/agent-marketplace/config.yaml
   content: |
     apiVersion: agent-marketplace.io/marketplace/v1
@@ -86,7 +88,18 @@ api:
   env: []
   envFrom: []
   resources: {}
+  strategy: {}
+  podSecurityContext: {}
+  extraVolumes: []
+  extraVolumeMounts: []
   probes:
+    startup:
+      enabled: true
+      path: /readyz
+      port: operations
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 30
     liveness:
       enabled: true
       path: /healthz
@@ -117,6 +130,10 @@ worker:
   env: []
   envFrom: []
   resources: {}
+  strategy: {}
+  podSecurityContext: {}
+  extraVolumes: []
+  extraVolumeMounts: []
   probes:
     liveness:
       enabled: false
@@ -135,7 +152,18 @@ all:
   env: []
   envFrom: []
   resources: {}
+  strategy: {}
+  podSecurityContext: {}
+  extraVolumes: []
+  extraVolumeMounts: []
   probes:
+    startup:
+      enabled: true
+      path: /readyz
+      port: operations
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 30
     liveness:
       enabled: true
       path: /healthz
@@ -166,6 +194,10 @@ web:
   env: []
   envFrom: []
   resources: {}
+  strategy: {}
+  podSecurityContext: {}
+  extraVolumes: []
+  extraVolumeMounts: []
   probes:
     liveness:
       enabled: true
@@ -195,6 +227,10 @@ site:
   env: []
   envFrom: []
   resources: {}
+  strategy: {}
+  podSecurityContext: {}
+  extraVolumes: []
+  extraVolumeMounts: []
   probes:
     liveness:
       enabled: true
@@ -217,6 +253,7 @@ service:
   api:
     type: ClusterIP
     port: 8080
+    operationsPort: 9090
   web:
     type: ClusterIP
     port: 3000
@@ -240,5 +277,6 @@ serviceMonitor:
   enabled: false
   interval: 30s
   scrapeTimeout: 10s
+  scheme: http
   labels: {}
   additionalLabels: {}

@@ -2,7 +2,7 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "agent-marketplace.fullname" . }}
+  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "api") }}
   labels:
     {{- include "agent-marketplace.labels" . | nindent 4 }}
     {{- with .Values.serviceMonitor.labels }}
@@ -17,8 +17,9 @@ spec:
       {{- include "agent-marketplace.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: api
   endpoints:
-    - targetPort: operations
+    - port: operations
       path: /metrics
+      scheme: {{ .Values.serviceMonitor.scheme }}
       interval: {{ .Values.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
 {{- end }}

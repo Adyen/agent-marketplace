@@ -80,7 +80,7 @@ site:
     tag: "1.0.0"
 ```
 
-The web container receives an internal API base automatically. Keep the operations listener private; the chart exposes only the API public port through its Service.
+The web container receives an internal API base automatically. The API Service exposes the public `http` port and a named `operations` port (`service.api.operationsPort`, default 9090). The operations port is for private monitoring and health endpoints only; it is not reachable through the Ingress.
 
 ## 3. Configure the ingress boundary
 
@@ -119,9 +119,49 @@ ingress:
           port: 8080
 ```
 
-Do not route `/readyz` or `/metrics` through the public ingress. If a monitoring system needs `/metrics`, enable `serviceMonitor` or configure an equivalent private monitoring path.
+Do not route `/readyz` or `/metrics` through the public ingress. If a monitoring system needs `/metrics`, enable `serviceMonitor` or configure an equivalent private monitoring path. The rendered ServiceMonitor is named after the API component (for example `agent-marketplace-api` when `fullnameOverride: agent-marketplace` is set) and scrapes the named `operations` Service port.
 
-## 4. Render and apply the chart
+## 4. Tune workload behavior per component
+
+Each workload block (`api`, `worker`, `all`, `web`, `site`) accepts the same optional keys:
+
+- `strategy`: the Deployment `spec.strategy`. For example, give the API a zero-unavailable rolling update while the singleton worker uses `Recreate`:
+  ```yaml
+  api:
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+  worker:
+    strategy:
+      type: Recreate
+  ```
+- `podSecurityContext`: merged over the global `podSecurityContext` for that component's pods only. Use it for component-specific needs such as a frontend UID without imposing it on other images:
+  ```yaml
+  web:
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+  ```
+- `extraVolumes` / `extraVolumeMounts`: appended after the global `extraVolumes`/`extraVolumeMounts` for that component only. Use them to attach a CA bundle Secret to just the API and worker:
+  ```yaml
+  api:
+    extraVolumes:
+      - name: custom-ca
+        secret:
+          secretName: custom-ca
+    extraVolumeMounts:
+      - name: custom-ca
+        mountPath: /etc/ssl/custom-ca
+        readOnly: true
+  ```
+
+The API and `all` roles also render an optional `startupProbe` (`<role>.probes.startup`, enabled by default) that polls `/readyz` on the `operations` port so a slow-starting API is not killed by its liveness probe. The worker has no HTTP listener and renders no HTTP probes.
+
+When the chart manages the ConfigMap (`config.enabled: true` and no `config.existingConfigMap`), the API, worker, and `all` pods carry a `checksum/config` pod annotation computed from the rendered ConfigMap. Changing `config.content` therefore rolls those pods automatically. Set `config.nameOverride` to pin the ConfigMap name, and `config.key` to change both the data key and the mounted `subPath`.
+
+## 5. Render and apply the chart
 
 Write the selected values to a local file and render before applying:
 
@@ -141,7 +181,7 @@ helm upgrade --install marketplace deploy/helm/agent-marketplace \
   -f values.yaml
 ```
 
-## 5. Verify the deployment
+## 6. Verify the deployment
 
 Verify that API readiness and frontend routes are reachable from the appropriate private or authenticated paths:
 
@@ -150,7 +190,7 @@ kubectl get deployments,services,pods -n marketplace
 kubectl describe deployment marketplace-agent-marketplace-api -n marketplace
 ```
 
-The API readiness probe should use `/readyz` on the operations port. The public API Service should expose only the application HTTP port. Worker pods do not have an HTTP listener; observe their process state and logs instead of adding an HTTP probe.
+The API readiness and startup probes should use `/readyz` on the operations port. The API Service should expose the application HTTP port plus the named `operations` port for private monitoring; the Ingress still exposes only the intended public routes. Worker pods do not have an HTTP listener; observe their process state and logs instead of adding an HTTP probe.
 
 ## Troubleshooting
 

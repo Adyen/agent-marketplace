@@ -43,7 +43,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "agent-marketplace.configMapName" -}}
-{{- default (printf "%s-config" (include "agent-marketplace.fullname" .)) .Values.config.existingConfigMap }}
+{{- if .Values.config.existingConfigMap }}
+{{- .Values.config.existingConfigMap }}
+{{- else }}
+{{- default (printf "%s-config" (include "agent-marketplace.fullname" .)) .Values.config.nameOverride }}
+{{- end }}
 {{- end }}
 
 {{- define "agent-marketplace.apiComponent" -}}
@@ -89,6 +93,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $component := .component -}}
 {{- $role := .role -}}
 {{- $isMarketplace := has $role (list "api" "worker" "all") -}}
+{{- $podSecurityContext := mergeOverwrite (deepCopy $root.Values.podSecurityContext) (default (dict) $component.podSecurityContext) -}}
+{{- $podAnnotations := deepCopy (default (dict) $root.Values.podAnnotations) -}}
+{{- if and $isMarketplace $root.Values.config.enabled (not $root.Values.config.existingConfigMap) }}
+{{- $_ := set $podAnnotations "checksum/config" (sha256sum (include (print $root.Template.BasePath "/configmap.yaml") $root)) -}}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -99,6 +108,10 @@ metadata:
 spec:
   replicas: {{ $component.replicas }}
   revisionHistoryLimit: 3
+  {{- with $component.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "agent-marketplace.selectorLabels" $root | nindent 6 }}
@@ -111,7 +124,7 @@ spec:
         {{- with $root.Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with $root.Values.podAnnotations }}
+      {{- with $podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -123,8 +136,10 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with $podSecurityContext }}
       securityContext:
-        {{- toYaml $root.Values.podSecurityContext | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with $root.Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -225,13 +240,22 @@ spec:
             timeoutSeconds: {{ $component.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ $component.probes.readiness.failureThreshold }}
           {{- end }}
+          {{- if and $component.probes.startup $component.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ $component.probes.startup.path }}
+              port: {{ $component.probes.startup.port }}
+            periodSeconds: {{ $component.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ $component.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ $component.probes.startup.failureThreshold }}
+          {{- end }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
             {{- if and $isMarketplace $root.Values.config.enabled }}
             - name: config
               mountPath: {{ $root.Values.config.mountPath }}
-              subPath: config.yaml
+              subPath: {{ $root.Values.config.key }}
               readOnly: true
             {{- end }}
             {{- if and $isMarketplace $root.Values.persistence.enabled }}
@@ -239,6 +263,9 @@ spec:
               mountPath: {{ $root.Values.persistence.mountPath }}
             {{- end }}
             {{- with $root.Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with $component.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
@@ -255,6 +282,9 @@ spec:
             claimName: {{ default (include "agent-marketplace.fullname" $root) $root.Values.persistence.existingClaim }}
         {{- end }}
         {{- with $root.Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with $component.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
 {{- end }}

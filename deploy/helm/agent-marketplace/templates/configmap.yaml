@@ -7,6 +7,6 @@ metadata:
   labels:
     {{- include "agent-marketplace.labels" . | nindent 4 }}
 data:
-  config.yaml: |
+  {{ .Values.config.key }}: |
 {{ .Values.config.content | nindent 4 }}
 {{- end }}
