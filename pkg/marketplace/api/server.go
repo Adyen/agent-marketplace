@@ -68,38 +68,38 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	s.metrics = newServerMetrics()
 
 	publicMux := http.NewServeMux()
-	s.metrics.register(publicMux, publicListener, "/.well-known/agent-marketplace.json", s.methodGet(s.handleWellKnown))
-	s.metrics.register(publicMux, publicListener, "/api/v1/capabilities", s.methodGet(s.handleCapabilities))
-	s.metrics.register(publicMux, publicListener, "/api/v1/instance", s.methodGet(s.handleInstance))
-	s.metrics.register(publicMux, publicListener, "/api/v1/search", s.methodGet(s.handleSearch))
-	s.metrics.register(publicMux, publicListener, "/api/v1/registries", s.methodGet(s.handleRegistryList))
-	s.metrics.register(publicMux, publicListener, "/api/v1/registries/", s.methodGet(s.handleRegistries))
-	s.metrics.register(publicMux, publicListener, "/api/v1/resources/", s.methodGet(s.handleResources))
-	s.metrics.register(publicMux, publicListener, "/api/v1/manifests/", s.methodGet(s.handleManifests))
-	s.metrics.register(publicMux, publicListener, "/api/v1/assessments/", s.methodGet(s.handleAssessmentDigest))
-	s.metrics.register(publicMux, publicListener, "/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
-	s.metrics.register(publicMux, publicListener, "/api/v1/content/", s.methodGet(s.handleContentDigest))
-	s.metrics.register(publicMux, publicListener, "/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
-	s.metrics.register(publicMux, publicListener, "/healthz", s.methodGet(s.handleHealthz))
+	publicMux.Handle("/.well-known/agent-marketplace.json", s.methodGet(s.handleWellKnown))
+	publicMux.Handle("/api/v1/capabilities", s.methodGet(s.handleCapabilities))
+	publicMux.Handle("/api/v1/instance", s.methodGet(s.handleInstance))
+	publicMux.Handle("/api/v1/search", s.methodGet(s.handleSearch))
+	publicMux.Handle("/api/v1/registries", s.methodGet(s.handleRegistryList))
+	publicMux.Handle("/api/v1/registries/", s.methodGet(s.handleRegistries))
+	publicMux.Handle("/api/v1/resources/", s.methodGet(s.handleResources))
+	publicMux.Handle("/api/v1/manifests/", s.methodGet(s.handleManifests))
+	publicMux.Handle("/api/v1/assessments/", s.methodGet(s.handleAssessmentDigest))
+	publicMux.Handle("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
+	publicMux.Handle("/api/v1/content/", s.methodGet(s.handleContentDigest))
+	publicMux.Handle("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
+	publicMux.Handle("/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
 	// listener directly; the operations listener remains the only route.
-	s.metrics.register(publicMux, publicListener, "/readyz", http.HandlerFunc(s.handlePublicOperationsNotFound))
-	s.metrics.register(publicMux, publicListener, "/metrics", http.HandlerFunc(s.handlePublicOperationsNotFound))
-	s.metrics.registerUnmatched(publicMux, publicListener)
+	publicMux.Handle("/readyz", http.HandlerFunc(s.handlePublicOperationsNotFound))
+	publicMux.Handle("/metrics", http.HandlerFunc(s.handlePublicOperationsNotFound))
 
 	opsMux := http.NewServeMux()
-	s.metrics.register(opsMux, operationsListener, "/readyz", s.methodGet(s.handleReadyz))
-	s.metrics.register(opsMux, operationsListener, "/metrics", s.methodGet(s.metrics.scrape.ServeHTTP))
-	s.metrics.registerUnmatched(opsMux, operationsListener)
+	opsMux.Handle("/readyz", s.methodGet(s.handleReadyz))
+	opsMux.Handle("/metrics", s.methodGet(s.metrics.scrape.ServeHTTP))
 
+	// Each mux is instrumented as a whole, not per route, so responses the
+	// mux itself generates are counted too; see serverMetrics.handler.
 	s.public = &http.Server{
-		Handler:      publicMux,
+		Handler:      s.metrics.handler(publicListener, publicMux),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 	s.ops = &http.Server{
-		Handler:      opsMux,
+		Handler:      s.metrics.handler(operationsListener, opsMux),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,

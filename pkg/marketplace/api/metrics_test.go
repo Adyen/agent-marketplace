@@ -82,6 +82,53 @@ func TestServerPrometheusMetrics(t *testing.T) {
 	requireMetricFamily(t, families, "process_cpu_seconds_total")
 }
 
+func TestServerPrometheusMuxRedirectsInstrumented(t *testing.T) {
+	public, operations := newMetricsTestServers(t, "metrics-mux-redirects")
+
+	// Disable redirect following per probe: following the redirect would
+	// issue a second request whose observation could mask an uncounted
+	// redirect response.
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	// Each probe requests a non-canonical spelling of a registered pattern,
+	// so http.ServeMux itself answers with a redirect that never reaches a
+	// registered route handler. The redirect is observed under the
+	// registered pattern it targets, keeping route labels bounded.
+	redirects := []struct {
+		listener string
+		server   *httptest.Server
+		path     string
+		route    string
+	}{
+		{publicListener, public, "/api/v1/resources", "/api/v1/resources/"},
+		{publicListener, public, "/api//v1/capabilities", "/api/v1/capabilities"},
+		{operationsListener, operations, "//metrics", "/metrics"},
+	}
+	for _, probe := range redirects {
+		response := requestMetrics(t, noFollow, http.MethodGet, probe.server.URL+probe.path, "")
+		if response.status != http.StatusTemporaryRedirect {
+			t.Fatalf("mux redirect %s%s status = %d, want %d", probe.listener, probe.path, response.status, http.StatusTemporaryRedirect)
+		}
+	}
+
+	families := parseMetricFamilies(t, requestMetrics(t, operations.Client(), http.MethodGet, operations.URL+"/metrics", "").body)
+	requests := requireMetricFamily(t, families, "agent_marketplace_requests_total")
+	durations := requireMetricFamily(t, families, "agent_marketplace_request_duration_seconds")
+	for _, probe := range redirects {
+		if value := requireMetric(t, requests, map[string]string{
+			"code": "307", "listener": probe.listener, "method": "get", "route": probe.route,
+		}).GetCounter().GetValue(); value != 1 {
+			t.Fatalf("%s%s redirect counted %v times, want exactly 1", probe.listener, probe.path, value)
+		}
+		histogram := requireMetric(t, durations, map[string]string{
+			"listener": probe.listener, "method": "get", "route": probe.route,
+		}).GetHistogram()
+		if count := histogram.GetSampleCount(); count < 1 {
+			t.Fatalf("%s%s redirect duration samples = %d, want at least 1", probe.listener, probe.path, count)
+		}
+	}
+}
+
 func TestServerPrometheusNegotiation(t *testing.T) {
 	public, operations := newMetricsTestServers(t, "metrics-negotiation")
 
