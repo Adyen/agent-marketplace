@@ -2,7 +2,7 @@
 
 The committed `.agents/config.yaml` file defines which registries a repository uses, which resources it selects, and which coding harnesses receive those resources. A configuration file can compose local YAML fragments with the `include` field.
 
-Agent Marketplace treats configuration as the source of selection policy and generated layer locks as the exact Git acquisition record. After editing the selected root file, run `agent-marketplace sync` to reconcile its writable lock and generated harness files, or `agent-marketplace sync --check` to report lock and output drift without changing files.
+For task-oriented guidance, see [How to adopt agent-marketplace in a repository](../how-to/adopt-agent-marketplace-in-a-repository.md) and [How to keep resources reproducible](../how-to/keep-resources-reproducible.md).
 
 ## File location and scope
 
@@ -21,7 +21,7 @@ Other configuration layers use related schemas:
 
 Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. Hosted Marketplace resources use exact pins under `marketplaces[].resources` and do not appear in the generated Git lockfiles.
 
-This page describes the committed repository file. Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
+Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
 
 ## `include`
 
@@ -42,7 +42,7 @@ include:
 
 Relative paths resolve from the directory containing the file that declares them. Absolute paths are also accepted. Includes are recursive, so an included fragment may include other fragments. The same file contributes only at its first position when reached more than once; canonical paths are used for this check. Glob patterns and remote URLs are not supported.
 
-Included fragments have lower precedence than their containing file. For an ordered list, the first fragment is merged first, later fragments merge over earlier fragments, and the containing file merges last. The normal field-specific merge rules still apply; `include` does not make every field a simple replacement. See the [selection and precedence reference](../../../docs/PRECEDENCE.md) for the complete merge rules.
+Included fragments have lower precedence than their containing file. For an ordered list, the first fragment is merged first, later fragments merge over earlier fragments, and the containing file merges last. The normal field-specific merge rules still apply; `include` does not make every field a simple replacement. See the [selection and precedence reference](https://github.com/Adyen/agent-marketplace/blob/main/docs/PRECEDENCE.md) for the complete merge rules.
 
 The loader rejects a layer when an include is missing, unreadable, malformed, invalid for that layer, or part of a direct or indirect cycle. Included fragments may omit `apiVersion`, but they must use fields allowed by the layer that includes them. A regular organization, user, or repository root still requires `apiVersion: agent-marketplace/v2` (or the accepted `agent-marketplace/v3` compatibility alias); a local root may omit it.
 
@@ -347,7 +347,7 @@ allowed_marketplaces:
   - '^https://marketplace\.example\.com$'
 ```
 
-The first layer that declares this field controls it, in authority order: organization, user, repository, then repository-personal. Lower-authority layers cannot relax a policy selected by a higher-authority layer.
+The first layer that declares this field controls it, in authority order: organization, user, repository. `LocalConfig` cannot declare this authority. Lower-authority layers cannot relax a policy selected by a higher-authority layer.
 
 | Configuration | Effect |
 |---|---|
@@ -357,7 +357,7 @@ The first layer that declares this field controls it, in authority order: organi
 
 The policy is checked before endpoint registration, search, acquisition, and synchronization.
 
-For the workflow that creates these entries, see [How to install a resource from a hosted Marketplace](../how-to/install-from-a-marketplace.md).
+For the workflow that creates these entries, see [How to install a resource from a hosted Marketplace](../how-to/install-from-a-marketplace.md) and the [Marketplace resource locators reference](./marketplace-resource-locators.md).
 
 ## Registry allowlist
 

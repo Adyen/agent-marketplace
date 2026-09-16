@@ -1,6 +1,6 @@
 # How to install a resource from a hosted Marketplace
 
-This guide shows how to register a hosted Marketplace, find a resource, inspect its verified installation preview, and install its exact revision.
+Register a hosted Marketplace, find a resource, inspect its verified installation preview, and install its exact revision.
 
 ## Prerequisites
 

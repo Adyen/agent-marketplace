@@ -2,6 +2,7 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
 import type { ResourceKind, SearchParams } from '~/types/marketplace'
 import { safeCanonicalUrl } from '~/lib/presentation'
+import { DOCS_PATH } from '~/lib/site'
 import { parseSearchQuery, toLocationQuery } from '~/composables/useSearchQuery'
 
 const route = useRoute()
@@ -291,7 +292,7 @@ useHead({
 
     <footer class="border-t border-default">
       <div class="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-5 text-xs text-muted sm:flex-row sm:items-center sm:justify-between sm:px-6">
-        <a href="/#install" class="underline decoration-muted underline-offset-4 hover:text-highlighted">Docs</a>
+        <a :href="DOCS_PATH" class="underline decoration-muted underline-offset-4 hover:text-highlighted">Docs</a>
         <p>built at Adyen</p>
       </div>
     </footer>

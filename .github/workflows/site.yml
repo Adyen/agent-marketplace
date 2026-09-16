@@ -46,7 +46,7 @@ jobs:
       - name: Build website
         run: make site-build
 
-      - name: Verify sibling Marketplace links
+      - name: Verify sibling Marketplace and documentation links
         env:
           SITE_BASE: /agent-marketplace/
         run: |
@@ -54,3 +54,10 @@ jobs:
           pnpm run build
           grep -Fq 'href="/marketplace/"' .vitepress/dist/index.html
           ! grep -Fq 'href="/agent-marketplace/marketplace/"' .vitepress/dist/index.html
+          grep -Fq 'href="/agent-marketplace/docs/"' .vitepress/dist/index.html
+          test -f .vitepress/dist/docs/index.html
+          # The navbar Marketplace link must resolve to the origin root from
+          # nested documentation pages as well as the landing page.
+          grep -Fq 'href="/marketplace/"' .vitepress/dist/docs/reference/cli.html
+          ! grep -Fq 'href="../marketplace/"' .vitepress/dist/docs/reference/cli.html
+          ! grep -Fq 'href="/agent-marketplace/marketplace/"' .vitepress/dist/docs/reference/cli.html

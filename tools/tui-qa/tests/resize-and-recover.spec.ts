@@ -29,7 +29,10 @@ test("minimum-size gate preserves selection and blocks toggles", async ({ termin
     await expect(terminal.getByText("beta-skill", { strict: false })).not.toBeVisible();
   });
 
-  await step("ignore toggle below minimum", () => terminal.write(" "), async () => {
+  await step("ignore toggle below minimum", async () => {
+    terminal.write(" ");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }, async () => {
     await expect(terminal.getByText("Resize required")).toBeVisible();
     await expect(terminal.getByText("Minimum terminal: 50x12")).toBeVisible();
     await expect(terminal.getByText("q quit · Ctrl+C quit")).toBeVisible();

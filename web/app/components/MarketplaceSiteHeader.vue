@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { DOCS_PATH } from '~/lib/site'
+
 const route = useRoute()
 const menuOpen = ref(false)
 const menuButton = ref<HTMLButtonElement | null>(null)
@@ -37,7 +39,7 @@ function closeMenu(returnFocus = false) {
           <NuxtLink to="/" class="am-site-nav__link" @click="closeMenu()">
             Marketplace
           </NuxtLink>
-          <a href="/#install" class="am-site-nav__link" @click="closeMenu()">Docs</a>
+          <a :href="DOCS_PATH" class="am-site-nav__link" @click="closeMenu()">Docs</a>
         </div>
 
         <div class="am-site-nav__utilities">
