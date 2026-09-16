@@ -1,0 +1,203 @@
+package main
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+func loadCIWorkflow(t *testing.T) map[string]any {
+	t.Helper()
+	p := filepath.Join("..", "..", ".github", "workflows", "ci.yml")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read %s: %v", p, err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse %s: %v", p, err)
+	}
+	return doc
+}
+
+func getMap(t *testing.T, m map[string]any, key string) map[string]any {
+	t.Helper()
+	v, ok := m[key].(map[string]any)
+	if !ok {
+		t.Fatalf("%q is not a map", key)
+	}
+	return v
+}
+
+func getSlice(t *testing.T, m map[string]any, key string) []any {
+	t.Helper()
+	v, ok := m[key].([]any)
+	if !ok {
+		t.Fatalf("%q is not a slice", key)
+	}
+	return v
+}
+
+func toStringSlice(t *testing.T, v []any) []string {
+	t.Helper()
+	out := make([]string, len(v))
+	for i, e := range v {
+		s, ok := e.(string)
+		if !ok {
+			t.Fatalf("element %d is not a string", i)
+		}
+		out[i] = s
+	}
+	return out
+}
+
+func stepMap(t *testing.T, step any) map[string]any {
+	t.Helper()
+	m, ok := step.(map[string]any)
+	if !ok {
+		t.Fatalf("step is not a map: %T", step)
+	}
+	return m
+}
+
+func TestTUIQADriverJob(t *testing.T) {
+	doc := loadCIWorkflow(t)
+
+	jobs := getMap(t, doc, "jobs")
+	driver := getMap(t, jobs, "tui-qa-required")
+
+	if got := driver["name"]; got != "TUI QA Driver" {
+		t.Errorf("name = %v, want %q", got, "TUI QA Driver")
+	}
+
+	needs := toStringSlice(t, getSlice(t, driver, "needs"))
+	if !slices.Equal(needs, []string{"changes", "tui-qa"}) {
+		t.Errorf("needs = %v, want [changes tui-qa]", needs)
+	}
+
+	if got := driver["if"]; got != "always()" {
+		t.Errorf("if = %v, want %q", got, "always()")
+	}
+
+	if got := driver["runs-on"]; got != "ubuntu-latest" {
+		t.Errorf("runs-on = %v, want %q", got, "ubuntu-latest")
+	}
+
+	if got := driver["timeout-minutes"]; got != 1 {
+		t.Errorf("timeout-minutes = %v, want %d", got, 1)
+	}
+
+	if perms, ok := driver["permissions"].(map[string]any); !ok || len(perms) != 0 {
+		t.Errorf("permissions must be empty; got %v", driver["permissions"])
+	}
+
+	steps := getSlice(t, driver, "steps")
+	if len(steps) != 1 {
+		t.Fatalf("steps = %d, want 1", len(steps))
+	}
+	step := stepMap(t, steps[0])
+	if step["name"] != "Require all TUI QA platforms" {
+		t.Errorf("step name = %v, want %q", step["name"], "Require all TUI QA platforms")
+	}
+
+	env := getMap(t, step, "env")
+	wantBindings := map[string]string{
+		"CHANGES_RESULT": "${{ needs.changes.result }}",
+		"RUN_TUI_QA":     "${{ needs.changes.outputs.tui_qa }}",
+		"TUI_QA_RESULT":  "${{ needs.tui-qa.result }}",
+	}
+	for k, want := range wantBindings {
+		if got := env[k]; got != want {
+			t.Errorf("env[%s] = %v, want %q", k, got, want)
+		}
+	}
+
+	if _, ok := step["run"].(string); !ok {
+		t.Fatalf("step run is not a string: %v", step["run"])
+	}
+}
+
+func TestTUIQADriverShell(t *testing.T) {
+	doc := loadCIWorkflow(t)
+
+	jobs := getMap(t, doc, "jobs")
+	driver := getMap(t, jobs, "tui-qa-required")
+	step := stepMap(t, getSlice(t, driver, "steps")[0])
+	run := step["run"].(string)
+
+	cases := []struct {
+		name          string
+		changesResult string
+		runTUIQA      string
+		tuiQAResult   string
+		wantPass      bool
+	}{
+		{"relevant+success", "success", "true", "success", true},
+		{"unrelated+skipped", "success", "false", "skipped", true},
+		{"planner+failure", "failure", "false", "skipped", false},
+		{"empty+invalid", "success", "", "success", false},
+		{"relevant+skipped", "success", "true", "skipped", false},
+		{"unrelated+success", "success", "false", "success", false},
+		{"upstream+failure", "success", "true", "failure", false},
+		{"cancellation", "cancelled", "false", "cancelled", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("bash", "-c", run)
+			cmd.Env = []string{
+				"CHANGES_RESULT=" + tc.changesResult,
+				"RUN_TUI_QA=" + tc.runTUIQA,
+				"TUI_QA_RESULT=" + tc.tuiQAResult,
+			}
+			err := cmd.Run()
+			if tc.wantPass && err != nil {
+				t.Fatalf("expected pass, got: %v", err)
+			}
+			if !tc.wantPass && err == nil {
+				t.Fatalf("expected failure, got pass")
+			}
+		})
+	}
+}
+
+func TestPullRequestTrigger(t *testing.T) {
+	doc := loadCIWorkflow(t)
+
+	on := getMap(t, doc, "on")
+	pr := getMap(t, on, "pull_request")
+	gotTypes := toStringSlice(t, getSlice(t, pr, "types"))
+	wantTypes := []string{"opened", "synchronize", "reopened", "labeled"}
+	sort.Strings(gotTypes)
+	sort.Strings(wantTypes)
+	if !slices.Equal(gotTypes, wantTypes) {
+		t.Errorf("pull_request.types = %v, want %v", gotTypes, wantTypes)
+	}
+}
+
+func TestBenchmarkCondition(t *testing.T) {
+	doc := loadCIWorkflow(t)
+
+	jobs := getMap(t, doc, "jobs")
+	benchmark := getMap(t, jobs, "benchmark")
+	cond := benchmark["if"].(string)
+
+	if !strings.Contains(cond, "github.event_name == 'pull_request'") {
+		t.Errorf("benchmark condition missing pull_request event guard: %s", cond)
+	}
+	if !strings.Contains(cond, "needs.changes.outputs.benchmark == 'true'") {
+		t.Errorf("benchmark condition missing path output: %s", cond)
+	}
+	if !strings.Contains(cond, "contains(github.event.pull_request.labels.*.name, 'run-benchmarks')") {
+		t.Errorf("benchmark condition missing run-benchmarks label: %s", cond)
+	}
+	if !strings.Contains(cond, " || ") {
+		t.Errorf("benchmark condition missing OR between path output and label: %s", cond)
+	}
+}

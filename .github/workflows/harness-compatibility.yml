@@ -19,13 +19,28 @@ jobs:
       contents: read
     outputs:
       matrix: ${{ steps.matrix.outputs.value }}
+      run: ${{ steps.changes.outputs.harness_compatibility }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
+      - name: Detect relevant changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" | go run ./tools/ci-plan
+          else
+            go run ./tools/ci-plan --all
+          fi >> "$GITHUB_OUTPUT"
       - name: Select every registered harness
         id: matrix
         env:
@@ -36,6 +51,8 @@ jobs:
 
   contracts:
     name: Compiler and driver contracts
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -62,6 +79,7 @@ jobs:
   probe:
     name: ${{ matrix.target }} compatibility
     needs: plan
+    if: needs.plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -226,4 +244,15 @@ jobs:
           PLAN_RESULT: ${{ needs.plan.result }}
           CONTRACTS_RESULT: ${{ needs.contracts.result }}
           PROBES_RESULT: ${{ needs.probe.result }}
-        run: test "$PLAN_RESULT" = success && test "$CONTRACTS_RESULT" = success && test "$PROBES_RESULT" = success
+          RUN_COMPATIBILITY: ${{ needs.plan.outputs.run }}
+        run: |
+          set -euo pipefail
+          test "$PLAN_RESULT" = success
+          if [[ "$RUN_COMPATIBILITY" == true ]]; then
+            test "$CONTRACTS_RESULT" = success
+            test "$PROBES_RESULT" = success
+          else
+            test "$RUN_COMPATIBILITY" = false
+            test "$CONTRACTS_RESULT" = skipped
+            test "$PROBES_RESULT" = skipped
+          fi

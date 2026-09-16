@@ -54,26 +54,48 @@ func TestRequiredCompatibilityGateRejectsIncompleteRuns(t *testing.T) {
 			t.Fatalf("gate does not inspect %s's actual job result", job)
 		}
 	}
-	run := func(t *testing.T, results []string, accepted bool) {
+	if step.Env["RUN_COMPATIBILITY"] != "${{ needs.plan.outputs.run }}" {
+		t.Fatal("gate does not bind RUN_COMPATIBILITY to plan.outputs.run")
+	}
+
+	run := func(t *testing.T, results []string, runCompat string, accepted bool) {
 		t.Helper()
 		cmd := exec.Command("bash", "-c", step.Run)
 		cmd.Env = []string{"PATH=/usr/bin:/bin"}
 		for i, variable := range variables {
 			cmd.Env = append(cmd.Env, variable+"="+results[i])
 		}
+		cmd.Env = append(cmd.Env, "RUN_COMPATIBILITY="+runCompat)
 		output, err := cmd.CombinedOutput()
 		if (err == nil) != accepted {
-			t.Fatalf("gate acceptance = %t, want %t for %v: %s", err == nil, accepted, results, output)
+			t.Fatalf("gate acceptance = %t, want %t for %v with RUN_COMPATIBILITY=%q: %s", err == nil, accepted, results, runCompat, output)
 		}
 	}
-	t.Run("all-success", func(t *testing.T) { run(t, []string{"success", "success", "success"}, true) })
+
+	t.Run("all-success", func(t *testing.T) { run(t, []string{"success", "success", "success"}, "true", true) })
+	t.Run("unrelated-plan-success-two-skipped", func(t *testing.T) { run(t, []string{"success", "skipped", "skipped"}, "false", true) })
+
 	for i, upstream := range []string{"plan", "contracts", "probe"} {
 		for _, outcome := range []string{"failure", "cancelled", "skipped", ""} {
-			t.Run(upstream+"/"+outcome, func(t *testing.T) {
+			t.Run(upstream+"/"+outcome+"/run-true", func(t *testing.T) {
 				results := []string{"success", "success", "success"}
 				results[i] = outcome
-				run(t, results, false)
+				run(t, results, "true", false)
 			})
 		}
 	}
+	for _, runCompat := range []string{"", "maybe"} {
+		t.Run("inconsistent-run-compat-"+runCompat, func(t *testing.T) {
+			run(t, []string{"success", "success", "success"}, runCompat, false)
+		})
+	}
+	t.Run("run-false-with-success", func(t *testing.T) {
+		run(t, []string{"success", "success", "success"}, "false", false)
+	})
+	t.Run("run-false-with-missing-plan", func(t *testing.T) {
+		run(t, []string{"", "skipped", "skipped"}, "false", false)
+	})
+	t.Run("run-true-with-skipped-jobs", func(t *testing.T) {
+		run(t, []string{"success", "skipped", "success"}, "true", false)
+	})
 }
