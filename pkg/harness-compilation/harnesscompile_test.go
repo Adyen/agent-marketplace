@@ -1,11 +1,14 @@
 package harnesscompile
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -30,6 +33,74 @@ func TestCompile_WithPluginRoot(t *testing.T) {
 	got := string(result.Artifacts[0].Bytes)
 	if want := "/plugins/acme/scripts/check.sh"; !strings.Contains(got, want) {
 		t.Fatalf("artifact does not contain expanded plugin root %q:\n%s", want, got)
+	}
+}
+
+func TestCompileMcpCredentialDiagnosticsForCanonicalExtras(t *testing.T) {
+	const literalSecret = "literal-extension-secret"
+	tests := []struct {
+		name        string
+		extra       map[string]any
+		wantLiteral bool
+	}{
+		{
+			name:        "environment literal",
+			extra:       map[string]any{"env": map[string]any{"API_TOKEN": literalSecret}},
+			wantLiteral: true,
+		},
+		{
+			name:        "header literal",
+			extra:       map[string]any{"headers": map[string]any{"Authorization": "Bearer " + literalSecret}},
+			wantLiteral: true,
+		},
+		{
+			name:        "OAuth literal",
+			extra:       map[string]any{"oauthClientSecret": literalSecret},
+			wantLiteral: true,
+		},
+		{
+			name: "interpolations",
+			extra: map[string]any{
+				"env":               map[string]any{"API_TOKEN": "${API_TOKEN}"},
+				"headers":           map[string]any{"Authorization": "Bearer ${API_TOKEN}"},
+				"oauthClientSecret": "${env:OAUTH_CLIENT_SECRET}",
+			},
+		},
+	}
+	previous := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	for _, tt := range tests {
+		for _, target := range []Target{TargetClaude, TargetFactory, TargetCursor, TargetWindsurf, TargetGemini, TargetDevin, TargetCodex} {
+			t.Run(tt.name+"/"+string(target), func(t *testing.T) {
+				var logs bytes.Buffer
+				slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+				server := ir.NewMcpServer("credentials", "server", nil, nil, tt.extra, ir.SourceRef{})
+				result, err := Compile(server, target)
+				if err != nil {
+					t.Fatalf("Compile(mcp, %s): %v", target, err)
+				}
+				if got := diag.HasCode(result.Diagnostics, diag.CodeMcpLiteralCredential); got != tt.wantLiteral {
+					t.Fatalf("literal credential diagnostic = %v, want %v: %#v", got, tt.wantLiteral, result.Diagnostics)
+				}
+				if !tt.wantLiteral {
+					if strings.Contains(logs.String(), "literal MCP credential detected") {
+						t.Fatalf("interpolation produced literal credential log: %s", logs.String())
+					}
+					return
+				}
+				if !strings.Contains(logs.String(), `"msg":"literal MCP credential detected"`) {
+					t.Fatalf("literal credential log missing: %s", logs.String())
+				}
+				for _, diagnostic := range result.Diagnostics {
+					if strings.Contains(diagnostic.Message, literalSecret) || strings.Contains(diagnostic.Hint, literalSecret) {
+						t.Fatalf("credential value leaked into diagnostic: %#v", diagnostic)
+					}
+				}
+				if strings.Contains(logs.String(), literalSecret) {
+					t.Fatalf("credential value leaked into log: %s", logs.String())
+				}
+			})
+		}
 	}
 }
 
