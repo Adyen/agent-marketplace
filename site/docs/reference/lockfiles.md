@@ -50,7 +50,7 @@ No local snapshot path is stored. `agent-marketplace` reconciles the lock agains
 - `agent-marketplace update` advances Git locks, optionally rewriting eligible refs first.
 - `agent-marketplace sync` reconciles writable stale locks unless `--locked` or `--check` is set.
 - Plain local-directory registries are live and do not appear in these locks.
-- Hosted Marketplace resources use exact pins in consumer configuration rather than Git lockfile entries.
+- Hosted Marketplace selections live in consumer configuration rather than Git lockfile entries; a supplied digest makes a selection exact, while an omitted digest follows the latest verified revision online.
 - A healthy, compatible lock does not silently advance when the remote `main` moves. Use `lock --upgrade` or `update` to move it deliberately.
 
 ## Lock modes

@@ -29,7 +29,7 @@ Each layer owns its lock. Organization, user, repository, and repository-persona
 
 ## Plain local and Marketplace
 
-Plain local-directory registries are live and are not locked. Hosted Marketplace resources use exact pins in consumer configuration instead of Git lockfile entries.
+Plain local-directory registries are live and are not locked. Hosted Marketplace selections live in consumer configuration instead of Git lockfile entries; supplied digests are exact pins, while omitted digests follow the latest verified revision online.
 
 ## Advancing locks
 

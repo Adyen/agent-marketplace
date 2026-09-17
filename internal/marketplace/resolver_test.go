@@ -61,6 +61,36 @@ func TestPrepareLocatorRejectsAssessmentBeforeMirrorDownload(t *testing.T) {
 	}
 }
 
+func TestResolverResolvesMarketplacePinWithoutDigestFromLatestRevision(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	archive := "sha256:" + strings.Repeat("b", 64)
+	revision := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(digest), ArchiveDigest: store.ArchiveDigest(archive),
+	})
+	mux := http.NewServeMux()
+	serveWellKnown(mux, "mp")
+	mux.HandleFunc("/api/v1/resources/source/skill/review", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(revision)
+	})
+	mux.HandleFunc("/api/v1/resources/src/skill/review/revisions/"+digest, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(revision)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	pin := config.MarketplaceResourcePin{RegistryID: "src", RegistrySlug: "source", Kind: "skill", Name: "review", Revision: "configured-revision"}
+	artifacts, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(context.Background(), &config.Config{
+		Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}},
+	}, nil, resolver.MarketplaceResolveModeInspect)
+	if len(errs) != 0 {
+		t.Fatalf("resolving an unpinned Marketplace resource returned errors: %v", errs)
+	}
+	if len(artifacts) != 1 || !artifacts[0].Unresolved {
+		t.Fatalf("resolved artifacts = %#v, want one unresolved inspection artifact", artifacts)
+	}
+}
+
 func TestResolverRejectsCachedAssessmentBeforeArtifactRead(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	archive := "sha256:" + strings.Repeat("b", 64)

@@ -108,7 +108,11 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 			if pin.Kind != "collection" || !hasExpandedCollectionLeaves(entry, pin) {
 				continue
 			}
-			rev, revErr := r.getResourceRevision(ctx, client, cache, entry, pin, mode)
+			pin, revErr := r.resolveUnpinnedPin(ctx, client, entry, pin, mode)
+			var rev store.AssessedResourceRevision
+			if revErr == nil {
+				rev, revErr = r.getResourceRevision(ctx, client, cache, entry, pin, mode)
+			}
 			if revErr == nil {
 				revErr = validateResourceRevision(entry, pin, rev)
 			}
@@ -352,6 +356,25 @@ func (r *Resolver) clientForEntry(entry config.MarketplaceEntry) (*Client, error
 	return NewClient(entry.URL, opts...)
 }
 
+func (r *Resolver) resolveUnpinnedPin(ctx context.Context, client *Client, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (config.MarketplaceResourcePin, error) {
+	if pin.Digest != "" {
+		return pin, nil
+	}
+	if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch || client == nil {
+		return pin, fmt.Errorf("resource pin digest is required for cached resolution")
+	}
+	latest, err := client.GetLatestResourceRevisionForRegistry(ctx, marketplaceAPIRegistry(pin), pin.RegistryID, pin.Kind, pin.Name)
+	if err != nil {
+		return pin, fmt.Errorf("resolve latest resource revision: %w", err)
+	}
+	if err := validateLatestResourceRevision(entry, pin, latest); err != nil {
+		return pin, err
+	}
+	pin.Digest = string(latest.ContentDigest)
+	slog.Debug("marketplace resolved omitted resource digest", "url", entry.URL, "registry_id", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "digest", pin.Digest)
+	return pin, nil
+}
+
 func (r *Resolver) resolvePinWithPolicy(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (resolver.ResolvedArtifact, error) {
 	artifact, _, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
 	return artifact, err
@@ -370,6 +393,10 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	kind, err := irKind(pin.Kind)
+	if err != nil {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+	}
+	pin, err = r.resolveUnpinnedPin(ctx, client, entry, pin, mode)
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
@@ -973,8 +1000,10 @@ func validatePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePi
 	if strings.TrimSpace(pin.Revision) == "" {
 		return fmt.Errorf("resource pin revision is required")
 	}
-	if err := validateSHA256Digest(pin.Digest); err != nil {
-		return fmt.Errorf("content digest %q: %w", pin.Digest, err)
+	if pin.Digest != "" {
+		if err := validateSHA256Digest(pin.Digest); err != nil {
+			return fmt.Errorf("content digest %q: %w", pin.Digest, err)
+		}
 	}
 	acquisition := pin.Acquisition
 	if acquisition == "" {

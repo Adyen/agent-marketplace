@@ -192,9 +192,18 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 			}
 		}
 
-		for _, pin := range entry.Resources {
+		for _, configuredPin := range entry.Resources {
+			pin, pinErr := r.resolveUnpinnedPin(ctx, client, entry, configuredPin, mode)
 			status, artifact, ok := newPinStatus(entry, pin, targetSet)
 			if !ok {
+				continue
+			}
+			if pinErr != nil {
+				status.State = PinStateUnavailable
+				status.Detail = pinErr.Error()
+				inspection.Pins = append(inspection.Pins, status)
+				inspection.Artifacts = append(inspection.Artifacts, artifact)
+				logPinDecision(status)
 				continue
 			}
 			if status.State == PinStateUnavailable && status.Detail != "" {
@@ -300,6 +309,14 @@ func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEnt
 	for _, pin := range entry.Resources {
 		status, artifact, ok := newPinStatus(entry, pin, targetSet)
 		if !ok {
+			continue
+		}
+		if pin.Digest == "" {
+			status.State = PinStateUnavailable
+			status.Detail = err.Error()
+			i.Pins = append(i.Pins, status)
+			i.Artifacts = append(i.Artifacts, artifact)
+			logPinDecision(status)
 			continue
 		}
 		if status.State == PinStateUnavailable && status.Detail != "" {

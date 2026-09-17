@@ -55,6 +55,14 @@ func TestValidateMarketplaceEntries(t *testing.T) {
 			wantErr: "not a valid marketplace kind",
 		},
 		{
+			name: "missing digest",
+			entries: []MarketplaceEntry{{
+				URL:        "https://market.example",
+				InstanceID: "x",
+				Resources:  []MarketplaceResourcePin{{RegistryID: "s", Kind: "skill", Name: "n", Revision: "r"}},
+			}},
+		},
+		{
 			name: "invalid digest",
 			entries: []MarketplaceEntry{{
 				URL:        "https://market.example",

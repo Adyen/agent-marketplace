@@ -48,6 +48,29 @@ func TestEnsureMarketplacePinPersistsExactIndexOnlyOccurrence(t *testing.T) {
 	}
 }
 
+func TestEnsureMarketplacePinOmitsOptionalDigest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	pin := testMarketplacePin()
+	pin.Digest = ""
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "digest:") {
+		t.Fatalf("optional digest was serialized: %s", data)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Marketplaces[0].Resources[0].Digest; got != "" {
+		t.Fatalf("digest = %q, want empty", got)
+	}
+}
+
 func TestEnsureMarketplacePinRejectsInvalidIndexOnlyOccurrenceBeforeMutation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 	original := []byte("apiVersion: agent-marketplace/v2\n# preserve this byte\n")

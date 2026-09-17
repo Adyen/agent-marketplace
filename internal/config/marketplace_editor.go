@@ -195,7 +195,11 @@ func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {
 	setMappingValue(node, "kind", scalarNode(pin.Kind))
 	setMappingValue(node, "name", scalarNode(pin.Name))
 	setMappingValue(node, "revision", scalarNode(pin.Revision))
-	setMappingValue(node, "digest", scalarNode(pin.Digest))
+	if pin.Digest == "" {
+		removeMappingKeyByName(node, "digest")
+	} else {
+		setMappingValue(node, "digest", scalarNode(pin.Digest))
+	}
 	setMappingValue(node, "acquisition", scalarNode(pin.Acquisition))
 	if pin.RegistryCommit == "" {
 		removeMappingKeyByName(node, "registry_commit")
@@ -462,8 +466,8 @@ func ValidateMarketplaceInstalledName(name string) error {
 	return nil
 }
 
-// ValidateMarketplaceResourcePin validates the fields needed for an exact
-// mirror pin before any config file is changed.
+// ValidateMarketplaceResourcePin validates the fields needed for a Marketplace
+// pin before any config file is changed.
 func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
 	if err := validateMarketplaceSegment("registry_id", pin.RegistryID); err != nil {
 		return err
@@ -477,7 +481,7 @@ func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
 	if err := validateMarketplaceSegment("revision", pin.Revision); err != nil {
 		return err
 	}
-	if !api.IsCanonicalSHA256Digest(pin.Digest) {
+	if pin.Digest != "" && !api.IsCanonicalSHA256Digest(pin.Digest) {
 		return fmt.Errorf("digest must be sha256:<64-hex>")
 	}
 	if pin.RegistrySlug != "" {
@@ -862,7 +866,7 @@ func marketplacePinNode(pin MarketplaceResourcePin) *yaml.Node {
 	add("kind", pin.Kind, false)
 	add("name", pin.Name, false)
 	add("revision", pin.Revision, false)
-	add("digest", pin.Digest, false)
+	add("digest", pin.Digest, true)
 	add("acquisition", pin.Acquisition, true)
 	add("registry_commit", pin.RegistryCommit, true)
 	add("registry_manifest_digest", pin.RegistryManifestDigest, true)

@@ -19,7 +19,6 @@ type MarketplaceEntry struct {
 	Source     Source                   `yaml:"-"`
 }
 
-// MarketplaceResourcePin is an exact Marketplace resource coordinate and digest.
 // MarketplaceSelection records an exact collection revision that keeps a leaf
 // selected. Its absence on a leaf represents a direct user selection.
 type MarketplaceSelection struct {
@@ -85,13 +84,14 @@ func (s *MarketplaceSelections) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// MarketplaceResourcePin is a Marketplace resource coordinate and optional digest.
 type MarketplaceResourcePin struct {
 	RegistryID             string                `yaml:"registry_id"`
 	RegistrySlug           string                `yaml:"registry_slug,omitempty"`
 	Kind                   string                `yaml:"kind"`
 	Name                   string                `yaml:"name"`
 	Revision               string                `yaml:"revision"`
-	Digest                 string                `yaml:"digest"`                // "sha256:<64 lowercase hex>"
+	Digest                 string                `yaml:"digest,omitempty"`      // "sha256:<64 lowercase hex>"
 	Acquisition            string                `yaml:"acquisition,omitempty"` // "mirror" or "index-only"
 	RegistryCommit         string                `yaml:"registry_commit,omitempty"`
 	RegistryManifestDigest string                `yaml:"registry_manifest_digest,omitempty"`
@@ -192,7 +192,7 @@ func validateMarketplacePin(entryIdx, pinIdx int, p MarketplaceResourcePin) []er
 	if err := validateMarketplaceSegment("revision", p.Revision); err != nil {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 	}
-	if !api.IsCanonicalSHA256Digest(p.Digest) {
+	if p.Digest != "" && !api.IsCanonicalSHA256Digest(p.Digest) {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].digest must be sha256:<64-hex>", entryIdx, pinIdx))
 	}
 	if p.Acquisition != "" && p.Acquisition != MarketplaceAcquisitionMirror && p.Acquisition != MarketplaceAcquisitionIndexOnly {

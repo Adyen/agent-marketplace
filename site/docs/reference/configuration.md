@@ -19,7 +19,7 @@ Other configuration layers use related schemas:
 | Repository | `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` | Shared project targets and resources |
 | Repository personal | `<repo>/.agents/config.local.yaml` | `<repo>/.agents/lock.local.yaml` | Gitignored choices for one checkout |
 
-Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. Hosted Marketplace resources use exact pins under `marketplaces[].resources` and do not appear in the generated Git lockfiles.
+Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. Hosted Marketplace selections live under `marketplaces[].resources` and do not appear in the generated Git lockfiles; entries with a digest are exact pins, while digestless entries follow the latest verified revision online.
 
 Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
 
@@ -287,7 +287,7 @@ A selected collection expands to its members before resources are resolved. Coll
 
 ## Hosted Marketplaces
 
-`marketplaces` records hosted Marketplace endpoints and immutable resource pins:
+`marketplaces` records hosted Marketplace endpoints and resource selections. A resource with a digest is an immutable pin; a resource without one follows the latest verified revision when resolved online:
 
 ```yaml
 marketplaces:
@@ -306,7 +306,7 @@ marketplaces:
         direct: true
 ```
 
-Marketplace entries accumulate across organization, user, repository, and repository-personal layers. `agent-marketplace install <endpoint-url>` verifies and writes an endpoint entry. Installing a Marketplace locator writes its exact resource pins; hand-editing pin identity or digest fields bypasses the installation preview and is not equivalent to a verified install.
+Marketplace entries accumulate across organization, user, repository, and repository-personal layers. `agent-marketplace install <endpoint-url>` verifies and writes an endpoint entry. Installing a Marketplace locator writes an exact resource pin; hand-edited entries may omit `digest` to follow the latest verified revision on online resolution. Hand-editing a supplied digest still bypasses the installation preview and is not equivalent to a verified install.
 
 ### Marketplace entry fields
 
@@ -315,7 +315,7 @@ Marketplace entries accumulate across organization, user, repository, and reposi
 | `url` | HTTP(S) endpoint URL | yes | Canonical Marketplace API base. Trailing slashes and scheme/host casing are normalized for identity comparisons. |
 | `instance_id` | route token | yes | Stable identity verified against `/.well-known/agent-marketplace.json`. |
 | `alias` | route token | no | Unique user-facing name for search and compact locators. `all` is reserved. |
-| `resources` | list of exact pins | no | Installed resource revisions owned by this endpoint. |
+| `resources` | list of resource selections | no | Installed resource revisions owned by this endpoint; entries without a digest follow the latest verified revision online. |
 
 An alias cannot contain `/`, `\\`, `@`, `:`, control characters, or leading or trailing whitespace. Duplicate non-empty aliases are rejected.
 
@@ -328,7 +328,7 @@ An alias cannot contain `/`, `\\`, `@`, `:`, control characters, or leading or t
 | `kind` | string | yes | `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection`. |
 | `name` | route token | yes | Marketplace resource name. |
 | `revision` | string | yes | Exact revision identifier. Newly installed resources use the content digest. |
-| `digest` | SHA-256 digest | yes | Lowercase `sha256:<64 hex>` content digest. |
+| `digest` | SHA-256 digest | no | Lowercase `sha256:<64 hex>` content digest. When omitted, online resolution selects and verifies the latest revision; cached-only resolution requires a digest. |
 | `acquisition` | string | no | `mirror` or `index-only`. An omitted value is treated as `mirror`. |
 | `registry_commit` | Git commit | for `index-only` | Full lowercase commit for the exact registry occurrence. Forbidden on mirror pins. |
 | `registry_manifest_digest` | SHA-256 digest | for `index-only` | Manifest digest for the exact registry occurrence. Forbidden on mirror pins. |
