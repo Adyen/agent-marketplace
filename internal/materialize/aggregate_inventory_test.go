@@ -26,7 +26,7 @@ func probeResources() map[ir.ResourceKind]ir.Resource {
 		ir.KindSkill:     ir.NewSkill("probe-skill", "probe", "body", nil, nil, ir.SourceRef{}),
 		ir.KindCommand:   ir.NewCommand("probe-command", "probe", "body", nil, ir.SourceRef{}),
 		ir.KindSubagent:  ir.NewSubagent("probe-subagent", "probe", "body", "", nil, "", nil, "", nil, ir.SourceRef{}),
-		ir.KindHook:      ir.NewHook("probe-hook", "PostToolUse", "echo probe", "command", nil, ir.SourceRef{}),
+		ir.KindHook:      ir.NewHookWithMatcher("probe-hook", "PreToolUse", "Bash", "echo probe", "command", nil, ir.SourceRef{}),
 		ir.KindMcpServer: ir.NewMcpServer("probe-mcp", "probe-bin", nil, nil, nil, ir.SourceRef{}),
 		ir.KindRule:      ir.NewRule("probe-rule", "probe", "body", []string{"**/*.go"}, false, nil, ir.SourceRef{}),
 	}

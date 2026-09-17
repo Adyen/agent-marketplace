@@ -1,5 +1,9 @@
 {
-  "command": "scripts/on-stop.sh",
-  "event": "post_cascade_response",
-  "type": "command"
+  "hooks": {
+    "post_cascade_response": [
+      {
+        "command": "scripts/on-stop.sh"
+      }
+    ]
+  }
 }

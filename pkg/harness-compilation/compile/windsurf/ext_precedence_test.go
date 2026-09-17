@@ -67,25 +67,25 @@ func TestWindsurfHookExtPrecedence(t *testing.T) {
 		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
 	}
 
-	if got := result.Artifacts[0].Path; got != ".windsurf/hooks/post_setup_worktree.json" {
-		t.Fatalf("artifact path = %q, want %q", got, ".windsurf/hooks/post_setup_worktree.json")
+	if got := result.Artifacts[0].Path; got != ".windsurf/hooks.json" {
+		t.Fatalf("artifact path = %q, want %q", got, ".windsurf/hooks.json")
 	}
 
 	var doc map[string]any
 	if err := json.Unmarshal(result.Artifacts[0].Bytes, &doc); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if doc["event"] != "post_setup_worktree" {
-		t.Fatalf("event = %#v, want %q", doc["event"], "post_setup_worktree")
+	hooks := doc["hooks"].(map[string]any)
+	groups := hooks["post_setup_worktree"].([]any)
+	entry := groups[0].(map[string]any)
+	if entry["powershell"] != "Write-Host test" {
+		t.Fatalf("powershell = %#v", entry["powershell"])
 	}
-	if doc["powershell"] != "Write-Host test" {
-		t.Fatalf("powershell = %#v", doc["powershell"])
+	if entry["working_directory"] != "/tmp/project" {
+		t.Fatalf("working_directory = %#v", entry["working_directory"])
 	}
-	if doc["working_dir"] != "/tmp/project" {
-		t.Fatalf("working_dir = %#v", doc["working_dir"])
-	}
-	if doc["show_output"] != true {
-		t.Fatalf("show_output = %#v", doc["show_output"])
+	if entry["show_output"] != true {
+		t.Fatalf("show_output = %#v", entry["show_output"])
 	}
 }
 

@@ -73,14 +73,14 @@ func TestSourceRevisionCompatibilityVectors(t *testing.T) {
 }
 
 func TestSourceRevisionRejectsUnknownVersionsAndMislabeledGenerators(t *testing.T) {
-	for _, version := range []string{"", "v0", "v3"} {
+	for _, version := range []string{"", "v0", "v4"} {
 		_, err := VerifyLockedGitRoot("not-opened", lockfile.GitRoot{RevisionSchema: version})
 		var coded *lockfile.Error
 		if !errors.As(err, &coded) || coded.Code != lockfile.CodeUnsupportedVersion {
 			t.Fatalf("verify %q: %v", version, err)
 		}
 	}
-	_, err := Build(Input{SnapshotRoot: "not-opened", RevisionSchema: "v3"})
+	_, err := Build(Input{SnapshotRoot: "not-opened", RevisionSchema: "v4"})
 	var coded *lockfile.Error
 	if !errors.As(err, &coded) || coded.Code != lockfile.CodeUnsupportedVersion {
 		t.Fatalf("build unknown version: %v", err)
@@ -107,8 +107,8 @@ func TestCurrentRevisionIncludesHookSupport(t *testing.T) {
 	if hook.Kind != "hook" || len(hook.SupportFiles) != 1 || hook.SupportFiles["check.sh"] == "" {
 		t.Fatalf("hook support projection = %+v", hook)
 	}
-	if built.Manifest.SchemaVersion != "v2" {
-		t.Fatalf("corrected hook support requires v2, got %q", built.Manifest.SchemaVersion)
+	if built.Manifest.SchemaVersion != "v3" {
+		t.Fatalf("corrected hook support requires v3, got %q", built.Manifest.SchemaVersion)
 	}
 	writeFixture(t, filepath.Join(root, "hooks", "check.sh"), "echo changed\n")
 	changed, err := Build(Input{SnapshotRoot: root, SourceHarness: "claude"})

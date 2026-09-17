@@ -704,7 +704,7 @@ func allDiscoveredResourceNames(registries []config.RegistryEntry, catalogs map[
 
 	var collisionErrs []error
 	for name, sources := range nameSources {
-		if len(sources) < 2 {
+		if len(sources) < 2 || resolver.HasAdditiveSources(kind) {
 			continue
 		}
 

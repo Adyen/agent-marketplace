@@ -136,7 +136,7 @@ func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 	if !ok {
 		t.Fatal("CollectManagedPaths has no entry for windsurf")
 	}
-	want := []string{"skills", "global_workflows", "hooks", "mcp_config.json"}
+	want := []string{"skills", "global_workflows", "hook-support", "mcp_config.json", "hooks.json"}
 	if !slices.Equal(mp.RelPaths, want) {
 		t.Errorf("windsurf machine-scope managed rel paths = %v, want %v", mp.RelPaths, want)
 	}

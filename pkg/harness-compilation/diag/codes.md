@@ -543,6 +543,9 @@ key or a hook event name), the resource name, and content digests are reported.
 | `hook.native-literal-unsupported` | Target would reinterpret a native Codex hook literal; hook suppressed | Remove the target-specific interpolation token or keep the hook in Codex format |
 | `hook.codex.native-fields-unsupported` | Target cannot preserve native Codex hook execution or context fields; hook suppressed | Remove async, commandWindows, and additionalContextLimit explicitly or keep the hook in Codex format |
 | `hook.codex.unsupported` | Codex does not execute this hook event or handler; hook suppressed | Use a documented Codex command hook event |
+| `hook.windsurf.native-fields-unsupported` | Windsurf cannot preserve conflicting native hook fields; hook suppressed | Remove the conflicting native fields explicitly or use a target that represents them |
+| `hook.windsurf.timeout-unsupported` | Windsurf cannot represent an explicit hook timeout; hook artifact suppressed | Remove the timeout explicitly or use a target that supports it |
+| `materialize.hook.support-conflict` | Conflicting desired support files block affected hooks rather than selecting a winner | Rename the conflicting support files or exclude one hook provider |
 | `mcp.security-restriction-unsupported` | Target cannot preserve native MCP authority or literal semantics; server suppressed | Keep the server in its native format or remove the unsupported security field explicitly |
 | `mcp.codex.security-unsupported` | Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed | Use documented Codex MCP fields or remove the unsupported setting explicitly |
 | `ingest.codex.load-resource-failed` | One malformed Codex resource or aggregate was skipped | Fix the reported native file; independent valid resources were retained |

@@ -8,11 +8,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
@@ -62,7 +65,11 @@ func materializeNativeAggregates(ctx context.Context, report *Report, key output
 				tr, diagnostics, routeErr = syncGeminiNativeAggregate(ctx, key, destination, desired, dryRun, !componentBlocked(blocked, ""))
 				report.Diags = append(report.Diags, diagnostics...)
 			} else {
-				tr, routeErr = syncNativeAggregate(key, destination, rel, desired, dryRun, !componentBlocked(blocked, ""))
+				pruneStale := !componentBlocked(blocked, "")
+				if slices.ContainsFunc(destination.AggregateRoutes, func(route harness.AggregateRoute) bool { return route.Container == "hooks" }) {
+					pruneStale = pruneStale && !componentBlocked(blocked, resourceInstallDirRel(key.target, ir.KindHook))
+				}
+				tr, routeErr = syncNativeAggregate(key, destination, rel, desired, dryRun, pruneStale)
 			}
 			if routeErr == nil && len(tr.Written)+len(tr.Skipped)+len(tr.Removed) > 0 {
 				report.PerRoot = append(report.PerRoot, tr)
@@ -370,6 +377,24 @@ func nativeAggregatePruneFence(target hcc.Target, machineScope bool) map[string]
 		if !install.ScopeRoot {
 			protected[install.Path(machineScope)] = true
 		}
+	}
+	legacy := info.PreservedLegacyDirs.Project
+	if machineScope {
+		legacy = info.PreservedLegacyDirs.User
+	}
+	for _, rel := range legacy {
+		if protected == nil {
+			protected = make(map[string]bool)
+		}
+		rel = trimArtifactRootPrefix(rel, info.ArtifactRootPrefix)
+		protected[strings.TrimSuffix(rel, "/")+"/"] = true
+	}
+	if info.PlanStrategy == harness.PlanWindsurf && len(protected) > 0 {
+		normalized := make(map[string]bool, len(protected))
+		for rel := range protected {
+			normalized[strings.TrimPrefix(rel, ".windsurf/")] = true
+		}
+		protected = normalized
 	}
 	return protected
 }

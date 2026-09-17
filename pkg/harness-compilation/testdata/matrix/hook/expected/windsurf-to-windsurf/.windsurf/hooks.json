@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "pre_read_code": [
+      {
+        "command": "/plugins/demo/scripts/check.sh"
+      }
+    ]
+  }
+}

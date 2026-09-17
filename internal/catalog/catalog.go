@@ -19,6 +19,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/windsurf"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
 	"github.com/Adyen/agent-marketplace/internal/collection"
@@ -39,12 +40,13 @@ const (
 
 // Entry represents a single cataloged resource discovered from a registry.
 type Entry struct {
-	Kind        ir.ResourceKind
-	Name        string
-	Description string
-	Tags        []string
-	Resource    ir.Resource // underlying IR resource for downstream compile/materialize
-	Path        string      // source file path (from ir.SourceRef)
+	Kind          ir.ResourceKind
+	Name          string
+	Description   string
+	Tags          []string
+	Resource      ir.Resource // underlying IR resource for downstream compile/materialize
+	Path          string      // source file path (from ir.SourceRef)
+	SourceHarness string      `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -279,6 +281,10 @@ func markdownBody(content string) string {
 	return content
 }
 
+type IngestOptions struct {
+	LegacyWindsurfHooks bool
+}
+
 // Load discovers resources from a directory on disk using HCC IngestBundle,
 // filtered to KindSkill. The sourceHarness parameter controls the ingest
 // format; empty string triggers autodetection via ingest.Autodetect.
@@ -286,12 +292,16 @@ func markdownBody(content string) string {
 // On autodetect failure, Load falls back to HarnessClaude and records
 // a diagnostic.
 func Load(dir string, sourceHarness string) (*Catalog, error) {
+	return LoadWithOptions(dir, sourceHarness, IngestOptions{})
+}
+
+func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (*Catalog, error) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve load root %q: %w", dir, err)
 	}
 	srcFS := os.DirFS(root)
-	cat, err := LoadFS(srcFS, sourceHarness)
+	cat, err := LoadFSWithOptions(srcFS, sourceHarness, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +315,10 @@ func Load(dir string, sourceHarness string) (*Catalog, error) {
 
 // LoadFS discovers resources from an fs.FS using HCC IngestBundle.
 func LoadFS(srcFS fs.FS, sourceHarness string) (*Catalog, error) {
+	return LoadFSWithOptions(srcFS, sourceHarness, IngestOptions{})
+}
+
+func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*Catalog, error) {
 	from := ingest.Harness(sourceHarness)
 	var autodetectDiag diag.Diagnostic
 
@@ -324,7 +338,13 @@ func LoadFS(srcFS fs.FS, sourceHarness string) (*Catalog, error) {
 		}
 	}
 
-	bundle, err := hcc.IngestBundle(srcFS, hcc.Harness(from))
+	var bundle *ingest.Bundle
+	var err error
+	if opts.LegacyWindsurfHooks && from == ingest.HarnessWindsurf {
+		bundle, err = (windsurf.Ingester{}).LoadBundleWithOptions(srcFS, windsurf.LoadOptions{LegacyHookInventory: true})
+	} else {
+		bundle, err = hcc.IngestBundle(srcFS, hcc.Harness(from))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("hcc ingest (%s): %w", from, err)
 	}
@@ -332,9 +352,10 @@ func LoadFS(srcFS fs.FS, sourceHarness string) (*Catalog, error) {
 	entries := make([]Entry, 0, len(bundle.Resources))
 	for _, r := range bundle.Resources {
 		entry := Entry{
-			Kind:     r.Kind(),
-			Name:     r.Name(),
-			Resource: r,
+			Kind:          r.Kind(),
+			Name:          r.Name(),
+			Resource:      r,
+			SourceHarness: string(from),
 		}
 
 		entry.Description = descriptionFromResource(r)

@@ -137,6 +137,7 @@ func BenchmarkMaterializePlans_TargetInfoLookup(b *testing.B) {
 // BenchmarkRunDryRunLargeMixedResources measures the dry-run path for
 // large mixed-resource workloads across multiple harnesses.
 func BenchmarkRunDryRunLargeMixedResources(b *testing.B) {
+	discardBenchLogs(b)
 	cases := []struct {
 		name         string
 		numResources int

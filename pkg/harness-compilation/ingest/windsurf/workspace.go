@@ -1,6 +1,7 @@
 package windsurf
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -34,6 +35,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 	servers := map[string]*ir.McpServer{}
 	rules := map[string]*ir.Rule{}
 	var diags []diag.Diagnostic
+	var currentHooks []*ir.Hook
 
 	for _, root := range roots {
 		loadedSkills, err := loadSkills(root)
@@ -61,13 +63,17 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 			commands[name] = command
 		}
 
-		loadedHooks, hookDiags, err := loadHooksRoot(root)
+		loadedHooks, hookDiags, err := loadHooksRoot(root, opts)
 		if err != nil {
 			return nil, err
 		}
 		diags = append(diags, hookDiags...)
-		for name, hook := range loadedHooks {
-			hooks[name] = hook
+		if opts.LegacyHookInventory {
+			for _, hook := range loadedHooks {
+				hooks[hook.Name()] = hook
+			}
+		} else {
+			currentHooks = append(currentHooks, loadedHooks...)
 		}
 
 		loadedServers, mcpDiags, err := loadMcpRoot(root)
@@ -92,6 +98,11 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 			})
 		}
 	}
+	if opts.LegacyHookInventory {
+		currentHooks = sortHooks(hooks)
+	} else {
+		distinctHookNames(currentHooks)
+	}
 
 	var resources []ir.Resource
 	for _, skill := range sortSkills(skills) {
@@ -103,7 +114,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 	for _, command := range sortCommands(commands) {
 		resources = append(resources, command)
 	}
-	for _, hook := range sortHooks(hooks) {
+	for _, hook := range currentHooks {
 		resources = append(resources, hook)
 	}
 	for _, server := range sortServers(servers) {
@@ -169,22 +180,25 @@ func loadWorkflows(root workspaceRoot) (map[string]*ir.Command, []diag.Diagnosti
 	return resources, diags, nil
 }
 
-func loadHooksRoot(root workspaceRoot) (map[string]*ir.Hook, []diag.Diagnostic, error) {
-	hooks, diags, err := LoadHooks(root.fs, path.Join(root.base, "hooks"))
-	if err != nil && !isNotExist(err) {
+func loadHooksRoot(root workspaceRoot, opts LoadOptions) ([]*ir.Hook, []diag.Diagnostic, error) {
+	var hooks []*ir.Hook
+	var diags []diag.Diagnostic
+	var err error
+	if opts.LegacyHookInventory {
+		hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks"), opts)
+		if errors.Is(err, fs.ErrNotExist) {
+			hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks.json"), opts)
+		}
+	} else {
+		hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks.json"), opts)
+		if errors.Is(err, fs.ErrNotExist) {
+			hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks"), opts)
+		}
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, err
 	}
-	if isNotExist(err) {
-		hooks, diags, err = LoadHooks(root.fs, path.Join(root.base, "hooks.json"))
-	}
-	if err != nil && !isNotExist(err) {
-		return nil, nil, err
-	}
-	resources := map[string]*ir.Hook{}
-	for _, hook := range hooks {
-		resources[hook.Name()] = hook
-	}
-	return resources, diags, nil
+	return hooks, diags, nil
 }
 
 func loadMcpRoot(root workspaceRoot) (map[string]*ir.McpServer, []diag.Diagnostic, error) {

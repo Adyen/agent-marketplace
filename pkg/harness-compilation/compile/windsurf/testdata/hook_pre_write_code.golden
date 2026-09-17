@@ -1,6 +1,9 @@
 {
-  "command": "scripts/check-write.sh",
-  "event": "pre_write_code",
-  "matcher": "Write",
-  "type": "command"
+  "hooks": {
+    "pre_write_code": [
+      {
+        "command": "scripts/check-write.sh"
+      }
+    ]
+  }
 }

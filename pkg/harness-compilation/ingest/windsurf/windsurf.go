@@ -10,7 +10,8 @@ import (
 type Ingester struct{}
 
 type LoadOptions struct {
-	User fs.FS
+	User                fs.FS
+	LegacyHookInventory bool
 }
 
 func init() {
@@ -24,11 +25,15 @@ func (Ingester) Detect(src fs.FS) bool {
 }
 
 func (Ingester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
+	return (Ingester{}).LoadBundleWithOptions(src, LoadOptions{})
+}
+
+func (Ingester) LoadBundleWithOptions(src fs.FS, opts LoadOptions) (*ingest.Bundle, error) {
 	if hasWorkspaceLayout(src, ".windsurf") {
-		return loadWorkspace(src, LoadOptions{}, ".windsurf")
+		return loadWorkspace(src, opts, ".windsurf")
 	}
 	if hasWorkspaceLayout(src, ".") {
-		return loadWorkspace(src, LoadOptions{}, ".")
+		return loadWorkspace(src, opts, ".")
 	}
 	return nil, fmt.Errorf("ingest/windsurf: no recognizable Windsurf layout found")
 }
