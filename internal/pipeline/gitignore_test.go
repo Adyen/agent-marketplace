@@ -251,7 +251,7 @@ func TestAppendLocalConfigIgnoreEntriesRestoresBlockingDescriptor(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	flags := func() int {
 		var got int
 		var controlErr error
@@ -294,7 +294,7 @@ func TestAppendLocalConfigIgnoreEntriesRejectsFIFOBeforeClearingNonblock(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := appendLocalConfigIgnoreEntries(f); !errors.Is(err, errUnsafeGitignore) {
 		t.Fatalf("error = %v, want errUnsafeGitignore", err)
 	}
