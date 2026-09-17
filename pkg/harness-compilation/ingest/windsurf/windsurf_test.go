@@ -1,11 +1,16 @@
 package windsurf
 
 import (
+	"io/fs"
+	"maps"
+	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 var testWorkspaceFS = fstest.MapFS{
@@ -189,6 +194,103 @@ func TestLoadWorkspace_SynthesizesManifestAndLoadsResources(t *testing.T) {
 		if codes[i] != want[i] {
 			t.Fatalf("diag[%d] = %q, want %q (all=%v)", i, codes[i], want[i], codes)
 		}
+	}
+}
+
+func TestLoadWorkspaceUnconsumedAuditExcludesUserRoot(t *testing.T) {
+	project := fstest.MapFS{
+		".windsurf/mcp_config.json": {Data: []byte(`{"mcpServers":{"project":{"command":"project-command"}}}`)},
+		".factory/mcp.json":         {Data: []byte(`{"mcpServers":{"foreign":{"command":"ignored-command"}}}`)},
+	}
+	user := fstest.MapFS{
+		"mcp_config.json": {Data: []byte(`{"mcpServers":{"user":{"command":"user-command"}}}`)},
+		".mcp.json":       {Data: []byte(`{"mcpServers":{"unrelated":{"command":"unrelated-command"}}}`)},
+	}
+
+	tests := []struct {
+		name          string
+		user          fs.FS
+		src           fstest.MapFS
+		wantWarnings  []string
+		wantResources map[string]string
+	}{
+		{
+			name:         "without user",
+			wantWarnings: []string{".factory/mcp.json"},
+			wantResources: map[string]string{
+				"project": "project-command",
+			},
+		},
+		{
+			name:         "separate user",
+			user:         user,
+			wantWarnings: []string{".factory/mcp.json"},
+			wantResources: map[string]string{
+				"project": "project-command",
+				"user":    "user-command",
+			},
+		},
+		{
+			name: "same filesystem",
+			src: func() fstest.MapFS {
+				combined := fstest.MapFS{}
+				for name, file := range project {
+					combined[name] = file
+				}
+				for name, file := range user {
+					if name == ".mcp.json" {
+						continue
+					}
+					combined[name] = file
+				}
+				return combined
+			}(),
+			wantWarnings: []string{".factory/mcp.json", "mcp_config.json"},
+			wantResources: map[string]string{
+				"project": "project-command",
+				"user":    "user-command",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			src := test.src
+			if src == nil {
+				src = project
+			}
+			user := test.user
+			if test.name == "same filesystem" {
+				user = src
+			}
+			bundle, err := LoadWorkspace(src, LoadOptions{User: user})
+			if err != nil {
+				t.Fatalf("LoadWorkspace: %v", err)
+			}
+			resources := make(map[string]string)
+			for _, resource := range bundle.Resources {
+				if resource.Kind() != ir.KindMcpServer {
+					continue
+				}
+				server := resource.(*ir.McpServer)
+				resources[server.Name()] = server.Command
+			}
+			if !maps.Equal(resources, test.wantResources) {
+				t.Fatalf("MCP resources = %v, want %v", resources, test.wantResources)
+			}
+			var warnings []string
+			for _, diagnostic := range bundle.Diagnostics {
+				if diagnostic.Code != diag.CodeIngestWindsurfUnconsumedConfig {
+					continue
+				}
+				if diagnostic.Severity != diag.SeverityWarning || !strings.Contains(diagnostic.Message, "windsurf workspace") {
+					t.Fatalf("unexpected audit diagnostic: %#v", diagnostic)
+				}
+				warnings = append(warnings, diagnostic.Source.File)
+			}
+			if !slices.Equal(warnings, test.wantWarnings) {
+				t.Fatalf("audit warnings = %v, want %v", warnings, test.wantWarnings)
+			}
+		})
 	}
 }
 

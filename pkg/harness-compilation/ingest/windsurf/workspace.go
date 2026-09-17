@@ -14,8 +14,9 @@ import (
 )
 
 type workspaceRoot struct {
-	fs   fs.FS
-	base string
+	fs       fs.FS
+	base     string
+	isBundle bool
 }
 
 func LoadWorkspace(src fs.FS, opts LoadOptions) (*ingest.Bundle, error) {
@@ -27,7 +28,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 	if opts.User != nil {
 		roots = append(roots, workspaceRoot{fs: opts.User, base: "."})
 	}
-	roots = append(roots, workspaceRoot{fs: src, base: sourceBase})
+	roots = append(roots, workspaceRoot{fs: src, base: sourceBase, isBundle: true})
 
 	skills := map[string]*ir.Skill{}
 	commands := map[string]*ir.Command{}
@@ -96,6 +97,9 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 				Message:  "AGENTS.md is handled by existing conventions; no Windsurf subagent resources were synthesized",
 				Source:   diag.SourceRef{File: agentsPath, Line: 1},
 			})
+		}
+		if !root.isBundle {
+			continue
 		}
 		consumed := make([]string, 0, 2)
 		if hookPath != "" {
