@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == pull_request ]]; then
-            git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" | go run ./tools/ci-plan
+            git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA" | go run ./tools/ci-plan
           else
             go run ./tools/ci-plan --all
           fi >> "$GITHUB_OUTPUT"

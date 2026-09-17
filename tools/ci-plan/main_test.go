@@ -76,6 +76,7 @@ func TestPlanCategories(t *testing.T) {
 		{"harness script", []string{"tools/harness-compat/install.sh"}, false, want("harness_compatibility")},
 		{"TUI QA", []string{"tools/tui-qa/package.json"}, false, want("tui_qa")},
 		{"marketplace Dockerfile", []string{"Dockerfile.marketplace"}, false, want("container_config", "container_marketplace")},
+		{"root dockerignore", []string{".dockerignore"}, false, want("container_config", "container_marketplace")},
 		{"web", []string{"web/app/main.ts"}, false, want("container_web")},
 		{"site", []string{"site/index.md"}, false, want("container_site")},
 		{"design", []string{"design/colors.css"}, false, want("container_config", "container_web", "container_site")},

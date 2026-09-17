@@ -215,10 +215,10 @@ func classifyPath(p string) (map[string]bool, error) {
 	}
 
 	switch {
-	case p == "Dockerfile.marketplace":
+	case p == "Dockerfile.marketplace" || p == ".dockerignore":
 		c["container_config"] = true
 		c["container_marketplace"] = true
-	case p == ".dockerignore" || p == "compose.yaml" ||
+	case p == "compose.yaml" ||
 		strings.HasPrefix(p, "deploy/compose/") ||
 		p == "web/Dockerfile" || p == "site/Dockerfile":
 		c["container_config"] = true

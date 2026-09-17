@@ -12,9 +12,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func loadCIWorkflow(t *testing.T) map[string]any {
+func loadWorkflow(t *testing.T, name string) map[string]any {
 	t.Helper()
-	p := filepath.Join("..", "..", ".github", "workflows", "ci.yml")
+	p := filepath.Join("..", "..", ".github", "workflows", name)
 	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("read %s: %v", p, err)
@@ -24,6 +24,10 @@ func loadCIWorkflow(t *testing.T) map[string]any {
 		t.Fatalf("parse %s: %v", p, err)
 	}
 	return doc
+}
+
+func loadCIWorkflow(t *testing.T) map[string]any {
+	return loadWorkflow(t, "ci.yml")
 }
 
 func getMap(t *testing.T, m map[string]any, key string) map[string]any {
@@ -199,5 +203,67 @@ func TestBenchmarkCondition(t *testing.T) {
 	}
 	if !strings.Contains(cond, " || ") {
 		t.Errorf("benchmark condition missing OR between path output and label: %s", cond)
+	}
+}
+
+func findStepRun(t *testing.T, doc map[string]any, jobName, stepName string) string {
+	t.Helper()
+	jobs := getMap(t, doc, "jobs")
+	job := getMap(t, jobs, jobName)
+	steps := getSlice(t, job, "steps")
+	for _, step := range steps {
+		m := stepMap(t, step)
+		if n, ok := m["name"].(string); ok && n == stepName {
+			run, ok := m["run"].(string)
+			if !ok {
+				t.Fatalf("step %q has no run string", stepName)
+			}
+			return run
+		}
+	}
+	t.Fatalf("step %q not found in job %q", stepName, jobName)
+	return ""
+}
+
+func TestPlannerInvocation(t *testing.T) {
+	want := `git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA" | go run ./tools/ci-plan`
+	cases := []struct {
+		file     string
+		jobName  string
+		stepName string
+	}{
+		{"ci.yml", "changes", "Detect relevant changes"},
+		{"harness-compatibility.yml", "plan", "Detect relevant changes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			doc := loadWorkflow(t, tc.file)
+			run := findStepRun(t, doc, tc.jobName, tc.stepName)
+			if !strings.Contains(run, want) {
+				t.Errorf("planner step in %s does not contain exact invocation %q:\n%s", tc.file, want, run)
+			}
+		})
+	}
+}
+
+func TestBenchmarkPackagesParity(t *testing.T) {
+	doc := loadWorkflow(t, "ci.yml")
+
+	jobs := getMap(t, doc, "jobs")
+	benchmark := getMap(t, jobs, "benchmark")
+	env := getMap(t, benchmark, "env")
+	raw, ok := env["BENCHMARK_PACKAGES"].(string)
+	if !ok {
+		t.Fatalf("BENCHMARK_PACKAGES is not a string: %v", env["BENCHMARK_PACKAGES"])
+	}
+
+	got := strings.Fields(raw)
+	want := make([]string, 0, len(expectedBenchmarkRoots))
+	for _, root := range expectedBenchmarkRoots {
+		want = append(want, "./"+root)
+	}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("BENCHMARK_PACKAGES does not match expectedBenchmarkRoots prefixed with ./\n got (%d): %v\nwant (%d): %v", len(got), got, len(want), want)
 	}
 }
