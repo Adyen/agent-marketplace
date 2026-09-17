@@ -22,6 +22,7 @@ Three independent local stacks start from the current main branch. Each layer in
 
 2. `fix/security-reserved-extras`
    - Reserved hook execution fields cannot be supplied by extension metadata, even when the corresponding typed value is empty or absent.
+   - Flatten valid wrapped native hook groups into typed handlers during ingestion; their commands must not depend on executable data surviving in extension metadata. Preserve handler names, outer matchers, and independent handler selection.
    - Apply the protection through shared compilation helpers and every affected hook translator, including native hook-group extras.
    - Retain unrelated extensions and existing coded conflict diagnostics; do not globally discard extension metadata or case-fold arbitrary dictionaries.
    - Cover empty and nonempty typed commands, mixed-case aliases, matcher/type/prompt/timeout fields, supported group fields, and unrelated extension preservation across targets.
