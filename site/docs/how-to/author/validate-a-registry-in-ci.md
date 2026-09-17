@@ -1,76 +1,83 @@
 # How to validate a registry in CI
 
-Check that a registry builds and produces no unexpected diagnostics before tagging a release.
+Fail a registry's CI when any resource it ships is malformed or cannot be compiled for the harnesses your consumers use.
 
 ## Prerequisites
 
-- A CI runner with `agent-marketplace` on its `PATH`.
+- A CI runner with Git and Go, or a way to download a released `agent-marketplace` binary.
 - A checkout of the registry repository.
+- You know the registry's source layout (`claude`, `factory`, `cursor`, `windsurf`, `gemini`, `devin`, or `codex`).
 
-## 1. Install the CLI in CI
+## 1. Install a pinned CLI
 
-Download a released binary or use `go install`:
+Pin the version so CI results are reproducible and match what consumers run. Either download the release asset for that version, or:
 
 ```bash
-go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
+go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@v3.1.1
 ```
 
-## 2. Capture the registry checkout
+Avoid `@latest` in CI: a new release can change diagnostics and make an unchanged registry fail.
 
-Record the registry path before changing directory:
+## 2. Point a throwaway consumer at the checkout
 
 ```bash
 REGISTRY_PATH=$PWD
-```
-
-## 3. Create a minimal consumer configuration
-
-In the CI job, create a temporary configuration that points at the current checkout:
-
-```bash
-mkdir -p /tmp/consumer/.agents
-cat > /tmp/consumer/.agents/config.yaml << EOF
+CONSUMER=$(mktemp -d)
+mkdir -p "$CONSUMER/.agents"
+cat > "$CONSUMER/.agents/config.yaml" << EOF
 apiVersion: agent-marketplace/v2
 harnesses:
   - claude
   - factory
+  - cursor
+  - windsurf
+  - gemini
+  - devin
+  - codex
 registries:
   - path: ${REGISTRY_PATH}
+    source_harness: claude
     required: true
 EOF
 ```
 
-## 4. Sync then check
+- List every harness your consumers target; a resource that compiles for Claude may emit a diagnostic for Codex or Windsurf.
+- Set `source_harness` explicitly so CI does not depend on layout autodetection.
+- `required: true` selects every resource of every kind, so nothing is silently skipped.
 
-A fresh consumer must first materialize the registry, then verify it is in sync:
+A local-directory registry is read live and produces no lock, which is what you want in CI.
+
+## 3. Sync strictly, then check
 
 ```bash
-cd /tmp/consumer
-agent-marketplace sync --strict
+cd "$CONSUMER"
+agent-marketplace sync --strict -v
 agent-marketplace sync --check
 ```
 
-Expected exit status: `0` after both commands if the registry is valid.
+`--strict` turns "selected but malformed" and "selected but missing" warnings into a non-zero exit; `-v` prints the diagnostic code and file for each one. `sync --check` then confirms the materialized output is stable.
 
-## 5. Convert to every target
+## 4. Confirm what was discovered
 
-For extra coverage, convert a representative sample to each target harness:
+Make sure every resource you expect is actually found, not merely that nothing failed:
 
 ```bash
-for target in claude factory cursor windsurf gemini devin codex; do
-  agent-marketplace convert \
-    --from claude \
-    --to "$target" \
-    --out "/tmp/out-$target" \
-    "${REGISTRY_PATH}/skills"
-done
+agent-marketplace list --kind skill
+agent-marketplace list --kind command
+agent-marketplace list --kind subagent
+agent-marketplace list --kind hook
+agent-marketplace list --kind mcp
 ```
 
-## 6. Fail on errors
+Compare against a checked-in expectation (for example `grep -c` on the output) so a resource that lands in an undiscovered directory fails CI instead of vanishing.
 
-Configure the CI job to fail on any non-zero exit status. This catches malformed resources before a release.
+## 5. Fail on any non-zero status
+
+Run the job with `set -euo pipefail` so any failing command stops the pipeline.
 
 ## Troubleshooting
 
-- **Diagnostics in CI differ from local**: Ensure the CI environment uses the same `harnesses` list and the same `agent-marketplace` version.
-- **`sync --check` fails with missing target**: Set `harnesses` explicitly in the test configuration.
+- **Diagnostics in CI differ from local**: Confirm the same CLI version and the same `harnesses` list. `agent-marketplace --version` prints the version.
+- **`sync --check` fails with missing target**: `harnesses` is missing from the consumer config.
+- **A resource is silently absent**: It is in a directory the source harness does not discover. Check the [registry layout reference](../../reference/registry-layout.md).
+- **`Malformed` with an `ingest.*` code**: Look the code up in `pkg/harness-compilation/diag/codes.md` in the CLI repository.

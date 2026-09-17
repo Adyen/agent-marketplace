@@ -49,9 +49,11 @@ agent-marketplace serve reindex private-agents --config /app/marketplace.yaml
 Search the Marketplace for a known resource:
 
 ```bash
-curl -fs \
-  "https://marketplace.example.com/api/v1/resources/private-agents/skill/review" | head
+curl -fsS "https://marketplace.example.com/api/v1/resources/private-agents/skill/review" -o revision.json \
+  && python3 -c 'import json; r=json.load(open("revision.json")); print(r["coordinate"], r["content_digest"])'
 ```
+
+A `404` means the worker has not yet published that resource; check the worker log for acquisition errors before retrying.
 
 ## Boundaries
 

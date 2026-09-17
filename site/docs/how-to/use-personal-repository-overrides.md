@@ -9,17 +9,36 @@ Keep project-wide configuration committed while making checkout-only choices in 
 
 ## 1. Create a personal override file
 
-Create `.agents/config.local.yaml` next to the committed configuration:
+Suppose the committed configuration is:
 
 ```yaml
-skills:
-  include:
-    - my-personal-skill
-  exclude:
-    - some-team-skill
+# .agents/config.yaml
+apiVersion: agent-marketplace/v2
+harnesses: [claude]
+registries:
+  - url: https://github.com/example-org/agent-resources.git
+    ref: v1.4.0
+    skills:
+      include:
+        - code-review
+        - some-team-skill
 ```
 
-Only include skills that do not need to be shared.
+Create `.agents/config.local.yaml` next to it. Repeat the registry `url` (and `ref`) so the CLI knows which provider your additions and exclusions apply to:
+
+```yaml
+# .agents/config.local.yaml
+registries:
+  - url: https://github.com/example-org/agent-resources.git
+    ref: v1.4.0
+    skills:
+      include:
+        - my-personal-skill
+      exclude:
+        - some-team-skill
+```
+
+The local layer merges above the committed one: `my-personal-skill` is added to the selection and `some-team-skill` is excluded for this checkout only. `apiVersion` and `harnesses` are not allowed in the local file. Only include resources that do not need to be shared.
 
 ## 2. Sync
 
