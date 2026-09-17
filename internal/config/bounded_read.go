@@ -26,20 +26,27 @@ func readConfigFile(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = file.Close() }()
+	return readOpenedConfigFile(file)
+}
+
+func readOpenedConfigFile(file *os.File) ([]byte, error) {
 	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("stat config %q: %w", path, err)
+		return nil, fmt.Errorf("stat config %q: %w", file.Name(), err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("read config %q: %w", path, ErrConfigNotRegular)
+		return nil, fmt.Errorf("read config %q: %w", file.Name(), ErrConfigNotRegular)
 	}
 	if info.Size() > MaxEffectiveConfigSize {
 		return nil, fmt.Errorf("%w: maximum %d bytes", ErrConfigTooLarge, MaxEffectiveConfigSize)
 	}
+	if err := syscall.SetNonblock(int(file.Fd()), false); err != nil {
+		return nil, fmt.Errorf("restore blocking config reads %q: %w", file.Name(), err)
+	}
 	limited := io.LimitReader(file, MaxEffectiveConfigSize+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
+		return nil, fmt.Errorf("read config %q: %w", file.Name(), err)
 	}
 	return boundedConfigData(data)
 }

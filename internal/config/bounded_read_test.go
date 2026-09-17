@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func writeBoundedConfigTestFile(t *testing.T, path, data string) {
@@ -149,6 +151,74 @@ func BenchmarkLoadBoundedIncludes(b *testing.B) {
 		if _, err := LoadConfigFromPath(root); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestReadOpenedConfigFileRestoresBlockingRegularDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := []byte("registries: []\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	readFlags := func() int {
+		var flags int
+		var controlErr error
+		conn, err := file.SyscallConn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.Control(func(fd uintptr) { flags, controlErr = unix.FcntlInt(fd, unix.F_GETFL, 0) }); err != nil {
+			t.Fatal(err)
+		}
+		if controlErr != nil {
+			t.Fatal(controlErr)
+		}
+		return flags
+	}
+	if readFlags()&unix.O_NONBLOCK == 0 {
+		t.Fatal("fixture descriptor did not start nonblocking")
+	}
+	got, err := readOpenedConfigFile(file)
+	if err != nil || string(got) != string(data) {
+		t.Fatalf("read = %q err=%v", got, err)
+	}
+	if readFlags()&unix.O_NONBLOCK != 0 {
+		t.Fatal("descriptor remained nonblocking")
+	}
+}
+
+func TestReadOpenedConfigFileRejectsFIFOBeforeClearingNonblock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.fifo")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := readOpenedConfigFile(file); !errors.Is(err, ErrConfigNotRegular) {
+		t.Fatalf("error = %v, want ErrConfigNotRegular", err)
+	}
+	var flags int
+	conn, err := file.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Control(func(fd uintptr) { flags, err = unix.FcntlInt(fd, unix.F_GETFL, 0) }); err != nil {
+		t.Fatal(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags&unix.O_NONBLOCK == 0 {
+		t.Fatalf("FIFO descriptor became blocking: %#x", flags)
 	}
 }
 
