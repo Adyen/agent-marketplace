@@ -165,7 +165,7 @@ func TestReadOpenedConfigFileRestoresBlockingRegularDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	readFlags := func() int {
 		var flags int
 		var controlErr error
@@ -202,7 +202,7 @@ func TestReadOpenedConfigFileRejectsFIFOBeforeClearingNonblock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := readOpenedConfigFile(file); !errors.Is(err, ErrConfigNotRegular) {
 		t.Fatalf("error = %v, want ErrConfigNotRegular", err)
 	}
