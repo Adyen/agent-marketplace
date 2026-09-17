@@ -4507,6 +4507,43 @@ harnesses:
 			{Args: []string{"telemetry", "purge"}, MustPass: true},
 		},
 	},
+	{
+		Name: "ingest/bare_bundle_mcp",
+		Desc: "Given a bare Claude bundle with skills, a command, and undotted MCP configuration, when list and sync run, then MCP is discovered and materialized without changing the native definition.",
+		Registries: []RegistryDef{{Name: "bare-bundle-mcp", Skills: []Skill{{Name: "demo"}}, Commands: []Command{{Name: "hi"}}, Files: map[string]string{
+			"mcp.json": (MCPServer{Name: "probe", Command: "npx", Args: []string{"-y", "x"}}).MCPFile(),
+		}}},
+		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:bare-bundle-mcp}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
+			{Args: []string{"list", "--kind", "skill"}, MustPass: true, OutContains: []string{"demo"}},
+			{Args: []string{"list", "--kind", "command"}, MustPass: true, OutContains: []string{"hi"}},
+			{Args: []string{"list", "--kind", "mcp"}, MustPass: true, OutContains: []string{"probe"}},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/mcp.json": "\"probe\": {"}},
+			{FileContains: map[string]string{"/workspace/.factory/mcp.json": "\"command\": \"npx\""}},
+			{FileContains: map[string]string{"/workspace/.factory/mcp.json": "\"-y\""}},
+			{FileContains: map[string]string{"/workspace/.factory/mcp.json": "\"x\""}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"probe"}},
+		},
+	},
+	{
+		Name: "ingest/unconsumed_config",
+		Desc: "Given an explicit Claude plugin with native MCP and a foreign undotted MCP configuration, when list, sync, and status run, then the foreign file is warned about while the selected native MCP remains materializable.",
+		Registries: []RegistryDef{{Name: "unconsumed-config", Skills: []Skill{{Name: "demo"}}, Files: map[string]string{
+			".claude-plugin/plugin.json": `{"name":"unconsumed-config"}`,
+			".mcp.json":                  (MCPServer{Name: "native", Command: "npx", Args: []string{"-y", "native"}}).MCPFile(),
+			"mcp.json":                   `{"mcpServers":{"foreign":{"command":"npx"}}}`,
+		}}},
+		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:unconsumed-config}}\n    ref: main\n    source_harness: claude\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
+			{Args: []string{"list"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "For Claude plugins, rename"}},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/mcp.json": "native"}, FileNotContains: map[string]string{"/workspace/.factory/mcp.json": "foreign"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "For Claude plugins, rename"}},
+		},
+	},
 }
 
 // ---------- parallelism configuration ----------

@@ -10,6 +10,29 @@ import (
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/codex"
 )
 
+func BenchmarkBareBundleIngest(b *testing.B) {
+	src := fstest.MapFS{
+		"skills/demo/SKILL.md": {Data: []byte("---\nname: demo\ndescription: Demo\n---\nDemo\n")},
+		"commands/hi.md":       {Data: []byte("---\nname: hi\ndescription: Hi\n---\nHi\n")},
+		"mcp.json":             {Data: []byte(`{"mcpServers":{"probe":{"command":"npx","args":["-y","x"]}}}`)},
+	}
+	harness, ok := ingest.Autodetect(src)
+	if !ok {
+		b.Fatal("Autodetect did not find Claude bare bundle")
+	}
+	ing, ok := ingest.For(harness)
+	if !ok {
+		b.Fatalf("ingester not registered for %q", harness)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := ing.LoadBundle(src); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkAutodetect(b *testing.B) {
 	tests := []struct {
 		name      string

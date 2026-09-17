@@ -34,7 +34,7 @@ func TestWindsurfLegacyHookLockRetainedUntilUpgrade(t *testing.T) {
 		t.Fatalf("unexpected lock: %#v", doc)
 	}
 	root := &doc.Registries[0].Roots[0]
-	if root.RevisionSchema != "v3" || len(root.Resources) != 2 {
+	if root.RevisionSchema != "v4" || len(root.Resources) != 2 {
 		t.Fatalf("new inventory: %#v", root)
 	}
 	root.RevisionSchema = "v2"
@@ -59,7 +59,7 @@ func TestWindsurfLegacyHookLockRetainedUntilUpgrade(t *testing.T) {
 		t.Fatalf("upgrade: %v\n%s", err, out)
 	}
 	updated := readExactManifestLock(t, lockPath)
-	if updated.Registries[0].Commit != doc.Registries[0].Commit || updated.Registries[0].Roots[0].RevisionSchema != "v3" || len(updated.Registries[0].Roots[0].Resources) != 2 {
+	if updated.Registries[0].Commit != doc.Registries[0].Commit || updated.Registries[0].Roots[0].RevisionSchema != "v4" || len(updated.Registries[0].Roots[0].Resources) != 2 {
 		t.Fatalf("upgraded lock: %#v", updated)
 	}
 	if out, err := executeCommand("sync", "--locked"); err != nil {
