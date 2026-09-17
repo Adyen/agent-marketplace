@@ -281,7 +281,7 @@ func translateHook(hook *ir.Hook, opts compilepkg.Options) ([]artifact.Artifact,
 	}
 
 	body := map[string]any{"command": command}
-	extraKeys, extraDiags := compilepkg.ExtraKeys(extra, compilepkg.PresentFields(map[string]bool{"command": true}), compilepkg.TargetWindsurf, hook.Name(), compilepkg.DiagSource(hook.Source))
+	extraKeys, extraDiags := compilepkg.HookExtraKeys(extra, compilepkg.CanonicalFields("command", "powershell", "show_output", "working_directory"), compilepkg.TargetWindsurf, hook.Name(), compilepkg.DiagSource(hook.Source))
 	for _, key := range extraKeys {
 		body[key] = extra[key]
 	}
