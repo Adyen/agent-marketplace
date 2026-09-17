@@ -2,9 +2,9 @@
 
 **Status:** Partially implemented. The repository ships the Git/directory v4 parser, include composition, runtime adapter, and explicit migration for representable standalone legacy files. Hosted Marketplace acquisition, v4-aware editing, and the hosted lock extension remain unimplemented or intentionally refused.
 
-**Prerequisite:** Hosted Marketplace consumer functionality still requires the layer-owned lock extension described below. The lockfile baseline inspected for this design is historical context for that remaining proposal.
+**Prerequisite:** Hosted Marketplace consumer functionality still requires the layer-owned lock extension described below.
 
-**Audience:** Client implementers and reviewers. This document records the v4 syntax and the implemented relationship with acquisition locks, while marking the hosted Marketplace portions that remain proposals rather than claiming the whole design is shipped.
+**Audience:** Client implementers and reviewers. This document records the v4 syntax and the implemented relationship with acquisition locks, while marking the hosted Marketplace portions that remain proposals.
 
 ## 1. Scope and agreed decisions
 
@@ -476,7 +476,7 @@ Implementation depends on these boundaries, in order. The current repository imp
 5. Route Marketplace installs and all CLI/TUI config edits through the common model; remove generated pin bookkeeping from new config writes.
 6. Release Marketplace consumer functionality only when its config, lock, consent, collection, update, check, and GC paths operate together.
 
-These are remaining dependency boundaries for hosted Marketplace functionality, not tracked execution state. The implemented parser/adapter and migration slice is already active in the repository; no hosted feature activation is authorized merely by the existence of this document.
+These are remaining dependency boundaries for hosted Marketplace functionality, not tracked execution state.
 
 The current glossary and ADRs describe pins stored in consumer config. During implementation, the storage consequences in ADRs 0002 and 0005 and the corresponding glossary entries must be explicitly superseded: identity/occurrence/collection semantics remain, but generated bindings and selection edges move to acquisition locks. This proposal does not silently rewrite the accepted descriptions of currently implemented behavior.
 
