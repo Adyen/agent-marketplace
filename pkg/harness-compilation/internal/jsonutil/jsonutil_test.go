@@ -214,6 +214,7 @@ type AliasPromoted struct {
 type aliasDocument struct {
 	Child  *aliasNested           `json:"child"`
 	Items  []aliasNested          `json:"items"`
+	Fixed  [2]aliasNested         `json:"fixed"`
 	ByName map[string]aliasNested `json:"byName"`
 	Values map[string]string      `json:"values"`
 	Hidden string                 `json:"-"`
@@ -241,6 +242,27 @@ func TestUnmarshalRejectsCaseCollidingNestedAliases(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), tt.secret) {
 				t.Fatalf("error %q leaked payload value", err)
+			}
+		})
+	}
+}
+
+func TestUnmarshalReportsIndexedAliasPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name, data, path string
+	}{
+		{name: "second slice element", data: `{"items":[{"value":"safe"},{"value":"safe","VALUE":"ambiguous"}]}`, path: "$.items[1]"},
+		{name: "second fixed-array element", data: `{"fixed":[{"value":"safe"},{"value":"safe","VALUE":"ambiguous"}]}`, path: "$.fixed[1]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var doc aliasDocument
+			err := Unmarshal("aliases.json", []byte(tc.data), &doc)
+			var duplicate *DuplicateKeyError
+			if !errors.As(err, &duplicate) || duplicate.Path != tc.path {
+				t.Fatalf("error = %v, duplicate = %#v, want path %q", err, duplicate, tc.path)
+			}
+			if coded, ok := diag.AsCodedError(err); !ok || coded.Code != diag.CodeJSONDuplicateKey {
+				t.Fatalf("error = %v, want coded duplicate-key error", err)
 			}
 		})
 	}

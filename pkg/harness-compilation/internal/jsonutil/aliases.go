@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -121,8 +122,8 @@ func checkFieldAliases(raw any, typ reflect.Type, path string) error {
 		if !ok {
 			return nil
 		}
-		for _, value := range values {
-			if err := checkFieldAliases(value, typ.Elem(), path+"[]"); err != nil {
+		for i, value := range values {
+			if err := checkFieldAliases(value, typ.Elem(), path+"["+strconv.Itoa(i)+"]"); err != nil {
 				return err
 			}
 		}
