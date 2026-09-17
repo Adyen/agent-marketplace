@@ -1,6 +1,6 @@
 # Unified resource configuration design
 
-**Status:** Partially implemented. The repository ships the Git/directory v4 parser, include composition, runtime adapter, and explicit migration for representable standalone legacy files. Hosted Marketplace acquisition, v4-aware editing, and the hosted lock extension remain unimplemented or intentionally refused.
+**Status:** Partially implemented. The repository ships the Git/directory v4 parser, include composition, runtime adapter, and explicit migration for representable standalone legacy files. Hosted Marketplace acquisition, v4-aware editing, and the hosted lock extension remain unimplemented.
 
 **Prerequisite:** Hosted Marketplace consumer functionality still requires the layer-owned lock extension described below.
 
