@@ -269,7 +269,7 @@ type hookRule struct {
 	Matcher string `json:"matcher,omitempty"`
 	// ExtraFields captures any additional JSON fields via the
 	// remaining key-value pairs after standard deserialization.
-	ExtraFields map[string]any
+	ExtraFields map[string]any `json:"-"`
 }
 
 // UnmarshalJSON implements custom unmarshalling to capture extra fields.

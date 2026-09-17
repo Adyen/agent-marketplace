@@ -202,3 +202,59 @@ func TestObjectWithUniqueKeys(t *testing.T) {
 		})
 	}
 }
+
+type aliasNested struct {
+	Value string `json:"value"`
+}
+
+type AliasPromoted struct {
+	Value string `json:"value"`
+}
+
+type aliasDocument struct {
+	Child  *aliasNested           `json:"child"`
+	Items  []aliasNested          `json:"items"`
+	ByName map[string]aliasNested `json:"byName"`
+	Values map[string]string      `json:"values"`
+	Hidden string                 `json:"-"`
+	AliasPromoted
+}
+
+func TestUnmarshalRejectsCaseCollidingNestedAliases(t *testing.T) {
+	cases := []struct {
+		name   string
+		data   string
+		secret string
+	}{
+		{name: "pointer", data: `{"child":{"value":"safe","VALUE":"pointer-secret"}}`, secret: "pointer-secret"},
+		{name: "slice", data: `{"items":[{"value":"safe","VALUE":"slice-secret"}]}`, secret: "slice-secret"},
+		{name: "map", data: `{"byName":{"entry":{"value":"safe","VALUE":"map-secret"}}}`, secret: "map-secret"},
+		{name: "promoted", data: `{"value":"safe","VALUE":"promoted-secret"}`, secret: "promoted-secret"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			var doc aliasDocument
+			err := Unmarshal("aliases.json", []byte(tt.data), &doc)
+			coded, ok := diag.AsCodedError(err)
+			if !ok || coded.Code != diag.CodeJSONDuplicateKey {
+				t.Fatalf("error = %v, want coded duplicate-key error", err)
+			}
+			if strings.Contains(err.Error(), tt.secret) {
+				t.Fatalf("error %q leaked payload value", err)
+			}
+		})
+	}
+}
+
+func TestUnmarshalPreservesSingletonAliasesAndMapKeys(t *testing.T) {
+	var doc aliasDocument
+	if err := Unmarshal("aliases.json", []byte(`{"Child":null,"Items":null,"ByName":null,"Values":{"Foo":"one","foo":"two"},"Hidden":"ignored","Value":"promoted"}`), &doc); err != nil {
+		t.Fatalf("Unmarshal rejected singleton aliases: %v", err)
+	}
+	if doc.Values["Foo"] != "one" || doc.Values["foo"] != "two" {
+		t.Fatalf("case-distinct map keys = %#v", doc.Values)
+	}
+	if doc.Hidden != "" || doc.Value != "promoted" {
+		t.Fatalf("decoded ignored or promoted fields: hidden=%q promoted=%q", doc.Hidden, doc.Value)
+	}
+}

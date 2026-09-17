@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -643,6 +644,14 @@ func resourceJSON(r ir.Resource) ([]byte, error) {
 	out, err := json.Marshal(m)
 	if err != nil {
 		return nil, fmt.Errorf("marshal canonical payload: %w", err)
+	}
+	if err := jsonutil.ValidateFieldAliases("", out, r); err != nil {
+		return nil, err
+	}
+	if err := jsonutil.ValidateFieldAliases("", out, &struct {
+		Name string `json:"name"`
+	}{}); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
