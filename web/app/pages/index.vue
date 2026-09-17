@@ -50,7 +50,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil((results.value?.total ??
 const currentPage = computed(() => Math.floor(searchParams.value.offset / searchParams.value.limit) + 1)
 const hasPreviousPage = computed(() => searchParams.value.offset > 0)
 const hasNextPage = computed(() => currentPage.value < totalPages.value)
-const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
+const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.canonical_url))
 const hasDraftFilters = computed(() => Boolean(draft.q || draft.kind || draft.registry.length))
 const searchUpdating = computed(() => {
   const applied = searchParams.value

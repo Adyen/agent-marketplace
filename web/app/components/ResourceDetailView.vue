@@ -13,6 +13,7 @@ type Props = {
   kind: ResourceKind
   name: string
   canonicalUrl: string
+  browserBase: string
   apiBase?: string
   inspection?: InspectionManifest
   primaryContent?: string
@@ -31,7 +32,7 @@ const listItem = computed<ResourceListItem>(() => ({
   revision: props.resource.content_digest,
   content_digest: props.resource.content_digest,
 }))
-const browserUrl = computed(() => resourceLocator(listItem.value, props.canonicalUrl))
+const browserUrl = computed(() => resourceLocator(listItem.value, props.browserBase))
 const command = computed(() => installCommand(listItem.value, props.canonicalUrl))
 // Install status is derived from what the Marketplace actually reports:
 // revocation, the nested assessment decision, and whether an installable

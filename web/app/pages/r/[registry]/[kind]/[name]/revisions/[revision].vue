@@ -42,7 +42,8 @@ const { data: primaryContent } = await useAsyncData<string | undefined>(
   },
   { immediate: true },
 )
-const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
+const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.canonical_url))
+const browserBase = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
 
 function loadInspectionFile(file: InspectionFile): Promise<string | Blob> {
   return api.getResourceInspectionFile(registry, kind, name, revision, file.content_digest, file.media_type)
@@ -72,7 +73,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This exact revision could not be loaded. It may be revoked, retained only by policy, or unavailable from the Marketplace.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :registry="registry" :acquisition="registryRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :registry="registry" :acquisition="registryRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :browser-base="browserBase" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
     </main>
   </div>
 </template>

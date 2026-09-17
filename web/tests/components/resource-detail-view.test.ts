@@ -44,7 +44,7 @@ const resource = {
 describe('ResourceDetailView', () => {
   it('shows read-only provenance, findings, and digest-pinned actions as text', () => {
     const wrapper = mount(ResourceDetailView, {
-      props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example' },
+      props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example' },
       global: { stubs },
     })
 
@@ -65,12 +65,22 @@ describe('ResourceDetailView', () => {
     expect(wrapper.findAll('h2').length).toBeGreaterThan(1)
   })
 
+  it('keeps the install command but disables the detail URL when the browser base is empty', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: '' },
+      global: { stubs },
+    })
+
+    expect(wrapper.get('code').text()).toBe(`agent-marketplace install "https://market.example/r/team-tools/skill/review/revisions/${encodeURIComponent(digest)}"`)
+    expect(wrapper.get('button[aria-label^="Copy detail URL"]').attributes('disabled')).toBeDefined()
+  })
+
   it('renders exact digest revision links and preserves revoked history state', () => {
     const previousDigest = 'sha256:' + 'd'.repeat(64)
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource,
-        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
         revisions: [
           { ...resource, content_digest: previousDigest, revocation: { ...revocation, reason: 'policy' } },
         ],
@@ -92,7 +102,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: withoutArchive,
-        registry: 'registry', kind, name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind, name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
         acquisition,
         revisions: [withoutArchive],
       },
@@ -108,7 +118,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, assessment: { ...assessmentBase, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: '<script>finding</script>', location: { path: 'SKILL.md', line: 1, column: 2 } }] } },
-        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
         inspection: {
           schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
@@ -142,7 +152,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource,
-        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
         inspection: {
           schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [
@@ -191,7 +201,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, coordinate: { ...resource.coordinate, kind: 'command', name: 'build' } },
-        registry: 'registry', kind: 'command', name: 'build', canonicalUrl: 'https://market.example', apiBase: '/',
+        registry: 'registry', kind: 'command', name: 'build', canonicalUrl: 'https://market.example', browserBase: 'https://market.example', apiBase: '/',
         inspection: {
           schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'command', name: 'build' }, revision_digest: digest, primary_path: 'COMMAND.md',
           files: [
@@ -220,7 +230,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, revocation },
-        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
       },
       global: { stubs },
     })
@@ -237,7 +247,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, archive_digest: undefined, assessment: { ...assessmentBase, decision: 'reject', findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject', message: 'executes a shell' }] } },
-        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
       },
       global: { stubs },
     })
@@ -257,7 +267,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, archive_digest: undefined },
-        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
       },
       global: { stubs },
     })
@@ -275,7 +285,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource,
-        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
         revisions: [
           { ...resource, content_digest: rejectedDigest, archive_digest: undefined, assessment: { ...assessmentBase, decision: 'reject', findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject' }] } },
           { ...resource, content_digest: strippedDigest, archive_digest: undefined, assessment: { ...assessmentBase, findings: [] } },
@@ -297,7 +307,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, assessment: { ...assessmentBase, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: 'references a remote host', location: { path: 'SKILL.md', line: 1, column: 2 } }] } },
-        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
         inspection: {
           schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
