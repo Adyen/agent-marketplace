@@ -87,6 +87,9 @@ func openConversionDirectory(path string, create bool) (int, []conversionCreated
 		return -1, nil, fmt.Errorf("open conversion directory root: %w", err)
 	}
 	created := make([]conversionCreatedDirectory, 0)
+	cleanupCreated := func() {
+		closeConversionCreatedDirectories(created)
+	}
 	components := strings.Split(strings.TrimPrefix(absolute, string(filepath.Separator)), string(filepath.Separator))
 	if len(components) == 1 && components[0] == "" {
 		return fd, created, nil
@@ -104,6 +107,7 @@ func openConversionDirectory(path string, create bool) (int, []conversionCreated
 				createdNow = true
 			} else if !errors.Is(mkdirErr, unix.EEXIST) {
 				_ = unix.Close(fd)
+				cleanupCreated()
 				return -1, nil, fmt.Errorf("create conversion directory %q: %w", filepath.Join(currentPath, component), mkdirErr)
 			}
 			next, openErr = unix.Openat(fd, component, conversionDirectoryOpenFlags, 0)
@@ -112,6 +116,7 @@ func openConversionDirectory(path string, create bool) (int, []conversionCreated
 				if dupErr != nil {
 					_ = unix.Close(next)
 					_ = unix.Close(fd)
+					cleanupCreated()
 					return -1, nil, fmt.Errorf("retain conversion directory parent: %w", dupErr)
 				}
 				created = append(created, conversionCreatedDirectory{parentFD: parentFD, name: component, path: filepath.Join(currentPath, component)})
@@ -122,6 +127,7 @@ func openConversionDirectory(path string, create bool) (int, []conversionCreated
 				_ = unix.Unlinkat(fd, component, unix.AT_REMOVEDIR)
 			}
 			_ = unix.Close(fd)
+			cleanupCreated()
 			return -1, nil, fmt.Errorf("open conversion directory %q without following symlinks: %w", filepath.Join(currentPath, component), openErr)
 		}
 		_ = unix.Close(fd)
