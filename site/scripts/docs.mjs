@@ -9,6 +9,10 @@ function fail(code, message) {
   throw Object.assign(new Error(message), { code })
 }
 
+function sanitizedGitEnvironment() {
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_CONFIG_')))
+}
+
 function safePath(path) {
   if (!path || isAbsolute(path) || path.includes('\\') || path.split('/').some((part) => !part || part === '.' || part === '..')) {
     fail('docs.invalid-path', `Unsafe documentation path: ${path}`)
@@ -97,7 +101,8 @@ export function createSnapshot(site, version, files, sidebar, source) {
 
 export function snapshotFromGit(site, version, ref, sidebar) {
   parseVersion(version)
-  const git = (...args) => execFileSync('git', ['-C', site, ...args], { maxBuffer: 32 * 1024 * 1024 })
+  const env = sanitizedGitEnvironment()
+  const git = (...args) => execFileSync('git', ['-C', site, ...args], { env, maxBuffer: 32 * 1024 * 1024 })
   const commit = git('rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`).toString().trim()
   const prefix = git('rev-parse', '--show-prefix').toString().trim()
   const docsPath = `${prefix}docs`
@@ -113,7 +118,8 @@ export function snapshotFromGit(site, version, ref, sidebar) {
 }
 
 export function assertAppendOnly(site, ref) {
-  const git = (...args) => execFileSync('git', ['-C', site, ...args], { encoding: 'utf8' })
+  const env = sanitizedGitEnvironment()
+  const git = (...args) => execFileSync('git', ['-C', site, ...args], { encoding: 'utf8', env })
   const commit = git('rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`).trim()
   const priorPaths = git('ls-tree', '-rz', '--name-only', commit, '--', 'versions').split('\0').filter(Boolean)
   const priorVersions = new Set(priorPaths.map((path) => path.split('/')[1]))

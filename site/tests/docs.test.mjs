@@ -29,7 +29,10 @@ function snapshot(root, version = '3.2.0-rc.13') {
 }
 
 function commitFixture(root) {
-  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } })
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_CONFIG_')))
+  env.GIT_CONFIG_GLOBAL = '/dev/null'
+  env.GIT_CONFIG_NOSYSTEM = '1'
+  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env })
   git('init', '-q')
   git('add', '.')
   git('-c', 'user.name=Docs test', '-c', 'user.email=docs@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Fixture')
@@ -142,6 +145,55 @@ test('snapshot CLI reads a pinned Git tree rather than dirty working docs', (t) 
   const release = loadReleases(root)[0]
   assert.equal(release.source.commit, commit)
   assert.equal(readFileSync(join(root, 'versions/3.2.0/docs/guide.md'), 'utf8'), '# Unreleased guide\n')
+})
+
+test('Git fixtures ignore ambient configuration injection variables', (t) => {
+  const root = workspace(t)
+  const keys = ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]))
+  process.env.GIT_CONFIG_COUNT = '1'
+  process.env.GIT_CONFIG_KEY_0 = 'core.bare'
+  process.env.GIT_CONFIG_VALUE_0 = 'not-a-boolean'
+  try {
+    assert.match(commitFixture(root), /^[0-9a-f]{40}$/)
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key]
+      else process.env[key] = previous[key]
+    }
+  }
+})
+
+test('snapshot Git commands ignore ambient Git configuration', (t) => {
+  const root = workspace(t)
+  const commit = commitFixture(root)
+  const config = join(root, 'invalid.gitconfig')
+  writeFileSync(config, '[broken\n')
+  const previous = process.env.GIT_CONFIG_GLOBAL
+  process.env.GIT_CONFIG_GLOBAL = config
+  try {
+    snapshotFromGit(root, '3.2.0', 'HEAD', sidebar)
+  } finally {
+    if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL
+    else process.env.GIT_CONFIG_GLOBAL = previous
+  }
+  assert.equal(loadReleases(root)[0].source.commit, commit)
+})
+
+test('history Git commands ignore ambient Git configuration', (t) => {
+  const root = workspace(t)
+  snapshot(root)
+  const baseline = commitFixture(root)
+  const config = join(root, 'invalid.gitconfig')
+  writeFileSync(config, '[broken\n')
+  const previous = process.env.GIT_CONFIG_GLOBAL
+  process.env.GIT_CONFIG_GLOBAL = config
+  try {
+    assertAppendOnly(root, baseline)
+  } finally {
+    if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL
+    else process.env.GIT_CONFIG_GLOBAL = previous
+  }
 })
 
 test('release checks reject missing snapshots and content or navigation drift', (t) => {
