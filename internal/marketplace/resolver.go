@@ -292,11 +292,7 @@ func canonicalMarketplaceEntry(entry config.MarketplaceEntry) (config.Marketplac
 // endpoint and pin. The instance ID matters because an endpoint URL can host
 // different Marketplace instances over time or behind different deployments.
 func marketplaceCatalogKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {
-	key := fmt.Sprintf("marketplace:%s:%s:%s:%s:%s", entry.URL, entry.InstanceID, pin.RegistryID, pin.Digest, pin.Revision)
-	if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
-		key += fmt.Sprintf(":occurrence:%s:%s", pin.RegistryCommit, pin.RegistryManifestDigest)
-	}
-	return key
+	return config.MarketplaceCatalogKey(entry, pin)
 }
 
 // marketplacePinRequired derives the resolver policy for an exact pin from the
