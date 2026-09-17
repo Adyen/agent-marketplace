@@ -58,7 +58,7 @@ Artifacts include `compatibility-<target>.json`, `summary.txt`, the test log, an
 
 ## Required merge gate
 
-The workflow exposes one stable check named **Harness Compatibility**. Its `required` job runs with `always()` and depends on planning, compiler/driver contracts, and the entire harness matrix. It accepts only `success` for all three results; failure, cancellation, skipping, or a missing result fails the gate. The [workflow regression test](../../tools/harness-compat/workflow_test.go) executes that gate's actual shell command against successful and unsuccessful upstream results.
+The workflow exposes one stable check named **Harness Compatibility**. Its `required` job runs with `always()` and depends on planning, compiler/driver contracts, and the entire harness matrix. It requires `plan` to succeed. When `plan.outputs.run` is `true`, `contracts` and `probe` must both be `success`; when it is `false`, they must both be `skipped`. Any other combination, missing result, or missing or inconsistent `run` value fails the gate. The [workflow regression test](../../tools/harness-compat/workflow_test.go) executes that gate's actual shell command against successful and unsuccessful upstream results.
 
 The repository's active `protected-main` ruleset requires this check from GitHub Actions, alongside the existing required checks. A workflow name alone is not a merge requirement: forks or newly configured repositories must also select the stable check in their own branch protection or ruleset. Do not require each matrix-job name individually, because adding a harness should automatically extend the aggregate gate.
 
