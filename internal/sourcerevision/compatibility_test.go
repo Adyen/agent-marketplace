@@ -114,6 +114,39 @@ func TestBareBundleMCPRevisionCompatibility(t *testing.T) {
 	}
 }
 
+func TestUnconsumedContainerRevisionCompatibility(t *testing.T) {
+	for _, version := range []string{"v1", "v2", "v3", "v4"} {
+		t.Run(version, func(t *testing.T) {
+			root := t.TempDir()
+			writeFixture(t, filepath.Join(root, "group", ".factory-plugin", "plugin.json"), `{"name":"group"}`)
+			writeFixture(t, filepath.Join(root, "group", "child", "skills", "demo", "SKILL.md"), "---\nname: demo\ndescription: Demo\n---\nDemo\n")
+
+			baseline, err := Build(Input{SnapshotRoot: root, RevisionSchema: version})
+			if err != nil {
+				t.Fatalf("Build baseline: %v", err)
+			}
+			if len(baseline.Manifest.Resources) != 1 || baseline.Manifest.Resources[0].Kind != "skill" || baseline.Manifest.Resources[0].Name != "demo" || baseline.Manifest.Resources[0].ContentDigest == "" {
+				t.Fatalf("baseline resources = %+v", baseline.Manifest.Resources)
+			}
+
+			writeFixture(t, filepath.Join(root, "group", ".mcp.json"), `{"mcpServers":{"foreign":{"command":"npx"}}}`)
+			built, err := Build(Input{SnapshotRoot: root, RevisionSchema: version})
+			if err != nil {
+				t.Fatalf("Build with audit-only config: %v", err)
+			}
+			if !bytes.Equal(baseline.Payload, built.Payload) {
+				t.Fatalf("audit-only config changed %s payload:\nbaseline: %s\nwith audit: %s", version, baseline.Payload, built.Payload)
+			}
+			if len(built.Manifest.Resources) != 1 || built.Manifest.Resources[0].Kind != "skill" || built.Manifest.Resources[0].Name != "demo" {
+				t.Fatalf("resources = %+v", built.Manifest.Resources)
+			}
+			if _, err := Verify(Input{SnapshotRoot: root}, baseline.Projection()); err != nil {
+				t.Fatalf("Verify baseline projection: %v", err)
+			}
+		})
+	}
+}
+
 func TestSourceRevisionRejectsUnknownVersionsAndMislabeledGenerators(t *testing.T) {
 	for _, version := range []string{"", "v0", "v999"} {
 		_, err := VerifyLockedGitRoot("not-opened", lockfile.GitRoot{RevisionSchema: version})

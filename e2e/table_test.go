@@ -4528,20 +4528,38 @@ harnesses:
 		},
 	},
 	{
+		Name: "ingest/unconsumed_container",
+		Desc: "Given a diagnostic-only Factory container with a nested skill, when lock, list, sync, and status run, then the child resource is discovered while the container audit remains visible.",
+		Registries: []RegistryDef{{Name: "unconsumed-container", Files: map[string]string{
+			"group/.factory-plugin/plugin.json": `{"name":"group"}`,
+			"group/.mcp.json":                   `{"mcpServers":{"foreign":{"command":"npx"}}}`,
+			"group/child/skills/demo/SKILL.md":  "---\nname: demo\ndescription: Demo\n---\nDemo\n",
+		}}},
+		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:unconsumed-container}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
+			{Args: []string{"list", "--kind", "skill"}, MustPass: true, OutContains: []string{"demo", "ingest.factory.unconsumed-config"}},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/demo/SKILL.md": "Demo"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"demo", "ingest.factory.unconsumed-config"}},
+		},
+	},
+	{
 		Name: "ingest/unconsumed_config",
-		Desc: "Given an explicit Claude plugin with native MCP and a foreign undotted MCP configuration, when list, sync, and status run, then the foreign file is warned about while the selected native MCP remains materializable.",
+		Desc: "Given an explicit Claude plugin with native MCP and foreign configurations, when list, sync, and status run, then the foreign files are warned about while the selected native MCP remains materializable.",
 		Registries: []RegistryDef{{Name: "unconsumed-config", Skills: []Skill{{Name: "demo"}}, Files: map[string]string{
 			".claude-plugin/plugin.json": `{"name":"unconsumed-config"}`,
 			".mcp.json":                  (MCPServer{Name: "native", Command: "npx", Args: []string{"-y", "native"}}).MCPFile(),
 			"mcp.json":                   `{"mcpServers":{"foreign":{"command":"npx"}}}`,
+			"gemini-extension.json":      `{"name":"gemini","mcpServers":{"foreign-gemini":{"command":"npx"}}}`,
 		}}},
 		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:unconsumed-config}}\n    ref: main\n    source_harness: claude\n    default: true\n",
 		Steps: []Step{
 			{Args: []string{"lock"}, MustPass: true},
-			{Args: []string{"list"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "For Claude plugins, rename"}},
+			{Args: []string{"list"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "gemini-extension.json", "For Claude plugins, rename"}},
 			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/mcp.json": "native"}, FileNotContains: map[string]string{"/workspace/.factory/mcp.json": "foreign"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
-			{Args: []string{"status"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "For Claude plugins, rename"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "gemini-extension.json", "For Claude plugins, rename"}},
 		},
 	},
 }

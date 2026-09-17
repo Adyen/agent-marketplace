@@ -25,6 +25,7 @@ var knownConfigLocations = []configLocation{
 	{path: ".factory/hooks/hooks.json", hint: "Select a Factory workspace source, or merge these hooks into hooks/hooks.json for a Factory plugin."},
 	{path: ".cursor/mcp.json", hint: "Select a Cursor workspace source, or merge these MCP definitions into mcp.json for a Cursor plugin."},
 	{path: ".cursor/hooks/hooks.json", hint: "Select a Cursor workspace source, or merge these hooks into hooks/hooks.json for a Cursor plugin."},
+	{path: "gemini-extension.json", hint: "Select a Gemini plugin source to ingest the MCP definitions in this extension manifest, or merge them into the selected layout's MCP configuration without overwriting existing entries."},
 	{path: ".gemini/mcp.json", hint: "Select a Gemini source and merge the relevant definitions into .gemini/settings.json using Gemini's native schema."},
 	{path: ".gemini/settings.json", hint: "Select a Gemini source and merge the relevant definitions into .gemini/settings.json using Gemini's native schema."},
 	{path: ".gemini/gemini-extension.json", hint: "Select a Gemini source and merge the relevant definitions into .gemini/settings.json using Gemini's native schema."},

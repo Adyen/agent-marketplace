@@ -296,6 +296,58 @@ func TestLoadBundleDoesNotWarnConsumedEmptyConfigOrDirectory(t *testing.T) {
 	}
 }
 
+func TestLoadBundleAuditsForeignGeminiManifest(t *testing.T) {
+	native := []byte(`{"mcpServers":{"native":{"command":"npx"}}}`)
+	foreign := []byte(`{"name":"gemini","mcpServers":{"foreign":{"command":"npx"}}}`)
+	tests := []struct {
+		name          string
+		harness       ingest.Harness
+		wantResource  string
+		wantAuditFile string
+	}{
+		{name: "claude", harness: ingest.HarnessClaude, wantResource: "native", wantAuditFile: "gemini-extension.json"},
+		{name: "gemini", harness: ingest.HarnessGemini, wantResource: "foreign"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := fstest.MapFS{
+				".claude-plugin/plugin.json": {Data: []byte(`{"name":"claude"}`)},
+				".mcp.json":                  {Data: native},
+				"gemini-extension.json":      {Data: foreign},
+			}
+			ing, ok := ingest.For(tt.harness)
+			if !ok {
+				t.Fatalf("ingester %q is not registered", tt.harness)
+			}
+			bundle, err := ing.LoadBundle(src)
+			if err != nil {
+				t.Fatalf("LoadBundle: %v", err)
+			}
+			if !hasResource(bundle.Resources, ir.KindMcpServer, tt.wantResource) {
+				t.Fatalf("resources = %#v", bundle.Resources)
+			}
+			if tt.harness == ingest.HarnessClaude {
+				if hasResource(bundle.Resources, ir.KindMcpServer, "foreign") {
+					t.Fatalf("foreign resource was ingested: %#v", bundle.Resources)
+				}
+				var audits []diag.Diagnostic
+				for _, diagnostic := range bundle.Diagnostics {
+					if diagnostic.Code == diag.CodeIngestClaudeUnconsumedConfig && diagnostic.Source.File == tt.wantAuditFile {
+						audits = append(audits, diagnostic)
+					}
+				}
+				if len(audits) != 1 || audits[0].Severity != diag.SeverityWarning || audits[0].Hint == "" {
+					t.Fatalf("Gemini audit diagnostics = %#v", audits)
+				}
+				return
+			}
+			if hasDiagnostic(bundle.Diagnostics, diag.CodeIngestGeminiUnconsumedConfig, "gemini-extension.json") {
+				t.Fatalf("native Gemini manifest was audited: %#v", bundle.Diagnostics)
+			}
+		})
+	}
+}
+
 func hasResource(resources []ir.Resource, kind ir.ResourceKind, name string) bool {
 	for _, resource := range resources {
 		if resource.Kind() == kind && resource.Name() == name {
