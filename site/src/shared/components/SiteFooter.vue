@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { withBase } from 'vitepress'
+import { computed } from 'vue'
+import { useDocsVersion } from '../useDocsVersion'
 import {
   DOCS_PATH,
   GITHUB_REPOSITORY_URL,
   MARKETPLACE_PATH,
 } from '../site'
 
-const links = [
-  { label: 'Documentation', href: withBase(DOCS_PATH), external: false },
+const { current } = useDocsVersion()
+const links = computed(() => [
+  { label: 'Documentation', href: withBase(current.value?.path ?? DOCS_PATH), external: false },
   { label: 'Marketplace', href: MARKETPLACE_PATH, external: false, hardNavigation: true },
   { label: 'GitHub', href: GITHUB_REPOSITORY_URL, external: true },
-]
+])
 </script>
 
 <template>

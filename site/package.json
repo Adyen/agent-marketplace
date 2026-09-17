@@ -9,9 +9,19 @@
   "scripts": {
     "dev": "vitepress dev",
     "build": "vitepress build",
-    "preview": "vitepress preview"
+    "preview": "vitepress preview",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "vue-tsc --noEmit",
+    "test:e2e": "playwright test --config tests/playwright.config.ts",
+    "docs:snapshot": "node scripts/docs.mjs snapshot",
+    "docs:check": "node scripts/docs.mjs check"
   },
   "devDependencies": {
-    "vitepress": "1.6.4"
+    "@playwright/test": "1.55.1",
+    "@types/node": "24.3.0",
+    "typescript": "5.9.3",
+    "vitepress": "1.6.4",
+    "vue": "3.5.41",
+    "vue-tsc": "3.0.0"
   }
 }

@@ -1,0 +1,111 @@
+// One entry per page, ordered by hand. Add a line here when adding a page
+// under site/docs/.
+export default [
+  { text: 'Overview', link: '/docs/' },
+  { text: 'Install', link: '/docs/install' },
+  { text: 'Quick start', link: '/docs/quick-start' },
+  { text: 'User journeys', link: '/docs/explanation/user-journeys' },
+  {
+    text: 'Tutorials',
+    items: [
+      {
+        text: 'Consumers',
+        items: [
+          { text: 'Install your first skill', link: '/docs/tutorials/install-your-first-skill' },
+          { text: 'Install your first Marketplace skill', link: '/docs/tutorials/install-your-first-marketplace-skill' }
+        ]
+      },
+      { text: 'Registry authors', items: [{ text: 'Create your first registry', link: '/docs/tutorials/create-your-first-registry' }] },
+      { text: 'Marketplace operators', items: [{ text: 'Run a local Marketplace', link: '/docs/tutorials/run-a-local-marketplace' }] }
+    ]
+  },
+  {
+    text: 'How-to guides',
+    items: [
+      {
+        text: 'Consumers',
+        items: [
+          { text: 'Browse and inspect Marketplace resources', link: '/docs/how-to/browse-marketplace-resources' },
+          { text: 'Adopt in a repository', link: '/docs/how-to/adopt-agent-marketplace-in-a-repository' },
+          { text: 'Keep resources reproducible', link: '/docs/how-to/keep-resources-reproducible' },
+          { text: 'Troubleshoot sync drift', link: '/docs/how-to/troubleshoot-sync-drift' },
+          { text: 'Install resource bundles', link: '/docs/how-to/install-resource-bundles' },
+          { text: 'Remove or override resources', link: '/docs/how-to/remove-or-override-resources' },
+          { text: 'Use personal repository overrides', link: '/docs/how-to/use-personal-repository-overrides' },
+          { text: 'Configure multiple harnesses', link: '/docs/how-to/configure-multiple-harnesses' },
+          { text: 'Write regular files instead of symlinks', link: '/docs/how-to/write-regular-files-instead-of-symlinks' },
+          { text: 'Use a local registry', link: '/docs/how-to/use-a-local-registry' },
+          { text: 'Maintain v4 configuration', link: '/docs/how-to/migrate-configuration' },
+          { text: 'Convert a harness layout', link: '/docs/how-to/convert-a-harness-layout' },
+          { text: 'Repair owned shared configuration', link: '/docs/how-to/repair-owned-shared-configuration' },
+          { text: 'Back up and restore machine resources', link: '/docs/how-to/back-up-and-restore-machine-resources' },
+          { text: 'Remove agent-marketplace safely', link: '/docs/how-to/remove-agent-marketplace-safely' },
+          { text: 'Clean the cache safely', link: '/docs/how-to/clean-the-cache-safely' },
+          { text: 'Configure private Git registries', link: '/docs/how-to/configure-private-git-registries' },
+          { text: 'Configure telemetry', link: '/docs/how-to/configure-telemetry' },
+          { text: 'Install from a hosted Marketplace', link: '/docs/how-to/install-from-a-marketplace' }
+        ]
+      },
+      {
+        text: 'Registry authors',
+        items: [
+          { text: 'Add a resource to a registry', link: '/docs/how-to/author/add-a-resource-to-a-registry' },
+          { text: 'Publish resource collections', link: '/docs/how-to/author/publish-resource-collections' },
+          { text: 'Declare tags and prerequisites', link: '/docs/how-to/author/declare-tags-and-prerequisites' },
+          { text: 'Validate a registry in CI', link: '/docs/how-to/author/validate-a-registry-in-ci' },
+          { text: 'Version and release a registry', link: '/docs/how-to/author/version-and-release-a-registry' }
+        ]
+      },
+      {
+        text: 'Marketplace operators',
+        items: [
+          { text: 'Deploy a production Marketplace', link: '/docs/how-to/operator/deploy-a-production-marketplace' },
+          { text: 'Enable and use the admin panel', link: '/docs/how-to/operator/enable-and-use-the-admin-panel' },
+          { text: 'Configure a reverse proxy', link: '/docs/how-to/operator/configure-a-reverse-proxy' },
+          { text: 'Connect a private registry', link: '/docs/how-to/operator/connect-a-private-registry' },
+          { text: 'Back up and restore a Marketplace', link: '/docs/how-to/operator/back-up-and-restore' },
+          { text: 'Manage ingestion policy', link: '/docs/how-to/operator/manage-ingestion-policy' },
+          { text: 'Revoke a resource', link: '/docs/how-to/operator/revoke-a-resource' },
+          { text: 'Reindex and monitor', link: '/docs/how-to/operator/reindex-and-monitor' }
+        ]
+      }
+    ]
+  },
+  {
+    text: 'Reference',
+    items: [
+      { text: 'Command line', link: '/docs/reference/cli' },
+      { text: 'Repository configuration', link: '/docs/reference/configuration' },
+      { text: 'Configuration layers', link: '/docs/reference/configuration-layers' },
+      { text: 'Harnesses and output paths', link: '/docs/reference/harnesses-and-output-paths' },
+      { text: 'TUI', link: '/docs/reference/tui' },
+      { text: 'Lockfiles', link: '/docs/reference/lockfiles' },
+      { text: 'Filesystem layout', link: '/docs/reference/filesystem-layout' },
+      { text: 'Environment variables', link: '/docs/reference/environment-variables' },
+      { text: 'Diagnostics', link: '/docs/reference/diagnostics' },
+      { text: 'Logging', link: '/docs/reference/logging' },
+      { text: 'Telemetry', link: '/docs/reference/telemetry' },
+      { text: 'Marketplace operator configuration', link: '/docs/reference/marketplace-operator-configuration' },
+      { text: 'Marketplace HTTP API', link: '/docs/reference/marketplace-http-api' },
+      { text: 'Marketplace health and metrics', link: '/docs/reference/marketplace-health-and-metrics' },
+      { text: 'Marketplace resource locators', link: '/docs/reference/marketplace-resource-locators' },
+      { text: 'Registry layout', link: '/docs/reference/registry-layout' },
+      { text: 'Resource metadata', link: '/docs/reference/resource-metadata' },
+      { text: 'Collections', link: '/docs/reference/collections' }
+    ]
+  },
+  {
+    text: 'Explanation',
+    items: [
+      { text: 'How agent-marketplace works', link: '/docs/explanation/how-agent-marketplace-works' },
+      { text: 'Scopes, selection, and precedence', link: '/docs/explanation/scopes-selection-and-precedence' },
+      { text: 'Native harness materialization', link: '/docs/explanation/native-harness-materialization' },
+      { text: 'Reproducibility and lockfiles', link: '/docs/explanation/reproducibility-and-lockfiles' },
+      { text: 'Shared configuration ownership', link: '/docs/explanation/shared-configuration-ownership' },
+      { text: 'Git registries and hosted Marketplaces', link: '/docs/explanation/git-registries-and-hosted-marketplaces' },
+      { text: 'Telemetry and privacy', link: '/docs/explanation/telemetry-and-privacy' },
+      { text: 'Marketplace architecture', link: '/docs/explanation/marketplace-architecture' },
+      { text: 'Marketplace trust model', link: '/docs/explanation/marketplace-trust-model' }
+    ]
+  }
+]

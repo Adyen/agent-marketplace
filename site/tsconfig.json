@@ -5,7 +5,9 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "strict": true,
-    "types": ["vite/client"]
+    "allowJs": true,
+    "skipLibCheck": true,
+    "types": ["vitepress/client", "node"]
   },
-  "include": [".vitepress/**/*.ts", ".vitepress/**/*.mts", "src/**/*.ts", "src/**/*.vue"]
+  "include": [".vitepress/**/*.ts", ".vitepress/**/*.mts", "src/**/*.ts", "src/**/*.vue", "tests/**/*.ts"]
 }

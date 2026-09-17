@@ -1,5 +1,10 @@
-import { defineConfig } from 'vitepress'
+import { defineConfigWithTheme, type DefaultTheme } from 'vitepress'
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { DOCS_PATH, GITHUB_REPOSITORY_URL, MARKETPLACE_PATH } from '../src/shared/site'
+import { docsLocation, searchVersionFilter } from '../src/shared/docs-versions.mjs'
+import { prepareSite } from '../scripts/docs.mjs'
+import previewSidebar from './sidebar.mjs'
 
 // The hosting target is deliberately undecided. SITE_BASE lets a project-path
 // deployment (e.g. GitHub Pages at /agent-marketplace/) be selected at build
@@ -7,9 +12,12 @@ import { DOCS_PATH, GITHUB_REPOSITORY_URL, MARKETPLACE_PATH } from '../src/share
 const base = process.env.SITE_BASE ?? '/'
 
 const repo = GITHUB_REPOSITORY_URL
+const site = fileURLToPath(new URL('../', import.meta.url))
+const docs = prepareSite(site, previewSidebar)
 
-export default defineConfig({
+export default defineConfigWithTheme<DefaultTheme.Config & { docsVersions: typeof docs.versions }>({
   base,
+  srcDir: docs.srcDir,
   lang: 'en-US',
   title: 'agent-marketplace',
   description:
@@ -18,10 +26,44 @@ export default defineConfig({
   appearance: true,
 
   vite: {
+    plugins: [{
+      name: 'docs-source-watcher',
+      configureServer(server) {
+        const sources = ['docs', 'versions', 'index.md'].map((path) => resolve(site, path))
+        server.watcher.add(sources)
+        let restart: ReturnType<typeof setTimeout>
+        server.watcher.on('all', (_event, path) => {
+          if (!sources.some((source) => path === source || path.startsWith(`${source}/`))) return
+          clearTimeout(restart)
+          restart = setTimeout(() => { server.watcher.emit('change', resolve(site, '.vitepress/config.mts')) }, 100)
+        })
+        server.httpServer?.once('close', () => clearTimeout(restart))
+      }
+    }],
     server: {
       // Build output lives inside the site directory, so exclude it from the
       // dev watcher: otherwise a production build triggers a reload per page.
       watch: { ignored: ['**/.vitepress/dist/**', '**/.vitepress/cache/**'] }
+    }
+  },
+
+  markdown: {
+    config(md) {
+      md.core.ruler.after('inline', 'versioned-docs-links', (state) => {
+        const location = docsLocation(`/${state.env.relativePath}`, docs.versions)
+        const version = docs.versions.find((entry) => entry.version === location?.version)
+        if (!version) return
+        for (const block of state.tokens) {
+          for (const token of block.children ?? []) {
+            const attribute = token.type === 'link_open' ? 'href' : token.type === 'image' ? 'src' : null
+            const href = attribute && token.attrGet(attribute)
+            if (attribute && href?.startsWith(DOCS_PATH)) {
+              const target = docsLocation(href, docs.versions)
+              if (target?.version === 'latest') token.attrSet(attribute, `${version.path}${href.slice(DOCS_PATH.length)}`)
+            }
+          }
+        }
+      })
     }
   },
 
@@ -32,8 +74,24 @@ export default defineConfig({
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }]
   ],
 
+  transformPageData(page) {
+    page.frontmatter.sourceUrl = `${repo}/edit/main/site/${page.relativePath}`
+    const location = docsLocation(`/${page.relativePath}`, docs.versions)
+    if (!location) return
+    const version = docs.versions.find((entry) => entry.version === location.version)!
+    page.frontmatter.sourceUrl = version.version === 'preview'
+      ? `${repo}/edit/main/site/docs/${location.page}.md`
+      : `${repo}/blob/${version.source.commit}/${version.source.path}/${location.page}.md`
+    page.frontmatter.docsVersion = version.version
+    if (version.version === 'preview') {
+      page.frontmatter.head ??= []
+      page.frontmatter.head.push(['meta', { name: 'robots', content: 'noindex' }])
+    }
+  },
+
   themeConfig: {
     siteTitle: 'agent-marketplace',
+    docsVersions: docs.versions,
 
     nav: [
       // The Marketplace is a sibling app at the shared origin root, outside
@@ -41,138 +99,20 @@ export default defineConfig({
       // normalization, which misresolves from nested docs pages or a non-root
       // base, so a component item renders the origin-root anchor directly.
       { component: 'MarketplaceNavLink' },
-      { text: 'Docs', link: DOCS_PATH, activeMatch: `^${DOCS_PATH}` }
+      { text: 'Docs', link: DOCS_PATH, activeMatch: `^${DOCS_PATH}` },
+      { component: 'DocsVersionSelect' }
     ],
 
-    // One entry per page, ordered by hand. Add a line here when adding a page
-    // under site/docs/.
-    sidebar: {
-      [DOCS_PATH]: [
-        { text: 'Overview', link: DOCS_PATH },
-        { text: 'Install', link: `${DOCS_PATH}install` },
-        { text: 'Quick start', link: `${DOCS_PATH}quick-start` },
-        { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
-        {
-          text: 'Tutorials',
-          items: [
-            {
-              text: 'Consumers',
-              items: [
-                { text: 'Install your first skill', link: `${DOCS_PATH}tutorials/install-your-first-skill` },
-                { text: 'Install your first Marketplace skill', link: `${DOCS_PATH}tutorials/install-your-first-marketplace-skill` }
-              ]
-            },
-            {
-              text: 'Registry authors',
-              items: [
-                { text: 'Create your first registry', link: `${DOCS_PATH}tutorials/create-your-first-registry` }
-              ]
-            },
-            {
-              text: 'Marketplace operators',
-              items: [
-                { text: 'Run a local Marketplace', link: `${DOCS_PATH}tutorials/run-a-local-marketplace` }
-              ]
-            }
-          ]
-        },
-        {
-          text: 'How-to guides',
-          items: [
-            {
-              text: 'Consumers',
-              items: [
-                { text: 'Browse and inspect Marketplace resources', link: `${DOCS_PATH}how-to/browse-marketplace-resources` },
-                { text: 'Adopt in a repository', link: `${DOCS_PATH}how-to/adopt-agent-marketplace-in-a-repository` },
-                { text: 'Keep resources reproducible', link: `${DOCS_PATH}how-to/keep-resources-reproducible` },
-                { text: 'Troubleshoot sync drift', link: `${DOCS_PATH}how-to/troubleshoot-sync-drift` },
-                { text: 'Install resource bundles', link: `${DOCS_PATH}how-to/install-resource-bundles` },
-                { text: 'Remove or override resources', link: `${DOCS_PATH}how-to/remove-or-override-resources` },
-                { text: 'Use personal repository overrides', link: `${DOCS_PATH}how-to/use-personal-repository-overrides` },
-                { text: 'Configure multiple harnesses', link: `${DOCS_PATH}how-to/configure-multiple-harnesses` },
-                { text: 'Write regular files instead of symlinks', link: `${DOCS_PATH}how-to/write-regular-files-instead-of-symlinks` },
-                { text: 'Use a local registry', link: `${DOCS_PATH}how-to/use-a-local-registry` },
-                { text: 'Maintain v4 configuration', link: `${DOCS_PATH}how-to/migrate-configuration` },
-                { text: 'Convert a harness layout', link: `${DOCS_PATH}how-to/convert-a-harness-layout` },
-                { text: 'Repair owned shared configuration', link: `${DOCS_PATH}how-to/repair-owned-shared-configuration` },
-                { text: 'Back up and restore machine resources', link: `${DOCS_PATH}how-to/back-up-and-restore-machine-resources` },
-                { text: 'Remove agent-marketplace safely', link: `${DOCS_PATH}how-to/remove-agent-marketplace-safely` },
-                { text: 'Clean the cache safely', link: `${DOCS_PATH}how-to/clean-the-cache-safely` },
-                { text: 'Configure private Git registries', link: `${DOCS_PATH}how-to/configure-private-git-registries` },
-                { text: 'Configure telemetry', link: `${DOCS_PATH}how-to/configure-telemetry` },
-                { text: 'Install from a hosted Marketplace', link: `${DOCS_PATH}how-to/install-from-a-marketplace` }
-              ]
-            },
-            {
-              text: 'Registry authors',
-              items: [
-                { text: 'Add a resource to a registry', link: `${DOCS_PATH}how-to/author/add-a-resource-to-a-registry` },
-                { text: 'Publish resource collections', link: `${DOCS_PATH}how-to/author/publish-resource-collections` },
-                { text: 'Declare tags and prerequisites', link: `${DOCS_PATH}how-to/author/declare-tags-and-prerequisites` },
-                { text: 'Validate a registry in CI', link: `${DOCS_PATH}how-to/author/validate-a-registry-in-ci` },
-                { text: 'Version and release a registry', link: `${DOCS_PATH}how-to/author/version-and-release-a-registry` }
-              ]
-            },
-            {
-              text: 'Marketplace operators',
-              items: [
-                { text: 'Deploy a production Marketplace', link: `${DOCS_PATH}how-to/operator/deploy-a-production-marketplace` },
-                { text: 'Enable and use the admin panel', link: `${DOCS_PATH}how-to/operator/enable-and-use-the-admin-panel` },
-                { text: 'Configure a reverse proxy', link: `${DOCS_PATH}how-to/operator/configure-a-reverse-proxy` },
-                { text: 'Connect a private registry', link: `${DOCS_PATH}how-to/operator/connect-a-private-registry` },
-                { text: 'Back up and restore a Marketplace', link: `${DOCS_PATH}how-to/operator/back-up-and-restore` },
-                { text: 'Manage ingestion policy', link: `${DOCS_PATH}how-to/operator/manage-ingestion-policy` },
-                { text: 'Revoke a resource', link: `${DOCS_PATH}how-to/operator/revoke-a-resource` },
-                { text: 'Reindex and monitor', link: `${DOCS_PATH}how-to/operator/reindex-and-monitor` }
-              ]
-            }
-          ]
-        },
-        {
-          text: 'Reference',
-          items: [
-            { text: 'Command line', link: `${DOCS_PATH}reference/cli` },
-            { text: 'Repository configuration', link: `${DOCS_PATH}reference/configuration` },
-            { text: 'Configuration layers', link: `${DOCS_PATH}reference/configuration-layers` },
-            { text: 'Harnesses and output paths', link: `${DOCS_PATH}reference/harnesses-and-output-paths` },
-            { text: 'TUI', link: `${DOCS_PATH}reference/tui` },
-            { text: 'Lockfiles', link: `${DOCS_PATH}reference/lockfiles` },
-            { text: 'Filesystem layout', link: `${DOCS_PATH}reference/filesystem-layout` },
-            { text: 'Environment variables', link: `${DOCS_PATH}reference/environment-variables` },
-            { text: 'Diagnostics', link: `${DOCS_PATH}reference/diagnostics` },
-            { text: 'Logging', link: `${DOCS_PATH}reference/logging` },
-            { text: 'Telemetry', link: `${DOCS_PATH}reference/telemetry` },
-            { text: 'Marketplace operator configuration', link: `${DOCS_PATH}reference/marketplace-operator-configuration` },
-            { text: 'Marketplace HTTP API', link: `${DOCS_PATH}reference/marketplace-http-api` },
-            { text: 'Marketplace health and metrics', link: `${DOCS_PATH}reference/marketplace-health-and-metrics` },
-            { text: 'Marketplace resource locators', link: `${DOCS_PATH}reference/marketplace-resource-locators` },
-            { text: 'Registry layout', link: `${DOCS_PATH}reference/registry-layout` },
-            { text: 'Resource metadata', link: `${DOCS_PATH}reference/resource-metadata` },
-            { text: 'Collections', link: `${DOCS_PATH}reference/collections` }
-          ]
-        },
-        {
-          text: 'Explanation',
-          items: [
-            { text: 'How agent-marketplace works', link: `${DOCS_PATH}explanation/how-agent-marketplace-works` },
-            { text: 'Scopes, selection, and precedence', link: `${DOCS_PATH}explanation/scopes-selection-and-precedence` },
-            { text: 'Native harness materialization', link: `${DOCS_PATH}explanation/native-harness-materialization` },
-            { text: 'Reproducibility and lockfiles', link: `${DOCS_PATH}explanation/reproducibility-and-lockfiles` },
-            { text: 'Shared configuration ownership', link: `${DOCS_PATH}explanation/shared-configuration-ownership` },
-            { text: 'Git registries and hosted Marketplaces', link: `${DOCS_PATH}explanation/git-registries-and-hosted-marketplaces` },
-            { text: 'Telemetry and privacy', link: `${DOCS_PATH}explanation/telemetry-and-privacy` },
-            { text: 'Marketplace architecture', link: `${DOCS_PATH}explanation/marketplace-architecture` },
-            { text: 'Marketplace trust model', link: `${DOCS_PATH}explanation/marketplace-trust-model` }
-          ]
-        }
-      ]
+    sidebar: docs.sidebar as DefaultTheme.Sidebar,
+
+    search: {
+      provider: 'local',
+      options: { miniSearch: { searchOptions: { filter: searchVersionFilter } } }
     },
 
-    search: { provider: 'local' },
-
     editLink: {
-      pattern: `${repo}/edit/main/site/:path`,
-      text: 'Edit this page on GitHub'
+      pattern(page) { return page.frontmatter.sourceUrl },
+      text: 'View page source on GitHub'
     },
 
     socialLinks: [{
