@@ -245,7 +245,7 @@ func Convert(srcFS fs.FS, from, to Harness, opts ...Option) (*Result, error) {
 		}
 		return nil, fmt.Errorf("harnesscompile.Convert: ingest %s: %w", from, err)
 	}
-	if len(b.Resources) == 0 && !allowsIntentionalZeroResourceBundle(b.Diagnostics) {
+	if len(b.Resources) == 0 && !diag.HasErrors(b.Diagnostics) && !allowsIntentionalZeroResourceBundle(b.Diagnostics) {
 		return nil, fmt.Errorf("harnesscompile.Convert: source %q: %w", from, errSourceEmpty)
 	}
 	slog.Info("harness ingest end", "from", from, "resources", len(b.Resources), "diagnostics", len(b.Diagnostics))

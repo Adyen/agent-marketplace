@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -218,6 +220,48 @@ func TestConvert_RefusesEmptyWorkspaceWithInformationalDiagnostic(t *testing.T) 
 	}
 	if !errors.Is(err, errSourceEmpty) {
 		t.Fatalf("Convert error = %v, want errSourceEmpty", err)
+	}
+}
+
+func TestConvert_PreservesInvalidOnlyDiagnosticsAndSuppressesPrune(t *testing.T) {
+	src := fstest.MapFS{
+		".claude-plugin/plugin.json": {Data: []byte(`{"name":"invalid-only"}`)},
+		"skills/broken/SKILL.md":     {Data: []byte("---\ntriggers: 42\n---\ninvalid\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessFactory)
+	if err != nil {
+		t.Fatalf("Convert(invalid-only): %v", err)
+	}
+	if result == nil {
+		t.Fatal("Convert(invalid-only) returned nil result")
+	}
+	if len(result.Artifacts) != 0 {
+		t.Fatalf("invalid-only artifacts = %d, want 0", len(result.Artifacts))
+	}
+	if !diag.HasErrors(result.Diagnostics) || !diag.HasCode(result.Diagnostics, diag.CodeIngestClaudeLoadSkillFailed) {
+		t.Fatalf("invalid-only diagnostics = %#v, want the load failure", result.Diagnostics)
+	}
+
+	outDir := t.TempDir()
+	outputPath := filepath.Join(outDir, "existing-output.txt")
+	original := []byte("previous successful conversion")
+	if err := os.WriteFile(outputPath, original, 0o644); err != nil {
+		t.Fatalf("seed previous output: %v", err)
+	}
+	report, err := Materialize(result, outDir, WithWriteMode(WriteModeSync), WithPruneStale(true))
+	if !errors.Is(err, ErrPartialResult) {
+		t.Fatalf("Materialize(invalid-only) error = %v, want ErrPartialResult", err)
+	}
+	if report == nil || !report.Partial || !report.PruneSuppressed {
+		t.Fatalf("Materialize(invalid-only) report = %#v, want partial result with pruning suppressed", report)
+	}
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read previous output: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("previous output changed from %q to %q", original, got)
 	}
 }
 
