@@ -277,6 +277,7 @@ func translateHook(hook *ir.Hook, opts compilepkg.Options) ([]artifact.Artifact,
 			if !ok || value != sidecar.HookWorkingDir {
 				return nil, []diag.Diagnostic{nativeFieldsUnsupportedDiagnostic(hook)}, nil
 			}
+			delete(extra, "working_directory")
 		}
 	}
 

@@ -8,6 +8,24 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
+func TestHookExtraKeysReservesUnicodeAliasesDeterministically(t *testing.T) {
+	extra := map[string]any{"COMMAND": "one", "hook\u017f": "blocked", "Foo": "one", "foo": "two"}
+	canonical := CanonicalFields("command")
+	before := map[string]any{}
+	for key, value := range extra {
+		before[key] = value
+	}
+	for i := 0; i < 10; i++ {
+		keys, diagnostics := HookExtraKeys(extra, canonical, TargetClaude, "probe", diag.SourceRef{})
+		if !reflect.DeepEqual(keys, []string{"Foo", "foo"}) || !diag.HasCode(diagnostics, diag.CodeCanonicalFieldOverridesExtra) {
+			t.Fatalf("iteration %d: keys=%#v diagnostics=%#v", i, keys, diagnostics)
+		}
+	}
+	if !reflect.DeepEqual(extra, before) || !reflect.DeepEqual(canonical, CanonicalFields("command")) {
+		t.Fatalf("inputs mutated: extra=%#v canonical=%#v", extra, canonical)
+	}
+}
+
 func TestHookExtraKeysReservesCaseAliasesWithoutMutatingCanonical(t *testing.T) {
 	canonical := CanonicalFields("command")
 	before := map[string]struct{}{"command": {}}

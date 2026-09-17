@@ -73,8 +73,12 @@ func HookExtraKeys(extra map[string]any, canonical map[string]struct{}, target T
 	for key := range canonical {
 		reserved[key] = struct{}{}
 	}
+	fields := make([]string, 0, len(reserved))
+	for field := range reserved {
+		fields = append(fields, field)
+	}
 	for key := range extra {
-		for field := range reserved {
+		for _, field := range fields {
 			if strings.EqualFold(key, field) {
 				reserved[key] = struct{}{}
 				break
