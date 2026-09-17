@@ -29,7 +29,6 @@ jobs:
       go_build: ${{ steps.changes.outputs.go_build }}
       go_test: ${{ steps.changes.outputs.go_test }}
       benchmark: ${{ steps.changes.outputs.benchmark }}
-      harness_compatibility: ${{ steps.changes.outputs.harness_compatibility }}
       marketplace_e2e: ${{ steps.changes.outputs.marketplace_e2e }}
       tui_qa: ${{ steps.changes.outputs.tui_qa }}
       container_config: ${{ steps.changes.outputs.container_config }}
