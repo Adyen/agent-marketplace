@@ -244,6 +244,8 @@ resources:
 
 `as` is invalid for collections because collections do not materialize. It does not rename the source coordinate or change content identity. Ordinary installation does not manufacture a `revision` option from a resolved result. An explicit revision request is retained even though it happens to be a hash.
 
+For Git and directory sources, the current legacy runtime only accepts an omitted or same-name `as` value; a differing installed alias is parsed but rejected with `v4.runtime-option`. Alias honoring remains part of the future hosted acquisition/editor boundary.
+
 An empty options map is semantically identical to a string item; editors emit the string when no options remain. Null/scalar option values and multi-key resource items are invalid. Duplicate locators within one include list are errors, even if their options match. One source group cannot install two different revisions of the same locator by repeating it.
 
 ### 4.4 Dynamic selection and exclusions
