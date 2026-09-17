@@ -28,7 +28,7 @@ The hosted lock extension is a prerequisite for shipping Marketplace selections 
 
 ## 1.1 Implementation status
 
-The current repository implements a safe, usable subset of this design:
+The current repository implements a subset of this design:
 
 ### Implemented
 
@@ -48,7 +48,7 @@ The current repository implements a safe, usable subset of this design:
 - Lossless migration rules for included legacy trees and the unreleased legacy Marketplace pin format, including provenance transfer into the owning lock. These inputs remain refused or require separately reviewed remediation.
 - The complete hosted acceptance matrix and release gate covering identity changes, missing versus corrupt locks, complete enumeration, partial-query failure, transactional publication, concurrent edits, and cross-scope behavior.
 
-This status is intentionally narrower than the normative tables below: a row can describe the required end state while still being listed as remaining work. The implemented slice is active for Git/directory sources and explicit standalone migration; no hosted Marketplace feature is activated by the schema alone.
+The implemented slice is active for Git/directory sources and explicit standalone migration; no hosted Marketplace feature is activated by the schema alone.
 
 ## 2. Canonical config shape
 
@@ -467,7 +467,7 @@ Parser/editor/resolver tests must assert independently authored expected results
 
 ## 10. Integration boundaries and release conditions
 
-Implementation depends on these boundaries, in order. The current repository implements the Git/directory portions of the first three boundaries and the semantic/selection-preserving migration for representable standalone inputs; hosted Marketplace boundaries remain pending:
+The current repository implements the Git/directory parser, include composition, runtime adapter, and migration for representable standalone legacy files; the shared node-level editors and hosted Marketplace boundaries remain pending:
 
 1. Merge #123 without broadening its Git-only scope.
 2. Add v4 parsing, a source-bound requirement model, and a legacy normalization adapter with semantic-equivalence tests.
