@@ -122,10 +122,6 @@ func TestMaterializePrivateMCPModes(t *testing.T) {
 			if err := os.Chmod(path, mode); err != nil {
 				t.Fatal(err)
 			}
-			before, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
 			if _, err := hcc.Materialize(result, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
 				t.Fatal(err)
 			}
@@ -144,7 +140,7 @@ func TestMaterializePrivateMCPModes(t *testing.T) {
 				t.Fatalf("merged data = %s", data)
 			}
 			if mode == 0o600 {
-				before = after
+				before := after
 				if _, err := hcc.Materialize(result, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
 					t.Fatal(err)
 				}
