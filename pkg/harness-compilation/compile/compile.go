@@ -323,6 +323,11 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 		slog.Error("compile failed", "target", t, "kind", kind, "resource", name, "error", err)
 		return nil, err
 	}
+	if kind == ir.KindMcpServer {
+		for i := range arts {
+			arts[i].Mode = 0o600
+		}
+	}
 	slog.Debug("compile end", "target", t, "kind", kind, "resource", name, "artifacts", len(arts), "diagnostics", len(diags))
 	return &Result{
 		Artifacts:   arts,
