@@ -169,8 +169,11 @@ func classifyPath(p string) (map[string]bool, error) {
 		return c, nil
 	}
 
-	if p == "go.mod" || p == "go.sum" || p == "go.work" || p == "go.work.sum" ||
-		p == "e2e/go.mod" || p == "e2e/go.sum" {
+	isE2E := strings.HasPrefix(p, "e2e/")
+	isRootModuleInput := p == "go.mod" || p == "go.sum" || p == "go.work" || p == "go.work.sum"
+	isE2EModuleInput := p == "e2e/go.mod" || p == "e2e/go.sum"
+
+	if isRootModuleInput {
 		c["go_build"] = true
 		c["go_test"] = true
 		c["benchmark"] = true
@@ -179,9 +182,15 @@ func classifyPath(p string) (map[string]bool, error) {
 		c["tui_qa"] = true
 		c["container_marketplace"] = true
 	}
+	if isE2E {
+		c["marketplace_e2e"] = true
+	}
+	if isE2EModuleInput || (strings.HasPrefix(p, "e2e/harness_compatibility_") && strings.HasSuffix(p, "_test.go")) {
+		c["harness_compatibility"] = true
+	}
 
 	isGo := strings.HasSuffix(p, ".go")
-	if isGo {
+	if isGo && !isE2E {
 		c["go_test"] = true
 	}
 
@@ -193,15 +202,8 @@ func classifyPath(p string) (map[string]bool, error) {
 		c["container_marketplace"] = true
 	}
 
-	if isGo && underAnyPrefix(p, benchmarkRoots) {
+	if isGo && !isE2E && underAnyPrefix(p, benchmarkRoots) {
 		c["benchmark"] = true
-	}
-
-	if strings.HasPrefix(p, "e2e/") {
-		c["marketplace_e2e"] = true
-		if strings.HasPrefix(p, "e2e/harness_compatibility_") && strings.HasSuffix(p, "_test.go") {
-			c["harness_compatibility"] = true
-		}
 	}
 
 	if strings.HasPrefix(p, "tools/harness-compat/") {
@@ -235,6 +237,7 @@ func classifyPath(p string) (map[string]bool, error) {
 	}
 
 	if strings.HasPrefix(p, "deploy/helm/") {
+		c["container_config"] = true
 		c["helm"] = true
 	}
 

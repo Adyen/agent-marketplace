@@ -71,14 +71,15 @@ func TestPlanCategories(t *testing.T) {
 		{"docs-only", []string{"README.md", "docs/architecture.md"}, false, want()},
 		{"product Go", []string{"internal/resolver/source.go"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
 		{"unbenchmarked tool Go", []string{"tools/harness-compat/main.go"}, false, want("go_test", "harness_compatibility")},
-		{"E2E", []string{"e2e/marketplace_test.go"}, false, want("marketplace_e2e", "go_test")},
+		{"E2E", []string{"e2e/marketplace_test.go"}, false, want("marketplace_e2e")},
+		{"harness compatibility E2E", []string{"e2e/harness_compatibility_native_test.go"}, false, want("marketplace_e2e", "harness_compatibility")},
 		{"harness script", []string{"tools/harness-compat/install.sh"}, false, want("harness_compatibility")},
 		{"TUI QA", []string{"tools/tui-qa/package.json"}, false, want("tui_qa")},
 		{"marketplace Dockerfile", []string{"Dockerfile.marketplace"}, false, want("container_config", "container_marketplace")},
 		{"web", []string{"web/app/main.ts"}, false, want("container_web")},
 		{"site", []string{"site/index.md"}, false, want("container_site")},
 		{"design", []string{"design/colors.css"}, false, want("container_config", "container_web", "container_site")},
-		{"Helm", []string{"deploy/helm/agent-marketplace/values.yaml"}, false, want("helm")},
+		{"Helm", []string{"deploy/helm/agent-marketplace/values.yaml"}, false, want("container_config", "helm")},
 		{"unknown script", []string{"scripts/new-check.sh"}, false, all},
 		{"unknown config", []string{"config/policy.yaml"}, false, all},
 		{"LICENSE", []string{"LICENSE"}, false, want()},
@@ -90,9 +91,9 @@ func TestPlanCategories(t *testing.T) {
 		{"go.sum", []string{"go.sum"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
 		{"go.work", []string{"go.work"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
 		{"go.work.sum", []string{"go.work.sum"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
-		{"e2e go.mod", []string{"e2e/go.mod"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
-		{"e2e go.sum", []string{"e2e/go.sum"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
-		{"multi-path union", []string{"internal/resolver/source.go", "web/index.html", "deploy/helm/agent-marketplace/Chart.yaml"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace", "container_web", "helm")},
+		{"e2e go.mod", []string{"e2e/go.mod"}, false, want("harness_compatibility", "marketplace_e2e")},
+		{"e2e go.sum", []string{"e2e/go.sum"}, false, want("harness_compatibility", "marketplace_e2e")},
+		{"multi-path union", []string{"internal/resolver/source.go", "web/index.html", "deploy/helm/agent-marketplace/Chart.yaml"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_config", "container_marketplace", "container_web", "helm")},
 	}
 
 	for _, root := range expectedBenchmarkRoots {
@@ -127,6 +128,23 @@ func TestDefinitionsMatch(t *testing.T) {
 	}
 	if !slices.Equal(benchmarkRoots, expectedBenchmarkRoots) {
 		t.Errorf("benchmarkRoots mismatch\n got: %v\nwant: %v", benchmarkRoots, expectedBenchmarkRoots)
+	}
+}
+
+func TestHelmDoesNotEnableImageCategories(t *testing.T) {
+	got, err := planCategories([]string{"deploy/helm/agent-marketplace/values.yaml"}, false)
+	if err != nil {
+		t.Fatalf("planCategories: %v", err)
+	}
+	for _, cat := range []string{"container_marketplace", "container_web", "container_site"} {
+		if got[cat] {
+			t.Errorf("%s should not be enabled for Helm paths", cat)
+		}
+	}
+	for _, cat := range []string{"container_config", "helm"} {
+		if !got[cat] {
+			t.Errorf("%s should be enabled for Helm paths", cat)
+		}
 	}
 }
 
