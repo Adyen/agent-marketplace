@@ -28,7 +28,7 @@ The hosted lock extension is a prerequisite for shipping Marketplace selections 
 
 ## 1.1 Implementation status
 
-The current repository implements a subset of this design:
+The current repository implements the Git/directory subset of this design:
 
 ### Implemented
 
