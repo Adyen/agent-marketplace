@@ -42,6 +42,7 @@ describe('ResourceRow', () => {
     expect(wrapper.find('[onerror]').exists()).toBe(false)
     expect(wrapper.get('button[aria-label^="Install command unavailable"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('a').exists()).toBe(false)
+    expect(wrapper.get('article').attributes('data-interactive')).toBeUndefined()
     expect(wrapper.text()).not.toContain('View details')
     expect(wrapper.text()).not.toContain('Copy URL')
   })
@@ -70,6 +71,7 @@ describe('ResourceRow', () => {
 
     expect(wrapper.text()).not.toContain('Available')
     expect(wrapper.text()).not.toContain('Not installable')
+    expect(wrapper.get('article').attributes('data-interactive')).toBe('true')
     expect(wrapper.get('button[aria-label^="Copy install command"]').attributes('disabled')).toBeUndefined()
   })
 })

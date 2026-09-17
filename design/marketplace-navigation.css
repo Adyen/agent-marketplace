@@ -36,6 +36,7 @@
 .am-site-header {
   position: relative;
   z-index: 50;
+  border-bottom: 1px solid var(--am-color-border-default);
   background: var(--am-color-bg-chrome);
   color: var(--am-color-text-primary);
 }
@@ -55,7 +56,7 @@
 
 .am-site-nav a:focus-visible,
 .am-site-nav button:focus-visible {
-  outline: 2px solid var(--am-color-action-primary);
+  outline: 2px solid var(--am-color-action-focus-ring);
   outline-offset: 4px;
 }
 
@@ -74,7 +75,7 @@ button[role="switch"] {
 }
 
 .am-site-nav__brand:hover {
-  opacity: 0.6;
+  color: var(--am-color-action-primary);
 }
 
 .am-site-nav__actions,
@@ -254,7 +255,7 @@ button[role="switch"] {
     align-items: stretch;
     flex-direction: column;
     gap: 16px;
-    background: var(--am-color-bg-canvas);
+    background: var(--am-color-bg-chrome);
     padding: 0 32px 32px;
   }
 

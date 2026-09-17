@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 const digest = `sha256:${'a'.repeat(64)}`
 const notesDigest = `sha256:${'f'.repeat(64)}`
@@ -10,6 +10,30 @@ const relativeAppURL = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || 
 const relativeAppBaseURL = `${relativeAppURL}/marketplace/`
 const sharedOriginURL = `http://127.0.0.1:${process.env.E2E_SHARED_ORIGIN_PORT || '4323'}`
 const sharedAppearanceKey = 'vitepress-theme-appearance'
+
+function colorChannels(color: string): number[] {
+  const channels = (color.match(/[0-9]*\.?[0-9]+/g) ?? []).slice(0, 3).map(Number)
+  return channels.some(channel => channel > 1)
+    ? channels.map(Math.round)
+    : channels.map(channel => Math.round(channel * 255))
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const luminance = (color: string) => {
+    const [red, green, blue] = colorChannels(color).map((channel) => {
+      const value = channel / 255
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+  }
+  const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a)
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+async function expectResourceCount(page: Page, count: number) {
+  const label = `${count} ${count === 1 ? 'resource' : 'resources'}`
+  await expect(page.locator('.catalog-results__header > p')).toContainText(label)
+}
 
 function searchResult() {
   return {
@@ -99,6 +123,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('aria-current', 'page')
+    await expect(marketplaceNav.getByRole('link', { name: 'Get started', exact: true })).toHaveCount(0)
     await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
     await expect(page.locator('link[href*="nuxt-fonts-global"]')).toHaveCount(0)
@@ -122,8 +147,15 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).resolves.toBe('light')
   })
 
-  test('keeps Nuxt color scales ordered in both themes', async ({ page }) => {
-    const scales = ['ink', 'focus', 'ready', 'withheld', 'revoked']
+  test('keeps Nuxt color scales fixed and ordered in both themes', async ({ page }) => {
+    const expected = {
+      ink: [[243, 246, 244], [113, 135, 122], [20, 26, 24]],
+      focus: [[240, 251, 244], [34, 184, 99], [16, 45, 28]],
+      ready: [[240, 251, 244], [34, 184, 99], [16, 45, 28]],
+      withheld: [[255, 251, 235], [245, 158, 11], [69, 26, 3]],
+      revoked: [[254, 242, 242], [239, 68, 68], [69, 10, 10]],
+    }
+    const scales = Object.keys(expected)
 
     await page.goto('/')
     for (const preference of ['light', 'dark']) {
@@ -133,7 +165,7 @@ test.describe('Marketplace browser discovery', () => {
       )
       await page.reload()
 
-      const luminances = await page.evaluate((names) => {
+      const renderedScales = await page.evaluate((names) => {
         const probe = document.createElement('span')
         document.body.appendChild(probe)
 
@@ -142,8 +174,9 @@ test.describe('Marketplace browser discovery', () => {
             probe.style.color = `var(--color-${name}-${shade})`
             const rendered = getComputedStyle(probe).color
             const channels = (rendered.match(/[0-9]*\.?[0-9]+/g) ?? []).slice(0, 3).map(Number)
-            const divisor = channels.some(channel => channel > 1) ? 255 : 1
-            return channels.reduce((sum, channel) => sum + channel / divisor, 0) / 3
+            return channels.some(channel => channel > 1)
+              ? channels.map(Math.round)
+              : channels.map(channel => Math.round(channel * 255))
           })
           return [name, shades]
         }))
@@ -153,10 +186,183 @@ test.describe('Marketplace browser discovery', () => {
       }, scales)
 
       for (const scale of scales) {
-        const [light, middle, dark] = luminances[scale] as number[]
-        expect(light, `${scale}-50 should be lighter in ${preference} mode`).toBeGreaterThan(middle)
-        expect(middle, `${scale}-500 should be lighter than ${scale}-950 in ${preference} mode`).toBeGreaterThan(dark)
+        expect(renderedScales[scale], `${scale} should not change in ${preference} mode`).toEqual(expected[scale])
       }
+    }
+  })
+
+  test('applies distinct Marketplace roles without changing the Landing palette', async ({ page }) => {
+    const themes = {
+      light: {
+        marketplace: {
+          canvas: 'rgb(243, 246, 244)',
+          surface: 'rgb(255, 255, 255)',
+          subtle: 'rgb(237, 242, 239)',
+          raised: 'rgb(255, 255, 255)',
+          chrome: 'rgb(255, 255, 255)',
+          control: 'rgb(255, 255, 255)',
+          hover: 'rgb(232, 238, 234)',
+          code: 'rgb(237, 242, 239)',
+          primaryText: 'rgb(27, 38, 32)',
+          secondaryText: 'rgb(83, 97, 90)',
+          mutedText: 'rgb(95, 110, 101)',
+          border: 'rgb(214, 223, 217)',
+          controlBorder: 'rgb(132, 149, 139)',
+          action: 'rgb(8, 122, 61)',
+          actionSoft: 'rgb(229, 243, 234)',
+        },
+        landing: { canvas: [255, 255, 255], surface: [255, 255, 255], actionHover: [10, 152, 80] },
+      },
+      dark: {
+        marketplace: {
+          canvas: 'rgb(20, 26, 24)',
+          surface: 'rgb(27, 35, 32)',
+          subtle: 'rgb(35, 46, 40)',
+          raised: 'rgb(40, 52, 45)',
+          chrome: 'rgb(27, 35, 32)',
+          control: 'rgb(32, 42, 37)',
+          hover: 'rgb(43, 56, 48)',
+          code: 'rgb(20, 26, 24)',
+          primaryText: 'rgb(237, 243, 239)',
+          secondaryText: 'rgb(184, 196, 189)',
+          mutedText: 'rgb(151, 168, 158)',
+          border: 'rgb(54, 69, 60)',
+          controlBorder: 'rgb(113, 135, 122)',
+          action: 'rgb(85, 219, 137)',
+          actionSoft: 'rgb(32, 61, 44)',
+        },
+        landing: { canvas: [9, 17, 13], surface: [11, 18, 14], actionHover: [120, 235, 162] },
+      },
+    } as const
+
+    for (const preference of ['light', 'dark'] as const) {
+      const theme = themes[preference]
+      await page.goto('/')
+      await page.evaluate(
+        ({ key, value }) => localStorage.setItem(key, value),
+        { key: sharedAppearanceKey, value: preference },
+      )
+      await page.reload()
+
+      await expect(page.locator('body')).toHaveCSS('background-color', theme.marketplace.canvas)
+      await expect(page.locator('main > section').first()).toHaveCSS('background-color', theme.marketplace.canvas)
+      const resourcesSection = page.getByTestId('resources-section')
+      await expect(resourcesSection).toHaveCSS('background-color', theme.marketplace.surface)
+      await expect(page.getByTestId('search-results')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      const sectionGeometry = await page.evaluate(() => {
+        const intro = document.querySelector('main > section:first-of-type')!.getBoundingClientRect()
+        const resources = document.querySelector('[data-testid="resources-section"]')!.getBoundingClientRect()
+        const footer = document.querySelector('footer')!.getBoundingClientRect()
+        return {
+          viewportWidth: document.documentElement.clientWidth,
+          resources: { x: resources.x, y: resources.y, width: resources.width, bottom: resources.bottom },
+          introBottom: intro.bottom,
+          footerTop: footer.top,
+        }
+      })
+      expect(sectionGeometry.resources.x).toBe(0)
+      expect(sectionGeometry.resources.width).toBe(sectionGeometry.viewportWidth)
+      expect(Math.abs(sectionGeometry.resources.y - sectionGeometry.introBottom)).toBeLessThanOrEqual(1)
+      expect(Math.abs(sectionGeometry.resources.bottom - sectionGeometry.footerTop)).toBeLessThanOrEqual(1)
+
+      const header = page.locator('.am-site-header')
+      await expect(header).toHaveCSS('background-color', theme.marketplace.chrome)
+      await expect(header).toHaveCSS('border-bottom-color', theme.marketplace.border)
+
+      const search = page.getByLabel('Search', { exact: true })
+      await expect(search).toHaveCSS('background-color', theme.marketplace.control)
+      await expect(search).toHaveCSS('border-color', theme.marketplace.controlBorder)
+      await search.focus()
+      await expect(search).toHaveCSS('outline-color', theme.marketplace.action)
+      await expect(search).toHaveCSS('outline-width', '2px')
+
+      const commandFilter = page.getByRole('radio', { name: 'Command', exact: true })
+      await expect(commandFilter).toHaveCSS('accent-color', theme.marketplace.action)
+      await commandFilter.check()
+      await expect(page.getByRole('button', { name: 'Remove Command kind filter' })).toHaveCSS('background-color', theme.marketplace.subtle)
+
+      await page.getByRole('button', { name: 'Clear', exact: true }).click()
+      const row = page.getByTestId('search-results').locator('article').first()
+      const namespace = row.locator('h2 span').first()
+      const resourceName = row.locator('h2 span').last()
+      const description = row.locator('p.text-toned')
+      await expect(namespace).toHaveCSS('color', theme.marketplace.mutedText)
+      await expect(resourceName).toHaveCSS('color', theme.marketplace.primaryText)
+      await expect(description).toHaveCSS('color', theme.marketplace.secondaryText)
+
+      await row.getByRole('link', { name: 'team-tools/secure-review', exact: true }).hover()
+      await expect(row).toHaveCSS('background-color', theme.marketplace.hover)
+      expect(contrastRatio(
+        await namespace.evaluate(element => getComputedStyle(element).color),
+        await row.evaluate(element => getComputedStyle(element).backgroundColor),
+      )).toBeGreaterThanOrEqual(4.5)
+
+      const copy = row.getByRole('button', { name: 'Copy install command for secure-review', exact: true })
+      await expect(copy).toHaveCSS('background-color', theme.marketplace.subtle)
+      await expect(copy).toHaveCSS('border-color', theme.marketplace.border)
+      await expect(copy).toHaveCSS('color', theme.marketplace.primaryText)
+      await copy.hover()
+      await expect(copy).toHaveCSS('background-color', theme.marketplace.hover)
+      await copy.focus()
+      await page.keyboard.press('Shift+Tab')
+      await page.keyboard.press('Tab')
+      await expect(copy).toHaveCSS('outline-color', theme.marketplace.action)
+      await expect(copy).toHaveCSS('outline-width', '2px')
+
+      const disabledPrevious = page.getByRole('button', { name: 'Go to previous page' })
+      await expect(disabledPrevious).toBeDisabled()
+      await expect(disabledPrevious).toHaveCSS('background-color', theme.marketplace.subtle)
+
+      await page.goto(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
+      const detailSurface = page.locator('main > article')
+      await expect(detailSurface).toHaveCSS('background-color', theme.marketplace.surface)
+      await expect(page.locator('main > article > div').first().locator('p.text-toned')).toHaveCSS('color', theme.marketplace.secondaryText)
+
+      const inspectionSelect = page.getByLabel('Inspection file')
+      await expect(inspectionSelect).toHaveCSS('background-color', theme.marketplace.control)
+      await expect(inspectionSelect).toHaveCSS('border-color', theme.marketplace.controlBorder)
+      await inspectionSelect.focus()
+      await expect(inspectionSelect).toHaveCSS('outline-color', theme.marketplace.action)
+
+      const markdown = page.getByTestId('safe-markdown')
+      await expect(markdown.locator('..')).toHaveCSS('background-color', theme.marketplace.raised)
+      await expect(markdown.locator('code').first()).toHaveCSS('background-color', theme.marketplace.code)
+      await expect(markdown.locator('code').first()).toHaveCSS('color', theme.marketplace.primaryText)
+      await expect(markdown.locator('pre')).toHaveCSS('background-color', theme.marketplace.code)
+      await expect(markdown.locator('pre')).toHaveCSS('border-color', theme.marketplace.border)
+
+      const command = page.getByTestId('command-text')
+      await expect(command.locator('..')).toHaveCSS('background-color', theme.marketplace.code)
+      await expect(command).toHaveCSS('color', theme.marketplace.primaryText)
+
+      const availableBadge = page.locator('span[data-slot="base"]').filter({ hasText: /^Available$/ }).first()
+      await expect(availableBadge).toHaveCSS('color', theme.marketplace.action)
+
+      await page.goto(sharedOriginURL)
+      await page.evaluate(
+        ({ key, value }) => localStorage.setItem(key, value),
+        { key: sharedAppearanceKey, value: preference },
+      )
+      await page.reload()
+      const landingRoles = await page.evaluate(() => {
+        const probe = document.createElement('span')
+        document.body.appendChild(probe)
+        const color = (role: string) => {
+          probe.style.color = `var(${role})`
+          const value = getComputedStyle(probe).color
+          return (value.match(/[0-9]*\.?[0-9]+/g) ?? []).slice(0, 3).map(Number).map(Math.round)
+        }
+        const root = getComputedStyle(document.documentElement)
+        const result = {
+          canvas: color('--am-color-bg-canvas'),
+          surface: color('--am-color-bg-surface'),
+          actionHover: color('--am-color-action-hover'),
+          control: root.getPropertyValue('--am-color-bg-control').trim(),
+        }
+        probe.remove()
+        return result
+      })
+      expect(landingRoles).toEqual({ ...theme.landing, control: '' })
     }
   })
 
@@ -238,7 +444,7 @@ test.describe('Marketplace browser discovery', () => {
 
     await expect(page.getByRole('heading', { name: 'e2e-marketplace', exact: true })).toBeVisible()
     await expect(page.getByText('Browse resources for AI agents, with every revision pinned and analyzed before publication.', { exact: true })).toBeVisible()
-    await expect(page.getByText(/To use a resource, install the.*agent-marketplace.*CLI, then copy and run its install command/)).toBeVisible()
+    await expect(page.getByText(/To use a resource, install the agent-marketplace CLI, then copy and run its install command\./)).toBeVisible()
     await expect(page.getByText(`agent-marketplace install "${appURL}"`, { exact: true })).toHaveCount(0)
     const copyInstall = page.getByRole('button', { name: 'Copy install command for secure-review', exact: true })
     await copyInstall.click()
@@ -267,40 +473,34 @@ test.describe('Marketplace browser discovery', () => {
 
     await page.getByLabel('Search', { exact: true }).fill('secure')
     await expect(page).toHaveURL(/q=secure/)
-    await page.getByRole('combobox', { name: 'Registry', exact: true }).click()
-    const longRegistry = page.getByRole('option', { name: 'registry-with-an-extremely-long-name', exact: true })
-    await expect(longRegistry).toBeVisible()
-    await expect(longRegistry.locator('[data-slot="itemLabel"]')).toHaveCSS('text-overflow', 'ellipsis')
-    await page.getByRole('option', { name: 'team-tools', exact: true }).click()
-    await page.getByRole('option', { name: 'community-tools', exact: true }).click()
-    await page.keyboard.press('Escape')
+    await page.getByRole('checkbox', { name: 'team-tools', exact: true }).check()
+    await page.getByRole('checkbox', { name: 'community-tools', exact: true }).check()
 
     await expect(page).toHaveURL(/registry=team-tools&registry=community-tools/)
-    await expect(page.locator('#search-registry')).toContainText('team-tools')
-    await expect(page.locator('#search-registry')).toContainText('+1 more')
-    await expect(page.getByText('· 1 total', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Remove team-tools registry filter' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Remove community-tools registry filter' })).toBeVisible()
+    await expectResourceCount(page, 1)
     await expect(page.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Search', exact: true })).toHaveCount(0)
 
-    await page.getByRole('button', { name: 'Clear filters', exact: true }).click()
+    await page.getByRole('button', { name: 'Clear', exact: true }).click()
     await expect(page.getByLabel('Search', { exact: true })).toHaveValue('')
     await expect(page).not.toHaveURL(/[?&]q=/)
   })
 
-  test('filters by kind and uses the empty placeholder for all kinds', async ({ page }) => {
+  test('filters by kind and exposes an all-kinds radio option', async ({ page }) => {
     const response = await page.goto('/')
     expect(response?.status()).toBe(200)
-    await expect(page.locator('#search-kind')).toHaveText('All resource kinds')
+    await expect(page.getByRole('radio', { name: 'All kinds', exact: true })).toBeChecked()
 
-    await page.locator('#search-kind').click()
-    await expect(page.getByRole('option', { name: 'All resource kinds', exact: true })).toHaveCount(0)
-    await page.getByRole('option', { name: 'Command', exact: true }).click()
+    await page.getByRole('radio', { name: 'Command', exact: true }).check()
     await expect(page).toHaveURL(/kind=command/)
-    await expect(page.getByText('· 1 total', { exact: true })).toBeVisible()
+    await expectResourceCount(page, 1)
+    await expect(page.getByRole('button', { name: 'Remove Command kind filter' })).toBeVisible()
 
-    await page.getByRole('button', { name: 'Clear filters', exact: true }).click()
+    await page.getByRole('button', { name: 'Clear', exact: true }).click()
     await expect(page).not.toHaveURL(/[?&]kind=/)
-    await expect(page.getByText('· 2 total', { exact: true })).toBeVisible()
+    await expectResourceCount(page, 2)
   })
 
   test('renders hostile text as text and preserves safe resource links', async ({ page }) => {
@@ -337,7 +537,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: previousDigest, exact: true })).toBeVisible()
-    await expect(page.locator('code')).toHaveText(`agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
+    await expect(page.getByTestId('command-text')).toHaveText(`agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeEnabled()
     const copyDetail = page.getByRole('button', { name: /Copy detail URL/ })
     await expect(copyDetail).toBeEnabled()
@@ -435,9 +635,11 @@ test.describe('Marketplace browser discovery', () => {
     await page.keyboard.press('Enter')
     await expect(page.locator('#main-content')).toBeFocused()
 
-    await page.locator('#search-query').focus()
-    await page.keyboard.press('Tab')
-    await expect(page.locator('#search-kind')).toBeFocused()
+    const allKinds = page.getByRole('radio', { name: 'All kinds', exact: true })
+    await allKinds.focus()
+    await expect(allKinds).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByRole('radio', { name: 'Skill', exact: true })).toBeFocused()
   })
 
   test('honors reduced-motion media preferences', async ({ page }) => {
@@ -474,9 +676,9 @@ test.describe('Marketplace browser discovery', () => {
       body: JSON.stringify(searchResult()),
     }))
     await relativePage.goto(relativeAppBaseURL)
-    await expect(relativePage.getByText('· 2 total', { exact: true })).toBeVisible()
+    await expectResourceCount(relativePage, 2)
     await relativePage.getByLabel('Search', { exact: true }).fill('secure')
-    await expect(relativePage.getByText('· 1 total', { exact: true })).toBeVisible()
+    await expectResourceCount(relativePage, 1)
     expect(sameOriginRequests.some(url => {
       const requestURL = new URL(url)
       return requestURL.origin === relativeAppURL && requestURL.pathname === '/api/v1/search'
