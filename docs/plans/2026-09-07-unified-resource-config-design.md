@@ -1,6 +1,6 @@
 # Unified resource configuration design
 
-**Status:** Implemented slice with remaining Marketplace lock proposals. The repository now implements strict v4 parsing and include composition, Git/directory runtime adaptation, and explicit semantic/selection-preserving migration for representable standalone legacy files. Migration regenerates canonical v4 YAML and does not promise authored comments or formatting. Hosted Marketplace acquisition remains unsupported at runtime until the lock extension described below is available.
+**Status:** Partially implemented. The repository ships the Git/directory v4 parser, include composition, runtime adapter, and explicit migration for representable standalone legacy files. Hosted Marketplace acquisition, v4-aware editing, and the hosted lock extension remain unimplemented or intentionally refused.
 
 **Prerequisite:** Hosted Marketplace consumer functionality still requires the layer-owned lock extension described below. The lockfile baseline inspected for this design is historical context for that remaining proposal.
 
@@ -25,6 +25,30 @@ Config records sources and installation intent. A layer-owned lock records exact
 This design does not change harness configuration precedence, source allowlist authority, materialization modes, aggregate ownership, trust handling, resource prerequisites, or existing collision policy. It does not introduce dependency installation or semantic-version ranges.
 
 The hosted lock extension is a prerequisite for shipping Marketplace selections in this schema. Moving pin fields out of config without that extension is not a valid intermediate release.
+
+## 1.1 Implementation status
+
+The current repository implements a safe, usable subset of this design:
+
+### Implemented
+
+- Strict `agent-marketplace/v4` parsing and normalization, including source-bound resource groups, compact and expanded selectors, per-resource options, bounded exclusions, duplicate/unknown-field rejection, version boundaries, and deterministic include composition.
+- Git and live-directory source handling through the existing loader, cache, resolver, lock, and materialization pipeline. Git sources reuse the existing exact-snapshot lock foundation; directories remain live and are never added to locks.
+- Source safety checks, including shared Git URL/ref validation, relative-directory containment and symlink escape checks, source-kind preservation, and fail-closed handling for Marketplace sources that lack the hosted lock integration.
+- Ordered selection semantics for explicit requests, tags, `all`, exclusions, required protection, harness narrowing, collection propagation, and source-local provenance in the legacy runtime adapter.
+- Explicit `migrate --to v4` with `--scope` and `--dry-run` for representable standalone v2/v3 files. Migration is semantic/selection-preserving, regenerates canonical YAML, preserves file modes, leaves lockfiles untouched, and refuses include trees, Marketplace pins, or other non-lossless inputs without writing changes.
+- Regression, resolver, migration, CLI, E2E, and hot-path benchmark coverage for the implemented parser/adapter and migration behavior.
+
+### Remaining
+
+- The versioned hosted Marketplace lock codec and its identity records: endpoint instance bindings, registry IDs, exact resource revisions, collection membership, dynamic-selector snapshots, mirror/index-only acquisitions, integrity data, and old-reader refusal for the hosted lock version.
+- Marketplace acquisition adapters and their integration with config-plus-lock transactions, immutable-cache leases, garbage collection, revocation, capability consent, update, check, and recovery behavior.
+- V4-aware `install`, `remove`, CLI/TUI resource-request editing, comment-preserving node-level writes, and common editor/normalization plumbing. Existing editing paths remain legacy-oriented; authored v4 Git/directory configs can be read and synchronized, but the editor is not yet a complete v4 authoring surface.
+- Marketplace endpoint registration, Marketplace resource selection, collections, dynamic selectors, exact revisions, and Marketplace `list`/`status`/`sync`/`update` behavior through the v4 model. Marketplace v4 sources currently fail closed until the hosted lock and acquisition layers exist.
+- Lossless migration rules for included legacy trees and the unreleased legacy Marketplace pin format, including provenance transfer into the owning lock. These inputs remain refused or require separately reviewed remediation.
+- The complete hosted acceptance matrix and release gate covering identity changes, missing versus corrupt locks, complete enumeration, partial-query failure, transactional publication, concurrent edits, and cross-scope behavior.
+
+This status is intentionally narrower than the normative tables below: a row can describe the required end state while still being listed as remaining work. The implemented slice is active for Git/directory sources and explicit standalone migration; no hosted Marketplace feature is activated by the schema alone.
 
 ## 2. Canonical config shape
 
@@ -353,6 +377,19 @@ The Git/directory parser, adapter, include composition, and representable standa
 | `migrate --to v4 --scope <scope> --dry-run` | Preview the selected layer's representable semantic/selection-preserving config transformation, with no writes, lock changes, or acquisition |
 | `migrate --to v4 --scope <scope>` | Explicit semantic/selection-preserving conversion to canonical v4 YAML and transactional publication; no content upgrade or authored comment/formatting guarantee |
 
+### 7.1 Current implementation status
+
+The operation table above is the target contract. The repository currently provides the following subset:
+
+| Area | Current state |
+|---|---|
+| Read, validate, compose, and normalize v4 Git/directory configuration | **Implemented.** The normal loader adapts these sources into the existing runtime requirement model. |
+| `list`, `status`, `sync`, `lock`, and `sync --check` for v4 Git/directory sources | **Implemented for the adapted Git/directory path.** Existing lock semantics remain Git-only; directories remain live. |
+| `migrate --to v4` | **Implemented for representable standalone legacy files.** `--scope` and `--dry-run` are supported; unsupported include/Marketplace cases fail closed. |
+| v4 Marketplace parsing | **Parser-only.** The schema validates Marketplace declarations and bounded selectors, but runtime resolution rejects them until the hosted lock exists. |
+| v4 `install`/`remove`, shared CLI/TUI editor, and comment-preserving v4 writes | **Remaining.** Current editing behavior is still based on the legacy configuration model. |
+| Hosted Marketplace lock, acquisition, identity, collection, dynamic-selector, update, check, and consent behavior | **Remaining.** These are the release-blocking hosted boundaries described in sections 6, 8.3, and 10. |
+
 Removing an exact `revision` constraint is an explicit config edit or future dedicated operation, not an interpretation of ordinary `update`.
 
 CLI and TUI share one resource-request editor and normalization pipeline. They do not independently implement Git and Marketplace selection rules. Editor serialization chooses compact groups and string items where possible, retaining authored expanded forms and comments rather than repeatedly normalizing the entire document on each edit. This editor behavior does not extend to migration, which regenerates canonical v4 YAML without promising authored comments or formatting.
@@ -426,7 +463,7 @@ Diagnostics identify the owning layer, declaring file, source name, and resource
 | Migration | Positive legacy examples plus empty overrides, defaults/tags/required, per-kind excludes, collisions, refused include conversion, deterministic alias generation, semantic/selection-preserving content |
 | End to end | Isolated install/remove/update/check/migrate workflows across all writable scopes; no developer-home or live organization dependencies |
 
-Parser/editor/resolver tests must assert independently authored expected results, not compare one production normalization helper with itself. Golden tests cover config edits and generated lock bytes. Relevant hot-path changes need baseline/post-change benchmarks. The implemented parser/adapter and migration slice is covered by the repository tests; hosted Marketplace acceptance remains pending its lock extension.
+Parser/editor/resolver tests must assert independently authored expected results, not compare one production normalization helper with itself. Golden tests cover config edits and generated lock bytes. Relevant hot-path changes need baseline/post-change benchmarks. The implemented parser/adapter and standalone migration slice is covered by the repository tests; v4-aware editor coverage and hosted Marketplace acceptance remain pending their respective implementation boundaries.
 
 ## 10. Integration boundaries and release conditions
 
