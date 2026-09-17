@@ -48,7 +48,7 @@ The current repository implements a subset of this design:
 - Semantic/selection-preserving migration support for included legacy trees and the unreleased Marketplace pin format, including provenance transfer into the owning lock. These inputs remain refused or require separately reviewed remediation.
 - The complete hosted acceptance matrix and release gate covering identity changes, missing versus corrupt locks, complete enumeration, partial-query failure, transactional publication, concurrent edits, and cross-scope behavior.
 
-The implemented slice is active for Git/directory sources and explicit standalone migration; no hosted Marketplace feature is activated by the schema alone.
+No hosted Marketplace feature is activated by the schema alone.
 
 ## 2. Canonical config shape
 
@@ -476,7 +476,7 @@ The current repository implements the Git/directory parser, include composition,
 5. Route Marketplace installs and all CLI/TUI config edits through the common model; remove generated pin bookkeeping from new config writes.
 6. Release Marketplace consumer functionality only when its config, lock, consent, collection, update, check, and GC paths operate together.
 
-These are remaining dependency boundaries for hosted Marketplace functionality, not tracked execution state.
+These are remaining dependency boundaries for hosted Marketplace functionality.
 
 The current glossary and ADRs describe pins stored in consumer config. During implementation, the storage consequences in ADRs 0002 and 0005 and the corresponding glossary entries must be explicitly superseded: identity/occurrence/collection semantics remain, but generated bindings and selection edges move to acquisition locks. This proposal does not silently rewrite the accepted descriptions of currently implemented behavior.
 
