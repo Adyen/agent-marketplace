@@ -6,7 +6,8 @@ on:
       - main
     tags:
       - '*'
-  pull_request: {}
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,8 +19,54 @@ env:
   CGO_ENABLED: "0"
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      go_build: ${{ steps.changes.outputs.go_build }}
+      go_test: ${{ steps.changes.outputs.go_test }}
+      benchmark: ${{ steps.changes.outputs.benchmark }}
+      marketplace_e2e: ${{ steps.changes.outputs.marketplace_e2e }}
+      tui_qa: ${{ steps.changes.outputs.tui_qa }}
+      container_config: ${{ steps.changes.outputs.container_config }}
+      container_marketplace: ${{ steps.changes.outputs.container_marketplace }}
+      container_web: ${{ steps.changes.outputs.container_web }}
+      container_site: ${{ steps.changes.outputs.container_site }}
+      helm: ${{ steps.changes.outputs.helm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Detect relevant changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA" | go run ./tools/ci-plan
+          else
+            go run ./tools/ci-plan --all
+          fi >> "$GITHUB_OUTPUT"
+
   build:
     name: Build
+    needs: changes
+    if: needs.changes.outputs.go_build == 'true' || needs.changes.outputs.container_config == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -31,19 +78,24 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
+        if: needs.changes.outputs.go_build == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Build binary
+        if: needs.changes.outputs.go_build == 'true'
         run: make build
 
       - name: Validate container packaging and Compose files
+        if: needs.changes.outputs.container_config == 'true'
         run: make container-check compose-config
 
   helm:
     name: Helm chart
+    needs: changes
+    if: needs.changes.outputs.helm == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -307,6 +359,8 @@ jobs:
 
   container-images:
     name: Container images (public defaults)
+    needs: changes
+    if: needs.changes.outputs.container_marketplace == 'true' || needs.changes.outputs.container_web == 'true' || needs.changes.outputs.container_site == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -318,19 +372,25 @@ jobs:
           persist-credentials: false
 
       - name: Build API image
+        if: needs.changes.outputs.container_marketplace == 'true'
         run: docker build --pull --target api --tag agent-marketplace-api:ci --file Dockerfile.marketplace .
 
       - name: Build worker image
+        if: needs.changes.outputs.container_marketplace == 'true'
         run: docker build --pull --target worker --tag agent-marketplace-worker:ci --file Dockerfile.marketplace .
 
       - name: Build web image
+        if: needs.changes.outputs.container_web == 'true'
         run: make WEB_CONTAINER_IMAGE=agent-marketplace-web:ci container-web
 
       - name: Build site image
+        if: needs.changes.outputs.container_site == 'true'
         run: make SITE_CONTAINER_IMAGE=agent-marketplace-site:ci container-site
 
   test:
     name: Test
+    needs: changes
+    if: needs.changes.outputs.go_test == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -352,6 +412,8 @@ jobs:
 
   tui-qa:
     name: TUI QA (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.tui_qa == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -399,18 +461,30 @@ jobs:
   tui-qa-required:
     name: TUI QA Driver
     if: always()
-    needs: tui-qa
+    needs: [changes, tui-qa]
     runs-on: ubuntu-latest
     timeout-minutes: 1
     permissions: {}
     steps:
       - name: Require all TUI QA platforms
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RUN_TUI_QA: ${{ needs.changes.outputs.tui_qa }}
           TUI_QA_RESULT: ${{ needs.tui-qa.result }}
-        run: test "$TUI_QA_RESULT" = success
+        run: |
+          set -euo pipefail
+          test "$CHANGES_RESULT" = success
+          if [[ "$RUN_TUI_QA" == true ]]; then
+            test "$TUI_QA_RESULT" = success
+          else
+            test "$RUN_TUI_QA" = false
+            test "$TUI_QA_RESULT" = skipped
+          fi
 
   marketplace-gate:
     name: Marketplace E2E gate
+    needs: changes
+    if: needs.changes.outputs.marketplace_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -433,27 +507,8 @@ jobs:
             go.sum
             e2e/go.sum
 
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Install web dependencies
-        working-directory: web
-        run: pnpm install --frozen-lockfile --ignore-scripts
-
-      - name: Install Chromium
-        working-directory: web
-        run: pnpm run e2e:install
-
       - name: Run Marketplace gate
         shell: bash
-        env:
-          PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ${{ vars.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }}
-          AGENT_BROWSER_EXECUTABLE_PATH: ${{ vars.AGENT_BROWSER_EXECUTABLE_PATH }}
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/e2e-artifacts"
@@ -471,7 +526,8 @@ jobs:
 
   benchmark:
     name: Benchmark
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.benchmark == 'true' || contains(github.event.pull_request.labels.*.name, 'run-benchmarks'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

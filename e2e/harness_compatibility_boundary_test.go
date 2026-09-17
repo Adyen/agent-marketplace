@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -183,7 +184,16 @@ func TestCompatibilityRuntimeUpdatesDisabled(t *testing.T) {
 	t.Setenv("DISABLE_AUTOUPDATER", "0")
 	t.Setenv("FACTORY_DROID_AUTO_UPDATE_ENABLED", "true")
 	environment := strings.Join(compatibilityEnv(e), "\n")
-	for _, expected := range []string{"DISABLE_AUTOUPDATER=1", "FACTORY_DROID_AUTO_UPDATE_ENABLED=false"} {
+	for _, expected := range []string{
+		"DISABLE_AUTOUPDATER=1",
+		"FACTORY_DROID_AUTO_UPDATE_ENABLED=false",
+		"HTTP_PROXY=http://127.0.0.1:9",
+		"HTTPS_PROXY=http://127.0.0.1:9",
+		"ALL_PROXY=http://127.0.0.1:9",
+		"http_proxy=http://127.0.0.1:9",
+		"https_proxy=http://127.0.0.1:9",
+		"all_proxy=http://127.0.0.1:9",
+	} {
 		if !strings.Contains(environment, expected) {
 			t.Errorf("runtime control missing: %s", expected)
 		}
@@ -440,6 +450,41 @@ func TestCompatibilityLocalMCPFixture(t *testing.T) {
 				t.Errorf("MCP reply %d missing %s", i, field)
 			}
 		}
+	}
+}
+
+func TestCompatibilityNativeInventoryRunnerSharesExecutions(t *testing.T) {
+	e := newEnv(t)
+	binary := filepath.Join(e.repos, "inventory-runner-fixture")
+	e.WriteFile(binary, "#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$HOME/probe-invocations\"\nprintf '%s\\n' 'amcompat-skill-a' 'amcompat-skill-b'\n")
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := newCompatibilityInventoryRunner()
+	probeA := compatibilityNativeProbe{kind: "skill", list: []string{"skills", "list"}}
+	probeB := compatibilityNativeProbe{kind: "command", list: []string{"skills", "list"}}
+	cmdA := runner.run(e, probeA, binary)
+	cmdB := runner.run(e, probeB, binary)
+
+	invocations := e.ReadFile(filepath.Join(e.home, "probe-invocations"))
+	lines := strings.Split(strings.TrimSpace(invocations), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly one shared execution, got %d: %q", len(lines), invocations)
+	}
+
+	cmdA.Observed = append(cmdA.Observed, "mutation-a")
+	cmdA.Diagnostics = append(cmdA.Diagnostics, "diag-a")
+	cmdA.Args = append(cmdA.Args, "extra-a")
+	if slices.Contains(cmdB.Observed, "mutation-a") || slices.Contains(cmdB.Diagnostics, "diag-a") || slices.Contains(cmdB.Args, "extra-a") {
+		t.Fatal("runner returned shared mutable slices instead of independent clones")
+	}
+
+	mcp := compatibilityNativeProbe{kind: "mcp", list: []string{"mcp", "list"}}
+	runner.run(e, mcp, binary)
+	invocationsAfter := e.ReadFile(filepath.Join(e.home, "probe-invocations"))
+	if strings.Count(invocationsAfter, "\n") != 2 {
+		t.Fatalf("distinct mcp list key did not execute a second time: %q", invocationsAfter)
 	}
 }
 

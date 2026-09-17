@@ -26,6 +26,48 @@ type compatibilityNativeProbe struct {
 	before   compatibilityCommand
 }
 
+type compatibilityInventoryRunner struct {
+	cache map[string]compatibilityCommand
+}
+
+func newCompatibilityInventoryRunner() *compatibilityInventoryRunner {
+	return &compatibilityInventoryRunner{cache: make(map[string]compatibilityCommand)}
+}
+
+func (r *compatibilityInventoryRunner) key(p compatibilityNativeProbe) string {
+	if p.protocol != "" {
+		return p.protocol + "\x00"
+	}
+	return strings.Join(p.list, "\x00")
+}
+
+func (r *compatibilityInventoryRunner) run(e *Env, p compatibilityNativeProbe, binary string) compatibilityCommand {
+	k := r.key(p)
+	if cached, ok := r.cache[k]; ok {
+		return cloneCompatibilityCommand(cached)
+	}
+	cmd := p.run(e, binary)
+	r.cache[k] = cmd
+	return cloneCompatibilityCommand(cmd)
+}
+
+func cloneCompatibilityCommand(c compatibilityCommand) compatibilityCommand {
+	cloned := c
+	if len(c.Args) > 0 {
+		cloned.Args = make([]string, len(c.Args))
+		copy(cloned.Args, c.Args)
+	}
+	if len(c.Observed) > 0 {
+		cloned.Observed = make([]string, len(c.Observed))
+		copy(cloned.Observed, c.Observed)
+	}
+	if len(c.Diagnostics) > 0 {
+		cloned.Diagnostics = make([]string, len(c.Diagnostics))
+		copy(cloned.Diagnostics, c.Diagnostics)
+	}
+	return cloned
+}
+
 func (p compatibilityNativeProbe) run(e *Env, binary string) compatibilityCommand {
 	if p.protocol != "" {
 		return runCompatibilityProtocol(e, binary, p.protocol, 30*time.Second)
@@ -72,9 +114,10 @@ func prepareCompatibilityNative(e *Env, f compatibilityFixture, row *compatibili
 		row.Reason = "no native inspection probes are declared for this harness"
 		return nil
 	}
+	runner := newCompatibilityInventoryRunner()
 	for i := range native.probes {
 		probe := &native.probes[i]
-		probe.before = probe.run(e, binary)
+		probe.before = runner.run(e, *probe, binary)
 		if err := probe.observe(&probe.before, e, f, row.Scope, nil, true); err != nil {
 			probe.before.Error = "native negative control failed: " + err.Error()
 		}
@@ -90,6 +133,7 @@ func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixtur
 		row.Status, row.Reason = "failed", err.Error()
 		t.Errorf("native trust boundary: %v", err)
 	}
+	runner := newCompatibilityInventoryRunner()
 	for _, probe := range n.probes {
 		row := rows[probe.kind]
 		if row.Status != "config-only-verified" {
@@ -105,7 +149,7 @@ func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixtur
 		ok := t.Run("native-"+probe.kind, func(t *testing.T) {
 			row.Status = "failed"
 			row.Reason = "native discovery or observable value assertion failed after config verification"
-			command := probe.run(e, n.binary)
+			command := runner.run(e, probe, n.binary)
 			err := probe.observe(&command, e, f, row.Scope, paths[probe.kind], false)
 			if err != nil && compatibilityTrustBlocksDiscovery(*row, command) {
 				row.Status = "blocked"

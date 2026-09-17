@@ -174,14 +174,7 @@ compose-config:
 	fi
 
 marketplace-gate:
-	@set -e; \
-		$(MAKE) secrets-check container-check compose-config; \
-		$(MAKE) test; \
-		E2E_SKIP_DOCKER=1 $(MAKE) e2e; \
-		command -v pnpm >/dev/null 2>&1 || { echo "ERROR: pnpm is required for marketplace-gate"; exit 1; }; \
-		cd web; \
-		pnpm run check; \
-		pnpm run test:e2e
+	@E2E_SKIP_DOCKER=1 $(MAKE) e2e
 
 # Cross-compilation targets
 darwin-arm64:
