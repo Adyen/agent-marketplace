@@ -469,9 +469,9 @@ Parser/editor/resolver tests must assert independently authored expected results
 
 The current repository implements the Git/directory parser, include composition, runtime adapter, and migration for representable standalone legacy files; the shared node-level editors and hosted Marketplace boundaries remain pending:
 
-1. Merge #123 without broadening its Git-only scope.
-2. Add v4 parsing, a source-bound requirement model, and a legacy normalization adapter with semantic-equivalence tests.
-3. Add shared node-level editors and explicit semantic/selection-preserving migration for representable standalone inputs. Migration regenerates canonical v4 YAML rather than promising authored comments or formatting; legacy config writes remain supported.
+1. The Git-only lock foundation from #123 is available without broadening its scope.
+2. V4 parsing, the source-bound requirement model, and the legacy normalization adapter with semantic-equivalence tests are implemented for the Git/directory slice.
+3. Shared node-level editors remain pending; semantic/selection-preserving migration for representable standalone inputs is implemented and regenerates canonical v4 YAML without a comment/formatting guarantee; legacy config writes remain supported.
 4. Specify and implement the versioned hosted lock codec, identity bindings, selector snapshots, and acquisition adapters on #123's transaction/lease lifecycle.
 5. Route Marketplace installs and all CLI/TUI config edits through the common model; remove generated pin bookkeeping from new config writes.
 6. Release Marketplace consumer functionality only when its config, lock, consent, collection, update, check, and GC paths operate together.
