@@ -42,6 +42,11 @@ func TestParseMarketplaceLocator(t *testing.T) {
 			input: "https://market.example/r/registry-one/skill/review/revisions/sha256:2222222222222222222222222222222222222222222222222222222222222222",
 			want:  MarketplaceLocator{Marketplace: "https://market.example", URL: "https://market.example", Registry: "registry-one", Kind: "skill", Name: "review", Revision: "sha256:2222222222222222222222222222222222222222222222222222222222222222", Digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
 		},
+		{
+			name:  "browser revision digest with endpoint prefix",
+			input: "https://MARKET.example/services/marketplace/r/registry-one/skill/review/revisions/sha256%3A3333333333333333333333333333333333333333333333333333333333333333",
+			want:  MarketplaceLocator{Marketplace: "https://market.example/services/marketplace", URL: "https://market.example/services/marketplace", Registry: "registry-one", Kind: "skill", Name: "review", Revision: "sha256:3333333333333333333333333333333333333333333333333333333333333333", Digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

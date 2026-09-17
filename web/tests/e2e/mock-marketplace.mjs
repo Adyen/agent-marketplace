@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 
 const port = Number(process.env.E2E_MOCK_PORT || 4311)
 const appOrigin = process.env.E2E_APP_ORIGIN || 'http://127.0.0.1:4321'
+const browserBase = `${appOrigin}/marketplace`
 const digest = `sha256:${'a'.repeat(64)}`
 const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>'
 const inspectionDigest = `sha256:${'d'.repeat(64)}`
@@ -52,9 +53,9 @@ const wellKnown = {
   instance_id: 'e2e-marketplace',
   canonical_url: appOrigin,
   api_base: `http://127.0.0.1:${port}/api/v1`,
-  browser_base: appOrigin,
-  browser_latest_route_template: `${appOrigin}/r/{registry}/{kind}/{name}`,
-  browser_exact_route_template: `${appOrigin}/r/{registry}/{kind}/{name}/revisions/{revision}`,
+  browser_base: browserBase,
+  browser_latest_route_template: `${browserBase}/r/{registry}/{kind}/{name}`,
+  browser_exact_route_template: `${browserBase}/r/{registry}/{kind}/{name}/revisions/{revision}`,
   api_versions: ['v1'],
   artifact_schema_versions: ['v1'],
   resource_kinds: ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection'],
