@@ -39,7 +39,7 @@ type Locator = MarketplaceLocator
 // ParseMarketplaceLocator parses either
 //
 //	alias:registry/kind/name[@sha256:<64 lowercase hex>]
-//	https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
+//	https://host[/prefix]/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 //
 // Alias resolution is deliberately not performed here. The returned registry,
 // kind, and name are the route tokens, not decoded or otherwise rewritten
@@ -147,13 +147,15 @@ func parseBrowserLocator(input string) (MarketplaceLocator, error) {
 		return MarketplaceLocator{}, fmt.Errorf("browser locator contains an unsafe path")
 	}
 	path := strings.TrimPrefix(u.Path, "/")
-	parts := strings.Split(path, "/")
-	if len(parts) != 4 && len(parts) != 6 {
-		return MarketplaceLocator{}, fmt.Errorf("invalid browser locator %q: expected /r/registry/kind/name with optional /revisions/revision", input)
+	allParts := strings.Split(path, "/")
+	routeStart := len(allParts) - 4
+	if len(allParts) >= 6 && allParts[len(allParts)-6] == "r" && allParts[len(allParts)-2] == "revisions" {
+		routeStart = len(allParts) - 6
 	}
-	if parts[0] != "r" || (len(parts) == 6 && parts[4] != "revisions") {
-		return MarketplaceLocator{}, fmt.Errorf("invalid browser locator %q: invalid browser route", input)
+	if routeStart < 0 || allParts[routeStart] != "r" {
+		return MarketplaceLocator{}, fmt.Errorf("invalid browser locator %q: expected [/prefix]/r/registry/kind/name with optional /revisions/revision", input)
 	}
+	parts := allParts[routeStart:]
 	for i, token := range parts {
 		if token == "" {
 			return MarketplaceLocator{}, fmt.Errorf("invalid browser locator %q: empty path segment", input)
@@ -175,7 +177,10 @@ func parseBrowserLocator(input string) (MarketplaceLocator, error) {
 		}
 	}
 	base := *u
-	base.Path = ""
+	base.Path = strings.Join(allParts[:routeStart], "/")
+	if base.Path != "" {
+		base.Path = "/" + base.Path
+	}
 	base.RawPath = ""
 	base.RawQuery = ""
 	base.Fragment = ""
