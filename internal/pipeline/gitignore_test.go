@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func writeGitignoreLocalConfig(t *testing.T, repo string) {
@@ -237,6 +239,79 @@ func TestEnsureLocalConfigGitignoredFIFOChild(t *testing.T) {
 		t.Skip("FIFO child only")
 	}
 	EnsureLocalConfigGitignored(repo)
+}
+
+func TestAppendLocalConfigIgnoreEntriesRestoresBlockingDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|syscall.O_NONBLOCK, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	flags := func() int {
+		var got int
+		var controlErr error
+		conn, err := f.SyscallConn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.Control(func(fd uintptr) { got, controlErr = unix.FcntlInt(fd, unix.F_GETFL, 0) }); err != nil {
+			t.Fatal(err)
+		}
+		if controlErr != nil {
+			t.Fatal(controlErr)
+		}
+		return got
+	}
+	before := flags()
+	if before&unix.O_NONBLOCK == 0 || before&unix.O_APPEND == 0 {
+		t.Fatalf("initial flags = %#x", before)
+	}
+	if err := appendLocalConfigIgnoreEntries(f); err != nil {
+		t.Fatal(err)
+	}
+	after := flags()
+	if after&unix.O_NONBLOCK != 0 || after&unix.O_APPEND == 0 {
+		t.Fatalf("restored flags = %#x", after)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != ".agents/config.local.yaml\n.agents/lock.local.yaml\n" {
+		t.Fatalf("gitignore = %q err=%v", data, err)
+	}
+}
+
+func TestAppendLocalConfigIgnoreEntriesRejectsFIFOBeforeClearingNonblock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NONBLOCK, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := appendLocalConfigIgnoreEntries(f); !errors.Is(err, errUnsafeGitignore) {
+		t.Fatalf("error = %v, want errUnsafeGitignore", err)
+	}
+	var flags int
+	conn, err := f.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Control(func(fd uintptr) { flags, err = unix.FcntlInt(fd, unix.F_GETFL, 0) }); err != nil {
+		t.Fatal(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags&unix.O_NONBLOCK == 0 {
+		t.Fatalf("FIFO nonblock flag cleared: %#x", flags)
+	}
 }
 
 func BenchmarkEnsureLocalConfigGitignoredNoop(b *testing.B) {
