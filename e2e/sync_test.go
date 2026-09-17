@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -60,4 +61,49 @@ registries:
 	if strings.TrimSpace(before) != strings.TrimSpace(after) {
 		t.Fatalf("second sync should not modify global skeleton\nbefore:\n%s\nafter:\n%s", before, after)
 	}
+}
+
+func TestSyncPreservesExternalGitignore(t *testing.T) {
+	t.Run("symlink", func(t *testing.T) {
+		env := newEnv(t)
+		env.InitGitRepo()
+		env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
+		env.WriteLocalConfig("{}\n")
+		env.WriteRepoConfig("harnesses: [factory]\nregistries: []")
+		env.WriteFile("/root/outside-ignore", "sentinel\n")
+		outside := env.mustResolvePath("/root/outside-ignore")
+		gitignore := env.mustResolvePath("/workspace/.gitignore")
+		if err := os.Symlink(outside, gitignore); err != nil {
+			t.Fatal(err)
+		}
+
+		env.MustRunAM("sync")
+
+		if got := env.ReadFile("/root/outside-ignore"); got != "sentinel\n" {
+			t.Fatalf("external sentinel = %q", got)
+		}
+		info, err := os.Lstat(gitignore)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Fatal("workspace gitignore symlink was replaced")
+		}
+	})
+
+	t.Run("regular file", func(t *testing.T) {
+		env := newEnv(t)
+		env.InitGitRepo()
+		env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
+		env.WriteLocalConfig("{}\n")
+		env.WriteRepoConfig("harnesses: [factory]\nregistries: []")
+		env.WriteFile("/workspace/.gitignore", "user-rule\n")
+
+		env.MustRunAM("sync")
+
+		want := "user-rule\n.agents/config.local.yaml\n.agents/lock.local.yaml\n"
+		if got := env.ReadFile("/workspace/.gitignore"); got != want {
+			t.Fatalf("gitignore = %q, want %q", got, want)
+		}
+	})
 }
