@@ -361,7 +361,7 @@ jobs:
   container-images:
     name: Container images (public defaults)
     needs: changes
-    if: needs.changes.outputs.container_config == 'true' || needs.changes.outputs.container_marketplace == 'true' || needs.changes.outputs.container_web == 'true' || needs.changes.outputs.container_site == 'true'
+    if: needs.changes.outputs.container_marketplace == 'true' || needs.changes.outputs.container_web == 'true' || needs.changes.outputs.container_site == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
