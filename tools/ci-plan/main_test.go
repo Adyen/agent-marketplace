@@ -81,9 +81,18 @@ func TestPlanCategories(t *testing.T) {
 		{"site", []string{"site/index.md"}, false, want("container_site")},
 		{"design", []string{"design/colors.css"}, false, want("container_config", "container_web", "container_site")},
 		{"Helm", []string{"deploy/helm/agent-marketplace/values.yaml"}, false, want("container_config", "helm")},
+		{"backend non-Go under benchmark root", []string{"internal/resolver/fixture.json"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
+		{"backend non-Go not under benchmark root", []string{"cmd/marketplace-healthcheck/config.yaml"}, false, want("go_build", "go_test", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
+		{"backend prose remains no-op", []string{"internal/tui/README.md"}, false, want()},
 		{"unknown script", []string{"scripts/new-check.sh"}, false, all},
 		{"unknown config", []string{"config/policy.yaml"}, false, all},
 		{"LICENSE", []string{"LICENSE"}, false, want()},
+		{"NOTICE", []string{"NOTICE"}, false, want()},
+		{"web LICENSE", []string{"web/LICENSE"}, false, want()},
+		{"site NOTICE", []string{"site/NOTICE"}, false, want()},
+		{"backend nested LICENSE", []string{"internal/resolver/LICENSE"}, false, want()},
+		{"docs LICENSE", []string{"docs/LICENSE"}, false, want()},
+		{"design LICENSE", []string{"design/LICENSE"}, false, want()},
 		{"ci workflow", []string{".github/workflows/ci.yml"}, false, all},
 		{"harness-compatibility workflow", []string{".github/workflows/harness-compatibility.yml"}, false, all},
 		{"ci-plan source", []string{"tools/ci-plan/main.go"}, false, all},
@@ -200,5 +209,20 @@ func TestMainOutputStdin(t *testing.T) {
 	}
 	if !slices.Contains(strings.Split(strings.TrimSpace(string(out)), "\n"), "go_test=true") {
 		t.Fatalf("expected go_test=true in output:\n%s", out)
+	}
+}
+
+func TestMainExtraArgument(t *testing.T) {
+	cmd := exec.Command("go", "run", ".", "--all", "extra")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error for --all extra, got:\n%s", out)
+	}
+	got := string(out)
+	if !strings.Contains(got, `unexpected positional argument "extra"`) {
+		t.Fatalf("expected error to blame extra, got:\n%s", got)
+	}
+	if strings.Contains(got, `unexpected positional argument "--all"`) {
+		t.Fatalf("error incorrectly blames --all:\n%s", got)
 	}
 }

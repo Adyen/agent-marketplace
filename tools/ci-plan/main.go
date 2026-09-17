@@ -46,15 +46,15 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) > 2 {
-		return fmt.Errorf("unexpected positional argument %q", os.Args[1])
-	}
 	all := false
-	if len(os.Args) == 2 {
+	if len(os.Args) >= 2 {
 		if os.Args[1] != "--all" {
 			return fmt.Errorf("unknown argument %q", os.Args[1])
 		}
 		all = true
+	}
+	if len(os.Args) > 2 {
+		return fmt.Errorf("unexpected positional argument %q", os.Args[2])
 	}
 
 	var paths []string
@@ -155,6 +155,10 @@ func classifyPath(p string) (map[string]bool, error) {
 		c[name] = false
 	}
 
+	if isLicenseOrNotice(p) {
+		return c, nil
+	}
+
 	switch p {
 	case ".github/workflows/ci.yml", ".github/workflows/harness-compatibility.yml":
 		enableAll(c)
@@ -194,16 +198,8 @@ func classifyPath(p string) (map[string]bool, error) {
 		c["go_test"] = true
 	}
 
-	if isGo && (strings.HasPrefix(p, "cmd/") || strings.HasPrefix(p, "internal/") || strings.HasPrefix(p, "pkg/")) {
-		c["go_build"] = true
-		c["harness_compatibility"] = true
-		c["marketplace_e2e"] = true
-		c["tui_qa"] = true
-		c["container_marketplace"] = true
-	}
-
-	if isGo && !isE2E && underAnyPrefix(p, benchmarkRoots) {
-		c["benchmark"] = true
+	if isBackendDir(p) && !proseOnly(p) {
+		enableBackend(p, c)
 	}
 
 	if strings.HasPrefix(p, "tools/harness-compat/") {
@@ -257,6 +253,22 @@ func underAnyPrefix(p string, prefixes []string) bool {
 	return false
 }
 
+func isBackendDir(p string) bool {
+	return strings.HasPrefix(p, "cmd/") || strings.HasPrefix(p, "internal/") || strings.HasPrefix(p, "pkg/")
+}
+
+func enableBackend(p string, c map[string]bool) {
+	c["go_build"] = true
+	c["go_test"] = true
+	c["harness_compatibility"] = true
+	c["marketplace_e2e"] = true
+	c["tui_qa"] = true
+	c["container_marketplace"] = true
+	if underAnyPrefix(p, benchmarkRoots) {
+		c["benchmark"] = true
+	}
+}
+
 func enableAll(result map[string]bool) {
 	for _, name := range categories {
 		result[name] = true
@@ -272,7 +284,12 @@ func anyEnabled(result map[string]bool) bool {
 	return false
 }
 
+func isLicenseOrNotice(p string) bool {
+	base := strings.ToLower(path.Base(p))
+	return base == "license" || base == "notice"
+}
+
 func proseOnly(p string) bool {
 	lower := strings.ToLower(p)
-	return strings.HasSuffix(lower, ".md") || p == "LICENSE" || p == "NOTICE"
+	return strings.HasSuffix(lower, ".md") || isLicenseOrNotice(p)
 }
