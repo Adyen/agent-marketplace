@@ -57,7 +57,8 @@ export default defineConfig({
             {
               text: 'Consumers',
               items: [
-                { text: 'Install your first skill', link: `${DOCS_PATH}tutorials/install-your-first-skill` }
+                { text: 'Install your first skill', link: `${DOCS_PATH}tutorials/install-your-first-skill` },
+                { text: 'Install your first Marketplace skill', link: `${DOCS_PATH}tutorials/install-your-first-marketplace-skill` }
               ]
             },
             {

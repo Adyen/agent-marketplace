@@ -17,7 +17,8 @@ You want skills and other resources in your editor, kept consistent across a tea
 
 | Goal | Read |
 |---|---|
-| Install one skill, end to end, on Claude Code | [Tutorial: install your first skill](./tutorials/install-your-first-skill.md) |
+| Install one skill from Git, end to end, on Claude Code | [Tutorial: install your first skill](./tutorials/install-your-first-skill.md) |
+| Find and install your first skill from an online Marketplace | [Tutorial: install your first Marketplace skill](./tutorials/install-your-first-marketplace-skill.md) |
 | Add agent-marketplace to a repository the team shares | [Adopt in a repository](./how-to/adopt-agent-marketplace-in-a-repository.md) |
 | Make CI prove every clone gets the same files | [Keep resources reproducible](./how-to/keep-resources-reproducible.md) |
 | Figure out why `sync --check` is failing | [Troubleshoot sync drift](./how-to/troubleshoot-sync-drift.md) |
