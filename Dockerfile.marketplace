@@ -1,6 +1,5 @@
 ARG GO_BUILD_IMAGE=golang:1.26.6-bookworm
 ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot
-ARG BUILD_CA_CERT_PATH=/etc/ssl/certs/ca-certificates.crt
 
 FROM --platform=$BUILDPLATFORM ${GO_BUILD_IMAGE} AS build
 
@@ -17,7 +16,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -trimpath -buildvcs=false -ldflags "-s -w" \
     -o /out/marketplace-healthcheck ./cmd/marketplace-healthcheck \
-    && mkdir -p /out/runtime/var/lib/agent-marketplace /out/runtime/tmp \
+    && ca_bundle= \
+    && for candidate in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do \
+        if [ -f "$candidate" ]; then ca_bundle="$candidate"; break; fi; \
+    done \
+    && if [ -z "$ca_bundle" ]; then echo "no supported CA bundle found in GO_BUILD_IMAGE" >&2; exit 1; fi \
+    && mkdir -p /out/runtime/etc/ssl/certs /out/runtime/var/lib/agent-marketplace /out/runtime/tmp \
+    && cp "$ca_bundle" /out/runtime/etc/ssl/certs/ca-certificates.crt \
     && chmod 1777 /out/runtime/tmp
 
 FROM ${GO_BUILD_IMAGE} AS git-runtime
@@ -40,8 +45,6 @@ RUN set -eux; \
     find "$root" -type f -exec strip --strip-unneeded {} \; 2>/dev/null || true
 
 FROM ${RUNTIME_IMAGE} AS api
-ARG BUILD_CA_CERT_PATH
-COPY --from=build ${BUILD_CA_CERT_PATH} /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=1000:1000 /out/runtime/ /
 WORKDIR /app
 COPY --from=build --chown=1000:1000 /out/agent-marketplace /app/agent-marketplace
@@ -54,8 +57,6 @@ ENTRYPOINT ["/app/agent-marketplace"]
 CMD ["serve", "--config", "/app/marketplace.yaml", "--role", "api"]
 
 FROM ${RUNTIME_IMAGE} AS worker
-ARG BUILD_CA_CERT_PATH
-COPY --from=build ${BUILD_CA_CERT_PATH} /etc/ssl/certs/ca-certificates.crt
 COPY --from=git-runtime /git-root /
 COPY --from=build --chown=1000:1000 /out/runtime/ /
 WORKDIR /app
