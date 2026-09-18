@@ -225,6 +225,17 @@ func ResolveFromURL(rawURL, explicitRef, explicitPath string) (gitURL, ref, path
 	}
 
 	path = parsed.Path
+	if explicitRef != "" && parsed.Ref != "" {
+		refAndPath := parsed.Ref
+		if path != "" {
+			refAndPath += "/" + path
+		}
+		if refAndPath == explicitRef {
+			path = ""
+		} else if remaining, matches := strings.CutPrefix(refAndPath, explicitRef+"/"); matches {
+			path = remaining
+		}
+	}
 	if explicitPath != "" {
 		path = explicitPath
 	}

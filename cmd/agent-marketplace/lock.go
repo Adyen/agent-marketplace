@@ -718,6 +718,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	if len(ec.Errors) > 0 && (!mode.ignoreBlocked || !config.OnlyRegistryURLBlockedErrors(ec.Errors)) {
 		return nil, 0, nil, errors.Join(ec.Errors...)
 	}
+	if mode.ignoreBlocked && config.OnlyRegistryURLBlockedErrors(ec.Errors) {
+		mode.offline = true
+		slog.Debug("blocked-registry removal reuses existing exact snapshots only")
+	}
 	resolvedTargets, err := resolveUpgradeTargets(ec, mode)
 	if err != nil {
 		return nil, 0, nil, err
