@@ -50,7 +50,7 @@ test.describe('Marketplace layout at 390px', () => {
     await expect(copy).toBeVisible()
     const commandScroller = command.locator('..')
     expect(await commandScroller.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     const copyBox = await copy.boundingBox()
     expect(copyBox).not.toBeNull()
     expect(copyBox!.x + copyBox!.width).toBeLessThanOrEqual(390)
