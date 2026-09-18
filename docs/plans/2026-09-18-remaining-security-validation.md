@@ -62,8 +62,10 @@ credential-bearing services, or build attack demonstrations during testing.
     existing cached input rather than silently omitting missing registries.
   - [x] Add a proof-backed single-entry cleanup operation for existing owned
     JSON/TOML adapters, without replacing unrelated entries or their ownership.
-  - [ ] Integrate targeted removal into the CLI transaction without unrelated
-    upserts or content rewrites, including ordinary generated files.
+  - [x] Integrate named blocked-registry MCP removal with exact inputs and
+    owned Devin/Codex aggregates into the config/lock publication scope.
+  - [ ] Extend targeted removal to the remaining command paths and artifact
+    types, including whole registries, collections, hooks, and ordinary files.
 - [ ] **R1e: Web URLs with slash-containing refs.** Check GitHub/GitLab URL
   interpretation and explicit `--ref`/`--path` behavior. Reject genuinely
   ambiguous input or use existing explicit selectors; do not introduce
@@ -272,10 +274,38 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   deletion 61.77 ms/op, with no significant timing difference. Memory is
   3.232 versus 1.346 MiB/op; allocations are 25528 versus 9005/op. This compares
   two different removal operations, not whole-CLI performance.
-- R1d CLI integration and targeted ordinary-file cleanup remain open. Normal
-  remove, sync, deinit, and doctor command behavior is unchanged by this backend
-  foundation. Existing adapter filesystem behavior remains a separate review
-  surface; this layer does not claim general filesystem sandboxing.
+- R1d named-MCP CLI integration: `remove <name> --from <registry>` now uses
+  targeted cleanup when registry policy is blocked and the selected resource is
+  an MCP server. Kind inference uses the same path. Every selected target must
+  have an existing owned-aggregate adapter; unsupported target mixtures fail
+  before publication rather than narrowing targets or running broad sync.
+- Preparation freezes config/include/absent-layer and adjacent-lock reads before
+  opening the exact inventory, retains its cache lease, and verifies the selected
+  identity again. Live local registries and unlocked input are unsupported in
+  this narrowly exact-backed path. Staged config resolves against the same exact
+  inventory without acquisition or Marketplace refresh.
+- A dependency publication scope holds destination/read coordination locks and
+  ownership root sessions through all-action preflight, config/lock publication,
+  and targeted deletions. Post-publication checks require the NEW generation,
+  not the old-or-new condition used during journal progress. Reverting to the
+  original selected config after publication therefore refuses cleanup.
+- Consumer regressions cover Devin repo and Codex user/repo output, explicit and
+  inferred kind, last-selected MCP, scoped copies, unowned/corrupt/drifted input,
+  pending journals, unsupported mixtures, missing exact snapshots, included-file
+  changes, new local config, changed locks, and post-publication reselection.
+  Refusals preserve bytes, modes, mtimes, ownership, backups, and staging state;
+  coordination locks are separate. Codex repo mutations retain the trust-review
+  diagnostic without modifying trust state. A declarative CLI E2E case covers
+  edited and handwritten sibling preservation.
+- Normal warm exact-lock sync benchmark: 74.00 to 79.92 ms/op (+8.00%); memory
+  and allocation differences are not significant. This is the existing normal
+  one-remote sync workload with local disk, not a cleanup-lifecycle measurement.
+- Late I/O/CAS failures remain distinguishable as committed-scope errors; no
+  rollback of published configuration is claimed. Aggregate journals remain
+  per-file, not a global filesystem transaction. Whole-registry, collection,
+  hook, ordinary-file, non-`--from`, and unblocked removal paths are unchanged
+  by this slice and remain follow-up work. Existing adapter filesystem behavior
+  remains a separate review surface; no general filesystem sandbox is claimed.
 - Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
   planning and first three implementation layers are published as PRs 210–213
   in stack 214. Native compatibility and real-terminal TUI checks remain CI
