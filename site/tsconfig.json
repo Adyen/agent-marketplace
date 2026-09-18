@@ -3,9 +3,16 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM"],
     "resolveJsonModule": true,
+    "skipLibCheck": true,
     "strict": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "node"]
   },
-  "include": [".vitepress/**/*.ts", ".vitepress/**/*.mts", "src/**/*.ts", "src/**/*.vue"]
+  "include": [
+    ".vitepress/**/*.ts",
+    ".vitepress/**/*.mts",
+    "src/**/*.ts",
+    "src/**/*.vue"
+  ]
 }

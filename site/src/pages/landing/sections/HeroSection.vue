@@ -3,9 +3,9 @@ import {
   GITHUB_REPOSITORY_URL,
   INSTALL_COMMAND,
   MARKETPLACE_PATH,
-} from '../../../shared/site'
-import CommandBar from '../components/CommandBar.vue'
-import TuiPreview from '../components/TuiPreview.vue'
+} from "../../../shared/site";
+import CommandBar from "../components/CommandBar.vue";
+import TuiPreview from "../components/TuiPreview.vue";
 </script>
 
 <template>
@@ -15,23 +15,17 @@ import TuiPreview from '../components/TuiPreview.vue'
         <div class="copy">
           <h1>
             Manage AI agent tooling once
-            <span class="h1-sub">
-              Sync it everywhere you work
-            </span>
+            <span class="h1-sub"> Sync it everywhere you work </span>
           </h1>
           <p class="lede">
-              Manage skills, commands, hooks, and MCP servers from one config, then
-              sync them to Claude, Cursor, Codex, and more.
+            Manage skills, commands, hooks, and MCP servers from one config,
+            then sync them to Claude, Cursor, Codex, and more.
           </p>
 
           <CommandBar :command="INSTALL_COMMAND" class="install" />
 
           <div class="actions">
-            <a
-              class="action primary"
-              :href="MARKETPLACE_PATH"
-              target="_self"
-            >
+            <a class="action primary" :href="MARKETPLACE_PATH" target="_self">
               Browse Marketplace
             </a>
             <a
@@ -47,13 +41,12 @@ import TuiPreview from '../components/TuiPreview.vue'
         </div>
 
         <div class="product-stage">
-        <TuiPreview />
+          <TuiPreview />
           <p class="preview-caption">
             Select resources, review their targets, then sync.
           </p>
         </div>
       </div>
-
     </div>
   </header>
 </template>
@@ -70,7 +63,11 @@ import TuiPreview from '../components/TuiPreview.vue'
     linear-gradient(var(--am-hero-grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--am-hero-grid) 1px, transparent 1px),
     var(--am-hero-bg);
-  background-size: auto, 44px 44px, 44px 44px, auto;
+  background-size:
+    auto,
+    44px 44px,
+    44px 44px,
+    auto;
   color: var(--am-hero-text);
 }
 
@@ -192,7 +189,8 @@ h1 {
   margin-top: 30px;
   padding-block: 9px;
   box-shadow:
-    0 20px 50px -30px color-mix(in srgb, var(--am-color-bg-canvas) 90%, transparent),
+    0 20px 50px -30px
+      color-mix(in srgb, var(--am-color-bg-canvas) 90%, transparent),
     inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 3%, transparent);
 }
 
@@ -227,13 +225,16 @@ h1 {
   .copy {
     max-width: 720px;
   }
-
 }
 
 @media (max-width: 680px) {
   .hero {
     padding: 88px 0 64px;
-    background-size: auto, 30px 30px, 30px 30px, auto;
+    background-size:
+      auto,
+      30px 30px,
+      30px 30px,
+      auto;
   }
 
   h1 {
@@ -258,7 +259,6 @@ h1 {
     --am-technical-font-size: 12px;
     padding-block: 7px;
   }
-
 }
 
 @media (prefers-reduced-motion: reduce) {

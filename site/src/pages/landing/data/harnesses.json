@@ -5,12 +5,8 @@
     {
       "id": "factory",
       "label": "Factory Droid",
-      "repoRoots": [
-        ".factory"
-      ],
-      "machineRoots": [
-        "~/.factory"
-      ],
+      "repoRoots": [".factory"],
+      "machineRoots": ["~/.factory"],
       "capabilities": {
         "compile": true,
         "ingest": true,
@@ -21,12 +17,8 @@
     {
       "id": "claude",
       "label": "Claude Code",
-      "repoRoots": [
-        ".claude"
-      ],
-      "machineRoots": [
-        "~/.claude"
-      ],
+      "repoRoots": [".claude"],
+      "machineRoots": ["~/.claude"],
       "capabilities": {
         "compile": true,
         "ingest": true,
@@ -37,12 +29,8 @@
     {
       "id": "cursor",
       "label": "Cursor",
-      "repoRoots": [
-        ".cursor"
-      ],
-      "machineRoots": [
-        "~/.cursor"
-      ],
+      "repoRoots": [".cursor"],
+      "machineRoots": ["~/.cursor"],
       "capabilities": {
         "compile": true,
         "ingest": true,
@@ -53,12 +41,8 @@
     {
       "id": "windsurf",
       "label": "Windsurf",
-      "repoRoots": [
-        "./ (repository root)"
-      ],
-      "machineRoots": [
-        "~/.codeium/windsurf"
-      ],
+      "repoRoots": ["./ (repository root)"],
+      "machineRoots": ["~/.codeium/windsurf"],
       "capabilities": {
         "compile": true,
         "ingest": true,
@@ -69,12 +53,8 @@
     {
       "id": "gemini",
       "label": "Gemini CLI",
-      "repoRoots": [
-        ".gemini"
-      ],
-      "machineRoots": [
-        "~/.gemini"
-      ],
+      "repoRoots": [".gemini"],
+      "machineRoots": ["~/.gemini"],
       "capabilities": {
         "compile": true,
         "ingest": true,
@@ -85,12 +65,8 @@
     {
       "id": "devin",
       "label": "Devin CLI",
-      "repoRoots": [
-        ".devin"
-      ],
-      "machineRoots": [
-        "~/.config/devin"
-      ],
+      "repoRoots": [".devin"],
+      "machineRoots": ["~/.config/devin"],
       "capabilities": {
         "compile": true,
         "ingest": true,
@@ -101,14 +77,8 @@
     {
       "id": "codex",
       "label": "Codex",
-      "repoRoots": [
-        ".agents",
-        ".codex"
-      ],
-      "machineRoots": [
-        "~/.agents",
-        "$CODEX_HOME or ~/.codex"
-      ],
+      "repoRoots": [".agents", ".codex"],
+      "machineRoots": ["~/.agents", "$CODEX_HOME or ~/.codex"],
       "capabilities": {
         "compile": true,
         "ingest": true,
@@ -161,273 +131,183 @@
     "command": {
       "claude": {
         "status": "native",
-        "paths": [
-          "commands/example.md"
-        ]
+        "paths": ["commands/example.md"]
       },
       "codex": {
         "status": "as-skill",
-        "paths": [
-          ".agents/skills/example/SKILL.md"
-        ]
+        "paths": [".agents/skills/example/SKILL.md"]
       },
       "cursor": {
         "status": "native",
-        "paths": [
-          "commands/example.md"
-        ]
+        "paths": ["commands/example.md"]
       },
       "devin": {
         "status": "as-skill",
-        "paths": [
-          "skills/example/SKILL.md"
-        ]
+        "paths": ["skills/example/SKILL.md"]
       },
       "factory": {
         "status": "native",
-        "paths": [
-          "commands/example.md"
-        ]
+        "paths": ["commands/example.md"]
       },
       "gemini": {
         "status": "native",
-        "paths": [
-          "commands/example.toml"
-        ]
+        "paths": ["commands/example.toml"]
       },
       "windsurf": {
         "status": "native",
-        "paths": [
-          ".windsurf/workflows/example.md"
-        ]
+        "paths": [".windsurf/workflows/example.md"]
       }
     },
     "hook": {
       "claude": {
         "status": "shared",
-        "paths": [
-          "hooks/hooks.json"
-        ]
+        "paths": ["hooks/hooks.json"]
       },
       "codex": {
         "status": "shared",
-        "paths": [
-          ".codex/hooks.json"
-        ]
+        "paths": [".codex/hooks.json"]
       },
       "cursor": {
         "status": "shared",
-        "paths": [
-          "hooks/hooks.json"
-        ]
+        "paths": ["hooks/hooks.json"]
       },
       "devin": {
         "status": "shared",
-        "paths": [
-          "hooks.v1.json"
-        ]
+        "paths": ["hooks.v1.json"]
       },
       "factory": {
         "status": "shared",
-        "paths": [
-          "hooks/hooks.json"
-        ]
+        "paths": ["hooks/hooks.json"]
       },
       "gemini": {
         "status": "shared",
-        "paths": [
-          ".gemini/settings.json"
-        ]
+        "paths": [".gemini/settings.json"]
       },
       "windsurf": {
         "status": "native",
-        "paths": [
-          ".windsurf/hooks/pre_user_prompt.json"
-        ]
+        "paths": [".windsurf/hooks/pre_user_prompt.json"]
       }
     },
     "mcp": {
       "claude": {
         "status": "shared",
-        "paths": [
-          ".mcp.json"
-        ]
+        "paths": [".mcp.json"]
       },
       "codex": {
         "status": "shared",
-        "paths": [
-          ".codex/config.toml"
-        ]
+        "paths": [".codex/config.toml"]
       },
       "cursor": {
         "status": "shared",
-        "paths": [
-          "mcp.json"
-        ]
+        "paths": ["mcp.json"]
       },
       "devin": {
         "status": "shared",
-        "paths": [
-          "mcp_config.json"
-        ]
+        "paths": ["mcp_config.json"]
       },
       "factory": {
         "status": "shared",
-        "paths": [
-          "mcp.json"
-        ]
+        "paths": ["mcp.json"]
       },
       "gemini": {
         "status": "shared",
-        "paths": [
-          "gemini-extension.json"
-        ]
+        "paths": ["gemini-extension.json"]
       },
       "windsurf": {
         "status": "shared",
-        "paths": [
-          ".windsurf/mcp_config.json"
-        ]
+        "paths": [".windsurf/mcp_config.json"]
       }
     },
     "rule": {
       "claude": {
         "status": "none",
-        "codes": [
-          "rule.claude.no-primitive"
-        ]
+        "codes": ["rule.claude.no-primitive"]
       },
       "codex": {
         "status": "none",
-        "codes": [
-          "rule.codex.unsupported"
-        ]
+        "codes": ["rule.codex.unsupported"]
       },
       "cursor": {
         "status": "native",
-        "paths": [
-          "rules/example.mdc"
-        ]
+        "paths": ["rules/example.mdc"]
       },
       "devin": {
         "status": "none",
-        "codes": [
-          "rule.devin.unsupported"
-        ]
+        "codes": ["rule.devin.unsupported"]
       },
       "factory": {
         "status": "native",
-        "paths": [
-          "rules/example.md"
-        ],
-        "codes": [
-          "rule.factory.metadata-dropped"
-        ]
+        "paths": ["rules/example.md"],
+        "codes": ["rule.factory.metadata-dropped"]
       },
       "gemini": {
         "status": "none",
-        "codes": [
-          "rule.gemini.no-primitive"
-        ]
+        "codes": ["rule.gemini.no-primitive"]
       },
       "windsurf": {
         "status": "native",
-        "paths": [
-          ".windsurf/rules/example.mdc"
-        ]
+        "paths": [".windsurf/rules/example.mdc"]
       }
     },
     "skill": {
       "claude": {
         "status": "native",
-        "paths": [
-          ".claude-plugin/plugin.json",
-          "skills/example/SKILL.md"
-        ]
+        "paths": [".claude-plugin/plugin.json", "skills/example/SKILL.md"]
       },
       "codex": {
         "status": "native",
-        "paths": [
-          ".agents/skills/example/SKILL.md"
-        ]
+        "paths": [".agents/skills/example/SKILL.md"]
       },
       "cursor": {
         "status": "native",
-        "paths": [
-          "skills/example/SKILL.md"
-        ]
+        "paths": ["skills/example/SKILL.md"]
       },
       "devin": {
         "status": "native",
-        "paths": [
-          "skills/example/SKILL.md"
-        ]
+        "paths": ["skills/example/SKILL.md"]
       },
       "factory": {
         "status": "native",
-        "paths": [
-          "skills/example/SKILL.md"
-        ]
+        "paths": ["skills/example/SKILL.md"]
       },
       "gemini": {
         "status": "native",
-        "paths": [
-          ".gemini/skills/example/SKILL.md"
-        ]
+        "paths": [".gemini/skills/example/SKILL.md"]
       },
       "windsurf": {
         "status": "native",
-        "paths": [
-          ".windsurf/skills/example/SKILL.md"
-        ]
+        "paths": [".windsurf/skills/example/SKILL.md"]
       }
     },
     "subagent": {
       "claude": {
         "status": "native",
-        "paths": [
-          ".claude-plugin/plugin.json",
-          "agents/example.md"
-        ]
+        "paths": [".claude-plugin/plugin.json", "agents/example.md"]
       },
       "codex": {
         "status": "native",
-        "paths": [
-          ".codex/agents/example.toml"
-        ]
+        "paths": [".codex/agents/example.toml"]
       },
       "cursor": {
         "status": "native",
-        "paths": [
-          "agents/example.md"
-        ]
+        "paths": ["agents/example.md"]
       },
       "devin": {
         "status": "native",
-        "paths": [
-          "agents/example.md"
-        ],
-        "codes": [
-          "subagent.devin.model-default"
-        ]
+        "paths": ["agents/example.md"],
+        "codes": ["subagent.devin.model-default"]
       },
       "factory": {
         "status": "native",
-        "paths": [
-          "droids/example.md"
-        ]
+        "paths": ["droids/example.md"]
       },
       "gemini": {
         "status": "native",
-        "paths": [
-          ".gemini/agents/example.md"
-        ]
+        "paths": [".gemini/agents/example.md"]
       },
       "windsurf": {
         "status": "none",
-        "codes": [
-          "subagent.windsurf.no-primitive"
-        ]
+        "codes": ["subagent.windsurf.no-primitive"]
       }
     }
   }

@@ -1,18 +1,38 @@
-import { defineComponent, h } from 'vue'
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
-import RegistryHistoryList from '../../app/components/RegistryHistoryList.vue'
-import RegistryOverview from '../../app/components/RegistryOverview.vue'
+import { defineComponent, h } from "vue";
+import { mount } from "@vue/test-utils";
+import { describe, expect, it } from "vitest";
+import RegistryHistoryList from "../../app/components/RegistryHistoryList.vue";
+import RegistryOverview from "../../app/components/RegistryOverview.vue";
 
 const stubs = {
-  NuxtLink: defineComponent({ props: { to: String }, setup(props, { slots }) { return () => h('a', { href: props.to }, slots.default?.()) } }),
-  ResourceRow: defineComponent({ props: { item: Object }, setup(props) { return () => h('article', String((props.item as { name?: string })?.name || '')) } }),
-  UBadge: defineComponent({ setup(_, { slots }) { return () => h('span', slots.default?.()) } }),
-  UButton: defineComponent({ props: { to: { type: [String, Object], default: '' } }, setup(_, { slots }) { return () => h('button', slots.default?.()) } }),
-  UInput: defineComponent({ setup: () => () => h('input') }),
-}
+  NuxtLink: defineComponent({
+    props: { to: String },
+    setup(props, { slots }) {
+      return () => h("a", { href: props.to }, slots.default?.());
+    },
+  }),
+  ResourceRow: defineComponent({
+    props: { item: Object },
+    setup(props) {
+      return () =>
+        h("article", String((props.item as { name?: string })?.name || ""));
+    },
+  }),
+  UBadge: defineComponent({
+    setup(_, { slots }) {
+      return () => h("span", slots.default?.());
+    },
+  }),
+  UButton: defineComponent({
+    props: { to: { type: [String, Object], default: "" } },
+    setup(_, { slots }) {
+      return () => h("button", slots.default?.());
+    },
+  }),
+  UInput: defineComponent({ setup: () => () => h("input") }),
+};
 
-const hostile = '<script>alert("x")</script>'
+const hostile = '<script>alert("x")</script>';
 const registry = {
   id: hostile,
   slug: hostile,
@@ -20,56 +40,76 @@ const registry = {
   origins: [hostile],
   ref: hostile,
   roots: [{ path: hostile, source_harness: hostile }],
-  acquisition: 'mirror' as const,
+  acquisition: "mirror" as const,
   publisher: { name: hostile, url: hostile },
   license: hostile,
   listed: true,
-}
+};
 
 const occurrence = {
   registry_id: hostile,
   ref: hostile,
   commit: hostile,
   registry_revision_manifest_digest: hostile,
-  acquisition: 'mirror' as const,
+  acquisition: "mirror" as const,
   mirrored_artifact_digest: hostile,
-  occurred_at: '2026-01-02T03:04:05Z',
-}
+  occurred_at: "2026-01-02T03:04:05Z",
+};
 
-describe('registry discovery surfaces', () => {
-  it('renders registry metadata and hostile text as escaped text, with publisher/operator distinction', () => {
+describe("registry discovery surfaces", () => {
+  it("renders registry metadata and hostile text as escaped text, with publisher/operator distinction", () => {
     const wrapper = mount(RegistryOverview, {
       props: {
         registry,
-        operator: { id: 'operator-id', name: 'Marketplace operator', canonical_url: 'https://market.example' },
+        operator: {
+          id: "operator-id",
+          name: "Marketplace operator",
+          canonical_url: "https://market.example",
+        },
         resourceCount: 1,
       },
       global: { stubs },
-    })
+    });
 
-    expect(wrapper.text()).toContain('Publisher')
-    expect(wrapper.text()).toContain('Marketplace operator')
-    expect(wrapper.text()).toContain('View 1 resource')
-    expect(wrapper.html().indexOf('About this registry')).toBeLessThan(wrapper.html().indexOf('Technical details'))
-    expect(wrapper.find('details').exists()).toBe(false)
-    expect(wrapper.find('script').exists()).toBe(false)
-    expect(wrapper.text()).toContain(hostile)
-  })
+    expect(wrapper.text()).toContain("Publisher");
+    expect(wrapper.text()).toContain("Marketplace operator");
+    expect(wrapper.text()).toContain("View 1 resource");
+    expect(wrapper.html().indexOf("About this registry")).toBeLessThan(
+      wrapper.html().indexOf("Technical details"),
+    );
+    expect(wrapper.find("details").exists()).toBe(false);
+    expect(wrapper.find("script").exists()).toBe(false);
+    expect(wrapper.text()).toContain(hostile);
+  });
 
-  it('provides an accessible empty history state', () => {
-    const wrapper = mount(RegistryHistoryList, { props: { occurrences: [] }, global: { stubs } })
-    expect(wrapper.text()).toContain('No registry occurrences have been recorded.')
-    expect(wrapper.find('[aria-label="Registry occurrence timeline"]').exists()).toBe(false)
-  })
+  it("provides an accessible empty history state", () => {
+    const wrapper = mount(RegistryHistoryList, {
+      props: { occurrences: [] },
+      global: { stubs },
+    });
+    expect(wrapper.text()).toContain(
+      "No registry occurrences have been recorded.",
+    );
+    expect(
+      wrapper.find('[aria-label="Registry occurrence timeline"]').exists(),
+    ).toBe(false);
+  });
 
-  it('renders exact history fields as text without interpreting hostile values', () => {
-    const wrapper = mount(RegistryHistoryList, { props: { occurrences: [occurrence] }, global: { stubs } })
-    expect(wrapper.get('ol[aria-label="Registry occurrence timeline"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Commit')
-    expect(wrapper.text()).toContain('Ref')
-    expect(wrapper.text()).toContain('Registry revision manifest digest')
-    expect(wrapper.text()).toContain(hostile)
-    expect(wrapper.find('script').exists()).toBe(false)
-    expect(wrapper.find('time').attributes('datetime')).toBe(occurrence.occurred_at)
-  })
-})
+  it("renders exact history fields as text without interpreting hostile values", () => {
+    const wrapper = mount(RegistryHistoryList, {
+      props: { occurrences: [occurrence] },
+      global: { stubs },
+    });
+    expect(
+      wrapper.get('ol[aria-label="Registry occurrence timeline"]').exists(),
+    ).toBe(true);
+    expect(wrapper.text()).toContain("Commit");
+    expect(wrapper.text()).toContain("Ref");
+    expect(wrapper.text()).toContain("Registry revision manifest digest");
+    expect(wrapper.text()).toContain(hostile);
+    expect(wrapper.find("script").exists()).toBe(false);
+    expect(wrapper.find("time").attributes("datetime")).toBe(
+      occurrence.occurred_at,
+    );
+  });
+});

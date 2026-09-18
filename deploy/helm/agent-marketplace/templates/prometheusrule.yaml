@@ -1,0 +1,48 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- $service := include "agent-marketplace.componentName" (dict "root" . "component" "api") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $service }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: {{ printf "%s.rules" $service | quote }}
+      rules:
+        - alert: AgentMarketplaceAPITargetMissing
+          expr: >-
+            absent(up{namespace="{{ .Release.Namespace }}",service="{{ $service }}",endpoint="operations"} == 1)
+          for: {{ .Values.prometheusRule.apiTargetMissing.for }}
+          labels:
+            severity: {{ .Values.prometheusRule.apiTargetMissing.severity | quote }}
+        - alert: AgentMarketplaceHTTP5xxHigh
+          expr: >-
+            (
+              sum(rate(agent_marketplace_requests_total{namespace="{{ .Release.Namespace }}",service="{{ $service }}",listener="public",code=~"5.."}[5m]))
+              /
+              sum(rate(agent_marketplace_requests_total{namespace="{{ .Release.Namespace }}",service="{{ $service }}",listener="public"}[5m]))
+            ) > {{ .Values.prometheusRule.http5xx.threshold }}
+            and
+            sum(rate(agent_marketplace_requests_total{namespace="{{ .Release.Namespace }}",service="{{ $service }}",listener="public"}[5m])) >= {{ .Values.prometheusRule.http5xx.minRequestRate }}
+          for: {{ .Values.prometheusRule.http5xx.for }}
+          labels:
+            severity: {{ .Values.prometheusRule.http5xx.severity | quote }}
+        - alert: AgentMarketplaceLatencyHigh
+          expr: >-
+            histogram_quantile(
+              0.95,
+              sum by (le) (rate(agent_marketplace_request_duration_seconds_bucket{namespace="{{ .Release.Namespace }}",service="{{ $service }}",listener="public"}[5m]))
+            ) > {{ .Values.prometheusRule.latency.threshold }}
+            and
+            sum(rate(agent_marketplace_requests_total{namespace="{{ .Release.Namespace }}",service="{{ $service }}",listener="public"}[5m])) >= {{ .Values.prometheusRule.latency.minRequestRate }}
+          for: {{ .Values.prometheusRule.latency.for }}
+          labels:
+            severity: {{ .Values.prometheusRule.latency.severity | quote }}
+{{- end }}

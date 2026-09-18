@@ -1,15 +1,16 @@
-import { devApiProxyTargets } from './app/lib/api-base'
-import { SHARED_APPEARANCE_KEY } from './app/lib/site'
+import { devApiProxyTargets } from "./app/lib/api-base";
+import { SHARED_APPEARANCE_KEY } from "./app/lib/site";
 
-const devApiProxy = process.env.NODE_ENV === 'development'
-  ? devApiProxyTargets(process.env.NUXT_PUBLIC_API_BASE)
-  : null
+const devApiProxy =
+  process.env.NODE_ENV === "development"
+    ? devApiProxyTargets(process.env.NUXT_PUBLIC_API_BASE)
+    : null;
 
 export default defineNuxtConfig({
-  compatibilityDate: '2025-07-15',
+  compatibilityDate: "2025-07-15",
   devtools: { enabled: false },
-  modules: ['@nuxt/ui', '@nuxt/eslint'],
-  css: ['~/assets/css/main.css'],
+  modules: ["@nuxt/ui", "@nuxt/eslint"],
+  css: ["~/assets/css/main.css"],
   // Nuxt color mode persists `system`; VitePress persists `auto`. Keep one
   // small controller so both applications can honor the same stored values.
   ui: {
@@ -18,9 +19,10 @@ export default defineNuxtConfig({
   },
   app: {
     head: {
-      script: [{
-        id: 'check-shared-appearance',
-        innerHTML: `;(() => {
+      script: [
+        {
+          id: "check-shared-appearance",
+          innerHTML: `;(() => {
           let preference = 'auto'
           try {
             preference = localStorage.getItem('${SHARED_APPEARANCE_KEY}') || 'auto'
@@ -30,7 +32,8 @@ export default defineNuxtConfig({
             document.documentElement.classList.add('dark')
           }
         })()`,
-      }],
+        },
+      ],
     },
   },
   // Icons resolve entirely from the locally installed `@iconify-json/lucide`
@@ -38,16 +41,16 @@ export default defineNuxtConfig({
   // the remote Iconify API is unreachable by design and must never be a
   // dependency of rendering.
   icon: {
-    serverBundle: 'local',
+    serverBundle: "local",
     clientBundle: { scan: true },
     fallbackToApi: false,
   },
   runtimeConfig: {
     // Server-only URL for Compose/internal-network SSR requests. Nuxt does not
     // serialize private runtimeConfig into the browser payload.
-    apiBaseInternal: '',
+    apiBaseInternal: "",
     public: {
-      apiBase: '/',
+      apiBase: "/",
     },
   },
   typescript: {
@@ -59,12 +62,15 @@ export default defineNuxtConfig({
     '/admin/**': { ssr: false, prerender: false, headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive' } },
   },
   nitro: {
-    preset: 'node-server',
+    preset: "node-server",
     devProxy: devApiProxy
       ? {
-          '/api/v1': { target: devApiProxy.api, changeOrigin: true },
-          '/.well-known/agent-marketplace.json': { target: devApiProxy.wellKnown, changeOrigin: true },
+          "/api/v1": { target: devApiProxy.api, changeOrigin: true },
+          "/.well-known/agent-marketplace.json": {
+            target: devApiProxy.wellKnown,
+            changeOrigin: true,
+          },
         }
       : {},
   },
-})
+});

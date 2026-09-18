@@ -280,3 +280,21 @@ serviceMonitor:
   scheme: http
   labels: {}
   additionalLabels: {}
+
+prometheusRule:
+  enabled: false
+  labels: {}
+  additionalLabels: {}
+  apiTargetMissing:
+    for: 5m
+    severity: critical
+  http5xx:
+    for: 10m
+    severity: critical
+    threshold: 0.05
+    minRequestRate: 0.1
+  latency:
+    for: 10m
+    severity: warning
+    threshold: 2
+    minRequestRate: 0.1

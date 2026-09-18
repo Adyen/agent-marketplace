@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import SectionShell from '../components/SectionShell.vue'
-import TerminalFrame from '../components/TerminalFrame.vue'
+import SectionShell from "../components/SectionShell.vue";
+import TerminalFrame from "../components/TerminalFrame.vue";
 </script>
 
 <template>
@@ -17,7 +17,7 @@ import TerminalFrame from '../components/TerminalFrame.vue'
       label="CI check · read-only"
       status="exit 1"
       padded
-      style="--am-terminal-status-color: var(--am-terminal-danger);"
+      style="--am-terminal-status-color: var(--am-terminal-danger)"
     >
       <div class="command">
         <span class="prompt" aria-hidden="true">$</span>
@@ -28,7 +28,9 @@ import TerminalFrame from '../components/TerminalFrame.vue'
         <samp class="summary">
           sync: <strong>2 out of sync</strong> (1 missing, 1 orphaned)
         </samp>
-        <samp class="root">→ repo-agents (/workspace/payments-api/.agents)</samp>
+        <samp class="root"
+          >→ repo-agents (/workspace/payments-api/.agents)</samp
+        >
         <samp class="change added">+ skills/pdf/SKILL.md</samp>
         <samp class="root">→ repo-codex (/workspace/payments-api/.codex)</samp>
         <samp class="change removed">- agents/old-agent.toml</samp>
@@ -125,5 +127,4 @@ import TerminalFrame from '../components/TerminalFrame.vue'
   content: "✓";
   font-family: var(--vp-font-family-mono);
 }
-
 </style>

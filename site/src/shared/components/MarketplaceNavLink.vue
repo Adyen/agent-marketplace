@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { MARKETPLACE_PATH } from '../site'
+import { MARKETPLACE_PATH } from "../site";
 
 // Rendered as a `component` nav item: VPNavBarMenu (desktop) and
 // VPNavScreenMenu (mobile, which passes `screen-menu`). A plain anchor keeps
@@ -7,7 +7,7 @@ import { MARKETPLACE_PATH } from '../site'
 // MARKETPLACE_PATH, so the sibling app stays at the origin root from every
 // page depth and under any SITE_BASE. target="_self" keeps the router from
 // intercepting the click as an SPA route.
-defineProps<{ screenMenu?: boolean }>()
+defineProps<{ screenMenu?: boolean }>();
 </script>
 
 <template>
@@ -16,7 +16,8 @@ defineProps<{ screenMenu?: boolean }>()
     :class="{ 'screen-menu': screenMenu }"
     :href="MARKETPLACE_PATH"
     target="_self"
-  >Marketplace</a>
+    >Marketplace</a
+  >
 </template>
 
 <style scoped>

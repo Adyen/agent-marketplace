@@ -22,7 +22,7 @@ export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_N
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common tidy version release clean e2e marketplace-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
+.PHONY: build test coverage lint ci-lint lint-common tidy version release clean e2e marketplace-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build web-check site-check secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -49,6 +49,17 @@ test:
 		GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_COMMON_DIR GIT_CONFIG_PARAMETERS; \
 	GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=1 \
 		GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=0 CGO_ENABLED=0 $(GO) test ./...
+
+COVERAGE_MIN ?= 70.0
+
+coverage:
+	@set -eu; \
+	profile=$$(mktemp); \
+	trap 'rm -f "$$profile"' EXIT; \
+	CGO_ENABLED=0 $(GO) test ./internal/... ./pkg/... -coverprofile="$$profile"; \
+	total=$$($(GO) tool cover -func "$$profile" | awk '/^total:/ {gsub("%", "", $$3); print $$3}'); \
+	test -n "$$total" || { echo "ERROR: coverage profile did not contain a total" >&2; exit 1; }; \
+	awk -v total="$$total" -v minimum="$(COVERAGE_MIN)" 'BEGIN { if (total + 0 < minimum + 0) { printf "ERROR: coverage %.1f%% is below minimum %.1f%%\n", total, minimum; exit 1 } printf "Coverage %.1f%% meets minimum %.1f%%\n", total, minimum }'
 
 lint: LINT_MODE=fix
 lint: lint-common
@@ -279,6 +290,14 @@ site-dev:
 site-build:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for website builds" >&2; exit 1; }
 	cd $(SITE_DIR) && pnpm install --frozen-lockfile && pnpm run build
+
+web-check:
+	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for web checks" >&2; exit 1; }
+	cd web && pnpm install --frozen-lockfile --ignore-scripts && pnpm run check
+
+site-check:
+	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for website checks" >&2; exit 1; }
+	cd $(SITE_DIR) && pnpm install --frozen-lockfile --ignore-scripts && pnpm run check
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).

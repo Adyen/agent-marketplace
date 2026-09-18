@@ -38,10 +38,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up pnpm
+      - name: Enable pinned pnpm
         run: |
           corepack enable pnpm
-          corepack install --global pnpm@10.4.1
+          corepack install --global pnpm@10.26.0
+
+      - name: Install site dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: site
+
+      - name: Site checks
+        run: pnpm run check
+        working-directory: site
 
       - name: Build website
         run: make site-build

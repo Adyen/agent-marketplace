@@ -192,6 +192,58 @@ kubectl describe deployment marketplace-agent-marketplace-api -n marketplace
 
 The API readiness and startup probes should use `/readyz` on the operations port. The API Service should expose the application HTTP port plus the named `operations` port for private monitoring; the Ingress still exposes only the intended public routes. Worker pods do not have an HTTP listener; observe their process state and logs instead of adding an HTTP probe.
 
+## 7. Roll back safely
+
+Inspect the release history before choosing a known-good revision:
+
+```bash
+helm history marketplace --namespace marketplace
+```
+
+For a manifest-only rollback, select the prior revision and wait for the
+workloads to become ready:
+
+```bash
+helm rollback marketplace <revision> \
+  --namespace marketplace \
+  --wait \
+  --timeout 10m
+kubectl rollout status deployment/marketplace-agent-marketplace-api \
+  --namespace marketplace \
+  --timeout=10m
+kubectl get deployments,services,pods --namespace marketplace
+```
+
+After the rollout, verify `/readyz` through the private operations port. For
+example, use a temporary port-forward and query it from an operator workstation:
+
+```bash
+kubectl port-forward service/marketplace-agent-marketplace-api 9090:9090 \
+  --namespace marketplace
+curl --fail http://127.0.0.1:9090/readyz
+```
+
+For future upgrades, prefer an atomic deployment when automatic manifest
+rollback is appropriate:
+
+```bash
+helm upgrade --install marketplace deploy/helm/agent-marketplace \
+  --namespace marketplace \
+  --create-namespace \
+  --values values.yaml \
+  --atomic \
+  --wait \
+  --timeout 10m
+```
+
+Helm rollback restores Kubernetes manifests and the previous pod template,
+including chart-managed ConfigMap checksums. It does **not** reverse PostgreSQL
+migrations and does not restore PostgreSQL or S3 data. Before a downgrade that
+may be incompatible with the current schema, take a data backup and confirm
+schema compatibility. If data restoration is required, follow the existing
+[Marketplace backup and restore procedure](../../../docs/marketplace-backup-restore.md);
+do not treat `helm rollback` as a database rollback.
+
 ## Troubleshooting
 
 - **API pods fail before becoming ready**: inspect the mounted operator configuration and confirm the configured database/blob drivers and Secret references match.

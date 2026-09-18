@@ -1,20 +1,20 @@
 <script setup lang="ts">
-import { targets } from '../data/harnesses'
+import { targets } from "../data/harnesses";
 
 const displayNames: Record<string, string> = {
-  factory: 'Factory',
-  claude: 'Claude Code',
-  cursor: 'Cursor',
-  windsurf: 'Windsurf',
-  gemini: 'Gemini',
-  devin: 'Devin',
-  codex: 'Codex',
-}
+  factory: "Factory",
+  claude: "Claude Code",
+  cursor: "Cursor",
+  windsurf: "Windsurf",
+  gemini: "Gemini",
+  devin: "Devin",
+  codex: "Codex",
+};
 
 const harnesses = targets.map((target) => ({
   id: target.id,
   label: displayNames[target.id] ?? target.label,
-}))
+}));
 </script>
 
 <template>
@@ -22,7 +22,9 @@ const harnesses = targets.map((target) => ({
     <div class="am-wrap strip">
       <div class="message">
         <span class="signal" aria-hidden="true"></span>
-        <span id="compatibility-title">Native output for the tools you already use</span>
+        <span id="compatibility-title"
+          >Native output for the tools you already use</span
+        >
       </div>
 
       <ul aria-label="Supported harnesses">
@@ -65,7 +67,8 @@ const harnesses = targets.map((target) => ({
   flex: none;
   border-radius: 50%;
   background: var(--vp-c-brand-1);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--am-color-action-primary) 42%, transparent);
+  box-shadow: 0 0 18px
+    color-mix(in srgb, var(--am-color-action-primary) 42%, transparent);
 }
 
 ul {

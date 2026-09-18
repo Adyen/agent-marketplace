@@ -1,24 +1,24 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref } from "vue";
 
 withDefaults(
   defineProps<{
-    label: string
-    status?: string
-    tag?: 'div' | 'figure'
-    padded?: boolean
+    label: string;
+    status?: string;
+    tag?: "div" | "figure";
+    padded?: boolean;
   }>(),
   {
-    tag: 'div',
+    tag: "div",
     padded: false,
   },
-)
+);
 
-const frame = ref<HTMLElement | null>(null)
+const frame = ref<HTMLElement | null>(null);
 
 defineExpose({
   focus: () => frame.value?.focus(),
-})
+});
 </script>
 
 <template>

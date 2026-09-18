@@ -184,6 +184,12 @@ jobs:
             enabled: true
           serviceMonitor:
             enabled: true
+          prometheusRule:
+            enabled: true
+            labels:
+              team: platform
+            additionalLabels:
+              alerting: marketplace
           EOF
 
           null_env_values_file="$RUNNER_TEMP/helm-null-env-values.yaml"
@@ -209,6 +215,16 @@ jobs:
           helm lint --strict "$CHART_DIR" --values "$values_file"
           helm template marketplace "$CHART_DIR" --namespace marketplace > "$package_dir/default-rendered.yaml"
           helm template marketplace "$CHART_DIR" --namespace marketplace --values "$values_file" > "$package_dir/configured-rendered.yaml"
+          default_rule_count="$(grep -c '^kind: PrometheusRule$' "$package_dir/default-rendered.yaml" || true)"
+          if [[ "$default_rule_count" -ne 0 ]]; then
+            echo "PrometheusRule must be disabled by default" >&2
+            exit 1
+          fi
+          configured_rule_count="$(grep -c '^kind: PrometheusRule$' "$package_dir/configured-rendered.yaml" || true)"
+          if [[ "$configured_rule_count" -ne 1 ]]; then
+            echo "enabling prometheusRule should render exactly one PrometheusRule" >&2
+            exit 1
+          fi
           if [[ "$(grep -c '^kind: Deployment$' "$package_dir/default-rendered.yaml")" -ne 1 ]]; then
             echo "default chart should render exactly one Deployment" >&2
             exit 1
@@ -265,6 +281,7 @@ jobs:
           site_doc="$(extract_doc Deployment agent-marketplace-site "$rendered")"
           api_service_doc="$(extract_doc Service agent-marketplace-api "$rendered")"
           monitor_doc="$(extract_doc ServiceMonitor agent-marketplace-api "$rendered")"
+          rule_doc="$(extract_doc PrometheusRule agent-marketplace-api "$rendered")"
 
           require "chart-managed ConfigMap carries the configured key" "$configmap_doc" "marketplace.yaml: |"
           require "API deployment mounts config under the configured key" "$api_doc" "subPath: marketplace.yaml"
@@ -300,6 +317,22 @@ jobs:
           require "ServiceMonitor selects the operations port" "$monitor_doc" "port: operations"
           reject "ServiceMonitor must not use targetPort" "$monitor_doc" "targetPort:"
           require "ServiceMonitor declares the scheme" "$monitor_doc" "scheme: http"
+
+          require "PrometheusRule carries the custom team label" "$rule_doc" "team: platform"
+          require "PrometheusRule carries the additional alert label" "$rule_doc" "alerting: marketplace"
+          require "API target alert is present" "$rule_doc" "alert: AgentMarketplaceAPITargetMissing"
+          require "HTTP 5xx alert is present" "$rule_doc" "alert: AgentMarketplaceHTTP5xxHigh"
+          require "latency alert is present" "$rule_doc" "alert: AgentMarketplaceLatencyHigh"
+          require "alerts select the release namespace" "$rule_doc" 'namespace="marketplace"'
+          require "alerts select the generated API Service" "$rule_doc" 'service="agent-marketplace-api"'
+          require "target alert is critical for five minutes" "$rule_doc" "severity: critical"
+          require "target alert duration is five minutes" "$rule_doc" "for: 5m"
+          require "HTTP 5xx alert duration is ten minutes" "$rule_doc" "for: 10m"
+          require "HTTP 5xx threshold is configurable" "$rule_doc" ") > 0.05"
+          require "HTTP 5xx minimum rate guard is present" "$rule_doc" ">= 0.1"
+          require "latency threshold is configurable" "$rule_doc" ") > 2"
+          require "latency minimum rate guard is present" "$rule_doc" ">= 0.1"
+          require "latency alert severity is warning" "$rule_doc" "severity: warning"
 
           checksum_of() {
             local checksums
@@ -356,6 +389,8 @@ jobs:
             exit 1
           fi
           helm template marketplace "${package_paths[0]}" --namespace marketplace --values "$values_file" > "$package_dir/package-rendered.yaml"
+          package_rule_doc="$(extract_doc PrometheusRule agent-marketplace-api "$package_dir/package-rendered.yaml")"
+          require "packaged chart retains the API target alert" "$package_rule_doc" "alert: AgentMarketplaceAPITargetMissing"
 
   container-images:
     name: Container images (public defaults)
@@ -409,6 +444,9 @@ jobs:
 
       - name: Run tests
         run: make test
+
+      - name: Enforce library coverage threshold
+        run: make coverage
 
   tui-qa:
     name: TUI QA (${{ matrix.os }})

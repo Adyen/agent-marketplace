@@ -8,9 +8,30 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      - id: coverage
+        name: make coverage
+        entry: make coverage
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
       - id: lint
         name: make lint
         entry: make lint
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: web-check
+        name: make web-check
+        entry: make web-check
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: site-check
+        name: make site-check
+        entry: make site-check
         language: system
         pass_filenames: false
         stages: [pre-commit]

@@ -1,40 +1,44 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref } from "vue";
 
 const props = withDefaults(
   defineProps<{ command: string; copyable?: boolean; highlight?: string }>(),
-  { copyable: true, highlight: '' },
-)
+  { copyable: true, highlight: "" },
+);
 
 const commandParts = computed(() => {
-  const start = props.highlight ? props.command.indexOf(props.highlight) : -1
-  if (start < 0) return undefined
+  const start = props.highlight ? props.command.indexOf(props.highlight) : -1;
+  if (start < 0) return undefined;
 
   return {
     before: props.command.slice(0, start),
     highlight: props.highlight,
     after: props.command.slice(start + props.highlight.length),
-  }
-})
+  };
+});
 
-type State = 'idle' | 'copied' | 'failed'
-const state = ref<State>('idle')
-let reset: ReturnType<typeof setTimeout> | undefined
+type State = "idle" | "copied" | "failed";
+const state = ref<State>("idle");
+let reset: ReturnType<typeof setTimeout> | undefined;
 
-const labels: Record<State, string> = { idle: 'copy', copied: 'copied', failed: '⌘C' }
+const labels: Record<State, string> = {
+  idle: "copy",
+  copied: "copied",
+  failed: "⌘C",
+};
 
 async function copy(command: string) {
   try {
-    await navigator.clipboard.writeText(command)
-    state.value = 'copied'
+    await navigator.clipboard.writeText(command);
+    state.value = "copied";
   } catch {
-    state.value = 'failed'
+    state.value = "failed";
   }
-  clearTimeout(reset)
-  reset = setTimeout(() => (state.value = 'idle'), 1400)
+  clearTimeout(reset);
+  reset = setTimeout(() => (state.value = "idle"), 1400);
 }
 
-onUnmounted(() => clearTimeout(reset))
+onUnmounted(() => clearTimeout(reset));
 </script>
 
 <template>
@@ -42,11 +46,19 @@ onUnmounted(() => clearTimeout(reset))
     <span class="prompt">$</span>
     <code>
       <template v-if="commandParts">
-        {{ commandParts.before }}<span class="highlight">{{ commandParts.highlight }}</span>{{ commandParts.after }}
+        {{ commandParts.before
+        }}<span class="highlight">{{ commandParts.highlight }}</span
+        >{{ commandParts.after }}
       </template>
       <template v-else>{{ command }}</template>
     </code>
-    <button v-if="copyable" class="copy" :class="{ 'is-done': state === 'copied' }" aria-label="Copy command" @click="copy(command)">
+    <button
+      v-if="copyable"
+      class="copy"
+      :class="{ 'is-done': state === 'copied' }"
+      aria-label="Copy command"
+      @click="copy(command)"
+    >
       {{ labels[state] }}
     </button>
   </div>
@@ -87,8 +99,13 @@ code::-webkit-scrollbar-thumb {
   background: var(--am-code-border);
 }
 
-.highlight { color: var(--vp-c-brand-1); }
-.prompt { color: var(--vp-c-brand-1); user-select: none; }
+.highlight {
+  color: var(--vp-c-brand-1);
+}
+.prompt {
+  color: var(--vp-c-brand-1);
+  user-select: none;
+}
 .copy {
   padding: 6px 9px;
   border: 1px solid var(--vp-c-brand-1);
@@ -100,11 +117,17 @@ code::-webkit-scrollbar-thumb {
   line-height: 1;
   cursor: pointer;
 }
-.copy:hover, .copy.is-done {
+.copy:hover,
+.copy.is-done {
   border-color: var(--vp-c-brand-2);
   background: var(--vp-c-brand-2);
   color: var(--am-on-accent);
 }
-.copy:active { transform: translateY(1px); }
-.copy:focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 2px; }
+.copy:active {
+  transform: translateY(1px);
+}
+.copy:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+}
 </style>

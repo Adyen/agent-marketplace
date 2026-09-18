@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import InteractiveTuiDemo from '../components/InteractiveTuiDemo.vue'
-import SectionShell from '../components/SectionShell.vue'
+import InteractiveTuiDemo from "../components/InteractiveTuiDemo.vue";
+import SectionShell from "../components/SectionShell.vue";
 </script>
 
 <template>
@@ -17,8 +17,8 @@ import SectionShell from '../components/SectionShell.vue'
 
     <p class="try-instruction">
       <strong>Try it:</strong>
-      Click the terminal to focus, then use <kbd>↑</kbd><kbd>↓</kbd> to navigate,
-      <kbd>Space</kbd> to toggle, and <kbd>S</kbd> to sync.
+      Click the terminal to focus, then use <kbd>↑</kbd><kbd>↓</kbd> to
+      navigate, <kbd>Space</kbd> to toggle, and <kbd>S</kbd> to sync.
     </p>
 
     <InteractiveTuiDemo class="demo" />
