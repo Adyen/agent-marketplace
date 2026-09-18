@@ -404,6 +404,44 @@ func TestObservationHostBudgetIsDeploymentWide(t *testing.T) {
 	}
 }
 
+func TestObservationHostBudgetExpiredReacquisitionRespectsCapacity(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name               string
+		limit              store.HostBudgetLimit
+		blockerAcquisition bool
+	}{
+		{name: "operations", limit: store.HostBudgetLimit{MaxOperations: 1, MaxAcquisitions: 1}},
+		{name: "acquisitions", limit: store.HostBudgetLimit{MaxOperations: 2, MaxAcquisitions: 1}, blockerAcquisition: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta, _ := openStores(t)
+			expired, err := meta.AcquireHostBudget(ctx, "git.example", "owner-a", true, tc.limit, 20*time.Millisecond)
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(300 * time.Millisecond)
+			other, err := meta.AcquireHostBudget(ctx, "git.example", "owner-b", tc.blockerAcquisition, tc.limit, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := meta.AcquireHostBudget(ctx, "git.example", "owner-a", true, tc.limit, time.Minute); !errors.Is(err, store.ErrConflict) {
+				t.Fatalf("expired same-owner reacquisition = %v, want conflict", err)
+			}
+			if err := meta.ReleaseHostBudget(ctx, "git.example", "owner-b", other.LeaseEpoch); err != nil {
+				t.Fatal(err)
+			}
+			reacquired, err := meta.AcquireHostBudget(ctx, "git.example", "owner-a", true, tc.limit, time.Minute)
+			if err != nil {
+				t.Fatalf("reacquisition after capacity freed: %v", err)
+			}
+			if reacquired.LeaseEpoch <= expired.LeaseEpoch {
+				t.Fatalf("reacquired lease epoch = %d, want continuation beyond expired lease epoch %d", reacquired.LeaseEpoch, expired.LeaseEpoch)
+			}
+		})
+	}
+}
+
 func TestObservationDueOrderingUsesBinaryRegistryIDOrder(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)

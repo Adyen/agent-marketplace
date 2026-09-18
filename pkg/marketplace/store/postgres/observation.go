@@ -244,8 +244,8 @@ func (s *Store) AcquireHostBudget(ctx context.Context, host, owner string, acqui
 		var existingEpoch int64
 		var existingExpired bool
 		err := tx.q.QueryRowContext(ctx, `SELECT acquisition, lease_epoch, lease_until<=`+dbNowMicro+` FROM host_budget_leases WHERE host=$1 AND owner=$2`, host, owner).Scan(&existing, &existingEpoch, &existingExpired)
-		if err == nil {
-			if existing != acquisition && !existingExpired {
+		if err == nil && !existingExpired {
+			if existing != acquisition {
 				return store.ErrConflict
 			}
 			_, err = tx.q.ExecContext(ctx, `UPDATE host_budget_leases SET acquisition=$1, lease_epoch=lease_epoch+1, lease_until=`+dbNowMicro+`+$2 WHERE host=$3 AND owner=$4`, acquisition, duration.Microseconds(), host, owner)
@@ -259,8 +259,13 @@ func (s *Store) AcquireHostBudget(ctx context.Context, host, owner string, acqui
 			out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: acquisition, LeaseEpoch: uint64(existingEpoch), LeaseUntil: microToTime(leaseUntil)}
 			return nil
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
+		}
+		if err == nil {
+			if _, err := tx.q.ExecContext(ctx, `DELETE FROM host_budget_leases WHERE host=$1 AND owner=$2`, host, owner); err != nil {
+				return err
+			}
 		}
 		var operations, acquisitions int
 		if err := tx.q.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN acquisition THEN 1 ELSE 0 END),0) FROM host_budget_leases WHERE host=$1 AND lease_until>`+dbNowMicro, host).Scan(&operations, &acquisitions); err != nil {
@@ -269,7 +274,7 @@ func (s *Store) AcquireHostBudget(ctx context.Context, host, owner string, acqui
 		if operations >= limit.MaxOperations || (acquisition && acquisitions >= limit.MaxAcquisitions) {
 			return store.ErrConflict
 		}
-		_, err = tx.q.ExecContext(ctx, `INSERT INTO host_budget_leases(host, owner, acquisition, lease_epoch, lease_until) VALUES ($1,$2,$3,1,`+dbNowMicro+`+$4)`, host, owner, acquisition, duration.Microseconds())
+		_, err = tx.q.ExecContext(ctx, `INSERT INTO host_budget_leases(host, owner, acquisition, lease_epoch, lease_until) VALUES ($1,$2,$3,$5,`+dbNowMicro+`+$4)`, host, owner, acquisition, duration.Microseconds(), existingEpoch+1)
 		if err != nil {
 			return err
 		}
@@ -277,7 +282,7 @@ func (s *Store) AcquireHostBudget(ctx context.Context, host, owner string, acqui
 		if err := tx.q.QueryRowContext(ctx, `SELECT lease_until FROM host_budget_leases WHERE host=$1 AND owner=$2`, host, owner).Scan(&leaseUntil); err != nil {
 			return err
 		}
-		out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: acquisition, LeaseEpoch: 1, LeaseUntil: microToTime(leaseUntil)}
+		out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: acquisition, LeaseEpoch: uint64(existingEpoch + 1), LeaseUntil: microToTime(leaseUntil)}
 		return nil
 	})
 	return out, err

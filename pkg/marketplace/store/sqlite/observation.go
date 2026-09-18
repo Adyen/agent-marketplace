@@ -253,16 +253,21 @@ func (s *Store) AcquireHostBudget(ctx context.Context, host, owner string, acqui
 		var existingAcq, existingEpoch int64
 		var existingExpired bool
 		err := tx.q.QueryRowContext(ctx, `SELECT acquisition, lease_epoch, lease_until<=? FROM host_budget_leases WHERE host=? AND owner=?`, timeToMicro(now), host, owner).Scan(&existingAcq, &existingEpoch, &existingExpired)
-		if err == nil {
-			if (existingAcq != 0) != acquisition && !existingExpired {
+		if err == nil && !existingExpired {
+			if (existingAcq != 0) != acquisition {
 				return store.ErrConflict
 			}
 			out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: acquisition, LeaseEpoch: uint64(existingEpoch + 1), LeaseUntil: now.Add(duration)}
 			_, err = tx.q.ExecContext(ctx, `UPDATE host_budget_leases SET acquisition=?, lease_until=?, lease_epoch=? WHERE host=? AND owner=?`, acquisition, timeToMicro(out.LeaseUntil), int64(out.LeaseEpoch), host, owner)
 			return err
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
+		}
+		if err == nil {
+			if _, err := tx.q.ExecContext(ctx, `DELETE FROM host_budget_leases WHERE host=? AND owner=?`, host, owner); err != nil {
+				return err
+			}
 		}
 		var operations, acquisitions int
 		if err := tx.q.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(acquisition),0) FROM host_budget_leases WHERE host=? AND lease_until>?`, host, timeToMicro(now)).Scan(&operations, &acquisitions); err != nil {
@@ -271,7 +276,7 @@ func (s *Store) AcquireHostBudget(ctx context.Context, host, owner string, acqui
 		if operations >= limit.MaxOperations || (acquisition && acquisitions >= limit.MaxAcquisitions) {
 			return store.ErrConflict
 		}
-		out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: acquisition, LeaseEpoch: 1, LeaseUntil: now.Add(duration)}
+		out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: acquisition, LeaseEpoch: uint64(existingEpoch + 1), LeaseUntil: now.Add(duration)}
 		_, err = tx.q.ExecContext(ctx, `INSERT INTO host_budget_leases(host, owner, acquisition, lease_epoch, lease_until) VALUES (?, ?, ?, ?, ?)`, host, owner, acquisition, int64(out.LeaseEpoch), timeToMicro(out.LeaseUntil))
 		return err
 	})
