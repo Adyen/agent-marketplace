@@ -155,5 +155,5 @@ An in-sync check returns exit status 0 without a drift verdict. Drift returns ex
 - **`marketplace "..." not found`**: Check the configured `alias`, or pass the endpoint URL to `--marketplace`.
 - **Instance ID mismatch**: The endpoint identity changed or the URL points to a different deployment. Do not edit `instance_id` to bypass the check; confirm the endpoint with its operator.
 - **Marketplace URL blocked**: The effective `allowed_marketplaces` policy does not permit the endpoint. Use an approved endpoint or ask the policy owner to update the controlling layer.
-- **Revoked revision**: Install a current revision. An emergency execution-only override is available through `sync --allow-revoked` for one exact pin; it does not make `sync --check` healthy.
+- **Revoked revision**: Install a current revision. As an emergency, execution-only escape you can run one sync with the exact revoked pin allowed: `agent-marketplace sync --allow-revoked <instance_id>/<registry>/<kind>/<name>@sha256:<64 hex>` (the first segment is the Marketplace `instance_id`, and `<kind>` for MCP servers is `mcpserver`). This never makes `sync --check` healthy, and the flag cannot be combined with `--check`.
 - **Offline sync warning**: `sync --offline` uses trusted cached Marketplace data and cannot observe revocations published after the cache was populated.
