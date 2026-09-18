@@ -361,6 +361,48 @@ Enumeration must be complete and bounded. Partial pagination, query failure, tru
 
 Reconciliation verifies every new artifact and collection member before publishing the new config/lock generation. New executable capabilities or policy-relevant changes retain the existing preview/consent boundary. Locks are deterministic and reused when semantically unchanged.
 
+### 6.4 Exact legacy pin migration slice
+
+The first hosted-lock implementation is deliberately limited to migrating exact legacy Marketplace state that is already backed by verified local cache evidence. It does not acquire missing content, evaluate dynamic selectors, update a revision, rebind an identity, or make the v4 editors Marketplace-aware.
+
+A migrated Marketplace entry becomes a named v4 `marketplace` source. A valid unique legacy alias is retained as the source name; otherwise the migrator allocates a deterministic non-conflicting `marketplace`, `marketplace-2`, and so on. A legacy pin becomes an explicit v4 request when `direct: true` or when it has no `selected_by` edge. Collection-only leaves stay generated lock membership rather than becoming new direct requests. `installed_name` becomes `as`. A revision distinct from the content digest is retained as an explicit `revision` only when it satisfies the v4 exact-revision grammar; an unrepresentable requested revision is refused. The registry slug is the locator binding name, with the immutable registry ID used as the deterministic fallback for older pins that lack a slug.
+
+The owning layer lock uses `agent-marketplace-lock/v2` when Marketplace state is present. V2 retains the v1 Git `registries` records and adds deterministic Marketplace records. The exact-pin slice uses this wire shape:
+
+```yaml
+apiVersion: agent-marketplace-lock/v2
+scope: user
+registries: []
+marketplaces:
+  - url: https://market.example
+    instance_id: market-id
+    registry_bindings:
+      - name: tools
+        registry_id: immutable-tools-id
+    resources:
+      - registry_id: immutable-tools-id
+        kind: skill
+        name: review
+        revision: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        content_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        archive_digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        acquisition: mirror
+        selected_by:
+          - registry_id: immutable-collections-id
+            name: onboarding
+            revision: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+```
+
+`marketplaces` must be non-empty in a v2 document. A binding identity is `name`; duplicate names with different IDs conflict, while several names may intentionally bind to one immutable ID. A resource identity is `(registry_id, kind, name)`; a duplicate identity with any different acquisition or integrity value conflicts. Selection edges are keyed by `(registry_id, name, revision)`. Marketplace entries sort by canonical URL then instance ID, bindings by name then ID, resources by identity, and selection edges by their key. The existing 4 MiB, YAML depth/node, duplicate-key, alias/merge, control-character, endpoint, segment, kind, digest, and path bounds apply before normalization.
+
+Every non-collection resource requires `archive_digest`. A collection is mirror-only, requires `collection_manifest_digest`, and omits `archive_digest`. An index-only non-collection additionally requires `registry_commit`, `registry_manifest_digest`, and `source_path`; those fields are forbidden for mirror resources. The lock always retains the legacy requested `revision` and independently verified `content_digest`. A v2 lock with no Marketplace entry is invalid rather than a second spelling of v1. New readers preserve v2 when Git state is reconciled; old v1 readers reject the version before decoding hosted fields.
+
+Directness and installed aliases are not duplicated into the lock because they are recoverable from v4 request intent. The runtime adapter matches the v4 source and request stream against its owning v2 lock, reconstructs the existing internal Marketplace pin model, and then uses the established resolver, status, revocation, cache, and materialization paths. A missing lock, scope mismatch, endpoint or instance mismatch, unknown registry binding, request/lock revision conflict, dangling selection edge, or conflicting duplicate record fails closed with a stable diagnostic. Git-only locks continue using byte-compatible v1 encoding. Git reconciliation of a v2 lock preserves Marketplace records unchanged; this slice cannot advance or delete them.
+
+Migration is offline. Every legacy resource pin must match verified cache metadata for endpoint instance, registry identity, kind, name, content digest, archive or collection integrity, and index-only occurrence fields where applicable. Missing, stale, corrupt, or inconsistent evidence refuses the selected migration transaction. An endpoint-only legacy entry may transfer its already accepted endpoint/instance binding without inventing a resource record.
+
+All selected writable config roots and their layer locks are read before planning. An absent lock becomes v2; an existing v1 lock is upgraded while preserving all Git records; an existing v2 Marketplace record must match the migrated state exactly. The migrator validates each generated config and lock together through the normal v4 runtime adapter, then publishes every changed config/lock pair through one journaled dependency transaction with generation and read assertions. `--dry-run` performs the same evidence, codec, scope, and adapter checks without publication. Any refusal, concurrent change, staging failure, or interrupted publication leaves the original config and lock bytes authoritative and recoverable.
+
 ## 7. Command and editor behavior
 
 The Git/directory parser, adapter, include composition, and representable standalone migration rows below are implemented behavior; hosted Marketplace rows and unsupported migration constructs remain proposed or refused until their lock extension and conversion rules ship.
@@ -413,7 +455,7 @@ Existing legacy files retain their legacy editing behavior until migration. A le
 | `sync` on legacy config | No schema rewrite |
 | Legacy client on v4 | Explicit unsupported-schema failure |
 
-The existing default behavior of `migrate` is not silently repurposed. The new format migration is named explicitly through `--to v4`. No deprecation deadline or automatic v2/v3 removal is part of this design.
+`migrate` targets v4 by default, while `--to v4` remains an accepted explicit spelling. Interactive startup and the TUI request consent before invoking it; declined or safely refused migration continues through the v2/v3 reader. No deprecation deadline or automatic v2/v3 removal is part of this design.
 
 ### 8.2 Semantic and selection-preserving conversion rules
 
@@ -426,20 +468,20 @@ Migration works from authored declarations and selector expressions, not a list 
 - Legacy named exclusions become locators; kind/source `exclude_all` becomes the corresponding bounded exclusion pattern where that preserves behavior.
 - Top-level selectors applying to several legacy sources are translated as source-qualified expressions without choosing today's collision winner as the only surviving provider.
 - Source roots, requested refs, source layouts, target restrictions, authority, scope, stable collision order, and selection semantics remain intact. A transformation that cannot preserve them is refused.
-- The implemented migration does not read, write, or reconcile lock records. No branch/tag resolution, Git fetch, or Marketplace latest lookup is part of this format-only migration; lock-aware reuse remains a future extension.
+- Git/directory-only migration does not change lock records. Exact legacy Marketplace migration uses the owning lock only as specified in section 6.4; it performs no branch/tag resolution, Git fetch, Marketplace request, or latest lookup.
 - Local directories remain live. Migration must not snapshot them or turn them into lockable Git sources.
 
 The initial automatic migration must refuse include trees or policy combinations for which an equivalent, provenance-preserving transformation has not been implemented and tested. In particular, it must not flatten includes into the root or edit included files merely to complete the conversion. The diagnostic lists the files/constructs requiring a separately reviewed conversion; the legacy config continues to work unchanged.
 
-A failed migration leaves config unchanged, and the implemented migration leaves lockfiles untouched. Any future config-plus-lock migration must use #123's dependency transaction and recovery guarantees. A missing/stale lock that would require acquisition is diagnosed as a prerequisite rather than resolved implicitly by this format-only migration.
+A failed migration leaves config and lock state unchanged. Git/directory-only migration leaves lockfiles byte-identical. Exact Marketplace migration publishes the selected config/lock pairs through #123's dependency transaction and recovery guarantees. Missing or inconsistent verified cache evidence is diagnosed as a prerequisite rather than acquired implicitly.
 
-### 8.3 Unreleased Marketplace pin format
+### 8.3 Legacy Marketplace exact-pin conversion
 
-The existing branch's `marketplaces[].resources` format is not the intended public migration path. Marketplace consumer functionality should ship directly on v4 and the hosted lock extension.
+The legacy `marketplaces[].resources` format is a migration input, not the intended public v4 authoring surface. The exact-pin slice in section 6.4 converts only state whose intent and acquisition provenance can be reconstructed without network access.
 
-If development installations need conversion, the preview must distinguish direct requests from collection-derived pins, preserve explicit user revision constraints where provenance proves them, and transfer verified identity/acquisition records into the owning lock. It must not mark every expanded leaf as a new direct request or treat a saved digest as fresh verification. Ambiguous pin provenance requires confirmation or manual remediation.
+The conversion distinguishes direct requests from collection-derived pins, preserves explicit user revision constraints where representable, and transfers verified identity/acquisition records into the owning lock. It never marks every expanded leaf as a new direct request or treats a saved config digest as fresh verification. Ambiguous pin provenance, dangling collection edges, missing integrity evidence, or an unrepresentable explicit revision is refused without publication.
 
-Legacy-reader support is an adapter into one internal requirement model, not permission for new editors to write both formats into one file. This design does not require rewriting existing v2/v3 organization installations merely to install the newer binary.
+Legacy-reader support remains an adapter into one internal requirement model, not permission for new editors to write both formats into one file. The exact-pin adapter is read-only from the v4 side; broader Marketplace editing and update behavior remains gated on the complete hosted implementation. Existing v2/v3 organization installations are not rewritten by consumer migration.
 
 ## 9. Diagnostics and acceptance criteria
 
@@ -462,23 +504,23 @@ Diagnostics identify the owning layer, declaring file, source name, and resource
 | Collections | Direct plus collection selection, shared/nested members, removal of one reason, leaf exclusions, exact constraints, conflicting revisions, mirror/index-only mixed members |
 | Locks | Git v1 reuse, hosted-version refusal by old readers, no user-wide merged lock, live directories excluded, exact-constraint retention, presentation-only changes not upgrading content |
 | Transactions | Failure before publication, split-publication recovery, rollback, concurrent config edits, immutable-cache leases and GC reachability |
-| Migration | Positive legacy examples plus empty overrides, defaults/tags/required, per-kind excludes, collisions, refused include conversion, deterministic alias generation, semantic/selection-preserving content |
-| End to end | Isolated install/remove/update/check/migrate workflows across all writable scopes; no developer-home or live organization dependencies |
+| Migration | Positive Git/directory examples plus empty overrides, defaults/tags/required, per-kind excludes, collisions, refused include conversion, deterministic source naming, semantic/selection-preserving content; exact Marketplace mirror/index-only pins, direct and collection-derived selection, aliases, endpoint-only bindings, verified-cache refusal, lock merge, dry-run, and all-layer rollback |
+| End to end | Isolated install/remove/update/check/migrate workflows across all writable scopes; no developer-home, live organization, or network dependencies |
 
-Parser/editor/resolver tests must assert independently authored expected results, not compare one production normalization helper with itself. Golden tests cover config edits and generated lock bytes. Relevant hot-path changes need baseline/post-change benchmarks. The implemented parser/adapter and standalone migration slice is covered by the repository tests; v4-aware editor coverage and hosted Marketplace acceptance remain pending their respective implementation boundaries.
+Parser/editor/resolver tests must assert independently authored expected results, not compare one production normalization helper with itself. Golden tests cover config edits and generated lock bytes. Relevant hot-path changes need baseline/post-change benchmarks. The implemented parser/adapter and standalone Git/directory migration slice is covered by the repository tests; exact Marketplace pin migration must add lock-codec, adapter, cache-evidence, transaction, CLI, and TUI coverage before its status changes to implemented. V4-aware Marketplace editor and broader hosted acceptance coverage remain pending their respective implementation boundaries.
 
 ## 10. Integration boundaries and release conditions
 
-The current repository implements the Git/directory parser, include composition, runtime adapter, and migration for representable standalone legacy files; the shared node-level editors and hosted Marketplace boundaries remain pending:
+The current repository implements the Git/directory parser, include composition, runtime adapter, and migration for representable standalone legacy files. The exact legacy Marketplace migration slice in section 6.4 is approved but remains an implementation boundary alongside the shared node-level editors and broader hosted behavior:
 
-1. The Git-only lock foundation from #123 is available without broadening its scope.
-2. V4 parsing, the source-bound requirement model, and the legacy normalization adapter with semantic-equivalence tests are implemented for the Git/directory slice.
-3. Shared node-level editors remain pending; semantic/selection-preserving migration for representable standalone inputs is implemented and regenerates canonical v4 YAML without a comment/formatting guarantee; legacy config writes remain supported.
-4. Specify and implement the versioned hosted lock codec, identity bindings, selector snapshots, and acquisition adapters on #123's transaction/lease lifecycle.
-5. Route Marketplace installs and all CLI/TUI config edits through the common model; remove generated pin bookkeeping from new config writes.
-6. Release Marketplace consumer functionality only when its config, lock, consent, collection, update, check, and GC paths operate together.
+1. The Git-only lock foundation from #123 remains available, with v1 bytes unchanged for Git-only state.
+2. V4 parsing, the source-bound requirement model, and the legacy normalization adapter with semantic-equivalence tests remain implemented for the Git/directory slice.
+3. Implement the v2 lock codec and read-only exact Marketplace adapter, verified-cache evidence reader, and transactional migration described in section 6.4 without enabling network acquisition or v4 Marketplace edits.
+4. Keep shared v4 node-level editors pending; legacy config writes remain supported until Marketplace installs and all CLI/TUI edits route through the common v4 model.
+5. Extend the hosted lock and acquisition lifecycle for dynamic selectors, updates, explicit identity rebinding, consent, checks, immutable-cache leases, and garbage collection.
+6. Release complete v4 Marketplace consumer functionality only when its config, lock, consent, collection, update, check, and GC paths operate together.
 
-These are remaining dependency boundaries for hosted Marketplace functionality.
+These are the remaining dependency boundaries for exact-pin migration and complete hosted Marketplace functionality.
 
 The current glossary and ADRs describe pins stored in consumer config. During implementation, the storage consequences in ADRs 0002 and 0005 and the corresponding glossary entries must be explicitly superseded: identity/occurrence/collection semantics remain, but generated bindings and selection edges move to acquisition locks. This proposal does not silently rewrite the accepted descriptions of currently implemented behavior.
 
