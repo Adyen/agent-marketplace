@@ -68,6 +68,26 @@ func PresentFields(fields map[string]bool) map[string]struct{} {
 	return result
 }
 
+func HookExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef) ([]string, []diag.Diagnostic) {
+	reserved := CanonicalFields("event", "type", "matcher", "command", "prompt", "timeout", "hooks")
+	for key := range canonical {
+		reserved[key] = struct{}{}
+	}
+	fields := make([]string, 0, len(reserved))
+	for field := range reserved {
+		fields = append(fields, field)
+	}
+	for key := range extra {
+		for _, field := range fields {
+			if strings.EqualFold(key, field) {
+				reserved[key] = struct{}{}
+				break
+			}
+		}
+	}
+	return ExtraKeys(extra, reserved, target, resource, source)
+}
+
 // ExtraKeys returns preserved extra-field keys in stable order and reports every
 // canonical field that would otherwise be duplicated. Translators must emit
 // canonical fields first and use these keys only for non-conflicting extras.

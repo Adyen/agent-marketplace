@@ -3,8 +3,11 @@ package artifact
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -13,7 +16,7 @@ func TestDecodeResourceRoundTrip(t *testing.T) {
 	commandExtra := map[string]any{"shell": "bash", "nested": map[string]any{"key": "value"}}
 	subagentExtra := map[string]any{"owner": "platform"}
 	hookExtra := map[string]any{"priority": float64(1)}
-	mcpExtra := map[string]any{"transport": "stdio"}
+	mcpExtra := map[string]any{"custom-transport": "stdio"}
 
 	cases := []struct {
 		name string
@@ -205,5 +208,116 @@ func TestDecodeResourceJSONFieldSurvivesUnmarshal(t *testing.T) {
 	}
 	if payloadMap["URL"] != "https://example.com/mcp" {
 		t.Fatalf("URL missing from payload: %v", payloadMap)
+	}
+}
+
+func TestDecodeResourceRejectsCaseCollidingKnownAliases(t *testing.T) {
+	cases := []struct {
+		name   string
+		kind   string
+		data   string
+		secret string
+	}{
+		{name: "hook command", kind: "hook", data: `{"name":"probe","command":"safe","COMMAND":"command-secret"}`, secret: "command-secret"},
+		{name: "hook command reverse", kind: "hook", data: `{"name":"probe","COMMAND":"command-secret","command":"safe"}`, secret: "command-secret"},
+		{name: "hook empty command", kind: "hook", data: `{"name":"probe","Command":"","command":"override-secret"}`, secret: "override-secret"},
+		{name: "exact command", kind: "hook", data: `{"name":"probe","command":"safe","command":"exact-secret"}`, secret: "exact-secret"},
+		{name: "nested source", kind: "hook", data: `{"name":"probe","Source":{"File":"safe","file":"source-secret"}}`, secret: "source-secret"},
+		{name: "nested permissions", kind: "skill", data: `{"name":"probe","Permissions":{"allow":["safe"],"Allow":["permissions-secret"]}}`, secret: "permissions-secret"},
+		{name: "name alias", kind: "hook", data: `{"name":"probe","Name":"name-secret"}`, secret: "name-secret"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DecodeResource(tt.kind, []byte(tt.data))
+			var coded *diag.CodedError
+			if !errors.As(err, &coded) || coded.Code != diag.CodeJSONDuplicateKey {
+				t.Fatalf("error = %v, want coded duplicate-key error", err)
+			}
+			if strings.Contains(err.Error(), tt.secret) {
+				t.Fatalf("error %q leaked payload value", err)
+			}
+		})
+	}
+}
+
+func TestDecodeResourceAcceptsSingletonAliasesAndExtras(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+	}{
+		{name: "lowercase", data: `{"name":"probe","command":"echo","event":"PreToolUse","type":"command"}`},
+		{name: "capitalized", data: `{"name":"probe","Command":"echo","Event":"PreToolUse","Type":"command"}`},
+		{name: "extra", data: `{"name":"probe","command":"echo","custom":"preserved"}`},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := DecodeResource("hook", []byte(tt.data))
+			if err != nil {
+				t.Fatalf("DecodeResource: %v", err)
+			}
+			hook, ok := r.(*ir.Hook)
+			if !ok || hook.Command != "echo" {
+				t.Fatalf("decoded hook = %#v", r)
+			}
+			if tt.name == "extra" && hook.Extra["custom"] != "preserved" {
+				t.Fatalf("extra = %#v", hook.Extra)
+			}
+		})
+	}
+}
+
+func TestDecodeResourcePreservesCaseDistinctMCPEnvKeys(t *testing.T) {
+	r, err := DecodeResource("mcpserver", []byte(`{"name":"probe","Command":"echo","Env":{"TOKEN":"one","token":"two"}}`))
+	if err != nil {
+		t.Fatalf("DecodeResource: %v", err)
+	}
+	server, ok := r.(*ir.McpServer)
+	if !ok || server.Env["TOKEN"] != "one" || server.Env["token"] != "two" {
+		t.Fatalf("decoded env = %#v", server)
+	}
+}
+
+func TestFromIRRejectsCaseCollidingHookCommandAliases(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		secret  string
+	}{
+		{name: "populated", command: "echo typed", secret: "echo extra"},
+		{name: "empty", command: "", secret: "echo extra"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := ir.NewHook(tc.name, "PreToolUse", tc.command, "command", map[string]any{"command": tc.secret}, ir.SourceRef{})
+			_, err := FromIR(r)
+			var coded *diag.CodedError
+			if !errors.As(err, &coded) || coded.Code != diag.CodeJSONDuplicateKey {
+				t.Fatalf("error = %v, want coded duplicate-key error", err)
+			}
+			if strings.Contains(err.Error(), tc.secret) {
+				t.Fatalf("error %q leaked payload value", err)
+			}
+		})
+	}
+}
+
+func TestFromIRRejectsCaseCollidingMCPTransportAliases(t *testing.T) {
+	secret := "transport extra secret"
+	r := ir.NewMcpServerWithOptions(
+		"server",
+		"echo",
+		nil,
+		nil,
+		map[string]any{"transport": secret},
+		ir.SourceRef{},
+		ir.WithMcpTransport("sse"),
+	)
+	_, err := FromIR(r)
+	var coded *diag.CodedError
+	if !errors.As(err, &coded) || coded.Code != diag.CodeJSONDuplicateKey {
+		t.Fatalf("error = %v, want coded duplicate-key error", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("error %q leaked payload value", err)
 	}
 }
