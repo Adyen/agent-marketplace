@@ -73,6 +73,10 @@ func entryResourcesForKind(entry RegistryEntry, kind ir.ResourceKind) []string {
 // returned mode is the existing file's perms, or
 // defaultConfigMode for a new file.
 func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
+	return readOrInitConfigWithV4(configPath, false)
+}
+
+func readOrInitConfigWithV4(configPath string, allowV4 bool) (*yaml.Node, os.FileMode, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -109,7 +113,7 @@ func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 		return nil, 0, fmt.Errorf("read config %q: %w", configPath, err)
 	}
 
-	if PeekAPIVersion(data) == APIVersionV4 {
+	if PeekAPIVersion(data) == APIVersionV4 && !allowV4 {
 		return nil, 0, v4err("v4.writer-opt-in", configPath, 0, "legacy config writers do not edit v4 files; use an explicit v4-aware operation")
 	}
 	info, err := os.Stat(configPath)

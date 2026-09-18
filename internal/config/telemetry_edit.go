@@ -65,7 +65,7 @@ func updateTelemetryScalar(configPath, key string, value *yaml.Node) error {
 		return fmt.Errorf("user config not found at %q; run 'agent-marketplace init' first", configPath)
 	}
 
-	doc, mode, err := readOrInitConfig(configPath)
+	doc, mode, err := readOrInitConfigWithV4(configPath, true)
 	if err != nil {
 		return err
 	}

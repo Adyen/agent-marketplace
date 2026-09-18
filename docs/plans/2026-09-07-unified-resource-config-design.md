@@ -20,7 +20,7 @@ Config records sources and installation intent. A layer-owned lock records exact
 | Marketplace identities | Automatically discovered instance and registry IDs live only in the owning lock |
 | Include composition | Named requests accumulate; higher-precedence decisions win for the same locator |
 | Marketplace dynamic selectors | `all` and `tags` require an explicit list of registry slugs |
-| Migration | Explicit opt-in to `agent-marketplace/v4`; existing v2/v3 configs remain supported |
+| Migration | Consent-based proactive migration to `agent-marketplace/v4`; existing v2/v3 configs remain supported |
 
 This design does not change harness configuration precedence, source allowlist authority, materialization modes, aggregate ownership, trust handling, resource prerequisites, or existing collision policy. It does not introduce dependency installation or semantic-version ranges.
 
@@ -36,7 +36,7 @@ The current repository implements the Git/directory subset of this design:
 - Git and live-directory source handling through the existing loader, cache, resolver, lock, and materialization pipeline. Git sources reuse the existing exact-snapshot lock foundation; directories remain live and are never added to locks.
 - Source safety checks, including shared Git URL/ref validation, relative-directory containment and symlink escape checks, source-kind preservation, and fail-closed handling for Marketplace sources that lack the hosted lock integration.
 - Ordered selection semantics for explicit requests, tags, `all`, exclusions, required protection, harness narrowing, collection propagation, and source-local provenance in the legacy runtime adapter.
-- Explicit `migrate --to v4` with `--scope` and `--dry-run` for representable standalone v2/v3 files. Migration is semantic/selection-preserving, regenerates canonical YAML, preserves file modes, leaves lockfiles untouched, and refuses include trees, Marketplace pins, or other inputs that cannot be represented without semantic loss without writing changes.
+- Consent-based proactive v4 migration: `migrate` defaults to v4, the TUI reuses its migration modal, and interactive CLI startup asks before converting detected writable v2/v3 roots. Migration is semantic/selection-preserving, regenerates canonical YAML, preserves file modes, leaves lockfiles untouched, and refuses include trees, Marketplace pins, or other inputs that cannot be represented without semantic loss without writing changes. Non-interactive startup warns and continues with legacy reads; `init` creates v4 roots directly.
 - Regression, resolver, migration, CLI, E2E, and hot-path benchmark coverage for the implemented parser/adapter and migration behavior.
 
 ### Remaining
@@ -45,7 +45,7 @@ The current repository implements the Git/directory subset of this design:
 - Marketplace acquisition adapters and their integration with config-plus-lock transactions, immutable-cache leases, garbage collection, revocation, capability consent, update, check, and recovery behavior.
 - V4-aware `install`, `remove`, CLI/TUI resource-request editing, comment-preserving node-level writes, and common editor/normalization plumbing. Existing editing paths remain legacy-oriented; authored v4 Git/directory configs can be read and synchronized, but the editor is not yet a complete v4 authoring surface.
 - Marketplace endpoint registration, Marketplace resource selection, collections, dynamic selectors, exact revisions, and Marketplace `list`/`status`/`sync`/`update` behavior through the v4 model. Marketplace v4 sources currently fail closed until the hosted lock and acquisition layers exist.
-- Semantic/selection-preserving migration support for included legacy trees and the unreleased Marketplace pin format, including provenance transfer into the owning lock. These inputs remain refused or require separately reviewed remediation.
+- Semantic/selection-preserving migration support for included legacy trees and the unreleased Marketplace pin format, including provenance transfer into the owning lock. These inputs remain refused or require separately reviewed remediation; consented startup migration warns and leaves the legacy reader active.
 - The complete hosted acceptance matrix and release gate covering identity changes, missing versus corrupt locks, complete enumeration, partial-query failure, transactional publication, concurrent edits, and cross-scope behavior.
 
 No hosted Marketplace feature is activated by the schema alone.
@@ -376,8 +376,8 @@ The Git/directory parser, adapter, include composition, and representable standa
 | `update` / lock upgrade | Advance eligible unpinned resolutions and dynamic memberships; retain explicit exact constraints and immutable identity bindings |
 | `update --bump` | Existing Git ref-bump behavior through the config-plus-lock transaction; no implicit release of Marketplace exact revision constraints |
 | `list`, `status`, automatic TUI refresh | Use existing exact lock views without advancing dependencies; surface config/lock errors distinctly from output drift |
-| `migrate --to v4 --scope <scope> --dry-run` | Preview the selected layer's representable semantic/selection-preserving config transformation, with no writes, lock changes, or acquisition |
-| `migrate --to v4 --scope <scope>` | Explicit semantic/selection-preserving conversion to canonical v4 YAML and transactional publication; no content upgrade or authored comment/formatting guarantee |
+| `migrate [--to v4] --scope <scope> --dry-run` | Preview the selected layer's representable semantic/selection-preserving config transformation, with no writes, lock changes, or acquisition |
+| `migrate [--to v4] --scope <scope>` | Consent-approved or explicit semantic/selection-preserving conversion to canonical v4 YAML and transactional publication; no content upgrade or authored comment/formatting guarantee |
 
 ### 7.1 Current implementation status
 
@@ -387,7 +387,7 @@ The repository currently provides the following subset:
 |---|---|
 | Read, validate, compose, and normalize v4 Git/directory configuration | **Implemented.** The normal loader adapts these sources into the existing runtime requirement model. |
 | `list`, `status`, `sync`, `lock`, and `sync --check` for v4 Git/directory sources | **Implemented for the adapted Git/directory path.** Existing lock semantics remain Git-only; directories remain live. |
-| `migrate --to v4` | **Implemented for representable standalone legacy files.** `--scope` and `--dry-run` are supported; unsupported include/Marketplace cases fail closed. |
+| `migrate [--to v4]` | **Implemented for representable standalone legacy files.** The command defaults to v4; startup and TUI consent flows are available; `--scope` and `--dry-run` are supported; unsupported include/Marketplace cases fail closed while legacy reads remain available. |
 | v4 Marketplace parsing | **Parser-only.** The schema validates Marketplace declarations and bounded selectors, but runtime resolution rejects them until the hosted lock exists. |
 | v4 `install`/`remove`, shared CLI/TUI editor, and comment-preserving v4 writes | **Remaining.** Current editing behavior is still based on the legacy configuration model. |
 | Hosted Marketplace lock, acquisition, identity, collection, dynamic-selector, update, check, and consent behavior | **Remaining.** These are the release-blocking hosted boundaries described in sections 6 and 10. |

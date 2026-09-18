@@ -35,8 +35,8 @@ func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "apiVersion: agent-marketplace/v2") {
-		t.Errorf("expected v2 apiVersion, got:\n%s", content)
+	if !strings.Contains(content, "apiVersion: agent-marketplace/v4") {
+		t.Errorf("expected v4 apiVersion, got:\n%s", content)
 	}
 	if !strings.Contains(content, "harnesses:") {
 		t.Errorf("expected harnesses list, got:\n%s", content)
@@ -190,8 +190,8 @@ func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
 		t.Fatalf("read config: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "apiVersion: agent-marketplace/v2") || !strings.Contains(content, "factory") {
-		t.Fatalf("expected v2 config with factory, got:\n%s", content)
+	if !strings.Contains(content, "apiVersion: agent-marketplace/v4") || !strings.Contains(content, "factory") {
+		t.Fatalf("expected v4 config with factory, got:\n%s", content)
 	}
 	if !strings.Contains(content, "telemetry:") || !strings.Contains(content, "level: basic") {
 		t.Fatalf("expected telemetry consent to be written, got:\n%s", content)

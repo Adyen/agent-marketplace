@@ -174,9 +174,6 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 }
 
 func marketplaceInstallSnapshotError(msg snapshotLoadedMsg) error {
-	if msg.pendingMigration.hasConfigs() {
-		return errors.New("configuration migration is required")
-	}
 	hardErrors := append([]error(nil), msg.errs...)
 	hardErrors = append(hardErrors, diagnosticErrors(msg.diagnostics)...)
 	if len(hardErrors) > 0 {
@@ -274,6 +271,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.applySnapshotStatus(msg)
 		if msg.pendingMigration.hasConfigs() {
+			m.applySnapshotData(msg)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
@@ -303,6 +301,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.applySnapshotStatus(msg.snapshotLoadedMsg)
 		if msg.pendingMigration.hasConfigs() {
+			m.applySnapshotData(msg.snapshotLoadedMsg)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
@@ -330,6 +329,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.applySnapshotStatus(snapshot)
 		if snapshot.pendingMigration.hasConfigs() {
+			m.applySnapshotData(snapshot)
 			m.migrationPrompt = snapshot.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
@@ -568,9 +568,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case migrationDoneMsg:
 		if msg.err != nil {
 			m.recordOperationFailure(operationMigration, diagnosticMigration, msg.err)
-			m.toast = fmt.Sprintf("migration error: %v", msg.err)
+			m.migrationPrompt = migrationPrompt{}
+			m.pane = paneList
+			m.toast = fmt.Sprintf("v4 migration skipped: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
-			slog.Error("migration failed", "count", msg.count, "err", msg.err)
+			slog.Warn("migration refused; continuing with legacy configuration", "count", msg.count, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "migrate", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}

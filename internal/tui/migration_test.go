@@ -2,10 +2,8 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,7 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestSnapshotV2ConfigDoesNotOpenMigrationModal(t *testing.T) {
+func TestSnapshotV2ConfigOpensMigrationModal(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	writeV2Config(t, filepath.Join(repoRoot, ".agents", "config.yaml"))
@@ -39,11 +37,13 @@ func TestSnapshotV2ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	defer restoreLocal()
 
 	m := NewModel(repoRoot, homeDir)
-	mi, _ := m.Update(readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached))
+	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
+	snapshot.generation = m.requests.active(requestSnapshot)
+	mi, _ := m.Update(snapshot)
 	m = mi.(Model)
 
-	if m.pane != paneList {
-		t.Fatalf("expected list pane for v2 config, got pane=%v", m.pane)
+	if m.pane != paneMigrationModal {
+		t.Fatalf("expected migration modal for v2 config, got pane=%v", m.pane)
 	}
 }
 
@@ -125,7 +125,9 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 		t.Fatalf("mkdir global agents: %v", err)
 	}
 	globalConfigPath := filepath.Join(globalAgentsDir, "config.yaml")
-	writeV2Config(t, globalConfigPath)
+	if err := os.WriteFile(globalConfigPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeV2Config(t, configPath)
@@ -151,16 +153,16 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	if done.err != nil {
 		t.Fatalf("migration failed: %v", done.err)
 	}
-	if done.count != 1 {
-		t.Fatalf("expected only the incomplete user config to be remediated, got %d migrations", done.count)
+	if done.count != 2 {
+		t.Fatalf("expected both legacy configs to be migrated, got %d migrations", done.count)
 	}
 
 	repoCfg, err := config.LoadConfigFromPath(configPath)
 	if err != nil {
 		t.Fatalf("load migrated repo config: %v", err)
 	}
-	if repoCfg.APIVersion != config.APIVersionV2 {
-		t.Fatalf("expected repo apiVersion %q, got %q", config.APIVersionV2, repoCfg.APIVersion)
+	if repoCfg.APIVersion != config.APIVersionV4 {
+		t.Fatalf("expected repo apiVersion %q, got %q", config.APIVersionV4, repoCfg.APIVersion)
 	}
 	if len(repoCfg.Harnesses) != 0 {
 		t.Fatalf("expected repo config to have no harnesses, got %v", repoCfg.Harnesses)
@@ -170,38 +172,27 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load migrated global config: %v", err)
 	}
-	if !equalStrings(globalCfg.Harnesses, config.DefaultHarnesses()) {
-		t.Fatalf("expected global harnesses %v, got %v", config.DefaultHarnesses(), globalCfg.Harnesses)
+	if !equalStrings(globalCfg.Harnesses, []string{"factory"}) {
+		t.Fatalf("expected global harnesses to be preserved, got %v", globalCfg.Harnesses)
 	}
 }
 
 func TestRenderMigrationModalIncludesActions(t *testing.T) {
-	defaultHarnesses := config.DefaultHarnesses()
-	harnessesFlag := strings.Join(defaultHarnesses, ",")
-	harnessesList := fmt.Sprintf("%v", defaultHarnesses)
-
 	m := NewModel("/repo", "/home")
 	m.pane = paneMigrationModal
 	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}}
 
 	out := renderMigrationModal(m)
 	for _, want := range []string{
-		"Config remediation required",
+		"Configuration migration required",
 		"Project",
-		"agent-marketplace migrate --harnesses " + harnessesFlag,
-		"apiVersion: agent-marketplace/v2",
-		"Existing registries, selected skills, excludes, and comments are preserved",
-		"harnesses: " + harnessesList,
+		"agent-marketplace migrate",
+		"apiVersion: agent-marketplace/v4",
+		"preserves source selections and layer policies",
 		"[m]",
 		"[l]",
 		"leave config unchanged",
 	} {
-		if !contains(out, want) {
-			t.Fatalf("migration modal missing %q in output:\n%s", want, out)
-		}
-	}
-	for _, h := range defaultHarnesses {
-		want := "  - " + h
 		if !contains(out, want) {
 			t.Fatalf("migration modal missing %q in output:\n%s", want, out)
 		}

@@ -1,15 +1,40 @@
 # How to migrate configuration
 
-Repair a configuration that `agent-marketplace` rejects for structural reasons, using `agent-marketplace migrate` where it can help and hand edits where it cannot.
+Convert representable legacy configuration to the v4 source/resource schema while keeping v2/v3 reads available. For legacy structural remediation without a v4 conversion, use `agent-marketplace migrate --to v2`.
 
 ## Prerequisites
 
 - `agent-marketplace` on your `PATH`.
-- `agent-marketplace status` or `sync` reports a configuration validation error.
+- A writable v2 or v3 root that you want to convert to v4, or a v1 file that you have already converted into a valid v2 root.
+- `agent-marketplace status` or `sync` reports a configuration validation error when structural remediation is needed.
 
 ## What `migrate` does and does not do
 
-`migrate` runs one transactional pass over `~/.agents/config.yaml`, `.agents/config.yaml`, and `.agents/config.local.yaml`. Every file is validated before any file is written, and every modified file is written atomically. It:
+By default, `migrate` converts representable standalone v2/v3 roots to the canonical v4 source/resource schema. The conversion is semantic and selection-preserving, but does not promise authored comments or formatting. It is transactional: all selected inputs are validated before any file is written.
+
+Preview all writable layers without writing:
+
+```bash
+agent-marketplace migrate --dry-run
+```
+
+V4 migration:
+
+- targets user, repository, and repository-personal config layers; use `--scope user`, `--scope repo`, or `--scope local` to limit the transaction;
+- refuses include trees, hosted Marketplace selections without proven pin provenance, and other lossy inputs without changing bytes;
+- never edits organization configuration or lockfiles;
+- does not add `devin` or `codex` implicitly; and
+- leaves v2/v3 configs readable when migration is declined or refused.
+
+Interactive CLI startup and the TUI ask before migrating detected legacy roots. A declined or non-interactive prompt leaves the original files unchanged and continues with v2/v3 reads. Run the command below explicitly to publish a conversion:
+
+```bash
+agent-marketplace migrate
+```
+
+The `--to v4` spelling is accepted as an alias. The `--to v2` spelling selects the legacy structural-remediation flow described below.
+
+Legacy structural remediation with `--to v2` runs one transactional pass over `~/.agents/config.yaml`, `.agents/config.yaml`, and `.agents/config.local.yaml`. It:
 
 | Remediation | Layer | Behavior |
 |---|---|---|
@@ -18,13 +43,13 @@ Repair a configuration that `agent-marketplace` rejects for structural reasons, 
 | Removes `backup:` and `logging:` | repo | These keys are user-level only |
 | Removes `harnesses:`, `backup:`, `logging:`, `allowed_registries:`, `allowed_marketplaces:` | local | These keys are not allowed in the personal-local layer |
 
-A file that is already valid v2 or v3 is left byte-for-byte unchanged. `migrate` never adds `devin` or `codex` to a harness list on its own.
+A file that is already valid v2 or v3 is left byte-for-byte unchanged by the structural-remediation flow. It never adds `devin` or `codex` to a harness list on its own. Use it as follows when a configuration is rejected for structural reasons:
 
-It refuses, without modifying anything:
+```bash
+agent-marketplace migrate --to v2 --harnesses claude,factory
+```
 
-- any existing file with **no `apiVersion`** (`migrate` does not translate v1 configs, and requires an explicit `apiVersion` on every existing file it inspects, including local configs where it is otherwise optional);
-- a file containing the legacy `identity` or `team_profiles` keys;
-- an `apiVersion` other than `agent-marketplace/v2` or `agent-marketplace/v3`.
+`--harnesses` is only used when the user config needs a list and has none; an existing user list wins. On a terminal without `--harnesses`, the command prompts. A non-interactive invocation without a usable target harness set fails rather than guessing.
 
 ## 1. Identify the problem
 
@@ -32,13 +57,11 @@ It refuses, without modifying anything:
 agent-marketplace status
 ```
 
-The `ERRORS` section names the file and the offending key or line. Decide from the table above whether `migrate` covers it.
+The `ERRORS` section names the file and the offending key or line. Decide from the boundaries above whether v4 migration or structural remediation covers it.
 
 ## 2. Supply a missing apiVersion or convert a v1 file by hand
 
-`migrate` requires every existing file it inspects to declare an accepted `apiVersion` (`agent-marketplace/v2` or `agent-marketplace/v3`). If a file (including a local `.agents/config.local.yaml` that omitted it during normal loading) lacks `apiVersion`, add `apiVersion: agent-marketplace/v2` to it before running `migrate`.
-
-A legacy v1 file has no `apiVersion` and may contain obsolete keys. Before `migrate` can touch it, edit it into a valid v2 root:
+V4 migration requires an accepted `apiVersion` on regular user and repository roots. A local root may omit it during normal loading, but an unversioned local file is considered a legacy migration candidate. A legacy v1 file has no `apiVersion` and may contain obsolete keys; convert it into a valid v2 root before using the v4 migrator:
 
 Before:
 
@@ -73,19 +96,9 @@ collections:
     - platform-onboarding
 ```
 
-The changes: add `apiVersion`; declare `harnesses` (repo-level is optional if your user config has one); use the map form of selectors (`include:`), although the bare list is still accepted; drop `identity` and `team_profiles`, which have no v2 equivalent.
+The changes are: add `apiVersion`; declare `harnesses` (repository-level harnesses are optional if your user config has them); use the map form of selectors (`include:`), although the bare list is still accepted; and drop `identity` and `team_profiles`, which have no v2 equivalent.
 
-## 3. Run the migration
-
-```bash
-agent-marketplace migrate --harnesses claude,factory
-```
-
-`--harnesses` is only used when the user config needs a list and has none; an existing user list wins. On a terminal without `--harnesses`, the command prompts. The output names each rewritten file, or:
-
-```text
-No structural remediation needed; config files are already valid
-```
+## 3. Review and run the migration
 
 Then sync:
 
@@ -95,6 +108,21 @@ agent-marketplace sync
 
 ## 4. Verify
 
+Inspect the migrated root and confirm it declares v4 sources and resources:
+
+```yaml
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: https://github.com/example-org/infra-skills.git
+    ref: main
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
+```
+
+For structural remediation, verify the result with:
+
 ```bash
 agent-marketplace status
 ```
@@ -103,10 +131,11 @@ agent-marketplace status
 
 ## Troubleshooting
 
-- **`has no apiVersion (v1 input is not supported)`**: Add `apiVersion: agent-marketplace/v2` to the file (including any `.agents/config.local.yaml` that omitted it) or convert the file by hand as in step 2, then rerun `migrate`.
-- **`config contains legacy identity or team_profiles fields`**: Delete those keys; nothing in v2 replaces them.
-- **`target harness set is required`**: The user config exists but has no `harnesses`; pass `--harnesses` or run on a terminal to be prompted.
-- **A local config still contains `harnesses`**: `migrate` removes it, because the target set is machine-wide and lives in the user or repository config.
+- **Migration refuses a file**: The file may be v1, contain unsupported include provenance, contain hosted Marketplace selections without pins, or contain legacy `identity` or `team_profiles` fields. Convert v1 by hand or resolve the unsupported fields before migrating.
+- **`has no apiVersion (v1 input is not supported)`**: Add `apiVersion: agent-marketplace/v2` to a regular file or convert the file by hand as in step 2. A local file that intentionally omitted the version can be migrated through the v4 flow, but regular roots must declare one.
+- **The prompt is skipped**: Run `agent-marketplace migrate` explicitly on a terminal. Non-interactive commands keep using v2/v3 and never rewrite without consent.
+- **`target harness set is required`**: The v2 structural-remediation flow needs an existing user harness list, `--harnesses`, or an interactive prompt.
+- **A local config still contains `harnesses`**: The v2 structural-remediation flow removes it, because the target set is machine-wide and lives in the user or repository config.
 
 ## Related documentation
 

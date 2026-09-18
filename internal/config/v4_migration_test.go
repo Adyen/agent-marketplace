@@ -282,6 +282,24 @@ func TestMigrateConfigFilesToV4AllScopeLeavesLockfilesUnchanged(t *testing.T) {
 	}
 }
 
+func TestFindV4MigrationCandidatesFindsOnlyLegacyLayers(t *testing.T) {
+	dir := t.TempDir()
+	userPath := filepath.Join(dir, "user.yaml")
+	repoPath := filepath.Join(dir, "repo.yaml")
+	localPath := filepath.Join(dir, "local.yaml")
+	writeV2Config(t, userPath, "apiVersion: agent-marketplace/v3\nharnesses: [factory]\n")
+	writeV2Config(t, repoPath, "apiVersion: agent-marketplace/v4\nsources: {}\n")
+	writeV2Config(t, localPath, "registries: []\n")
+
+	candidates, err := FindV4MigrationCandidates(MigratePaths{User: userPath, Repo: repoPath, Local: localPath})
+	if err != nil {
+		t.Fatalf("find candidates: %v", err)
+	}
+	if len(candidates) != 2 || candidates[0].Scope != V4MigrationUser || candidates[1].Scope != V4MigrationLocal {
+		t.Fatalf("candidates = %#v, want user and local legacy layers", candidates)
+	}
+}
+
 func TestMigrateConfigFilesToV4AllScopePublishesNothingWhenOneLayerIsUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	userPath := filepath.Join(dir, "user.yaml")

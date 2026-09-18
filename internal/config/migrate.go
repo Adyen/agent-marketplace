@@ -626,6 +626,47 @@ const (
 	V4MigrationLocal V4MigrationScope = "local"
 )
 
+type V4MigrationCandidate struct {
+	Scope V4MigrationScope
+	Path  string
+}
+
+// FindV4MigrationCandidates returns writable legacy roots that can be offered
+// for consented v4 migration. Missing files and already-v4 roots are omitted;
+// unversioned roots are considered legacy only for the local layer.
+func FindV4MigrationCandidates(paths MigratePaths) ([]V4MigrationCandidate, error) {
+	selected := []V4MigrationCandidate{
+		{Scope: V4MigrationUser, Path: paths.User},
+		{Scope: V4MigrationRepo, Path: paths.Repo},
+		{Scope: V4MigrationLocal, Path: paths.Local},
+	}
+	candidates := make([]V4MigrationCandidate, 0, len(selected))
+	seen := make(map[string]struct{}, len(selected))
+	for _, candidate := range selected {
+		if candidate.Path == "" {
+			continue
+		}
+		path := filepath.Clean(candidate.Path)
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read %s config %q: %w", candidate.Scope, path, err)
+		}
+		version := PeekAPIVersion(data)
+		if version == APIVersionV2 || version == APIVersionV3 || (version == "" && candidate.Scope == V4MigrationLocal) {
+			candidate.Path = path
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates, nil
+}
+
 type V4MigrationResult struct {
 	Scope         V4MigrationScope
 	DryRun        bool

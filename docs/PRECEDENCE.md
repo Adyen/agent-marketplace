@@ -8,7 +8,7 @@ Legacy configuration uses the **v2 schema** (`apiVersion: agent-marketplace/v2`)
 
 V4 is a separate, explicit source/resource schema. A v4 root must declare `apiVersion: agent-marketplace/v4`; v4 included fragments may omit the version, but an explicit v2/v3 version or legacy installation key is rejected. Normal CLI readers recognize v4 and adapt each layer into the runtime requirement model. V4 sources and resource groups are composed within their root/include tree before the normal layer order is applied; v4 does not make legacy `registries`, `skills`, or `marketplaces` keys valid.
 
-`agent-marketplace migrate` retains its legacy structural-remediation behavior when `--to` is omitted. It does not rewrite valid v2/v3 files to v4 implicitly. Use `agent-marketplace migrate --to v4` for explicit conversion.
+`agent-marketplace migrate` targets v4 by default; `--to v4` remains an accepted compatibility spelling. Interactive CLI startup and the TUI proactively ask before migrating detected writable v2/v3 roots (and unversioned local legacy roots). A declined or non-interactive prompt leaves the files unchanged and continues using the v2/v3 reader. Use `agent-marketplace migrate --to v2` only for the legacy structural-remediation flow.
 
 ## Config includes
 
@@ -41,7 +41,7 @@ When `url` is omitted, a registry entry uses `path` as its location alias (for e
 
 ## Explicit v4 migration safety
 
-`agent-marketplace migrate --to v4` is a format-only conversion, not a selection upgrade. Without `--scope`, it validates the writable user, repository, and repository-personal roots as one transaction; `--scope user|repo|local` limits validation and publication to that layer. Organization configuration is never read or written by this conversion, and generated lockfiles are never changed. `--dry-run` performs the same representability and v4-reader checks without publishing configuration files.
+`agent-marketplace migrate` (or `agent-marketplace migrate --to v4`) is a format-only conversion, not a selection upgrade. Without `--scope`, it validates the writable user, repository, and repository-personal roots as one transaction; `--scope user|repo|local` limits validation and publication to that layer. Organization configuration is never read or written by this conversion, and generated lockfiles are never changed. `--dry-run` performs the same representability and v4-reader checks without publishing configuration files. New user configs created by `agent-marketplace init` use v4 directly.
 
 Conversion is fail-closed. The migrator refuses a legacy include tree because flattening it or editing its fragments would change provenance, and refuses legacy hosted Marketplace selections when their pin provenance cannot be proven. It also refuses any source, selector, or policy that cannot be represented without semantic loss. A refusal or validation failure publishes none of the selected files; the legacy configuration remains usable unchanged.
 

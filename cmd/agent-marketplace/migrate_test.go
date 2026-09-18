@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestMigrateCommandRemediatesV2UserAndRepo(t *testing.T) {
+func TestMigrateCommandDefaultsToV4ForUserAndRepo(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -60,21 +60,25 @@ tags:
 	if err != nil {
 		t.Fatalf("expected migrated repo config to load: %v", err)
 	}
-	if repoCfg.APIVersion != config.APIVersionV2 {
-		t.Fatalf("expected repo apiVersion v2, got %q", repoCfg.APIVersion)
+	if repoCfg.APIVersion != config.APIVersionV4 {
+		t.Fatalf("expected repo apiVersion v4, got %q", repoCfg.APIVersion)
 	}
 	if !equalStrings(repoCfg.Harnesses, []string{"factory"}) {
 		t.Fatalf("expected repo harnesses to be preserved, got %v", repoCfg.Harnesses)
 	}
-	if !equalStrings(repoCfg.Tags, []string{"k8s"}) {
-		t.Fatalf("expected tags preserved, got %v", repoCfg.Tags)
+	v4Cfg, err := config.LoadV4ConfigFromPath(filepath.Join(agentsDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("expected migrated v4 config to load: %v", err)
+	}
+	if !equalStrings(v4Cfg.Groups["registry"].Tags, []string{"k8s"}) {
+		t.Fatalf("expected tags preserved in v4 group, got %v", v4Cfg.Groups["registry"].Tags)
 	}
 
 	migratedData, err := os.ReadFile(filepath.Join(agentsDir, "config.yaml"))
 	if err != nil {
 		t.Fatalf("read migrated config: %v", err)
 	}
-	if !strings.Contains(string(migratedData), "- vm-lifecycle") {
+	if !strings.Contains(string(migratedData), "skill/vm-lifecycle") {
 		t.Fatalf("expected migrated config to preserve skills list, got:\n%s", migratedData)
 	}
 
@@ -82,11 +86,123 @@ tags:
 	if err != nil {
 		t.Fatalf("expected migrated global config to load: %v", err)
 	}
-	if globalCfg.APIVersion != config.APIVersionV2 {
-		t.Fatalf("expected global apiVersion v2, got %q", globalCfg.APIVersion)
+	if globalCfg.APIVersion != config.APIVersionV4 {
+		t.Fatalf("expected global apiVersion v4, got %q", globalCfg.APIVersion)
 	}
 	if !equalStrings(globalCfg.Harnesses, []string{"factory"}) {
 		t.Fatalf("expected global harnesses [factory], got %v", globalCfg.Harnesses)
+	}
+}
+
+func TestStartupPromptForV4MigrationUsesCLIConsent(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := t.TempDir()
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	oldIsTerminal := isTerminal
+	isTerminal = func(uintptr) bool { return true }
+	defer func() { isTerminal = oldIsTerminal }()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.WriteString("\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	defer func() { _ = reader.Close() }()
+
+	cmd := newRootCmd()
+	cmd.SetIn(reader)
+	var out strings.Builder
+	cmd.SetOut(&out)
+	if err := maybePromptV4Migration(cmd, false, false); err != nil {
+		t.Fatalf("startup prompt failed: %v", err)
+	}
+	if _, err := config.LoadV4ConfigFromPath(configPath); err != nil {
+		t.Fatalf("startup prompt did not migrate config: %v", err)
+	}
+	if !strings.Contains(out.String(), "Migrate these configuration files") {
+		t.Fatalf("prompt output = %q", out.String())
+	}
+}
+
+func TestPromptForV4MigrationAcceptsAndMigrates(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runV4MigrationPrompt(&out, strings.NewReader("\n"), true, config.MigratePaths{Repo: path}); err != nil {
+		t.Fatalf("prompt migration failed: %v", err)
+	}
+	migrated, err := config.LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatalf("load migrated config: %v", err)
+	}
+	if migrated.APIVersion != config.APIVersionV4 || !strings.Contains(out.String(), "Migrate") {
+		t.Fatalf("migration output/config = %q / %#v", out.String(), migrated)
+	}
+}
+
+func TestPromptForV4MigrationDeclineLeavesBytesUnchanged(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	before := []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")
+	if err := os.WriteFile(path, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runV4MigrationPrompt(&out, strings.NewReader("n\n"), true, config.MigratePaths{Repo: path}); err != nil {
+		t.Fatalf("prompt migration failed: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(before) {
+		t.Fatalf("decline changed config: %q, %v", got, err)
+	}
+}
+
+func TestPromptForV4MigrationNonInteractiveWarnsAndLeavesBytes(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	before := []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")
+	if err := os.WriteFile(path, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runV4MigrationPrompt(&out, strings.NewReader(""), false, config.MigratePaths{Repo: path}); err != nil {
+		t.Fatalf("noninteractive migration failed: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("noninteractive prompt unexpectedly wrote output = %q", out.String())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(before) {
+		t.Fatalf("noninteractive path changed config: %q, %v", got, err)
 	}
 }
 
@@ -192,7 +308,7 @@ registries:
 	withWorkingDir(t, repoRoot)
 
 	cmd := newRootCmd()
-	cmd.SetArgs([]string{"migrate", "--harnesses", "factory,cursor"})
+	cmd.SetArgs([]string{"migrate", "--to", "v2", "--harnesses", "factory,cursor"})
 	var out strings.Builder
 	cmd.SetOut(&out)
 
@@ -308,7 +424,7 @@ registries:
 	defer func() { isTerminal = oldIsTerminal }()
 
 	cmd := newRootCmd()
-	cmd.SetArgs([]string{"migrate"})
+	cmd.SetArgs([]string{"migrate", "--to", "v2"})
 	var out strings.Builder
 	cmd.SetOut(&out)
 
