@@ -166,11 +166,11 @@ type MetadataStore interface {
 	ListDueRegistryObservations(ctx context.Context, now time.Time, limit int) ([]RegistryObservation, error)
 	CompareAndSwapRegistryObservation(ctx context.Context, registry RegistryID, expectedVersion uint64, next RegistryObservation) error
 	AcquireRegistryLease(ctx context.Context, registry RegistryID, owner string, leaseDuration time.Duration) (RegistryObservation, error)
-	ReleaseRegistryLease(ctx context.Context, registry RegistryID, owner string) error
+	ReleaseRegistryLease(ctx context.Context, registry RegistryID, owner string, leaseEpoch uint64) error
 	SetDesiredRefresh(ctx context.Context, registry RegistryID, desired DesiredRefresh) (RegistryObservation, error)
 	ClearActiveRefresh(ctx context.Context, registry RegistryID, jobID JobID) (RegistryObservation, error)
 	AcquireHostBudget(ctx context.Context, host, owner string, acquisition bool, limit HostBudgetLimit, leaseDuration time.Duration) (HostBudgetLease, error)
-	ReleaseHostBudget(ctx context.Context, host, owner string) error
+	ReleaseHostBudget(ctx context.Context, host, owner string, leaseEpoch uint64) error
 
 	// Registry occurrences.
 	GetRegistryOccurrence(ctx context.Context, registry RegistryID, commit string) (RegistryOccurrence, error)

@@ -489,35 +489,32 @@ func (s *Store) LeaseJob(ctx context.Context, kind, workerID string, leaseDurati
 }
 
 func (s *Store) markExpiredTerminalJobs(ctx context.Context, kind string) error {
-	now := timeToMicro(time.Now().UTC())
-	_, err := s.q.ExecContext(ctx, `UPDATE jobs SET status=$1, worker_id=NULL, lease_until=NULL, updated_at=$2
-		WHERE kind=$3 AND status=$4 AND attempt >= max_attempts AND lease_until IS NOT NULL AND lease_until <= $5`,
-		store.JobStatusTerminalFailed, now, kind, store.JobStatusLeased, now)
+	_, err := s.q.ExecContext(ctx, `UPDATE jobs SET status=$1, worker_id=NULL, lease_until=NULL, updated_at=`+dbNowMicro+`
+		WHERE kind=$2 AND status=$3 AND attempt >= max_attempts AND lease_until IS NOT NULL AND lease_until <= `+dbNowMicro,
+		store.JobStatusTerminalFailed, kind, store.JobStatusLeased)
 	return err
 }
 
 func (s *Store) markExpiredTerminalJob(ctx context.Context, id store.JobID) error {
-	now := timeToMicro(time.Now().UTC())
-	_, err := s.q.ExecContext(ctx, `UPDATE jobs SET status=$1, worker_id=NULL, lease_until=NULL, updated_at=$2
-		WHERE id=$3 AND status=$4 AND attempt >= max_attempts AND lease_until IS NOT NULL AND lease_until <= $5`,
-		store.JobStatusTerminalFailed, now, id, store.JobStatusLeased, now)
+	_, err := s.q.ExecContext(ctx, `UPDATE jobs SET status=$1, worker_id=NULL, lease_until=NULL, updated_at=`+dbNowMicro+`
+		WHERE id=$2 AND status=$3 AND attempt >= max_attempts AND lease_until IS NOT NULL AND lease_until <= `+dbNowMicro,
+		store.JobStatusTerminalFailed, id, store.JobStatusLeased)
 	return err
 }
 
 func (s *Store) leaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (store.Job, error) {
 	const maxAttempts = 100
 	for i := 0; i < maxAttempts; i++ {
-		nowMicro := timeToMicro(time.Now().UTC())
 		var id store.JobID
 		row := s.q.QueryRowContext(ctx,
 			`SELECT id FROM jobs
 			 WHERE kind=$1
 			   AND attempt < max_attempts
-			   AND (status=$2 OR status=$3 OR (status=$4 AND lease_until <= $5))
-			   AND (lease_until IS NULL OR lease_until <= $6)
+			   AND (status=$2 OR status=$3 OR (status=$4 AND lease_until <= `+dbNowMicro+`))
+			   AND (lease_until IS NULL OR lease_until <= `+dbNowMicro+`)
 			 ORDER BY created_at ASC, id ASC
 			 LIMIT 1`,
-			kind, store.JobStatusPending, store.JobStatusFailed, store.JobStatusLeased, nowMicro, nowMicro,
+			kind, store.JobStatusPending, store.JobStatusFailed, store.JobStatusLeased,
 		)
 		err := row.Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -549,16 +546,14 @@ func (s *Store) LeaseJobByID(ctx context.Context, id store.JobID, workerID strin
 }
 
 func (s *Store) leaseJobByID(ctx context.Context, id store.JobID, workerID string, leaseDuration time.Duration) (store.Job, error) {
-	now := time.Now().UTC()
-	nowMicro := timeToMicro(now)
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
-		 SET status=$1, worker_id=$2, lease_until=$3, attempt=attempt+1, updated_at=$4
-		 WHERE id=$5 AND attempt < max_attempts
-		   AND (status=$6 OR status=$7 OR (status=$8 AND lease_until <= $9))
-		   AND (lease_until IS NULL OR lease_until <= $10)`,
-		store.JobStatusLeased, workerID, timeToMicro(now.Add(leaseDuration)), nowMicro,
-		id, store.JobStatusPending, store.JobStatusFailed, store.JobStatusLeased, nowMicro, nowMicro,
+		 SET status=$1, worker_id=$2, lease_until=`+dbNowMicro+`+$3, attempt=attempt+1, updated_at=`+dbNowMicro+`
+		 WHERE id=$4 AND attempt < max_attempts
+		   AND (status=$5 OR status=$6 OR (status=$7 AND lease_until <= `+dbNowMicro+`))
+		   AND (lease_until IS NULL OR lease_until <= `+dbNowMicro+`)`,
+		store.JobStatusLeased, workerID, leaseDuration.Microseconds(),
+		id, store.JobStatusPending, store.JobStatusFailed, store.JobStatusLeased,
 	)
 	if err != nil {
 		return store.Job{}, err
@@ -578,14 +573,11 @@ func (s *Store) ExtendLease(ctx context.Context, id store.JobID, workerID string
 }
 
 func (s *Store) extendLease(ctx context.Context, id store.JobID, workerID string, d time.Duration) error {
-	now := time.Now().UTC()
-	nowMicro := timeToMicro(now)
-	newLease := timeToMicro(now.Add(d))
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
-		 SET lease_until=$1, updated_at=$2
-		 WHERE id=$3 AND worker_id=$4 AND status=$5 AND lease_until > $6`,
-		newLease, nowMicro, id, workerID, store.JobStatusLeased, nowMicro,
+		 SET lease_until=`+dbNowMicro+`+$1, updated_at=`+dbNowMicro+`
+		 WHERE id=$2 AND worker_id=$3 AND status=$4 AND lease_until > `+dbNowMicro,
+		d.Microseconds(), id, workerID, store.JobStatusLeased,
 	)
 	if err != nil {
 		return err
@@ -605,16 +597,13 @@ func (s *Store) ReleaseJob(ctx context.Context, id store.JobID, workerID string)
 }
 
 func (s *Store) releaseJob(ctx context.Context, id store.JobID, workerID string) error {
-	now := time.Now().UTC()
-	nowMicro := timeToMicro(now)
-
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
 		 SET status=$1, worker_id=NULL, lease_until=NULL,
 		     attempt=CASE WHEN attempt > 0 THEN attempt-1 ELSE 0 END,
-		     updated_at=$2
-		 WHERE id=$3 AND worker_id=$4 AND status=$5 AND lease_until > $6`,
-		store.JobStatusPending, nowMicro, id, workerID, store.JobStatusLeased, nowMicro,
+		     updated_at=`+dbNowMicro+`
+		 WHERE id=$2 AND worker_id=$3 AND status=$4 AND lease_until > `+dbNowMicro,
+		store.JobStatusPending, id, workerID, store.JobStatusLeased,
 	)
 	if err != nil {
 		return err
@@ -634,12 +623,11 @@ func (s *Store) CompleteJob(ctx context.Context, id store.JobID, workerID string
 }
 
 func (s *Store) completeJob(ctx context.Context, id store.JobID, workerID string) error {
-	now := time.Now().UTC()
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
-		 SET status=$1, worker_id=NULL, lease_until=NULL, updated_at=$2
-		 WHERE id=$3 AND worker_id=$4 AND status=$5 AND lease_until > $6`,
-		store.JobStatusCompleted, timeToMicro(now), id, workerID, store.JobStatusLeased, timeToMicro(now),
+		 SET status=$1, worker_id=NULL, lease_until=NULL, updated_at=`+dbNowMicro+`
+		 WHERE id=$2 AND worker_id=$3 AND status=$4 AND lease_until > `+dbNowMicro,
+		store.JobStatusCompleted, id, workerID, store.JobStatusLeased,
 	)
 	if err != nil {
 		return err
@@ -659,21 +647,14 @@ func (s *Store) FailJob(ctx context.Context, id store.JobID, workerID string, ba
 }
 
 func (s *Store) failJob(ctx context.Context, id store.JobID, workerID string, backoff time.Duration) error {
-	now := time.Now().UTC()
-	nowMicro := timeToMicro(now)
-	retryAt := nowMicro
-	if backoff > 0 {
-		retryAt = timeToMicro(now.Add(backoff))
-	}
-
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
 		 SET status=CASE WHEN attempt >= max_attempts THEN $1 ELSE $2 END,
-		     worker_id=NULL, lease_until=CASE WHEN attempt >= max_attempts THEN NULL ELSE $3 END,
-		     backoff=$4, updated_at=$5
-		 WHERE id=$6 AND worker_id=$7 AND status=$8 AND lease_until > $9`,
-		store.JobStatusTerminalFailed, store.JobStatusFailed, retryAt, int64(backoff), nowMicro,
-		id, workerID, store.JobStatusLeased, nowMicro,
+		     worker_id=NULL, lease_until=CASE WHEN attempt >= max_attempts THEN NULL ELSE `+dbNowMicro+`+CASE WHEN $3 > 0 THEN $3 ELSE 0 END END,
+		     backoff=$3, updated_at=`+dbNowMicro+`
+		 WHERE id=$4 AND worker_id=$5 AND status=$6 AND lease_until > `+dbNowMicro,
+		store.JobStatusTerminalFailed, store.JobStatusFailed, int64(backoff),
+		id, workerID, store.JobStatusLeased,
 	)
 	if err != nil {
 		return err

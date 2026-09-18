@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const dbNowMicro = "(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) * 1000000)::bigint"
+
 // time helpers.
 func timeToMicro(t time.Time) int64 {
 	if t.IsZero() {

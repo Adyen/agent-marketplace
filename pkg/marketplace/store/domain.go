@@ -229,14 +229,16 @@ type RegistryObservation struct {
 	NextReconcileAt          time.Time           `json:"next_reconcile_at,omitempty"`
 	ConsecutiveProbeFailures int                 `json:"consecutive_probe_failures,omitempty"`
 	WorkLeaseOwner           string              `json:"work_lease_owner,omitempty"`
-	WorkLeaseUntil           time.Time           `json:"work_lease_until,omitempty"`
-	DesiredCommit            string              `json:"desired_commit,omitempty"`
-	DesiredGeneration        string              `json:"desired_generation,omitempty"`
-	ActiveRefreshJobID       JobID               `json:"active_refresh_job_id,omitempty"`
-	ActiveRefreshTrigger     string              `json:"active_refresh_trigger,omitempty"`
-	SuccessfulCommit         string              `json:"successful_commit,omitempty"`
-	SuccessfulGeneration     string              `json:"successful_generation,omitempty"`
-	LastSuccessfulIndexAt    time.Time           `json:"last_successful_index_at,omitempty"`
+	// WorkLeaseEpoch fences releases from an earlier lease renewal.
+	WorkLeaseEpoch        uint64    `json:"work_lease_epoch,omitempty"`
+	WorkLeaseUntil        time.Time `json:"work_lease_until,omitempty"`
+	DesiredCommit         string    `json:"desired_commit,omitempty"`
+	DesiredGeneration     string    `json:"desired_generation,omitempty"`
+	ActiveRefreshJobID    JobID     `json:"active_refresh_job_id,omitempty"`
+	ActiveRefreshTrigger  string    `json:"active_refresh_trigger,omitempty"`
+	SuccessfulCommit      string    `json:"successful_commit,omitempty"`
+	SuccessfulGeneration  string    `json:"successful_generation,omitempty"`
+	LastSuccessfulIndexAt time.Time `json:"last_successful_index_at,omitempty"`
 }
 
 // DesiredRefresh is the immutable identity and trigger for a refresh request.
@@ -259,7 +261,9 @@ type HostBudgetLease struct {
 	Host        string
 	Owner       string
 	Acquisition bool
-	LeaseUntil  time.Time
+	// LeaseEpoch fences releases from an earlier lease renewal.
+	LeaseEpoch uint64
+	LeaseUntil time.Time
 }
 
 // RegistryRefreshStatus describes the health of the most recent registry refresh.

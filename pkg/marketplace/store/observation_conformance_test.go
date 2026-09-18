@@ -175,23 +175,34 @@ func TestRegistryLeaseRenewalAndReleaseErrors(t *testing.T) {
 	if renewed.WorkLeaseUntil.Before(first.WorkLeaseUntil) || renewed.ObservationVersion <= first.ObservationVersion {
 		t.Fatalf("renewal did not advance lease state: first=%#v renewed=%#v", first, renewed)
 	}
-	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-b"); !errors.Is(err, store.ErrConflict) {
+	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-b", renewed.WorkLeaseEpoch); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("wrong-owner release error = %v, want conflict", err)
 	}
-	if err := meta.ReleaseRegistryLease(ctx, "missing", "owner-a"); !errors.Is(err, store.ErrNotFound) {
+	if err := meta.ReleaseRegistryLease(ctx, "missing", "owner-a", first.WorkLeaseEpoch); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("missing release error = %v, want not found", err)
 	}
-	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a"); err != nil {
+	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a", first.WorkLeaseEpoch); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale release after renewal error = %v, want conflict", err)
+	}
+	current, err := meta.GetRegistryObservation(ctx, "release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.WorkLeaseOwner != "owner-a" || current.WorkLeaseEpoch != renewed.WorkLeaseEpoch {
+		t.Fatalf("stale release cleared renewed lease: %#v", current)
+	}
+	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a", renewed.WorkLeaseEpoch); err != nil {
 		t.Fatalf("owner release: %v", err)
 	}
-	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a"); !errors.Is(err, store.ErrConflict) {
+	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a", renewed.WorkLeaseEpoch); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("released lease error = %v, want conflict", err)
 	}
-	if _, err := meta.AcquireRegistryLease(ctx, "release", "owner-a", time.Millisecond); err != nil {
+	last, err := meta.AcquireRegistryLease(ctx, "release", "owner-a", time.Millisecond)
+	if err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(5 * time.Millisecond)
-	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a"); !errors.Is(err, store.ErrLeaseExpired) {
+	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a", last.WorkLeaseEpoch); !errors.Is(err, store.ErrLeaseExpired) {
 		t.Fatalf("expired lease error = %v, want lease expired", err)
 	}
 }
@@ -368,16 +379,54 @@ func TestObservationHostBudgetIsDeploymentWide(t *testing.T) {
 	if _, err := meta.AcquireHostBudget(ctx, "git.example", "probe-1", false, limit, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := meta.AcquireHostBudget(ctx, "git.example", "clone-1", true, limit, time.Minute); err != nil {
+	first, err := meta.AcquireHostBudget(ctx, "git.example", "clone-1", true, limit, time.Minute)
+	if err != nil {
 		t.Fatal(err)
+	}
+	renewed, err := meta.AcquireHostBudget(ctx, "git.example", "clone-1", true, limit, 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.LeaseEpoch <= first.LeaseEpoch || !renewed.LeaseUntil.After(first.LeaseUntil) {
+		t.Fatalf("host budget renewal did not advance lease: first=%#v renewed=%#v", first, renewed)
 	}
 	if _, err := meta.AcquireHostBudget(ctx, "git.example", "clone-2", true, limit, time.Minute); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("host budget admission = %v, want conflict", err)
 	}
-	if err := meta.ReleaseHostBudget(ctx, "git.example", "clone-1"); err != nil {
+	if err := meta.ReleaseHostBudget(ctx, "git.example", "clone-1", first.LeaseEpoch); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale host budget release = %v, want conflict", err)
+	}
+	if err := meta.ReleaseHostBudget(ctx, "git.example", "clone-1", renewed.LeaseEpoch); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := meta.AcquireHostBudget(ctx, "git.example", "clone-2", true, limit, time.Minute); err != nil {
 		t.Fatalf("host budget after release: %v", err)
+	}
+}
+
+func TestObservationDueOrderingUsesBinaryRegistryIDOrder(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	base := time.Unix(2000, 0).UTC()
+	for _, id := range []store.RegistryID{"zulu", "Alpha", "_underscore", "alpha"} {
+		if err := meta.PutRegistry(ctx, store.Registry{ID: id, Slug: string(id), Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}); err != nil {
+			t.Fatal(err)
+		}
+		if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: id, NextProbeAt: base}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := meta.ListDueRegistryObservations(ctx, base, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.RegistryID{"Alpha", "_underscore", "alpha", "zulu"}
+	if len(got) != len(want) {
+		t.Fatalf("due observations = %#v, want %d rows", got, len(want))
+	}
+	for i, observation := range got {
+		if observation.RegistryID != want[i] {
+			t.Fatalf("due observation %d = %q, want %q", i, observation.RegistryID, want[i])
+		}
 	}
 }

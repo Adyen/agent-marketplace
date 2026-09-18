@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-var migrations = []string{migration0, migration1, migration2, migration3, migration4}
+var migrations = []string{migration0, migration1, migration2, migration3, migration4, migration5}
 
 const migrationTable = "marketplace_metadata_v2_schema_migrations"
 
@@ -268,4 +268,11 @@ CREATE INDEX idx_host_budget_leases_expiry ON host_budget_leases(host, lease_unt
 // migration4 adds a durable fencing token for observation writers.
 const migration4 = `
 ALTER TABLE registry_observations ADD COLUMN observation_version BIGINT NOT NULL DEFAULT 0;
+`
+
+// migration5 adds lease epochs so a release from before renewal cannot clear
+// the currently held registry or host-budget lease.
+const migration5 = `
+ALTER TABLE registry_observations ADD COLUMN work_lease_epoch BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE host_budget_leases ADD COLUMN lease_epoch BIGINT NOT NULL DEFAULT 0;
 `

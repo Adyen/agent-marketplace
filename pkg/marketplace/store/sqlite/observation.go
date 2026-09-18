@@ -12,7 +12,7 @@ import (
 
 const observationColumns = `registry_id, observation_version, observed_commit, observed_at, probe_status,
  probe_error, next_probe_at, next_reconcile_at, consecutive_probe_failures,
- work_lease_owner, work_lease_until, desired_commit, desired_generation,
+ work_lease_owner, work_lease_epoch, work_lease_until, desired_commit, desired_generation,
  active_refresh_job_id, active_refresh_trigger, successful_commit,
  successful_generation, last_successful_index_at`
 
@@ -22,12 +22,12 @@ func (s *Store) GetRegistryObservation(ctx context.Context, id store.RegistryID)
 
 func scanObservation(sc interface{ Scan(...any) error }) (store.RegistryObservation, error) {
 	var o store.RegistryObservation
-	var observationVersion int64
+	var observationVersion, workLeaseEpoch int64
 	var observedAt, nextProbe, nextReconcile, leaseUntil, indexedAt int64
 	var jobID string
 	err := sc.Scan(&o.RegistryID, &observationVersion, &o.ObservedCommit, &observedAt, &o.ProbeStatus,
 		&o.ProbeError, &nextProbe, &nextReconcile, &o.ConsecutiveProbeFailures,
-		&o.WorkLeaseOwner, &leaseUntil, &o.DesiredCommit, &o.DesiredGeneration,
+		&o.WorkLeaseOwner, &workLeaseEpoch, &leaseUntil, &o.DesiredCommit, &o.DesiredGeneration,
 		&jobID, &o.ActiveRefreshTrigger, &o.SuccessfulCommit, &o.SuccessfulGeneration,
 		&indexedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -37,6 +37,7 @@ func scanObservation(sc interface{ Scan(...any) error }) (store.RegistryObservat
 		return store.RegistryObservation{}, err
 	}
 	o.ObservationVersion = uint64(observationVersion)
+	o.WorkLeaseEpoch = uint64(workLeaseEpoch)
 	o.ObservedAt = microToTime(observedAt)
 	o.NextProbeAt = microToTime(nextProbe)
 	o.NextReconcileAt = microToTime(nextReconcile)
@@ -55,11 +56,11 @@ func (s *Store) putRegistryObservation(ctx context.Context, o store.RegistryObse
 		return fmt.Errorf("registry observation requires registry id")
 	}
 	result, err := s.q.ExecContext(ctx, `INSERT INTO registry_observations (`+observationColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(registry_id) DO NOTHING`,
 		o.RegistryID, int64(1), o.ObservedCommit, timeToMicro(o.ObservedAt), o.ProbeStatus, o.ProbeError,
 		timeToMicro(o.NextProbeAt), timeToMicro(o.NextReconcileAt), o.ConsecutiveProbeFailures,
-		o.WorkLeaseOwner, timeToMicro(o.WorkLeaseUntil), o.DesiredCommit, o.DesiredGeneration,
+		o.WorkLeaseOwner, int64(o.WorkLeaseEpoch), timeToMicro(o.WorkLeaseUntil), o.DesiredCommit, o.DesiredGeneration,
 		o.ActiveRefreshJobID, o.ActiveRefreshTrigger, o.SuccessfulCommit, o.SuccessfulGeneration,
 		timeToMicro(o.LastSuccessfulIndexAt))
 	if err != nil {
@@ -105,12 +106,12 @@ func (s *Store) CompareAndSwapRegistryObservation(ctx context.Context, id store.
 		next.RegistryID = id
 		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET
 		 observation_version=observation_version+1, observed_commit=?, observed_at=?, probe_status=?, probe_error=?, next_probe_at=?, next_reconcile_at=?,
-		 consecutive_probe_failures=?, work_lease_owner=?, work_lease_until=?, desired_commit=?, desired_generation=?,
+		 consecutive_probe_failures=?, work_lease_owner=?, work_lease_epoch=?, work_lease_until=?, desired_commit=?, desired_generation=?,
 		 active_refresh_job_id=?, active_refresh_trigger=?, successful_commit=?, successful_generation=?, last_successful_index_at=?
 		 WHERE registry_id=? AND observation_version=?`,
 			next.ObservedCommit, timeToMicro(next.ObservedAt), next.ProbeStatus, next.ProbeError,
 			timeToMicro(next.NextProbeAt), timeToMicro(next.NextReconcileAt), next.ConsecutiveProbeFailures,
-			next.WorkLeaseOwner, timeToMicro(next.WorkLeaseUntil), next.DesiredCommit, next.DesiredGeneration,
+			next.WorkLeaseOwner, int64(next.WorkLeaseEpoch), timeToMicro(next.WorkLeaseUntil), next.DesiredCommit, next.DesiredGeneration,
 			next.ActiveRefreshJobID, next.ActiveRefreshTrigger, next.SuccessfulCommit, next.SuccessfulGeneration,
 			timeToMicro(next.LastSuccessfulIndexAt), id, int64(expectedVersion))
 		if err != nil {
@@ -139,7 +140,7 @@ func (s *Store) AcquireRegistryLease(ctx context.Context, id store.RegistryID, o
 			return store.ErrTopology
 		}
 		now := time.Now().UTC()
-		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, work_lease_owner=?, work_lease_until=?
+		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, work_lease_owner=?, work_lease_epoch=work_lease_epoch+1, work_lease_until=?
 			WHERE registry_id=? AND (work_lease_owner='' OR work_lease_owner=? OR work_lease_until<=?)`, owner, timeToMicro(now.Add(duration)), id, owner, timeToMicro(now))
 		if err != nil {
 			return err
@@ -160,13 +161,13 @@ func (s *Store) AcquireRegistryLease(ctx context.Context, id store.RegistryID, o
 	return out, err
 }
 
-func (s *Store) ReleaseRegistryLease(ctx context.Context, id store.RegistryID, owner string) error {
+func (s *Store) ReleaseRegistryLease(ctx context.Context, id store.RegistryID, owner string, leaseEpoch uint64) error {
 	return s.withTx(ctx, func(tx *Store) error {
 		current, err := tx.GetRegistryObservation(ctx, id)
 		if err != nil {
 			return err
 		}
-		if current.WorkLeaseOwner != owner {
+		if current.WorkLeaseOwner != owner || current.WorkLeaseEpoch != leaseEpoch {
 			return store.ErrConflict
 		}
 		now := time.Now().UTC()
@@ -174,7 +175,7 @@ func (s *Store) ReleaseRegistryLease(ctx context.Context, id store.RegistryID, o
 			return store.ErrLeaseExpired
 		}
 		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, work_lease_owner='', work_lease_until=0
-			WHERE registry_id=? AND work_lease_owner=? AND work_lease_until>?`, id, owner, timeToMicro(now))
+			WHERE registry_id=? AND work_lease_owner=? AND work_lease_epoch=? AND work_lease_until>?`, id, owner, int64(leaseEpoch), timeToMicro(now))
 		if err != nil {
 			return err
 		}
@@ -249,39 +250,37 @@ func (s *Store) AcquireHostBudget(ctx context.Context, host, owner string, acqui
 		if _, err := tx.q.ExecContext(ctx, `INSERT OR IGNORE INTO host_budgets(host) VALUES (?)`, host); err != nil {
 			return err
 		}
-		if _, err := tx.q.ExecContext(ctx, `DELETE FROM host_budget_leases WHERE host=? AND lease_until<=?`, host, timeToMicro(now)); err != nil {
-			return err
-		}
-		var existingAcq int
-		err := tx.q.QueryRowContext(ctx, `SELECT acquisition FROM host_budget_leases WHERE host=? AND owner=?`, host, owner).Scan(&existingAcq)
+		var existingAcq, existingEpoch int64
+		var existingExpired bool
+		err := tx.q.QueryRowContext(ctx, `SELECT acquisition, lease_epoch, lease_until<=? FROM host_budget_leases WHERE host=? AND owner=?`, timeToMicro(now), host, owner).Scan(&existingAcq, &existingEpoch, &existingExpired)
 		if err == nil {
-			if (existingAcq != 0) != acquisition {
+			if (existingAcq != 0) != acquisition && !existingExpired {
 				return store.ErrConflict
 			}
-			out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: existingAcq != 0, LeaseUntil: now.Add(duration)}
-			_, err = tx.q.ExecContext(ctx, `UPDATE host_budget_leases SET lease_until=? WHERE host=? AND owner=?`, timeToMicro(out.LeaseUntil), host, owner)
+			out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: acquisition, LeaseEpoch: uint64(existingEpoch + 1), LeaseUntil: now.Add(duration)}
+			_, err = tx.q.ExecContext(ctx, `UPDATE host_budget_leases SET acquisition=?, lease_until=?, lease_epoch=? WHERE host=? AND owner=?`, acquisition, timeToMicro(out.LeaseUntil), int64(out.LeaseEpoch), host, owner)
 			return err
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		var operations, acquisitions int
-		if err := tx.q.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(acquisition),0) FROM host_budget_leases WHERE host=?`, host).Scan(&operations, &acquisitions); err != nil {
+		if err := tx.q.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(acquisition),0) FROM host_budget_leases WHERE host=? AND lease_until>?`, host, timeToMicro(now)).Scan(&operations, &acquisitions); err != nil {
 			return err
 		}
 		if operations >= limit.MaxOperations || (acquisition && acquisitions >= limit.MaxAcquisitions) {
 			return store.ErrConflict
 		}
-		out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: acquisition, LeaseUntil: now.Add(duration)}
-		_, err = tx.q.ExecContext(ctx, `INSERT INTO host_budget_leases(host, owner, acquisition, lease_until) VALUES (?, ?, ?, ?)`, host, owner, acquisition, timeToMicro(out.LeaseUntil))
+		out = store.HostBudgetLease{Host: host, Owner: owner, Acquisition: acquisition, LeaseEpoch: 1, LeaseUntil: now.Add(duration)}
+		_, err = tx.q.ExecContext(ctx, `INSERT INTO host_budget_leases(host, owner, acquisition, lease_epoch, lease_until) VALUES (?, ?, ?, ?, ?)`, host, owner, acquisition, int64(out.LeaseEpoch), timeToMicro(out.LeaseUntil))
 		return err
 	})
 	return out, err
 }
 
-func (s *Store) ReleaseHostBudget(ctx context.Context, host, owner string) error {
+func (s *Store) ReleaseHostBudget(ctx context.Context, host, owner string, leaseEpoch uint64) error {
 	return s.withTx(ctx, func(tx *Store) error {
-		result, err := tx.q.ExecContext(ctx, `DELETE FROM host_budget_leases WHERE host=? AND owner=?`, host, owner)
+		result, err := tx.q.ExecContext(ctx, `DELETE FROM host_budget_leases WHERE host=? AND owner=? AND lease_epoch=?`, host, owner, int64(leaseEpoch))
 		if err != nil {
 			return err
 		}
@@ -290,7 +289,15 @@ func (s *Store) ReleaseHostBudget(ctx context.Context, host, owner string) error
 			return err
 		}
 		if n == 0 {
-			return store.ErrNotFound
+			var currentEpoch int64
+			err := tx.q.QueryRowContext(ctx, `SELECT lease_epoch FROM host_budget_leases WHERE host=? AND owner=?`, host, owner).Scan(&currentEpoch)
+			if errors.Is(err, sql.ErrNoRows) {
+				return store.ErrNotFound
+			}
+			if err != nil {
+				return err
+			}
+			return store.ErrConflict
 		}
 		return nil
 	})
