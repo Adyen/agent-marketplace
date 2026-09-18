@@ -31,11 +31,24 @@ type MarketplaceConsentError struct {
 	Err        error
 }
 
+type MarketplaceInstallResource struct {
+	Name string
+	Kind string
+}
+
+type MarketplaceInstallFinding struct {
+	Resource string
+	Severity string
+	Message  string
+}
+
 type MarketplaceInstallSummary struct {
-	Name          string
-	ResourceKinds []string
-	Findings      int
-	Capabilities  int
+	Name         string
+	Kind         string
+	Sources      []string
+	Resources    []MarketplaceInstallResource
+	Findings     []MarketplaceInstallFinding
+	Capabilities []string
 }
 
 type PreparedMarketplaceInstall struct {
@@ -365,20 +378,57 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 }
 
 func marketplaceInstallSummary(plan *marketplace.PreparedInstall) MarketplaceInstallSummary {
-	summary := MarketplaceInstallSummary{Name: plan.Pin.Name}
+	summary := MarketplaceInstallSummary{Name: plan.Pin.Name, Kind: plan.Pin.Kind}
+	sources, capabilities := map[string]struct{}{}, map[string]struct{}{}
+	findings := map[MarketplaceInstallFinding]struct{}{}
 	var add func(*marketplace.PreparedInstall, bool)
 	add = func(current *marketplace.PreparedInstall, leaf bool) {
 		preview := current.Preview()
-		summary.Findings += len(preview.Findings)
-		summary.Capabilities += len(preview.Capabilities)
+		source := nonEmpty(current.Pin.RegistrySlug, current.Pin.RegistryID)
+		if source != "" {
+			sources[source] = struct{}{}
+		}
+		for _, capability := range preview.Capabilities {
+			capabilities[capability] = struct{}{}
+		}
+		for _, finding := range preview.Findings {
+			message := nonEmpty(finding.Message, finding.Code)
+			findings[MarketplaceInstallFinding{Resource: current.Pin.Name, Severity: finding.Severity, Message: message}] = struct{}{}
+		}
 		if leaf {
-			summary.ResourceKinds = append(summary.ResourceKinds, current.Pin.Kind)
+			summary.Resources = append(summary.Resources, MarketplaceInstallResource{Name: current.Pin.Name, Kind: current.Pin.Kind})
 		}
 		for _, member := range current.CollectionMembers {
 			add(member, len(member.CollectionMembers) == 0)
 		}
 	}
 	add(plan, len(plan.CollectionMembers) == 0)
+	for source := range sources {
+		summary.Sources = append(summary.Sources, source)
+	}
+	for capability := range capabilities {
+		summary.Capabilities = append(summary.Capabilities, capability)
+	}
+	for finding := range findings {
+		summary.Findings = append(summary.Findings, finding)
+	}
+	sort.Strings(summary.Sources)
+	sort.Strings(summary.Capabilities)
+	slices.SortFunc(summary.Resources, func(a, b MarketplaceInstallResource) int {
+		if byKind := strings.Compare(a.Kind, b.Kind); byKind != 0 {
+			return byKind
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	slices.SortFunc(summary.Findings, func(a, b MarketplaceInstallFinding) int {
+		if byResource := strings.Compare(a.Resource, b.Resource); byResource != 0 {
+			return byResource
+		}
+		if bySeverity := strings.Compare(a.Severity, b.Severity); bySeverity != 0 {
+			return bySeverity
+		}
+		return strings.Compare(a.Message, b.Message)
+	})
 	return summary
 }
 
@@ -659,8 +709,8 @@ func evaluateMarketplaceConsent(plan *marketplace.PreparedInstall, accept bool) 
 		return err
 	}
 	summary := marketplaceInstallSummary(plan)
-	if (summary.Findings > 0 || summary.Capabilities > 0) && !accept {
-		return fmt.Errorf("marketplace install requires risk acceptance: %d finding(s), %d active capability(ies); re-run with --accept-risk (or --yes)", summary.Findings, summary.Capabilities)
+	if (len(summary.Findings) > 0 || len(summary.Capabilities) > 0) && !accept {
+		return fmt.Errorf("marketplace install requires risk acceptance: %d finding(s), %d active capability(ies); re-run with --accept-risk (or --yes)", len(summary.Findings), len(summary.Capabilities))
 	}
 	return nil
 }
