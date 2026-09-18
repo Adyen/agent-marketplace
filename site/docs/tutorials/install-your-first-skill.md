@@ -135,6 +135,7 @@ For reproducible setups, use a stable tag or commit as the registry ref. The [re
 
 ## Next steps
 
+- [Install your first skill from an online Marketplace](./install-your-first-marketplace-skill.md) to learn the hosted catalog workflow.
 - Learn the everyday [`list`, `install`, `remove`, `sync`, and `update` commands](../reference/cli.md).
 - [Add agent-marketplace to a repository](https://github.com/Adyen/agent-marketplace/blob/main/docs/adoption-guide.md) to share selections with a team.
 - Read the [configuration reference](../reference/configuration.md) when you need to edit `.agents/config.yaml` directly.

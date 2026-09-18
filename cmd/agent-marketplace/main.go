@@ -419,6 +419,7 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 		FromRef:             fromRef,
 		FromPath:            fromPath,
 		DependencyReconcile: reconcileCommandDependencies,
+		CleanupDependencies: reconcileCleanupDependencies,
 	})
 	if err != nil {
 		return err

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -39,6 +40,8 @@ func ParseScope(s string) (Scope, error) {
 	}
 }
 
+type CleanupDependencyCommitter func(context.Context, string, []StagedConfigEdit, []dependencytxn.ReadAssertion, dependencytxn.CommitScope) error
+
 // RemoveOptions holds the arguments for a remove operation.
 type RemoveOptions struct {
 	RepoRoot            string
@@ -51,6 +54,7 @@ type RemoveOptions struct {
 	FromRef             string // --ref flag: git ref for --from
 	FromPath            string // --path flag: subdirectory for --from
 	DependencyReconcile DependencyReconciler
+	CleanupDependencies CleanupDependencyCommitter
 	configStaging       *configStagingManager
 	warningSink         *[]error
 }
@@ -1283,6 +1287,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if target != nil {
 		resolvedKind = target.Kind
 	}
+	cleanupOnly := config.OnlyRegistryURLBlockedErrors(ec.Errors) && resolvedKind == ir.KindMcpServer
 
 	// Cross-layer named exclude: when the entry lives only in a lower layer,
 	// validate that suppressing it at this scope is meaningful (a local/repo
@@ -1296,6 +1301,17 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 			return nil, err
 		}
 	}
+	var cleanup *ownedRemovalPreparation
+	if cleanupOnly {
+		if target == nil {
+			return nil, fmt.Errorf("blocked MCP cleanup target is unresolved")
+		}
+		cleanup, err = prepareBlockedOwnedMCPRemoval(ctx, opts, ec, *target, name, fromURL, selectedPath, shadowRef, resolvedKind)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup.release()
+	}
 
 	// Remove the resource from the specific registry entry. shadowRef ensures a
 	// newly created shadow entry (cross-layer case) passes ref-required
@@ -1308,6 +1324,12 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	}
 	if err := disableErr; err != nil {
 		return nil, err
+	}
+	if cleanup != nil {
+		if err := cleanup.commit(opts); err != nil {
+			return nil, err
+		}
+		return &RemoveResult{RemovedName: name}, nil
 	}
 
 	if err := syncAfterRemove(ctx, opts, WithIgnoreBlockedRegistries()); err != nil {

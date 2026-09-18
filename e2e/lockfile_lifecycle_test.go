@@ -112,6 +112,35 @@ func TestLockfileFileURLGitLifecycleRetainsExactCommitUntilUpdate(t *testing.T) 
 	fixture.env.AssertFileContains("/workspace/.factory/skills/review/SKILL.md", "Review version two")
 }
 
+func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
+	fixture := newLockfileGitFixture(t, "install-exact-discovery", Skill{Name: "review", Description: "Reviewed version A"})
+	fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main", fixture.url))
+	if result := fixture.env.RunAM("sync"); result.ExitCode != 0 {
+		t.Fatalf("seed sync: %s", result.Combined)
+	}
+	beforeConfig := fixture.env.ReadFile("/workspace/.agents/config.yaml")
+	beforeLock := fixture.env.ReadFile("/workspace/.agents/lock.yaml")
+	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Changed version B"}, Skill{Name: "new", Description: "Only in B"})
+	result := fixture.env.RunAM("install", "new", "--from", fixture.url, "--ref", "main")
+	if result.ExitCode == 0 || !strings.Contains(result.Combined, "not found") {
+		t.Fatalf("mutable-only resource was not safely refused: %s", result.Combined)
+	}
+	if fixture.env.ReadFile("/workspace/.agents/config.yaml") != beforeConfig || fixture.env.ReadFile("/workspace/.agents/lock.yaml") != beforeLock {
+		t.Fatal("refused install changed configuration or lock")
+	}
+	if _, err := os.Lstat(filepath.Join(fixture.env.workspace, ".factory", "skills", "new")); !os.IsNotExist(err) {
+		t.Fatalf("mutable-only output exists: %v", err)
+	}
+	result = fixture.env.RunAM("install", "review", "--from", fixture.url, "--ref", "main")
+	if result.ExitCode != 0 {
+		t.Fatalf("locked resource install: %s", result.Combined)
+	}
+	fixture.env.AssertFileContains("/workspace/.factory/skills/review/SKILL.md", "Reviewed version A")
+	if fixture.env.ReadFile("/workspace/.agents/lock.yaml") != beforeLock {
+		t.Fatal("install advanced the existing exact lock")
+	}
+}
+
 func TestOrganizationIncludeTrustBlocksSyncWithoutMutation(t *testing.T) {
 	for _, unsafe := range []string{"writable", "symlink-dotdot"} {
 		t.Run(unsafe, func(t *testing.T) {

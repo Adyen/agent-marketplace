@@ -49,6 +49,9 @@ credential-bearing services, or build attack demonstrations during testing.
   select mutable-cache content and then lock different content in one operation.
   If reproduced, bind discovery and mutation to the same exact revision while
   preserving local registries, reusable locks, and transactional rollback.
+  - [x] Bind remote ad-hoc CLI discovery and publication to prepared exact pins.
+  - [ ] Validate and bind remaining configured-install discovery paths, including
+    missing-lock bootstrap and concurrent changes to existing exact inputs.
 - [x] **R1c: Marketplace preview/consent identity.** Trace prepared-plan commit
   and collision checks. Distinguish an interactive preview-to-commit mismatch
   from explicitly accepting the currently resolved revision in a new CLI run.
@@ -60,7 +63,12 @@ credential-bearing services, or build attack demonstrations during testing.
   making blocked entries impossible to remove or altering required policy.
   - [x] Prevent new acquisition when tolerating blocked-registry errors; require
     existing cached input rather than silently omitting missing registries.
-  - [ ] Implement targeted removal without unrelated upserts or content rewrites.
+  - [x] Add a proof-backed single-entry cleanup operation for existing owned
+    JSON/TOML adapters, without replacing unrelated entries or their ownership.
+  - [x] Integrate named blocked-registry MCP removal with exact inputs and
+    owned Devin/Codex aggregates into the config/lock publication scope.
+  - [ ] Extend targeted removal to the remaining command paths and artifact
+    types, including whole registries, collections, hooks, and ordinary files.
 - [ ] **R1e: Web URLs with slash-containing refs.** Check GitHub/GitLab URL
   interpretation and explicit `--ref`/`--path` behavior. Reject genuinely
   ambiguous input or use existing explicit selectors; do not introduce
@@ -214,9 +222,38 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
 - R1c warm-registry benchmark: 855.2 to 867.6 microseconds/op (no significant
   timing difference), zero refreshes/op, 310.6 to 314.3 KiB/op and 2988 to 3031
   allocations/op. This does not measure a cold exact-snapshot acquisition.
-- R1b remains open: discovery-to-lock consistency requires a guarantee before
-  publishing the staged config/lock transaction; checking only after commit
-  would not preserve rollback or prevent the mismatch.
+- R1b remote ad-hoc slice, based on merged `a371a5d`: a real CLI regression
+  confirmed that `install new --from ...` reported success for a resource only
+  in mutable commit B while the owning lock still contained commit A.
+- Remote `--from` installs now prepare exact lock documents and the effective
+  discovery config without publishing dependency files. Discovery consumes that
+  exact view; final reconciliation reuses the prepared documents offline and
+  validates frozen config/include/absent-layer/lock generations before publication.
+  The exact-cache lease spans preparation, selection, publication, and sync.
+- Regressions cover warm-lock refusal and valid installation, cold named/bundle/
+  inferred/user installs with a ref move after discovery, changed included config
+  before reconciliation and immediately before commit, newly created local config,
+  changed locks and final requirements, and missing-selection preservation with
+  released-plan refusal. GC cannot cross the prepared lease and can run after a
+  failed selection. A built-binary E2E case verifies the warm locked consumer.
+  Install-focused command/pipeline tests, race-enabled ad-hoc regressions, focused
+  E2E, full `make test`, build, and CI lint passed before publication.
+- Adversarial review checked pin reuse, generation checks, pre-publication errors,
+  cache-lease ownership, scope boundaries, and the actual consumer/test paths.
+  Discovery also uses the prepared effective config rather than an earlier load.
+  An alleged extra lease acquisition was rejected after checking the actual code;
+  the acquired lease is transferred once and released by the plan. No remaining
+  blocker was identified within the remote ad-hoc contract.
+- Repeated warm remote `--from` install benchmark (local Git/disk included, no
+  Internet): 166.5 to 146.9 ms/op (-11.80%), 1.910 to 2.684 MiB/op (+40.50%),
+  and 13.25k to 18.86k allocations/op (+42.38%). Five samples per revision;
+  benchstat reports p=0.008 but cannot estimate a 95% confidence interval with
+  this sample count. This is not a cold-install or general-sync benchmark.
+- R1b remains open for configured-install bootstrap and other unbound discovery
+  paths. Local registries and the explicitly unlocked organization layer retain
+  their existing semantics; this slice does not promise immutable local input or
+  global filesystem atomicity. A post-publication sync failure retains committed
+  dependency state under the existing error contract.
 - R1e partial fix: an explicit `--ref release/v1` now removes the full matched
   ref from a GitHub/GitLab web URL before deriving the directory. Tree/blob,
   root, encoded slash, mismatching ref, component-boundary, and explicit-path
@@ -243,11 +280,64 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
 - R1d normal warm-lock benchmark: 78.90 to 79.77 ms/op (+1.11%); memory and
   allocations have no statistically significant difference. This workload
   includes local disk and normal command processing, not Internet access.
-- R1d targeted-write implementation remains open. Both remove and deinit still
-  use general reconciliation, not a removal-only engine. The next layer must
-  preserve unrelated shared-aggregate entries and ordinary files, including
-  drifted siblings, using existing ownership evidence. The acquisition guard
-  alone does not guarantee no unrelated upserts or no writes on every error.
+- R1d backend foundation added on merged baseline `83ac043`:
+  `RepairFile.RemoveOwned` removes one explicitly confirmed clean owned entry
+  using the existing JSON/TOML adapters, root write session, mandatory backup,
+  journal, and generation/digest CAS. It re-reads current file/proof and retains
+  the durable metadata of every sibling, including drifted siblings.
+- Pre-push adversarial review found a destination-binding defect in the first
+  implementation: mutable preview paths could redirect a write inside the
+  bound root while changing the original file's ownership record. The operation
+  now checks its canonical root against the store binding and uses that root
+  plus the validated relative path for publication. Retargeting regressions and
+  a legitimate root-alias control cover the correction before first push.
+- Backend tests cover keyed JSON/TOML preservation, exact retained spans and
+  ordering, handwritten and drifted siblings, custom/private modes, absent or
+  corrupt proof, present unmanaged targets, pending journals, confirmation,
+  cancellation, foreign CAS mutation, and sequential/duplicate hooks. Codex raw
+  hook digests have distinct controls: exact raw duplicates are handled without
+  removing both, while reserialized changed values are refused.
+- The desired-selection guard is relative to the prepared view, NOT a fresh
+  configuration read. Future CLI integration must bind authorization to the
+  applicable config/lock generations and refuse stale requests. Ownership
+  proof alone does not authorize deleting a newly selected resource.
+- Scoped clean 100-entry MCP comparison (disk/journal cost included; setup and
+  preview excluded): full materialization deletion 62.26 ms/op versus targeted
+  deletion 61.77 ms/op, with no significant timing difference. Memory is
+  3.232 versus 1.346 MiB/op; allocations are 25528 versus 9005/op. This compares
+  two different removal operations, not whole-CLI performance.
+- R1d named-MCP CLI integration: `remove <name> --from <registry>` now uses
+  targeted cleanup when registry policy is blocked and the selected resource is
+  an MCP server. Kind inference uses the same path. Every selected target must
+  have an existing owned-aggregate adapter; unsupported target mixtures fail
+  before publication rather than narrowing targets or running broad sync.
+- Preparation freezes config/include/absent-layer and adjacent-lock reads before
+  opening the exact inventory, retains its cache lease, and verifies the selected
+  identity again. Live local registries and unlocked input are unsupported in
+  this narrowly exact-backed path. Staged config resolves against the same exact
+  inventory without acquisition or Marketplace refresh.
+- A dependency publication scope holds destination/read coordination locks and
+  ownership root sessions through all-action preflight, config/lock publication,
+  and targeted deletions. Post-publication checks require the NEW generation,
+  not the old-or-new condition used during journal progress. Reverting to the
+  original selected config after publication therefore refuses cleanup.
+- Consumer regressions cover Devin repo and Codex user/repo output, explicit and
+  inferred kind, last-selected MCP, scoped copies, unowned/corrupt/drifted input,
+  pending journals, unsupported mixtures, missing exact snapshots, included-file
+  changes, new local config, changed locks, and post-publication reselection.
+  Refusals preserve bytes, modes, mtimes, ownership, backups, and staging state;
+  coordination locks are separate. Codex repo mutations retain the trust-review
+  diagnostic without modifying trust state. A declarative CLI E2E case covers
+  edited and handwritten sibling preservation.
+- Normal warm exact-lock sync benchmark: 74.00 to 79.92 ms/op (+8.00%); memory
+  and allocation differences are not significant. This is the existing normal
+  one-remote sync workload with local disk, not a cleanup-lifecycle measurement.
+- Late I/O/CAS failures remain distinguishable as committed-scope errors; no
+  rollback of published configuration is claimed. Aggregate journals remain
+  per-file, not a global filesystem transaction. Whole-registry, collection,
+  hook, ordinary-file, non-`--from`, and unblocked removal paths are unchanged
+  by this slice and remain follow-up work. Existing adapter filesystem behavior
+  remains a separate review surface; no general filesystem sandbox is claimed.
 - Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
   planning and first three implementation layers are published as PRs 210–213
   in stack 214. Native compatibility and real-terminal TUI checks remain CI

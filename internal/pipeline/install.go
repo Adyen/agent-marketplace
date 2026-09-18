@@ -23,6 +23,16 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+type PreparedInstallDependencies struct {
+	Context         context.Context
+	DiscoveryConfig *config.Config
+	View            DependencyLockView
+	Reconcile       DependencyReconciler
+	Release         func()
+}
+
+type InstallDependencyPreparer func(context.Context, string, string, []StagedConfigEdit) (PreparedInstallDependencies, error)
+
 // InstallOptions holds the arguments for an install operation.
 type InstallOptions struct {
 	RepoRoot                string
@@ -51,6 +61,7 @@ type InstallOptions struct {
 	// (ScopedConfigPath).
 	LocalConfigDir      string
 	DependencyReconcile DependencyReconciler
+	PrepareDependencies InstallDependencyPreparer
 	configStaging       *configStagingManager
 }
 
@@ -92,6 +103,9 @@ type resourceIdentity struct {
 // Install adds resources to the appropriate config layer and re-syncs.
 // It handles --tag, --all, --from, collection, and single-resource installs.
 func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, retErr error) {
+	if opts.PrepareDependencies != nil && opts.DependencyReconcile == nil {
+		return nil, errors.New("install dependency preparation requires a dependency reconciler")
+	}
 	marketplaceEndpointRequested := isMarketplaceEndpointRegistration(opts)
 	if marketplaceEndpointRequested && !opts.ScopeSpecified {
 		opts.Scope = ScopeUser
@@ -1014,7 +1028,31 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err != nil {
 		return nil, err
 	}
-	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.RepoRoot, opts.LocalConfigDir)
+	var discoveryOptions []catalog.LoadOption
+	if opts.PrepareDependencies != nil && !syntheticEntry.IsLocal() {
+		if opts.configStaging == nil {
+			return nil, errors.New("exact install preparation requires staged configuration")
+		}
+		edits, err := opts.configStaging.Edits()
+		if err != nil {
+			return nil, err
+		}
+		prepared, err := opts.PrepareDependencies(ctx, repoRoot, opts.LocalConfigDir, edits)
+		if err != nil {
+			return nil, err
+		}
+		if prepared.Release != nil {
+			defer prepared.Release()
+		}
+		if prepared.Context == nil || prepared.DiscoveryConfig == nil || prepared.View.CatalogOption == nil || prepared.Reconcile == nil || prepared.Release == nil {
+			return nil, errors.New("exact install preparation returned an incomplete dependency view")
+		}
+		ctx = prepared.Context
+		discoveryCfg = prepared.DiscoveryConfig
+		opts.DependencyReconcile = prepared.Reconcile
+		discoveryOptions = append(discoveryOptions, prepared.View.CatalogOption)
+	}
+	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.RepoRoot, opts.LocalConfigDir, discoveryOptions...)
 	if err != nil {
 		return nil, err
 	}
