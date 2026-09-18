@@ -60,7 +60,10 @@ credential-bearing services, or build attack demonstrations during testing.
   making blocked entries impossible to remove or altering required policy.
   - [x] Prevent new acquisition when tolerating blocked-registry errors; require
     existing cached input rather than silently omitting missing registries.
-  - [ ] Implement targeted removal without unrelated upserts or content rewrites.
+  - [x] Add a proof-backed single-entry cleanup operation for existing owned
+    JSON/TOML adapters, without replacing unrelated entries or their ownership.
+  - [ ] Integrate targeted removal into the CLI transaction without unrelated
+    upserts or content rewrites, including ordinary generated files.
 - [ ] **R1e: Web URLs with slash-containing refs.** Check GitHub/GitLab URL
   interpretation and explicit `--ref`/`--path` behavior. Reject genuinely
   ambiguous input or use existing explicit selectors; do not introduce
@@ -243,11 +246,36 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
 - R1d normal warm-lock benchmark: 78.90 to 79.77 ms/op (+1.11%); memory and
   allocations have no statistically significant difference. This workload
   includes local disk and normal command processing, not Internet access.
-- R1d targeted-write implementation remains open. Both remove and deinit still
-  use general reconciliation, not a removal-only engine. The next layer must
-  preserve unrelated shared-aggregate entries and ordinary files, including
-  drifted siblings, using existing ownership evidence. The acquisition guard
-  alone does not guarantee no unrelated upserts or no writes on every error.
+- R1d backend foundation added on merged baseline `83ac043`:
+  `RepairFile.RemoveOwned` removes one explicitly confirmed clean owned entry
+  using the existing JSON/TOML adapters, root write session, mandatory backup,
+  journal, and generation/digest CAS. It re-reads current file/proof and retains
+  the durable metadata of every sibling, including drifted siblings.
+- Pre-push adversarial review found a destination-binding defect in the first
+  implementation: mutable preview paths could redirect a write inside the
+  bound root while changing the original file's ownership record. The operation
+  now checks its canonical root against the store binding and uses that root
+  plus the validated relative path for publication. Retargeting regressions and
+  a legitimate root-alias control cover the correction before first push.
+- Backend tests cover keyed JSON/TOML preservation, exact retained spans and
+  ordering, handwritten and drifted siblings, custom/private modes, absent or
+  corrupt proof, present unmanaged targets, pending journals, confirmation,
+  cancellation, foreign CAS mutation, and sequential/duplicate hooks. Codex raw
+  hook digests have distinct controls: exact raw duplicates are handled without
+  removing both, while reserialized changed values are refused.
+- The desired-selection guard is relative to the prepared view, NOT a fresh
+  configuration read. Future CLI integration must bind authorization to the
+  applicable config/lock generations and refuse stale requests. Ownership
+  proof alone does not authorize deleting a newly selected resource.
+- Scoped clean 100-entry MCP comparison (disk/journal cost included; setup and
+  preview excluded): full materialization deletion 62.26 ms/op versus targeted
+  deletion 61.77 ms/op, with no significant timing difference. Memory is
+  3.232 versus 1.346 MiB/op; allocations are 25528 versus 9005/op. This compares
+  two different removal operations, not whole-CLI performance.
+- R1d CLI integration and targeted ordinary-file cleanup remain open. Normal
+  remove, sync, deinit, and doctor command behavior is unchanged by this backend
+  foundation. Existing adapter filesystem behavior remains a separate review
+  surface; this layer does not claim general filesystem sandboxing.
 - Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
   planning and first three implementation layers are published as PRs 210–213
   in stack 214. Native compatibility and real-terminal TUI checks remain CI
