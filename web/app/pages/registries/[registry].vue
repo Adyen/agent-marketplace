@@ -11,7 +11,11 @@ const { data: registryData, pending, error, refresh } = await useAsyncData(
   registryAsyncDataKey(registry),
   () => api.getRegistry(registry),
 )
-const { data: operator, error: operatorError } = await useAsyncData('marketplace-instance', () => api.getInstance())
+const { data: operator } = await useAsyncData('marketplace-instance', () => api.getInstance())
+const { data: resources, error: resourcesError } = await useAsyncData(
+  `marketplace-registry-resources:${registry}`,
+  () => api.search({ q: '', kind: '', registry: [registry], offset: 0, limit: 1 }),
+)
 
 watch([pending, registryData, error], async () => {
   if (pending.value) return
@@ -34,9 +38,8 @@ useHead(() => ({
 <template>
   <NuxtPage v-if="route.path === historyPath" />
   <div v-else class="min-h-screen bg-[var(--am-color-bg-canvas)] text-default">
-    <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Registry' }]" />
-
-    <main id="main-content" ref="mainContent" class="mx-auto max-w-5xl rounded px-4 py-10 focus-visible:outline-2 focus-visible:outline-primary sm:px-6 lg:px-8" tabindex="-1">
+    <main id="main-content" ref="mainContent" class="mx-auto max-w-6xl rounded px-4 py-6 focus-visible:outline-2 focus-visible:outline-primary sm:px-6 sm:py-8 lg:px-8" tabindex="-1">
+      <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Marketplace', to: '/' }, { label: registryData?.slug || registry }]" />
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-[var(--am-color-bg-surface)] p-8">
         <h1 tabindex="-1" class="text-2xl font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Loading registry</h1>
         <p class="mt-3 text-sm text-toned">Fetching registry identity and acquisition metadata.</p>
@@ -47,14 +50,8 @@ useHead(() => ({
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
       <template v-else-if="registryData">
-        <div class="mb-6 flex flex-wrap items-center justify-end gap-3">
-          <nav aria-label="Registry actions" class="flex flex-wrap gap-2">
-            <UButton :to="historyPath" color="neutral" variant="outline" size="sm">View registry history</UButton>
-            <UButton :to="{ path: '/', query: { registry } }" color="neutral" variant="outline" size="sm">Search this registry</UButton>
-          </nav>
-        </div>
-        <UAlert v-if="operatorError" color="warning" variant="subtle" icon="i-lucide-info" title="Operator metadata is unavailable" description="The registry is available, but Marketplace operator details could not be loaded." class="mb-6" />
-        <RegistryOverview :registry="registryData" :operator="operator" />
+        <p v-if="resourcesError" class="mb-6 border-l-2 border-warning pl-3 text-sm text-toned" role="status">Resources could not be loaded. Registry information remains available.</p>
+        <RegistryOverview :registry="registryData" :operator="operator" :resource-count="resources?.total || 0" />
       </template>
       <section v-else role="status" class="rounded-2xl border border-dashed border-default bg-[var(--am-color-bg-surface)] p-8">
         <h1 tabindex="-1" class="text-2xl font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Registry not found</h1>

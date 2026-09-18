@@ -42,27 +42,104 @@ const resource = {
 }
 
 describe('ResourceDetailView', () => {
-  it('shows read-only provenance, findings, and digest-pinned actions as text', () => {
+  it('prioritizes identity, installation, and default content before tabbed supporting details', async () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource,
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+        inspection: {
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'team/tools', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
+          files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 10, inspection_class: 'text' }],
+        },
+        primaryContent: '# Review\n\nResource instructions.',
+        revisions: [resource],
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.get('h1').text()).toBe('review')
+    expect(wrapper.find('[data-testid="revision-summary"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="installation-panel"]').text()).not.toContain('exact version')
+    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').text()).toBe('Copy command')
+    expect(wrapper.get('header button[aria-label^="Copy detail URL"]').text()).toBe('Copy link')
+    expect(wrapper.get('a[href="/docs/"]').text()).toBe('Set up CLI')
+
+    const installPosition = wrapper.html().indexOf('data-testid="installation-panel"')
+    const tabsPosition = wrapper.html().indexOf('role="tablist"')
+    const contentPosition = wrapper.html().indexOf('data-testid="safe-markdown"')
+    expect(installPosition).toBeLessThan(tabsPosition)
+    expect(tabsPosition).toBeLessThan(contentPosition)
+
+    const tabs = wrapper.findAll('[role="tab"]')
+    expect(tabs.map(tab => tab.text())).toEqual(['Content', 'Security', 'Revisions', 'Technical details'])
+    expect(tabs[0]?.attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[data-testid="safe-markdown"]').text()).toContain('Resource instructions.')
+    expect(wrapper.find('[aria-labelledby="security-tab"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('security finding')
+
+    await tabs[1]!.trigger('click')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('metadata-check')
+    expect(wrapper.find('[data-testid="safe-markdown"]').exists()).toBe(false)
+  })
+
+  it('labels an older selected revision and links to the current revision', () => {
+    const currentDigest = 'sha256:' + 'd'.repeat(64)
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource,
+        currentRevisionDigest: currentDigest,
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+        revisions: [{ ...resource, content_digest: currentDigest }],
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.find('[data-testid="revision-summary"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('You’re viewing an older revision.')
+    expect(wrapper.get(`a[href="/r/team-tools/skill/review/revisions/${encodeURIComponent(currentDigest)}"]`).text()).toBe('View latest')
+  })
+
+  it('shows read-only provenance, findings, and digest-pinned actions as text', async () => {
     const wrapper = mount(ResourceDetailView, {
       props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example' },
       global: { stubs },
     })
 
-    // The heading is the resource coordinate, which is both the URL and the
-    // CLI argument, so the registry is part of the identifier.
-    expect(wrapper.get('h1').text()).toBe('team-tools/review')
-    expect(wrapper.text()).toContain('analyzer-v2')
-    expect(wrapper.text()).toContain('Apache-2.0')
-    expect(wrapper.text()).toContain('<script>not markup</script>')
+    expect(wrapper.get('h1').text()).toBe('review')
     expect(wrapper.get('code').text()).toContain(`/revisions/sha256%3A${'c'.repeat(64)}`)
     expect(wrapper.get('button[aria-label^="Copy detail URL"]').exists()).toBe(true)
     expect(wrapper.find('script').exists()).toBe(false)
     expect(wrapper.find('[onerror]').exists()).toBe(false)
     expect(wrapper.find('[aria-live="polite"]').exists()).toBe(true)
+    expect(wrapper.findAll('h1')).toHaveLength(1)
+
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    expect(wrapper.text()).toContain('analyzer-v2')
+    expect(wrapper.text()).toContain('<script>not markup</script>')
     expect(wrapper.text()).toContain('Severity: low')
     expect(wrapper.text()).toContain('Policy: content-policy')
-    expect(wrapper.findAll('h1')).toHaveLength(1)
-    expect(wrapper.findAll('h2').length).toBeGreaterThan(1)
+
+    await wrapper.findAll('[role="tab"]')[3]!.trigger('click')
+    expect(wrapper.text()).toContain('Apache-2.0')
+    expect(wrapper.find('button[aria-label="Copy License"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Copy Archive digest"]').exists()).toBe(true)
+    expect(wrapper.findAll('h2').length).toBeGreaterThan(0)
+  })
+
+  it('describes automated policy results without presenting them as an endorsement', async () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, assessment: { ...assessmentBase, findings: [] } },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.text()).not.toContain('No findings reported')
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    expect(wrapper.text()).toContain('Allowed by marketplace policy')
+    expect(wrapper.text()).toContain('Automated scan: no issues detected')
+    expect(wrapper.text()).toContain('Scanned Jan 2, 2026')
   })
 
   it('keeps the install command but disables the detail URL when the browser base is empty', () => {
@@ -75,7 +152,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('button[aria-label^="Copy detail URL"]').attributes('disabled')).toBeDefined()
   })
 
-  it('renders exact digest revision links and preserves revoked history state', () => {
+  it('renders exact digest revision links and preserves revoked history state', async () => {
     const previousDigest = 'sha256:' + 'd'.repeat(64)
     const wrapper = mount(ResourceDetailView, {
       props: {
@@ -88,16 +165,18 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
-    expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain(previousDigest)
-    expect(wrapper.get(`a[href="/r/registry/skill/review/revisions/${encodeURIComponent(previousDigest)}"]`).exists()).toBe(true)
-    expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain('Revoked')
-    expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain('Current')
+    await wrapper.findAll('[role="tab"]')[2]!.trigger('click')
+    const history = wrapper.get('[aria-labelledby="revisions-tab"]')
+    expect(history.get(`a[href="/r/registry/skill/review/revisions/${encodeURIComponent(previousDigest)}"]`).attributes('title')).toBe(previousDigest)
+    expect(history.text()).toContain('Revoked')
+    expect(history.text()).toContain('Latest')
+    expect(history.get(`a[href="/r/registry/skill/review/revisions/${encodeURIComponent(digest)}"]`).attributes('aria-current')).toBe('page')
   })
 
   it.each([
     ['an index-only skill', 'index-only', 'skill'],
     ['a collection', 'mirror', 'collection'],
-  ] as const)('keeps an archive-free revision available for %s', (_, acquisition, kind) => {
+  ] as const)('keeps an archive-free revision available for %s', async (_, acquisition, kind) => {
     const { archive_digest: _archiveDigest, ...withoutArchive } = resource
     const wrapper = mount(ResourceDetailView, {
       props: {
@@ -109,12 +188,39 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
-    const history = wrapper.get('[aria-labelledby="revision-history-heading"]')
+    await wrapper.findAll('[role="tab"]')[2]!.trigger('click')
+    const history = wrapper.get('[aria-labelledby="revisions-tab"]')
     expect(history.text()).toContain('Available')
     expect(history.text()).not.toContain('No installable artifact')
   })
 
-  it('renders only sanitized Markdown and an escaped raw view from the inspection projection', () => {
+  it('renders collection members as linked resources before exposing the raw manifest', async () => {
+    const memberDigest = 'sha256:' + '8'.repeat(64)
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, coordinate: { ...coordinate, kind: 'collection', name: 'bundle' } },
+        registry: 'registry', kind: 'collection', name: 'bundle', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+        inspection: {
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'collection', name: 'bundle' }, revision_digest: digest, primary_path: 'COLLECTION.json',
+          files: [{ path: 'COLLECTION.json', content_digest: digest, media_type: 'application/json', size: 100, inspection_class: 'text' }],
+        },
+        primaryContent: JSON.stringify({ members: [{ kind: 'skill', name: 'review', registry_id: 'registry', revision: memberDigest }] }),
+        relatedResources: [{ registry_id: 'registry', kind: 'skill', name: 'review', revision: memberDigest, content_digest: memberDigest, description: 'Reviews changes before merge.' }],
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.get('[data-testid="collection-members"]').text()).toContain('review')
+    expect(wrapper.get('[data-testid="collection-members"]').text()).toContain('Skill')
+    expect(wrapper.get('[data-testid="collection-members"]').text()).toContain('Reviews changes before merge.')
+    expect(wrapper.get(`a[href="/r/registry/skill/review/revisions/${encodeURIComponent(memberDigest)}"]`).exists()).toBe(true)
+    expect(wrapper.find('[data-testid="escaped-raw"]').exists()).toBe(false)
+
+    await wrapper.get('[aria-label="Content view"]').findAll('button')[1]!.trigger('click')
+    expect(wrapper.get('[data-testid="escaped-raw"]').text()).toContain('"members"')
+  })
+
+  it('renders only sanitized Markdown and an escaped raw view from the inspection projection', async () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, assessment: { ...assessmentBase, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: '<script>finding</script>', location: { path: 'SKILL.md', line: 1, column: 2 } }] } },
@@ -134,9 +240,13 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('<img')
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('evil.invalid')
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).toContain('href="https://example.com/docs"')
+
+    await wrapper.get('[aria-label="Content view"]').findAll('button')[1]!.trigger('click')
     expect(wrapper.get('[data-testid="escaped-raw"]').html()).toContain('&lt;script&gt;')
     expect(wrapper.get('[data-testid="escaped-raw"] mark').attributes('aria-label')).toContain('remote-reference (warn)')
-    expect(wrapper.get('a[href="#finding-highlight-0"]').text()).toBe('View highlighted range')
+
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    expect(wrapper.text()).toContain('View highlighted range')
     expect(wrapper.text()).toContain('remote-reference')
     expect(wrapper.text()).toContain('Severity: warn')
     expect(wrapper.text()).toContain('Policy: network-policy')
@@ -189,6 +299,7 @@ describe('ResourceDetailView', () => {
     expect(calls.at(-1)).toEqual({ path: 'support/config.json', digest: configDigest })
     expect(wrapper.find('[data-testid="safe-markdown"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="escaped-selected-raw"]').html()).toContain('&lt;script&gt;')
+    expect(wrapper.find('[aria-label="Content view"]').exists()).toBe(false)
     expect(wrapper.find('script').exists()).toBe(false)
 
     await selector.setValue('sha256:' + 'b'.repeat(64))
@@ -197,7 +308,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.find('script').exists()).toBe(false)
   })
 
-  it('shows all-kind metadata without rendering SVG or binary bodies', () => {
+  it('shows all-kind metadata without rendering SVG or binary bodies', async () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, coordinate: { ...resource.coordinate, kind: 'command', name: 'build' } },
@@ -214,6 +325,7 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
     expect(wrapper.text()).toContain('COMMAND.md')
+    await wrapper.findAll('[role="tab"]')[3]!.trigger('click')
     expect(wrapper.text()).toContain('Binary metadata (not rendered)')
     expect(wrapper.find('img').exists()).toBe(false)
     // No SVG may come from the payload. The only SVG allowed in the tree is the
@@ -279,7 +391,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
   })
 
-  it('gives each history row the status its own revision record supports', () => {
+  it('gives each history row the status its own revision record supports', async () => {
     const rejectedDigest = 'sha256:' + 'd'.repeat(64)
     const strippedDigest = 'sha256:' + 'e'.repeat(64)
     const wrapper = mount(ResourceDetailView, {
@@ -294,16 +406,17 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
-    const rows = wrapper.get('[aria-labelledby="revision-history-heading"]').findAll('li')
+    await wrapper.findAll('[role="tab"]')[2]!.trigger('click')
+    const rows = wrapper.get('[aria-labelledby="revisions-tab"]').findAll('li')
     expect(rows.map(row => row.text())).toEqual([
       expect.stringContaining('Blocked by policy'),
       expect.stringContaining('No installable artifact'),
       expect.stringContaining('Available'),
     ])
-    expect(rows[2]?.text()).toContain('Current')
+    expect(rows[2]?.text()).toContain('Latest')
   })
 
-  it('uses assessment finding locations for highlighting', () => {
+  it('uses assessment finding locations for highlighting', async () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, assessment: { ...assessmentBase, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: 'references a remote host', location: { path: 'SKILL.md', line: 1, column: 2 } }] } },
@@ -317,8 +430,10 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
+    await wrapper.get('[aria-label="Content view"]').findAll('button')[1]!.trigger('click')
+    expect(wrapper.get('[data-testid="escaped-raw"] mark').attributes('aria-label')).toContain('remote-reference')
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
     expect(wrapper.findAll('[aria-label="Security findings"] > li')).toHaveLength(1)
     expect(wrapper.get('[aria-label="Security findings"]').text()).toContain('SKILL.md:1-2')
-    expect(wrapper.get('[data-testid="escaped-raw"] mark').attributes('aria-label')).toContain('remote-reference')
   })
 })

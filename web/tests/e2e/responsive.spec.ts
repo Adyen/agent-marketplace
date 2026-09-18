@@ -37,6 +37,24 @@ test.describe('Marketplace layout at 390px', () => {
     await expect(page.getByRole('radio', { name: 'All kinds', exact: true })).toBeVisible()
     await expect(page.getByRole('checkbox', { name: 'team-tools', exact: true })).toBeVisible()
   })
+
+  test('keeps long resource identity and command content contained while copy remains visible', async ({ page }) => {
+    await page.goto('/r/team-tools/skill/secure-review')
+    const heading = page.getByRole('heading', { name: 'secure-review', exact: true })
+    const command = page.getByTestId('command-text')
+    const copy = page.getByRole('button', { name: /Copy pinned CLI install command/ })
+
+    await heading.evaluate(element => { element.textContent = 'resource-' + 'long'.repeat(50) })
+    await command.evaluate(element => { element.textContent += '-' + 'argument'.repeat(80) })
+
+    await expect(copy).toBeVisible()
+    const commandScroller = command.locator('..')
+    expect(await commandScroller.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+    const copyBox = await copy.boundingBox()
+    expect(copyBox).not.toBeNull()
+    expect(copyBox!.x + copyBox!.width).toBeLessThanOrEqual(390)
+  })
 })
 
 test.describe('Marketplace layout at 768px', () => {
@@ -55,6 +73,16 @@ test.describe('Marketplace layout at 768px', () => {
 
 test.describe('Marketplace layout at 1440px', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
+
+  test('shows identity, installation, and the beginning of content above the fold', async ({ page }) => {
+    await page.goto('/r/team-tools/skill/secure-review')
+
+    await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeInViewport()
+    await expect(page.getByTestId('installation-panel')).toBeInViewport()
+    await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeInViewport()
+    await expect(page.getByRole('tab', { name: 'Content', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByTestId('safe-markdown')).toBeInViewport()
+  })
 
   test('keeps search and results anchored while search applies', async ({ page }) => {
     let releaseSearch = () => {}
@@ -107,7 +135,7 @@ test.describe('Marketplace layout at 1440px', () => {
     expect(Math.abs(resultAfter!.x - resultBefore!.x)).toBeLessThanOrEqual(1)
   })
 
-  test('uses a compact intro, sticky filter rail, and unified results column', async ({ page }) => {
+  test('uses a shared container, sticky filter rail, and unified results column', async ({ page }) => {
     await page.goto('/?kind=skill&registry=team-tools')
 
     const introduction = page.locator('.marketplace-intro')
@@ -141,9 +169,9 @@ test.describe('Marketplace layout at 1440px', () => {
     await expect(introductionParagraphs.last()).toHaveCSS('display', 'inline')
     expect(searchBox!.x).toBeGreaterThan(sidebarBox!.x + sidebarBox!.width)
     expect(catalogBox!.y).toBeGreaterThan(searchBox!.y + searchBox!.height)
-    expect(introductionBox!.x - sidebarBox!.x).toBeGreaterThan(40)
+    expect(Math.abs(introductionBox!.x - sidebarBox!.x)).toBeLessThanOrEqual(1)
     expect(resultsBox!.x).toBeGreaterThan(sidebarBox!.x)
-    expect(resultsBox!.width).toBeGreaterThan(900)
+    expect(resultsBox!.width).toBeGreaterThan(600)
     await expect(stickyFilters).toHaveCSS('position', 'sticky')
     await expect(page.getByRole('button', { name: 'Filters', exact: true })).toBeHidden()
     await expect(page.getByRole('radio', { name: 'Skill', exact: true })).toBeChecked()

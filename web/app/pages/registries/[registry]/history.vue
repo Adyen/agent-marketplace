@@ -37,9 +37,8 @@ useHead(() => ({
 
 <template>
   <div class="min-h-screen bg-[var(--am-color-bg-canvas)] text-default">
-    <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Registry', to: overviewPath }, { label: 'History' }]" />
-
-    <main id="main-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
+    <main id="main-content" class="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8" tabindex="-1">
+      <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Marketplace', to: '/' }, { label: registryData?.slug || registry, to: overviewPath }, { label: 'History' }]" />
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-[var(--am-color-bg-surface)] p-8">
         <h1 ref="heading" tabindex="-1" class="text-2xl font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Loading registry history</h1>
         <p class="mt-3 text-sm text-toned">Fetching immutable registry occurrences.</p>
@@ -56,10 +55,7 @@ useHead(() => ({
             <h1 ref="heading" tabindex="-1" class="mt-1 break-words text-3xl font-semibold tracking-tight text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">{{ registryData?.slug || registry }}</h1>
             <p class="mt-2 text-sm leading-6 text-toned">Each occurrence records the exact registry revision observed by this Marketplace.</p>
           </div>
-          <nav aria-label="Registry history actions" class="flex flex-wrap gap-2">
-            <UButton :to="overviewPath" color="neutral" variant="outline" size="sm">Registry overview</UButton>
-            <UButton :to="{ path: '/', query: { registry } }" color="neutral" variant="outline" size="sm">Search this registry</UButton>
-          </nav>
+          <NuxtLink :to="overviewPath" class="text-sm font-medium text-primary underline-offset-4 hover:underline">Back to registry</NuxtLink>
         </div>
         <UAlert v-if="registryError" color="warning" variant="subtle" icon="i-lucide-info" title="Registry metadata is unavailable" description="History is shown from the registry history endpoint, but overview metadata could not be loaded." class="mb-6" />
         <RegistryHistoryList :occurrences="history || []" />

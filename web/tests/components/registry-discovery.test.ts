@@ -5,7 +5,10 @@ import RegistryHistoryList from '../../app/components/RegistryHistoryList.vue'
 import RegistryOverview from '../../app/components/RegistryOverview.vue'
 
 const stubs = {
+  NuxtLink: defineComponent({ props: { to: String }, setup(props, { slots }) { return () => h('a', { href: props.to }, slots.default?.()) } }),
+  ResourceRow: defineComponent({ props: { item: Object }, setup(props) { return () => h('article', String((props.item as { name?: string })?.name || '')) } }),
   UBadge: defineComponent({ setup(_, { slots }) { return () => h('span', slots.default?.()) } }),
+  UInput: defineComponent({ setup: () => () => h('input') }),
 }
 
 const hostile = '<script>alert("x")</script>'
@@ -35,12 +38,20 @@ const occurrence = {
 describe('registry discovery surfaces', () => {
   it('renders registry metadata and hostile text as escaped text, with publisher/operator distinction', () => {
     const wrapper = mount(RegistryOverview, {
-      props: { registry, operator: { id: 'operator-id', name: 'Marketplace operator', canonical_url: 'https://market.example' } },
+      props: {
+        registry,
+        operator: { id: 'operator-id', name: 'Marketplace operator', canonical_url: 'https://market.example' },
+        resources: [{ registry_id: 'registry', kind: 'skill', name: 'review', revision: 'sha256:' + 'a'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64) }],
+        canonicalUrl: 'https://market.example',
+      },
       global: { stubs },
     })
 
-    expect(wrapper.text()).toContain('Registry publisher')
+    expect(wrapper.text()).toContain('Publisher:')
     expect(wrapper.text()).toContain('Marketplace operator')
+    expect(wrapper.text()).toContain('review')
+    expect(wrapper.html().indexOf('registry-resources-heading')).toBeLessThan(wrapper.html().indexOf('About this registry'))
+    expect(wrapper.get('details').attributes('open')).toBeUndefined()
     expect(wrapper.find('script').exists()).toBe(false)
     expect(wrapper.text()).toContain(hostile)
   })

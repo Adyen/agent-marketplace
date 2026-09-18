@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import CopyButton from '~/components/CopyButton.vue'
-import { installCommand, kindLabel, listAvailabilityCopy, registryLabel, resourceRoute } from '~/lib/presentation'
+import { installCommand, kindLabel, listAvailabilityCopy, registryLabel, registryRoute, resourceRoute } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
 import type { ResourceListItem } from '~/types/marketplace'
 
@@ -14,6 +14,7 @@ const props = defineProps<Props>()
 const { copied, copyError, copy } = useCopyText()
 
 const browserUrl = computed(() => resourceRoute(props.item))
+const registryUrl = computed(() => registryRoute(props.item))
 const command = computed(() => installCommand(props.item, props.canonicalUrl))
 const availability = computed(() => listAvailabilityCopy(props.item))
 const installable = computed(() => availability.value?.installable !== false)
@@ -45,14 +46,10 @@ const commandLabel = computed(() => {
         <div class="flex min-w-0 items-baseline gap-2">
           <span class="shrink-0 font-mono text-xs font-medium text-muted">{{ kindLabel(item.kind) }}</span>
           <span class="text-xs text-dimmed" aria-hidden="true">·</span>
-          <h2 class="min-w-0 truncate font-mono text-sm font-medium leading-5 tracking-tight">
-            <NuxtLink
-              v-if="browserUrl"
-              :to="browserUrl"
-              class="group/resource-link cursor-pointer rounded decoration-primary underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-            >
-              <span class="text-muted">{{ registryLabel(item) }}/</span><span class="font-semibold text-highlighted">{{ item.name }}</span>
-            </NuxtLink>
+          <h2 class="relative z-10 min-w-0 truncate font-mono text-sm font-medium leading-5 tracking-tight">
+            <template v-if="browserUrl && registryUrl">
+              <NuxtLink :to="registryUrl" class="cursor-pointer rounded text-muted decoration-primary underline-offset-4 hover:text-highlighted hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ registryLabel(item) }}</NuxtLink><span class="text-dimmed" aria-hidden="true">/</span><NuxtLink :to="browserUrl" :aria-label="`${registryLabel(item)}/${item.name}`" class="cursor-pointer rounded font-semibold text-highlighted decoration-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ item.name }}</NuxtLink>
+            </template>
             <span v-else><span class="text-muted">{{ registryLabel(item) }}/</span><span class="font-semibold text-highlighted">{{ item.name }}</span></span>
           </h2>
         </div>

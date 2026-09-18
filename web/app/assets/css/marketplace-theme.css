@@ -6,13 +6,13 @@
  */
 
 :root {
-  --am-color-bg-canvas: #f3f6f4;
+  --am-color-bg-canvas: #ffffff;
   --am-color-bg-surface: #ffffff;
-  --am-color-bg-subtle: #edf2ef;
+  --am-color-bg-subtle: #f5f6f5;
   --am-color-bg-raised: #ffffff;
   --am-color-bg-chrome: #ffffff;
   --am-color-bg-control: #ffffff;
-  --am-color-bg-hover: #e8eeea;
+  --am-color-bg-hover: #f4f5f4;
 
   --am-color-text-primary: #1b2620;
   --am-color-text-secondary: #53615a;
@@ -21,9 +21,9 @@
   --am-color-text-inverse: #ffffff;
   --am-color-text-on-action: #ffffff;
 
-  --am-color-border-default: #d6dfd9;
-  --am-color-border-strong: #abbab0;
-  --am-color-border-control: #84958b;
+  --am-color-border-default: #dedfde;
+  --am-color-border-strong: #b8bab8;
+  --am-color-border-control: #858885;
 
   --am-color-action-primary: #087a3d;
   --am-color-action-hover: #066632;
@@ -32,9 +32,9 @@
   --am-color-action-focus-ring: #087a3d;
   --am-color-action-selection: #ccebd8;
 
-  --am-color-code-bg: #edf2ef;
+  --am-color-code-bg: #f5f6f5;
   --am-color-code-bg-raised: #ffffff;
-  --am-color-code-border: #d6dfd9;
+  --am-color-code-border: #dedfde;
   --am-color-code-text: #1b2620;
   --am-color-code-text-muted: #5f6e65;
 }
