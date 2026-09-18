@@ -383,15 +383,14 @@ func marketplaceInstallSummary(plan *marketplace.PreparedInstall) MarketplaceIns
 	findings := map[MarketplaceInstallFinding]struct{}{}
 	var add func(*marketplace.PreparedInstall, bool)
 	add = func(current *marketplace.PreparedInstall, leaf bool) {
-		preview := current.Preview()
 		source := nonEmpty(current.Pin.RegistrySlug, current.Pin.RegistryID)
 		if source != "" {
 			sources[source] = struct{}{}
 		}
-		for _, capability := range preview.Capabilities {
+		for _, capability := range current.Artifact.Manifest.Capabilities {
 			capabilities[capability] = struct{}{}
 		}
-		for _, finding := range preview.Findings {
+		for _, finding := range current.Revision.Assessment.Findings {
 			message := nonEmpty(finding.Message, finding.Code)
 			findings[MarketplaceInstallFinding{Resource: current.Pin.Name, Severity: finding.Severity, Message: message}] = struct{}{}
 		}
