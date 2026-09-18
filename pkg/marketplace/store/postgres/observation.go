@@ -120,9 +120,6 @@ func (s *Store) AcquireRegistryLease(ctx context.Context, id store.RegistryID, o
 			return store.ErrTopology
 		}
 		now := time.Now().UTC()
-		if _, err := tx.q.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, "agent-marketplace:registry-observation:"+id.String()); err != nil {
-			return err
-		}
 		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET work_lease_owner=$1, work_lease_until=$2 WHERE registry_id=$3 AND (work_lease_owner='' OR work_lease_until<=$4)`, owner, timeToMicro(now.Add(duration)), id, timeToMicro(now))
 		if err != nil {
 			return err

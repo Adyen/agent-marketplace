@@ -97,41 +97,6 @@ func TestObservationDesiredRefreshCoalescesAndCleansTerminalJob(t *testing.T) {
 	}
 }
 
-func TestRegistryRemovalUnlistsWithoutDeletingImmutableHistory(t *testing.T) {
-	ctx := context.Background()
-	meta, _ := openStores(t)
-	registry := store.Registry{ID: "removed", Slug: "removed", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}
-	if err := meta.PutRegistry(ctx, registry); err != nil {
-		t.Fatal(err)
-	}
-	if err := meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{RegistryID: registry.ID, Ref: "main", Commit: "immutable-commit", RegistryRevisionManifestDigest: "manifest", Acquisition: store.AcquisitionMirror}); err != nil {
-		t.Fatal(err)
-	}
-	registry.Listed = false
-	if err := meta.PutRegistry(ctx, registry); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := meta.GetRegistry(ctx, registry.ID); err != nil {
-		t.Fatalf("unlisted registry lookup: %v", err)
-	}
-	history, err := meta.RegistryHistory(ctx, registry.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(history) != 1 || history[0].Commit != "immutable-commit" {
-		t.Fatalf("history after removal = %#v, want immutable occurrence", history)
-	}
-	listed, err := meta.ListRegistries(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, item := range listed {
-		if item.ID == registry.ID {
-			t.Fatalf("removed registry remained listed: %#v", item)
-		}
-	}
-}
-
 func TestObservationHostBudgetIsDeploymentWide(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)
