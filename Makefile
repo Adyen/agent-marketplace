@@ -233,17 +233,17 @@ clean:
 devin-probe:
 	@echo "Running local Devin runtime probes (isolated HOME; read-only commands) ..."
 	@AGENT_MARKETPLACE_DEVIN_PROBES=1 DEVIN_PROBE_REQUIRE=$(DEVIN_PROBE_REQUIRE) \
-		$(GO) test -v -count=1 -timeout 10m ./internal/devinprobe/
+		CGO_ENABLED=0 $(GO) test -v -count=1 -timeout 10m ./internal/devinprobe/
 
 .PHONY: harness-compat-check harness-compat-config
 
 harness-compat-check:
-	$(GO) test ./tools/harness-compat
-	HARNESS_COMPAT_TARGET= $(GO) -C e2e test -count=1 -run '^TestCompatibility' .
+	CGO_ENABLED=0 $(GO) test ./tools/harness-compat
+	CGO_ENABLED=0 HARNESS_COMPAT_TARGET= $(GO) -C e2e test -count=1 -run '^TestCompatibility' .
 	shellcheck tools/harness-compat/*.sh
 
 harness-compat-config:
-	HARNESS_COMPAT_TARGET=all HARNESS_COMPAT_NATIVE_MODE=unavailable \
+	CGO_ENABLED=0 HARNESS_COMPAT_TARGET=all HARNESS_COMPAT_NATIVE_MODE=unavailable \
 		HARNESS_COMPAT_NATIVE_REASON="Configuration-only verification; native probes run in CI" \
 		$(GO) -C e2e test -count=1 -timeout 15m -run '^TestHarnessCompatibility$$' .
 
