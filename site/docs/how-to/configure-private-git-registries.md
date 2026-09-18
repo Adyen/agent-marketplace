@@ -27,9 +27,14 @@ git ls-remote git@github.com:example-org/private-skills.git
 3. Configure the registry in `agent-marketplace` with the same SSH URL:
 
 ```yaml
-registries:
-  - url: git@github.com:example-org/private-skills.git
+apiVersion: agent-marketplace/v4
+sources:
+  private-skills:
+    git: git@github.com:example-org/private-skills.git
     ref: main
+resources:
+  private-skills:
+    all: true
 ```
 
 ## Use an HTTPS URL with existing Git authentication
@@ -43,9 +48,14 @@ git ls-remote https://github.com/example-org/private-skills.git
 Then configure the same URL in `agent-marketplace`:
 
 ```yaml
-registries:
-  - url: https://github.com/example-org/private-skills.git
+apiVersion: agent-marketplace/v4
+sources:
+  private-skills:
+    git: https://github.com/example-org/private-skills.git
     ref: main
+resources:
+  private-skills:
+    all: true
 ```
 
 Do not use `git config credential.helper store` or any other global Git mutation to satisfy `agent-marketplace`.

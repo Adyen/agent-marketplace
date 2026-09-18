@@ -125,8 +125,8 @@ tags:
 	if err != nil {
 		t.Fatalf("expected migrated v4 config to load: %v", err)
 	}
-	if !equalStrings(v4Cfg.Groups["registry"].Tags, []string{"k8s"}) {
-		t.Fatalf("expected tags preserved in v4 group, got %v", v4Cfg.Groups["registry"].Tags)
+	if !equalStrings(v4Cfg.Groups["infra"].Tags, []string{"k8s"}) {
+		t.Fatalf("expected tags preserved in v4 group, got %v", v4Cfg.Groups["infra"].Tags)
 	}
 
 	migratedData, err := os.ReadFile(filepath.Join(agentsDir, "config.yaml"))
@@ -302,8 +302,8 @@ func TestMigrateCommandToV4IsExplicitAndSupportsDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrated config is not v4: %v", err)
 	}
-	if migrated.Sources["registry"].Git != "https://example.test/agents.git" {
-		t.Fatalf("migrated source = %#v", migrated.Sources["registry"])
+	if migrated.Sources["agents"].Git != "https://example.test/agents.git" {
+		t.Fatalf("migrated source = %#v", migrated.Sources["agents"])
 	}
 }
 

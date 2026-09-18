@@ -70,11 +70,11 @@ registries:
 	if err != nil {
 		t.Fatalf("load migrated v4: %v", err)
 	}
-	source := cfg.Sources["registry"]
+	source := cfg.Sources["agents"]
 	if source.Git != "https://example.test/agents.git" || source.Ref != "main" || source.Path != "skills" || source.SourceHarness != "claude" {
 		t.Fatalf("source = %#v", source)
 	}
-	group := cfg.Groups["registry"]
+	group := cfg.Groups["agents"]
 	if group.Required == nil || !*group.Required || len(group.Include) != 1 || group.Include[0].Locator != "skill/review" {
 		t.Fatalf("group = %#v", group)
 	}
@@ -90,6 +90,163 @@ registries:
 	}
 	if loaded.APIVersion != APIVersionV4 || len(loaded.Registries) != 1 || loaded.Registries[0].Skills.Include[0] != "review" {
 		t.Fatalf("adapted config = %#v", loaded)
+	}
+}
+
+func TestMigrateConfigFilesToV4UsesRegistryBasenames(t *testing.T) {
+	dir := t.TempDir()
+	agentsDir := filepath.Join(dir, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "local-resources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(agentsDir, "config.yaml")
+	writeV2Config(t, path, `apiVersion: agent-marketplace/v2
+registries:
+  - url: https://example.test/team/agents.git
+    ref: main
+    skills: {include: [https-skill]}
+  - url: git@example.test:other/agents.git
+    ref: main
+    skills: {include: [scp-skill]}
+  - url: git@example.test:team/security-skills.git
+    ref: main
+    skills: {include: [security-skill]}
+  - url: ./local-resources
+    skills: {include: [local-skill]}
+`)
+	if _, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	cfg, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatalf("load migrated v4: %v", err)
+	}
+	expected := []struct {
+		name     string
+		git      string
+		dir      string
+		includes []string
+	}{
+		{name: "agents", git: "https://example.test/team/agents.git", includes: []string{"skill/https-skill"}},
+		{name: "agents-2", git: "git@example.test:other/agents.git", includes: []string{"skill/scp-skill"}},
+		{name: "security-skills", git: "git@example.test:team/security-skills.git", includes: []string{"skill/security-skill"}},
+		{name: "local-resources", dir: filepath.Join(dir, "local-resources"), includes: []string{"skill/local-skill"}},
+	}
+	if len(cfg.Sources) != len(expected) {
+		t.Fatalf("sources = %#v", cfg.Sources)
+	}
+	for _, want := range expected {
+		source, ok := cfg.Sources[want.name]
+		if !ok {
+			t.Fatalf("missing source %q in %#v", want.name, cfg.Sources)
+		}
+		if source.Git != want.git || source.Directory != want.dir || source.Ref != "main" && want.git != "" {
+			t.Fatalf("source %q = %#v", want.name, source)
+		}
+		group, ok := cfg.Groups[want.name]
+		if !ok {
+			t.Fatalf("missing resource group %q in %#v", want.name, cfg.Groups)
+		}
+		if len(group.Include) != len(want.includes) {
+			t.Fatalf("group %q includes = %#v", want.name, group.Include)
+		}
+		for i, locator := range want.includes {
+			if group.Include[i].Locator != locator {
+				t.Fatalf("group %q include[%d] = %q, want %q", want.name, i, group.Include[i].Locator, locator)
+			}
+		}
+	}
+}
+
+func TestMigrateConfigFilesToV4SerializesTelemetryOnlyWhenConfigured(t *testing.T) {
+	base := `apiVersion: agent-marketplace/v2
+harnesses: [factory]
+%sregistries:
+  - url: https://example.test/agents.git
+    ref: main
+    skills: {include: [review]}
+`
+	tests := []struct {
+		name          string
+		telemetry     string
+		wantTelemetry bool
+	}{
+		{name: "absent", telemetry: "", wantTelemetry: false},
+		{name: "configured", telemetry: "telemetry: {level: basic}\n", wantTelemetry: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			writeV2Config(t, path, fmt.Sprintf(base, tt.telemetry))
+			if _, err := MigrateConfigFilesToV4(MigratePaths{User: path}, V4MigrationUser, false); err != nil {
+				t.Fatalf("migration failed: %v", err)
+			}
+			data := readConfigString(t, path)
+			if !strings.Contains(data, "apiVersion: agent-marketplace/v4") || !strings.Contains(data, "agents:") {
+				t.Fatalf("migrated config missing v4 marker or agents source: %s", data)
+			}
+			if got := strings.Contains(data, "telemetry:"); got != tt.wantTelemetry {
+				t.Fatalf("telemetry key presence = %t, want %t: %s", got, tt.wantTelemetry, data)
+			}
+			cfg, err := LoadV4ConfigFromPath(path)
+			if err != nil {
+				t.Fatalf("load migrated v4: %v", err)
+			}
+			if !tt.wantTelemetry {
+				if cfg.Telemetry != nil {
+					t.Fatalf("telemetry = %#v, want nil", cfg.Telemetry)
+				}
+				return
+			}
+			if cfg.Telemetry == nil || cfg.Telemetry.Level != "basic" {
+				t.Fatalf("telemetry = %#v, want level basic", cfg.Telemetry)
+			}
+		})
+	}
+}
+
+func TestMigrateConfigFilesToV4KeepsHarnessDefaultsAtTopLevel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeV2Config(t, path, `apiVersion: agent-marketplace/v2
+harnesses: [factory]
+registries:
+  - url: https://example.test/agents.git
+    ref: main
+    skills: {include: [review]}
+  - url: https://example.test/security.git
+    ref: main
+    harnesses: [claude]
+    skills: {include: [audit]}
+`)
+	if _, err := MigrateConfigFilesToV4(MigratePaths{User: path}, V4MigrationUser, false); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	data := readConfigString(t, path)
+	if !strings.Contains(data, "agents:") || !strings.Contains(data, "security:") {
+		t.Fatalf("migrated config missing expected sources: %s", data)
+	}
+	if got := strings.Count(data, "harnesses:"); got != 2 {
+		t.Fatalf("harnesses: occurrences = %d, want 2 (root plus explicit security override): %s", got, data)
+	}
+	cfg, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatalf("load migrated v4: %v", err)
+	}
+	if len(cfg.Harnesses) != 1 || cfg.Harnesses[0] != "factory" {
+		t.Fatalf("root harnesses = %#v, want [factory]", cfg.Harnesses)
+	}
+	agents := cfg.Groups["agents"]
+	if agents.HasHarnesses || agents.Harnesses != nil {
+		t.Fatalf("agents group expanded inherited harnesses: %#v", agents)
+	}
+	security := cfg.Groups["security"]
+	if !security.HasHarnesses || len(security.Harnesses) != 1 || security.Harnesses[0] != "claude" {
+		t.Fatalf("security group harnesses = %#v, want [claude]", security)
 	}
 }
 
@@ -237,7 +394,7 @@ registries:
 	if v4.Materialization == nil || v4.Materialization.Mode != "file" || v4.Materialization.Targets["factory"] != "symlink" {
 		t.Fatalf("materialization = %#v", v4.Materialization)
 	}
-	if got := v4.Groups["registry"].Include[0].Locator; got != "skill/review" {
+	if got := v4.Groups["resources"].Include[0].Locator; got != "skill/review" {
 		t.Fatalf("migrated content locator = %q", got)
 	}
 }

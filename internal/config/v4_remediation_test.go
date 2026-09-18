@@ -217,7 +217,7 @@ registries:
 	if err != nil {
 		t.Fatal(err)
 	}
-	group := v4.Groups["registry"]
+	group := v4.Groups["agents"]
 	if !group.HasTags || group.Tags == nil || len(group.Tags) != 0 || !group.HasHarnesses || group.Harnesses == nil || len(group.Harnesses) != 0 {
 		t.Fatalf("empty overrides lost: %#v", group)
 	}

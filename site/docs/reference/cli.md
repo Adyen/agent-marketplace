@@ -54,7 +54,7 @@ When `install` or `remove` receives a name shared by multiple resource kinds, `-
 
 ## `init`
 
-Creates a minimal user configuration with the canonical v2 schema and an explicit harness list. It does not add registries or install resources. An existing user configuration is left unchanged.
+Creates a minimal user configuration with the v4 schema and an explicit harness list. It does not add sources or install resources. An existing user configuration is left unchanged.
 
 ```text
 agent-marketplace init [flags]
@@ -115,7 +115,7 @@ Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` colu
 
 ## `install`
 
-Adds selections to one configuration layer and synchronizes materialized output. It also registers hosted Marketplace endpoints and installs exact Marketplace resource revisions.
+Adds selections to one writable configuration layer and synchronizes materialized output. V4 roots are authored through their `sources` and `resources` maps; configuration-writing install operations do not rewrite a v4 root.
 
 ```text
 agent-marketplace install <resource-name> [flags]
@@ -150,9 +150,9 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--yes` | boolean | no | `false` | Automation spelling of `--accept-risk`. |
 | `--verbose` | boolean | no | `false` | Shows the complete collection inventory and technical Marketplace preview, including revisions, digests, acquisition details, and provenance. |
 
-Registering an endpoint verifies its well-known identity and canonical URL before writing it. Re-registering the same identity in the same or a broader scope is a no-op.
+A Marketplace endpoint lookup verifies its well-known identity and canonical URL. To use the endpoint from a v4 root, declare a named `marketplace` source and add an exact request to its `resources` group; keep the matching verified layer lock next to the configuration.
 
-A Marketplace resource install resolves and verifies the exact artifact before configuration mutation. By default it shows the resource kind, source, up to ten collection members, human-readable findings, and deduplicated active capabilities. `--verbose` shows the complete collection inventory and technical preview. Rejected or revoked resources cannot be installed.
+A Marketplace resource install resolves and verifies the exact artifact before configuration mutation. It prints the digest, license, findings, capabilities, provenance, and acquisition mode; by default it shows up to ten collection members, while `--verbose` shows the complete collection inventory and technical preview. Rejected or revoked resources cannot be installed. Warning findings and active capabilities require `--accept-risk` or `--yes`; consent applies only to that verified invocation.
 
 In an interactive terminal, warning findings and active capabilities produce an `Install despite these risks? [y/N]:` prompt. Accepting commits the exact prepared revision and prints only the result. Non-interactive execution still requires `--accept-risk` or `--yes` and returns a nonzero exit code without consent.
 
@@ -297,40 +297,17 @@ The report can contain these sections:
 
 Fatal resolution errors return exit status 1 after the report is printed.
 
-## `migrate`
+## Configuration authoring
 
-With no target flag, `migrate` converts legacy configuration to v4:
+The CLI reads v4 roots and adapts their `sources` and `resources` model for discovery, status, synchronization, and materialization. A root must declare `apiVersion: agent-marketplace/v4`; included fragments may omit `apiVersion` and inherit v4 from the root.
 
-```text
-agent-marketplace migrate [--to v4] [--scope all|user|repo|local] [--dry-run]
-```
+Source kinds are explicit:
 
-`--to v4` is an accepted alias for the default. Use `--to v2 --harnesses <targets>` only for the legacy structural-remediation flow, which preserves valid v2/v3 `apiVersion` values, refuses files containing legacy `identity` or `team_profiles` fields, and does **not** convert a file to v4. The conversion preserves semantics and selection behavior for representable inputs or it does not publish: it validates each legacy input and generated v4 document with the normal v4 reader and runtime adapter; an already-v4 file is parse-validated and skipped. Migration regenerates canonical v4 YAML and does not promise authored comments or formatting. Publication preserves each original before replacing files, and rolls back already-published files if a later replacement fails. Temporary files and successful-publication backups are cleaned up. It refuses constructs whose meaning or provenance cannot be preserved, including legacy include trees, hosted Marketplace selections without proven pin provenance, collection-derived aliases that cannot be represented, and unrepresentable revisions or policy.
+- `git` sources require `ref` and use the owning layer's exact Git lock.
+- `directory` sources are live, relative to the declaring file, and never acquire a Git lock.
+- `marketplace` sources require a matching verified layer lock for explicit requests.
 
-Exact legacy Marketplace pins migrate offline from verified local cache evidence: each proven endpoint becomes a `sources.<name>.marketplace` source with direct requests under `resources`, and the owning layer's lock is created or upgraded to `agent-marketplace-lock/v2` carrying the identity, integrity, and selection records. The migrated config and its lock are published together in one journaled dependency transaction.
-
-By default, `migrate` examines all writable layers: user (`~/.agents/config.yaml`), repository (`.agents/config.yaml`), and repository-personal (`.agents/config.local.yaml`). It never reads or writes organization configuration (`/etc/agent-marketplace/config.yaml`), and Git/directory-only conversion leaves locks unchanged. Use `--scope` to select exactly one writable layer; a missing file in the selected scope is skipped. With `--dry-run`, validation and conversion run as a preview and neither configuration files nor locks are written.
-
-| Flag | Type | Required | Default | Description |
-|---|---|:---:|---|---|
-| `--to` | string | no | `v4` | Migration target. Omitting it or passing `v4` selects v4 conversion; `v2` selects legacy structural remediation. |
-| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. Organization is never a target. |
-| `--dry-run` | boolean | no | `false` | Validates and previews the selected conversion without writing configuration files or locks. |
-| `--harnesses` | comma-separated strings | conditionally | existing user harnesses | Legacy structural-remediation (`--to v2`) option. Supplies the user harness set when that remediation requires one. |
-
-When a harness set is required but absent, terminal execution prompts and non-terminal execution requires `--harnesses`. All legacy-remediation inputs are validated before any file is written.
-
-A successful explicit conversion reports each changed (or, for `--dry-run`, planned) writable file. If nothing needs conversion it reports:
-
-```text
-No legacy config files require v4 migration
-```
-
-### Reading and writing v4 configuration
-
-Normal CLI readers accept a v4 root (`apiVersion: agent-marketplace/v4`) and adapt its Git/directory `sources` and `resources` model for normal discovery and synchronization. Source kinds are explicit, and directory sources are live, relative to the declaring file, and never acquire a Git lock. V4 roots may use local include trees; a root must declare v4, while an included fragment may omit `apiVersion`. Explicit `marketplace` source requests are hydrated read-only from a matching normalized `agent-marketplace-lock/v2` record in the owning layer's lock; a missing, malformed, or mismatched lock fails closed. Dynamic Marketplace selectors, lock acquisition/update, and v4 Marketplace editing remain unsupported. Repository-personal v4 roots reject disallowed layer fields with `v4.layer-field`.
-
-Effective reloads used by staged configuration operations consume staged v4 root/include bytes through in-memory overlays while retaining canonical paths. Legacy config writers protect v4 files. Configuration-editing operations that use the legacy writer refuse with a `v4.writer-opt-in` diagnostic instead of rewriting a v4 root into the legacy shape. Edit the v4 source/resource declarations directly; `migrate --to v2` is not a v4 editor.
+Use the [v4 configuration reference](configuration.md) to author source declarations and resource groups. Configuration edits preserve the authored v4 shape; unknown fields, mixed source kinds, invalid locators, and mismatched Marketplace lock evidence fail closed.
 
 ## `convert`
 

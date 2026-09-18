@@ -65,14 +65,16 @@ REGISTRY_PATH=$(pwd)
 cd $(mktemp -d)
 mkdir -p .agents
 cat > .agents/config.yaml << EOF
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - claude
-registries:
-  - path: ${REGISTRY_PATH}
-    skills:
-      include:
-        - hello-world
+sources:
+  local:
+    directory: ${REGISTRY_PATH}
+resources:
+  local:
+    include:
+      - skill/hello-world
 EOF
 ```
 

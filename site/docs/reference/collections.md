@@ -26,7 +26,6 @@ The fields in `COLLECTION.yaml` are:
 | `description` | string | no | Short description. |
 | `version` | string | no | Display-only version metadata; matching is by `name`. |
 | `resources` | list | no | General member entries. |
-| `skills` | list | no | Legacy skill-only member entries. |
 | `includes` | list | no | Nested collections to include. |
 
 ## `resources` item
@@ -39,14 +38,7 @@ The fields in `COLLECTION.yaml` are:
 | `path` | string | no | Provider path hint. |
 | `ref` | string | no | Provider ref hint. |
 
-## `skills` item (legacy)
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `name` | string | yes | Skill name. |
-| `registry` | string | no | Provider registry hint. |
-| `path` | string | no | Provider path hint. |
-| `ref` | string | no | Provider ref hint. |
 
 ## Nested collections
 
@@ -68,9 +60,15 @@ Shared children are valid across sibling include branches. An ancestor repeated 
 A consumer selects a collection like any other resource:
 
 ```yaml
-collections:
-  include:
-    - platform-onboarding
+apiVersion: agent-marketplace/v4
+sources:
+  shared:
+    git: https://github.com/example-org/shared-agents.git
+    ref: main
+resources:
+  shared:
+    include:
+      - collection/platform-onboarding
 ```
 
 Collections expand into their members before resource resolution. The collection itself is not materialized.

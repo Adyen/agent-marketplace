@@ -20,16 +20,18 @@ Write a minimal committed configuration:
 
 ```yaml
 # .agents/config.yaml
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - claude
-registries:
-  - url: https://github.com/example-org/agent-resources.git
+sources:
+  shared:
+    git: https://github.com/example-org/agent-resources.git
     ref: v1.4.0
     path: resources
-    skills:
-      include:
-        - code-review
+resources:
+  shared:
+    include:
+      - skill/code-review
 ```
 
 Replace `https://github.com/example-org/agent-resources.git` with a registry you control or a public example.

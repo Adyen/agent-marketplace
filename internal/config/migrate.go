@@ -11,12 +11,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	telemetryconfig "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 	"gopkg.in/yaml.v3"
@@ -729,16 +729,16 @@ type v4MigrationGroup struct {
 }
 
 type v4MigrationDocument struct {
-	APIVersion          string                       `yaml:"apiVersion"`
-	Sources             map[string]v4MigrationSource `yaml:"sources,omitempty"`
-	Resources           map[string]v4MigrationGroup  `yaml:"resources,omitempty"`
-	Harnesses           []string                     `yaml:"harnesses,omitempty"`
-	AllowedRegistries   *[]string                    `yaml:"allowed_registries,omitempty"`
-	AllowedMarketplaces *[]string                    `yaml:"allowed_marketplaces,omitempty"`
-	Backup              *BackupConfig                `yaml:"backup,omitempty"`
-	Logging             *LoggingConfig               `yaml:"logging,omitempty"`
-	Telemetry           any                          `yaml:"telemetry,omitempty"`
-	Materialization     *MaterializationConfig       `yaml:"materialization,omitempty"`
+	APIVersion          string                           `yaml:"apiVersion"`
+	Sources             map[string]v4MigrationSource     `yaml:"sources,omitempty"`
+	Resources           map[string]v4MigrationGroup      `yaml:"resources,omitempty"`
+	Harnesses           []string                         `yaml:"harnesses,omitempty"`
+	AllowedRegistries   *[]string                        `yaml:"allowed_registries,omitempty"`
+	AllowedMarketplaces *[]string                        `yaml:"allowed_marketplaces,omitempty"`
+	Backup              *BackupConfig                    `yaml:"backup,omitempty"`
+	Logging             *LoggingConfig                   `yaml:"logging,omitempty"`
+	Telemetry           *telemetryconfig.TelemetryConfig `yaml:"telemetry,omitempty"`
+	Materialization     *MaterializationConfig           `yaml:"materialization,omitempty"`
 }
 
 type v4MigrationInput struct {
@@ -1129,11 +1129,10 @@ func publishV4MigrationTransaction(ctx context.Context, plans []v4MigrationPlan)
 
 func encodeV4MigrationWithEvidence(cfg *Config, configPath string, kind layerKind, evidence MarketplaceMigrationEvidence) (v4MigrationEncoding, error) {
 	doc := v4MigrationDocument{APIVersion: APIVersionV4, Sources: map[string]v4MigrationSource{}, Resources: map[string]v4MigrationGroup{}, Harnesses: append([]string(nil), cfg.Harnesses...), AllowedRegistries: cfg.AllowedRegistries, AllowedMarketplaces: cfg.AllowedMarketplaces, Backup: cfg.Backup, Logging: cfg.Logging, Telemetry: cfg.Telemetry, Materialization: cfg.Materialization}
-	registryCount := len(cfg.Registries)
 	encoding := v4MigrationEncoding{}
-	for index, original := range cfg.Registries {
+	for _, original := range cfg.Registries {
 		entry := resolveRegistryEntry(cfg, original)
-		name := v4MigrationSourceName(index, registryCount)
+		name := v4MigrationRegistrySourceName(doc.Sources, entry.URL)
 		source := v4MigrationSource{Ref: entry.Ref, Path: NormalizeRegistryPath(entry.Path), SourceHarness: entry.SourceHarness}
 		if entry.IsLocal() {
 			if kind == userLayer && entry.IsRepoRelativeLocal() {
@@ -1151,8 +1150,8 @@ func encodeV4MigrationWithEvidence(cfg *Config, configPath string, kind layerKin
 		}
 		doc.Sources[name] = source
 		group := v4MigrationGroup{}
-		if entry.Harnesses != nil {
-			values := cloneV4StringList(entry.Harnesses)
+		if original.Harnesses != nil {
+			values := cloneV4StringList(original.Harnesses)
 			group.Harnesses = &values
 		}
 		hasExplicit := false
@@ -1298,15 +1297,7 @@ func v4MigrationMarketplaceSourceName(sources map[string]v4MigrationSource, alia
 			return alias
 		}
 	}
-	for index := 1; ; index++ {
-		name := "marketplace"
-		if index > 1 {
-			name = fmt.Sprintf("marketplace-%d", index)
-		}
-		if _, taken := sources[name]; !taken {
-			return name
-		}
-	}
+	return v4MigrationUniqueSourceName(sources, "marketplace")
 }
 
 // verifyMigrationEvidenceRecord checks that a verified lock record represents
@@ -1356,15 +1347,32 @@ func legacyLocalBase(configPath string, kind layerKind) string {
 	return filepath.Dir(filepath.Dir(configPath))
 }
 
-func v4MigrationSourceName(index, registryCount int) string {
-	if index == 0 {
-		return "registry"
+// v4MigrationRegistrySourceName derives a v4 source name from the basename of
+// the registry's normalized Git URL or local directory, falling back to
+// "registry" when the basename is not a valid v4 source name.
+func v4MigrationRegistrySourceName(sources map[string]v4MigrationSource, registryURL string) string {
+	name := NormalizeGitURL(registryURL)
+	if separator := strings.LastIndexAny(name, "/:"); separator >= 0 {
+		name = name[separator+1:]
 	}
-	// YAML mappings are serialized in key order. Pad generated suffixes to the
-	// width of the total registry count so ToLegacyConfig's deterministic source
-	// traversal retains authored order for any registry count.
-	width := len(strconv.Itoa(registryCount))
-	return fmt.Sprintf("registry-%0*d", width, index+1)
+	if !v4SourceNameRE.MatchString(name) {
+		name = "registry"
+	}
+	return v4MigrationUniqueSourceName(sources, name)
+}
+
+// v4MigrationUniqueSourceName allocates base, base-2, base-3, ... until an
+// unused source name is found.
+func v4MigrationUniqueSourceName(sources map[string]v4MigrationSource, base string) string {
+	for index := 1; ; index++ {
+		name := base
+		if index > 1 {
+			name = fmt.Sprintf("%s-%d", base, index)
+		}
+		if _, taken := sources[name]; !taken {
+			return name
+		}
+	}
 }
 
 func v4ResourceKindName(kind ir.ResourceKind) string {

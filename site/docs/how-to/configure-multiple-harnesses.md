@@ -22,7 +22,7 @@ Press `H` to open the harness modal. Toggle each target with `space` and press `
 Add the harnesses to `~/.agents/config.yaml` or `.agents/config.yaml`:
 
 ```yaml
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - claude
   - cursor
@@ -31,17 +31,20 @@ harnesses:
 
 ## 3. Narrow a registry to specific harnesses
 
-A registry can emit only a subset of the global targets:
+A resource group can emit only a subset of the global targets:
 
 ```yaml
-registries:
-  - url: https://github.com/example-org/claude-tools.git
+sources:
+  claude-tools:
+    git: https://github.com/example-org/claude-tools.git
     ref: v1.0.0
-    harnesses:
-      - claude
+resources:
+  claude-tools:
+    include: [skill/code-review]
+    harnesses: [claude]
 ```
 
-The entry's `harnesses` list intersects with the effective list.
+The group's `harnesses` list intersects with the effective list.
 
 ## 4. Sync and verify
 
