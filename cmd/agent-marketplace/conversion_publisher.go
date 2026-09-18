@@ -36,6 +36,11 @@ func (p conversionPublisher) materialize(result *hcc.Result, outDir string, matO
 		if err := p.preflight(outDir); err != nil {
 			return nil, err
 		}
+		if p.rootGuard != nil {
+			if err := p.rootGuard(); err != nil {
+				return nil, err
+			}
+		}
 		report, err := hcc.Materialize(converted, outDir, matOpts...)
 		protectConversionSharedCandidates(report, p.shared)
 		return report, err

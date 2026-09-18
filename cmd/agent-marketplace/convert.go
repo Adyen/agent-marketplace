@@ -137,10 +137,6 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	if err != nil {
 		return fmt.Errorf("convert: %w", err)
 	}
-	if err := rootGuard(); err != nil {
-		return err
-	}
-
 	writeMode := hcc.WriteModeOverwrite
 	matOpts := []hcc.WriteOption{hcc.WithWriteMode(writeMode)}
 	if syncMode {
