@@ -148,20 +148,22 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--as` | safe local name | no | resource name | Changes the generated local name while retaining the Marketplace coordinate. |
 | `--accept-risk` | boolean | no | `false` | Accepts the verified revision's warning findings and active capabilities. |
 | `--yes` | boolean | no | `false` | Automation spelling of `--accept-risk`. |
+| `--verbose` | boolean | no | `false` | Shows the complete collection inventory and technical Marketplace preview, including revisions, digests, acquisition details, and provenance. |
 
 Registering an endpoint verifies its well-known identity and canonical URL before writing it. Re-registering the same identity in the same or a broader scope is a no-op.
 
-A Marketplace resource install resolves and verifies the exact artifact before configuration mutation, prints its digest, license, findings, capabilities, provenance, and acquisition mode, and writes an exact pin under `marketplaces[].resources`. Rejected or revoked resources cannot be installed. Warning findings and active capabilities require `--accept-risk` or `--yes`; consent applies only to that verified invocation.
+A Marketplace resource install resolves and verifies the exact artifact before configuration mutation. By default it shows the resource kind, source, up to ten collection members, human-readable findings, and deduplicated active capabilities. `--verbose` shows the complete collection inventory and technical preview. Rejected or revoked resources cannot be installed.
 
-A successful resource installation prints a scope-specific confirmation:
+In an interactive terminal, warning findings and active capabilities produce an `Install despite these risks? [y/N]:` prompt. Accepting commits the exact prepared revision and prints only the result. Non-interactive execution still requires `--accept-risk` or `--yes` and returns a nonzero exit code without consent.
+
+Successful Marketplace installs print a concise confirmation:
 
 ```text
-Installed frontend-design in this repo
-Installed frontend-design user-wide
-Installed frontend-design locally
+✓ Installed frontend-design
+✓ Installed coderabbit-skills · 3 skills
 ```
 
-Collection installation prints `Installed collection <name> <scope-label>`. Unmet resource prerequisites are reported as warnings and do not install prerequisite resources automatically.
+Configured Git registry installs retain their scope-specific confirmation, such as `Installed frontend-design in this repo`. Unmet resource prerequisites are reported as warnings and do not install prerequisite resources automatically.
 
 For configured Git registries, discovery stays on the exact inventory of every layer that already has a valid lock. A registry may bootstrap from its mutable ref only when its own configuration layer has no lock; a missing lock in one layer does not make another layer's post-lock content installable.
 
