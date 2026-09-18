@@ -96,7 +96,9 @@ The protocol SHALL support a named, versioned, independently enabled, gating or 
 - **WHEN** an analyzer declares a `run` block with an `implementation_digest` and a `version`
 - **THEN** the marketplace MUST hash the executable at `run.command` and refuse to run it when the digest does not match
 - **AND** the runner MUST echo the configured `version` in its JSON response
-- **AND** a version mismatch, malformed output, or non-zero exit MUST produce an `error` verdict with a non-consentable `marketplace.policy.audit-unavailable` finding
+- **AND** a version mismatch, malformed output, or non-zero exit MUST produce an `error` verdict
+- **AND** for a gating analyzer that `error` verdict MUST carry a non-consentable `marketplace.policy.audit-unavailable` finding
+- **AND** for an advisory analyzer the runner error MUST remain an `error` audit with no `marketplace.policy.audit-unavailable` finding
 
 #### Scenario: Rulepack analyzer
 

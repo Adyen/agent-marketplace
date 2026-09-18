@@ -87,12 +87,15 @@ type Audit struct {
 	Verdict         string // pass | warn | fail | error | skipped
 	Summary         string // one human sentence rendered on the badge
 	Findings        []Finding
-	FindingCount    int
-	DurationNS      int64
+	Duration        time.Duration
 	Error           string // redacted; set only when Verdict is error
-	ResultDigest    string // sha256:<64 lowercase hex>
 }
 ```
+
+`FindingCount`, `DurationNS`, and `ResultDigest` are not `Audit` fields. They are
+derived audit summary fields. `store.ResourceAudit` computes `ResultDigest` over
+the stored audit, and the API's `AuditSummary` derives `finding_count` and
+`duration_ns` (`Duration.Nanoseconds()`) when rendering each revision audit.
 
 `Finding` gains `AnalyzerID` so attribution survives into the store, which it does not today.
 
@@ -145,9 +148,11 @@ working directory, no inherited credentials, and errors redacted before they rea
 
 Protocol: one JSON request on stdin, one JSON audit on stdout.
 
-- Request carries the resource IR, the primary content, and support files inline, each bounded by
-  `policy.limits` (`file_bytes`, `file_count`, `repository_bytes`), plus the analyzer's opaque
-  `config` block and the request schema version.
+- Request carries a reduced public subject payload: the resource `kind` and `name` plus the
+  extracted public text `samples`. It also carries the support files inline, each bounded by
+  `policy.limits` (`file_bytes`, `file_count`, `repository_bytes`), the analyzer's opaque
+  `config` block, and the request schema version. The full resource IR is never serialized into
+  the request.
 - Response is bounded in size. A response that is malformed, oversized, or reports a version other
   than the configured one produces an `error` audit rather than being trusted.
 - stderr is captured, truncated, and redacted into the audit's `Error` field.
