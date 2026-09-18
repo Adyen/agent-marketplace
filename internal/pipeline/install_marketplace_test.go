@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -100,6 +101,66 @@ func TestMarketplaceCollectionInstallPreviewIncludesRootAndSortedLeafMetadata(t 
 	typed := root.Preview()
 	if len(typed.CollectionMembers) != 2 || len(typed.Findings) != 1 || typed.Findings[0].Code != "collection-policy" {
 		t.Fatalf("typed collection preview = %#v", typed)
+	}
+}
+
+func TestMarketplaceInstallSummaryAggregatesCollectionRisks(t *testing.T) {
+	rootRevision := store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "coderabbit-skills"}, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64))}
+	leafRevision := store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "fix"}, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("b", 64))}
+	root := &marketplace.PreparedInstall{
+		Pin:      config.MarketplaceResourcePin{RegistrySlug: "awesome-ai", Kind: "collection", Name: "coderabbit-skills"},
+		Revision: testAssessedResourceRevision(t, rootRevision, store.AssessmentDecisionWarn, []store.Finding{{Code: "root-warning", Severity: "medium", Message: "Reviews pull requests", Policy: "warn"}}),
+		CollectionMembers: []*marketplace.PreparedInstall{
+			{
+				Pin:      config.MarketplaceResourcePin{RegistrySlug: "awesome-ai", Kind: "skill", Name: "review"},
+				Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"read"}}},
+			},
+			{
+				Pin:      config.MarketplaceResourcePin{RegistrySlug: "awesome-ai", Kind: "skill", Name: "fix"},
+				Revision: testAssessedResourceRevision(t, leafRevision, store.AssessmentDecisionWarn, []store.Finding{{Code: "leaf-warning", Severity: "low", Message: "Writes source files", Policy: "warn"}}),
+				Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"read", "write"}}},
+			},
+			{
+				Pin: config.MarketplaceResourcePin{Kind: "collection", Name: "nested"},
+				CollectionMembers: []*marketplace.PreparedInstall{{
+					Pin: config.MarketplaceResourcePin{RegistrySlug: "awesome-ai", Kind: "skill", Name: "explain"},
+				}},
+			},
+		},
+	}
+
+	summary := marketplaceInstallSummary(root)
+	if summary.Name != "coderabbit-skills" || summary.Kind != "collection" {
+		t.Fatalf("summary identity = %#v", summary)
+	}
+	wantResources := []MarketplaceInstallResource{{Name: "explain", Kind: "skill"}, {Name: "fix", Kind: "skill"}, {Name: "review", Kind: "skill"}}
+	if !slices.Equal(summary.Resources, wantResources) {
+		t.Fatalf("resources = %#v, want %#v", summary.Resources, wantResources)
+	}
+	if !slices.Equal(summary.Sources, []string{"awesome-ai"}) || !slices.Equal(summary.Capabilities, []string{"read", "write"}) {
+		t.Fatalf("summary sources/capabilities = %#v", summary)
+	}
+	if len(summary.Findings) != 2 || summary.Findings[0].Resource != "coderabbit-skills" || summary.Findings[1].Resource != "fix" {
+		t.Fatalf("summary findings = %#v", summary.Findings)
+	}
+	if err := evaluateMarketplaceConsent(root, false); err == nil || !strings.Contains(err.Error(), "2 finding(s), 2 active capability(ies)") {
+		t.Fatalf("consent error = %v, want aggregate collection counts", err)
+	}
+}
+
+func TestMarketplaceCollectionConsentSurfacesBlockedLeafBeforeAcceptableWarnings(t *testing.T) {
+	rootRevision := store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "secure"}, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64))}
+	leafRevision := store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "blocked"}, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("b", 64))}
+	root := &marketplace.PreparedInstall{
+		Pin:      config.MarketplaceResourcePin{Kind: "collection", Name: "secure"},
+		Revision: testAssessedResourceRevision(t, rootRevision, store.AssessmentDecisionWarn, []store.Finding{{Code: "root-warning", Severity: "low", Policy: "warn"}}),
+		CollectionMembers: []*marketplace.PreparedInstall{{
+			Pin:      config.MarketplaceResourcePin{Kind: "skill", Name: "blocked"},
+			Revision: testAssessedResourceRevision(t, leafRevision, store.AssessmentDecisionReject, []store.Finding{{Code: "blocked-leaf", Severity: "high", Policy: "reject", Message: "blocked resource"}}),
+		}},
+	}
+	if err := evaluateMarketplaceConsent(root, false); err == nil || !strings.Contains(err.Error(), "blocked-leaf") || !strings.Contains(err.Error(), "cannot bypass") {
+		t.Fatalf("consent error = %v, want blocked leaf", err)
 	}
 }
 
