@@ -50,17 +50,15 @@ registries:
 
 Do not use `git config credential.helper store` or any other global Git mutation to satisfy `agent-marketplace`.
 
-## Verify that tokens do not leak into the lock
+## Verify that credentials do not leak into the lock
+
+The lock records only canonical origins, refs, commits, and digests. Confirm every `url:` in the lock is credential-free:
 
 ```bash
-grep -i token .agents/lock.yaml || echo "no token in lock"
+grep -E '^\s*url:' .agents/lock.yaml
 ```
 
-Expected:
-
-```text
-no token in lock
-```
+Every line should show a bare `https://host/path.git` or `git@host:path.git` origin with no `user:token@` portion or query string. If you ever see one, the credential came from the configured registry URL: remove it from `.agents/config.yaml`, rely on the credential helper or SSH agent instead, and re-run `agent-marketplace lock`.
 
 ## Boundaries
 

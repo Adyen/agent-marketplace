@@ -452,10 +452,147 @@ func TestMarketplacePinRollbackRefusesConcurrentConfigChange(t *testing.T) {
 	}
 }
 
+func TestMarketplaceCollisionUsesExactLockView(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		selected      string
+		defaultSelect bool
+		wantCollision bool
+	}{
+		{name: "locked selection absent from mutable cache", selected: "keeper", wantCollision: true},
+		{name: "mutable-only selection absent from lock", selected: "cache-only", defaultSelect: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".state"))
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			ec, _ := exactLockViewGCFixture(t)
+			repoRoot := filepath.Dir(filepath.Dir(ec.Repo.Path))
+			entry := ec.Merged.Registries[0]
+			selection := "    skills: {include: [keeper]}\n"
+			if tc.defaultSelect {
+				selection = "    default: true\n"
+			}
+			configBytes := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + entry.URL + "\n    ref: " + entry.Ref + "\n" + selection)
+			if err := os.WriteFile(ec.Repo.Path, configBytes, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+			lockBytes, err := os.ReadFile(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			warm := cache.RegistryCachePath(entry.URL, entry.Ref)
+			if err := os.MkdirAll(filepath.Join(warm, ".factory", "skills", "cache-only"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(warm, ".factory", "skills", "cache-only", "SKILL.md"), []byte("---\nname: cache-only\ndescription: cache\n---\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			loaded := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot})
+			if len(loaded.Errors) > 0 {
+				t.Fatal(errors.Join(loaded.Errors...))
+			}
+			var clones atomic.Int32
+			opts := InstallOptions{RepoRoot: repoRoot, CatalogOption: []catalog.LoadOption{catalog.WithCloneOrPull(func(string, string) (string, error) {
+				clones.Add(1)
+				return "", errors.New("unexpected clone")
+			})}}
+			plan := &marketplace.PreparedInstall{Entry: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}, Pin: config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: tc.selected}, Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: tc.selected}}}
+			err = checkMarketplaceInstallCollision(context.Background(), opts, &loaded, plan)
+			if tc.wantCollision != (err != nil) {
+				t.Fatalf("collision error = %v, want collision %v", err, tc.wantCollision)
+			}
+			if tc.wantCollision && !strings.Contains(err.Error(), `skill "keeper" collides with installed name "keeper"`) {
+				t.Fatalf("collision error = %v, want keeper collision", err)
+			}
+			if clones.Load() != 0 {
+				t.Fatalf("clone calls = %d", clones.Load())
+			}
+			gotConfig, configErr := os.ReadFile(ec.Repo.Path)
+			if configErr != nil {
+				t.Fatal(configErr)
+			}
+			gotLock, lockErr := os.ReadFile(lockPath)
+			if lockErr != nil {
+				t.Fatal(lockErr)
+			}
+			if !bytes.Equal(gotConfig, configBytes) || !bytes.Equal(gotLock, lockBytes) {
+				t.Fatal("collision check mutated config or lock")
+			}
+			if _, err := os.Stat(filepath.Join(repoRoot, ".factory")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("collision check created harness output: %v", err)
+			}
+		})
+	}
+}
+
+func TestMarketplaceCollisionRejectsInvalidOrUnavailableExactLock(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		code         string
+		breakFixture func(t *testing.T, repoRoot, snapshot string)
+	}{
+		{name: "invalid lock", code: "lock.invalid", breakFixture: func(t *testing.T, repoRoot, _ string) {
+			if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "lock.yaml"), []byte("not: [valid"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "unavailable snapshot", code: "lock.snapshot-unavailable", breakFixture: func(t *testing.T, _ string, snapshot string) {
+			if err := os.RemoveAll(snapshot); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".state"))
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			ec, snapshot := exactLockViewGCFixture(t)
+			repoRoot := filepath.Dir(filepath.Dir(ec.Repo.Path))
+			tc.breakFixture(t, repoRoot, snapshot)
+			loaded := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot})
+			if len(loaded.Errors) > 0 {
+				t.Fatal(errors.Join(loaded.Errors...))
+			}
+			var clones atomic.Int32
+			opts := InstallOptions{RepoRoot: repoRoot, CatalogOption: []catalog.LoadOption{catalog.WithCloneOrPull(func(string, string) (string, error) {
+				clones.Add(1)
+				return "", errors.New("unexpected clone")
+			})}}
+			plan := &marketplace.PreparedInstall{Entry: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}, Pin: config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "keeper"}, Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "keeper"}}}
+			err := checkMarketplaceInstallCollision(context.Background(), opts, &loaded, plan)
+			var lockErr *LockViewError
+			if !errors.As(err, &lockErr) || lockErr.Code != tc.code {
+				t.Fatalf("error = %v, want LockViewError %s", err, tc.code)
+			}
+			if clones.Load() != 0 {
+				t.Fatalf("clone calls = %d", clones.Load())
+			}
+		})
+	}
+}
+
 func TestMarketplaceInstallDoesNotRefreshWarmRegistries(t *testing.T) {
 	opts, ec, plan, fetches := marketplaceInstallWarmRegistryFixture(t, 0)
+	configPath := config.ProjectConfigPath(opts.RepoRoot)
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := checkMarketplaceInstallCollision(context.Background(), opts, ec, plan); err != nil {
 		t.Fatal(err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("missing-lock preflight changed config: %q err=%v", after, err)
+	}
+	if _, err := os.Stat(filepath.Join(opts.RepoRoot, ".factory")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing-lock preflight created harness output: %v", err)
 	}
 	if _, err := syncAfterInstall(context.Background(), opts.RepoRoot, nil, silentSyncOptsForInstall(opts)...); err != nil {
 		t.Fatal(err)

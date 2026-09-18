@@ -1,97 +1,73 @@
 # Documentation
 
-`agent-marketplace` syncs shared AI agent resources from Git-based or local registries and materializes them into the native layout of each coding harness you use.
+`agent-marketplace` syncs shared AI agent resources (skills, commands, subagents, hooks, MCP servers) from Git registries or a hosted Marketplace into the native layout of every coding harness you use: Claude Code, Codex, Cursor, Devin, Factory Droid, Gemini CLI, and Windsurf.
 
 ## Start here
 
-- [Install](./install.md): get the binary onto your `PATH`.
-- [Quick start](./quick-start.md): pick a harness, point a project at a registry, and toggle skills in the interactive UI.
+New to the tool? Do these two in order, about ten minutes total:
 
-## Tutorials
+1. [Install](./install.md) the binary.
+2. Follow the [quick start](./quick-start.md): point a project at a public skill registry, toggle skills in the terminal UI, and commit a config your teammates can reproduce with one command.
 
-Step-by-step lessons that take you from nothing to a working result.
+Then pick the section below that matches what you are trying to do.
 
-### Consumers
+## I use agent resources in my projects
 
-- [Install your first skill for Claude Code](./tutorials/install-your-first-skill.md)
+You want skills and other resources in your editor, kept consistent across a team.
 
-### Registry authors
+| Goal | Read |
+|---|---|
+| Install one skill, end to end, on Claude Code | [Tutorial: install your first skill](./tutorials/install-your-first-skill.md) |
+| Add agent-marketplace to a repository the team shares | [Adopt in a repository](./how-to/adopt-agent-marketplace-in-a-repository.md) |
+| Make CI prove every clone gets the same files | [Keep resources reproducible](./how-to/keep-resources-reproducible.md) |
+| Figure out why `sync --check` is failing | [Troubleshoot sync drift](./how-to/troubleshoot-sync-drift.md) |
+| Target more than one harness | [Configure multiple harnesses](./how-to/configure-multiple-harnesses.md) |
+| Remove a resource, or keep one out of a team default | [Remove or override resources](./how-to/remove-or-override-resources.md) · [Personal repository overrides](./how-to/use-personal-repository-overrides.md) |
+| Install from a curated Marketplace instead of a raw Git URL | [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md) |
+| Understand what the tool is doing | [How agent-marketplace works](./explanation/how-agent-marketplace-works.md) |
 
-- [Create your first registry](./tutorials/create-your-first-registry.md)
+More consumer guides: [install bundles](./how-to/install-resource-bundles.md), [regular files instead of symlinks](./how-to/write-regular-files-instead-of-symlinks.md), [local registries](./how-to/use-a-local-registry.md), [private Git registries](./how-to/configure-private-git-registries.md), [migrate configuration](./how-to/migrate-configuration.md), [convert a harness layout](./how-to/convert-a-harness-layout.md), [repair owned shared configuration](./how-to/repair-owned-shared-configuration.md), [back up machine resources](./how-to/back-up-and-restore-machine-resources.md), [clean the cache](./how-to/clean-the-cache-safely.md), [remove agent-marketplace](./how-to/remove-agent-marketplace-safely.md), [telemetry](./how-to/configure-telemetry.md).
 
-### Marketplace operators
+## I publish resources for others
 
-- [Run a local Marketplace](./tutorials/run-a-local-marketplace.md)
+You maintain a Git repository of skills that other people install.
 
-## How-to guides
+| Goal | Read |
+|---|---|
+| Create a registry from nothing and install from it | [Tutorial: create your first registry](./tutorials/create-your-first-registry.md) |
+| Add a skill or command | [Add a resource to a registry](./how-to/author/add-a-resource-to-a-registry.md) |
+| Make resources discoverable by tag and declare what they need | [Declare tags and prerequisites](./how-to/author/declare-tags-and-prerequisites.md) |
+| Ship a bundle consumers can install in one step | [Publish resource collections](./how-to/author/publish-resource-collections.md) |
+| Catch broken resources before consumers do | [Validate a registry in CI](./how-to/author/validate-a-registry-in-ci.md) |
+| Cut a release consumers can pin | [Version and release a registry](./how-to/author/version-and-release-a-registry.md) |
+| Look up exactly which files are discovered | [Registry layout](./reference/registry-layout.md) · [Resource metadata](./reference/resource-metadata.md) · [Collections](./reference/collections.md) |
 
-Task-oriented instructions for a specific goal, assuming you already know the basics.
+## I operate a Marketplace
 
-### Consumers
+You run the hosted service that curates registries for an organization.
 
-- [Adopt agent-marketplace in a repository](./how-to/adopt-agent-marketplace-in-a-repository.md)
-- [Keep resources reproducible](./how-to/keep-resources-reproducible.md)
-- [Troubleshoot sync drift](./how-to/troubleshoot-sync-drift.md)
-- [Install resource bundles](./how-to/install-resource-bundles.md)
-- [Remove or override resources](./how-to/remove-or-override-resources.md)
-- [Use personal repository overrides](./how-to/use-personal-repository-overrides.md)
-- [Configure multiple harnesses](./how-to/configure-multiple-harnesses.md)
-- [Write regular files instead of symlinks](./how-to/write-regular-files-instead-of-symlinks.md)
-- [Use a local registry](./how-to/use-a-local-registry.md)
-- [Migrate configuration](./how-to/migrate-configuration.md)
-- [Convert a harness layout](./how-to/convert-a-harness-layout.md)
-- [Repair owned shared configuration](./how-to/repair-owned-shared-configuration.md)
-- [Back up and restore machine resources](./how-to/back-up-and-restore-machine-resources.md)
-- [Remove agent-marketplace safely](./how-to/remove-agent-marketplace-safely.md)
-- [Clean the cache safely](./how-to/clean-the-cache-safely.md)
-- [Configure private Git registries](./how-to/configure-private-git-registries.md)
-- [Configure telemetry](./how-to/configure-telemetry.md)
-- [Install a resource from a hosted Marketplace](./how-to/install-from-a-marketplace.md)
-
-### Registry authors
-
-- [Add a resource to a registry](./how-to/author/add-a-resource-to-a-registry.md)
-- [Publish resource collections](./how-to/author/publish-resource-collections.md)
-- [Declare tags and prerequisites](./how-to/author/declare-tags-and-prerequisites.md)
-- [Validate a registry in CI](./how-to/author/validate-a-registry-in-ci.md)
-- [Version and release a registry](./how-to/author/version-and-release-a-registry.md)
-
-### Marketplace operators
-
-- [Deploy a production Marketplace](./how-to/operator/deploy-a-production-marketplace.md)
-- [Configure a reverse proxy](./how-to/operator/configure-a-reverse-proxy.md)
-- [Connect a private registry](./how-to/operator/connect-a-private-registry.md)
-- [Back up and restore a Marketplace](./how-to/operator/back-up-and-restore.md)
-- [Manage ingestion policy](./how-to/operator/manage-ingestion-policy.md)
-- [Revoke a resource](./how-to/operator/revoke-a-resource.md)
-- [Reindex and monitor](./how-to/operator/reindex-and-monitor.md)
+| Goal | Read |
+|---|---|
+| See the whole thing working on your laptop | [Tutorial: run a local Marketplace](./tutorials/run-a-local-marketplace.md) |
+| Deploy it for real | [Deploy a production Marketplace](./how-to/operator/deploy-a-production-marketplace.md) · [Configure a reverse proxy](./how-to/operator/configure-a-reverse-proxy.md) |
+| Index a registry that needs credentials | [Connect a private registry](./how-to/operator/connect-a-private-registry.md) |
+| Decide what is allowed in | [Manage ingestion policy](./how-to/operator/manage-ingestion-policy.md) |
+| Pull something bad | [Revoke a resource revision](./how-to/operator/revoke-a-resource.md) |
+| Keep it healthy and recoverable | [Reindex and monitor](./how-to/operator/reindex-and-monitor.md) · [Back up and restore](./how-to/operator/back-up-and-restore.md) |
+| Understand the moving parts and the trust boundary | [Marketplace architecture](./explanation/marketplace-architecture.md) · [Marketplace trust model](./explanation/marketplace-trust-model.md) |
 
 ## Reference
 
-Precise descriptions of commands, flags, files, and fields.
+Exact descriptions of commands, files, and fields.
 
-- [Command line](./reference/cli.md)
-- [Repository configuration](./reference/configuration.md)
-- [Configuration layers](./reference/configuration-layers.md)
-- [Harnesses and output paths](./reference/harnesses-and-output-paths.md)
-- [TUI](./reference/tui.md)
-- [Lockfiles](./reference/lockfiles.md)
-- [Filesystem layout](./reference/filesystem-layout.md)
-- [Environment variables](./reference/environment-variables.md)
-- [Diagnostics](./reference/diagnostics.md)
-- [Logging](./reference/logging.md)
-- [Telemetry](./reference/telemetry.md)
-- [Marketplace operator configuration](./reference/marketplace-operator-configuration.md)
-- [Marketplace HTTP API](./reference/marketplace-http-api.md)
-- [Marketplace health and metrics](./reference/marketplace-health-and-metrics.md)
-- [Marketplace resource locators](./reference/marketplace-resource-locators.md)
-- [Registry layout](./reference/registry-layout.md)
-- [Resource metadata](./reference/resource-metadata.md)
-- [Collections](./reference/collections.md)
+- CLI: [command line](./reference/cli.md) · [TUI](./reference/tui.md) · [environment variables](./reference/environment-variables.md) · [diagnostics](./reference/diagnostics.md) · [logging](./reference/logging.md) · [telemetry](./reference/telemetry.md)
+- Consumer files: [repository configuration](./reference/configuration.md) · [configuration layers](./reference/configuration-layers.md) · [lockfiles](./reference/lockfiles.md) · [filesystem layout](./reference/filesystem-layout.md) · [harnesses and output paths](./reference/harnesses-and-output-paths.md)
+- Registry files: [registry layout](./reference/registry-layout.md) · [resource metadata](./reference/resource-metadata.md) · [collections](./reference/collections.md)
+- Marketplace: [operator configuration](./reference/marketplace-operator-configuration.md) · [HTTP API](./reference/marketplace-http-api.md) · [health and metrics](./reference/marketplace-health-and-metrics.md) · [resource locators](./reference/marketplace-resource-locators.md)
 
 ## Explanation
 
-Discussions that build a mental model of how `agent-marketplace` works and why it is designed this way.
+Why it is designed this way.
 
 - [How agent-marketplace works](./explanation/how-agent-marketplace-works.md)
 - [Scopes, selection, and precedence](./explanation/scopes-selection-and-precedence.md)
@@ -102,6 +78,3 @@ Discussions that build a mental model of how `agent-marketplace` works and why i
 - [Telemetry and privacy](./explanation/telemetry-and-privacy.md)
 - [Marketplace architecture](./explanation/marketplace-architecture.md)
 - [Marketplace trust model](./explanation/marketplace-trust-model.md)
-- [Resource identity, revisions, and installed names](./explanation/resource-identity-revisions-and-installed-names.md)
-- [Mirror and index-only acquisition](./explanation/mirror-and-index-only-acquisition.md)
-- [Resource discovery and compilation](./explanation/resource-discovery-and-compilation.md)

@@ -232,16 +232,18 @@ func DefaultLoaders() Loaders {
 
 // filterBlockedRegistryErrors removes RegistryURLBlockedError values from errs,
 // logging each ignored error as a warning. It returns the remaining errors.
-func filterBlockedRegistryErrors(errs []error) []error {
+func filterBlockedRegistryErrors(errs []error) ([]error, bool) {
 	filtered := make([]error, 0, len(errs))
+	ignored := false
 	for _, err := range errs {
 		if config.IsRegistryURLBlockedError(err) {
 			slog.Warn("ignoring blocked registry error during remove", "error", err)
+			ignored = true
 			continue
 		}
 		filtered = append(filtered, err)
 	}
-	return filtered
+	return filtered, ignored
 }
 
 // ResolveWithExactLockLease keeps the single read-only exact-cache lease used
@@ -388,8 +390,9 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 
 	config.LogManagedDiagnostics(ec.Diagnostics)
 
+	var ignoredBlocked bool
 	if opts.IgnoreBlockedRegistries {
-		ec.Errors = filterBlockedRegistryErrors(ec.Errors)
+		ec.Errors, ignoredBlocked = filterBlockedRegistryErrors(ec.Errors)
 	}
 
 	for _, err := range ec.Errors {
@@ -453,7 +456,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		if err := config.ValidateRegistryURLs(mergedCfg.Registries, effectiveAllowlist); err != nil {
 			ec.Errors = append(ec.Errors, err)
 			if opts.IgnoreBlockedRegistries {
-				ec.Errors = filterBlockedRegistryErrors(ec.Errors)
+				ec.Errors, ignoredBlocked = filterBlockedRegistryErrors(ec.Errors)
 			}
 			if len(ec.Errors) > 0 {
 				result.ConfigErrors = ec.Errors
@@ -463,6 +466,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		}
 	}
 	result.MergedCfg = mergedCfg
+	if ignoredBlocked {
+		opts.Offline = true
+		opts.CatalogMode = catalog.LoadModeInspect
+		slog.Debug("blocked-registry removal resolves cached inputs without fetching")
+	}
 	if opts.Offline && mergedCfg != nil && len(mergedCfg.Marketplaces) > 0 {
 		result.Warnings = append(result.Warnings, errors.New("offline Marketplace sync cannot observe newer revocations; cached revocation metadata is used"))
 	}

@@ -15,7 +15,7 @@ environment variable > ~/.agents/config.yaml logging block > code default
 
 ## Scope
 
-Logging is read from the user personal configuration only. Project and local `logging:` blocks are ignored.
+The logging runtime reads its settings from `~/.agents/config.yaml` (including any fragments that file includes). The schema also accepts a `logging:` block in the organization layer, but at startup the CLI initializes logging before organization configuration is loaded, so an organization `logging:` block does not currently affect the log file, level, or rotation. Repository and local configs cannot declare `logging:` and are rejected if they do.
 
 ## Default settings
 

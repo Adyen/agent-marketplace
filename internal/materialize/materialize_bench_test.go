@@ -28,6 +28,28 @@ func discardBenchLogs(b *testing.B) {
 	b.Cleanup(func() { slog.SetDefault(previous) })
 }
 
+func BenchmarkBuildWorkItemsSelectionPolicy(b *testing.B) {
+	home := b.TempDir()
+	b.Setenv("HOME", home)
+	b.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	b.Setenv("XDG_CACHE_HOME", filepath.Join(b.TempDir(), "cache"))
+	b.Setenv("XDG_STATE_HOME", filepath.Join(b.TempDir(), "state"))
+	repoRoot := b.TempDir()
+	resolved := make([]resolver.ResolvedArtifact, 0, 101)
+	for i := 0; i < 100; i++ {
+		name := fmt.Sprintf("resource-%03d", i)
+		resource := ir.NewSkill(name, "benchmark", "body", nil, nil, ir.SourceRef{})
+		resolved = append(resolved, resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: name, Resource: resource}, RegistryURL: "https://example.invalid/registry.git", Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}})
+	}
+	collision := ir.NewSkill("resource-050", "benchmark", "preferred", nil, nil, ir.SourceRef{})
+	resolved = append(resolved, resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "resource-050", Resource: collision}, RegistryURL: "https://example.invalid/registry.git", Source: config.RepoCommitted, FilePrecedence: 2, Harnesses: []hcc.Target{hcc.TargetFactory}})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		buildWorkItems(resolved, repoRoot)
+	}
+}
+
 // BenchmarkRunSupportFiles measures the materialize.Run hot-path cost
 // when skills have support files that must be copied into the cache.
 func BenchmarkRunSupportFiles(b *testing.B) {
