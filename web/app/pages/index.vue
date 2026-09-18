@@ -450,7 +450,7 @@ useHead({
 
 .marketplace-catalog__inner {
   width: 100%;
-  max-width: 90rem;
+  max-width: 72rem;
   margin: 0 auto;
   padding: 0 1rem;
 }
@@ -643,13 +643,13 @@ useHead({
   .marketplace-catalog__layout {
     display: grid;
     grid-template-columns: 13.5rem minmax(0, 1fr);
-    gap: 2rem;
+    gap: 1.5rem;
   }
 
   .catalog-sidebar {
     display: block;
     min-width: 0;
-    padding: 1.55rem 1.6rem 2rem 0;
+    padding: 1.55rem 1rem 2rem 0;
     border-right: 1px solid var(--am-color-border-default);
   }
 
@@ -683,7 +683,7 @@ useHead({
 @media (min-width: 64rem) {
   .marketplace-catalog__layout {
     grid-template-columns: 15rem minmax(0, 1fr);
-    gap: 2.75rem;
+    gap: 1.5rem;
   }
 }
 </style>
