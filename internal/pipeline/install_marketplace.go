@@ -368,9 +368,8 @@ func marketplaceInstallSummary(plan *marketplace.PreparedInstall) MarketplaceIns
 	summary := MarketplaceInstallSummary{Name: plan.Pin.Name}
 	var add func(*marketplace.PreparedInstall, bool)
 	add = func(current *marketplace.PreparedInstall, leaf bool) {
-		preview := current.Preview()
-		summary.Findings += len(preview.Findings)
-		summary.Capabilities += len(preview.Capabilities)
+		summary.Findings += len(current.Revision.Assessment.Findings)
+		summary.Capabilities += len(current.Artifact.Manifest.Capabilities)
 		if leaf {
 			summary.ResourceKinds = append(summary.ResourceKinds, current.Pin.Kind)
 		}
