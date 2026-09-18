@@ -179,6 +179,9 @@ func TestObservationDesiredRefreshCoalescesAndClearsActiveJob(t *testing.T) {
 	if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: "refresh"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := meta.EnqueueJob(ctx, store.Job{ID: "job-1", Kind: "refresh", Payload: []byte("payload")}); err != nil {
+		t.Fatal(err)
+	}
 	first, err := meta.SetDesiredRefresh(ctx, store.RegistryID("refresh"), store.DesiredRefresh{Commit: "commit-1", Generation: "generation-1", JobID: "job-1", Trigger: "source-change"})
 	if err != nil {
 		t.Fatalf("SetDesiredRefresh: %v", err)
@@ -206,6 +209,55 @@ func TestObservationDesiredRefreshCoalescesAndClearsActiveJob(t *testing.T) {
 	}
 	if again.ActiveRefreshJobID != "job-3" {
 		t.Fatalf("later attempt did not create active job: %q", again.ActiveRefreshJobID)
+	}
+}
+
+func TestObservationCompareAndSwapMissingObservationReturnsNotFound(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	if err := meta.CompareAndSwapRegistryObservation(ctx, "missing", 1, store.RegistryObservation{ObservedCommit: "commit"}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing observation CAS error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestObservationDesiredRefreshRecoversMissingOrTerminalActiveJob(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		status store.JobStatus
+	}{
+		{name: "missing", status: ""},
+		{name: "completed", status: store.JobStatusCompleted},
+		{name: "terminal failed", status: store.JobStatusTerminalFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta, _ := openStores(t)
+			registryID := store.RegistryID("refresh-" + tc.name)
+			if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: registryID}); err != nil {
+				t.Fatal(err)
+			}
+			activeJobID := store.JobID("active-" + tc.name)
+			if tc.status != "" {
+				if err := meta.EnqueueJob(ctx, store.Job{ID: activeJobID, Kind: "refresh", Status: tc.status, Payload: []byte("payload")}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			first, err := meta.SetDesiredRefresh(ctx, registryID, store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: activeJobID, Trigger: "source-change"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.ActiveRefreshJobID != activeJobID {
+				t.Fatalf("initial active job = %q, want %q", first.ActiveRefreshJobID, activeJobID)
+			}
+			replacementJobID := store.JobID("replacement-" + tc.name)
+			second, err := meta.SetDesiredRefresh(ctx, registryID, store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: replacementJobID, Trigger: "manual"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if second.ActiveRefreshJobID != store.JobID("replacement-"+tc.name) {
+				t.Fatalf("replacement active job = %q, want replacement job", second.ActiveRefreshJobID)
+			}
+		})
 	}
 }
 

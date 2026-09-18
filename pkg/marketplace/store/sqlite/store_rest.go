@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	modernsqlite "modernc.org/sqlite"
 )
 
 // -- Registry occurrences --
@@ -422,6 +423,11 @@ func (s *Store) scanRevocationFromRows(rows *sql.Rows) (store.Revocation, error)
 
 // -- Jobs --
 
+func isUniqueConstraint(err error) bool {
+	var sqliteErr *modernsqlite.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == 19
+}
+
 func (s *Store) GetJob(ctx context.Context, id store.JobID) (store.Job, error) {
 	return s.getJob(ctx, id)
 }
@@ -510,6 +516,9 @@ func (s *Store) enqueueJob(ctx context.Context, job store.Job) error {
 		timeToMicro(job.CreatedAt), timeToMicro(job.UpdatedAt),
 	)
 	if err != nil {
+		if job.IdempotencyKey != "" && isUniqueConstraint(err) {
+			return fmt.Errorf("%w: idempotency key %q raced with another enqueue", store.ErrConflict, job.IdempotencyKey)
+		}
 		return fmt.Errorf("insert job: %w", err)
 	}
 	return nil

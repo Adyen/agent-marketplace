@@ -121,6 +121,11 @@ func (s *Store) CompareAndSwapRegistryObservation(ctx context.Context, id store.
 			return err
 		}
 		if n != 1 {
+			if _, getErr := tx.GetRegistryObservation(ctx, id); errors.Is(getErr, store.ErrNotFound) {
+				return getErr
+			} else if getErr != nil {
+				return getErr
+			}
 			return fmt.Errorf("%w: registry observation %q changed", store.ErrConflict, id)
 		}
 		return nil
@@ -191,7 +196,18 @@ func (s *Store) SetDesiredRefresh(ctx context.Context, id store.RegistryID, desi
 		if err != nil {
 			return err
 		}
-		if current.ActiveRefreshJobID == "" || current.DesiredCommit != desired.Commit || current.DesiredGeneration != desired.Generation {
+		activeJobLive := false
+		if current.ActiveRefreshJobID != "" {
+			activeJob, jobErr := tx.GetJob(ctx, current.ActiveRefreshJobID)
+			switch {
+			case errors.Is(jobErr, store.ErrNotFound):
+			case jobErr != nil:
+				return jobErr
+			default:
+				activeJobLive = !activeJob.Status.IsTerminal()
+			}
+		}
+		if !activeJobLive || current.DesiredCommit != desired.Commit || current.DesiredGeneration != desired.Generation {
 			_, err = tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, desired_commit=?, desired_generation=?, active_refresh_job_id=?, active_refresh_trigger=? WHERE registry_id=?`, desired.Commit, desired.Generation, desired.JobID, desired.Trigger, id)
 			if err != nil {
 				return err

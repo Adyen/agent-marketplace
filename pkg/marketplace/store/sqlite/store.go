@@ -350,11 +350,19 @@ func (s *Store) putRegistry(ctx context.Context, registry store.Registry) error 
 	}
 
 	_, err = s.q.ExecContext(ctx,
-		`INSERT OR REPLACE INTO registries
+		`INSERT INTO registries
 		 (id, slug, aliases, origins, ref, roots, acquisition, publisher,
 		  license, credentials_ref, policy_overrides, listed,
 		  refresh_status, refresh_error, refreshed_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		  slug=excluded.slug, aliases=excluded.aliases, origins=excluded.origins,
+		  ref=excluded.ref, roots=excluded.roots, acquisition=excluded.acquisition,
+		  publisher=excluded.publisher, license=excluded.license,
+		  credentials_ref=excluded.credentials_ref, policy_overrides=excluded.policy_overrides,
+		  listed=excluded.listed, refresh_status=excluded.refresh_status,
+		  refresh_error=excluded.refresh_error, refreshed_at=excluded.refreshed_at,
+		  created_at=excluded.created_at, updated_at=excluded.updated_at`,
 		registry.ID, registry.Slug, aliasesJSON, originsJSON, registry.Ref, rootsJSON,
 		registry.Acquisition, publisherJSON, registry.License, registry.CredentialsRef,
 		policyJSON, listed,

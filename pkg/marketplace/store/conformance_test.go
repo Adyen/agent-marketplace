@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -158,6 +159,29 @@ func TestConformance(t *testing.T) {
 	}
 }
 
+func TestConformancePutRegistrySlugCollisionPreservesExistingRegistry(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	first := store.Registry{ID: "registry-first", Slug: "shared-slug", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}
+	second := store.Registry{ID: "registry-second", Slug: "shared-slug", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}
+	if err := meta.PutRegistry(ctx, first); err != nil {
+		t.Fatalf("PutRegistry(first): %v", err)
+	}
+	if err := meta.PutRegistry(ctx, second); err == nil {
+		t.Fatal("PutRegistry(second) unexpectedly succeeded despite slug collision")
+	}
+	got, err := meta.GetRegistry(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("GetRegistry(first) after collision: %v", err)
+	}
+	if got.ID != first.ID || got.Slug != first.Slug {
+		t.Fatalf("existing registry after slug collision = %#v, want %#v", got, first)
+	}
+	if _, err := meta.GetRegistry(ctx, second.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second registry lookup error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestConformanceLeaseJobByIDLeavesOlderJobPending(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)
@@ -183,6 +207,35 @@ func TestConformanceLeaseJobByIDLeavesOlderJobPending(t *testing.T) {
 	}
 	if older.Status != store.JobStatusPending {
 		t.Fatalf("older job status = %q, want %q", older.Status, store.JobStatusPending)
+	}
+}
+
+func TestConformanceConcurrentDuplicateIdempotencyKeysReturnConflict(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	const attempts = 8
+	start := make(chan struct{})
+	errs := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		go func(i int) {
+			<-start
+			errs <- meta.EnqueueJob(ctx, store.Job{ID: store.JobID(fmt.Sprintf("raced-%d", i)), Kind: "refresh", IdempotencyKey: "same-refresh", Payload: []byte("payload")})
+		}(i)
+	}
+	close(start)
+	var successes int
+	for i := 0; i < attempts; i++ {
+		err := <-errs
+		if err == nil {
+			successes++
+			continue
+		}
+		if !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("raced duplicate enqueue error = %v, want ErrConflict", err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("raced duplicate enqueue successes = %d, want 1", successes)
 	}
 }
 

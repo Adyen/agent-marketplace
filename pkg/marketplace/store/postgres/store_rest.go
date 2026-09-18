@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // -- Registry occurrences --
@@ -376,6 +377,11 @@ func (s *Store) ListRevocations(ctx context.Context, kind store.RevocationKind) 
 
 // -- Jobs --
 
+func isUniqueConstraint(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
 func (s *Store) GetJob(ctx context.Context, id store.JobID) (store.Job, error) {
 	return s.getJob(ctx, id)
 }
@@ -461,6 +467,9 @@ func (s *Store) enqueueJob(ctx context.Context, job store.Job) error {
 		timeToMicro(job.CreatedAt), timeToMicro(job.UpdatedAt),
 	)
 	if err != nil {
+		if job.IdempotencyKey != "" && isUniqueConstraint(err) {
+			return fmt.Errorf("%w: idempotency key %q raced with another enqueue", store.ErrConflict, job.IdempotencyKey)
+		}
 		return fmt.Errorf("insert job: %w", err)
 	}
 	return nil

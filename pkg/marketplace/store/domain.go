@@ -588,6 +588,11 @@ const (
 	JobStatusTerminalFailed JobStatus = "terminal_failed"
 )
 
+// IsTerminal reports whether a job can no longer make progress.
+func (s JobStatus) IsTerminal() bool {
+	return s == JobStatusCompleted || s == JobStatusTerminalFailed
+}
+
 // Job is a durable, leased unit of work.
 type Job struct {
 	// ID is the unique job identifier.
