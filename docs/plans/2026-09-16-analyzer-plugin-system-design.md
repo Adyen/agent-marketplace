@@ -53,7 +53,7 @@ verdict badge and its own detail page, rather than one flat findings list.
 
 An **analyzer** is the plugin: an identity, a version, a role, and configuration. An **audit** is
 one analyzer's verdict about one resource revision. Operator configuration says `analyzers:`; the
-web UI says "Security audits".
+web UI says "Analyzer audits" for the section and "Analyzer audit" for one audit's detail page.
 
 ## Design
 
@@ -275,9 +275,9 @@ Additive only.
 - New `Analyzer audits` section on `ResourceDetailView.vue`, below the existing findings section:
   one entry per audit in server order with verdict color, analyzer name, and summary. Each entry
   links to the per-audit page.
-- New page under the existing `/r/{registry}/{kind}/{name}/revisions/{digest}/` tree rendering one
-  audit: verdict, analyzer identity and version, role, summary, its findings with the existing
-  source-range highlighting, and its error text when it failed.
+- New page at the sibling audit route `/r/{registry}/{kind}/{name}/{digest}/audit/{analyzerId}`
+  rendering one audit: verdict, analyzer identity and version, role, summary, its findings with the
+  existing source-range highlighting, and its error text when it failed.
 - The existing flat findings list stays flat and ungrouped, so
   `resource-detail-view.test.ts` assertions on the `Security findings` heading, `Severity:`,
   `Policy:`, code, message, and range text keep passing.

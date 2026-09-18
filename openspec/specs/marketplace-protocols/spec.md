@@ -82,7 +82,7 @@ The protocol SHALL support a named, versioned, independently enabled, gating or 
 - **AND** the built-in `marketplace.rulepack` MUST NOT run unless it is explicitly enabled
 
 - **WHEN** `policy.analyzers` is an explicit empty list
-- **THEN** the marketplace MUST produce a `pass` assessment for every resource with no findings and no audit rows
+- **THEN** the marketplace MUST produce an `allow` assessment for every resource with no findings and no audit rows
 
 #### Scenario: Built-in overrides
 
