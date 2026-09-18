@@ -74,9 +74,17 @@ func TestLooksLikeMarketplaceBrowserURL(t *testing.T) {
 		want bool
 	}{
 		{name: "resource route", raw: "https://market.example/services/marketplace/r/registry/skill/review", want: true},
+		{name: "resource route with revision", raw: "https://market.example/r/registry/skill/review/revisions/sha256:2222222222222222222222222222222222222222222222222222222222222222", want: true},
 		{name: "malformed resource route", raw: "https://market.example/r/registry/skill", want: true},
+		{name: "truncated route root", raw: "https://market.example/r", want: true},
+		{name: "truncated route root trailing slash", raw: "https://market.example/r/", want: true},
+		{name: "truncated route registry only", raw: "https://market.example/r/registry", want: true},
 		{name: "endpoint prefix", raw: "https://market.example/services/marketplace", want: false},
+		{name: "endpoint base containing r segment", raw: "https://market.example/services/r/api", want: false},
+		{name: "endpoint base ending in r", raw: "https://market.example/services/r", want: false},
 		{name: "git project", raw: "https://github.com/org/repo", want: false},
+		{name: "git nested group with r segment", raw: "https://gitlab.example.com/group/r/repo", want: false},
+		{name: "git web path with r segment", raw: "https://github.com/org/repo/tree/main/r/skill", want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := LooksLikeMarketplaceBrowserURL(tc.raw); got != tc.want {

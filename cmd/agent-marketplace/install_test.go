@@ -640,8 +640,26 @@ func TestInstallValidationKeepsMarketplaceURLsOutOfGitFallback(t *testing.T) {
 			input: "https://market.example/services/marketplace/r/registry/skill/review",
 		},
 		{
+			name:  "endpoint base containing r segment",
+			input: "https://market.example/services/r/api",
+		},
+		{
+			name:  "git URL containing r segment",
+			input: "https://gitlab.example.com/group/r/repo",
+		},
+		{
 			name:    "malformed browser resource route",
 			input:   "https://market.example/services/marketplace/r/registry/not-a-kind/review",
+			wantErr: "invalid Marketplace browser URL",
+		},
+		{
+			name:    "truncated browser route",
+			input:   "https://market.example/r",
+			wantErr: "invalid Marketplace browser URL",
+		},
+		{
+			name:    "truncated browser route with registry",
+			input:   "https://market.example/r/registry",
 			wantErr: "invalid Marketplace browser URL",
 		},
 	}

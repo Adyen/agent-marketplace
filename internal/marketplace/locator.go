@@ -61,6 +61,13 @@ func ParseMarketplaceLocator(raw string) (MarketplaceLocator, error) {
 // LooksLikeMarketplaceBrowserURL reports whether an HTTP(S) URL contains the
 // Marketplace browser resource route marker. Callers can reject malformed
 // routes before generic Git URL parsing turns them into SSH clone URLs.
+//
+// Detection is anchored to the [/prefix]/r/registry/kind/name[/revisions/digest]
+// route shape: a mid-path "r" segment only marks a route when it starts a
+// complete route suffix, so legitimate endpoint bases and generic Git URLs
+// containing an "r" path segment stay generic. A route truncated at the path
+// root (/r, /r/registry, /r/registry/kind) cannot be an endpoint base or a
+// group/project Git path, so it is still rejected fail-closed.
 func LooksLikeMarketplaceBrowserURL(raw string) bool {
 	input := strings.TrimSpace(raw)
 	u, err := url.Parse(input)
@@ -69,7 +76,14 @@ func LooksLikeMarketplaceBrowserURL(raw string) bool {
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	for i, part := range parts {
-		if i+1 < len(parts) && part == "r" {
+		if part != "r" {
+			continue
+		}
+		tail := len(parts) - i
+		if tail == 4 || (tail == 6 && parts[len(parts)-2] == "revisions") {
+			return true
+		}
+		if i == 0 && tail < 4 {
 			return true
 		}
 	}
