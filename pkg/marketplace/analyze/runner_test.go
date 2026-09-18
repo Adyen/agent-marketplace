@@ -552,7 +552,7 @@ func TestRunnerStageVerifiedExecutable(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	staged, err := r.stageVerifiedExecutable(dir)
+	staged, err := r.stageVerifiedExecutable(dir, 0)
 	if err != nil {
 		t.Fatalf("stageVerifiedExecutable: %v", err)
 	}
@@ -837,5 +837,166 @@ sleep 60
 	}
 	if elapsed > 10*time.Second {
 		t.Fatalf("Analyze blocked on descendant-held pipes: %v", elapsed)
+	}
+}
+
+// TestRunnerRedactsProtocolErrorStrings proves the runner redacts declared
+// passthrough secrets from every runner-controlled protocol error string:
+// schema version, analyzer id/version, verdict, finding code, and JSON decode
+// errors.
+func TestRunnerRedactsProtocolErrorStrings(t *testing.T) {
+	t.Setenv("TEST_TOKEN", "super-secret-xyz")
+
+	cases := []struct {
+		name    string
+		payload string
+		wantErr string
+	}{
+		{
+			name:    "schema version",
+			payload: `{"schema_version":"super-secret-xyz","analyzer_id":"acme.runner","analyzer_version":"1.0.0","verdict":"pass","findings":[]}`,
+			wantErr: "schema version mismatch",
+		},
+		{
+			name:    "analyzer id",
+			payload: `{"schema_version":"agent-marketplace.analyzer/v1","analyzer_id":"super-secret-xyz","analyzer_version":"1.0.0","verdict":"pass","findings":[]}`,
+			wantErr: "id mismatch",
+		},
+		{
+			name:    "analyzer version",
+			payload: `{"schema_version":"agent-marketplace.analyzer/v1","analyzer_id":"acme.runner","analyzer_version":"super-secret-xyz","verdict":"pass","findings":[]}`,
+			wantErr: "version mismatch",
+		},
+		{
+			name:    "verdict",
+			payload: `{"schema_version":"agent-marketplace.analyzer/v1","analyzer_id":"acme.runner","analyzer_version":"1.0.0","verdict":"super-secret-xyz","findings":[]}`,
+			wantErr: "verdict is not valid",
+		},
+		{
+			name:    "finding code",
+			payload: `{"schema_version":"agent-marketplace.analyzer/v1","analyzer_id":"acme.runner","analyzer_version":"1.0.0","verdict":"warn","summary":"x","findings":[{"code":"other.super-secret-xyz","message":"x"}]}`,
+			wantErr: "not namespaced",
+		},
+		{
+			name:    "malformed JSON",
+			payload: `{"schema_version":super-secret-xyz`,
+			wantErr: "not valid JSON",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			script, digest := newRunnerScript(t, "#!/bin/sh\nread -r _\nprintf '%s' '"+tc.payload+"'\n")
+
+			r, err := NewRunner("acme.runner", "1.0.0", defaultRunnerConfig(script, digest, []string{"TEST_TOKEN"}))
+			if err != nil {
+				t.Fatalf("NewRunner: %v", err)
+			}
+			_, err = r.Analyze(context.Background(), Subject{
+				Resource: &fakeResource{kind: "skill", name: "test"},
+				Limits:   DefaultLimits(),
+			}, nil)
+			if err == nil {
+				t.Fatalf("expected %q error", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tc.wantErr)
+			}
+			if strings.Contains(err.Error(), "super-secret-xyz") {
+				t.Fatalf("declared secret leaked into protocol error: %q", err.Error())
+			}
+		})
+	}
+}
+
+// TestRunnerRedactsFindingCodeAndSourceFile proves declared passthrough
+// secrets cannot persist in runner-controlled finding metadata. parseResponse
+// redacts Code and SourceRange.File before storing the audit.
+func TestRunnerRedactsFindingCodeAndSourceFile(t *testing.T) {
+	t.Setenv("TEST_TOKEN", "super-secret-xyz")
+
+	script, digest := newRunnerScript(t, `#!/bin/sh
+read -r _
+printf '{"schema_version":"agent-marketplace.analyzer/v1","analyzer_id":"acme.runner","analyzer_version":"1.0.0","verdict":"warn","summary":"x","findings":[{"code":"acme.runner.%s","message":"m","source_range":{"file":"dir/%s.txt","line":1,"column":1}}]}' "$TEST_TOKEN" "$TEST_TOKEN"
+`)
+
+	r, err := NewRunner("acme.runner", "1.0.0", defaultRunnerConfig(script, digest, []string{"TEST_TOKEN"}))
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	audit, err := r.Analyze(context.Background(), Subject{
+		Resource: &fakeResource{kind: "skill", name: "test"},
+		Limits:   DefaultLimits(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(audit.Findings) != 1 {
+		t.Fatalf("findings = %v", audit.Findings)
+	}
+	f := audit.Findings[0]
+	if strings.Contains(f.Code, "super-secret-xyz") {
+		t.Fatalf("secret persisted in finding code: %q", f.Code)
+	}
+	if f.Code != "acme.runner.[REDACTED]" {
+		t.Fatalf("finding code = %q, want redacted namespaced code", f.Code)
+	}
+	if f.SourceRange == nil || strings.Contains(f.SourceRange.File, "super-secret-xyz") {
+		t.Fatalf("secret persisted in source range file: %+v", f.SourceRange)
+	}
+	if !strings.Contains(f.SourceRange.File, "[REDACTED]") {
+		t.Fatalf("source range file not redacted: %q", f.SourceRange.File)
+	}
+}
+
+// TestRunnerRejectsOversizedExecutable proves staging rejects an executable
+// larger than the input bound instead of allocating its full size.
+func TestRunnerRejectsOversizedExecutable(t *testing.T) {
+	script, digest := newRunnerScript(t, `#!/bin/sh
+read -r _
+printf '{"schema_version":"agent-marketplace.analyzer/v1","analyzer_id":"acme.runner","analyzer_version":"1.0.0","verdict":"pass","findings":[]}'
+`)
+
+	r, err := NewRunner("acme.runner", "1.0.0", defaultRunnerConfig(script, digest, nil))
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+
+	if _, err := r.stageVerifiedExecutable(t.TempDir(), 4); err == nil ||
+		!strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected oversized executable rejection, got %v", err)
+	}
+}
+
+// TestRunnerRejectsOversizedExecutableFallback proves the strict documented
+// maximum bounds staged executable input through Analyze.
+func TestRunnerRejectsOversizedExecutableFallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge-runner")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0755)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	if _, err := f.WriteAt([]byte{'x'}, maxRunnerExecutableBytes); err != nil {
+		t.Fatalf("WriteAt: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	r, err := NewRunner("acme.runner", "1.0.0", RunnerConfig{
+		Command:              path,
+		Timeout:              30 * time.Second,
+		ImplementationDigest: "sha256:" + strings.Repeat("0", 64),
+		MaxOutputBytes:       64 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	_, err = r.Analyze(context.Background(), Subject{
+		Resource: &fakeResource{kind: "skill", name: "test"},
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected strict-maximum rejection, got %v", err)
 	}
 }

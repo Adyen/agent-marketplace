@@ -95,7 +95,7 @@ func (r *Runner) Analyze(ctx context.Context, s Subject, cfg AnalyzerConfig) (Au
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	execPath, err := r.stageVerifiedExecutable(tmpDir)
+	execPath, err := r.stageVerifiedExecutable(tmpDir, maxRunnerExecutableBytes)
 	if err != nil {
 		return Audit{}, err
 	}
@@ -182,19 +182,43 @@ func (r *Runner) Analyze(ctx context.Context, s Subject, cfg AnalyzerConfig) (Au
 // configured timeout.
 const runnerWaitDelay = 2 * time.Second
 
+// maxRunnerExecutableBytes is the strict documented maximum for staged
+// executable input. The executable is trusted runner configuration, not
+// analyzed content, so this fixed cap bounds it rather than the subject's
+// MaxFileBytes input limit.
+const maxRunnerExecutableBytes = 64 << 20 // 64 MiB
+
 // stageVerifiedExecutable reads the configured command once, binds those exact
 // bytes to the declared implementation_digest, and stages a private executable
 // copy inside the isolated run directory. Executing the staged copy instead of
 // re-opening cfg.Command closes the hash-then-exec TOCTOU window: replacing
 // the original path after verification cannot change what runs.
-func (r *Runner) stageVerifiedExecutable(dir string) (string, error) {
+//
+// maxBytes bounds the input before any memory allocation. The stat size and a
+// limited read both reject executables that exceed or grow past the bound, so
+// a hostile or oversized binary cannot force an unbounded allocation.
+func (r *Runner) stageVerifiedExecutable(dir string, maxBytes int64) (string, error) {
+	if maxBytes <= 0 {
+		maxBytes = maxRunnerExecutableBytes
+	}
 	fi, err := os.Stat(r.cfg.Command)
 	if err != nil {
 		return "", fmt.Errorf("cannot stat runner executable: %w", err)
 	}
-	data, err := os.ReadFile(r.cfg.Command)
+	if fi.Size() > maxBytes {
+		return "", fmt.Errorf("runner executable exceeds %d byte input limit", maxBytes)
+	}
+	f, err := os.Open(r.cfg.Command)
 	if err != nil {
 		return "", fmt.Errorf("cannot read runner executable: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("cannot read runner executable: %w", err)
+	}
+	if int64(len(data)) > maxBytes {
+		return "", fmt.Errorf("runner executable exceeds %d byte input limit", maxBytes)
 	}
 	sum := sha256.Sum256(data)
 	actualDigest := hex.EncodeToString(sum[:])
@@ -297,11 +321,15 @@ func (r *Runner) parseResponse(stdout []byte, envValues []string) (Audit, error)
 		return Audit{}, fmt.Errorf("runner response exceeded %d bytes", r.cfg.MaxOutputBytes)
 	}
 
+	// Redact every declared passthrough value from runner-controlled strings
+	// before storing or echoing them in error text.
+	redact := redactor(envValues)
+
 	dec := json.NewDecoder(bytes.NewReader(stdout))
 	dec.DisallowUnknownFields()
 	var resp runnerResponse
 	if err := dec.Decode(&resp); err != nil {
-		return Audit{}, fmt.Errorf("runner response is not valid JSON: %w", err)
+		return Audit{}, fmt.Errorf("runner response is not valid JSON: %s", redact(err.Error()))
 	}
 
 	// Reject trailing data after one JSON value.
@@ -310,35 +338,37 @@ func (r *Runner) parseResponse(stdout []byte, envValues []string) (Audit, error)
 			return Audit{}, fmt.Errorf("runner response contains trailing JSON")
 		}
 		if !strings.Contains(err.Error(), "EOF") {
-			return Audit{}, fmt.Errorf("runner response has malformed trailing data")
+			return Audit{}, fmt.Errorf("runner response has malformed trailing data: %s", redact(err.Error()))
 		}
 	}
 
 	if resp.SchemaVersion != "agent-marketplace.analyzer/v1" {
-		return Audit{}, fmt.Errorf("runner response schema version mismatch: %q", resp.SchemaVersion)
+		return Audit{}, fmt.Errorf("runner response schema version mismatch: %q", redact(resp.SchemaVersion))
 	}
 	if resp.AnalyzerID != r.id {
-		return Audit{}, fmt.Errorf("runner response analyzer id mismatch: got %q, want %q", resp.AnalyzerID, r.id)
+		return Audit{}, fmt.Errorf("runner response analyzer id mismatch: got %q, want %q", redact(resp.AnalyzerID), r.id)
 	}
 	if resp.AnalyzerVersion != r.ver {
-		return Audit{}, fmt.Errorf("runner response analyzer version mismatch: got %q, want %q", resp.AnalyzerVersion, r.ver)
+		return Audit{}, fmt.Errorf("runner response analyzer version mismatch: got %q, want %q", redact(resp.AnalyzerVersion), r.ver)
 	}
 	if resp.Verdict == "" {
 		return Audit{}, fmt.Errorf("runner response verdict is empty")
 	}
 	if !isValidVerdict(resp.Verdict) {
-		return Audit{}, fmt.Errorf("runner response verdict is not valid: %q", resp.Verdict)
+		return Audit{}, fmt.Errorf("runner response verdict is not valid: %q", redact(resp.Verdict))
 	}
 
-	// Redact every declared passthrough value before persistence.
-	redact := redactor(envValues)
 	resp.Summary = redact(resp.Summary)
 	resp.Error = redact(resp.Error)
 	prefix := r.id + "."
 	for i := range resp.Findings {
 		resp.Findings[i].Analyzer = r.id
 		resp.Findings[i].AnalyzerVersion = r.ver
+		resp.Findings[i].Code = redact(resp.Findings[i].Code)
 		resp.Findings[i].Message = redact(resp.Findings[i].Message)
+		if resp.Findings[i].SourceRange != nil {
+			resp.Findings[i].SourceRange.File = redact(resp.Findings[i].SourceRange.File)
+		}
 		if resp.Findings[i].Code == "" {
 			return Audit{}, fmt.Errorf("runner response finding %d has empty code", i)
 		}
