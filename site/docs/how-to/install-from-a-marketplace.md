@@ -70,26 +70,17 @@ Install the resource in repository scope:
 agent-marketplace install team:shared-agents/skill/review
 ```
 
-Before changing configuration, the CLI fetches and verifies the immutable revision and prints a preview similar to:
+Before changing configuration, the CLI fetches and verifies the immutable revision. A resource without findings or active capabilities produces compact output:
 
 ```text
-Marketplace install preview:
-marketplace: team (https://marketplace.example.com)
-instance_id: marketplace-production
-registry: shared-agents (...)
-kind: skill
-name: review
-installed_name: review
-revision: sha256:...
-content_digest: sha256:...
-archive_digest: sha256:...
-acquisition: mirror
-license: Apache-2.0
-findings: none
-capabilities: none
-provenance: registry_url=... ref=... path=... generator=...
-Installed review in this repo
+Installing review · skill
+
+Source: shared-agents
+
+✓ Installed review
 ```
+
+Collections also list their included resources, grouped by kind. The default output shows up to ten members; use `--verbose` to show the complete inventory and technical preview, including revisions, digests, acquisition details, and provenance.
 
 The command writes an exact content pin under `marketplaces[].resources` in `.agents/config.yaml` and synchronizes the selected harness outputs.
 
@@ -104,15 +95,23 @@ A URL ending in `/revisions/sha256:<digest>` installs that exact revision. Witho
 
 ## 4. Review findings and capabilities
 
-If the verified artifact contains warning-level findings or active capabilities, the first install prints the preview and stops before editing configuration. Read the complete preview and inspect the resource source. If you accept the displayed revision and risks, rerun the same command with explicit consent:
+If the verified artifact contains warning-level findings or active capabilities, an interactive terminal shows the compact install details and asks for confirmation:
 
-```bash
-agent-marketplace install \
-  team:shared-agents/skill/review \
-  --accept-risk
+```text
+Installing review · skill
+
+Source: shared-agents
+
+Warning: 1 security finding
+  HIGH  [review] Executes shell commands
+Active capabilities: shell
+
+Install despite these risks? [y/N]:
 ```
 
-For non-interactive automation, `--yes` has the same consent effect. Both flags apply only to the exact revision verified by that invocation. A rejected or revoked revision remains blocked.
+Answer `y` to install the prepared revision without fetching it again. After acceptance, the CLI prints only the concise success result.
+
+For non-interactive automation, pass `--accept-risk` or `--yes`. Both flags apply only to the exact revision verified by that invocation. Without either flag the command returns a nonzero exit code and installs nothing. A rejected or revoked revision remains blocked.
 
 If the resource name conflicts with an existing generated path, choose a safe local name:
 

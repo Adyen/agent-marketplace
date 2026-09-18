@@ -78,6 +78,7 @@ type InstallResult struct {
 	CollectionLabel              string
 	RequirementWarnings          []error
 	MarketplacePreview           string
+	MarketplaceSummary           MarketplaceInstallSummary
 	MarketplaceEndpoint          string
 	MarketplaceConfigPath        string
 	MarketplaceAlreadyConfigured bool
@@ -117,7 +118,10 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			return nil, err
 		}
 		if err := evaluateMarketplaceConsent(prepared.plan, opts.AcceptRisk); err != nil {
-			return nil, &MarketplaceConsentError{Preview: prepared.preview, Prepared: prepared, Err: err}
+			return nil, &MarketplaceConsentError{
+				Preview: prepared.preview, Prepared: prepared, Summary: marketplaceInstallSummary(prepared.plan),
+				Acceptable: evaluateMarketplaceConsent(prepared.plan, true) == nil, Err: err,
+			}
 		}
 		return CommitPreparedMarketplaceInstall(ctx, prepared)
 	}
