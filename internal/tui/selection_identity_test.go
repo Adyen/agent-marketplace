@@ -1,0 +1,117 @@
+package tui
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+)
+
+func TestMarketplaceSelectionIndexKeepsDistinctPins(t *testing.T) {
+	d1 := "sha256:" + strings.Repeat("1", 64)
+	d2 := "sha256:" + strings.Repeat("2", 64)
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{
+		{RegistryID: "a", Kind: "mcpserver", Name: "probe", Digest: d2, Revision: "X:" + d1 + ":R"},
+		{RegistryID: "a:" + d2 + ":X", Kind: "mcpserver", Name: "probe", Digest: d1, Revision: "R"},
+	}}
+	if errs := config.ValidateMarketplaceEntries([]config.MarketplaceEntry{entry}); len(errs) > 0 {
+		t.Fatalf("pins rejected: %v", errs)
+	}
+	index := indexMarketplaceSelections(&config.Config{Marketplaces: []config.MarketplaceEntry{entry}})
+	firstKey := marketplaceSelectionKey(marketplaceCatalogKey(entry, entry.Resources[0]), ir.KindMcpServer.String(), "probe")
+	secondKey := marketplaceSelectionKey(marketplaceCatalogKey(entry, entry.Resources[1]), ir.KindMcpServer.String(), "probe")
+	if firstKey == secondKey || index[firstKey][config.RepoCommitted].Pin.Digest != d2 || index[secondKey][config.RepoCommitted].Pin.Digest != d1 {
+		t.Fatalf("selection index collapsed pins: %#v", index)
+	}
+}
+
+func TestCompetingRegistryCleanupIsScopeBound(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nhooks: {include: [startup]}\nregistries:\n  - url: https://trusted.example/repo.git\n  - url: https://user-rival.example/repo.git\n    skills: {include: [review]}\n"
+	if err := os.WriteFile(configPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows := []row{
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.RepoCommitted}, RegistryURL: "https://project.example/repo.git"},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.Organization, Required: true}, RegistryURL: "https://required.example/repo.git"},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal, IsMarketplace: true}, RegistryURL: "https://market.example/repo.git"},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.SourceUnset}, RegistryURL: "https://unset.example/repo.git"},
+	}
+	act := toggleAction{scope: scopeGlobal, enable: true, kind: ir.KindSkill, skillName: "review", registryURL: "https://trusted.example/repo.git"}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd := excludeCompetingRegistriesCmd(repo, rows, act); cmd != nil {
+		msg, ok := cmd().(configWrittenMsg)
+		if !ok || msg.err != nil {
+			t.Fatalf("cross-scope cleanup = %#v", msg)
+		}
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("cross-scope cleanup changed user config: %q err=%v", after, err)
+	}
+	if err := os.WriteFile(configPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	userRows := []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal}, RegistryURL: "https://user-rival.example/repo.git"}}
+	if cmd := excludeCompetingRegistriesCmd(repo, userRows, act); cmd == nil {
+		t.Fatal("same-scope cleanup returned nil")
+	} else if msg, ok := cmd().(configWrittenMsg); !ok || msg.err != nil {
+		t.Fatalf("same-scope cleanup = %#v", msg)
+	}
+	updated, err := os.ReadFile(configPath)
+	if err != nil || !strings.Contains(string(updated), "exclude: [review]") {
+		t.Fatalf("existing user rival exclude disappeared: %q err=%v", updated, err)
+	}
+
+	projectConfig := filepath.Join(repo, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	projectInitial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://project-rival.example/repo.git\n    skills: {include: [review]}\n"
+	if err := os.WriteFile(projectConfig, []byte(projectInitial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	projectAct := toggleAction{scope: scopeProject, enable: true, kind: ir.KindSkill, skillName: "review", registryURL: "https://trusted.example/repo.git"}
+	projectRows := []row{
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.RepoCommitted}, RegistryURL: "https://project-rival.example/repo.git"},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal}, RegistryURL: "https://user-not-added.example/repo.git"},
+	}
+	if cmd := excludeCompetingRegistriesCmd(repo, projectRows, projectAct); cmd == nil {
+		t.Fatal("project cleanup returned nil")
+	} else if msg, ok := cmd().(configWrittenMsg); !ok || msg.err != nil {
+		t.Fatalf("project cleanup = %#v", msg)
+	}
+	projectUpdated, err := os.ReadFile(projectConfig)
+	if err != nil || !strings.Contains(string(projectUpdated), "exclude: [review]") {
+		t.Fatalf("project rival exclude missing: %q err=%v", projectUpdated, err)
+	}
+	if strings.Contains(string(projectUpdated), "user-not-added.example") {
+		t.Fatalf("user rival promoted into project config: %q", projectUpdated)
+	}
+}
+
+func TestValidateToggleRegistryWriteScopeBoundary(t *testing.T) {
+	err := validateToggleRegistryWrite([]row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.RepoCommitted}, RegistryURL: "./project"}}, []error{errors.New(`skill "review" is provided by multiple registries`)}, toggleAction{scope: scopeGlobal, enable: true, kind: ir.KindSkill, skillName: "review", registryURL: "https://trusted.example/repo.git"})
+	if err != nil {
+		t.Fatalf("remote primary with cross-scope relative rival = %v", err)
+	}
+	err = validateToggleRegistryWrite(nil, nil, toggleAction{scope: scopeGlobal, enable: true, kind: ir.KindSkill, skillName: "review", registryURL: "./primary"})
+	var boundary *config.GlobalRelativeRegistryError
+	if !errors.As(err, &boundary) {
+		t.Fatalf("relative primary error = %v, want GlobalRelativeRegistryError", err)
+	}
+}

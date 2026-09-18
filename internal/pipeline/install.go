@@ -978,7 +978,11 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			return nil, err
 		}
 	}
-	if err := config.EnsureRegistryWithPathsInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
+	ensureRegistry := config.EnsureRegistryWithPathsInConfig
+	if fromRef != "" {
+		ensureRegistry = config.EnsureRegistryWithPathsAtRefInConfig
+	}
+	if err := ensureRegistry(configPath, fromURL, fromRef, fromPath); err != nil {
 		return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
 	}
 
@@ -1029,18 +1033,31 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if catalogKey == "" {
 		return nil, fmt.Errorf("no catalog found for registry %s; check that the URL and ref are correct", fromURL)
 	}
+	selectedCatalogs := map[string]catalog.LoadedCatalog{catalogKey: catalogs[catalogKey]}
+	addSelectedResource := func(resourceKind ir.ResourceKind, resourceName string) error {
+		if fromRef != "" {
+			return config.AddResourceToExactRegistryEntryAtRef(configPath, fromURL, fromPath, fromRef, resourceKind, resourceName)
+		}
+		return config.AddResourceToExactRegistryEntry(configPath, fromURL, fromPath, resourceKind, resourceName)
+	}
 
 	// If a name arg is given, install just that resource.
 	if len(opts.Args) > 0 {
 		resourceName := strings.TrimSpace(opts.Args[0])
 
 		// Check collections.
-		if col := collection.Find(discoveredCollections, resourceName); col != nil {
+		selectedCollections := make([]collection.Collection, 0)
+		for _, col := range discoveredCollections {
+			if col.SourceCatalogKey == catalogKey {
+				selectedCollections = append(selectedCollections, col)
+			}
+		}
+		if col := collection.Find(selectedCollections, resourceName); col != nil {
 			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries, opts.Scope)
 			if err != nil {
 				return nil, err
 			}
-			if err := config.AddCollectionToConfig(configPath, col.Name); err != nil {
+			if err := addSelectedResource(ir.KindCollection, col.Name); err != nil {
 				return nil, err
 			}
 			requirementWarnings, err := syncAfterInstall(ctx, repoRoot, collectionResources, silentSyncOptsForInstall(opts)...)
@@ -1054,10 +1071,10 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			}, nil
 		}
 
-		if malformedErr := malformedSkillInstallError(catalogs, resourceName); malformedErr != nil {
+		if malformedErr := malformedSkillInstallError(selectedCatalogs, resourceName); malformedErr != nil {
 			return nil, malformedErr
 		}
-		match, err := findCatalogResource(catalogs, resourceName, kind, hasKind)
+		match, err := findCatalogResource(selectedCatalogs, resourceName, kind, hasKind)
 		if err != nil {
 			return nil, err
 		}
@@ -1065,7 +1082,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			return nil, fmt.Errorf("resource or collection %q not found in registry %s", resourceName, fromURL)
 		}
 
-		if err := config.AddResourceToExactRegistryEntry(configPath, fromURL, fromPath, match.kind, resourceName); err != nil {
+		if err := addSelectedResource(match.kind, resourceName); err != nil {
 			return nil, err
 		}
 		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName, opts.configStaging); err != nil {
@@ -1093,16 +1110,16 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 
 	if inferredName != "" {
 		// Try to find the inferred name in the catalog.
-		if _, ok := catalogs[catalogKey]; ok {
-			if malformedErr := malformedSkillInstallError(catalogs, inferredName); malformedErr != nil {
+		if _, ok := selectedCatalogs[catalogKey]; ok {
+			if malformedErr := malformedSkillInstallError(selectedCatalogs, inferredName); malformedErr != nil {
 				return nil, malformedErr
 			}
-			match, err := findCatalogResource(catalogs, inferredName, kind, hasKind)
+			match, err := findCatalogResource(selectedCatalogs, inferredName, kind, hasKind)
 			if err != nil {
 				return nil, err
 			}
 			if match != nil {
-				if err := config.AddResourceToExactRegistryEntry(configPath, fromURL, fromPath, match.kind, inferredName); err != nil {
+				if err := addSelectedResource(match.kind, inferredName); err != nil {
 					return nil, err
 				}
 				if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, inferredName, opts.configStaging); err != nil {
