@@ -160,6 +160,18 @@ type MetadataStore interface {
 	// coordinate order. The cursor is stateless and is never retained.
 	ReadCatalogProjectionPage(ctx context.Context, req CatalogProjectionPageRequest) (CatalogProjectionPage, error)
 
+	// Registry observation and scheduler state.
+	GetRegistryObservation(ctx context.Context, registry RegistryID) (RegistryObservation, error)
+	PutRegistryObservation(ctx context.Context, observation RegistryObservation) error
+	ListDueRegistryObservations(ctx context.Context, now time.Time, limit int) ([]RegistryObservation, error)
+	CompareAndSwapRegistryObservation(ctx context.Context, registry RegistryID, expectedObservedAt time.Time, next RegistryObservation) error
+	AcquireRegistryLease(ctx context.Context, registry RegistryID, owner string, leaseDuration time.Duration) (RegistryObservation, error)
+	ReleaseRegistryLease(ctx context.Context, registry RegistryID, owner string) error
+	SetDesiredRefresh(ctx context.Context, registry RegistryID, desired DesiredRefresh) (RegistryObservation, error)
+	ClearActiveRefresh(ctx context.Context, registry RegistryID, jobID JobID) (RegistryObservation, error)
+	AcquireHostBudget(ctx context.Context, host, owner string, acquisition bool, limit HostBudgetLimit, leaseDuration time.Duration) (HostBudgetLease, error)
+	ReleaseHostBudget(ctx context.Context, host, owner string) error
+
 	// Registry occurrences.
 	GetRegistryOccurrence(ctx context.Context, registry RegistryID, commit string) (RegistryOccurrence, error)
 	PutRegistryOccurrence(ctx context.Context, occ RegistryOccurrence) error

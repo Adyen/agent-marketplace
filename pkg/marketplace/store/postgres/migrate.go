@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-var migrations = []string{migration0, migration1, migration2}
+var migrations = []string{migration0, migration1, migration2, migration3}
 
 const migrationTable = "marketplace_metadata_v2_schema_migrations"
 
@@ -225,4 +225,42 @@ INSERT INTO catalog_versions (singleton, version) VALUES (1, 0);
 // from direct resource members.
 const migration2 = `
 ALTER TABLE collection_revisions ADD COLUMN includes TEXT NOT NULL DEFAULT '[]';
+`
+
+// migration3 adds durable scheduler observation state and deployment-wide
+// operation leases. Immutable registry/resource occurrences remain untouched.
+const migration3 = `
+CREATE TABLE registry_observations (
+    registry_id TEXT PRIMARY KEY,
+    observed_commit TEXT NOT NULL DEFAULT '',
+    observed_at BIGINT NOT NULL DEFAULT 0,
+    probe_status TEXT NOT NULL DEFAULT '',
+    probe_error TEXT NOT NULL DEFAULT '',
+    next_probe_at BIGINT NOT NULL DEFAULT 0,
+    next_reconcile_at BIGINT NOT NULL DEFAULT 0,
+    consecutive_probe_failures INTEGER NOT NULL DEFAULT 0,
+    work_lease_owner TEXT NOT NULL DEFAULT '',
+    work_lease_until BIGINT NOT NULL DEFAULT 0,
+    desired_commit TEXT NOT NULL DEFAULT '',
+    desired_generation TEXT NOT NULL DEFAULT '',
+    active_refresh_job_id TEXT NOT NULL DEFAULT '',
+    active_refresh_trigger TEXT NOT NULL DEFAULT '',
+    successful_commit TEXT NOT NULL DEFAULT '',
+    successful_generation TEXT NOT NULL DEFAULT '',
+    last_successful_index_at BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_registry_observations_due ON registry_observations(next_probe_at, next_reconcile_at, registry_id);
+
+CREATE TABLE host_budgets (
+    host TEXT PRIMARY KEY
+);
+CREATE TABLE host_budget_leases (
+    host TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    acquisition BOOLEAN NOT NULL DEFAULT false,
+    lease_until BIGINT NOT NULL,
+    PRIMARY KEY (host, owner),
+    FOREIGN KEY (host) REFERENCES host_budgets(host) ON DELETE CASCADE
+);
+CREATE INDEX idx_host_budget_leases_expiry ON host_budget_leases(host, lease_until);
 `

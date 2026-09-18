@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfigValid(t *testing.T) {
@@ -62,8 +63,24 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Refresh.Interval.Duration() == 0 {
 		t.Fatalf("refresh interval did not default")
 	}
+	if cfg.Refresh.ReconcileInterval.Duration() != 24*time.Hour {
+		t.Fatalf("reconcile interval = %s, want 24h", cfg.Refresh.ReconcileInterval.Duration())
+	}
+	if cfg.Refresh.ProbeTimeout.Duration() != 30*time.Second {
+		t.Fatalf("probe timeout = %s, want 30s", cfg.Refresh.ProbeTimeout.Duration())
+	}
 	if cfg.CatalogProjection.Enabled {
 		t.Fatal("catalog projection is enabled by default")
+	}
+}
+
+func TestRefreshIntervalsMustBePositive(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, strings.Replace(validConfigYAML(), "refresh:\n  interval: 30m", "refresh:\n  interval: -1s\n  reconcile_interval: -2s\n  probe_timeout: -3s", 1)))
+	if err == nil {
+		t.Fatal("negative refresh durations unexpectedly accepted")
+	}
+	if cfg.Refresh.Interval.Duration() >= 0 || cfg.Refresh.ReconcileInterval.Duration() >= 0 || cfg.Refresh.ProbeTimeout.Duration() >= 0 {
+		t.Fatalf("negative refresh durations were not decoded: %+v", cfg.Refresh)
 	}
 }
 

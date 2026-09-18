@@ -204,6 +204,61 @@ type Marketplace struct {
 	InstanceMetadata map[string]any `json:"instance_metadata,omitempty"`
 }
 
+// RegistryProbeStatus is the outcome of the latest lightweight source probe.
+type RegistryProbeStatus string
+
+const (
+	RegistryProbeStatusUnknown RegistryProbeStatus = "unknown"
+	RegistryProbeStatusOK      RegistryProbeStatus = "ok"
+	RegistryProbeStatusFailed  RegistryProbeStatus = "failed"
+)
+
+// RegistryObservation is durable scheduler state for one registry. Observation
+// health and desired/successful indexing identities are intentionally separate
+// from the public Registry record and immutable occurrences.
+type RegistryObservation struct {
+	RegistryID               RegistryID          `json:"registry_id"`
+	ObservedCommit           string              `json:"observed_commit,omitempty"`
+	ObservedAt               time.Time           `json:"observed_at,omitempty"`
+	ProbeStatus              RegistryProbeStatus `json:"probe_status,omitempty"`
+	ProbeError               string              `json:"probe_error,omitempty"`
+	NextProbeAt              time.Time           `json:"next_probe_at,omitempty"`
+	NextReconcileAt          time.Time           `json:"next_reconcile_at,omitempty"`
+	ConsecutiveProbeFailures int                 `json:"consecutive_probe_failures,omitempty"`
+	WorkLeaseOwner           string              `json:"work_lease_owner,omitempty"`
+	WorkLeaseUntil           time.Time           `json:"work_lease_until,omitempty"`
+	DesiredCommit            string              `json:"desired_commit,omitempty"`
+	DesiredGeneration        string              `json:"desired_generation,omitempty"`
+	ActiveRefreshJobID       JobID               `json:"active_refresh_job_id,omitempty"`
+	ActiveRefreshTrigger     string              `json:"active_refresh_trigger,omitempty"`
+	SuccessfulCommit         string              `json:"successful_commit,omitempty"`
+	SuccessfulGeneration     string              `json:"successful_generation,omitempty"`
+	LastSuccessfulIndexAt    time.Time           `json:"last_successful_index_at,omitempty"`
+}
+
+// DesiredRefresh is the immutable identity and trigger for a refresh request.
+type DesiredRefresh struct {
+	Commit     string
+	Generation string
+	JobID      JobID
+	Trigger    string
+}
+
+// HostBudgetLimit bounds active remote operations for one normalized host.
+type HostBudgetLimit struct {
+	MaxOperations   int
+	MaxAcquisitions int
+}
+
+// HostBudgetLease identifies an admitted operation that must be released when
+// the operation ends. Expired leases are reclaimed by the next admission.
+type HostBudgetLease struct {
+	Host        string
+	Owner       string
+	Acquisition bool
+	LeaseUntil  time.Time
+}
+
 // RegistryRefreshStatus describes the health of the most recent registry refresh.
 type RegistryRefreshStatus string
 

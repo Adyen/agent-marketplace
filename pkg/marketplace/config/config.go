@@ -31,6 +31,8 @@ const (
 	defaultListen             = "127.0.0.1:8080"
 	defaultOperationsListen   = "127.0.0.1:9090"
 	defaultRefreshInterval    = 30 * time.Minute
+	defaultReconcileInterval  = 24 * time.Hour
+	defaultProbeTimeout       = 30 * time.Second
 	defaultHiddenContent      = "warn"
 	defaultLicenseUndeclared  = LicenseUndeclaredReject
 	defaultAcquisitionDefault = "mirror"
@@ -207,7 +209,9 @@ type StorageBlobs struct {
 
 // Refresh configures the background refresh scheduler.
 type Refresh struct {
-	Interval Duration `yaml:"interval"`
+	Interval          Duration `yaml:"interval"`
+	ReconcileInterval Duration `yaml:"reconcile_interval"`
+	ProbeTimeout      Duration `yaml:"probe_timeout"`
 }
 
 // Policy configures the global indexing policy.
@@ -340,6 +344,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.Refresh.Interval == 0 {
 		cfg.Refresh.Interval = Duration(defaultRefreshInterval)
 	}
+	if cfg.Refresh.ReconcileInterval == 0 {
+		cfg.Refresh.ReconcileInterval = Duration(defaultReconcileInterval)
+	}
+	if cfg.Refresh.ProbeTimeout == 0 {
+		cfg.Refresh.ProbeTimeout = Duration(defaultProbeTimeout)
+	}
 	if cfg.AcquisitionDefault == "" {
 		cfg.AcquisitionDefault = defaultAcquisitionDefault
 	}
@@ -404,6 +414,12 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.Refresh.Interval.Duration() <= 0 {
 		errs = append(errs, errors.New("refresh.interval must be a positive duration"))
+	}
+	if cfg.Refresh.ReconcileInterval.Duration() <= 0 {
+		errs = append(errs, errors.New("refresh.reconcile_interval must be a positive duration"))
+	}
+	if cfg.Refresh.ProbeTimeout.Duration() <= 0 {
+		errs = append(errs, errors.New("refresh.probe_timeout must be a positive duration"))
 	}
 	if cfg.RefreshConcurrency < 0 {
 		errs = append(errs, errors.New("refresh_concurrency must not be negative"))
