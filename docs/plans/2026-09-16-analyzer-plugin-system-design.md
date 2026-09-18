@@ -241,7 +241,7 @@ The revision decision is derived from the audits:
    `warn` -> `warn`
 3. otherwise -> `allow`
 
-An advisory analyzer can never reject. That is the whole point of the role.
+An advisory analyzer can never reject.
 
 A gating analyzer that times out, crashes, or returns an unusable response yields an `error` audit
 and downgrades the revision to `warn` rather than rejecting it, so one misconfigured binary or one
