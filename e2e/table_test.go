@@ -180,6 +180,25 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:    "security/config_include_size",
+		Desc:    "Given an oversized valid included config, When sync runs, Then it fails without mutating the inputs or materializing output",
+		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: [large.yaml]\nregistries: []\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/.agents/large.yaml", Body: "registries: []\n#" + strings.Repeat("x", 4*1024*1024) + "\n"},
+			{Args: []string{"sync"}, AssertExitCode: intPtr(1), OutContains: []string{"config file exceeds maximum size"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/large.yaml"}, FilesAbsent: []string{"/workspace/.factory"}},
+		},
+	},
+	{
+		Name:    "security/config_include_small",
+		Desc:    "Given a small included registry and selector, When sync runs, Then the included skill materializes",
+		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: [small.yaml]\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/registry/skills/bounded-skill/SKILL.md", Body: (Skill{Name: "bounded-skill", Description: "bounded include skill"}).SkillFile()},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/small.yaml", Body: "registries:\n  - url: ./registry\nskills:\n  include: [bounded-skill]\n"},
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/bounded-skill/SKILL.md"}},
+		},
+	},
+	{
 		Name:       "locks/unlocked_organization_sync_parity",
 		Desc:       "Given an organization registry without a lock, when syncing and checking repeatedly, then resources stay synced without creating an organization lock.",
 		Registries: []RegistryDef{{Name: "org-parity", Skills: []Skill{{Name: "review"}}}},
