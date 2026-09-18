@@ -4,14 +4,11 @@
 
 ## Why native layouts
 
-Coding agents read their own formats: Claude Code expects `.claude/skills/<name>/SKILL.md`, Factory Droid expects `.factory/skills/<name>/SKILL.md`, Devin CLI expects `.devin/skills/<name>/SKILL.md` with a `SKILL.md` file and a `x-agent-marketplace-kind: command` marker for commands. Native output means the generated files work immediately, without an intermediate adapter.
+Coding agents read their own formats. Claude Code looks for `.claude/skills/<name>/SKILL.md`, Factory Droid for `.factory/skills/<name>/SKILL.md`, Codex for `.agents/skills/<name>/SKILL.md` plus `.codex/` for everything else. Writing native output means the generated files work the moment the harness starts, with no adapter in between. The [output paths reference](../reference/harnesses-and-output-paths.md) has the full matrix.
 
-## The compilation pipeline
+## Where compilation happens
 
-1. **Ingest**: read the source resource in its native harness layout and translate it into a canonical intermediate representation.
-2. **Canonical IR**: each intermediate value represents one resource (a skill, command, subagent, hook, or MCP server) and is independent of any harness.
-3. **Compile**: translate the canonical IR into the target harness artifacts.
-4. **Materialize**: write the artifacts to disk atomically and prune stale output.
+The pipeline that turns a registry resource into native files is described step by step in [How agent-marketplace works](./how-agent-marketplace-works.md). This page covers what happens at the last step: how the compiled artifacts land on disk.
 
 ## Honest about loss
 
@@ -29,4 +26,4 @@ Devin and Codex store durable ownership in XDG state so the CLI can distinguish 
 
 - [Harnesses and output paths reference](../reference/harnesses-and-output-paths.md)
 - [How to convert a harness layout](../how-to/convert-a-harness-layout.md)
-- [Diagnostics reference](../reference/diagnostics.md)
+- [How agent-marketplace works](./how-agent-marketplace-works.md)

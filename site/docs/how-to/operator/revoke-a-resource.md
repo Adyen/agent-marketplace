@@ -1,6 +1,6 @@
-# How to revoke a resource
+# How to revoke a resource revision
 
-Remove a resource or a specific revision from a hosted Marketplace.
+Mark a resource, or one exact revision of it, as revoked in a hosted Marketplace so consumers can no longer install it. Revocation is a policy record: the immutable artifact bytes and revision history are retained, and existing consumer pins that reference the revoked digest start failing `sync --check`.
 
 ## Prerequisites
 
@@ -49,16 +49,16 @@ agent-marketplace serve reindex shared-agents --config /app/marketplace.yaml
 Request the resource and confirm it is reported as revoked:
 
 ```bash
-curl -fs \
-  "https://marketplace.example.com/api/v1/resources/shared-agents/skill/review" | head
+curl -fsS "https://marketplace.example.com/api/v1/resources/shared-agents/skill/review" -o revision.json
+python3 -c 'import json,sys; r=json.load(open("revision.json")); print(r.get("revocation"))'
 ```
 
-A revoked revision response includes a `revocation` field with `kind`, `target_id`, `reason`, and `applied_at`. A `coordinates` target revokes every revision of that resource; a `revisions` target revokes only that digest.
+A revoked revision has a non-null `revocation` object with `kind`, `target_id`, `reason`, and `applied_at`. `None` means the latest revision is not revoked. Avoid `curl ... | head` for this check: without `set -o pipefail` the pipeline reports success even when `curl` fails.
 
 ## Boundaries
 
 - Revocations apply before ingestion. A `revisions` target affects only one digest. A `coordinates` target affects every revision of that resource, including newer ones.
-- Consumers can use `sync --allow-revoked <marketplace/registry/kind/name@sha256:...>` to run once with a revoked pin, but cannot make `sync --check` healthy for it.
+- Consumers can run one sync with `sync --allow-revoked <instance_id>/<registry>/<kind>/<name>@sha256:...` for a revoked pin, but that is execution-only and cannot make `sync --check` healthy.
 
 ## Related documentation
 

@@ -46,9 +46,24 @@ Do not append `/revisions` to the compact form. `/revisions` is the URL path suf
 |---|---|
 | `alias` | User-defined endpoint alias. Cannot be `all`. |
 | `registry` | Route-facing registry slug or ID. |
-| `kind` | `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection`. |
+| `kind` | `skill`, `command`, `subagent`, `hook`, `mcpserver`, or `collection`. Note `mcpserver`, not `mcp`: the CLI `--kind` flag uses `mcp`, but Marketplace locators and HTTP routes use the protocol spelling. |
 | `name` | Marketplace resource name. |
 | `revision` | Content digest of the exact revision. |
+
+## Kind spelling
+
+Marketplace locators use the wire protocol's kind names, which differ from the CLI `--kind` flag for one kind:
+
+| CLI `--kind` | Locator / API `{kind}` |
+|---|---|
+| `skill` | `skill` |
+| `command` | `command` |
+| `subagent` | `subagent` |
+| `hook` | `hook` |
+| `mcp` | `mcpserver` |
+| `collection` | `collection` |
+
+`agent-marketplace install team:shared-agents/mcp/docs-server` is rejected as an invalid kind; use `team:shared-agents/mcpserver/docs-server`.
 
 ## Registration
 

@@ -9,7 +9,7 @@ Convert a resource from one harness layout to another for inspection or migratio
 
 ## 1. Convert from a source to a destination
 
-Conversion is bidirectional across all supported harnesses. Each invocation has a single source and a single destination. The destination directory must be empty or non-existent, because the command writes the full converted tree.
+Conversion is bidirectional across all supported harnesses. Each invocation has one source and one destination. By default the command writes in overwrite mode: existing files at the same paths are replaced and other files in `--out` are left alone. Add `--sync` to also prune files that a previous conversion wrote but that this run no longer produces, and `--dry-run` to see the planned writes without touching disk. When `--out` is omitted, the output goes to `<path>-<to>`.
 
 Convert a Claude Code plugin to Factory Droid format:
 
@@ -35,9 +35,9 @@ Every supported harness can be both a source and a destination: `claude`, `facto
 
 ## Codex conversion restrictions
 
-Converting to Codex requires a destination without pre-existing `.codex/hooks.json` or `.codex/config.toml`. Use a new or empty directory.
+Converting **to** Codex is the one case with a destination precondition: the command refuses an `--out` directory that already contains `.codex/hooks.json` or `.codex/config.toml`, because those are shared, ownership-reconciled files and one-shot conversion does not merge into them. Use a new or empty directory for Codex output.
 
 ## Troubleshooting
 
 - **Conversion drops fields**: Some fields are native-only and have no equivalent in the target. Check the [diagnostics reference](../reference/diagnostics.md) for the emitted warning codes.
-- **Destination already exists**: Use a fresh `--out` directory rather than manually cleaning target files.
+- **`codex shared file ... already exists`**: You converted to Codex into a directory that already has `.codex/hooks.json` or `.codex/config.toml`. Pick a fresh `--out`.
