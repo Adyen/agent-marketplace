@@ -112,7 +112,7 @@ function formatValue(value: unknown): string {
 </script>
 
 <template>
-  <article class="border border-default bg-default p-5 sm:p-7">
+  <article class="border border-default bg-[var(--am-color-bg-surface)] p-5 sm:p-7">
     <div class="flex flex-wrap items-start justify-between gap-4 border-b border-default pb-5">
       <div class="flex min-w-0 items-start gap-4">
         <!-- The same mark the index row carries, at reading size. -->
@@ -122,7 +122,7 @@ function formatValue(value: unknown): string {
           <h1 class="mt-1 break-words font-mono text-2xl tracking-tight">
             <span class="text-muted">{{ registryLabel(listItem) }}/</span><span class="font-medium text-highlighted">{{ name }}</span>
           </h1>
-          <p v-if="resource.description" class="mt-2 text-sm leading-6 text-muted">{{ resource.description }}</p>
+          <p v-if="resource.description" class="mt-2 text-sm leading-6 text-toned">{{ resource.description }}</p>
         </div>
       </div>
       <span class="inline-flex shrink-0 items-center gap-2 text-sm">
@@ -175,13 +175,13 @@ function formatValue(value: unknown): string {
 
     <section v-if="revoked" role="alert" aria-live="assertive" class="border-b border-default py-6" aria-labelledby="revocation-heading">
       <h2 id="revocation-heading" class="text-lg font-semibold text-error">This revision is revoked</h2>
-      <p class="mt-2 text-sm leading-6 text-muted">The Marketplace has marked this exact digest as revoked. This page is read-only; do not install it.</p>
+      <p class="mt-2 text-sm leading-6 text-toned">The Marketplace has marked this exact digest as revoked. This page is read-only; do not install it.</p>
       <p class="mt-3 break-words font-mono text-xs text-dimmed">{{ formatValue(resource.revocation) }}</p>
     </section>
 
     <section v-else-if="availability === 'policy-blocked'" role="alert" aria-live="assertive" class="border-b border-default py-6" aria-labelledby="policy-block-heading">
       <h2 id="policy-block-heading" class="text-lg font-semibold text-error">The security policy rejected this revision</h2>
-      <p class="mt-2 text-sm leading-6 text-muted">The authoritative assessment rejected this revision, so this Marketplace keeps it indexed for inspection but blocks its artifact from serving and installation. Read the metadata, inspection preview, and findings below. There is nothing to install.</p>
+      <p class="mt-2 text-sm leading-6 text-toned">The authoritative assessment rejected this revision, so this Marketplace keeps it indexed for inspection but blocks its artifact from serving and installation. Read the metadata, inspection preview, and findings below. There is nothing to install.</p>
     </section>
 
     <section v-if="showRevisionHistory" class="border-b border-default py-6" aria-labelledby="revision-history-heading">
@@ -191,7 +191,7 @@ function formatValue(value: unknown): string {
       </div>
       <p v-if="revisionsError" class="mt-3 rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning" role="status" aria-live="polite">Revision history is unavailable. The current revision remains available below.</p>
       <ol v-else class="mt-4 space-y-2" aria-label="Resource revision history">
-        <li v-for="revision in revisionHistory" :key="revision.content_digest" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-default bg-muted/30 px-4 py-3">
+        <li v-for="revision in revisionHistory" :key="revision.content_digest" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-default bg-[var(--am-color-bg-subtle)] px-4 py-3">
           <div class="min-w-0">
             <NuxtLink v-if="revisionURL(revision)" :to="revisionURL(revision)" class="break-all font-mono text-sm text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ revision.content_digest }}</NuxtLink>
             <span v-else class="break-all font-mono text-sm text-muted">{{ revision.content_digest }}</span>
@@ -207,40 +207,40 @@ function formatValue(value: unknown): string {
         <h2 id="inspection-heading" class="text-lg font-semibold text-highlighted">Inspection preview</h2>
         <span class="font-mono text-xs text-muted">{{ inspection.primary_path }} · {{ inspection.files.length }} file{{ inspection.files.length === 1 ? '' : 's' }}</span>
       </div>
-      <div v-if="selectableFiles.length > 1" class="mt-4 rounded-xl border border-default bg-muted/30 p-4">
+      <div v-if="selectableFiles.length > 1" class="mt-4 rounded-xl border border-default bg-[var(--am-color-bg-subtle)] p-4">
         <label for="inspection-file" class="text-sm font-medium text-highlighted">Inspect file</label>
-        <select id="inspection-file" v-model="selectedDigest" aria-label="Inspection file" class="mt-2 block w-full rounded-lg border border-default bg-default px-3 py-2 text-sm text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+        <select id="inspection-file" v-model="selectedDigest" aria-label="Inspection file" class="mt-2 block w-full rounded-lg border border-[var(--am-color-border-control)] bg-[var(--am-color-bg-control)] px-3 py-2 text-sm text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--am-color-action-focus-ring)]">
           <option v-for="file in selectableFiles" :key="file.content_digest" :value="file.content_digest">{{ file.path }} · {{ file.size }} bytes</option>
         </select>
         <p class="mt-2 text-xs text-muted">The primary file is selected by default. Additional files load only after selection.</p>
       </div>
-      <div v-if="selectedIsImage && selectedImageURL" class="mt-4 rounded-xl border border-default bg-default p-5">
+      <div v-if="selectedIsImage && selectedImageURL" class="mt-4 rounded-xl border border-default bg-[var(--am-color-bg-raised)] p-5">
         <img :src="selectedImageURL" alt="Contained resource preview" class="max-h-96 max-w-full object-contain" loading="lazy" referrerpolicy="no-referrer">
       </div>
-      <div v-else-if="selectedContent !== undefined && selectedIsMarkdown" class="mt-4 rounded-xl border border-default bg-default p-5">
+      <div v-else-if="selectedContent !== undefined && selectedIsMarkdown" class="mt-4 rounded-xl border border-default bg-[var(--am-color-bg-raised)] p-5">
         <div class="marketplace-markdown" data-testid="safe-markdown" v-html="renderedContent" />
       </div>
-      <pre v-else-if="selectedContent !== undefined" data-testid="escaped-primary" aria-label="Escaped raw inspection text" class="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-default bg-muted/30 p-5 font-mono text-xs text-highlighted" v-html="highlightedContent" />
-      <p v-else-if="loadingDigest === selectedFile?.content_digest" class="mt-4 rounded-xl border border-default bg-muted/30 px-4 py-3 text-sm text-muted" role="status" aria-live="polite">Loading {{ selectedFile.path }}…</p>
+      <pre v-else-if="selectedContent !== undefined" data-testid="escaped-primary" aria-label="Escaped raw inspection text" class="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-[var(--am-color-code-border)] bg-[var(--am-color-code-bg)] p-5 font-mono text-xs text-[var(--am-color-code-text)]" v-html="highlightedContent" />
+      <p v-else-if="loadingDigest === selectedFile?.content_digest" class="mt-4 rounded-xl border border-default bg-[var(--am-color-bg-subtle)] px-4 py-3 text-sm text-toned" role="status" aria-live="polite">Loading {{ selectedFile.path }}…</p>
       <p v-else-if="selectedContentUnavailable || !selectedIsImage" class="mt-4 rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning" role="status">{{ selectedIsPrimary ? 'Primary content is unavailable or intentionally withheld for safe inspection.' : 'This file is unavailable for safe inspection.' }}</p>
-      <div v-if="imageFiles.length" class="mt-4 rounded-xl border border-default bg-muted/30 p-4">
+      <div v-if="imageFiles.length" class="mt-4 rounded-xl border border-default bg-[var(--am-color-bg-subtle)] p-4">
         <p class="text-sm font-medium text-highlighted">Contained raster previews</p>
         <div class="mt-3 grid gap-3 sm:grid-cols-2">
-          <figure v-for="file in imageFiles" :key="file.path" class="rounded-lg border border-default bg-default p-3">
+          <figure v-for="file in imageFiles" :key="file.path" class="rounded-lg border border-default bg-[var(--am-color-bg-raised)] p-3">
             <img :src="inspectionFileURL(file.content_digest)" :alt="`Contained preview ${file.path}`" class="max-h-64 max-w-full object-contain" loading="lazy" referrerpolicy="no-referrer">
             <figcaption class="mt-2 break-all font-mono text-xs text-muted">{{ file.path }} · {{ file.content_digest }}</figcaption>
           </figure>
         </div>
       </div>
-      <div v-if="textFiles.length" class="mt-4 rounded-xl border border-default bg-muted/30 px-4 py-3 text-sm text-muted">
+      <div v-if="textFiles.length" class="mt-4 rounded-xl border border-default bg-[var(--am-color-bg-subtle)] px-4 py-3 text-sm text-muted">
         <p class="font-medium text-highlighted">Additional text files are available by immutable digest.</p>
         <ul class="mt-2 space-y-1 font-mono text-xs"><li v-for="file in textFiles" :key="file.path">{{ file.path }} · {{ file.content_digest }} · {{ file.size }} bytes</li></ul>
       </div>
-      <div v-if="binaryFiles.length" class="mt-4 rounded-xl border border-default bg-muted/30 px-4 py-3 text-sm text-muted">
+      <div v-if="binaryFiles.length" class="mt-4 rounded-xl border border-default bg-[var(--am-color-bg-subtle)] px-4 py-3 text-sm text-muted">
         <p class="font-medium text-highlighted">Binary metadata (not rendered)</p>
         <ul class="mt-2 space-y-1 font-mono text-xs"><li v-for="file in binaryFiles" :key="file.path">{{ file.path }} · {{ file.media_type }} · {{ file.content_digest }} · {{ file.size }} bytes</li></ul>
       </div>
-      <details v-if="selectedContent !== undefined" class="mt-4 rounded-xl border border-default bg-muted/30">
+      <details v-if="selectedContent !== undefined" class="mt-4 rounded-xl border border-default bg-[var(--am-color-code-bg)]">
         <summary class="cursor-pointer px-4 py-3 text-sm font-medium text-highlighted">View escaped raw text</summary>
         <p v-if="selectedFindingDetails.some(finding => finding.startByte !== undefined && finding.endByte !== undefined)" class="px-4 pb-2 text-xs text-muted">Finding ranges are highlighted below. Select a finding's range link to move focus to its highlighted text.</p>
         <pre :data-testid="selectedIsPrimary ? 'escaped-raw' : 'escaped-selected-raw'" aria-label="Escaped raw inspection text" class="max-h-96 overflow-auto whitespace-pre-wrap break-words px-4 pb-4 font-mono text-xs text-highlighted" v-html="highlightedContent" />
@@ -260,7 +260,7 @@ function formatValue(value: unknown): string {
 
     <section class="border-b border-default py-6" aria-labelledby="findings-heading">
       <h2 id="findings-heading" class="text-lg font-semibold text-highlighted">Security findings</h2>
-      <p v-if="findings.length" class="mt-2 text-sm leading-6 text-muted">Every finding reported by this revision's assessment.</p>
+      <p v-if="findings.length" class="mt-2 text-sm leading-6 text-toned">Every finding reported by this revision's assessment.</p>
       <ul v-if="findings.length" class="mt-4 space-y-3" aria-label="Security findings">
         <li v-for="finding in displayFindings" :id="`finding-${finding.index}`" :key="finding.index" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -273,12 +273,12 @@ function formatValue(value: unknown): string {
           <a v-if="selectedContent !== undefined && finding.path === selectedFile?.path && finding.startByte !== undefined && finding.endByte !== undefined" :href="`#finding-highlight-${finding.index}`" class="mt-2 inline-block text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">View highlighted range</a>
         </li>
       </ul>
-      <p v-else class="mt-3 text-sm text-muted">No findings were reported for this revision.</p>
+      <p v-else class="mt-3 text-sm text-toned">No findings were reported for this revision.</p>
     </section>
 
     <section class="pt-6" aria-labelledby="acquisition-heading">
       <h2 id="acquisition-heading" class="text-lg font-semibold text-highlighted">Install exact revision</h2>
-      <p class="mt-2 text-sm leading-6 text-muted">Copy the digest-pinned command to install this exact revision. Copy the detail URL to share this page. Installation remains a local CLI action.</p>
+      <p class="mt-2 text-sm leading-6 text-toned">Copy the digest-pinned command to install this exact revision. Copy the detail URL to share this page. Installation remains a local CLI action.</p>
       <div class="mt-4 grid gap-3">
         <CommandBlock :command="command" :label="`pinned CLI install command for ${name}`" :disabled="!commandAvailable" />
         <p v-if="installNotice" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">{{ installNotice }}</p>

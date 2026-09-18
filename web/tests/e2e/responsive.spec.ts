@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 
 async function expectFirstResultWithinViewport(page: Page) {
   const firstResult = page.locator('article').first()
@@ -10,13 +10,13 @@ async function expectFirstResultWithinViewport(page: Page) {
 test.describe('Marketplace layout at 390px', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 
-  test('shows the first result above the fold with compact filters and usable actions', async ({ page }) => {
+  test('keeps the catalog compact and opens filters on demand', async ({ page }) => {
     await page.goto('/')
 
     await expectFirstResultWithinViewport(page)
+    await expect(page.locator('.catalog-sidebar')).toBeHidden()
     await expect(page.getByRole('button', { name: 'Filters', exact: true })).toBeVisible()
-    await expect(page.locator('#search-kind')).toBeHidden()
-    await expect(page.locator('#search-registry')).toBeHidden()
+    await expect(page.locator('#mobile-resource-filters')).toBeHidden()
 
     const firstResult = page.locator('article').first()
     const copyAction = firstResult.getByRole('button', { name: 'Copy install command for secure-review' })
@@ -32,28 +32,23 @@ test.describe('Marketplace layout at 390px', () => {
     await expect(description).toHaveCSS('white-space', 'nowrap')
     await expect(firstResult.getByText('View details', { exact: true })).toHaveCount(0)
 
-    const unavailableResult = page.locator('article').last()
-    const firstResultBox = await firstResult.boundingBox()
-    const unavailableResultBox = await unavailableResult.boundingBox()
-    expect(firstResultBox).not.toBeNull()
-    expect(unavailableResultBox).not.toBeNull()
-    expect(Math.abs(firstResultBox!.height - unavailableResultBox!.height)).toBeLessThanOrEqual(1)
-
     await page.getByRole('button', { name: 'Filters', exact: true }).click()
-    await expect(page.locator('#search-kind')).toBeVisible()
-    await expect(page.locator('#search-registry')).toBeVisible()
+    await expect(page.locator('#mobile-resource-filters')).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'All kinds', exact: true })).toBeVisible()
+    await expect(page.getByRole('checkbox', { name: 'team-tools', exact: true })).toBeVisible()
   })
 })
 
 test.describe('Marketplace layout at 768px', () => {
   test.use({ viewport: { width: 768, height: 1024 } })
 
-  test('keeps filters inline and the first result above the fold', async ({ page }) => {
+  test('shows the desktop filter rail and keeps the first result above the fold', async ({ page }) => {
     await page.goto('/')
 
     await expect(page.getByRole('button', { name: 'Filters', exact: true })).toBeHidden()
-    await expect(page.locator('#search-kind')).toBeVisible()
-    await expect(page.locator('#search-registry')).toBeVisible()
+    await expect(page.locator('.catalog-sidebar')).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'All kinds', exact: true })).toBeVisible()
+    await expect(page.getByRole('checkbox', { name: 'team-tools', exact: true })).toBeVisible()
     await expectFirstResultWithinViewport(page)
   })
 })
@@ -61,7 +56,7 @@ test.describe('Marketplace layout at 768px', () => {
 test.describe('Marketplace layout at 1440px', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
-  test('keeps search controls and the result list anchored while search applies', async ({ page }) => {
+  test('keeps search and results anchored while search applies', async ({ page }) => {
     let releaseSearch = () => {}
     const delayedSearch = new Promise<void>((resolve) => {
       releaseSearch = resolve
@@ -78,7 +73,6 @@ test.describe('Marketplace layout at 1440px', () => {
 
     const search = page.locator('#marketplace-search')
     const firstResult = page.locator('article').first()
-    const clearFilters = page.getByRole('button', { name: 'Clear filters', exact: true })
     const updateStatus = page.getByTestId('search-update-status')
     const resultsPanel = page.getByTestId('search-results')
     const resultsBody = page.getByTestId('search-results-body')
@@ -87,27 +81,21 @@ test.describe('Marketplace layout at 1440px', () => {
 
     expect(searchBefore).not.toBeNull()
     expect(resultBefore).not.toBeNull()
-    await expect(clearFilters).toHaveCount(0)
     await expect(updateStatus).toHaveCSS('opacity', '0')
     expect(await page.locator('html').evaluate(element => getComputedStyle(element).scrollbarGutter)).toContain('stable')
 
     await page.getByLabel('Search', { exact: true }).fill('secure')
-    await expect(clearFilters).toBeVisible()
-    await expect(clearFilters).toBeEnabled()
-    await expect(clearFilters).toHaveCSS('cursor', 'pointer')
     await expect(updateStatus).toHaveCSS('opacity', '1')
-    await expect(updateStatus).toHaveText('Updating')
+    await expect(updateStatus).toContainText('Updating')
     await expect(page).toHaveURL(/q=secure/)
     await expect(firstResult).toBeVisible()
     await expect(page.getByRole('status', { name: 'Loading resources' })).toHaveCount(0)
     await expect(resultsPanel).toHaveAttribute('aria-busy', 'true')
     await expect(resultsBody).toHaveAttribute('inert', '')
     releaseSearch()
-    await expect(page.getByText('· 1 total', { exact: true })).toBeVisible()
+    await expect(page.locator('.catalog-results__header p')).toContainText('1 resource')
     await expect(updateStatus).toHaveCSS('opacity', '0')
     await expect(resultsBody).not.toHaveAttribute('inert', '')
-    await expect(page.getByText('matching your search', { exact: true })).toHaveCount(0)
-    expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true)
 
     const searchAfter = await search.boundingBox()
     const resultAfter = await firstResult.boundingBox()
@@ -119,71 +107,85 @@ test.describe('Marketplace layout at 1440px', () => {
     expect(Math.abs(resultAfter!.x - resultBefore!.x)).toBeLessThanOrEqual(1)
   })
 
-  test('keeps the introduction above the full-width searchable catalog', async ({ page }) => {
+  test('uses a compact intro, sticky filter rail, and unified results column', async ({ page }) => {
     await page.goto('/?kind=skill&registry=team-tools')
 
-    const search = await page.locator('#marketplace-search').boundingBox()
-    expect(search).not.toBeNull()
-    expect(search!.width).toBeGreaterThan(1000)
+    const introduction = page.locator('.marketplace-intro')
+    const introductionHeading = page.getByRole('heading', { name: 'e2e-marketplace', exact: true })
+    const introductionParagraphs = page.locator('.marketplace-intro__description p')
+    const resultsHeader = page.locator('.catalog-results__header')
+    const catalogHeading = page.getByRole('heading', { name: 'Resources', exact: true })
+    const resultCount = page.locator('.catalog-results__header > p')
+    const activeFilters = page.getByLabel('Active filters')
+    const search = page.locator('#marketplace-search')
+    const sidebar = page.locator('.catalog-sidebar')
+    const stickyFilters = page.locator('.catalog-sidebar__sticky')
+    const results = page.locator('.catalog-results')
+    const [introductionBox, catalogBox, searchBox, sidebarBox, resultsBox] = await Promise.all([
+      introductionHeading.boundingBox(),
+      catalogHeading.boundingBox(),
+      search.boundingBox(),
+      sidebar.boundingBox(),
+      results.boundingBox(),
+    ])
 
-    const introductionHeading = await page.getByRole('heading', { name: 'e2e-marketplace', exact: true }).boundingBox()
-    const catalogHeading = await page.getByRole('heading', { name: 'Resources', exact: true }).boundingBox()
-    const resultCount = await page.getByText('· 1 total', { exact: true }).boundingBox()
-    expect(introductionHeading).not.toBeNull()
-    expect(catalogHeading).not.toBeNull()
-    expect(resultCount).not.toBeNull()
-    expect(catalogHeading!.y).toBeGreaterThan(introductionHeading!.y + introductionHeading!.height)
-    expect(resultCount!.y).toBeLessThan(catalogHeading!.y + catalogHeading!.height)
-    expect(catalogHeading!.y).toBeLessThan(resultCount!.y + resultCount!.height)
-    expect(search!.y).toBeGreaterThan(catalogHeading!.y + catalogHeading!.height)
-
+    expect(introductionBox).not.toBeNull()
+    expect(catalogBox).not.toBeNull()
+    expect(searchBox).not.toBeNull()
+    expect(sidebarBox).not.toBeNull()
+    expect(resultsBox).not.toBeNull()
+    expect(introductionBox!.height).toBeLessThan(50)
+    expect((await introduction.boundingBox())!.height).toBeLessThan(140)
+    await expect(introductionParagraphs).toHaveCount(2)
+    await expect(introductionParagraphs.first()).toHaveCSS('display', 'inline')
+    await expect(introductionParagraphs.last()).toHaveCSS('display', 'inline')
+    expect(searchBox!.x).toBeGreaterThan(sidebarBox!.x + sidebarBox!.width)
+    expect(catalogBox!.y).toBeGreaterThan(searchBox!.y + searchBox!.height)
+    expect(introductionBox!.x - sidebarBox!.x).toBeGreaterThan(40)
+    expect(resultsBox!.x).toBeGreaterThan(sidebarBox!.x)
+    expect(resultsBox!.width).toBeGreaterThan(900)
+    await expect(stickyFilters).toHaveCSS('position', 'sticky')
     await expect(page.getByRole('button', { name: 'Filters', exact: true })).toBeHidden()
-    await expect(page.locator('#search-kind')).toBeVisible()
-    await expect(page.locator('#search-registry')).toBeVisible()
-    const clearFilters = page.getByRole('button', { name: 'Clear filters', exact: true })
-    const searchInput = page.locator('#search-query')
-    const kindFilter = page.locator('#search-kind')
-    const registryFilter = page.locator('#search-registry')
+    await expect(page.getByRole('radio', { name: 'Skill', exact: true })).toBeChecked()
+    await expect(page.getByRole('checkbox', { name: 'team-tools', exact: true })).toBeChecked()
+    await expect(resultCount).toContainText('1 resource')
+    const skillChip = page.getByRole('button', { name: 'Remove Skill kind filter' })
+    const clearFilters = page.getByRole('button', { name: 'Clear', exact: true })
+    await expect(skillChip).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Remove team-tools registry filter' })).toBeVisible()
     await expect(clearFilters).toBeEnabled()
-    const [searchInputBox, kindFilterBox, registryFilterBox, clearFiltersBox] = await Promise.all([
-      searchInput.boundingBox(),
-      kindFilter.boundingBox(),
-      registryFilter.boundingBox(),
-      clearFilters.boundingBox(),
-    ])
-    expect(searchInputBox).not.toBeNull()
-    expect(kindFilterBox).not.toBeNull()
-    expect(registryFilterBox).not.toBeNull()
-    expect(clearFiltersBox).not.toBeNull()
-    expect(Math.abs(clearFiltersBox!.y - kindFilterBox!.y)).toBeLessThanOrEqual(1)
-    expect([
-      kindFilterBox!.height,
-      registryFilterBox!.height,
-      clearFiltersBox!.height,
-    ]).toEqual([
-      searchInputBox!.height,
-      searchInputBox!.height,
-      searchInputBox!.height,
-    ])
-    const searchFontSize = await searchInput.evaluate(element => getComputedStyle(element).fontSize)
-    await expect(kindFilter).toHaveCSS('font-size', searchFontSize)
-    await expect(registryFilter).toHaveCSS('font-size', searchFontSize)
-    await expect(clearFilters).toHaveCSS('font-size', searchFontSize)
-    const kindValueBox = await kindFilter.locator('[data-slot="value"]').boundingBox()
-    const registryValueBox = await registryFilter.getByTestId('registry-filter-first').boundingBox()
-    expect(kindValueBox).not.toBeNull()
-    expect(registryValueBox).not.toBeNull()
-    const kindInset = kindValueBox!.x - kindFilterBox!.x
-    const registryInset = registryValueBox!.x - registryFilterBox!.x
-    expect(Math.abs(kindInset - registryInset)).toBeLessThanOrEqual(1)
-    const searchX = search!.x
-    await kindFilter.click()
-    await expect(page.getByRole('option', { name: 'Skill', exact: true })).toBeVisible()
-    expect(await page.locator('body').evaluate(element => element.style.overflow)).not.toBe('hidden')
-    expect(Math.abs((await page.locator('#marketplace-search').boundingBox())!.x - searchX)).toBeLessThanOrEqual(1)
-    await page.keyboard.press('Escape')
+    await expect(resultsHeader).toHaveCSS('gap', '8px')
+    await expect(activeFilters).toHaveCSS('gap', '6px')
+    await expect(skillChip).toHaveCSS('min-height', '30px')
+    await expect(skillChip).toHaveCSS('gap', '5px')
+    await expect(skillChip).toHaveCSS('font-size', '13px')
+    await expect(skillChip).toHaveCSS('font-weight', '500')
+    const chipPadding = await skillChip.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft]
+    })
+    expect(chipPadding).toEqual(['3px', '8px', '3px', '10px'])
+    const clearPadding = await clearFilters.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft]
+    })
+    expect(clearPadding).toEqual(['3px', '6px', '3px', '6px'])
 
     const firstResult = page.locator('article').first()
+    const [headerBox, headingBox, countBox, filtersBox, resultBox, chipBox, clearBox] = await Promise.all([
+      resultsHeader.boundingBox(),
+      catalogHeading.boundingBox(),
+      resultCount.boundingBox(),
+      activeFilters.boundingBox(),
+      firstResult.boundingBox(),
+      skillChip.boundingBox(),
+      clearFilters.boundingBox(),
+    ])
+    expect(countBox!.x - (headingBox!.x + headingBox!.width)).toBeCloseTo(8, 0)
+    expect(filtersBox!.y - (headerBox!.y + headerBox!.height)).toBeCloseTo(10, 0)
+    expect(resultBox!.y - (filtersBox!.y + filtersBox!.height)).toBeCloseTo(14, 0)
+    expect(chipBox!.y + chipBox!.height / 2).toBeCloseTo(clearBox!.y + clearBox!.height / 2, 0)
+
     const description = firstResult.locator('p').first()
     const copyAction = firstResult.getByRole('button', { name: /Copy install command/ })
     const descriptionBox = await description.boundingBox()
@@ -192,14 +194,35 @@ test.describe('Marketplace layout at 1440px', () => {
     expect(copyActionBox).not.toBeNull()
     expect(copyActionBox!.x - (descriptionBox!.x + descriptionBox!.width)).toBeGreaterThanOrEqual(16)
 
-    const availableResultBox = await firstResult.boundingBox()
-    const unavailableResultBox = await page.locator('article').last().boundingBox()
-    expect(availableResultBox).not.toBeNull()
-    expect(unavailableResultBox).not.toBeNull()
-    expect(Math.abs(availableResultBox!.height - unavailableResultBox!.height)).toBeLessThanOrEqual(1)
-
-    await clearFilters.click()
-    await expect(page).not.toHaveURL(/[?&]registry=/)
+    await page.getByRole('button', { name: 'Remove Skill kind filter' }).click()
     await expect(page).not.toHaveURL(/[?&]kind=/)
+    await page.getByRole('button', { name: 'Clear', exact: true }).click()
+    await expect(page).not.toHaveURL(/[?&]registry=/)
+  })
+
+  test('separates empty and error states from active filters', async ({ page }) => {
+    await page.route('**/api/v1/search**', async (route) => {
+      if (new URL(route.request().url()).searchParams.get('q') === 'error') {
+        await route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
+        return
+      }
+      await route.continue()
+    })
+
+    const expectStateGap = async (state: Locator) => {
+      await expect(state).toBeVisible()
+      const filtersBox = await page.getByLabel('Active filters').boundingBox()
+      const stateBox = await state.boundingBox()
+      expect(filtersBox).not.toBeNull()
+      expect(stateBox).not.toBeNull()
+      expect(stateBox!.y - (filtersBox!.y + filtersBox!.height)).toBeGreaterThanOrEqual(12)
+    }
+
+    await page.goto('/?q=empty&kind=skill')
+    await expectStateGap(page.getByRole('status').filter({ hasText: 'No resources found' }))
+
+    await page.getByLabel('Search', { exact: true }).fill('error')
+    await expect(page).toHaveURL(/q=error/)
+    await expectStateGap(page.getByRole('alert').filter({ hasText: 'Search could not be completed' }))
   })
 })
