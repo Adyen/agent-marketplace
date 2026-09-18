@@ -39,7 +39,7 @@ credential-bearing services, or build attack demonstrations during testing.
 
 ## Stack R1 — Selection integrity
 
-- [ ] **R1a: Collision policy through materialization.** Trace resolver output
+- [x] **R1a: Collision policy through materialization.** Trace resolver output
   into native skill links and owned MCP aggregates. Test both registry orders,
   required/source precedence, same-registry disjoint paths, and separate
   machine/repository scopes. Preserve documented soft collision warnings and
@@ -182,4 +182,18 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
 ### Progress
 
 - Plan corrected and rebased to the merged hardening baseline `96e030e`.
-- Implementation has not started. All unchecked items remain open.
+- R1a confirmed through `resolver.Resolve` into `materialize.Run`, not by
+  injecting duplicates into a leaf helper. Same-URL disjoint paths retained for
+  visibility could install the wrong skill or Devin MCP value; Gemini and Codex
+  could reject the duplicated desired entries instead of installing the winner.
+- R1a fixed by a resolver-owned materialization projection using the existing
+  precedence comparator per kind/name, target, and machine/project scope.
+  Visibility and soft warnings remain unchanged; additive hooks remain additive.
+- R1a verification: full resolver/materializer package tests passed, then final
+  projection/consumer regressions and `make ci-lint LINT_BASE=origin/main` passed.
+  Tests cover both source orders, required/source/file precedence, config-order
+  ties, target overlap, separate scopes, nil resources, and unresolved metadata.
+- R1a benchmark (101 inputs, including existing filesystem inspection):
+  190.4 to 208.3 microseconds/op (+9.44%), 194.4 to 242.4 KiB/op (+24.72%),
+  and 938 to 942 allocations/op. The added policy check has a measured cost.
+- All other unchecked items remain open.
