@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -374,6 +375,21 @@ func (s *externallyCompletingStore) GetJob(ctx context.Context, id store.JobID) 
 	return s.MetadataStore.GetJob(ctx, id)
 }
 
+type externallyTerminalFailingStore struct {
+	store.MetadataStore
+	once sync.Once
+}
+
+func (s *externallyTerminalFailingStore) GetJob(ctx context.Context, id store.JobID) (store.Job, error) {
+	s.once.Do(func() {
+		leased, err := s.LeaseJob(ctx, "refresh", "other-worker", time.Minute)
+		if err == nil && leased.ID == id {
+			_ = s.FailJob(ctx, id, "other-worker", 0)
+		}
+	})
+	return s.MetadataStore.GetJob(ctx, id)
+}
+
 func TestReindexReturnsWhenAnotherWorkerCompletesItsJob(t *testing.T) {
 	repoDir, cleanup := createTestRepo(t)
 	defer cleanup()
@@ -383,6 +399,28 @@ func TestReindexReturnsWhenAnotherWorkerCompletesItsJob(t *testing.T) {
 	deps := Deps{Config: cfg, MetadataStore: &externallyCompletingStore{MetadataStore: meta}, BlobStore: blobs}
 	if err := Reindex(context.Background(), deps, cfg, cfg.Registries[0].Slug); err != nil {
 		t.Fatalf("Reindex: %v", err)
+	}
+}
+
+func TestReindexReturnsWhenAnotherWorkerTerminallyFailsItsJob(t *testing.T) {
+	repoDir, cleanup := createTestRepo(t)
+	defer cleanup()
+	cfg := createTestConfig(t, repoDir)
+	meta, blobs := openTestStores(t)
+	defer func() { _ = meta.Close() }()
+	deps := Deps{Config: cfg, MetadataStore: &externallyTerminalFailingStore{MetadataStore: meta}, BlobStore: blobs}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := Reindex(ctx, deps, cfg, cfg.Registries[0].Slug)
+	if err == nil {
+		t.Fatal("Reindex unexpectedly succeeded")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Reindex polled after terminal failure: %v", err)
+	}
+	if !strings.Contains(err.Error(), "reindex job") {
+		t.Fatalf("Reindex error = %v, want existing reindex job failure semantics", err)
 	}
 }
 

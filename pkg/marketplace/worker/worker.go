@@ -361,7 +361,7 @@ func Reindex(ctx context.Context, deps Deps, cfg config.Config, registrySlugOrID
 		switch requested.Status {
 		case job.Completed:
 			return nil
-		case job.Failed:
+		case job.Failed, job.TerminalFailed:
 			registry, registryErr := deps.MetadataStore.GetRegistry(ctx, store.RegistryID(cfgRegistry.ID))
 			if registryErr == nil && registry.RefreshError != "" {
 				return errors.New(registry.RefreshError)
