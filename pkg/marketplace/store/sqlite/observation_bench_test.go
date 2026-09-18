@@ -22,8 +22,18 @@ func BenchmarkListDueRegistryObservations(b *testing.B) {
 	defer func() { _ = s.Close() }()
 	base := time.Unix(1000, 0).UTC()
 	for i := 0; i < 200; i++ {
+		registryID := store.RegistryID(fmt.Sprintf("registry-%03d", i))
+		if err := s.PutRegistry(ctx, store.Registry{
+			ID:          registryID,
+			Slug:        string(registryID),
+			Ref:         "main",
+			Acquisition: store.AcquisitionMirror,
+			Listed:      true,
+		}); err != nil {
+			b.Fatal(err)
+		}
 		if err := s.PutRegistryObservation(ctx, store.RegistryObservation{
-			RegistryID:      store.RegistryID(fmt.Sprintf("registry-%03d", i)),
+			RegistryID:      registryID,
 			NextProbeAt:     base.Add(time.Duration(i) * time.Minute),
 			NextReconcileAt: base.Add(24 * time.Hour),
 		}); err != nil {

@@ -221,10 +221,10 @@ func (s *Store) SetDesiredRefresh(ctx context.Context, id store.RegistryID, desi
 func (s *Store) ClearActiveRefresh(ctx context.Context, id store.RegistryID, jobID store.JobID) (store.RegistryObservation, error) {
 	var out store.RegistryObservation
 	err := s.withTx(ctx, func(tx *Store) error {
-		if _, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, active_refresh_job_id='', active_refresh_trigger='' WHERE registry_id=$1 AND active_refresh_job_id=$2`, id, jobID); err != nil {
+		_, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, active_refresh_job_id='', active_refresh_trigger='' WHERE registry_id=$1 AND active_refresh_job_id=$2`, id, jobID)
+		if err != nil {
 			return err
 		}
-		var err error
 		out, err = tx.GetRegistryObservation(ctx, id)
 		return err
 	})
