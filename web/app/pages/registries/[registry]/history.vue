@@ -23,7 +23,7 @@ watch([pending, history, error], async () => {
   heading.value?.focus()
 }, { flush: 'post' })
 
-const overviewPath = `/registries/${encodeURIComponent(registry)}`
+const overviewPath = `/?registry=${encodeURIComponent(registry)}`
 
 function retry() {
   refresh()

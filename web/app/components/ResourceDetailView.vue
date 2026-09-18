@@ -6,7 +6,7 @@ import { useResourceInspectionPreview } from '~/composables/useResourceInspectio
 import { isResourceKind } from '~/lib/api'
 import { DOCS_PATH } from '~/lib/site'
 import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRoute, shortDigest } from '~/lib/presentation'
-import type { InspectionFile, InspectionManifest, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
+import type { InspectionFile, InspectionManifest, Marketplace, Registry, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
 
 type Props = {
   resource: ResourceRevision
@@ -24,10 +24,12 @@ type Props = {
   revisionsError?: boolean
   currentRevisionDigest?: string
   relatedResources?: ResourceListItem[]
+  registryDetails?: Registry
+  operator?: Marketplace
   initialTab?: Tab
 }
 
-type Tab = 'content' | 'security' | 'revisions' | 'technical'
+type Tab = 'content' | 'security' | 'revisions' | 'registry' | 'technical'
 type ContentMode = 'preview' | 'raw'
 type TechnicalEntry = { label: string, value: string, copyable?: boolean }
 type CollectionMember = { kind: ResourceKind, name: string, description?: string, to: string }
@@ -256,7 +258,7 @@ function formatValue(value: unknown): string {
 
     <div class="mt-7 border-b border-default">
       <div role="tablist" aria-label="Resource details" class="flex gap-1 overflow-x-auto">
-        <button v-for="tab in ([['content', 'Content'], ['security', 'Security'], ['revisions', 'Revisions'], ['technical', 'Technical details']] as const)" :id="`${tab[0]}-tab`" :key="tab[0]" type="button" role="tab" :aria-selected="activeTab === tab[0]" :aria-controls="`${tab[0]}-panel`" class="shrink-0 border-b-2 px-3 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary" :class="activeTab === tab[0] ? 'border-primary text-highlighted' : 'border-transparent text-muted hover:text-highlighted'" @click="selectTab(tab[0])">{{ tab[1] }}</button>
+        <button v-for="tab in ([['content', 'Content'], ['security', 'Security'], ['revisions', 'Revisions'], ['registry', 'Registry'], ['technical', 'Technical details']] as const)" :id="`${tab[0]}-tab`" :key="tab[0]" type="button" role="tab" :aria-selected="activeTab === tab[0]" :aria-controls="`${tab[0]}-panel`" class="shrink-0 border-b-2 px-3 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary" :class="activeTab === tab[0] ? 'border-primary text-highlighted' : 'border-transparent text-muted hover:text-highlighted'" @click="selectTab(tab[0])">{{ tab[1] }}</button>
       </div>
     </div>
 
@@ -369,6 +371,11 @@ function formatValue(value: unknown): string {
           </div>
         </li>
       </ol>
+    </section>
+
+    <section v-else-if="activeTab === 'registry'" id="registry-panel" role="tabpanel" aria-labelledby="registry-tab" class="py-6">
+      <RegistryOverview v-if="registryDetails" :registry="registryDetails" :operator="operator" />
+      <p v-else class="text-sm text-muted">Registry details are unavailable.</p>
     </section>
 
     <section v-else id="technical-panel" role="tabpanel" aria-labelledby="technical-tab" class="py-6">

@@ -6,7 +6,7 @@ import type { Marketplace, Registry } from '~/types/marketplace'
 const props = defineProps<{
   registry: Registry
   operator?: Marketplace
-  resourceCount: number
+  resourceCount?: number
 }>()
 const operatorCanonicalUrl = computed(() => safeCanonicalUrl(props.operator?.canonical_url))
 const publisherUrl = computed(() => safeCanonicalUrl(props.registry.publisher?.url))
@@ -20,7 +20,7 @@ const marketplaceRoute = computed(() => ({ path: '/', query: { registry: props.r
       <p class="text-sm font-medium text-muted">Registry</p>
       <h1 class="mt-1 break-words text-3xl font-semibold tracking-tight text-highlighted">{{ registry.slug }}</h1>
       <p class="mt-2 max-w-3xl text-base leading-7 text-toned">Resources published through this registry.</p>
-      <UButton :to="marketplaceRoute" color="primary" class="mt-4">View {{ resourceCount }} resource{{ resourceCount === 1 ? '' : 's' }}</UButton>
+      <UButton :to="marketplaceRoute" color="primary" class="mt-4">{{ resourceCount === undefined ? 'View resources' : `View ${resourceCount} resource${resourceCount === 1 ? '' : 's'}` }}</UButton>
     </header>
 
     <section class="mt-8 border-t border-default pt-6" aria-labelledby="registry-about-heading">
