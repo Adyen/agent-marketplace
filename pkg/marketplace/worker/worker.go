@@ -28,6 +28,7 @@ type Deps struct {
 	Marketplace   store.Marketplace
 	MetadataStore store.MetadataStore
 	BlobStore     store.BlobStore
+	ReindexActor  store.ManagedActor
 }
 
 // Refresh performs a single refresh of the configured registry.
@@ -35,6 +36,12 @@ type Deps struct {
 // and publishes it atomically. The registry status is updated to reflect the
 // outcome of the refresh.
 func Refresh(ctx context.Context, deps Deps, registry store.Registry) error {
+	if err := checkAuthority(ctx, deps); err != nil {
+		return err
+	}
+	if deps.Config.Management.Mode == "database" {
+		return reindexManaged(ctx, deps, string(registry.ID))
+	}
 	cfgRegistry, ok := registryByID(deps.Config, string(registry.ID))
 	if !ok {
 		return fmt.Errorf("registry %q is not present in the operator config", registry.ID)
@@ -109,7 +116,17 @@ func Refresh(ctx context.Context, deps Deps, registry store.Registry) error {
 
 // EnsureMarketplace loads or creates the Marketplace instance record.
 func EnsureMarketplace(ctx context.Context, deps *Deps) error {
+	if err := checkAuthority(ctx, *deps); err != nil {
+		return err
+	}
 	mp, err := deps.MetadataStore.GetMarketplace(ctx, store.MarketplaceID(deps.Config.Instance.ID))
+	if deps.Config.Management.Mode == "database" {
+		if err != nil {
+			return fmt.Errorf("load managed marketplace: %w", err)
+		}
+		deps.Marketplace = mp
+		return nil
+	}
 	if err == nil {
 		if mp.Name != deps.Config.Instance.Name || mp.CanonicalURL != deps.Config.Instance.CanonicalURL {
 			mp.Name = deps.Config.Instance.Name
@@ -142,6 +159,9 @@ func EnsureMarketplace(ctx context.Context, deps *Deps) error {
 // table is deliberately separate from immutable resource revisions: withdrawal
 // removes only the active declaration and never edits revision/history rows.
 func EnsureRevocations(ctx context.Context, deps Deps) error {
+	if err := checkAuthority(ctx, deps); err != nil {
+		return err
+	}
 	evaluator, err := revocation.New(deps.Config)
 	if err != nil {
 		return fmt.Errorf("build revocation evaluator: %w", err)
@@ -192,6 +212,9 @@ func Run(ctx context.Context, deps Deps, cfg config.Config) error {
 		return err
 	}
 
+	if deps.Config.Management.Mode == "database" {
+		return runManaged(ctx, deps)
+	}
 	for _, src := range cfg.Registries {
 		if err := enqueueRefresh(ctx, deps.MetadataStore, src, cfg.Refresh.Interval.Duration()); err != nil && !errors.Is(err, store.ErrConflict) {
 			return fmt.Errorf("enqueue initial refresh for %q: %w", src.ID, err)
@@ -306,6 +329,12 @@ func loadRegistryForJob(ctx context.Context, deps Deps, id string) (store.Regist
 // Reindex performs a one-shot durable enqueue of the requested registry and
 // processes refresh jobs until the requested registry's refresh is complete.
 func Reindex(ctx context.Context, deps Deps, cfg config.Config, registrySlugOrID string) error {
+	if err := checkAuthority(ctx, deps); err != nil {
+		return err
+	}
+	if deps.Config.Management.Mode == "database" {
+		return reindexManaged(ctx, deps, registrySlugOrID)
+	}
 	cfgRegistry, ok := registryBySlugOrID(cfg, registrySlugOrID)
 	if !ok {
 		return fmt.Errorf("registry %q not found in config", registrySlugOrID)

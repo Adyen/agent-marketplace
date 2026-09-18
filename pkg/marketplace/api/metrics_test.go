@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
@@ -187,7 +188,7 @@ func newMetricsTestServers(t *testing.T, instanceID string) (*httptest.Server, *
 		Instance:         config.Instance{ID: instanceID},
 		Listen:           "127.0.0.1:0",
 		OperationsListen: "127.0.0.1:0",
-	}, nil, nil)
+	}, &authorityMetadata{err: store.ErrNotFound}, nil)
 	public := httptest.NewServer(server.PublicHandler())
 	operations := httptest.NewServer(server.OpsHandler())
 	t.Cleanup(public.Close)

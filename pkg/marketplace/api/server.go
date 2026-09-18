@@ -72,6 +72,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	s.metrics = newServerMetrics()
 
 	publicMux := http.NewServeMux()
+	s.registerAdmin(publicMux)
 	publicMux.Handle("/.well-known/agent-marketplace.json", s.methodGet(s.handleWellKnown))
 	publicMux.Handle("/api/v1/capabilities", s.methodGet(s.handleCapabilities))
 	publicMux.Handle("/api/v1/instance", s.methodGet(s.handleInstance))
@@ -100,7 +101,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	// Each mux is instrumented as a whole, not per route, so responses the
 	// mux itself generates are counted too; see serverMetrics.handler.
 	s.public = &http.Server{
-		Handler:      s.metrics.handler(publicListener, publicMux),
+		Handler:      s.authorityHandler(s.availabilityHandler(s.metrics.handler(publicListener, publicMux))),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -117,6 +118,9 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 
 // Start runs the public and operations listeners until ctx is cancelled.
 func (s *Server) Start(ctx context.Context) error {
+	if err := s.checkAuthority(ctx); err != nil {
+		return fmt.Errorf("start API configuration authority: %w", err)
+	}
 	pubLn, err := net.Listen("tcp", s.cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("listen public %q: %w", s.cfg.Listen, err)
@@ -252,7 +256,24 @@ func (s *Server) handleCatalogProjection(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
 		return
 	}
-	etag := s.catalogETag(page.CatalogVersion)
+	if s.cfg.Management.Mode == "database" {
+		view := availabilityFromContext(r.Context())
+		if view == nil {
+			writeError(w, http.StatusServiceUnavailable, "availability unavailable")
+			return
+		}
+		for i := range page.Resources {
+			decision := s.evaluateAvailability(view, page.Resources[i].AssessedResourceRevision)
+			switch decision.Availability {
+			case AvailabilityRevoked:
+				page.Resources[i].Availability = store.CatalogAvailabilityRevoked
+			case AvailabilityAvailable:
+			default:
+				page.Resources[i].Availability = store.CatalogAvailabilityBlocked
+			}
+		}
+	}
+	etag := s.availabilityETag(r.Context(), page.CatalogVersion)
 	setCatalogHeaders(w, etag)
 	if !continuation {
 		matches, err := ifNoneMatchMatches(r.Header.Get("If-None-Match"), etag)
@@ -686,7 +707,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]ResourceListItem, 0, len(revs))
 	for _, rev := range revs {
-		items = append(items, s.resourceToListItem(rev, registries, relevanceScore(rev.Coordinate.Name, searchQ)))
+		item := s.resourceToListItem(rev, registries, relevanceScore(rev.Coordinate.Name, searchQ))
+		if s.cfg.Management.Mode == "database" {
+			decision := s.evaluateAvailability(availabilityFromContext(r.Context()), rev)
+			if decision.Availability != AvailabilityAvailable {
+				item.Availability = decision.Availability
+			}
+		}
+		items = append(items, item)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -802,6 +830,15 @@ func (s *Server) handleRegistryOccurrence(w http.ResponseWriter, r *http.Request
 		slog.Error("registry occurrence did not match requested identity", "registry", src.ID, "commit", commit, "occurrence_registry", occurrence.RegistryID, "occurrence_commit", occurrence.Commit)
 		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
+	}
+	if s.cfg.Management.Mode == "database" {
+		restriction, err := s.managedRegistryRestriction(r.Context(), src.ID)
+		if !writeAvailabilityRestriction(w, restriction, err) {
+			return
+		}
+		if !s.managedDigestAllowed(w, r.Context(), "manifest", store.ArchiveDigest(occurrence.RegistryRevisionManifestDigest)) {
+			return
+		}
 	}
 	origin := ""
 	if len(src.Origins) > 0 {
@@ -925,7 +962,10 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.applyEffectiveRevocation(rev))
+	if !s.managedResourceAllowed(w, r.Context(), rev) {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev))
 }
 
 func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
@@ -956,7 +996,18 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 			writeError(w, http.StatusInternalServerError, "failed to load revisions")
 			return
 		}
+		if !s.managedResourceAllowed(w, r.Context(), rev) {
+			return
+		}
 		revs[i] = s.applyEffectiveRevocation(rev)
+	}
+	if s.cfg.Management.Mode == "database" {
+		items := make([]any, len(revs))
+		for i, rev := range revs {
+			items[i] = s.availabilityResourceDTO(r.Context(), rev)
+		}
+		writeJSON(w, http.StatusOK, items)
+		return
 	}
 	writeJSON(w, http.StatusOK, revs)
 }
@@ -996,7 +1047,10 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.applyEffectiveRevocation(rev))
+	if !s.managedResourceAllowed(w, r.Context(), rev) {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev))
 }
 
 func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {
@@ -1063,6 +1117,18 @@ func (s *Server) getResourceInspection(ctx context.Context, registrySlug, kind, 
 	if err != nil {
 		return inspection.Manifest{}, nil, err
 	}
+	if s.cfg.Management.Mode == "database" {
+		restriction, err := s.managedOwnerRestriction(ctx, []store.AssessedResourceRevision{rev})
+		if err != nil {
+			return inspection.Manifest{}, nil, err
+		}
+		if restriction == AvailabilityRevoked {
+			return inspection.Manifest{}, nil, errContentRevoked
+		}
+		if restriction != AvailabilityAvailable {
+			return inspection.Manifest{}, nil, errContentBlocked
+		}
+	}
 	if !isCanonicalSHA256Digest(string(rev.Assessment.InspectionManifestDigest)) {
 		return inspection.Manifest{}, nil, errInspectionUnavailable
 	}
@@ -1088,6 +1154,18 @@ func (s *Server) getResourceInspection(ctx context.Context, registrySlug, kind, 
 }
 
 func (s *Server) writeInspectionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errContentRevoked) {
+		writeError(w, http.StatusGone, "content unavailable")
+		return
+	}
+	if errors.Is(err, errContentBlocked) {
+		writeError(w, http.StatusForbidden, "content unavailable")
+		return
+	}
+	if errors.Is(err, errAvailabilityUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "availability unavailable")
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, errInspectionUnavailable) {
 		writeError(w, http.StatusNotFound, "inspection not found")
 		return
@@ -1141,6 +1219,9 @@ func (s *Server) handleInspectionDigest(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid inspection digest")
 		return
 	}
+	if !s.managedDigestAllowed(w, r.Context(), "inspection", store.ArchiveDigest(digest)) {
+		return
+	}
 	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -1167,6 +1248,9 @@ func (s *Server) handleContentDigest(w http.ResponseWriter, r *http.Request) {
 	digest, ok := digestPath(r.URL.Path, "/api/v1/content/")
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid content digest")
+		return
+	}
+	if !s.managedDigestAllowed(w, r.Context(), "content", store.ArchiveDigest(digest)) {
 		return
 	}
 	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
@@ -1244,6 +1328,9 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid manifest digest")
 		return
 	}
+	if !s.managedDigestAllowed(w, r.Context(), "manifest", store.ArchiveDigest(digest)) {
+		return
+	}
 
 	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
 	if err != nil {
@@ -1310,7 +1397,12 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "artifact not found")
 		return
 	}
-	switch s.resourceOwnerRestriction(revisions) {
+	restriction, err := s.managedOwnerRestriction(r.Context(), revisions)
+	if err != nil {
+		writeAvailabilityRestriction(w, restriction, err)
+		return
+	}
+	switch restriction {
 	case AvailabilityRevoked:
 		writeError(w, http.StatusGone, "artifact is revoked")
 		return
@@ -1446,6 +1538,10 @@ func (s *Server) handlePublicOperationsNotFound(w http.ResponseWriter, _ *http.R
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if err := s.checkAuthority(r.Context()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "configuration authority unavailable")
+		return
+	}
 	ctx := r.Context()
 	if err := s.revocationsReady(ctx); err != nil {
 		slog.Error("readyz failed: live revocations are not reconciled", "err", err)
@@ -1588,7 +1684,12 @@ func (s *Server) manifestRestriction(ctx context.Context, digest store.RevisionD
 		}
 		owners = append(owners, revisions...)
 	}
-	if restriction := s.resourceOwnerRestriction(owners); restriction != AvailabilityAvailable {
+	if s.cfg.Management.Mode == "database" && len(owners) > 0 {
+		restriction, err := s.managedOwnerRestriction(ctx, owners)
+		if err != nil || restriction != AvailabilityAvailable {
+			return restriction, err
+		}
+	} else if restriction := s.resourceOwnerRestriction(owners); restriction != AvailabilityAvailable {
 		return restriction, nil
 	}
 	// An exact collection declaration remains authoritative even when metadata

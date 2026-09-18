@@ -387,7 +387,7 @@ func (s *Store) RegistryHistory(ctx context.Context, id store.RegistryID) ([]sto
 	rows, err := s.q.QueryContext(ctx,
 		fmt.Sprintf(`SELECT registry_id, ref, roots, revision_commit, manifest_digest, acquisition,
 		        mirrored_artifact_digest, source_origin, occurred_at
-		 FROM registry_occurrences WHERE registry_id=$1 ORDER BY occurred_at DESC, revision_commit DESC
+		 FROM all_registry_occurrences WHERE registry_id=$1 ORDER BY occurred_at DESC, occurrence_key DESC
 		 LIMIT %d`, store.MaxRegistryHistoryEntries),
 		id,
 	)
@@ -428,13 +428,13 @@ const assessedResourceJoins = `
 	 AND ra.assessment_digest=cra.assessment_digest
 	JOIN LATERAL (
 	  SELECT candidate.revision_commit, candidate.manifest_digest, candidate.source_path, so.occurred_at
-	  FROM resource_occurrences candidate
-	  LEFT JOIN registry_occurrences so
-	    ON so.registry_id=candidate.registry_id AND so.revision_commit=candidate.revision_commit
+	  FROM all_resource_occurrences candidate
+	  LEFT JOIN all_registry_occurrences so
+	    ON so.registry_id=candidate.registry_id AND so.occurrence_key=candidate.occurrence_key
 	  WHERE candidate.marketplace_id=rr.marketplace_id AND candidate.registry_id=rr.registry_id
 	    AND candidate.kind=rr.kind AND candidate.name=rr.name
 	    AND candidate.content_digest=rr.content_digest
-	  ORDER BY so.occurred_at DESC NULLS LAST, candidate.revision_commit DESC
+	  ORDER BY so.occurred_at DESC NULLS LAST, candidate.occurrence_key DESC
 	  LIMIT 1
 	) ro ON true
 	LEFT JOIN revocations rv
@@ -447,11 +447,9 @@ const assessedResourceJoins = `
 	  ON rg.kind='registry' AND rg.target_id=rr.registry_id`
 
 const currentAssessedResourceJoins = `
-	JOIN registry_heads sh ON sh.registry_id=rr.registry_id
-	JOIN resource_occurrences ro
+	JOIN current_resource_occurrences ro
 	  ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
 	 AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest
-	 AND ro.revision_commit=sh.revision_commit
 	JOIN current_resource_assessments cra
 	  ON cra.marketplace_id=rr.marketplace_id AND cra.registry_id=rr.registry_id
 	 AND cra.kind=rr.kind AND cra.name=rr.name AND cra.content_digest=rr.content_digest

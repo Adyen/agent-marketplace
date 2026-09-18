@@ -32,6 +32,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/licensepolicy"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/google/licensecheck"
 )
@@ -1151,8 +1152,9 @@ func applyLicensePolicy(r artifact.BuildResult, registryID store.RegistryID, lp 
 		return r, false
 	}
 
-	if strings.TrimSpace(r.License) == "" {
-		switch lp.undeclared {
+	decision := licensepolicy.Evaluate(r.License, lp.allowlist, lp.undeclared)
+	if decision.Code == analyze.PolicyLicenseUndeclared {
+		switch decision.Outcome {
 		case config.LicenseUndeclaredReject:
 			rejectOnLicense(&r, registryID, lp, analyze.PolicyLicenseUndeclared, fmt.Sprintf(
 				"resource declares no license, and policy.license_undeclared is %q: it is not installable while the license allowlist (%s) is configured",
@@ -1185,7 +1187,7 @@ func applyLicensePolicy(r artifact.BuildResult, registryID store.RegistryID, lp 
 	// Matched against the declared value exactly as authored, not a trimmed
 	// copy: trimming is only how "declares nothing" is recognised, and must not
 	// widen which declared strings the allowlist accepts.
-	if !slices.Contains(lp.allowlist, r.License) {
+	if decision.Outcome == analyze.OutcomeReject {
 		rejectOnLicense(&r, registryID, lp, analyze.PolicyLicenseNotAllowed, fmt.Sprintf(
 			"declared license %q is not in the configured license allowlist (%s)",
 			r.License, lp.allowlistText()))

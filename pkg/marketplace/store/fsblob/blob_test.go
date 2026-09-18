@@ -11,6 +11,24 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
 )
 
+func TestGetBounded(t *testing.T) {
+	ctx := context.Background()
+	bs := fsblob.New(t.TempDir())
+	digest := store.ArchiveDigest("sha256:bounded")
+	if err := bs.Put(ctx, digest, []byte("12345")); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := bs.GetBounded(ctx, digest, 5); err != nil || string(data) != "12345" {
+		t.Fatalf("exact bound: %q %v", data, err)
+	}
+	if data, err := bs.GetBounded(ctx, digest, 4); !errors.Is(err, store.ErrBlobTooLarge) || data != nil {
+		t.Fatalf("oversize: %q %v", data, err)
+	}
+	if _, err := bs.GetBounded(ctx, "sha256:absent", 5); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal(err)
+	}
+}
+
 func TestBlobRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	bs := fsblob.New(t.TempDir())

@@ -54,6 +54,10 @@ export default defineNuxtConfig({
     strict: true,
     typeCheck: true,
   },
+  routeRules: {
+    '/admin': { ssr: false, prerender: false, headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive' } },
+    '/admin/**': { ssr: false, prerender: false, headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive' } },
+  },
   nitro: {
     preset: 'node-server',
     devProxy: devApiProxy

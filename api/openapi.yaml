@@ -14,6 +14,176 @@ servers:
     description: Marketplace public origin
 
 paths:
+  /api/v1/admin/session:
+    get:
+      operationId: getAdminSession
+      summary: Trusted proxy authenticated admin session (never cache)
+      responses:
+        '200':
+          description: Authenticated session; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSession'
+        default:
+          $ref: '#/components/responses/AdminError'
+  /api/v1/admin/configuration:
+    get:
+      operationId: getAdminConfiguration
+      responses:
+        '200':
+          description: Managed configuration; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminConfiguration'
+        default:
+          $ref: '#/components/responses/AdminError'
+  /api/v1/admin/profiles:
+    get:
+      operationId: getAdminProfiles
+      responses:
+        '200':
+          description: Opaque approved references only; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminProfiles'
+        default:
+          $ref: '#/components/responses/AdminError'
+  /api/v1/admin/instance:
+    get:
+      operationId: getAdminInstance
+      responses:
+        '200':
+          description: Sanitized deployment information; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminInstance'
+        default:
+          $ref: '#/components/responses/AdminError'
+  /api/v1/admin/attempts:
+    get:
+      operationId: getAdminAttempts
+      parameters:
+        - in: query
+          name: before
+          schema: { type: integer, format: int64, minimum: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100 }
+        - in: query
+          name: registry_id
+          schema: { type: string }
+        - in: query
+          name: job_id
+          schema: { type: string }
+      responses:
+        '200':
+          description: Bounded refresh attempt history; no-store. A nonzero next_before is the cursor for an older page, which may be empty.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attempts, next_before]
+                properties:
+                  attempts:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminAttempt' }
+                  next_before: { type: integer, format: int64 }
+        default:
+          $ref: '#/components/responses/AdminError'
+  /api/v1/admin/activity:
+    get:
+      operationId: getAdminActivity
+      parameters:
+        - in: query
+          name: before
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: Append-only changes; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changes]
+                properties:
+                  changes:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminChange' }
+        default:
+          $ref: '#/components/responses/AdminError'
+  /api/v1/admin/jobs/{id}:
+    get:
+      operationId: getAdminJob
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Safe job status without payloads or raw logs; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminJob'
+        default:
+          $ref: '#/components/responses/AdminError'
+  /api/v1/admin/validate:
+    post:
+      operationId: validateAdminChange
+      description: Static validation only; does not acquire a repository or publish. Requires browser same-origin protection.
+      parameters:
+        - $ref: '#/components/parameters/AdminRevision'
+        - $ref: '#/components/parameters/AdminMarker'
+        - $ref: '#/components/parameters/AdminIdempotency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminProposal' }
+      responses:
+        '200':
+          description: Statically valid proposal; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid, warnings]
+                properties:
+                  valid: { type: boolean, enum: [true] }
+                  warnings:
+                    type: array
+                    items: { type: string }
+        default:
+          $ref: '#/components/responses/AdminError'
+  /api/v1/admin/changes:
+    post:
+      operationId: applyAdminChange
+      description: Atomic audited change and durable work intent. Acceptance does not imply publication. Never automatically replay after session expiry or conflict.
+      parameters:
+        - $ref: '#/components/parameters/AdminRevision'
+        - $ref: '#/components/parameters/AdminMarker'
+        - $ref: '#/components/parameters/AdminIdempotency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminProposal' }
+      responses:
+        '202':
+          description: Accepted configuration or operational request; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminChange' }
+        default:
+          $ref: '#/components/responses/AdminError'
   /.well-known/agent-marketplace.json:
     get:
       operationId: getWellKnown
@@ -628,7 +798,211 @@ paths:
           description: Liveness response
 
 components:
+  parameters:
+    AdminRevision:
+      in: header
+      name: If-Match
+      required: true
+      description: Quoted managed revision read from configuration
+      schema: { type: string, example: '"18"' }
+    AdminMarker:
+      in: header
+      name: X-Marketplace-Admin
+      required: true
+      schema: { type: string, enum: ['1'] }
+    AdminIdempotency:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    AdminError:
+      description: 'Stable error; no-store. 401 unauthenticated, 403 forbidden, 428 precondition_required, 409 revision_conflict or idempotency_conflict, 422 invalid_configuration.'
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message]
+            properties:
+              code: { type: string }
+              message: { type: string }
+              fields:
+                type: object
+                additionalProperties: { type: string }
   schemas:
+    AdminActor:
+      type: object
+      required: [issuer, subject]
+      properties:
+        issuer: { type: string }
+        subject: { type: string }
+    AdminSession:
+      type: object
+      required: [actor, capabilities]
+      properties:
+        actor: { $ref: '#/components/schemas/AdminActor' }
+        capabilities:
+          type: array
+          items: { type: string }
+    AdminLicensePolicy:
+      type: object
+      required: [allowlist, undeclared]
+      properties:
+        allowlist:
+          type: array
+          nullable: true
+          items: { type: string }
+        undeclared: { type: string, enum: [reject, warn, allow, ''] }
+    AdminRegistry:
+      type: object
+      required: [id, slug, aliases, origin, historical_origins, ref, roots, acquisition, publisher, license, generation, lifecycle, paused, withdrawn, retired]
+      properties:
+        paused: { type: boolean }
+        withdrawn: { type: boolean }
+        retired: { type: boolean }
+        id: { type: string }
+        slug: { type: string }
+        aliases:
+          type: array
+          nullable: true
+          items: { type: string }
+        origin: { type: string }
+        historical_origins:
+          type: array
+          nullable: true
+          items: { type: string }
+        ref: { type: string }
+        roots:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [path]
+            properties:
+              path: { type: string }
+              source_harness: { type: string }
+        acquisition: { type: string, enum: [index-only, mirror] }
+        publisher:
+          type: object
+          properties:
+            name: { type: string }
+            url: { type: string }
+        license: { type: string }
+        profile_id: { type: string }
+        license_override: { $ref: '#/components/schemas/AdminLicensePolicy' }
+        non_license_overrides:
+          type: object
+          additionalProperties: true
+        generation: { type: integer, format: int64 }
+        lifecycle: { type: string }
+    AdminSnapshot:
+      type: object
+      required: [version, policy_revision, license_policy, registries, source_fingerprint]
+      properties:
+        version: { type: integer }
+        policy_revision: { type: integer, format: int64 }
+        license_policy: { $ref: '#/components/schemas/AdminLicensePolicy' }
+        registries:
+          type: array
+          items: { $ref: '#/components/schemas/AdminRegistry' }
+        source_fingerprint: { type: string }
+    AdminConfiguration:
+      type: object
+      required: [revision, snapshot]
+      properties:
+        revision: { type: integer, format: int64 }
+        snapshot: { $ref: '#/components/schemas/AdminSnapshot' }
+    AdminProfiles:
+      type: object
+      required: [profiles, source_harnesses]
+      properties:
+        profiles:
+          type: array
+          items:
+            type: object
+            required: [id, allowed_origins]
+            properties:
+              id: { type: string }
+              allowed_origins:
+                type: array
+                items: { type: string }
+        source_harnesses:
+          type: array
+          items: { type: string }
+    AdminInstance:
+      type: object
+      required: [name, version, management_mode, revision, worker_status]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        management_mode: { type: string }
+        revision: { type: integer, format: int64 }
+        worker_status: { type: string }
+    AdminProposal:
+      type: object
+      required: [action, reason]
+      properties:
+        action:
+          type: string
+          enum: [upsert_registry, set_policy, pause, resume, withdraw, restore, retire, restore_retired, reindex]
+        registry_id: { type: string }
+        registry: { $ref: '#/components/schemas/AdminRegistry' }
+        license_policy: { $ref: '#/components/schemas/AdminLicensePolicy' }
+        reason: { type: string }
+        confirm_origin_move: { type: boolean }
+        confirm_unrestricted: { type: boolean }
+    AdminChange:
+      type: object
+      required: [marketplace_id, revision, parent_revision, actor, operation, reason, request_id, idempotency_key, request_digest, snapshot, job_ids, created_at]
+      properties:
+        marketplace_id: { type: string }
+        revision: { type: integer, format: int64 }
+        parent_revision: { type: integer, format: int64 }
+        actor: { $ref: '#/components/schemas/AdminActor' }
+        operation: { type: string }
+        reason: { type: string }
+        request_id: { type: string }
+        idempotency_key: { type: string }
+        request_digest: { type: string }
+        snapshot: { $ref: '#/components/schemas/AdminSnapshot' }
+        job_ids:
+          type: array
+          nullable: true
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+    AdminAttempt:
+      type: object
+      required: [sequence, marketplace_id, registry_id, job_id, attempt, worker_id, registry_generation, policy_revision, configuration_revision, actor, operation, outcome, recorded_at]
+      properties:
+        sequence: { type: integer, format: int64 }
+        marketplace_id: { type: string }
+        registry_id: { type: string }
+        job_id: { type: string }
+        parent_job_id: { type: string }
+        attempt: { type: integer }
+        worker_id: { type: string }
+        registry_generation: { type: integer, format: int64 }
+        policy_revision: { type: integer, format: int64 }
+        configuration_revision: { type: integer, format: int64 }
+        request_id: { type: string }
+        actor: { $ref: '#/components/schemas/AdminActor' }
+        operation: { type: string }
+        change_operation: { type: string }
+        outcome: { type: string, enum: [started, failed, superseded, succeeded] }
+        publication_id: { type: string }
+        expected_publication_id: { type: string }
+        recorded_at: { type: string, format: date-time }
+    AdminJob:
+      type: object
+      required: [id, kind, status, attempt, max_attempts, created_at, updated_at]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        status: { type: string }
+        attempt: { type: integer }
+        max_attempts: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     Capabilities:
       type: object
       required:

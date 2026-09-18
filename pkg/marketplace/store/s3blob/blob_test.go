@@ -95,6 +95,17 @@ func TestProbeReturnsBackendError(t *testing.T) {
 	}
 }
 
+func TestGetBounded(t *testing.T) {
+	ctx := context.Background()
+	bs, _ := newEndpointStore(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("12345")) })
+	if data, err := bs.GetBounded(ctx, "sha256:bounded", 5); err != nil || string(data) != "12345" {
+		t.Fatalf("exact bound: %q %v", data, err)
+	}
+	if data, err := bs.GetBounded(ctx, "sha256:bounded", 4); !errors.Is(err, store.ErrBlobTooLarge) || data != nil {
+		t.Fatalf("oversize: %q %v", data, err)
+	}
+}
+
 func TestGetWithoutChecksumModeHeader(t *testing.T) {
 	ctx := context.Background()
 	data := []byte("custom endpoint blob bytes")

@@ -198,6 +198,7 @@ func hardenedGitArgs() []string {
 		"-c", "protocol.file.allow=always",
 		"-c", "submodule.recurse=false",
 		"-c", "credential.helper=",
+		"-c", "http.followRedirects=false",
 	}
 }
 

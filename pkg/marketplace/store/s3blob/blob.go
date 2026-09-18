@@ -87,6 +87,17 @@ func (s *Store) Probe(ctx context.Context) error {
 // Get returns the blob bytes for digest. It returns [store.ErrNotFound] when
 // the blob does not exist.
 func (s *Store) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
+	return s.get(ctx, digest, 0)
+}
+
+func (s *Store) GetBounded(ctx context.Context, digest store.ArchiveDigest, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, store.ErrBlobTooLarge
+	}
+	return s.get(ctx, digest, limit)
+}
+
+func (s *Store) get(ctx context.Context, digest store.ArchiveDigest, limit int64) ([]byte, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(string(digest)),
@@ -100,6 +111,9 @@ func (s *Store) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, er
 		return nil, fmt.Errorf("get blob %s: %w", digest, err)
 	}
 	defer func() { _ = out.Body.Close() }()
+	if limit > 0 {
+		return store.ReadBlobBounded(out.Body, limit)
+	}
 
 	data, err := io.ReadAll(out.Body)
 	if err != nil {

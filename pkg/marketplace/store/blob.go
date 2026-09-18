@@ -1,6 +1,31 @@
 package store
 
-import "context"
+import (
+	"context"
+	"errors"
+	"io"
+	"math"
+)
+
+var ErrBlobTooLarge = errors.New("marketplace/store: blob exceeds bounded read limit")
+
+type BoundedBlobStore interface {
+	GetBounded(context.Context, ArchiveDigest, int64) ([]byte, error)
+}
+
+func ReadBlobBounded(reader io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 || limit == math.MaxInt64 {
+		return nil, ErrBlobTooLarge
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, ErrBlobTooLarge
+	}
+	return data, nil
+}
 
 // BlobStore is the capability-oriented interface for content-addressed blobs.
 // All digests are archive digests; callers verify digests before invoking

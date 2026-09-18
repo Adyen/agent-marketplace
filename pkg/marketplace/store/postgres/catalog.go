@@ -91,17 +91,15 @@ func (s *Store) readCatalogProjectionPage(ctx context.Context, req store.Catalog
 			       rv.kind AS revision_revocation_kind, rv.target_id AS revision_revocation_target, rv.reason AS revision_revocation_reason, rv.applied_at AS revision_revocation_at,
 			       rc.kind AS coordinate_revocation_kind, rc.target_id AS coordinate_revocation_target, rc.reason AS coordinate_revocation_reason, rc.applied_at AS coordinate_revocation_at,
 			       rg.kind AS registry_revocation_kind, rg.target_id AS registry_revocation_target, rg.reason AS registry_revocation_reason, rg.applied_at AS registry_revocation_at,
-			       so.source_origin,
+			       ro.source_origin,
 			       ROW_NUMBER() OVER (
 			         PARTITION BY rr.marketplace_id, rr.registry_id, rr.kind, rr.name
 			         ORDER BY rr.content_digest DESC
 			       ) AS rank
 			FROM resource_revisions rr
 			JOIN registries r ON r.id=rr.registry_id AND r.listed
-			JOIN registry_heads sh ON sh.registry_id=rr.registry_id
-			JOIN resource_occurrences ro ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
-			  AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest AND ro.revision_commit=sh.revision_commit
-			LEFT JOIN registry_occurrences so ON so.registry_id=sh.registry_id AND so.revision_commit=sh.revision_commit
+			JOIN current_resource_occurrences ro ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
+			  AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest
 			JOIN current_resource_assessments ca ON ca.marketplace_id=rr.marketplace_id AND ca.registry_id=rr.registry_id
 			  AND ca.kind=rr.kind AND ca.name=rr.name AND ca.content_digest=rr.content_digest
 			JOIN resource_assessments ra ON ra.marketplace_id=ca.marketplace_id AND ra.registry_id=ca.registry_id
@@ -351,9 +349,8 @@ func (s *Store) catalogCoordinatesVisible(ctx context.Context, coordinates []sto
 			JOIN resource_revisions rr ON rr.marketplace_id=requested.marketplace_id AND rr.registry_id=requested.registry_id
 			  AND rr.kind=requested.kind AND rr.name=requested.name
 			JOIN registries r ON r.id=rr.registry_id AND r.listed
-			JOIN registry_heads sh ON sh.registry_id=rr.registry_id
-			JOIN resource_occurrences ro ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
-			  AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest AND ro.revision_commit=sh.revision_commit
+			JOIN current_resource_occurrences ro ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
+			  AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest
 			JOIN current_resource_assessments ca ON ca.marketplace_id=rr.marketplace_id AND ca.registry_id=rr.registry_id
 			  AND ca.kind=rr.kind AND ca.name=rr.name AND ca.content_digest=rr.content_digest`, args...)
 		if err != nil {
