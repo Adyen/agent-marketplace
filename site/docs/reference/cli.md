@@ -309,6 +309,23 @@ Source kinds are explicit:
 
 Use the [v4 configuration reference](configuration.md) to author source declarations and resource groups. Configuration edits preserve the authored v4 shape; unknown fields, mixed source kinds, invalid locators, and mismatched Marketplace lock evidence fail closed.
 
+## `migrate`
+
+Converts representable legacy user, repository, and repository-personal configuration to the v4 source/resource schema. Migration is transactional, preserves v2/v3 reads when declined or refused, and uses verified local Marketplace cache evidence without network access. Use `--to v2` for legacy structural remediation.
+
+```text
+agent-marketplace migrate [flags]
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--to` | string | no | `v4` | Target schema: `v4` or `v2`. |
+| `--scope` | string | no | `all` | V4 writable layer: `all`, `user`, `repo`, or `local`. |
+| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. |
+| `--harnesses` | comma-separated strings | v2 only | none | Target harnesses for legacy structural remediation. |
+
+The `--to v4` spelling is accepted as an alias. V4 migration refuses lossy inputs and incomplete Marketplace provenance without changing files; proven Marketplace conversions create or upgrade the owning v2 lock atomically with the migrated config. Organization configuration is never edited.
+
 ## `convert`
 
 Ingests one harness layout and writes an equivalent layout for another harness. Conversion does not edit marketplace configuration.
