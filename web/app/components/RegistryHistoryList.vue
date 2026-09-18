@@ -9,7 +9,7 @@ defineProps<{
 <template>
   <div v-if="occurrences.length" class="relative">
     <ol aria-label="Registry occurrence timeline" class="space-y-4">
-      <li v-for="(occurrence, index) in occurrences" :key="`${occurrence.commit}-${occurrence.occurred_at}-${index}`" class="relative rounded-2xl border border-default bg-default p-5 shadow-sm">
+      <li v-for="(occurrence, index) in occurrences" :key="`${occurrence.commit}-${occurrence.occurred_at}-${index}`" class="relative rounded-2xl border border-default bg-[var(--am-color-bg-surface)] p-5 shadow-sm">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p class="text-sm font-semibold text-highlighted">Occurrence {{ occurrences.length - index }}</p>
@@ -38,5 +38,5 @@ defineProps<{
       </li>
     </ol>
   </div>
-  <p v-else class="rounded-2xl border border-dashed border-default bg-default p-8 text-sm text-muted">No registry occurrences have been recorded.</p>
+  <p v-else class="rounded-2xl border border-dashed border-default bg-[var(--am-color-bg-surface)] p-8 text-sm text-toned">No registry occurrences have been recorded.</p>
 </template>

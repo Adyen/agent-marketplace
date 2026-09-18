@@ -1,11 +1,12 @@
 @import "../../../../design/semantic-colors.css";
+@import "./marketplace-theme.css";
 @import "../../../../design/marketplace-navigation.css";
 
 /**
  * Tailwind and Nuxt UI adapters.
  *
- * Nuxt UI expects complete color scales. Their anchors are shared semantic
- * roles; intermediate shades are derived here so no canonical color is copied.
+ * Nuxt UI expects complete, theme-independent color scales. Marketplace
+ * semantic roles are mapped separately below.
  */
 
 @theme static {
@@ -16,65 +17,65 @@
   --text-sm: 0.9375rem;
   --text-sm--line-height: 1.375rem;
 
-  --color-ink-50: var(--am-scale-light-end);
-  --color-ink-100: color-mix(in srgb, var(--am-color-text-secondary) 15%, var(--am-scale-light-end));
-  --color-ink-200: color-mix(in srgb, var(--am-color-text-secondary) 30%, var(--am-scale-light-end));
-  --color-ink-300: color-mix(in srgb, var(--am-color-text-secondary) 45%, var(--am-scale-light-end));
-  --color-ink-400: var(--am-color-text-muted);
-  --color-ink-500: var(--am-color-text-muted);
-  --color-ink-600: var(--am-color-text-secondary);
-  --color-ink-700: color-mix(in srgb, var(--am-color-text-secondary) 70%, var(--am-scale-dark-end));
-  --color-ink-800: color-mix(in srgb, var(--am-color-text-secondary) 45%, var(--am-scale-dark-end));
-  --color-ink-900: color-mix(in srgb, var(--am-color-text-secondary) 20%, var(--am-scale-dark-end));
-  --color-ink-950: var(--am-scale-dark-end);
+  --color-ink-50: #f3f6f4;
+  --color-ink-100: #e8eeea;
+  --color-ink-200: #d6dfd9;
+  --color-ink-300: #b8c4bd;
+  --color-ink-400: #97a89e;
+  --color-ink-500: #71877a;
+  --color-ink-600: #53615a;
+  --color-ink-700: #3b4c41;
+  --color-ink-800: #28342d;
+  --color-ink-900: #1b2320;
+  --color-ink-950: #141a18;
 
-  --color-focus-50: color-mix(in srgb, var(--am-color-action-primary) 10%, var(--am-scale-light-end));
-  --color-focus-100: color-mix(in srgb, var(--am-color-action-primary) 20%, var(--am-scale-light-end));
-  --color-focus-200: color-mix(in srgb, var(--am-color-action-primary) 35%, var(--am-scale-light-end));
-  --color-focus-300: color-mix(in srgb, var(--am-color-action-primary) 60%, var(--am-scale-light-end));
-  --color-focus-400: var(--am-color-action-hover);
-  --color-focus-500: var(--am-color-action-primary);
-  --color-focus-600: var(--am-color-action-active);
-  --color-focus-700: color-mix(in srgb, var(--am-color-action-active) 75%, var(--am-scale-dark-end));
-  --color-focus-800: color-mix(in srgb, var(--am-color-action-active) 55%, var(--am-scale-dark-end));
-  --color-focus-900: color-mix(in srgb, var(--am-color-action-active) 40%, var(--am-scale-dark-end));
-  --color-focus-950: color-mix(in srgb, var(--am-color-action-active) 25%, var(--am-scale-dark-end));
+  --color-focus-50: #f0fbf4;
+  --color-focus-100: #d9f7e4;
+  --color-focus-200: #b3edc9;
+  --color-focus-300: #78eba2;
+  --color-focus-400: #55db89;
+  --color-focus-500: #22b863;
+  --color-focus-600: #10934b;
+  --color-focus-700: #087a3d;
+  --color-focus-800: #066632;
+  --color-focus-900: #055329;
+  --color-focus-950: #102d1c;
 
-  --color-ready-50: color-mix(in srgb, var(--am-color-marketplace-installable) 10%, var(--am-scale-light-end));
-  --color-ready-100: color-mix(in srgb, var(--am-color-marketplace-installable) 20%, var(--am-scale-light-end));
-  --color-ready-200: color-mix(in srgb, var(--am-color-marketplace-installable) 35%, var(--am-scale-light-end));
-  --color-ready-300: color-mix(in srgb, var(--am-color-marketplace-installable) 60%, var(--am-scale-light-end));
-  --color-ready-400: color-mix(in srgb, var(--am-color-marketplace-installable) 85%, var(--am-scale-light-end));
-  --color-ready-500: var(--am-color-marketplace-installable);
-  --color-ready-600: color-mix(in srgb, var(--am-color-marketplace-installable) 85%, var(--am-scale-dark-end));
-  --color-ready-700: color-mix(in srgb, var(--am-color-marketplace-installable) 70%, var(--am-scale-dark-end));
-  --color-ready-800: color-mix(in srgb, var(--am-color-marketplace-installable) 55%, var(--am-scale-dark-end));
-  --color-ready-900: color-mix(in srgb, var(--am-color-marketplace-installable) 40%, var(--am-scale-dark-end));
-  --color-ready-950: color-mix(in srgb, var(--am-color-marketplace-installable) 25%, var(--am-scale-dark-end));
+  --color-ready-50: #f0fbf4;
+  --color-ready-100: #d9f7e4;
+  --color-ready-200: #b3edc9;
+  --color-ready-300: #78eba2;
+  --color-ready-400: #55db89;
+  --color-ready-500: #22b863;
+  --color-ready-600: #10934b;
+  --color-ready-700: #087a3d;
+  --color-ready-800: #066632;
+  --color-ready-900: #055329;
+  --color-ready-950: #102d1c;
 
-  --color-withheld-50: color-mix(in srgb, var(--am-color-marketplace-withheld) 10%, var(--am-scale-light-end));
-  --color-withheld-100: color-mix(in srgb, var(--am-color-marketplace-withheld) 20%, var(--am-scale-light-end));
-  --color-withheld-200: color-mix(in srgb, var(--am-color-marketplace-withheld) 35%, var(--am-scale-light-end));
-  --color-withheld-300: color-mix(in srgb, var(--am-color-marketplace-withheld) 60%, var(--am-scale-light-end));
-  --color-withheld-400: color-mix(in srgb, var(--am-color-marketplace-withheld) 85%, var(--am-scale-light-end));
-  --color-withheld-500: var(--am-color-marketplace-withheld);
-  --color-withheld-600: color-mix(in srgb, var(--am-color-marketplace-withheld) 85%, var(--am-scale-dark-end));
-  --color-withheld-700: color-mix(in srgb, var(--am-color-marketplace-withheld) 70%, var(--am-scale-dark-end));
-  --color-withheld-800: color-mix(in srgb, var(--am-color-marketplace-withheld) 55%, var(--am-scale-dark-end));
-  --color-withheld-900: color-mix(in srgb, var(--am-color-marketplace-withheld) 40%, var(--am-scale-dark-end));
-  --color-withheld-950: color-mix(in srgb, var(--am-color-marketplace-withheld) 25%, var(--am-scale-dark-end));
+  --color-withheld-50: #fffbeb;
+  --color-withheld-100: #fef3c7;
+  --color-withheld-200: #fde68a;
+  --color-withheld-300: #fcd34d;
+  --color-withheld-400: #fbbf24;
+  --color-withheld-500: #f59e0b;
+  --color-withheld-600: #d97706;
+  --color-withheld-700: #b45309;
+  --color-withheld-800: #92400e;
+  --color-withheld-900: #78350f;
+  --color-withheld-950: #451a03;
 
-  --color-revoked-50: color-mix(in srgb, var(--am-color-marketplace-revoked) 10%, var(--am-scale-light-end));
-  --color-revoked-100: color-mix(in srgb, var(--am-color-marketplace-revoked) 20%, var(--am-scale-light-end));
-  --color-revoked-200: color-mix(in srgb, var(--am-color-marketplace-revoked) 35%, var(--am-scale-light-end));
-  --color-revoked-300: color-mix(in srgb, var(--am-color-marketplace-revoked) 60%, var(--am-scale-light-end));
-  --color-revoked-400: color-mix(in srgb, var(--am-color-marketplace-revoked) 85%, var(--am-scale-light-end));
-  --color-revoked-500: var(--am-color-marketplace-revoked);
-  --color-revoked-600: color-mix(in srgb, var(--am-color-marketplace-revoked) 85%, var(--am-scale-dark-end));
-  --color-revoked-700: color-mix(in srgb, var(--am-color-marketplace-revoked) 70%, var(--am-scale-dark-end));
-  --color-revoked-800: color-mix(in srgb, var(--am-color-marketplace-revoked) 55%, var(--am-scale-dark-end));
-  --color-revoked-900: color-mix(in srgb, var(--am-color-marketplace-revoked) 40%, var(--am-scale-dark-end));
-  --color-revoked-950: color-mix(in srgb, var(--am-color-marketplace-revoked) 25%, var(--am-scale-dark-end));
+  --color-revoked-50: #fef2f2;
+  --color-revoked-100: #fee2e2;
+  --color-revoked-200: #fecaca;
+  --color-revoked-300: #fca5a5;
+  --color-revoked-400: #f87171;
+  --color-revoked-500: #ef4444;
+  --color-revoked-600: #dc2626;
+  --color-revoked-700: #b91c1c;
+  --color-revoked-800: #991b1b;
+  --color-revoked-900: #7f1d1d;
+  --color-revoked-950: #450a0a;
 
   --color-marketplace-installable: var(--am-color-marketplace-installable);
   --color-marketplace-withheld: var(--am-color-marketplace-withheld);
@@ -86,8 +87,6 @@
 :root {
   color-scheme: light;
   --ui-radius: 0.25rem;
-  --am-scale-light-end: var(--am-color-bg-canvas);
-  --am-scale-dark-end: var(--am-color-text-primary);
 
   --ui-primary: var(--am-color-action-primary);
   --ui-success: var(--am-color-marketplace-installable);
@@ -98,26 +97,24 @@
   --ui-bg: var(--am-color-bg-canvas);
   --ui-bg-muted: var(--am-color-bg-subtle);
   --ui-bg-elevated: var(--am-color-bg-raised);
-  --ui-bg-accented: var(--am-color-bg-raised);
+  --ui-bg-accented: var(--am-color-bg-hover);
   --ui-bg-inverted: var(--am-color-text-primary);
 
   --ui-text-dimmed: var(--am-color-text-muted);
-  --ui-text-muted: var(--am-color-text-secondary);
+  --ui-text-muted: var(--am-color-text-muted);
   --ui-text-toned: var(--am-color-text-secondary);
   --ui-text: var(--am-color-text-primary);
-  --ui-text-highlighted: var(--am-color-code-text);
-  --ui-text-inverted: var(--am-color-text-on-action);
+  --ui-text-highlighted: var(--am-color-text-primary);
+  --ui-text-inverted: var(--am-color-text-inverse);
 
   --ui-border: var(--am-color-border-default);
   --ui-border-muted: var(--am-color-border-default);
   --ui-border-accented: var(--am-color-border-strong);
-  --ui-border-inverted: var(--am-color-action-primary);
+  --ui-border-inverted: var(--am-color-text-primary);
 }
 
 .dark {
   color-scheme: dark;
-  --am-scale-light-end: var(--am-color-text-primary);
-  --am-scale-dark-end: var(--am-color-bg-canvas);
 }
 
 body {
