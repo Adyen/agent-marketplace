@@ -58,6 +58,24 @@ func ParseMarketplaceLocator(raw string) (MarketplaceLocator, error) {
 	return parseAliasLocator(input)
 }
 
+// LooksLikeMarketplaceBrowserURL reports whether an HTTP(S) URL contains the
+// Marketplace browser resource route marker. Callers can reject malformed
+// routes before generic Git URL parsing turns them into SSH clone URLs.
+func LooksLikeMarketplaceBrowserURL(raw string) bool {
+	input := strings.TrimSpace(raw)
+	u, err := url.Parse(input)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for i, part := range parts {
+		if i+1 < len(parts) && part == "r" {
+			return true
+		}
+	}
+	return false
+}
+
 // ParseLocator is a short alias for ParseMarketplaceLocator.
 func ParseLocator(raw string) (MarketplaceLocator, error) {
 	return ParseMarketplaceLocator(raw)

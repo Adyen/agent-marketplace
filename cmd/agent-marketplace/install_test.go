@@ -622,6 +622,49 @@ func TestInstallValidationRejectsMarketplaceSelectorCombinations(t *testing.T) {
 	}
 }
 
+func TestInstallValidationKeepsMarketplaceURLsOutOfGitFallback(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name:  "browser base with endpoint prefix",
+			input: "https://market.example/services/marketplace",
+		},
+		{
+			name:  "valid browser resource route",
+			input: "https://market.example/services/marketplace/r/registry/skill/review",
+		},
+		{
+			name:    "malformed browser resource route",
+			input:   "https://market.example/services/marketplace/r/registry/not-a-kind/review",
+			wantErr: "invalid Marketplace browser URL",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newInstallCmd()
+			err := cmd.Args(cmd, []string{tc.input})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validation rejected Marketplace URL: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("validation error = %v, want %q", err, tc.wantErr)
+			}
+			if strings.Contains(err.Error(), "use --from") {
+				t.Fatalf("Marketplace URL fell through to Git registry guidance: %v", err)
+			}
+		})
+	}
+}
+
 func TestInstallCommandAddsSkillToRepoConfigAndSyncsIt(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

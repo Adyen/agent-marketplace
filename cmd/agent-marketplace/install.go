@@ -47,9 +47,12 @@ func newInstallCmd() *cobra.Command {
 			marketplace = strings.TrimSpace(marketplace)
 			marketplaceFlags := acceptRisk || assumeYes || installedName != ""
 			marketplaceLocatorArg := len(args) == 1 && looksLikeMarketplaceLocator(args[0])
+			marketplaceBrowserURL := len(args) == 1 && looksLikeMarketplaceBrowserURL(args[0])
 			marketplaceCoordinate := marketplace != "" || marketplaceLocatorArg
 
 			switch {
+			case marketplaceBrowserURL && !marketplaceLocatorArg:
+				return fmt.Errorf("invalid Marketplace browser URL; use a canonical Marketplace resource URL")
 			case marketplace != "" && (fromURL != "" || installAll || tag != ""):
 				return fmt.Errorf("--marketplace is only supported for a single Marketplace resource")
 			case marketplaceCoordinate && fromURL != "":
@@ -396,4 +399,8 @@ func looksLikeRegistryURL(arg string) bool {
 func looksLikeMarketplaceLocator(arg string) bool {
 	_, err := marketplace.ParseMarketplaceLocator(arg)
 	return err == nil
+}
+
+func looksLikeMarketplaceBrowserURL(arg string) bool {
+	return marketplace.LooksLikeMarketplaceBrowserURL(arg)
 }

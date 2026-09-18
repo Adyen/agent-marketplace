@@ -67,6 +67,25 @@ func TestParseMarketplaceLocator(t *testing.T) {
 	}
 }
 
+func TestLooksLikeMarketplaceBrowserURL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "resource route", raw: "https://market.example/services/marketplace/r/registry/skill/review", want: true},
+		{name: "malformed resource route", raw: "https://market.example/r/registry/skill", want: true},
+		{name: "endpoint prefix", raw: "https://market.example/services/marketplace", want: false},
+		{name: "git project", raw: "https://github.com/org/repo", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := LooksLikeMarketplaceBrowserURL(tc.raw); got != tc.want {
+				t.Fatalf("LooksLikeMarketplaceBrowserURL(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseMarketplaceLocatorRejectsNamedRevisionsWithExplicitError(t *testing.T) {
 	for _, input := range []string{"public:registry/skill/name@v2", "https://market.example/r/registry/skill/name/revisions/main"} {
 		if _, err := ParseMarketplaceLocator(input); err == nil || !strings.Contains(err.Error(), "exact content digest (sha256:<64 lowercase hex>)") {
