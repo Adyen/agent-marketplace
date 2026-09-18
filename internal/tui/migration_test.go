@@ -8,7 +8,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	mptestutil "github.com/Adyen/agent-marketplace/internal/testutil/marketplace"
 )
 
 func TestSnapshotV2ConfigOpensMigrationModal(t *testing.T) {
@@ -174,6 +176,61 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	}
 	if !equalStrings(globalCfg.Harnesses, []string{"factory"}) {
 		t.Fatalf("expected global harnesses to be preserved, got %v", globalCfg.Harnesses)
+	}
+}
+
+func TestMigrationModalRunMigratesMarketplaceConfig(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	// Isolate cache and transaction state from any developer environment.
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, ".local", "state"))
+
+	// Verified mirror artifact in the default cache root for the pin below.
+	seed := mptestutil.SeedVerifiedMarketplaceSkill(t, filepath.Join(cache.CacheDir(), "marketplace"),
+		"https://market.example", "mp", "src", "review")
+	contentDigest, archiveDigest := seed.ContentDigest, seed.ArchiveDigest
+
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := "apiVersion: agent-marketplace/v2\nmarketplaces:\n" +
+		"  - url: https://market.example\n    instance_id: mp\n    resources:\n" +
+		"      - registry_id: src\n        kind: skill\n        name: review\n" +
+		"        revision: " + contentDigest + "\n        digest: " + contentDigest + "\n        direct: true\n"
+	if err := os.WriteFile(configPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewModel(repoRoot, homeDir)
+	m.pane = paneMigrationModal
+	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: configPath, scope: config.V4MigrationRepo}}}
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = mi.(Model)
+	if cmd == nil {
+		t.Fatal("run should emit a migration command")
+	}
+	msg := cmd()
+	done, ok := msg.(migrationDoneMsg)
+	if !ok {
+		t.Fatalf("expected migrationDoneMsg, got %T", msg)
+	}
+	if done.err != nil {
+		t.Fatalf("marketplace migration failed: %v", done.err)
+	}
+	if done.count != 1 {
+		t.Fatalf("expected 1 migration, got %d", done.count)
+	}
+	migrated, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("hydrate migrated pair: %v", err)
+	}
+	if len(migrated.Marketplaces) != 1 || len(migrated.Marketplaces[0].Resources) != 1 ||
+		migrated.Marketplaces[0].Resources[0].LockArchiveDigest != archiveDigest {
+		t.Fatalf("hydrated marketplaces = %#v", migrated.Marketplaces)
 	}
 }
 

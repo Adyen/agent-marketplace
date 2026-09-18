@@ -1,13 +1,68 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	mptestutil "github.com/Adyen/agent-marketplace/internal/testutil/marketplace"
 )
+
+func TestMigrateCommandMarketplaceEndToEndUsesVerifiedCache(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, ".local", "state"))
+
+	// Verified mirror artifact and revision metadata in the default cache root.
+	seed := mptestutil.SeedVerifiedMarketplaceSkill(t, filepath.Join(cache.CacheDir(), "marketplace"),
+		"https://market.example", "mp", "src", "review")
+	contentDigest, archiveDigest := seed.ContentDigest, seed.ArchiveDigest
+
+	repoRoot := t.TempDir()
+	agentsDir := filepath.Join(repoRoot, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := "apiVersion: agent-marketplace/v2\nmarketplaces:\n" +
+		"  - url: https://market.example\n    instance_id: mp\n    alias: adyen\n    resources:\n" +
+		"      - registry_id: src\n        registry_slug: tools\n        kind: skill\n        name: review\n" +
+		"        revision: " + contentDigest + "\n        digest: " + contentDigest + "\n        direct: true\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"migrate", "--scope", "repo"})
+	var out strings.Builder
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("migrate failed: %v", err)
+	}
+
+	migrated, err := config.LoadConfigFromPath(filepath.Join(agentsDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("hydrate migrated config+lock: %v", err)
+	}
+	if len(migrated.Marketplaces) != 1 || len(migrated.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("hydrated marketplaces = %#v", migrated.Marketplaces)
+	}
+	pin := migrated.Marketplaces[0].Resources[0]
+	if !pin.Direct || pin.RegistrySlug != "tools" || pin.LockArchiveDigest != archiveDigest {
+		t.Fatalf("hydrated pin = %#v", pin)
+	}
+	if _, err := os.Stat(filepath.Join(agentsDir, "lock.yaml")); err != nil {
+		t.Fatalf("expected generated lock: %v", err)
+	}
+}
 
 func TestMigrateCommandDefaultsToV4ForUserAndRepo(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -151,7 +206,7 @@ func TestPromptForV4MigrationAcceptsAndMigrates(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	if err := runV4MigrationPrompt(&out, strings.NewReader("\n"), true, config.MigratePaths{Repo: path}); err != nil {
+	if err := runV4MigrationPrompt(context.Background(), &out, strings.NewReader("\n"), true, config.MigratePaths{Repo: path}); err != nil {
 		t.Fatalf("prompt migration failed: %v", err)
 	}
 	migrated, err := config.LoadV4ConfigFromPath(path)
@@ -174,7 +229,7 @@ func TestPromptForV4MigrationDeclineLeavesBytesUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	if err := runV4MigrationPrompt(&out, strings.NewReader("n\n"), true, config.MigratePaths{Repo: path}); err != nil {
+	if err := runV4MigrationPrompt(context.Background(), &out, strings.NewReader("n\n"), true, config.MigratePaths{Repo: path}); err != nil {
 		t.Fatalf("prompt migration failed: %v", err)
 	}
 	got, err := os.ReadFile(path)
@@ -194,7 +249,7 @@ func TestPromptForV4MigrationNonInteractiveWarnsAndLeavesBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	if err := runV4MigrationPrompt(&out, strings.NewReader(""), false, config.MigratePaths{Repo: path}); err != nil {
+	if err := runV4MigrationPrompt(context.Background(), &out, strings.NewReader(""), false, config.MigratePaths{Repo: path}); err != nil {
 		t.Fatalf("noninteractive migration failed: %v", err)
 	}
 	if out.Len() != 0 {

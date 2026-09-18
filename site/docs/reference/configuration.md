@@ -14,14 +14,14 @@ The selected file applies to its directory tree. Generated repository-scoped out
 
 Other configuration layers use related schemas:
 
-| Layer | Configuration | Generated Git lock | Purpose |
+| Layer | Configuration | Generated acquisition lock | Purpose |
 |---|---|---|---|
 | Organization | `/etc/agent-marketplace/config.yaml` | `/etc/agent-marketplace/lock.yaml` | Managed machine policy and required resources |
 | User | `~/.agents/config.yaml` | `~/.agents/lock.yaml` | Personal machine-wide targets and resources |
 | Repository | `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` | Shared project targets and resources |
 | Repository personal | `<repo>/.agents/config.local.yaml` | `<repo>/.agents/lock.local.yaml` | Gitignored choices for one checkout |
 
-Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. Hosted Marketplace resources use exact pins under `marketplaces[].resources` and do not appear in the generated Git lockfiles.
+Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. Lock v1 is Git-only; lock v2 additionally stores exact Marketplace migration state. Legacy v2/v3 configuration still stores Marketplace pins under `marketplaces[].resources`; a v4 `marketplace` source instead requires a matching v2 lock record, written by explicit migration.
 
 Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
 
@@ -45,9 +45,9 @@ resources:
 
 A v4 root must declare exactly `agent-marketplace/v4`. Its `sources` map names explicit Git, live directory, or Marketplace sources, and its `resources` map binds typed locators and selection policy to those source names. Use exactly one source discriminator: `git` requires `ref`, `directory` is live and relative to the declaring file, and `marketplace` accepts no Git-only fields. A directory source is not inferred from a `.git` suffix. V4 accepts local include trees; a child fragment may omit `apiVersion`, but an explicit non-v4 version or legacy key is rejected rather than guessed.
 
-Normal CLI reads—including discovery, status, synchronization, and configuration loading—recognize v4 and adapt Git/directory sources to the runtime requirement model. Marketplace sources are syntax-validated but are not runtime-resolvable on this branch: the legacy runtime adapter always returns `v4.marketplace-lock-required` because hosted acquisition-lock integration is not implemented. Effective staged reloads consume v4 root/include bytes from in-memory overlays without changing disk files. Legacy editors refuse with `v4.writer-opt-in`; repository-personal v4 roots reject disallowed fields with `v4.layer-field`.
+Normal CLI reads—including discovery, status, synchronization, and configuration loading—recognize v4 and adapt Git/directory sources to the runtime requirement model. Explicit v4 Marketplace requests are hydrated from a matching normalized `agent-marketplace-lock/v2` record in the owning layer's lock; a missing, malformed, or mismatched lock returns stable diagnostics (`v4.marketplace-lock-required`, `v4.marketplace-lock-mismatch`). Effective staged reloads consume v4 root/include bytes from in-memory overlays without changing disk files. Legacy editors refuse with `v4.writer-opt-in`; repository-personal v4 roots reject disallowed fields with `v4.layer-field`.
 
-To convert legacy declarations, run `agent-marketplace migrate --to v4`. The command validates all writable user, repository, and repository-personal layers by default; `--scope user|repo|local` selects one. Organization configuration is never a migration target, and migration does not change lockfiles. Use `--dry-run` to preview. Conversion is fail-closed: legacy include trees and hosted Marketplace selections without proven pin provenance are refused, and a failed conversion leaves the input files unchanged. See the [CLI migration reference](cli.md#migrate).
+To convert legacy declarations, run `agent-marketplace migrate --to v4`. The command validates all writable user, repository, and repository-personal layers by default; `--scope user|repo|local` selects one. Organization configuration is never a migration target. Migration writes the owning layer's lock only when it carries exact proven Marketplace state; Git/directory-only conversion leaves locks unchanged. Marketplace migration works offline from verified local cache evidence and requires an assessed revision record plus the artifact or collection manifest for every pin. Use `--dry-run` to preview. Conversion is fail-closed: legacy include trees and hosted Marketplace selections without proven pin provenance are refused, and a failed conversion leaves the input files unchanged. See the [CLI migration reference](cli.md#migrate).
 
 ## `include`
 
@@ -327,7 +327,7 @@ A selected collection expands to its members before resources are resolved. Coll
 
 ## Hosted Marketplaces
 
-`marketplaces` records hosted Marketplace endpoints and immutable resource pins in the legacy v2/v3 configuration shape. It is not a v4 top-level field. The explicit v2/v3-to-v4 migration refuses files containing these selections because a saved pin does not by itself prove the provenance required to recreate a v4 Marketplace request and acquisition record. Keep the legacy file unchanged and remediate the Marketplace selections separately. The legacy shape is:
+`marketplaces` records hosted Marketplace endpoints and immutable resource pins in the legacy v2/v3 configuration shape. It is not a v4 top-level field. The explicit v2/v3-to-v4 migration converts these selections only when every pin is backed by verified local cache evidence, emitting a `sources.<name>.marketplace` entry, direct requests under `resources`, and an `agent-marketplace-lock/v2` record in the owning layer's lock; missing or inconsistent evidence refuses the file, which stays readable as v2/v3. The legacy shape is:
 
 ```yaml
 marketplaces:

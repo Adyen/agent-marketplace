@@ -152,7 +152,7 @@ func maybePromptV4Migration(cmd *cobra.Command, rootTUI, showVersion bool) error
 	if pending.User == "" && pending.Repo == "" && pending.Local == "" {
 		return nil
 	}
-	return runV4MigrationPrompt(cmd.OutOrStdout(), cmd.InOrStdin(), commandInputIsTerminal(cmd.InOrStdin()), pending)
+	return runV4MigrationPrompt(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), commandInputIsTerminal(cmd.InOrStdin()), pending)
 }
 
 func skipV4MigrationPrompt(cmd *cobra.Command) bool {

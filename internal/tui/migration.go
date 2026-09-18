@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 )
 
 type migrationConfig struct {
@@ -63,7 +65,7 @@ func pendingMigrationFor(repoRoot, homeDir string) migrationPrompt {
 func (m Model) runMigrationCmd() tea.Cmd {
 	return func() tea.Msg {
 		paths := migrationPathsForPrompt(m.migrationPrompt)
-		result, err := config.MigrateConfigFilesToV4(paths, config.V4MigrationAll, false)
+		result, err := config.MigrateConfigFilesToV4WithEvidence(context.Background(), paths, config.V4MigrationAll, false, marketplace.DefaultCache())
 		count := 0
 		if result != nil {
 			if result.UserMigrated {

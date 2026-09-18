@@ -14,9 +14,11 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/giturl"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	telemetryconfig "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 
@@ -1612,6 +1614,24 @@ func v4ExclusionMatches(exclude, locator string) bool {
 // v4 schema version on the returned value so writers can reject legacy edits;
 // the adapter is read-only compatibility, not a second v4 serializer.
 func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
+	return c.toLegacyConfig(kind, nil)
+}
+
+// ToLegacyConfigWithLock adapts a validated v4 document with its owning
+// acquisition lock. Marketplace sources hydrate exact pins from normalized v2
+// lock records; a nil or non-v2 lock fails closed for Marketplace state.
+func (c *V4Config) ToLegacyConfigWithLock(kind layerKind, doc *lockfile.Document) (*Config, error) {
+	if doc != nil && doc.APIVersion == lockfile.APIVersionV2 {
+		normalized, err := lockfile.Normalize(*doc)
+		if err != nil {
+			return nil, v4err("v4.marketplace-lock-mismatch", "", 0, "lock failed codec normalization: %v", err)
+		}
+		doc = &normalized
+	}
+	return c.toLegacyConfig(kind, doc)
+}
+
+func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*Config, error) {
 	if c == nil {
 		return nil, v4err("v4.runtime", "", 0, "nil configuration")
 	}
@@ -1645,10 +1665,54 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+
+	var lockByEndpoint map[string]lockfile.MarketplaceLock
+	marketplaceEndpoints := map[string]string{}
+	for _, name := range names {
+		src := c.Sources[name]
+		if src.Kind != V4SourceMarketplace {
+			continue
+		}
+		if lockDoc == nil || lockDoc.APIVersion != lockfile.APIVersionV2 {
+			return nil, v4err("v4.marketplace-lock-required", "sources."+name, src.Line, "Marketplace resources require an acquisition lock and cannot be resolved by the legacy runtime")
+		}
+		if _, duplicate := marketplaceEndpoints[src.CanonicalURL]; duplicate {
+			return nil, v4err("v4.marketplace-lock-mismatch", "sources."+name, src.Line, "duplicate source binding for Marketplace endpoint %q", src.CanonicalURL)
+		}
+		marketplaceEndpoints[src.CanonicalURL] = name
+	}
+	if len(marketplaceEndpoints) > 0 {
+		expected := lockfile.Scope(sourceForLayer(kind).LockScope())
+		if lockDoc.Scope != expected {
+			return nil, v4err("v4.marketplace-lock-mismatch", "", 0, "lock scope %q does not match %q", lockDoc.Scope, expected)
+		}
+		lockByEndpoint = make(map[string]lockfile.MarketplaceLock, len(lockDoc.Marketplaces))
+		for _, mp := range lockDoc.Marketplaces {
+			lockByEndpoint[mp.URL] = mp
+			if _, ok := marketplaceEndpoints[mp.URL]; !ok {
+				return nil, v4err("v4.marketplace-lock-mismatch", "", 0, "lock endpoint %q has no matching Marketplace source", mp.URL)
+			}
+		}
+		for _, name := range names {
+			src := c.Sources[name]
+			if src.Kind != V4SourceMarketplace {
+				continue
+			}
+			if _, ok := lockByEndpoint[src.CanonicalURL]; !ok {
+				return nil, v4err("v4.marketplace-lock-mismatch", "sources."+name, 0, "Marketplace source %q has no lock record for endpoint %q", name, src.CanonicalURL)
+			}
+		}
+	}
+
 	for _, name := range names {
 		src := c.Sources[name]
 		if src.Kind == V4SourceMarketplace {
-			return nil, v4err("v4.marketplace-lock-required", "sources."+name, src.Line, "Marketplace resources require an acquisition lock and cannot be resolved by the legacy runtime")
+			entry, err := c.marketplaceEntryForLock(name, src, c.Groups[name], lockByEndpoint[src.CanonicalURL], kind)
+			if err != nil {
+				return nil, err
+			}
+			out.Marketplaces = append(out.Marketplaces, *entry)
+			continue
 		}
 		entry := RegistryEntry{SourceHarness: src.SourceHarness, Ref: src.Ref, Path: src.Path, URL: src.URL, V4Kind: src.Kind}
 		if src.Kind == V4SourceDirectory {
@@ -1712,6 +1776,110 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 		out.Registries = append(out.Registries, entry)
 	}
 	return out, nil
+}
+
+// marketplaceEntryForLock hydrates one v4 Marketplace source binding from its
+// normalized lock record. Only explicit include requests are supported; the
+// lock's deterministic resource order is retained.
+func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4ResourceGroup, mp lockfile.MarketplaceLock, kind layerKind) (*MarketplaceEntry, error) {
+	sourcePath := "resources." + name
+	if group.HasAll || group.HasTags || group.HasRegistries || group.HasRequired || group.HasHarnesses || len(group.Exclude) > 0 || len(effectiveV4Exclusions(group)) > 0 {
+		return nil, v4err("v4.marketplace-runtime-unsupported", sourcePath, src.Line, "Marketplace sources support only explicit include requests in this slice")
+	}
+	bindings := make(map[string]string, len(mp.RegistryBindings))
+	for _, binding := range mp.RegistryBindings {
+		bindings[binding.Name] = binding.RegistryID
+	}
+	resources := make(map[string]int, len(mp.Resources))
+	for i := range mp.Resources {
+		r := &mp.Resources[i]
+		resources[r.RegistryID+"\x00"+r.Kind+"\x00"+r.Name] = i
+	}
+	direct := make(map[int]V4ResourceRequest)
+	for _, request := range effectiveV4Requests(group) {
+		if request.Required || request.HasHarnesses {
+			return nil, v4err("v4.marketplace-runtime-unsupported", request.Locator, src.Line, "Marketplace requests do not support required or harnesses options")
+		}
+		registryID, ok := bindings[request.Registry]
+		if !ok {
+			return nil, v4err("v4.marketplace-lock-mismatch", request.Locator, src.Line, "registry binding %q is not in the lock", request.Registry)
+		}
+		lockKind := api.FromIR(v4KindToIR(request.Kind))
+		index, ok := resources[registryID+"\x00"+lockKind+"\x00"+request.Name]
+		if !ok {
+			return nil, v4err("v4.marketplace-lock-mismatch", request.Locator, src.Line, "resource %q is not in the lock", request.Locator)
+		}
+		if request.Options.Revision != "" && request.Options.Revision != mp.Resources[index].Revision {
+			return nil, v4err("v4.marketplace-lock-mismatch", request.Locator, src.Line, "requested revision %q does not match locked revision %q", request.Options.Revision, mp.Resources[index].Revision)
+		}
+		if previous, exists := direct[index]; exists {
+			return nil, v4err("v4.marketplace-lock-mismatch", request.Locator, src.Line, "requests %q and %q resolve to the same locked resource", previous.Locator, request.Locator)
+		}
+		direct[index] = request
+	}
+
+	collections := make(map[string]int)
+	for i := range mp.Resources {
+		if mp.Resources[i].Kind == api.KindCollection {
+			r := &mp.Resources[i]
+			collections[r.RegistryID+"\x00"+r.Name] = i
+		}
+	}
+	reachable := make([]bool, len(mp.Resources))
+	for i := range direct {
+		reachable[i] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		for i := range mp.Resources {
+			if reachable[i] {
+				continue
+			}
+			for _, edge := range mp.Resources[i].SelectedBy {
+				parent, ok := collections[edge.RegistryID+"\x00"+edge.Name]
+				if ok && reachable[parent] && mp.Resources[parent].ContentDigest == edge.Revision {
+					reachable[i] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	entry := &MarketplaceEntry{URL: mp.URL, InstanceID: mp.InstanceID, Alias: name, Source: sourceForLayer(kind)}
+	for i := range mp.Resources {
+		if !reachable[i] {
+			r := &mp.Resources[i]
+			return nil, v4err("v4.marketplace-lock-mismatch", sourcePath, src.Line, "locked resource %s/%s/%s is not requested or reachable from a requested collection", r.RegistryID, r.Kind, r.Name)
+		}
+		r := &mp.Resources[i]
+		pin := MarketplaceResourcePin{
+			RegistryID:                   r.RegistryID,
+			RegistrySlug:                 r.RegistryName,
+			Kind:                         r.Kind,
+			Name:                         r.Name,
+			Revision:                     r.Revision,
+			Digest:                       string(r.ContentDigest),
+			Acquisition:                  r.Acquisition,
+			RegistryCommit:               r.RegistryCommit,
+			RegistryManifestDigest:       string(r.RegistryManifestDigest),
+			LockArchiveDigest:            string(r.ArchiveDigest),
+			LockCollectionManifestDigest: string(r.CollectionManifestDigest),
+			LockSourcePath:               r.SourcePath,
+		}
+		selections := make([]MarketplaceSelection, 0, len(r.SelectedBy))
+		for _, edge := range r.SelectedBy {
+			selections = append(selections, MarketplaceSelection{RegistryID: edge.RegistryID, Name: edge.Name, Revision: edge.Revision.String()})
+		}
+		pin.SelectedBy = MarketplaceSelectionsFrom(selections)
+		if request, ok := direct[i]; ok {
+			pin.Direct = true
+			if request.Options.HasAs {
+				pin.InstalledName = request.Options.As
+			}
+		}
+		entry.Resources = append(entry.Resources, pin)
+	}
+	return entry, nil
 }
 
 func cloneV4StringList(values []string) []string {

@@ -299,24 +299,24 @@ Fatal resolution errors return exit status 1 after the report is printed.
 
 ## `migrate`
 
-With no target flag, `migrate` performs the existing structural remediation for legacy configuration. It preserves valid v2 and v3 `apiVersion` values, and files containing legacy `identity` or `team_profiles` fields are refused without modification. This mode does **not** convert a legacy file to v4.
-
-Use the explicit v4 form to convert legacy source and resource declarations:
+With no target flag, `migrate` converts legacy configuration to v4:
 
 ```text
-agent-marketplace migrate --to v4 [--scope all|user|repo|local] [--dry-run]
+agent-marketplace migrate [--to v4] [--scope all|user|repo|local] [--dry-run]
 ```
 
-`--to v4` is the only migration target currently supported. The conversion preserves semantics and selection behavior for representable inputs or it does not publish: it validates each legacy input and generated v4 document with the normal v4 reader and runtime adapter; an already-v4 file is parse-validated and skipped. Migration regenerates canonical v4 YAML and does not promise authored comments or formatting. Publication preserves each original before replacing files, and rolls back already-published files if a later replacement fails. Temporary files and successful-publication backups are cleaned up. It refuses constructs whose meaning or provenance cannot be preserved, including legacy include trees and hosted Marketplace selections without proven pin provenance.
+`--to v4` is an accepted alias for the default. Use `--to v2 --harnesses <targets>` only for the legacy structural-remediation flow, which preserves valid v2/v3 `apiVersion` values, refuses files containing legacy `identity` or `team_profiles` fields, and does **not** convert a file to v4. The conversion preserves semantics and selection behavior for representable inputs or it does not publish: it validates each legacy input and generated v4 document with the normal v4 reader and runtime adapter; an already-v4 file is parse-validated and skipped. Migration regenerates canonical v4 YAML and does not promise authored comments or formatting. Publication preserves each original before replacing files, and rolls back already-published files if a later replacement fails. Temporary files and successful-publication backups are cleaned up. It refuses constructs whose meaning or provenance cannot be preserved, including legacy include trees, hosted Marketplace selections without proven pin provenance, collection-derived aliases that cannot be represented, and unrepresentable revisions or policy.
 
-By default, the explicit v4 form examines all writable layers: user (`~/.agents/config.yaml`), repository (`.agents/config.yaml`), and repository-personal (`.agents/config.local.yaml`). It never reads or writes organization configuration (`/etc/agent-marketplace/config.yaml`) and never changes lockfiles. Use `--scope` to select exactly one writable layer; a missing file in the selected scope is skipped. With `--dry-run`, validation and conversion run as a preview and no configuration file is written.
+Exact legacy Marketplace pins migrate offline from verified local cache evidence: each proven endpoint becomes a `sources.<name>.marketplace` source with direct requests under `resources`, and the owning layer's lock is created or upgraded to `agent-marketplace-lock/v2` carrying the identity, integrity, and selection records. The migrated config and its lock are published together in one journaled dependency transaction.
+
+By default, `migrate` examines all writable layers: user (`~/.agents/config.yaml`), repository (`.agents/config.yaml`), and repository-personal (`.agents/config.local.yaml`). It never reads or writes organization configuration (`/etc/agent-marketplace/config.yaml`), and Git/directory-only conversion leaves locks unchanged. Use `--scope` to select exactly one writable layer; a missing file in the selected scope is skipped. With `--dry-run`, validation and conversion run as a preview and neither configuration files nor locks are written.
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--to` | string | no | none | Explicit migration target. The only supported value is `v4`; omitting it selects legacy structural remediation. |
-| `--scope` | string | no | `all` (with `--to v4`) | Writable layer for explicit v4 migration: `all`, `user`, `repo`, or `local`. Organization is never a target. |
-| `--dry-run` | boolean | no | `false` | With `--to v4`, validates and previews the selected conversion without writing configuration files or locks. |
-| `--harnesses` | comma-separated strings | conditionally | existing user harnesses | Legacy structural-remediation option. Supplies the user harness set when that remediation requires one. |
+| `--to` | string | no | `v4` | Migration target. Omitting it or passing `v4` selects v4 conversion; `v2` selects legacy structural remediation. |
+| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. Organization is never a target. |
+| `--dry-run` | boolean | no | `false` | Validates and previews the selected conversion without writing configuration files or locks. |
+| `--harnesses` | comma-separated strings | conditionally | existing user harnesses | Legacy structural-remediation (`--to v2`) option. Supplies the user harness set when that remediation requires one. |
 
 When a harness set is required but absent, terminal execution prompts and non-terminal execution requires `--harnesses`. All legacy-remediation inputs are validated before any file is written.
 
@@ -328,9 +328,9 @@ No legacy config files require v4 migration
 
 ### Reading and writing v4 configuration
 
-Normal CLI readers accept a v4 root (`apiVersion: agent-marketplace/v4`) and adapt its Git/directory `sources` and `resources` model for normal discovery and synchronization. Source kinds are explicit, and directory sources are live, relative to the declaring file, and never acquire a Git lock. V4 roots may use local include trees; a root must declare v4, while an included fragment may omit `apiVersion`. Marketplace sources are syntax-validated but are not runtime-resolvable on this branch: the legacy runtime adapter always returns `v4.marketplace-lock-required` because hosted acquisition-lock integration is not implemented. Repository-personal v4 roots reject disallowed layer fields with `v4.layer-field`.
+Normal CLI readers accept a v4 root (`apiVersion: agent-marketplace/v4`) and adapt its Git/directory `sources` and `resources` model for normal discovery and synchronization. Source kinds are explicit, and directory sources are live, relative to the declaring file, and never acquire a Git lock. V4 roots may use local include trees; a root must declare v4, while an included fragment may omit `apiVersion`. Explicit `marketplace` source requests are hydrated read-only from a matching normalized `agent-marketplace-lock/v2` record in the owning layer's lock; a missing, malformed, or mismatched lock fails closed. Dynamic Marketplace selectors, lock acquisition/update, and v4 Marketplace editing remain unsupported. Repository-personal v4 roots reject disallowed layer fields with `v4.layer-field`.
 
-Effective reloads used by staged configuration operations consume staged v4 root/include bytes through in-memory overlays while retaining canonical paths. Legacy config writers protect v4 files. Configuration-editing operations that use the legacy writer refuse with a `v4.writer-opt-in` diagnostic instead of rewriting a v4 root into the legacy shape. Edit the v4 source/resource declarations directly; `migrate` without `--to v4` is not a v4 editor.
+Effective reloads used by staged configuration operations consume staged v4 root/include bytes through in-memory overlays while retaining canonical paths. Legacy config writers protect v4 files. Configuration-editing operations that use the legacy writer refuse with a `v4.writer-opt-in` diagnostic instead of rewriting a v4 root into the legacy shape. Edit the v4 source/resource declarations directly; `migrate --to v2` is not a v4 editor.
 
 ## `convert`
 

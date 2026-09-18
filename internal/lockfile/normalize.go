@@ -22,6 +22,14 @@ func cloneDocument(in Document) Document {
 			}
 		}
 	}
+	out.Marketplaces = append([]MarketplaceLock(nil), in.Marketplaces...)
+	for i := range out.Marketplaces {
+		out.Marketplaces[i].RegistryBindings = append([]MarketplaceRegistryBinding(nil), in.Marketplaces[i].RegistryBindings...)
+		out.Marketplaces[i].Resources = append([]MarketplaceResourceLock(nil), in.Marketplaces[i].Resources...)
+		for j := range out.Marketplaces[i].Resources {
+			out.Marketplaces[i].Resources[j].SelectedBy = append([]MarketplaceSelectionLock(nil), in.Marketplaces[i].Resources[j].SelectedBy...)
+		}
+	}
 	return out
 }
 

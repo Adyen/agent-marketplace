@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 )
 
 func newMigrateCmd() *cobra.Command {
@@ -31,17 +33,23 @@ schema. The conversion is semantic and selection preserving for representable
 standalone legacy files; it does not promise authored comments or formatting.
 
 Migration is transactional: all selected inputs are validated before any file
-is written. Include trees, hosted Marketplace selections without pin
-provenance, and other lossy inputs are refused without modification. Existing
-v2 and v3 configs remain readable when migration is declined or refused.
+is written. Include trees and Marketplace entries lacking complete verified
+cache provenance are refused without modification; a proven Marketplace entry
+migrates its exact pins into a v2 lock record derived offline from verified
+local cache evidence. Existing v2 and v3 configs remain readable when
+migration is declined or refused.
 
-The --to v4 spelling remains accepted for compatibility. Use --to v2 only for
-the legacy structural-remediation flow. V4 migration supports --scope and
---dry-run, and never edits organization configuration or lockfiles.`,
+The --to v4 spelling remains accepted for compatibility (v4 is the default).
+Use --to v2 only for the legacy structural-remediation flow. V4 migration
+supports --scope and --dry-run; --dry-run writes neither config nor lock.
+Organization configuration is never edited. Git/directory-only conversion
+leaves locks unchanged; provenance-proven Marketplace conversion creates or
+upgrades the owning layer lock to agent-marketplace-lock/v2 transactionally,
+published together with the migrated config in one journaled transaction.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch targetVersion {
 			case "", "v4":
-				return runMigrateV4(cmd.OutOrStdout(), config.V4MigrationScope(scope), dryRun)
+				return runMigrateV4(cmd.Context(), cmd.OutOrStdout(), config.V4MigrationScope(scope), dryRun)
 			case "v2":
 				return runMigrate(cmd.OutOrStdout(), os.Stdin, harnesses)
 			default:
@@ -140,12 +148,12 @@ func pendingV4MigrationPaths(paths config.MigratePaths) (config.MigratePaths, er
 	return pending, nil
 }
 
-func runMigrateV4(out io.Writer, scope config.V4MigrationScope, dryRun bool) error {
+func runMigrateV4(ctx context.Context, out io.Writer, scope config.V4MigrationScope, dryRun bool) error {
 	paths, err := currentMigratePaths()
 	if err != nil {
 		return err
 	}
-	result, err := config.MigrateConfigFilesToV4(paths, scope, dryRun)
+	result, err := config.MigrateConfigFilesToV4WithEvidence(ctx, paths, scope, dryRun, marketplace.DefaultCache())
 	if err != nil {
 		return err
 	}
@@ -159,7 +167,7 @@ func runMigrateV4(out io.Writer, scope config.V4MigrationScope, dryRun bool) err
 // runV4MigrationPrompt asks for consent before changing legacy configuration.
 // A non-interactive invocation never mutates files and logs the explicit
 // migration command for the next interactive run.
-func runV4MigrationPrompt(out io.Writer, in io.Reader, terminal bool, paths config.MigratePaths) error {
+func runV4MigrationPrompt(ctx context.Context, out io.Writer, in io.Reader, terminal bool, paths config.MigratePaths) error {
 	if !terminal {
 		slog.Warn("legacy configuration detected; migration consent unavailable", "next_command", "agent-marketplace migrate")
 		return nil
@@ -192,7 +200,7 @@ func runV4MigrationPrompt(out io.Writer, in io.Reader, terminal bool, paths conf
 	if reply != "" && !strings.HasPrefix(reply, "y") {
 		return fmt.Errorf("unknown response %q; use y or n", reply)
 	}
-	result, err := config.MigrateConfigFilesToV4(paths, config.V4MigrationAll, false)
+	result, err := config.MigrateConfigFilesToV4WithEvidence(ctx, paths, config.V4MigrationAll, false, marketplace.DefaultCache())
 	if err != nil {
 		slog.Warn("automatic v4 migration refused; continuing with legacy configuration", "error", err)
 		_, writeErr := fmt.Fprintf(out, "warning: v4 migration was not completed: %v\nContinuing with v2/v3 compatibility reads.\n", err)

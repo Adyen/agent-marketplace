@@ -2,15 +2,23 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -681,10 +689,35 @@ type V4MigrationResult struct {
 type v4MigrationSource struct {
 	Git           string `yaml:"git,omitempty"`
 	Directory     string `yaml:"directory,omitempty"`
+	Marketplace   string `yaml:"marketplace,omitempty"`
 	Ref           string `yaml:"ref,omitempty"`
 	Path          string `yaml:"path,omitempty"`
 	SourceHarness string `yaml:"source_harness,omitempty"`
 }
+
+// v4MigrationResourceOptions carries explicit per-request options on a v4
+// include locator mapping.
+type v4MigrationResourceOptions struct {
+	As       string `yaml:"as,omitempty"`
+	Revision string `yaml:"revision,omitempty"`
+}
+
+// v4MigrationEncoding pairs the generated v4 config bytes with the desired
+// Marketplace lock endpoints derived from verified cache evidence.
+type v4MigrationEncoding struct {
+	ConfigBytes  []byte
+	Marketplaces []lockfile.MarketplaceLock
+}
+
+// MarketplaceMigrationEvidence reconstructs a fully populated Marketplace lock
+// record for one legacy pin from verified offline cache evidence.
+type MarketplaceMigrationEvidence interface {
+	VerifiedMarketplaceLockResource(MarketplaceEntry, MarketplaceResourcePin) (lockfile.MarketplaceResourceLock, error)
+}
+
+// commitV4Migration publishes config and lock pairs atomically; tests swap it
+// to inject transaction failures.
+var commitV4Migration = dependencytxn.Commit
 
 type v4MigrationGroup struct {
 	Include   []any     `yaml:"include,omitempty"`
@@ -709,20 +742,33 @@ type v4MigrationDocument struct {
 }
 
 type v4MigrationInput struct {
-	name string
-	path string
-	kind layerKind
-	mode os.FileMode
-	cfg  *Config
+	name          string
+	path          string
+	kind          layerKind
+	mode          os.FileMode
+	cfg           *Config
+	canonicalPath string
+	generation    dependencytxn.Generation
+	expectedMode  fs.FileMode
 }
 
 // MigrateConfigFilesToV4 performs the explicitly requested semantic and
 // selection-preserving legacy conversion for representable inputs. It
 // regenerates canonical v4 YAML and does not promise authored comments or
-// formatting. It never reads or writes organization configuration and never
-// changes locks. Every selected file is parsed and converted before any temp
-// file is published; unsupported constructs therefore leave all inputs intact.
+// formatting. It never reads or writes organization configuration. Inputs
+// carrying Marketplace entries are refused without verified evidence.
 func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun bool) (*V4MigrationResult, error) {
+	return MigrateConfigFilesToV4WithEvidence(context.Background(), paths, scope, dryRun, nil)
+}
+
+// MigrateConfigFilesToV4WithEvidence is MigrateConfigFilesToV4 with an
+// explicit context and offline Marketplace evidence provider. For layers that
+// carry Marketplace entries it derives the exact lock records through
+// evidence, merges them into the owning layer lock, and publishes every
+// config+lock pair in one dependency transaction. Every selected file is
+// parsed, converted, and pair-validated before anything is published;
+// unsupported constructs therefore leave all inputs intact.
+func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths, scope V4MigrationScope, dryRun bool, evidence MarketplaceMigrationEvidence) (*V4MigrationResult, error) {
 	if scope != V4MigrationAll && scope != V4MigrationUser && scope != V4MigrationRepo && scope != V4MigrationLocal {
 		return nil, v4err("v4.migration-scope", "scope", 0, "unsupported migration scope %q", scope)
 	}
@@ -744,23 +790,26 @@ func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun b
 		if item.path == "" {
 			continue
 		}
-		data, err := os.ReadFile(item.path)
+		canonical, err := canonicalConfigPath(item.path)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			return nil, fmt.Errorf("read %s config %q: %w", item.name, item.path, err)
+			return nil, fmt.Errorf("resolve %s config %q: %w", item.name, item.path, err)
 		}
-		info, err := os.Stat(item.path)
+		data, generation, mode, err := dependencytxn.ReadSnapshot(canonical)
 		if err != nil {
-			return nil, fmt.Errorf("stat %s config %q: %w", item.name, item.path, err)
+			return nil, fmt.Errorf("read %s config %q: %w", item.name, canonical, err)
+		}
+		if !generation.Exists {
+			continue
 		}
 		if PeekAPIVersion(data) == APIVersionV4 {
 			v4, err := LoadV4ConfigFromPath(item.path)
 			if err != nil {
 				return nil, err
 			}
-			if _, err := v4.ToLegacyConfig(item.kind); err != nil {
+			if _, _, err := loadV4RuntimeConfig(v4, item.path, item.kind, nil); err != nil {
 				return nil, err
 			}
 			// An already-v4 file is valid input and needs no rewrite.
@@ -773,35 +822,69 @@ func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun b
 		if len(cfg.Include) > 0 {
 			return nil, v4err("v4.migration-unsupported", item.path, 0, "include trees cannot be converted without editing included files")
 		}
-		if len(cfg.Marketplaces) > 0 {
-			return nil, v4err("v4.migration-marketplace", item.path, 0, "Marketplace selections have no semantically lossless pin provenance")
+		if len(cfg.Marketplaces) > 0 && evidence == nil {
+			return nil, v4err("v4.migration-marketplace-evidence", item.path, 0, "Marketplace entries require verified cache evidence for exact lock migration")
 		}
-		inputs = append(inputs, v4MigrationInput{name: item.name, path: item.path, kind: item.kind, mode: info.Mode().Perm(), cfg: cfg})
+		inputs = append(inputs, v4MigrationInput{name: item.name, path: item.path, kind: item.kind, mode: mode, cfg: cfg, canonicalPath: canonical, generation: generation, expectedMode: mode})
 	}
 
 	result := &V4MigrationResult{Scope: scope, DryRun: dryRun, UserPath: paths.User, RepoPath: paths.Repo, LocalPath: paths.Local}
-	staged := make([]stagedV4MigrationFile, 0, len(inputs))
+	plans := make([]v4MigrationPlan, 0, len(inputs))
+	hasMarketplace := false
 	for _, input := range inputs {
-		data, err := encodeV4Migration(input.cfg, input.path, input.kind)
+		encoding, err := encodeV4MigrationWithEvidence(input.cfg, input.path, input.kind, evidence)
 		if err != nil {
-			cleanupStagedV4MigrationFiles(staged)
 			return nil, err
+		}
+		plan := v4MigrationPlan{input: input, data: encoding.ConfigBytes}
+		if len(encoding.Marketplaces) > 0 {
+			hasMarketplace = true
+			lockPath, lockDoc, lockData, lockGeneration, lockMode, err := mergeV4MigrationLock(input, encoding.Marketplaces)
+			if err != nil {
+				return nil, err
+			}
+			plan.lockPath = lockPath
+			plan.lockDoc = &lockDoc
+			plan.lockData = lockData
+			plan.lockGeneration = lockGeneration
+			plan.lockExpectedMode = lockMode
 		}
 		// Parse the generated bytes again so publication is gated by the same
 		// strict v4 validator normal readers use.
-		parsed, err := ParseV4Config(data, input.path, true)
+		parsed, err := ParseV4Config(plan.data, input.path, true)
 		if err != nil {
-			cleanupStagedV4MigrationFiles(staged)
 			return nil, fmt.Errorf("validate v4 migration for %q: %w", input.path, err)
 		}
-		if _, err := parsed.ToLegacyConfig(input.kind); err != nil {
-			cleanupStagedV4MigrationFiles(staged)
+		if plan.lockDoc != nil {
+			if _, err := parsed.ToLegacyConfigWithLock(input.kind, plan.lockDoc); err != nil {
+				return nil, fmt.Errorf("validate v4 migration lock pair for %q: %w", input.path, err)
+			}
+		} else if _, err := parsed.ToLegacyConfig(input.kind); err != nil {
 			return nil, fmt.Errorf("validate v4 runtime configuration for %q: %w", input.path, err)
 		}
-		if dryRun {
-			markV4MigrationResult(result, input.name)
-			continue
+		plans = append(plans, plan)
+	}
+	if dryRun {
+		for _, plan := range plans {
+			markV4MigrationResult(result, plan.input.name)
 		}
+		slog.Info("v4 migration preview complete", "files", len(inputs))
+		return result, nil
+	}
+	if hasMarketplace {
+		if err := publishV4MigrationTransaction(ctx, plans); err != nil {
+			return nil, err
+		}
+		for _, plan := range plans {
+			markV4MigrationResult(result, plan.input.name)
+		}
+		slog.Info("v4 migration complete", "user", result.UserMigrated, "repo", result.RepoMigrated, "local", result.LocalMigrated)
+		return result, nil
+	}
+	staged := make([]stagedV4MigrationFile, 0, len(plans))
+	for _, plan := range plans {
+		input := plan.input
+		data := plan.data
 		tmp, err := os.CreateTemp(filepath.Dir(input.path), filepath.Base(input.path)+".tmp-v4-*")
 		if err != nil {
 			cleanupStagedV4MigrationFiles(staged)
@@ -825,10 +908,6 @@ func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun b
 			return nil, fmt.Errorf("close v4 migration temp for %q: %w", input.path, err)
 		}
 		staged = append(staged, stagedV4MigrationFile{name: input.name, temp: tmp.Name(), path: input.path})
-	}
-	if dryRun {
-		slog.Info("v4 migration preview complete", "files", len(inputs))
-		return result, nil
 	}
 	if err := publishV4Migration(&staged); err != nil {
 		cleanupStagedV4MigrationFiles(staged)
@@ -946,21 +1025,124 @@ func markV4MigrationResult(result *V4MigrationResult, name string) {
 	}
 }
 
-func encodeV4Migration(cfg *Config, configPath string, kind layerKind) ([]byte, error) {
+// v4MigrationPlan is one validated config migration plus, when the layer
+// carries Marketplace entries, its merged lock document.
+type v4MigrationPlan struct {
+	input            v4MigrationInput
+	data             []byte
+	lockPath         string
+	lockDoc          *lockfile.Document
+	lockData         []byte
+	lockGeneration   dependencytxn.Generation
+	lockExpectedMode fs.FileMode
+}
+
+// mergeV4MigrationLock merges desired Marketplace endpoint records into the
+// layer's existing lock: absent locks start as v2, v1 Git records are
+// preserved through the version upgrade, and existing v2 Marketplace records
+// must be identical. Anything malformed, wrong-scope, or conflicting is
+// refused before any write.
+func mergeV4MigrationLock(input v4MigrationInput, desired []lockfile.MarketplaceLock) (string, lockfile.Document, []byte, dependencytxn.Generation, fs.FileMode, error) {
+	fail := func(err error) (string, lockfile.Document, []byte, dependencytxn.Generation, fs.FileMode, error) {
+		return "", lockfile.Document{}, nil, dependencytxn.Generation{}, 0, err
+	}
+	lockPath, err := lockfile.PathForConfig(input.canonicalPath)
+	if err != nil {
+		return fail(v4err("v4.migration-marketplace-lock", input.path, 0, "%v", err))
+	}
+	layerScope := lockfile.Scope(sourceForLayer(input.kind).LockScope())
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: layerScope}
+	raw, generation, mode, readErr := dependencytxn.ReadSnapshot(lockPath)
+	if readErr != nil {
+		return fail(fmt.Errorf("read existing lock %q: %w", lockPath, readErr))
+	}
+	if generation.Exists {
+		existing, err := lockfile.Decode(raw)
+		if err != nil {
+			return fail(v4err("v4.migration-marketplace-lock", input.path, 0, "existing lock %q: %v", lockPath, err))
+		}
+		if existing.Scope != layerScope {
+			return fail(v4err("v4.migration-marketplace-lock", input.path, 0, "existing lock %q has scope %q, want %q", lockPath, existing.Scope, layerScope))
+		}
+		switch existing.APIVersion {
+		case lockfile.APIVersionV1:
+			doc.Registries = existing.Registries
+		case lockfile.APIVersionV2:
+			if !reflect.DeepEqual(existing.Marketplaces, desired) {
+				return fail(v4err("v4.migration-marketplace-lock-conflict", input.path, 0, "existing lock %q records different Marketplace identity", lockPath))
+			}
+			doc.Registries = existing.Registries
+		default:
+			return fail(v4err("v4.migration-marketplace-lock", input.path, 0, "existing lock %q has unsupported apiVersion %q", lockPath, existing.APIVersion))
+		}
+	}
+	doc.Marketplaces = desired
+	normalized, err := lockfile.Normalize(doc)
+	if err != nil {
+		return fail(v4err("v4.migration-marketplace-lock", input.path, 0, "normalize merged lock: %v", err))
+	}
+	data, err := lockfile.Encode(normalized)
+	if err != nil {
+		return fail(fmt.Errorf("encode merged lock %q: %w", lockPath, err))
+	}
+	return lockPath, normalized, data, generation, mode, nil
+}
+
+// publishV4MigrationTransaction publishes every planned config and lock file
+// in one dependency transaction so a failure leaves all originals intact.
+func publishV4MigrationTransaction(ctx context.Context, plans []v4MigrationPlan) error {
+	started := time.Now()
+	desired := make([]dependencytxn.DesiredFile, 0, len(plans)*2)
+	for _, plan := range plans {
+		// Generations and modes were captured with the original bytes during
+		// planning, so a concurrent writer between then and commit trips the
+		// compare-and-swap precondition instead of being overwritten.
+		desired = append(desired, dependencytxn.DesiredFile{
+			Path: plan.input.canonicalPath, Expected: plan.input.generation, ExpectedMode: plan.input.expectedMode,
+			Bytes: plan.data, Mode: plan.input.mode,
+		})
+		if plan.lockDoc == nil {
+			continue
+		}
+		lockMode := plan.lockExpectedMode
+		if !plan.lockGeneration.Exists {
+			lockMode = 0o644
+		}
+		desired = append(desired, dependencytxn.DesiredFile{
+			Path: plan.lockPath, Expected: plan.lockGeneration, ExpectedMode: plan.lockExpectedMode,
+			Bytes: plan.lockData, Mode: lockMode,
+		})
+	}
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return fmt.Errorf("resolve dependency state dir: %w", err)
+	}
+	slog.Info("v4 migration transaction started", "files", len(desired))
+	result, err := commitV4Migration(ctx, stateDir, desired)
+	if err != nil {
+		slog.Warn("v4 migration transaction failed", "files", len(desired), "duration_ms", time.Since(started).Milliseconds())
+		return fmt.Errorf("commit v4 migration transaction: %w", err)
+	}
+	slog.Info("v4 migration transaction committed", "files", len(desired), "changed", len(result.Changed), "duration_ms", time.Since(started).Milliseconds())
+	return nil
+}
+
+func encodeV4MigrationWithEvidence(cfg *Config, configPath string, kind layerKind, evidence MarketplaceMigrationEvidence) (v4MigrationEncoding, error) {
 	doc := v4MigrationDocument{APIVersion: APIVersionV4, Sources: map[string]v4MigrationSource{}, Resources: map[string]v4MigrationGroup{}, Harnesses: append([]string(nil), cfg.Harnesses...), AllowedRegistries: cfg.AllowedRegistries, AllowedMarketplaces: cfg.AllowedMarketplaces, Backup: cfg.Backup, Logging: cfg.Logging, Telemetry: cfg.Telemetry, Materialization: cfg.Materialization}
 	registryCount := len(cfg.Registries)
+	encoding := v4MigrationEncoding{}
 	for index, original := range cfg.Registries {
 		entry := resolveRegistryEntry(cfg, original)
 		name := v4MigrationSourceName(index, registryCount)
 		source := v4MigrationSource{Ref: entry.Ref, Path: NormalizeRegistryPath(entry.Path), SourceHarness: entry.SourceHarness}
 		if entry.IsLocal() {
 			if kind == userLayer && entry.IsRepoRelativeLocal() {
-				return nil, v4err("v4.migration-unsupported", configPath, 0, "repository-relative local source %q cannot be migrated into user scope", entry.URL)
+				return encoding, v4err("v4.migration-unsupported", configPath, 0, "repository-relative local source %q cannot be migrated into user scope", entry.URL)
 			}
 			base := legacyLocalBase(configPath, kind)
 			localPath, err := entry.ResolveLocalPath(base)
 			if err != nil {
-				return nil, v4err("v4.migration-unsupported", configPath, 0, "local source %q cannot be represented: %v", entry.URL, err)
+				return encoding, v4err("v4.migration-unsupported", configPath, 0, "local source %q cannot be represented: %v", entry.URL, err)
 			}
 			source.Directory = localPath
 			source.Ref, source.Path = "", ""
@@ -988,13 +1170,13 @@ func encodeV4Migration(cfg *Config, configPath string, kind layerKind) ([]byte, 
 			for _, resourceName := range selector.Include {
 				hasExplicit = true
 				if strings.TrimSpace(resourceName) == "" || strings.Contains(resourceName, "/") {
-					return nil, v4err("v4.migration-unsupported", configPath, 0, "resource name %q is not a v4 locator segment", resourceName)
+					return encoding, v4err("v4.migration-unsupported", configPath, 0, "resource name %q is not a v4 locator segment", resourceName)
 				}
 				group.Include = append(group.Include, fmt.Sprintf("%s/%s", v4ResourceKindName(resourceKind), resourceName))
 			}
 			for _, resourceName := range selector.Exclude {
 				if strings.TrimSpace(resourceName) == "" || strings.Contains(resourceName, "/") {
-					return nil, v4err("v4.migration-unsupported", configPath, 0, "resource exclusion %q is not a v4 locator segment", resourceName)
+					return encoding, v4err("v4.migration-unsupported", configPath, 0, "resource exclusion %q is not a v4 locator segment", resourceName)
 				}
 				addExclusion(fmt.Sprintf("%s/%s", v4ResourceKindName(resourceKind), resourceName))
 			}
@@ -1019,11 +1201,152 @@ func encodeV4Migration(cfg *Config, configPath string, kind layerKind) ([]byte, 
 			doc.Resources[name] = group
 		}
 	}
+	layerScope := lockfile.Scope(sourceForLayer(kind).LockScope())
+	for index, entry := range cfg.Marketplaces {
+		canonical, err := urlutil.NormalizeEndpointURL(entry.URL)
+		if err != nil {
+			return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "marketplaces[%d] url: %v", index, err)
+		}
+		name := v4MigrationMarketplaceSourceName(doc.Sources, entry.Alias)
+		doc.Sources[name] = v4MigrationSource{Marketplace: canonical}
+		lock := lockfile.MarketplaceLock{URL: canonical, InstanceID: entry.InstanceID}
+		bindings := map[string]string{}
+		group := v4MigrationGroup{}
+		for pinIndex, pin := range entry.Resources {
+			record, err := evidence.VerifiedMarketplaceLockResource(entry, pin)
+			if err != nil {
+				return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "marketplaces[%d].resources[%d] (%s/%s/%s): %v", index, pinIndex, pin.RegistryID, pin.Kind, pin.Name, err)
+			}
+			if err := verifyMigrationEvidenceRecord(pin, record); err != nil {
+				return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "marketplaces[%d].resources[%d] (%s/%s/%s): %v", index, pinIndex, pin.RegistryID, pin.Kind, pin.Name, err)
+			}
+			if bound, ok := bindings[record.RegistryName]; ok && bound != record.RegistryID {
+				return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "marketplaces[%d]: registry name %q binds both %q and %q", index, record.RegistryName, bound, record.RegistryID)
+			}
+			bindings[record.RegistryName] = record.RegistryID
+			lock.Resources = append(lock.Resources, record)
+			direct := pin.Direct || len(pin.SelectedBy.List()) == 0
+			if !direct {
+				if pin.InstalledName != "" {
+					return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "marketplaces[%d].resources[%d]: installed_name %q on a collection-derived pin cannot be represented without creating direct intent", index, pinIndex, pin.InstalledName)
+				}
+				continue
+			}
+			locator := record.RegistryName + "/" + v4MigrationMarketplaceKind(pin.Kind) + "/" + pin.Name
+			options := v4MigrationResourceOptions{As: pin.InstalledName}
+			if pin.Revision != pin.Digest {
+				if !v4RevisionRE.MatchString(pin.Revision) {
+					return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "marketplaces[%d].resources[%d]: revision %q is not a canonical sha256 digest and cannot be preserved", index, pinIndex, pin.Revision)
+				}
+				options.Revision = pin.Revision
+			}
+			if options.As == "" && options.Revision == "" {
+				group.Include = append(group.Include, locator)
+			} else {
+				group.Include = append(group.Include, map[string]v4MigrationResourceOptions{locator: options})
+			}
+		}
+		bindingNames := make([]string, 0, len(bindings))
+		for binding := range bindings {
+			bindingNames = append(bindingNames, binding)
+		}
+		sort.Strings(bindingNames)
+		for _, binding := range bindingNames {
+			lock.RegistryBindings = append(lock.RegistryBindings, lockfile.MarketplaceRegistryBinding{Name: binding, RegistryID: bindings[binding]})
+		}
+		normalized, err := lockfile.Normalize(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: layerScope, Marketplaces: []lockfile.MarketplaceLock{lock}})
+		if err != nil {
+			return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "marketplaces[%d]: normalize desired lock endpoint: %v", index, err)
+		}
+		if len(group.Include) > 0 {
+			doc.Resources[name] = group
+		}
+		encoding.Marketplaces = append(encoding.Marketplaces, normalized.Marketplaces[0])
+	}
+	if len(encoding.Marketplaces) > 0 {
+		// Normalize the complete endpoint list so the merge comparison sees the
+		// same canonical order a decoded existing lock uses (sorted by URL).
+		normalized, err := lockfile.Normalize(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: layerScope, Marketplaces: encoding.Marketplaces})
+		if err != nil {
+			return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "normalize desired marketplace locks: %v", err)
+		}
+		encoding.Marketplaces = normalized.Marketplaces
+	}
 	data, err := yaml.Marshal(doc)
 	if err != nil {
-		return nil, fmt.Errorf("encode v4 config %q: %w", configPath, err)
+		return encoding, fmt.Errorf("encode v4 config %q: %w", configPath, err)
 	}
-	return data, nil
+	encoding.ConfigBytes = data
+	return encoding, nil
+}
+
+// v4MigrationMarketplaceKind converts a legacy Marketplace kind into the v4
+// locator kind segment.
+func v4MigrationMarketplaceKind(kind string) string {
+	if kind == "mcpserver" {
+		return "mcp"
+	}
+	return kind
+}
+
+// v4MigrationMarketplaceSourceName picks a unique v4 source name for a legacy
+// Marketplace entry: a valid authored alias wins, otherwise a deterministic
+// marketplace-N name is allocated without colliding with registry sources.
+func v4MigrationMarketplaceSourceName(sources map[string]v4MigrationSource, alias string) string {
+	if alias != "" && v4SourceNameRE.MatchString(alias) {
+		if _, taken := sources[alias]; !taken {
+			return alias
+		}
+	}
+	for index := 1; ; index++ {
+		name := "marketplace"
+		if index > 1 {
+			name = fmt.Sprintf("marketplace-%d", index)
+		}
+		if _, taken := sources[name]; !taken {
+			return name
+		}
+	}
+}
+
+// verifyMigrationEvidenceRecord checks that a verified lock record represents
+// the same immutable identity the legacy pin declares; archive, collection
+// manifest, and source-path fields are cache-enriched and exempt.
+func verifyMigrationEvidenceRecord(pin MarketplaceResourcePin, record lockfile.MarketplaceResourceLock) error {
+	registryName := pin.RegistrySlug
+	if registryName == "" {
+		registryName = pin.RegistryID
+	}
+	if record.RegistryName != registryName {
+		return fmt.Errorf("evidence registry name %q does not match pin %q", record.RegistryName, registryName)
+	}
+	if record.RegistryID != pin.RegistryID || record.Kind != pin.Kind || record.Name != pin.Name || record.Revision != pin.Revision {
+		return fmt.Errorf("evidence identity (%s/%s/%s@%s) does not match pin (%s/%s/%s@%s)", record.RegistryID, record.Kind, record.Name, record.Revision, pin.RegistryID, pin.Kind, pin.Name, pin.Revision)
+	}
+	if string(record.ContentDigest) != pin.Digest {
+		return fmt.Errorf("evidence content digest %q does not match pin digest %q", record.ContentDigest, pin.Digest)
+	}
+	acquisition := pin.Acquisition
+	if acquisition == "" {
+		acquisition = MarketplaceAcquisitionMirror
+	}
+	if record.Acquisition != acquisition {
+		return fmt.Errorf("evidence acquisition %q does not match pin %q", record.Acquisition, acquisition)
+	}
+	if record.RegistryCommit != pin.RegistryCommit || record.RegistryManifestDigest.String() != pin.RegistryManifestDigest {
+		return fmt.Errorf("evidence occurrence (%s/%s) does not match pin (%s/%s)", record.RegistryCommit, record.RegistryManifestDigest, pin.RegistryCommit, pin.RegistryManifestDigest)
+	}
+	selected := pin.SelectedBy.List()
+	if len(record.SelectedBy) != len(selected) {
+		return fmt.Errorf("evidence selected_by length %d does not match pin %d", len(record.SelectedBy), len(selected))
+	}
+	for i, edge := range selected {
+		got := record.SelectedBy[i]
+		if got.RegistryID != edge.RegistryID || got.Name != edge.Name || got.Revision.String() != edge.Revision {
+			return fmt.Errorf("evidence selected_by[%d] %v does not match pin %v", i, got, edge)
+		}
+	}
+	return nil
 }
 
 func legacyLocalBase(configPath string, kind layerKind) string {

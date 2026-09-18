@@ -7,6 +7,7 @@ Convert representable legacy configuration to the v4 source/resource schema whil
 - `agent-marketplace` on your `PATH`.
 - A writable v2 or v3 root that you want to convert to v4, or a v1 file that you have already converted into a valid v2 root.
 - `agent-marketplace status` or `sync` reports a configuration validation error when structural remediation is needed.
+- For a config containing exact Marketplace pins: verified local cache metadata — an assessed revision record plus the artifact or collection manifest for every pin. Normal legacy `sync` populates this evidence; migration performs no network access and refuses the file when any pin's evidence is missing.
 
 ## What `migrate` does and does not do
 
@@ -22,7 +23,8 @@ V4 migration:
 
 - targets user, repository, and repository-personal config layers; use `--scope user`, `--scope repo`, or `--scope local` to limit the transaction;
 - refuses include trees, hosted Marketplace selections without proven pin provenance, and other lossy inputs without changing bytes;
-- never edits organization configuration or lockfiles;
+- never edits organization configuration;
+- leaves Git- and directory-only locks unchanged, while a proven Marketplace conversion creates or upgrades the owning layer lock to `agent-marketplace-lock/v2` atomically with the config in one journaled transaction;
 - does not add `devin` or `codex` implicitly; and
 - leaves v2/v3 configs readable when migration is declined or refused.
 
@@ -121,6 +123,8 @@ resources:
     include: [skill/vm-lifecycle]
 ```
 
+When the legacy config carried proven Marketplace pins, also inspect the adjacent layer lock (for example `.agents/lock.yaml` next to `.agents/config.yaml`). It declares `apiVersion: agent-marketplace-lock/v2` with the migrated endpoint, registry bindings, resource digests, and selection edges that back the v4 `marketplace` source.
+
 For structural remediation, verify the result with:
 
 ```bash
@@ -129,9 +133,19 @@ agent-marketplace status
 
 `ERRORS` should be empty and `TARGET HARNESS SET` should show the intended harnesses and their source layer.
 
+## Boundaries
+
+- `migrate` targets v4 by default; `--to v4` remains an accepted alias.
+- It is semantic and selection-preserving for representable standalone roots and transactional across the selected writable layers.
+- It does not add `devin` or `codex` implicitly and never edits organization config. Git/directory-only conversion leaves locks unchanged; a proven Marketplace conversion creates or upgrades the owning layer lock to `agent-marketplace-lock/v2` atomically with the config in one journaled transaction.
+- It refuses `include` trees, hosted Marketplace selections without proven pin provenance, collection-derived aliases that cannot be represented, and other lossy inputs without changing bytes.
+- `--to v2 --harnesses <targets>` remains available for legacy structural remediation.
+- v1 roots are rejected and must be converted to valid v2 first.
+
 ## Troubleshooting
 
-- **Migration refuses a file**: The file may be v1, contain unsupported include provenance, contain hosted Marketplace selections without pins, or contain legacy `identity` or `team_profiles` fields. Convert v1 by hand or resolve the unsupported fields before migrating.
+- **Migration refuses a file**: The file may be v1, contain unsupported include provenance, contain Marketplace pins whose verified cache evidence is missing or inconsistent, or contain legacy `identity` or `team_profiles` fields. Convert v1 by hand or resolve the unsupported fields before migrating.
+- **`v4.migration-marketplace-evidence`**: A Marketplace pin's verified cache evidence is missing or inconsistent. Run a normal legacy `sync` so the CLI fetches and verifies the endpoint's metadata/artifacts, then rerun `migrate` — do not hand-author lock or trust data.
 - **`has no apiVersion (v1 input is not supported)`**: Add `apiVersion: agent-marketplace/v2` to a regular file or convert the file by hand as in step 2. A local file that intentionally omitted the version can be migrated through the v4 flow, but regular roots must declare one.
 - **The prompt is skipped**: Run `agent-marketplace migrate` explicitly on a terminal. Non-interactive commands keep using v2/v3 and never rewrite without consent.
 - **`target harness set is required`**: The v2 structural-remediation flow needs an existing user harness list, `--harnesses`, or an interactive prompt.

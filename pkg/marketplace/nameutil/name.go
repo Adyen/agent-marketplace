@@ -1,10 +1,36 @@
 package nameutil
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
 )
+
+// ValidateSegment validates a single Marketplace identifier segment (instance
+// ID, registry binding, resource name or revision). The error text is a
+// predicate phrase so callers can prefix their own field label, e.g.
+// fmt.Errorf("%s %s", label, err).
+func ValidateSegment(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return errors.New("is required")
+	}
+	if value != strings.TrimSpace(value) {
+		return errors.New("must not have leading or trailing whitespace")
+	}
+	if value == "." || value == ".." {
+		return errors.New("must not be a dot path component")
+	}
+	if strings.ContainsAny(value, "/\\") {
+		return errors.New("contains an unsafe path separator")
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return errors.New("contains a control character")
+		}
+	}
+	return nil
+}
 
 // ValidateSafeFilename validates a platform-independent filename component.
 // It keeps ordinary Unicode names and punctuation usable while rejecting the
