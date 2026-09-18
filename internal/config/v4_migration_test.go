@@ -399,6 +399,41 @@ registries:
 	}
 }
 
+func TestMigrateConfigFilesToV4PreservesConfigSymlink(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	dir := t.TempDir()
+	target := filepath.Join(dir, "config-target.yaml")
+	link := filepath.Join(dir, "config.yaml")
+	writeV2Config(t, target, `apiVersion: agent-marketplace/v2
+registries:
+  - url: https://example.test/agents.git
+    ref: main
+    skills: {include: [review]}
+`)
+	if err := os.Symlink(filepath.Base(target), link); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := MigrateConfigFilesToV4(MigratePaths{Repo: link}, V4MigrationRepo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RepoMigrated {
+		t.Fatalf("result = %+v", result)
+	}
+	linkTarget, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("config symlink was not preserved: %v", err)
+	}
+	if linkTarget != filepath.Base(target) {
+		t.Fatalf("config symlink target = %q, want %q", linkTarget, filepath.Base(target))
+	}
+	data := readConfigString(t, target)
+	if !strings.Contains(data, "apiVersion: agent-marketplace/v4") || !strings.Contains(data, "skill/review") {
+		t.Fatalf("symlink target did not receive migrated v4 content: %s", data)
+	}
+}
+
 func TestMigrateConfigFilesToV4AllScopeLeavesLockfilesUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	userPath := filepath.Join(dir, "user.yaml")

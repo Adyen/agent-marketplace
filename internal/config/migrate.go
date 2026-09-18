@@ -659,7 +659,7 @@ func FindV4MigrationCandidates(paths MigratePaths) ([]V4MigrationCandidate, erro
 			continue
 		}
 		seen[path] = struct{}{}
-		data, err := os.ReadFile(path)
+		data, err := readConfigFile(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -830,7 +830,6 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 
 	result := &V4MigrationResult{Scope: scope, DryRun: dryRun, UserPath: paths.User, RepoPath: paths.Repo, LocalPath: paths.Local}
 	plans := make([]v4MigrationPlan, 0, len(inputs))
-	hasMarketplace := false
 	for _, input := range inputs {
 		encoding, err := encodeV4MigrationWithEvidence(input.cfg, input.path, input.kind, evidence)
 		if err != nil {
@@ -838,7 +837,6 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 		}
 		plan := v4MigrationPlan{input: input, data: encoding.ConfigBytes}
 		if len(encoding.Marketplaces) > 0 {
-			hasMarketplace = true
 			lockPath, lockDoc, lockData, lockGeneration, lockMode, err := mergeV4MigrationLock(input, encoding.Marketplaces)
 			if err != nil {
 				return nil, err
@@ -871,147 +869,14 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 		slog.Info("v4 migration preview complete", "files", len(inputs))
 		return result, nil
 	}
-	if hasMarketplace {
-		if err := publishV4MigrationTransaction(ctx, plans); err != nil {
-			return nil, err
-		}
-		for _, plan := range plans {
-			markV4MigrationResult(result, plan.input.name)
-		}
-		slog.Info("v4 migration complete", "user", result.UserMigrated, "repo", result.RepoMigrated, "local", result.LocalMigrated)
-		return result, nil
-	}
-	staged := make([]stagedV4MigrationFile, 0, len(plans))
-	for _, plan := range plans {
-		input := plan.input
-		data := plan.data
-		tmp, err := os.CreateTemp(filepath.Dir(input.path), filepath.Base(input.path)+".tmp-v4-*")
-		if err != nil {
-			cleanupStagedV4MigrationFiles(staged)
-			return nil, fmt.Errorf("create v4 migration temp for %q: %w", input.path, err)
-		}
-		if err := tmp.Chmod(input.mode); err != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
-			cleanupStagedV4MigrationFiles(staged)
-			return nil, fmt.Errorf("chmod v4 migration temp for %q: %w", input.path, err)
-		}
-		if _, err := tmp.Write(data); err != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
-			cleanupStagedV4MigrationFiles(staged)
-			return nil, fmt.Errorf("write v4 migration temp for %q: %w", input.path, err)
-		}
-		if err := tmp.Close(); err != nil {
-			_ = os.Remove(tmp.Name())
-			cleanupStagedV4MigrationFiles(staged)
-			return nil, fmt.Errorf("close v4 migration temp for %q: %w", input.path, err)
-		}
-		staged = append(staged, stagedV4MigrationFile{name: input.name, temp: tmp.Name(), path: input.path})
-	}
-	if err := publishV4Migration(&staged); err != nil {
-		cleanupStagedV4MigrationFiles(staged)
+	if err := publishV4MigrationTransaction(ctx, plans); err != nil {
 		return nil, err
 	}
-	for _, file := range staged {
-		markV4MigrationResult(result, file.name)
+	for _, plan := range plans {
+		markV4MigrationResult(result, plan.input.name)
 	}
 	slog.Info("v4 migration complete", "user", result.UserMigrated, "repo", result.RepoMigrated, "local", result.LocalMigrated)
 	return result, nil
-}
-
-type stagedV4MigrationFile struct {
-	name      string
-	temp      string
-	path      string
-	backup    string
-	backedUp  bool
-	published bool
-}
-
-// v4MigrationRename is a narrow seam for deterministic publication failure
-// tests. Rollback deliberately uses os.Rename directly so an injected publish
-// failure cannot also hide whether already-published files were restored.
-var v4MigrationRename = os.Rename
-
-func cleanupStagedV4MigrationFiles(files []stagedV4MigrationFile) {
-	for _, file := range files {
-		_ = os.Remove(file.temp)
-		_ = os.Remove(file.backup)
-	}
-}
-
-func stageV4MigrationBackup(path string) (string, error) {
-	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".bak-v4-*")
-	if err != nil {
-		return "", err
-	}
-	name := file.Name()
-	if err := file.Close(); err != nil {
-		_ = os.Remove(name)
-		return "", err
-	}
-	if err := os.Remove(name); err != nil {
-		return "", err
-	}
-	return name, nil
-}
-
-func rollbackV4Migration(files []stagedV4MigrationFile) error {
-	var rollbackErr error
-	for i := len(files) - 1; i >= 0; i-- {
-		file := &files[i]
-		if file.published {
-			if err := os.Remove(file.path); err != nil && !errors.Is(err, os.ErrNotExist) && rollbackErr == nil {
-				rollbackErr = fmt.Errorf("remove published v4 migration %q: %w", file.path, err)
-			}
-		}
-		if file.backedUp {
-			if err := os.Rename(file.backup, file.path); err != nil && rollbackErr == nil {
-				rollbackErr = fmt.Errorf("restore v4 migration %q: %w", file.path, err)
-			}
-			file.backedUp = false
-		}
-	}
-	return rollbackErr
-}
-
-func publishV4Migration(staged *[]stagedV4MigrationFile) error {
-	files := *staged
-	for i := range files {
-		backup, err := stageV4MigrationBackup(files[i].path)
-		if err != nil {
-			rollbackErr := rollbackV4Migration(files)
-			if rollbackErr != nil {
-				return fmt.Errorf("stage v4 migration backup for %q: %w (rollback failed: %v)", files[i].path, err, rollbackErr)
-			}
-			return fmt.Errorf("stage v4 migration backup for %q: %w", files[i].path, err)
-		}
-		files[i].backup = backup
-		if err := v4MigrationRename(files[i].path, backup); err != nil {
-			rollbackErr := rollbackV4Migration(files)
-			if rollbackErr != nil {
-				return fmt.Errorf("backup v4 migration %q: %w (rollback failed: %v)", files[i].path, err, rollbackErr)
-			}
-			return fmt.Errorf("backup v4 migration %q: %w", files[i].path, err)
-		}
-		files[i].backedUp = true
-	}
-	for i := range files {
-		if err := v4MigrationRename(files[i].temp, files[i].path); err != nil {
-			rollbackErr := rollbackV4Migration(files)
-			if rollbackErr != nil {
-				return fmt.Errorf("publish v4 migration %q: %w (rollback failed: %v)", files[i].path, err, rollbackErr)
-			}
-			return fmt.Errorf("publish v4 migration %q: %w", files[i].path, err)
-		}
-		files[i].published = true
-	}
-	for i := range files {
-		_ = os.Remove(files[i].backup)
-		files[i].backup = ""
-	}
-	return nil
 }
 
 func markV4MigrationResult(result *V4MigrationResult, name string) {
@@ -1128,8 +993,15 @@ func publishV4MigrationTransaction(ctx context.Context, plans []v4MigrationPlan)
 }
 
 func encodeV4MigrationWithEvidence(cfg *Config, configPath string, kind layerKind, evidence MarketplaceMigrationEvidence) (v4MigrationEncoding, error) {
-	doc := v4MigrationDocument{APIVersion: APIVersionV4, Sources: map[string]v4MigrationSource{}, Resources: map[string]v4MigrationGroup{}, Harnesses: append([]string(nil), cfg.Harnesses...), AllowedRegistries: cfg.AllowedRegistries, AllowedMarketplaces: cfg.AllowedMarketplaces, Backup: cfg.Backup, Logging: cfg.Logging, Telemetry: cfg.Telemetry, Materialization: cfg.Materialization}
 	encoding := v4MigrationEncoding{}
+	if kind == localLayer {
+		for _, resourceKind := range AllKinds {
+			if !cfg.SelectorForKind(resourceKind).IsZero() {
+				return encoding, v4err("v4.migration-unsupported", configPath, 0, "source-free personal-local %s selector cannot be represented in v4", v4ResourceKindName(resourceKind))
+			}
+		}
+	}
+	doc := v4MigrationDocument{APIVersion: APIVersionV4, Sources: map[string]v4MigrationSource{}, Resources: map[string]v4MigrationGroup{}, Harnesses: append([]string(nil), cfg.Harnesses...), AllowedRegistries: cfg.AllowedRegistries, AllowedMarketplaces: cfg.AllowedMarketplaces, Backup: cfg.Backup, Logging: cfg.Logging, Telemetry: cfg.Telemetry, Materialization: cfg.Materialization}
 	for _, original := range cfg.Registries {
 		entry := resolveRegistryEntry(cfg, original)
 		name := v4MigrationRegistrySourceName(doc.Sources, entry.URL)

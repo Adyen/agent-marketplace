@@ -67,6 +67,37 @@ resources:
 	}
 }
 
+func TestParseV4AcceptsYAMLBooleanSpellings(t *testing.T) {
+	for _, test := range []struct {
+		spelling string
+		want     bool
+	}{
+		{spelling: "true", want: true},
+		{spelling: "True", want: true},
+		{spelling: "TRUE", want: true},
+		{spelling: "false", want: false},
+		{spelling: "False", want: false},
+		{spelling: "FALSE", want: false},
+	} {
+		t.Run(test.spelling, func(t *testing.T) {
+			cfg, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
+sources: {s: {git: https://example.test/a.git, ref: main}}
+resources: {s: {all: ` + test.spelling + `, required: ` + test.spelling + `}}
+`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			group := cfg.Groups["s"]
+			if group.All == nil || *group.All != test.want {
+				t.Errorf("all = %v, want %t", group.All, test.want)
+			}
+			if group.Required == nil || *group.Required != test.want {
+				t.Errorf("required = %v, want %t", group.Required, test.want)
+			}
+		})
+	}
+}
+
 func TestV4RequiredExplicitRequestSurvivesExclusion(t *testing.T) {
 	cfg, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
 sources: {s: {git: https://example.test/a.git, ref: main}}

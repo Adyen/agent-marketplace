@@ -1,11 +1,14 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 )
 
 func TestV4OrderedChildExcludeThenRootIncludeSurvivesLegacyAdapter(t *testing.T) {
@@ -158,7 +161,8 @@ sources: {shared: {git: https://example.test/agents.git, ref: main}}
 	}
 }
 
-func TestV4MigrationPublishesAllFilesOrRollsBack(t *testing.T) {
+func TestV4MigrationPublishesAllFilesInOneTransaction(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 	dir := t.TempDir()
 	user := filepath.Join(dir, "user.yaml")
 	repo := filepath.Join(dir, "repo.yaml")
@@ -170,33 +174,20 @@ func TestV4MigrationPublishesAllFilesOrRollsBack(t *testing.T) {
 	if err := os.WriteFile(repo, []byte(repoBefore), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldRename := v4MigrationRename
-	t.Cleanup(func() { v4MigrationRename = oldRename })
-	calls := 0
-	v4MigrationRename = func(old, new string) error {
-		calls++
-		if calls == 4 {
-			return errors.New("injected publication failure")
-		}
-		return os.Rename(old, new)
+	original := commitV4Migration
+	commitV4Migration = func(context.Context, string, []dependencytxn.DesiredFile, ...dependencytxn.Option) (dependencytxn.Result, error) {
+		return dependencytxn.Result{}, errors.New("injected publication failure")
 	}
+	t.Cleanup(func() { commitV4Migration = original })
 	_, err := MigrateConfigFilesToV4(MigratePaths{User: user, Repo: repo}, V4MigrationAll, false)
-	if err == nil || !strings.Contains(err.Error(), "publish v4 migration") {
+	if err == nil || !strings.Contains(err.Error(), "commit v4 migration transaction") {
 		t.Fatalf("error = %v, want injected publication failure", err)
 	}
 	for path, want := range map[string]string{user: userBefore, repo: repoBefore} {
 		got, readErr := os.ReadFile(path)
 		if readErr != nil || string(got) != want {
-			t.Fatalf("%s after rollback = %q, %v", path, got, readErr)
+			t.Fatalf("%s after failed transaction = %q, %v", path, got, readErr)
 		}
-	}
-	matches, err := filepath.Glob(filepath.Join(dir, "*.tmp-v4-*"))
-	if err != nil || len(matches) != 0 {
-		t.Fatalf("staged files remain: %v, %v", matches, err)
-	}
-	matches, err = filepath.Glob(filepath.Join(dir, "*.bak-v4-*"))
-	if err != nil || len(matches) != 0 {
-		t.Fatalf("backup files remain: %v, %v", matches, err)
 	}
 }
 

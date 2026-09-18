@@ -2894,7 +2894,7 @@ func artifactShadowedByEntries(s ResolvedArtifact, entries []config.RegistryEntr
 			if ex.kind != s.Kind || strings.TrimSpace(ex.name) != s.Name {
 				continue
 			}
-			if entry.Source != s.Source && normalizedRegistryURL(entry.URL) != normalizedRegistryURL(s.RegistryURL) {
+			if entry.V4Decisions == nil && entry.Source != s.Source && normalizedRegistryURL(entry.URL) != normalizedRegistryURL(s.RegistryURL) {
 				return true
 			}
 			if registryIdentityMatches(entry.URL, entry.Path, entry.Ref, s.RegistryURL, s.RegistryPath, s.Ref) {

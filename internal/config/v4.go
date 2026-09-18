@@ -222,7 +222,7 @@ func ParseV4Config(data []byte, declaringPath string, root bool) (*V4Config, err
 	if err != nil {
 		return nil, err
 	}
-	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: append([]string(nil), doc.harnesses...), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
+	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
 	if err := normalizeV4Tree(out); err != nil {
 		return nil, err
 	}
@@ -888,7 +888,10 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 			if value.Kind != yaml.ScalarNode || value.Tag != "!!bool" {
 				return g, v4err("v4.type", "resources."+source+"."+key, value.Line, "must be a boolean")
 			}
-			b := value.Value == "true"
+			var b bool
+			if err := value.Decode(&b); err != nil {
+				return g, v4err("v4.type", "resources."+source+"."+key, value.Line, "must be a boolean: %v", err)
+			}
 			if key == "all" {
 				g.All, g.HasAll = &b, true
 			} else {
@@ -1151,10 +1154,25 @@ func assignV4DecisionPrecedence(group *V4ResourceGroup) {
 }
 
 func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, error) {
-	return loadV4TreeWithOverlays(file, root, visiting, nil, nil)
+	return loadV4TreeWithOverlays(file, root, visiting, nil, nil, "")
 }
 
-func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, overlays map[string][]byte, rootData []byte) (*V4Config, error) {
+func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, overlays map[string][]byte, rootData []byte, organizationPath string) (*V4Config, error) {
+	if organizationPath != "" {
+		if root && !filepath.IsAbs(organizationPath) {
+			wd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("resolve organization config path %q: %w", organizationPath, err)
+			}
+			organizationPath = wd + string(filepath.Separator) + organizationPath
+			file = organizationPath
+		}
+		if !root {
+			if err := validateOrganizationInclude(file, organizationPath); err != nil {
+				return nil, err
+			}
+		}
+	}
 	canonical, err := canonicalConfigPath(file)
 	if err != nil {
 		return nil, err
@@ -1186,9 +1204,13 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 		for _, p := range paths {
 			childPath := p
 			if !filepath.IsAbs(childPath) {
-				childPath = filepath.Join(filepath.Dir(canonical), childPath)
+				if organizationPath != "" {
+					childPath = lexicalConfigParent(file) + string(filepath.Separator) + childPath
+				} else {
+					childPath = filepath.Join(filepath.Dir(canonical), childPath)
+				}
 			}
-			child, e := loadV4TreeWithOverlays(childPath, false, visiting, overlays, nil)
+			child, e := loadV4TreeWithOverlays(childPath, false, visiting, overlays, nil, organizationPath)
 			if e != nil {
 				return nil, fmt.Errorf("load v4 include %q from %q: %w", childPath, canonical, e)
 			}
@@ -1219,7 +1241,7 @@ func v4ConfigData(canonical, requested string, root bool, rootData []byte, overl
 			return bounded, true, err
 		}
 	}
-	data, err := os.ReadFile(canonical)
+	data, err := readConfigFile(canonical)
 	return data, false, err
 }
 
@@ -1242,7 +1264,7 @@ func mergeV4Config(dst, src *V4Config) error {
 	}
 	dst.Files = append(dst.Files, src.Files...)
 	if src.HasHarnesses {
-		dst.Harnesses, dst.HasHarnesses = append([]string(nil), src.Harnesses...), true
+		dst.Harnesses, dst.HasHarnesses = cloneV4StringList(src.Harnesses), true
 	}
 	// Allowlist policy is first-authority: an included child claims the field
 	// before its containing document can provide a weaker replacement.
@@ -1463,7 +1485,7 @@ func mergeV4Group(dst *V4Config, name string, src V4ResourceGroup) {
 		d.Required, d.HasRequired = &b, true
 	}
 	if src.HasHarnesses {
-		d.Harnesses, d.HasHarnesses = append([]string(nil), src.Harnesses...), true
+		d.Harnesses, d.HasHarnesses = cloneV4StringList(src.Harnesses), true
 	}
 	dst.Groups[name] = d
 }
@@ -1505,7 +1527,7 @@ func normalizeV4Tree(c *V4Config) error {
 				g.Include[i].Required = *g.Required
 			}
 			if g.HasHarnesses {
-				g.Include[i].Harnesses = append([]string(nil), g.Harnesses...)
+				g.Include[i].Harnesses = cloneV4StringList(g.Harnesses)
 				g.Include[i].HasHarnesses = true
 			}
 			if g.Include[i].Options.Revision != "" && !v4RevisionRE.MatchString(g.Include[i].Options.Revision) {
@@ -1720,6 +1742,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 			entry.Path = ""
 		}
 		if group, ok := c.Groups[name]; ok {
+			entry.FilePrecedence = effectiveV4GroupPrecedence(group)
 			// Keep the ordered v4 stream as runtime state. Reconstructing policy
 			// from Include/Exclude sets loses a later root include after a child
 			// exclusion, and cannot represent re-inclusion after a wildcard.
@@ -1776,6 +1799,14 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 		out.Registries = append(out.Registries, entry)
 	}
 	return out, nil
+}
+
+func effectiveV4GroupPrecedence(group V4ResourceGroup) int {
+	precedence := -1
+	for _, decision := range group.Decisions {
+		precedence = max(precedence, decision.Provenance.Precedence)
+	}
+	return precedence + 1
 }
 
 // marketplaceEntryForLock hydrates one v4 Marketplace source binding from its

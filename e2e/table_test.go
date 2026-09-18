@@ -202,6 +202,19 @@ var testTable = []TestCase{
 		},
 	},
 	{
+		Name:       "migration/source_free_local_selector_is_refused",
+		Desc:       "Given a source-free personal-local selector that sync honors, When local v4 migration is requested, Then migration refuses without changing selection and the next sync still honors it",
+		Registries: []RegistryDef{{Name: "local-selector", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "harnesses: [factory]\n",
+		RepoCfg:    "registries:\n  - url: {{REG:local-selector}}\n    ref: main\n",
+		LocalCfg:   "apiVersion: agent-marketplace/v2\nskills:\n  include: [review]\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"migrate", "--scope", "local"}, AssertExitCode: intPtr(1), OutContains: []string{"v4.migration-unsupported"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+		},
+	},
+	{
 		Name:    "security/config_include_size",
 		Desc:    "Given an oversized valid included config, When sync runs, Then it fails without mutating the inputs or materializing output",
 		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: [large.yaml]\nregistries: []\n",

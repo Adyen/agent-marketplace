@@ -660,6 +660,39 @@ func TestMigrateConfigFilesToV4MarketplaceAllScopeSingleCommit(t *testing.T) {
 	}
 }
 
+func TestMigrateConfigFilesToV4GitRejectsConcurrentConfigWriteWithoutTouchingLock(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".agents", "config.yaml")
+	writeV2Config(t, path, `apiVersion: agent-marketplace/v2
+registries:
+  - url: https://example.test/agents.git
+    ref: main
+    skills: {include: [review]}
+`)
+	lockPath := marketplaceLockPath(t, path)
+	lockBefore := []byte("apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries: []\n")
+	if err := os.WriteFile(lockPath, lockBefore, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original := commitV4Migration
+	concurrent := []byte("apiVersion: agent-marketplace/v2\n# concurrent writer\n")
+	commitV4Migration = func(ctx context.Context, stateDir string, files []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+		if err := os.WriteFile(path, concurrent, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return original(ctx, stateDir, files, opts...)
+	}
+	t.Cleanup(func() { commitV4Migration = original })
+	_, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false)
+	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("expected ErrGenerationConflict, got %v", err)
+	}
+	assertFileUnchanged(t, path, concurrent)
+	assertFileUnchanged(t, lockPath, lockBefore)
+}
+
 func TestMigrateConfigFilesToV4MarketplaceRejectsConcurrentConfigWrite(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))

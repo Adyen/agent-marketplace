@@ -501,8 +501,16 @@ func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overla
 }
 
 func loadConfigTree(path string, kind layerKind) (*Config, error) {
-	if data, err := os.ReadFile(path); err == nil && PeekAPIVersion(data) == APIVersionV4 {
-		v4, err := LoadV4ConfigFromPath(path)
+	data, err := readConfigFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if PeekAPIVersion(data) == APIVersionV4 {
+		organizationPath := ""
+		if kind == organizationLayer {
+			organizationPath = path
+		}
+		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, nil, data, organizationPath)
 		if err != nil {
 			return nil, err
 		}
@@ -521,7 +529,11 @@ func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKin
 
 func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layerKind, overlays map[string][]byte) (*Config, []ConfigRead, error) {
 	if PeekAPIVersion(data) == APIVersionV4 {
-		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, overlays, data)
+		organizationPath := ""
+		if kind == organizationLayer {
+			organizationPath = path
+		}
+		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, overlays, data, organizationPath)
 		if err != nil {
 			return nil, nil, err
 		}
