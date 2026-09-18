@@ -13,7 +13,7 @@ Reconcile Devin or Codex shared configuration files when `agent-marketplace` can
 agent-marketplace doctor
 ```
 
-Look for diagnostics such as `ownership.state-missing`, `ownership.unmanaged-key`, or `materialize.codex.trust-review`.
+Look for `ownership.*` diagnostics such as `ownership.state-missing` or `ownership.unmanaged-key`. (`materialize.codex.trust-review` is a reminder to review Codex trust after a repo aggregate changed; it is not an ownership problem and `--repair` has nothing to do for it.)
 
 ## 2. Open the repair prompt
 

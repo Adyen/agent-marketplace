@@ -15,6 +15,7 @@ import (
 // touch process-global state, so their top-level tests run in the parent.
 var inProcessTestFiles = map[string]bool{
 	"command_integration_test.go": true,
+	"docs_contract_test.go":       true,
 	"process_runner_test.go":      true,
 	"process_suite_test.go":       true,
 	"warnings_test.go":            true,

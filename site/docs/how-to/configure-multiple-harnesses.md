@@ -49,11 +49,7 @@ The entry's `harnesses` list intersects with the effective list.
 agent-marketplace sync
 ```
 
-Check the output:
-
-```text
-Installed 3  Removed 0  Malformed 0  Errors 0
-```
+The summary line reports how many resources were installed; the count is the number of selected resources multiplied by the targets each applies to, so it varies with your selection.
 
 Each selected resource now appears under the directories for every applicable target harness.
 

@@ -16,11 +16,13 @@ Run the binary with no arguments:
 agent-marketplace
 ```
 
+This quick start uses **Claude Code** so every path and screenshot matches what you see. The same flow works for any of the seven supported harnesses; the [harnesses and output paths reference](./reference/harnesses-and-output-paths.md) lists where each one puts its files, and [How to configure multiple harnesses](./how-to/configure-multiple-harnesses.md) covers switching later.
+
 On first launch there is no personal configuration yet, so the UI asks which coding harnesses it should write into. Harnesses it detects on your machine are pre-selected:
 
 ![First-run modal listing the seven harnesses, with Claude Code pre-selected](./images/quick-start/first-run-harness-modal.png)
 
-Move with `j`/`k`, toggle with `space`, and press `enter`. The choice is saved to `~/.agents/config.yaml`. Where a path starts with `.claude`, substitute the directory for your selected harness.
+Make sure only **Claude Code** is checked: move with `j`/`k`, toggle with `space`, and press `enter`. The choice is saved to `~/.agents/config.yaml`.
 
 Press `q` to leave the UI for a moment.
 
@@ -128,7 +130,7 @@ Start a new Claude Code session in the project and it picks the skills up.
 
 ## Commit the config, not the output
 
-Commit the two files under `.agents/`. Ignore the generated harness output, which is recreated from the lock on every sync:
+Commit the two files under `.agents/`. Ignore the generated Claude Code output, which is recreated from the lock on every sync (other harnesses write to different directories; see the [output paths reference](./reference/harnesses-and-output-paths.md)):
 
 ```bash
 echo '.claude/skills/' >> .gitignore
@@ -146,6 +148,7 @@ In CI, `agent-marketplace sync --check` exits non-zero if the config, lock, and 
 
 ## Where next
 
+- [Configure multiple harnesses](./how-to/configure-multiple-harnesses.md): add Cursor, Codex, Devin, or others alongside Claude Code.
 - [Install your first skill for Claude Code](./tutorials/install-your-first-skill.md): the same flow, CLI only, installed user-wide instead of per project.
 - [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md): search and install verified resources from a Marketplace server instead of a raw Git URL.
 - [TUI reference](./reference/tui.md): every key binding and modal action.
