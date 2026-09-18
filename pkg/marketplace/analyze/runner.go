@@ -99,8 +99,10 @@ func (r *Runner) Analyze(ctx context.Context, s Subject, cfg AnalyzerConfig) (Au
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	// Build the allowlisted, otherwise empty environment.
-	var env []string
+	// Build the allowlisted, otherwise empty environment. The slice must stay
+	// non-nil: a nil cmd.Env would silently inherit the entire parent
+	// environment instead of the intended empty allowlist.
+	env := make([]string, 0, len(r.cfg.EnvPassthrough))
 	var envValues []string
 	for _, name := range r.cfg.EnvPassthrough {
 		if v, ok := os.LookupEnv(name); ok && v != "" {
@@ -123,6 +125,10 @@ func (r *Runner) Analyze(ctx context.Context, s Subject, cfg AnalyzerConfig) (Au
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, r.cfg.Command, r.cfg.Args...)
+	// Kill the whole process group on timeout so a descendant holding the
+	// inherited stdout/stderr pipes cannot keep Wait's pipe drain blocked
+	// beyond the configured timeout.
+	bindRunnerProcessGroup(cmd)
 	cmd.Dir = tmpDir
 	cmd.Env = env
 	cmd.Stdin = bytes.NewReader(reqJSON)

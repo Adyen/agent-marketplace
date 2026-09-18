@@ -678,3 +678,87 @@ func TestRunnerAnalyzeChecksCommandExecutable(t *testing.T) {
 		t.Fatalf("error = %q", err.Error())
 	}
 }
+
+// TestRunnerChildEnvironmentCaptured dumps the child's real environment back
+// through the stderr diagnostic channel and asserts undeclared parent
+// variables (including ambient ones like HOME) are absent while a declared
+// passthrough name is present.
+func TestRunnerChildEnvironmentCaptured(t *testing.T) {
+	t.Setenv("UNDECLARED_SECRET", "undeclared-parent-value")
+	t.Setenv("DECLARED_TOKEN", "declared-parent-value")
+
+	script, digest := newRunnerScript(t, `#!/bin/sh
+read -r _
+env | sort >&2
+exit 1
+`)
+
+	r, err := NewRunner("acme.runner", "1.0.0", RunnerConfig{
+		Command:              script,
+		Timeout:              30 * time.Second,
+		ImplementationDigest: digest,
+		MaxOutputBytes:       64 * 1024,
+		EnvPassthrough:       []string{"DECLARED_TOKEN"},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+
+	_, err = r.Analyze(context.Background(), Subject{
+		Resource: &fakeResource{kind: "skill", name: "test"},
+		Limits:   DefaultLimits(),
+	}, nil)
+	if err == nil {
+		t.Fatal("expected nonzero exit error carrying captured env")
+	}
+	if strings.Contains(err.Error(), "UNDECLARED_SECRET") || strings.Contains(err.Error(), "undeclared-parent-value") {
+		t.Fatalf("undeclared parent env leaked into child: %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "HOME=") {
+		t.Fatalf("ambient parent env leaked into child: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "DECLARED_TOKEN=") {
+		t.Fatalf("declared passthrough missing from child env: %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "declared-parent-value") {
+		t.Fatalf("declared passthrough value must be redacted: %q", err.Error())
+	}
+}
+
+// TestRunnerTimeoutDescendantHoldingPipes proves Analyze returns within the
+// configured timeout even when a spawned descendant keeps the inherited
+// stdout/stderr pipes open after the direct child is killed.
+func TestRunnerTimeoutDescendantHoldingPipes(t *testing.T) {
+	script, digest := newRunnerScript(t, `#!/bin/sh
+read -r _
+# Descendant inherits stdout/stderr pipes and outlives any direct kill.
+sleep 60 &
+sleep 60
+`)
+
+	r, err := NewRunner("acme.runner", "1.0.0", RunnerConfig{
+		Command:              script,
+		Timeout:              300 * time.Millisecond,
+		ImplementationDigest: digest,
+		MaxOutputBytes:       64 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+
+	start := time.Now()
+	_, err = r.Analyze(context.Background(), Subject{
+		Resource: &fakeResource{kind: "skill", name: "test"},
+		Limits:   DefaultLimits(),
+	}, nil)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("error = %q", err.Error())
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("Analyze blocked on descendant-held pipes: %v", elapsed)
+	}
+}
