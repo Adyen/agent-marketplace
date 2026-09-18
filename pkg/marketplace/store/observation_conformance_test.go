@@ -173,7 +173,7 @@ func TestEnqueueNilPayloadIsEmptyAcrossBackends(t *testing.T) {
 	}
 }
 
-func TestObservationDesiredRefreshCoalescesAndCleansTerminalJob(t *testing.T) {
+func TestObservationDesiredRefreshCoalescesAndClearsActiveJob(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)
 	if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: "refresh"}); err != nil {

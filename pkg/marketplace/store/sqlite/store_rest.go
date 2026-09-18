@@ -621,13 +621,11 @@ func (s *Store) extendLease(ctx context.Context, id store.JobID, workerID string
 	now := time.Now().UTC()
 	nowMicro := timeToMicro(now)
 	newLease := timeToMicro(now.Add(d))
-	updated := timeToMicro(now)
-
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
 		 SET lease_until=?, updated_at=?
 		 WHERE id=? AND worker_id=? AND status=? AND lease_until > ?`,
-		newLease, updated, id, workerID, store.JobStatusLeased, nowMicro,
+		newLease, nowMicro, id, workerID, store.JobStatusLeased, nowMicro,
 	)
 	if err != nil {
 		return err
@@ -637,7 +635,7 @@ func (s *Store) extendLease(ctx context.Context, id store.JobID, workerID string
 		return err
 	}
 	if n == 0 {
-		return s.leaseError(ctx, id, workerID, store.ErrLeaseExpired)
+		return s.leaseError(ctx, id, store.ErrLeaseExpired)
 	}
 	return nil
 }
@@ -649,7 +647,6 @@ func (s *Store) ReleaseJob(ctx context.Context, id store.JobID, workerID string)
 func (s *Store) releaseJob(ctx context.Context, id store.JobID, workerID string) error {
 	now := time.Now().UTC()
 	nowMicro := timeToMicro(now)
-	updated := nowMicro
 
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
@@ -657,7 +654,7 @@ func (s *Store) releaseJob(ctx context.Context, id store.JobID, workerID string)
 		     attempt=CASE WHEN attempt > 0 THEN attempt-1 ELSE 0 END,
 		     updated_at=?
 		 WHERE id=? AND worker_id=? AND status=? AND lease_until > ?`,
-		store.JobStatusPending, updated, id, workerID, store.JobStatusLeased, nowMicro,
+		store.JobStatusPending, nowMicro, id, workerID, store.JobStatusLeased, nowMicro,
 	)
 	if err != nil {
 		return err
@@ -667,7 +664,7 @@ func (s *Store) releaseJob(ctx context.Context, id store.JobID, workerID string)
 		return err
 	}
 	if n == 0 {
-		return s.leaseError(ctx, id, workerID, store.ErrLeaseExpired)
+		return s.leaseError(ctx, id, store.ErrLeaseExpired)
 	}
 	return nil
 }
@@ -692,7 +689,7 @@ func (s *Store) completeJob(ctx context.Context, id store.JobID, workerID string
 		return err
 	}
 	if n == 0 {
-		return s.leaseError(ctx, id, workerID, store.ErrLeaseExpired)
+		return s.leaseError(ctx, id, store.ErrLeaseExpired)
 	}
 	return nil
 }
@@ -726,12 +723,12 @@ func (s *Store) failJob(ctx context.Context, id store.JobID, workerID string, ba
 		return err
 	}
 	if n == 0 {
-		return s.leaseError(ctx, id, workerID, store.ErrLeaseExpired)
+		return s.leaseError(ctx, id, store.ErrLeaseExpired)
 	}
 	return nil
 }
 
-func (s *Store) leaseError(ctx context.Context, id store.JobID, workerID string, sentinel error) error {
+func (s *Store) leaseError(ctx context.Context, id store.JobID, sentinel error) error {
 	_, err := s.getJob(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.ErrNotFound
