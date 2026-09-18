@@ -18,7 +18,7 @@ const emit = defineEmits<{
     color="primary"
     :highlight="modelValue.length > 0"
     :content="{ bodyLock: false }"
-    :ui="{ base: 'h-9 w-full px-3 text-sm ring-default focus-visible:ring-primary', value: 'min-w-0 flex-1 text-left', placeholder: 'min-w-0 flex-1 text-left text-dimmed', itemLabel: 'truncate' }"
+    :ui="{ base: 'h-9 w-full px-3 text-sm focus-visible:ring-primary', value: 'min-w-0 flex-1 text-left', placeholder: 'min-w-0 flex-1 text-left text-dimmed', itemLabel: 'truncate' }"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <template #default>

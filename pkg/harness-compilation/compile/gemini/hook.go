@@ -63,13 +63,13 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 		canonical[key] = true
 	}
 	canonical["event"] = true
-	extraKeys, diags := compile.ExtraKeys(h.Extra, compile.PresentFields(canonical), mapping.TargetGemini, h.Name(), diag.SourceRef(h.Source))
+	extraKeys, diags := compile.HookExtraKeys(h.Extra, compile.PresentFields(canonical), mapping.TargetGemini, h.Name(), diag.SourceRef(h.Source))
 	for _, k := range extraKeys {
 		rule[k] = h.Extra[k]
 	}
 	group["hooks"] = []any{rule}
 	if sidecar := h.Ext.Gemini; sidecar != nil {
-		keys, groupDiags := compile.ExtraKeys(sidecar.HookGroupExtra, compile.PresentFields(map[string]bool{"hooks": true, "matcher": h.Matcher != ""}), mapping.TargetGemini, h.Name(), diag.SourceRef(h.Source))
+		keys, groupDiags := compile.HookExtraKeys(sidecar.HookGroupExtra, compile.PresentFields(map[string]bool{"hooks": true, "matcher": h.Matcher != ""}), mapping.TargetGemini, h.Name(), diag.SourceRef(h.Source))
 		diags = append(diags, groupDiags...)
 		for _, key := range keys {
 			group[key] = sidecar.HookGroupExtra[key]

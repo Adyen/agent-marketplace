@@ -1,0 +1,73 @@
+/**
+ * Marketplace-only semantic colors.
+ *
+ * Shared brand and Landing roles remain in design/semantic-colors.css. This
+ * file is imported only by the Nuxt Marketplace adapter, after shared colors.
+ */
+
+:root {
+  --am-color-bg-canvas: #f3f6f4;
+  --am-color-bg-surface: #ffffff;
+  --am-color-bg-subtle: #edf2ef;
+  --am-color-bg-raised: #ffffff;
+  --am-color-bg-chrome: #ffffff;
+  --am-color-bg-control: #ffffff;
+  --am-color-bg-hover: #e8eeea;
+
+  --am-color-text-primary: #1b2620;
+  --am-color-text-secondary: #53615a;
+  /* Darkened from the proposal so it remains 4.5:1 on bg-hover. */
+  --am-color-text-muted: #5f6e65;
+  --am-color-text-inverse: #ffffff;
+  --am-color-text-on-action: #ffffff;
+
+  --am-color-border-default: #d6dfd9;
+  --am-color-border-strong: #abbab0;
+  --am-color-border-control: #84958b;
+
+  --am-color-action-primary: #087a3d;
+  --am-color-action-hover: #066632;
+  --am-color-action-active: #055329;
+  --am-color-action-soft: #e5f3ea;
+  --am-color-action-focus-ring: #087a3d;
+  --am-color-action-selection: #ccebd8;
+
+  --am-color-code-bg: #edf2ef;
+  --am-color-code-bg-raised: #ffffff;
+  --am-color-code-border: #d6dfd9;
+  --am-color-code-text: #1b2620;
+  --am-color-code-text-muted: #5f6e65;
+}
+
+:root.dark {
+  --am-color-bg-canvas: #141a18;
+  --am-color-bg-surface: #1b2320;
+  --am-color-bg-subtle: #232e28;
+  --am-color-bg-raised: #28342d;
+  --am-color-bg-chrome: #1b2320;
+  --am-color-bg-control: #202a25;
+  --am-color-bg-hover: #2b3830;
+
+  --am-color-text-primary: #edf3ef;
+  --am-color-text-secondary: #b8c4bd;
+  --am-color-text-muted: #97a89e;
+  --am-color-text-inverse: #141a18;
+  --am-color-text-on-action: #102117;
+
+  --am-color-border-default: #36453c;
+  --am-color-border-strong: #52675a;
+  --am-color-border-control: #71877a;
+
+  --am-color-action-primary: #55db89;
+  --am-color-action-hover: #78eba2;
+  --am-color-action-active: #39c873;
+  --am-color-action-soft: #203d2c;
+  --am-color-action-focus-ring: #55db89;
+  --am-color-action-selection: #2b5138;
+
+  --am-color-code-bg: #141a18;
+  --am-color-code-bg-raised: #202a25;
+  --am-color-code-border: #36453c;
+  --am-color-code-text: #edf3ef;
+  --am-color-code-text-muted: #97a89e;
+}

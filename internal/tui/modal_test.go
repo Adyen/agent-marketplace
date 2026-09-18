@@ -138,12 +138,14 @@ func TestModalGkeyTogglesGlobalByCurrentState(t *testing.T) {
 	}
 }
 
-func TestModalGlobalCollisionWithRepoRelativeCompetitorFailsBeforeWrite(t *testing.T) {
+func TestModalGlobalRepoRelativeSelectionFailsBeforeWrite(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoRoot := t.TempDir()
-	selected := mkRow("audit", withAvailable, withRegistry("https://example.com/remote.git", "remote"))
-	competitor := mkRow("audit", withAvailable, withRegistry("./local-registry", "local"))
+	selected := mkRow("audit", withAvailable, withRegistry("./local-registry", "local"))
+	selected.Artifact.Source = config.UserPersonal
+	competitor := mkRow("audit", withAvailable, withRegistry("https://example.com/remote.git", "remote"))
+	competitor.Artifact.Source = config.RepoCommitted
 	m := NewModel(repoRoot, homeDir)
 	m.pane = paneToggleModal
 	m.modalSkill = selected
@@ -164,8 +166,8 @@ func TestModalGlobalCollisionWithRepoRelativeCompetitorFailsBeforeWrite(t *testi
 		t.Fatalf("expected GlobalRelativeRegistryError, got %v", msg.err)
 	}
 	globalConfig := filepath.Join(homeDir, ".agents", "config.yaml")
-	if data, err := os.ReadFile(globalConfig); err == nil && strings.Contains(string(data), "remote.git") {
-		t.Fatalf("primary registry was written before collision policy failed:\n%s", string(data))
+	if _, err := os.Stat(globalConfig); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("global config was created before collision policy failed: %v", err)
 	}
 	if m.pendingExcludeAction != nil {
 		t.Fatal("collision follow-up remained pending after preflight failure")

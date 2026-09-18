@@ -2,9 +2,11 @@ package bundle
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -12,6 +14,30 @@ func TestLoadMcpServersRejectsDuplicateNestedKeys(t *testing.T) {
 	fs := fstest.MapFS{".mcp.json": {Data: []byte(`{"mcpServers":{"my-server":{"env":{"TOKEN":"first","TOKEN":"second"}}}}`)}}
 	if _, err := LoadMcpServers(fs, ".mcp.json"); err == nil {
 		t.Fatal("LoadMcpServers accepted duplicate nested JSON key")
+	}
+}
+
+func TestLoadMcpServersRejectsCaseCollidingKnownAliases(t *testing.T) {
+	cases := []struct {
+		name   string
+		fields string
+	}{
+		{name: "command-first", fields: `"command":"safe","Command":"secret"`},
+		{name: "command-second", fields: `"Command":"secret","command":"safe"`},
+		{name: "args-first", fields: `"args":["safe"],"Args":["secret"]`},
+		{name: "args-second", fields: `"Args":["secret"],"args":["safe"]`},
+		{name: "disabled-first", fields: `"disabled":false,"Disabled":true`},
+		{name: "disabled-second", fields: `"Disabled":true,"disabled":false`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte(`{"mcpServers":{"my-server":{` + tc.fields + `}}}`)
+			_, err := LoadMcpServers(fstest.MapFS{".mcp.json": {Data: data}}, ".mcp.json")
+			var coded *diag.CodedError
+			if !errors.As(err, &coded) || coded.Code != diag.CodeJSONDuplicateKey {
+				t.Fatalf("error = %v, want coded duplicate-key error", err)
+			}
+		})
 	}
 }
 
@@ -262,10 +288,29 @@ func TestMcpServerEntryUnmarshal(t *testing.T) {
 	if e.URL != "https://example.com" {
 		t.Errorf("url: got %q, want %q", e.URL, "https://example.com")
 	}
+	if e.DisabledSet {
+		t.Error("disabled set unexpectedly true")
+	}
 	if v, ok := e.Extra["timeout"]; !ok {
 		t.Error("extra[timeout]: missing")
 	} else if f, ok := v.(float64); !ok || f != 30 {
 		t.Errorf("extra[timeout]: got %v (%T), want 30", v, v)
+	}
+}
+
+func TestMcpServerEntryUnmarshalResetsState(t *testing.T) {
+	var entry mcpServerEntry
+	if err := json.Unmarshal([]byte(`{"command":"echo","disabled":true,"custom":"keep"}`), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if !entry.DisabledSet || entry.Extra["custom"] != "keep" {
+		t.Fatalf("initial state: disabledSet=%v extra=%v", entry.DisabledSet, entry.Extra)
+	}
+	if err := json.Unmarshal([]byte(`{"command":"echo"}`), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.DisabledSet || entry.Extra != nil {
+		t.Fatalf("reused state: disabledSet=%v extra=%v", entry.DisabledSet, entry.Extra)
 	}
 }
 

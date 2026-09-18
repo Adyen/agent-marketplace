@@ -34,7 +34,10 @@ const commandLabel = computed(() => {
 </script>
 
 <template>
-  <article class="group relative border-b border-default px-3 py-2.5 transition-colors hover:bg-muted/60 motion-reduce:transition-none sm:px-4 sm:py-3">
+  <article
+    :data-interactive="browserUrl ? 'true' : undefined"
+    class="marketplace-resource-row group relative border-b border-default px-3 py-2.5 transition-colors motion-reduce:transition-none sm:px-4 sm:py-3"
+  >
     <div class="grid min-w-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-x-4 sm:grid-cols-[24px_minmax(0,1fr)_auto]">
       <ResourceFingerprint :digest="item.content_digest" :size="24" />
 

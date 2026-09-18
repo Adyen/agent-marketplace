@@ -203,6 +203,51 @@ func TestTranslateHook_PreservesWindsurfSidecar(t *testing.T) {
 	}
 }
 
+func TestTranslateHook_SidecarWorkdirConsumesIdenticalExtra(t *testing.T) {
+	hook := ir.NewHookWithMatcher("native", "PreToolUse", "Read", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/project"}, ir.SourceRef{})
+	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "PreToolUse", HookWorkingDir: "/tmp/project"}
+	artifacts, diags, err := (Compiler{}).Translate(hook)
+	if err != nil || len(artifacts) != 1 || len(diags) != 0 {
+		t.Fatalf("Translate(hook) = artifacts %d diags %#v err=%v", len(artifacts), diags, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(artifacts[0].Bytes, &doc); err != nil {
+		t.Fatal(err)
+	}
+	hooksDoc := doc["hooks"].(map[string]any)
+	var body map[string]any
+	for _, raw := range hooksDoc {
+		groups, ok := raw.([]any)
+		if ok && len(groups) > 0 {
+			body = groups[0].(map[string]any)
+			break
+		}
+	}
+	if body == nil {
+		t.Fatalf("hooks document = %#v", doc)
+	}
+	if body["working_directory"] != "/tmp/project" || hook.Extra["working_directory"] != "/tmp/project" {
+		t.Fatalf("workdir output/extra = %#v / %#v", body, hook.Extra)
+	}
+}
+
+func TestTranslateHook_SidecarWorkdirMismatchFails(t *testing.T) {
+	hook := ir.NewHookWithMatcher("native", "PreToolUse", "Read", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/other"}, ir.SourceRef{})
+	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "PreToolUse", HookWorkingDir: "/tmp/project"}
+	_, diags, err := (Compiler{}).Translate(hook)
+	if err != nil || !diag.HasCode(diags, diag.CodeHookWindsurfNativeFieldsUnsupported) {
+		t.Fatalf("mismatch result err=%v diags=%#v", err, diags)
+	}
+}
+
+func TestTranslateHook_AbsentSidecarWorkdirRemainsBlocked(t *testing.T) {
+	hook := ir.NewHookWithMatcher("native", "PreToolUse", "Read", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/project"}, ir.SourceRef{})
+	_, diags, err := (Compiler{}).Translate(hook)
+	if err != nil || !diag.HasCode(diags, diag.CodeCanonicalFieldOverridesExtra) {
+		t.Fatalf("absent sidecar result err=%v diags=%#v", err, diags)
+	}
+}
+
 func TestTranslateHook_WithPluginRoot(t *testing.T) {
 	hook := ir.NewHookWithMatcher(
 		"PreToolUse-Read-command",

@@ -525,7 +525,7 @@ func TestInspectCachedIndexOnlyRequiresOccurrenceScopedStaging(t *testing.T) {
 			if err := cache.MarkIndexOnlyArtifactVerified(identity, pin.Digest); err != nil {
 				t.Fatal(err)
 			}
-			stagedPath := cachedReconstructedResourcePath(cache, identity, pin.Kind)
+			stagedPath := cachedReconstructedResourcePath(cache, identity, pin.Kind, pin.Name)
 			if tc.stage != nil {
 				tc.stage(t, cache, stagedPath)
 			}

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RESOURCE_KINDS } from '~/types/marketplace'
 import type { ResourceKind, SearchParams } from '~/types/marketplace'
-import { safeCanonicalUrl } from '~/lib/presentation'
+import { kindLabel, safeCanonicalUrl } from '~/lib/presentation'
 import { DOCS_PATH } from '~/lib/site'
 import { parseSearchQuery, toLocationQuery } from '~/composables/useSearchQuery'
 
@@ -38,7 +38,6 @@ const supportedKinds = computed<ResourceKind[]>(() => {
   if (!knownMetadata) return [...RESOURCE_KINDS]
   return RESOURCE_KINDS.filter(kind => knownMetadata.resource_kinds.includes(kind))
 })
-const registryOptions = computed(() => (registries.value ?? []).map(registry => registry.slug))
 
 const limitOptions = [
   { label: '25 per page', value: 25 },
@@ -51,7 +50,11 @@ const currentPage = computed(() => Math.floor(searchParams.value.offset / search
 const hasPreviousPage = computed(() => searchParams.value.offset > 0)
 const hasNextPage = computed(() => currentPage.value < totalPages.value)
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.canonical_url))
-const hasDraftFilters = computed(() => Boolean(draft.q || draft.kind || draft.registry.length))
+const activeFilterCount = computed(() => Number(Boolean(draft.kind)) + draft.registry.length)
+const resultCountLabel = computed(() => {
+  const total = results.value?.total ?? 0
+  return `${total} ${total === 1 ? 'resource' : 'resources'}`
+})
 const searchUpdating = computed(() => {
   const applied = searchParams.value
   return pending.value
@@ -61,12 +64,6 @@ const searchUpdating = computed(() => {
     || draft.registry.length !== applied.registry.length
     || draft.registry.some((registry, index) => registry !== applied.registry[index])
 })
-const activeFilterCount = computed(() => Number(Boolean(draft.kind)) + draft.registry.length)
-const resultCountLabel = computed(() => {
-  const total = results.value?.total ?? 0
-  return `${total} ${total === 1 ? 'resource' : 'resources'}`
-})
-
 const resultStatus = computed(() => {
   if (pending.value) return 'Loading Marketplace resources.'
   if (searchError.value) return 'Search failed. Review the error message and try again.'
@@ -97,6 +94,18 @@ function submitSearch() {
   void router.push({ query: toLocationQuery({ ...draft, offset: 0 }) })
 }
 
+function updateKind(kind: ResourceKind | '') {
+  draft.kind = kind
+}
+
+function updateRegistries(registry: string[]) {
+  draft.registry = registry
+}
+
+function removeRegistry(registry: string) {
+  draft.registry = draft.registry.filter(value => value !== registry)
+}
+
 function resetSearch() {
   clearTimeout(searchTimer)
   searchTimer = undefined
@@ -125,176 +134,556 @@ useHead({
 </script>
 
 <template>
-  <div class="flex min-h-[calc(100vh-4rem)] flex-col bg-default text-default">
-    <main id="main-content" ref="mainContent" class="flex-1" tabindex="-1">
-      <section class="border-b border-default bg-muted/40">
-        <div class="mx-auto max-w-6xl px-4 py-5 sm:px-6">
-          <h1 class="text-3xl font-bold leading-[1.12] tracking-[-0.035em] text-default sm:text-4xl">
-            {{ metadata?.instance_id ?? 'Agent Marketplace' }}
-          </h1>
-          <div class="mt-3 max-w-4xl text-lg leading-[1.66] text-muted">
+  <div class="marketplace-home">
+    <main id="main-content" class="marketplace-main" tabindex="-1">
+      <section class="marketplace-intro">
+        <div class="marketplace-intro__inner">
+          <h1>{{ metadata?.instance_id ?? 'Agent Marketplace' }}</h1>
+          <div class="marketplace-intro__description">
             <p>Browse resources for AI agents, with every revision pinned and analyzed before publication.</p>
-            <p class="mt-1">
+            <p>
               To use a resource, install the
-              <a href="/" class="whitespace-nowrap font-medium text-primary underline underline-offset-4">agent-marketplace</a>
+              <a href="/">agent-marketplace</a>
               CLI, then copy and run its install command.
             </p>
           </div>
         </div>
       </section>
 
-      <section class="mx-auto max-w-6xl px-4 sm:px-6" aria-labelledby="results-heading">
-        <header class="border-b border-default py-4 sm:py-5">
-          <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-            <div class="flex items-baseline gap-2">
-              <h2
-                id="results-heading"
-                tabindex="-1"
-                class="rounded text-base font-semibold tracking-tight text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
-              >
-                Resources
-              </h2>
-              <span class="text-xs font-medium text-muted">· {{ results?.total ?? '—' }} total</span>
-              <span
-                data-testid="search-update-status"
-                aria-hidden="true"
-                :class="searchUpdating ? 'opacity-100' : 'opacity-0'"
-                class="inline-flex items-center gap-1 text-xs text-muted"
-              >
-                <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin motion-reduce:animate-none" />
-                Updating
-              </span>
-            </div>
-          </div>
+      <section
+        data-testid="resources-section"
+        class="marketplace-catalog"
+        aria-labelledby="results-heading"
+      >
+        <div class="marketplace-catalog__inner">
+          <div class="marketplace-catalog__layout">
+            <aside class="catalog-sidebar" aria-labelledby="filters-heading">
+              <div class="catalog-sidebar__sticky">
+                <h2 id="filters-heading">Filters</h2>
+                <CatalogFilterRail
+                  :kind="draft.kind"
+                  :registry="draft.registry"
+                  :registries="registries ?? []"
+                  :kinds="supportedKinds"
+                  @update:kind="updateKind"
+                  @update:registry="updateRegistries"
+                />
+              </div>
+            </aside>
 
-          <form id="marketplace-search" class="mt-3" role="search" @submit.prevent="submitSearch">
-              <div
-                class="grid gap-2 sm:gap-3"
-                :class="hasDraftFilters
-                  ? 'grid-cols-[minmax(0,1fr)_auto_5.5rem] sm:grid-cols-[minmax(0,1fr)_11rem_11rem_5.5rem]'
-                  : 'grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_11rem_11rem]'"
+            <div class="catalog-results">
+              <form
+                id="marketplace-search"
+                class="catalog-search"
+                role="search"
+                @submit.prevent="submitSearch"
               >
-                <div class="min-w-0">
-                  <label for="search-query" class="sr-only">Search</label>
-                  <UInput
-                    id="search-query"
-                    v-model="draft.q"
-                    size="lg"
-                    placeholder="Search resources"
-                    autocomplete="off"
-                    icon="i-lucide-search"
-                    color="primary"
-                    class="w-full"
-                    :ui="{ base: 'h-9 ring-default focus-visible:ring-primary' }"
-                  />
-                </div>
-
+                <label for="search-query" class="sr-only">Search</label>
+                <UInput
+                  id="search-query"
+                  v-model="draft.q"
+                  size="lg"
+                  placeholder="Search resources..."
+                  autocomplete="off"
+                  icon="i-lucide-search"
+                  color="primary"
+                  class="w-full"
+                  :ui="{ base: 'h-10 focus-visible:ring-primary' }"
+                />
                 <UButton
                   type="button"
                   size="sm"
                   color="neutral"
                   variant="outline"
                   icon="i-lucide-list-filter"
-                  aria-controls="resource-filters"
+                  aria-controls="mobile-resource-filters"
                   :aria-expanded="filtersOpen"
-                  class="h-9 min-h-9 self-center justify-center sm:hidden"
+                  class="mobile-filter-toggle"
                   @click="filtersOpen = !filtersOpen"
                 >
                   Filters<span v-if="activeFilterCount"> ({{ activeFilterCount }})</span>
                 </UButton>
+              </form>
 
+              <div
+                id="mobile-resource-filters"
+                class="mobile-resource-filters"
+                :data-open="filtersOpen"
+              >
+                <CatalogFilterRail
+                  id-prefix="mobile-catalog-filter"
+                  :kind="draft.kind"
+                  :registry="draft.registry"
+                  :registries="registries ?? []"
+                  :kinds="supportedKinds"
+                  @update:kind="updateKind"
+                  @update:registry="updateRegistries"
+                />
+              </div>
+
+              <header class="catalog-results__header">
+                <h2 id="results-heading" tabindex="-1">Resources</h2>
+                <p>
+                  {{ resultCountLabel }}
+                  <span
+                    data-testid="search-update-status"
+                    :class="{ 'catalog-results__updating--visible': searchUpdating }"
+                    class="catalog-results__updating"
+                  >
+                    · Updating…
+                  </span>
+                </p>
+              </header>
+
+              <div
+                v-if="activeFilterCount"
+                class="catalog-active-filters"
+                aria-label="Active filters"
+              >
+                <button
+                  v-if="draft.kind"
+                  type="button"
+                  class="catalog-filter-chip"
+                  :aria-label="`Remove ${kindLabel(draft.kind)} kind filter`"
+                  @click="draft.kind = ''"
+                >
+                  {{ kindLabel(draft.kind) }}
+                  <UIcon name="i-lucide-x" aria-hidden="true" />
+                </button>
+                <button
+                  v-for="registry in draft.registry"
+                  :key="registry"
+                  type="button"
+                  class="catalog-filter-chip"
+                  :aria-label="`Remove ${registry} registry filter`"
+                  @click="removeRegistry(registry)"
+                >
+                  {{ registry }}
+                  <UIcon name="i-lucide-x" aria-hidden="true" />
+                </button>
                 <UButton
-                  v-if="hasDraftFilters"
                   type="button"
                   size="sm"
                   color="primary"
                   variant="link"
-                  class="col-start-3 row-start-1 h-9 min-h-9 cursor-pointer self-center whitespace-nowrap px-1 text-sm font-medium underline-offset-4 sm:col-start-4"
+                  class="clear-filters"
                   @click="resetSearch"
                 >
-                  Clear filters
+                  Clear
                 </UButton>
+              </div>
 
+              <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                {{ resultStatus }}
+              </p>
+
+              <UAlert
+                v-if="metadataError"
+                color="warning"
+                variant="subtle"
+                icon="i-lucide-info"
+                title="Instance metadata is unavailable"
+                description="Search still works, but this instance's capability filters may be incomplete."
+                class="my-4"
+              />
+
+              <div
+                v-if="pending && !results"
+                role="status"
+                aria-live="polite"
+                aria-busy="true"
+                aria-label="Loading resources"
+                class="catalog-search-content"
+              >
                 <div
-                  id="resource-filters"
-                  :class="[
-                    filtersOpen ? 'flex' : 'hidden',
-                    hasDraftFilters ? 'col-span-3' : 'col-span-2',
-                    'row-start-2 flex-col gap-2 sm:contents',
-                  ]"
+                  v-for="i in 8"
+                  :key="i"
+                  class="animate-pulse border-b border-default px-3 py-3 motion-reduce:animate-none sm:px-4"
                 >
-                  <SearchKindFilter
-                    id="search-kind"
-                    v-model="draft.kind"
-                    :kinds="supportedKinds"
-                    size="lg"
-                    class="h-9 w-full self-center sm:col-start-2 sm:row-start-1"
-                    aria-label="Filter by resource kind"
-                  />
-                  <RegistryFilter
-                    id="search-registry"
-                    v-model="draft.registry"
-                    :items="registryOptions"
-                    size="lg"
-                    class="h-9 w-full self-center sm:col-start-3 sm:row-start-1"
-                    aria-label="Registry"
-                  />
+                  <div class="min-w-0 flex-1">
+                    <div class="h-5 w-1/4 rounded bg-muted" />
+                    <div class="mt-2 h-5 w-1/3 rounded bg-muted" />
+                    <div class="mt-2 h-3 w-2/3 rounded bg-muted" />
+                    <div class="mt-2 h-3 w-1/4 rounded bg-muted" />
+                  </div>
                 </div>
               </div>
-            </form>
 
-            <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ resultStatus }}</p>
-        </header>
-        <UAlert v-if="metadataError" color="warning" variant="subtle" icon="i-lucide-info" title="Instance metadata is unavailable" description="Search still works, but this instance's capability filters may be incomplete." class="my-4" />
+              <SearchStatus v-else-if="searchError" class="catalog-search-content" state="error" @retry="retry" />
+              <SearchStatus v-else-if="!results?.items.length" class="catalog-search-content" state="empty" @reset="resetSearch" />
 
-        <div v-if="pending && !results" role="status" aria-live="polite" aria-busy="true" aria-label="Loading resources">
-          <div v-for="i in 8" :key="i" class="animate-pulse border-b border-default px-3 py-3 motion-reduce:animate-none sm:px-4">
-            <div class="min-w-0 flex-1">
-              <div class="h-5 w-1/4 rounded bg-muted" />
-              <div class="mt-2 h-5 w-1/3 rounded bg-muted" />
-              <div class="mt-2 h-3 w-2/3 rounded bg-muted" />
-              <div class="mt-2 h-3 w-1/4 rounded bg-muted" />
+              <div
+                v-else
+                data-testid="search-results"
+                class="catalog-search-content"
+                :aria-busy="pending || undefined"
+              >
+                <div
+                  data-testid="search-results-body"
+                  :inert="pending || undefined"
+                  :class="pending ? 'pointer-events-none' : ''"
+                >
+                  <div>
+                    <ResourceRow
+                      v-for="item in results.items"
+                      :key="JSON.stringify([item.registry_id, item.kind, item.name, item.content_digest])"
+                      :item="item"
+                      :canonical-url="canonicalUrl"
+                    />
+                  </div>
+
+                  <nav class="catalog-pagination" aria-label="Search results pagination">
+                    <p>page {{ currentPage }} / {{ totalPages }}</p>
+                    <div class="flex items-center gap-2">
+                      <USelect
+                        id="page-size"
+                        v-model="draft.limit"
+                        :items="limitOptions"
+                        value-key="value"
+                        size="xs"
+                        class="w-32"
+                        aria-label="Results per page"
+                        @update:model-value="submitSearch"
+                      />
+                      <UButton
+                        size="xs"
+                        color="neutral"
+                        variant="outline"
+                        icon="i-lucide-chevron-left"
+                        :disabled="!hasPreviousPage"
+                        aria-label="Go to previous page"
+                        @click="goToPage(currentPage - 1)"
+                      >
+                        Prev
+                      </UButton>
+                      <UButton
+                        size="xs"
+                        color="neutral"
+                        variant="outline"
+                        trailing-icon="i-lucide-chevron-right"
+                        :disabled="!hasNextPage"
+                        aria-label="Go to next page"
+                        @click="goToPage(currentPage + 1)"
+                      >
+                        Next
+                      </UButton>
+                    </div>
+                  </nav>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-
-        <SearchStatus v-else-if="searchError" state="error" @retry="retry" />
-        <SearchStatus v-else-if="!results?.items.length" state="empty" @reset="resetSearch" />
-
-        <template v-else>
-          <div
-            data-testid="search-results"
-            :aria-busy="pending || undefined"
-          >
-            <div
-              data-testid="search-results-body"
-              :inert="pending || undefined"
-              :class="pending ? 'pointer-events-none opacity-50' : 'opacity-100'"
-              class="transition-opacity duration-150 motion-reduce:transition-none"
-            >
-              <div>
-                <ResourceRow v-for="item in results.items" :key="JSON.stringify([item.registry_id, item.kind, item.name, item.content_digest])" :item="item" :canonical-url="canonicalUrl" />
-              </div>
-
-              <nav class="flex flex-col items-center justify-between gap-3 py-5 sm:flex-row" aria-label="Search results pagination">
-                <p class="font-mono text-xs text-muted">page {{ currentPage }} / {{ totalPages }}</p>
-                <div class="flex items-center gap-2">
-                  <USelect id="page-size" v-model="draft.limit" :items="limitOptions" value-key="value" size="xs" class="w-32" aria-label="Results per page" @update:model-value="submitSearch" />
-                  <UButton size="xs" color="neutral" variant="outline" icon="i-lucide-chevron-left" :disabled="!hasPreviousPage" aria-label="Go to previous page" @click="goToPage(currentPage - 1)">Prev</UButton>
-                  <UButton size="xs" color="neutral" variant="outline" trailing-icon="i-lucide-chevron-right" :disabled="!hasNextPage" aria-label="Go to next page" @click="goToPage(currentPage + 1)">Next</UButton>
-                </div>
-              </nav>
-            </div>
-          </div>
-        </template>
       </section>
     </main>
 
-    <footer class="border-t border-default">
-      <div class="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-5 text-xs text-muted sm:flex-row sm:items-center sm:justify-between sm:px-6">
-        <a :href="DOCS_PATH" class="underline decoration-muted underline-offset-4 hover:text-highlighted">Docs</a>
+    <footer class="marketplace-footer">
+      <div>
+        <a :href="DOCS_PATH">Docs</a>
         <p>built at Adyen</p>
       </div>
     </footer>
   </div>
 </template>
+
+<style scoped>
+.marketplace-home {
+  display: flex;
+  min-height: calc(100vh - 4rem);
+  flex-direction: column;
+  background: var(--am-color-bg-canvas);
+  color: var(--am-color-text-primary);
+}
+
+.marketplace-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.marketplace-intro {
+  border-bottom: 1px solid var(--am-color-border-default);
+  background: var(--am-color-bg-canvas);
+}
+
+.marketplace-intro__inner {
+  width: 100%;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.marketplace-intro h1 {
+  font-size: clamp(1.85rem, 4vw, 2.4rem);
+  font-weight: 750;
+  letter-spacing: -0.035em;
+  line-height: 1.12;
+}
+
+.marketplace-intro__description {
+  margin-top: 0.5rem;
+  color: var(--am-color-text-secondary);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.marketplace-intro__description p {
+  display: inline;
+}
+
+.marketplace-intro__description p + p {
+  margin-left: 0.25rem;
+}
+
+.marketplace-intro__description a {
+  color: var(--am-color-action-primary);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  white-space: nowrap;
+}
+
+.marketplace-catalog {
+  flex: 1;
+  background: var(--am-color-bg-surface);
+}
+
+.marketplace-catalog__inner {
+  width: 100%;
+  max-width: 90rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.marketplace-catalog__layout,
+.catalog-results {
+  min-width: 0;
+}
+
+.catalog-sidebar {
+  display: none;
+}
+
+.catalog-results {
+  padding-top: 1.25rem;
+}
+
+.catalog-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+}
+
+.mobile-filter-toggle {
+  min-height: 2.5rem;
+  cursor: pointer;
+}
+
+.mobile-resource-filters {
+  display: none;
+  margin-top: 0.8rem;
+  padding: 1rem;
+  border: 1px solid var(--am-color-border-default);
+  border-radius: 0.55rem;
+  background: var(--am-color-bg-canvas);
+}
+
+.mobile-resource-filters[data-open="true"] {
+  display: block;
+}
+
+.catalog-results__header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 1rem;
+}
+
+.catalog-results__header h2 {
+  width: fit-content;
+  border-radius: 0.2rem;
+  font-size: 1.35rem;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+}
+
+.catalog-results__header h2:focus-visible {
+  outline: 2px solid var(--am-color-action-focus-ring);
+  outline-offset: 4px;
+}
+
+.catalog-results__header p {
+  margin: 0;
+  color: var(--am-color-text-muted);
+  font-size: 0.8rem;
+  font-weight: 550;
+}
+
+.catalog-results__updating {
+  opacity: 0;
+}
+
+.catalog-results__updating--visible {
+  opacity: 1;
+}
+
+.catalog-active-filters {
+  display: flex;
+  min-height: 30px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.catalog-filter-chip {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 10px;
+  border: 1px solid var(--am-color-border-default);
+  border-radius: 999px;
+  background: var(--am-color-bg-subtle);
+  color: var(--am-color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.catalog-filter-chip:hover {
+  border-color: var(--am-color-border-strong);
+  background: var(--am-color-bg-hover);
+  color: var(--am-color-text-primary);
+}
+
+.catalog-filter-chip:focus-visible {
+  outline: 2px solid var(--am-color-action-focus-ring);
+  outline-offset: 2px;
+}
+
+.catalog-filter-chip :deep(svg) {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.clear-filters {
+  min-height: 30px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
+.catalog-search-content {
+  margin-top: 14px;
+}
+
+.catalog-pagination {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.25rem 0;
+}
+
+.catalog-pagination p {
+  color: var(--am-color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.marketplace-footer {
+  border-top: 1px solid var(--am-color-border-default);
+  background: var(--am-color-bg-canvas);
+}
+
+.marketplace-footer > div {
+  display: flex;
+  width: 100%;
+  max-width: 72rem;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem;
+  color: var(--am-color-text-muted);
+  font-size: 0.75rem;
+}
+
+.marketplace-footer a {
+  text-decoration: underline;
+  text-decoration-color: var(--am-color-border-strong);
+  text-underline-offset: 4px;
+}
+
+.marketplace-footer a:hover {
+  color: var(--am-color-text-primary);
+}
+
+@media (min-width: 40rem) {
+  .marketplace-intro__inner,
+  .marketplace-catalog__inner {
+    padding-right: 1.5rem;
+    padding-left: 1.5rem;
+  }
+
+  .catalog-pagination,
+  .marketplace-footer > div {
+    flex-direction: row;
+  }
+
+  .marketplace-footer > div {
+    align-items: center;
+    justify-content: space-between;
+    padding-right: 1.5rem;
+    padding-left: 1.5rem;
+  }
+}
+
+@media (min-width: 48rem) {
+  .marketplace-catalog__layout {
+    display: grid;
+    grid-template-columns: 13.5rem minmax(0, 1fr);
+    gap: 2rem;
+  }
+
+  .catalog-sidebar {
+    display: block;
+    min-width: 0;
+    padding: 1.55rem 1.6rem 2rem 0;
+    border-right: 1px solid var(--am-color-border-default);
+  }
+
+  .catalog-sidebar__sticky {
+    position: sticky;
+    top: 5.5rem;
+  }
+
+  .catalog-sidebar h2 {
+    margin-bottom: 1.3rem;
+    font-size: 0.8rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .catalog-results {
+    padding-top: 1.55rem;
+  }
+
+  .catalog-search {
+    display: block;
+  }
+
+  .mobile-filter-toggle,
+  .mobile-resource-filters {
+    display: none !important;
+  }
+}
+
+@media (min-width: 64rem) {
+  .marketplace-catalog__layout {
+    grid-template-columns: 15rem minmax(0, 1fr);
+    gap: 2.75rem;
+  }
+}
+</style>

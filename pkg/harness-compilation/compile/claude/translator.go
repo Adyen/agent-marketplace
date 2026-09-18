@@ -284,7 +284,7 @@ func (c *claudeCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]arti
 	if h.Timeout != nil {
 		rule["timeout"] = *h.Timeout
 	}
-	extraKeys, diags := compile.ExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": h.Matcher != "", "type": true, "command": h.Command != "", "prompt": h.Prompt != "", "timeout": h.Timeout != nil}), mapping.TargetClaude, h.Name(), diag.SourceRef(h.Source))
+	extraKeys, diags := compile.HookExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": h.Matcher != "", "type": true, "command": h.Command != "", "prompt": h.Prompt != "", "timeout": h.Timeout != nil}), mapping.TargetClaude, h.Name(), diag.SourceRef(h.Source))
 	for _, k := range extraKeys {
 		rule[k] = h.Extra[k]
 	}

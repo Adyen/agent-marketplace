@@ -158,7 +158,7 @@ func TestMarketplaceCatalogKeyIncludesInstanceID(t *testing.T) {
 	if first == second {
 		t.Fatalf("catalog keys collided across Marketplace instances: %q", first)
 	}
-	if !strings.Contains(first, ":instance-one:") {
+	if !strings.Contains(first, "\x00instance-one\x00") {
 		t.Fatalf("catalog key %q does not include instance ID", first)
 	}
 }

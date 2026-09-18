@@ -4,11 +4,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"sort"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 )
+
+var ErrFragmentModeConflict = errors.New("fragment file modes conflict")
+
+func fragmentMode(fragments []Artifact) (fs.FileMode, error) {
+	var mode fs.FileMode
+	for _, f := range fragments {
+		if f.Mode == 0 {
+			continue
+		}
+		if mode != 0 && mode != f.Mode {
+			return 0, ErrFragmentModeConflict
+		}
+		mode = f.Mode
+	}
+	return mode, nil
+}
 
 // MergeFragments merges artifact fragments that share the same Path and
 // FragmentKey. Non-fragment artifacts are passed through unchanged.
@@ -47,6 +64,11 @@ func MergeFragments(artifacts []Artifact) ([]Artifact, error) {
 		if err != nil {
 			return nil, fmt.Errorf("merging fragments for %q: %w", path, err)
 		}
+		mode, err := fragmentMode(fragments)
+		if err != nil {
+			return nil, fmt.Errorf("merging fragments for %q: %w", path, err)
+		}
+		merged.Mode = mode
 		result = append(result, merged)
 	}
 
