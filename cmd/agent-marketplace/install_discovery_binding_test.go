@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -589,5 +590,84 @@ func testInstallMissingSelectionDoesNotPublishOrLeakLease(t *testing.T, configur
 	})
 	if err != nil || !visited {
 		t.Fatalf("GC after failed install: visited=%t error=%v", visited, err)
+	}
+}
+
+func reviewBindingRegistry(t testing.TB) lockfile.GitRegistry {
+	t.Helper()
+	commit, err := lockfile.ParseGitOID("sha1:" + strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	return lockfile.GitRegistry{URL: "https://example.invalid/registry", Ref: "main", Commit: commit, Roots: []lockfile.GitRoot{{Path: ".", SourceHarness: "claude", RevisionSchema: "v3", RevisionDigest: digest, Resources: []lockfile.GitResource{{Kind: "skill", Name: "review", ContentDigest: digest, ArchiveDigest: digest}}}}}
+}
+
+func TestInstallBindingSourceLookup(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	userPath := filepath.Join(t.TempDir(), "user-lock.yaml")
+	repoPath := filepath.Join(t.TempDir(), "repo-lock.yaml")
+	registry := reviewBindingRegistry(t)
+	plan := &preparedInstallLocks{documents: map[string]lockfile.Document{userPath: {APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeUser, Registries: []lockfile.GitRegistry{registry}}}, lockPaths: map[config.Source]string{config.UserPersonal: userPath, config.RepoCommitted: repoPath}, bindings: map[string][]lockfile.GitRegistry{}}
+	entry := config.RegistryEntry{URL: registry.URL, Ref: registry.Ref, Source: config.Organization}
+	if err := plan.bindRegistry(config.RepoCommitted, entry); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("source mismatch error = %v", err)
+	}
+	if len(plan.bindings) != 0 {
+		t.Fatalf("bindings after mismatch = %#v", plan.bindings)
+	}
+	entry.Source = config.UserPersonal
+	if err := plan.bindRegistry(config.RepoCommitted, entry); err != nil {
+		t.Fatal(err)
+	}
+	want := []lockfile.GitRegistry{registry}
+	if !reflect.DeepEqual(plan.bindings[repoPath], want) {
+		t.Fatalf("bindings = %#v, want %#v", plan.bindings[repoPath], want)
+	}
+}
+
+func TestMergeInstallBindingsPreservesInputs(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	registry := reviewBindingRegistry(t)
+	root := registry.Roots[0]
+	backing := make([]lockfile.GitRoot, 2)
+	backing[0] = root
+	base := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo, Registries: []lockfile.GitRegistry{{URL: registry.URL, Ref: registry.Ref, Commit: registry.Commit, Roots: backing[:1]}}}
+	inputRoots := append([]lockfile.GitRoot(nil), base.Registries[0].Roots...)
+	bindingRoot := root
+	bindingRoot.Path = "extra"
+	binding := []lockfile.GitRegistry{{URL: base.Registries[0].URL, Ref: base.Registries[0].Ref, Commit: base.Registries[0].Commit, Roots: []lockfile.GitRoot{bindingRoot}}}
+	merged, err := mergeInstallBindings(base, lockfile.ScopeRepo, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged.Registries) != 1 || len(merged.Registries[0].Roots) != 2 || merged.Registries[0].Roots[0].Path != "." || merged.Registries[0].Roots[1].Path != "extra" {
+		t.Fatalf("merged = %#v", merged)
+	}
+	if !reflect.DeepEqual(backing, []lockfile.GitRoot{root, lockfile.GitRoot{}}) || !reflect.DeepEqual(base.Registries[0].Roots, inputRoots) || !reflect.DeepEqual(binding[0].Roots, []lockfile.GitRoot{bindingRoot}) {
+		t.Fatalf("inputs mutated: backing=%#v roots=%#v binding=%#v", backing, base.Registries[0].Roots, binding[0].Roots)
+	}
+	conflicting := binding[0]
+	conflicting.Commit, err = lockfile.ParseGitOID("sha1:" + strings.Repeat("c", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mergeInstallBindings(base, lockfile.ScopeRepo, []lockfile.GitRegistry{conflicting}); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("commit conflict error = %v", err)
+	}
+	if !reflect.DeepEqual(backing, []lockfile.GitRoot{root, lockfile.GitRoot{}}) || !reflect.DeepEqual(base.Registries[0].Roots, inputRoots) || !reflect.DeepEqual(binding[0].Roots, []lockfile.GitRoot{bindingRoot}) {
+		t.Fatal("commit conflict mutated inputs")
+	}
+	digestConflict := binding[0]
+	digestConflict.Roots = []lockfile.GitRoot{{Path: ".", SourceHarness: "claude", RevisionSchema: "v3", RevisionDigest: lockfile.Digest("sha256:" + strings.Repeat("c", 64)), Resources: root.Resources}}
+	if _, err := mergeInstallBindings(base, lockfile.ScopeRepo, []lockfile.GitRegistry{digestConflict}); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("digest conflict error = %v", err)
+	}
+	if !reflect.DeepEqual(backing, []lockfile.GitRoot{root, lockfile.GitRoot{}}) || !reflect.DeepEqual(base.Registries[0].Roots, inputRoots) || !reflect.DeepEqual(binding[0].Roots, []lockfile.GitRoot{bindingRoot}) {
+		t.Fatal("digest conflict mutated inputs")
 	}
 }

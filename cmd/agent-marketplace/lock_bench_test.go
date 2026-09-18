@@ -5,12 +5,45 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
+
+func BenchmarkMergeInstallBindingsInMemory(b *testing.B) {
+	commit, err := lockfile.ParseGitOID("sha1:" + strings.Repeat("a", 40))
+	if err != nil {
+		b.Fatal(err)
+	}
+	digest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	for _, count := range []int{1, 16} {
+		b.Run(fmt.Sprintf("registries=%d", count), func(b *testing.B) {
+			base := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}
+			for i := range count {
+				base.Registries = append(base.Registries, lockfile.GitRegistry{
+					URL: fmt.Sprintf("https://example.invalid/registry-%d", i), Ref: "main", Commit: commit,
+					Roots: []lockfile.GitRoot{{Path: ".", SourceHarness: "claude", RevisionSchema: "v3", RevisionDigest: digest,
+						Resources: []lockfile.GitResource{{Kind: "skill", Name: "review", ContentDigest: digest, ArchiveDigest: digest}}}},
+				})
+			}
+			base, err := lockfile.Normalize(base)
+			if err != nil {
+				b.Fatal(err)
+			}
+			bindings := append([]lockfile.GitRegistry(nil), base.Registries...)
+			b.ReportAllocs()
+			for b.Loop() {
+				merged, err := mergeInstallBindings(base, lockfile.ScopeRepo, bindings)
+				if err != nil || len(merged.Registries) != count {
+					b.Fatalf("merge: registries=%d error=%v", len(merged.Registries), err)
+				}
+			}
+		})
+	}
+}
 
 func BenchmarkProjectLockedRoots(b *testing.B) {
 	roots := make([]lockfile.GitRoot, 0, 32)

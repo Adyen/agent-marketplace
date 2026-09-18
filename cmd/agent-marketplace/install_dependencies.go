@@ -120,7 +120,11 @@ func (p *preparedInstallLocks) bindRegistry(target config.Source, entry config.R
 	if err != nil {
 		return err
 	}
-	for _, registry := range p.documents[p.lockPaths[entry.Source]].Registries {
+	sourcePath, ok := p.lockPaths[entry.Source]
+	if !ok {
+		return fmt.Errorf("%w: selected registry source has no prepared lock path", dependencytxn.ErrGenerationConflict)
+	}
+	for _, registry := range p.documents[sourcePath].Registries {
 		if registry.URL != canonical || registry.Ref != entry.Ref {
 			continue
 		}
@@ -164,33 +168,35 @@ func reuseInstallDocument(plan *preparedInstallLocks, path string, scope lockfil
 
 func mergeInstallBindings(base lockfile.Document, scope lockfile.Scope, bindings []lockfile.GitRegistry) (lockfile.Document, error) {
 	byIdentity := make(map[string]lockfile.GitRegistry)
-	for _, registry := range append(append([]lockfile.GitRegistry(nil), base.Registries...), bindings...) {
-		identity := gitLockIdentity(registry.URL, registry.Ref)
-		merged, exists := byIdentity[identity]
-		if !exists {
-			registry.Roots = append([]lockfile.GitRoot(nil), registry.Roots...)
-			byIdentity[identity] = registry
-			continue
-		}
-		if merged.Commit != registry.Commit {
-			return lockfile.Document{}, fmt.Errorf("%w: selected sources require incompatible exact commits in one scope", dependencytxn.ErrGenerationConflict)
-		}
-		for _, root := range registry.Roots {
-			found := false
-			for _, prior := range merged.Roots {
-				if prior.Path == root.Path && prior.SourceHarness == root.SourceHarness {
-					if !reflect.DeepEqual(prior, root) {
-						return lockfile.Document{}, fmt.Errorf("%w: selected source manifests disagree", dependencytxn.ErrGenerationConflict)
+	for _, registries := range [][]lockfile.GitRegistry{base.Registries, bindings} {
+		for _, registry := range registries {
+			identity := gitLockIdentity(registry.URL, registry.Ref)
+			merged, exists := byIdentity[identity]
+			if !exists {
+				registry.Roots = append([]lockfile.GitRoot(nil), registry.Roots...)
+				byIdentity[identity] = registry
+				continue
+			}
+			if merged.Commit != registry.Commit {
+				return lockfile.Document{}, fmt.Errorf("%w: selected sources require incompatible exact commits in one scope", dependencytxn.ErrGenerationConflict)
+			}
+			for _, root := range registry.Roots {
+				found := false
+				for _, prior := range merged.Roots {
+					if prior.Path == root.Path && prior.SourceHarness == root.SourceHarness {
+						if !reflect.DeepEqual(prior, root) {
+							return lockfile.Document{}, fmt.Errorf("%w: selected source manifests disagree", dependencytxn.ErrGenerationConflict)
+						}
+						found = true
+						break
 					}
-					found = true
-					break
+				}
+				if !found {
+					merged.Roots = append(merged.Roots, root)
 				}
 			}
-			if !found {
-				merged.Roots = append(merged.Roots, root)
-			}
+			byIdentity[identity] = merged
 		}
-		byIdentity[identity] = merged
 	}
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
 	for _, registry := range byIdentity {
