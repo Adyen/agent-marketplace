@@ -52,7 +52,74 @@ function searchResult() {
   }
 }
 
+function streamingItems(count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const contentDigest = `sha256:${index.toString(16).padStart(64, '0')}`
+    return {
+      registry_id: 'team-tools',
+      registry_slug: 'team-tools',
+      kind: 'skill',
+      name: `stream-result-${String(index + 1).padStart(2, '0')}`,
+      revision: contentDigest,
+      content_digest: contentDigest,
+      description: `Streamed result ${index + 1}`,
+    }
+  })
+}
+
+async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
+  const items = streamingItems(30)
+  const offsets: number[] = []
+  let shouldFail = failNextPageOnce
+  await page.route('**/api/v1/search**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('q') !== 'stream') return route.continue()
+    const offset = Number(url.searchParams.get('offset') || 0)
+    const limit = Number(url.searchParams.get('limit') || 25)
+    offsets.push(offset)
+    if (offset > 0 && shouldFail) {
+      shouldFail = false
+      return route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: items.slice(offset, offset + limit), total: items.length, offset, limit }),
+    })
+  })
+  return offsets
+}
+
 test.describe('Marketplace browser discovery', () => {
+  test('streams additional search results while scrolling', async ({ page }) => {
+    const offsets = await routeStreamingSearch(page)
+    await page.goto('/')
+    await page.getByLabel('Search', { exact: true }).fill('stream')
+    await expect(page.locator('article')).toHaveCount(25)
+    await page.getByTestId('load-more-trigger').scrollIntoViewIfNeeded()
+    await expect(page.locator('article')).toHaveCount(30)
+    await expect(page.getByText('All 30 resources loaded.')).toBeVisible()
+    await expect(page.getByRole('navigation', { name: 'Search results pagination' })).toHaveCount(0)
+    expect(new URL(page.url()).searchParams.has('offset')).toBe(false)
+    expect(offsets).toEqual([0, 25])
+  })
+
+  test('retains loaded results and offers a manual retry when streaming fails', async ({ page }) => {
+    await page.addInitScript(() => {
+      Reflect.deleteProperty(window, 'IntersectionObserver')
+    })
+    const offsets = await routeStreamingSearch(page, true)
+    await page.goto('/')
+    await page.getByLabel('Search', { exact: true }).fill('stream')
+    await expect(page.locator('article')).toHaveCount(25)
+    await page.getByRole('button', { name: 'Load more resources' }).click()
+    await expect(page.locator('article')).toHaveCount(25)
+    await expect(page.getByRole('alert')).toContainText('Additional resources could not be loaded.')
+    await page.getByRole('button', { name: 'Retry loading resources' }).click()
+    await expect(page.locator('article')).toHaveCount(30)
+    expect(offsets).toEqual([0, 25, 25])
+  })
+
   test('uses the same brand font treatment on homepage and detail pages', async ({ page }) => {
     const getBrandStyle = (selector: string) => page.locator(selector).first().evaluate(element => {
       const style = getComputedStyle(element)
@@ -309,9 +376,7 @@ test.describe('Marketplace browser discovery', () => {
       await expect(copy).toHaveCSS('outline-color', theme.marketplace.action)
       await expect(copy).toHaveCSS('outline-width', '2px')
 
-      const disabledPrevious = page.getByRole('button', { name: 'Go to previous page' })
-      await expect(disabledPrevious).toBeDisabled()
-      await expect(disabledPrevious).toHaveCSS('background-color', theme.marketplace.subtle)
+      await expect(page.getByText('All 2 resources loaded.')).toHaveCSS('color', theme.marketplace.mutedText)
 
       await page.goto(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
       await expect(page.getByTestId('installation-panel')).toHaveCSS('border-top-width', '0px')

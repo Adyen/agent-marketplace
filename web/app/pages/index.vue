@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RESOURCE_KINDS } from '~/types/marketplace'
-import type { ResourceKind, SearchParams } from '~/types/marketplace'
+import type { ResourceKind, ResourceListItem, SearchParams } from '~/types/marketplace'
 import { kindLabel, safeCanonicalUrl } from '~/lib/presentation'
 import { DOCS_PATH } from '~/lib/site'
 import { parseSearchQuery, toLocationQuery } from '~/composables/useSearchQuery'
@@ -14,13 +14,22 @@ const { data: registries } = await useAsyncData('marketplace-registries', () => 
 const searchParams = computed(() => parseSearchQuery(route.query))
 const draft = reactive<SearchParams>({ ...searchParams.value })
 const filtersOpen = ref(false)
+const additionalItems = ref<ResourceListItem[]>([])
+const loadingMore = ref(false)
+const loadMoreError = ref<unknown>(null)
+const loadMoreTrigger = ref<HTMLElement | null>(null)
 let syncingDraft = false
+let searchGeneration = 0
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
   () => route.query,
   () => {
     clearTimeout(searchTimer)
+    searchGeneration++
+    additionalItems.value = []
+    loadingMore.value = false
+    loadMoreError.value = null
     syncingDraft = true
     Object.assign(draft, searchParams.value)
     nextTick(() => { syncingDraft = false })
@@ -39,16 +48,8 @@ const supportedKinds = computed<ResourceKind[]>(() => {
   return RESOURCE_KINDS.filter(kind => knownMetadata.resource_kinds.includes(kind))
 })
 
-const limitOptions = [
-  { label: '25 per page', value: 25 },
-  { label: '50 per page', value: 50 },
-  { label: '100 per page', value: 100 },
-]
-
-const totalPages = computed(() => Math.max(1, Math.ceil((results.value?.total ?? 0) / searchParams.value.limit)))
-const currentPage = computed(() => Math.floor(searchParams.value.offset / searchParams.value.limit) + 1)
-const hasPreviousPage = computed(() => searchParams.value.offset > 0)
-const hasNextPage = computed(() => currentPage.value < totalPages.value)
+const displayedItems = computed(() => [...(results.value?.items ?? []), ...additionalItems.value])
+const hasMoreResults = computed(() => displayedItems.value.length < (results.value?.total ?? 0))
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.canonical_url))
 const activeFilterCount = computed(() => Number(Boolean(draft.kind)) + draft.registry.length)
 const resultCountLabel = computed(() => {
@@ -60,18 +61,27 @@ const searchUpdating = computed(() => {
   return pending.value
     || draft.q !== applied.q
     || draft.kind !== applied.kind
-    || draft.limit !== applied.limit
     || draft.registry.length !== applied.registry.length
     || draft.registry.some((registry, index) => registry !== applied.registry[index])
 })
 const resultStatus = computed(() => {
   if (pending.value) return 'Loading Marketplace resources.'
   if (searchError.value) return 'Search failed. Review the error message and try again.'
-  return `${resultCountLabel.value} found.`
+  if (loadingMore.value) return `Loading more Marketplace resources. ${displayedItems.value.length} currently shown.`
+  if (loadMoreError.value) return `Additional resources could not be loaded. ${displayedItems.value.length} remain available.`
+  return `${resultCountLabel.value} found. ${displayedItems.value.length} shown.`
 })
 
 watch(() => [draft.q, draft.registry.join('\u0000')], scheduleSearch)
-watch(() => [draft.kind, draft.limit], applyDraft)
+watch(() => draft.kind, applyDraft)
+watch(loadMoreTrigger, (element, _previous, onCleanup) => {
+  if (!import.meta.client || !element || !('IntersectionObserver' in window)) return
+  const observer = new IntersectionObserver((entries) => {
+    if (entries.some(entry => entry.isIntersecting)) void loadMore()
+  }, { rootMargin: '300px 0px' })
+  observer.observe(element)
+  onCleanup(() => observer.disconnect())
+})
 onBeforeUnmount(() => clearTimeout(searchTimer))
 
 function applyDraft() {
@@ -116,9 +126,24 @@ function resetSearch() {
   nextTick(() => { syncingDraft = false })
 }
 
-function goToPage(page: number) {
-  const offset = (page - 1) * searchParams.value.limit
-  router.push({ query: toLocationQuery({ ...searchParams.value, offset }) })
+async function loadMore() {
+  const currentResults = results.value
+  if (pending.value || loadingMore.value || !currentResults || !hasMoreResults.value) return
+  const generation = searchGeneration
+  const offset = currentResults.offset + displayedItems.value.length
+  loadingMore.value = true
+  loadMoreError.value = null
+  try {
+    const page = await api.search({ ...searchParams.value, offset })
+    if (generation !== searchGeneration) return
+    if (page.offset !== offset || (!page.items.length && offset < page.total)) throw new Error('Marketplace search returned a non-progressing page')
+    additionalItems.value.push(...page.items)
+    currentResults.total = page.total
+  } catch (error) {
+    if (generation === searchGeneration) loadMoreError.value = error
+  } finally {
+    if (generation === searchGeneration) loadingMore.value = false
+  }
 }
 
 function retry() {
@@ -316,7 +341,7 @@ useHead({
                 v-else
                 data-testid="search-results"
                 class="catalog-search-content"
-                :aria-busy="pending || undefined"
+                :aria-busy="pending || loadingMore || undefined"
               >
                 <div
                   data-testid="search-results-body"
@@ -325,50 +350,33 @@ useHead({
                 >
                   <div>
                     <ResourceRow
-                      v-for="item in results.items"
+                      v-for="item in displayedItems"
                       :key="JSON.stringify([item.registry_id, item.kind, item.name, item.content_digest])"
                       :item="item"
                       :canonical-url="canonicalUrl"
                     />
                   </div>
 
-                  <nav class="catalog-pagination" aria-label="Search results pagination">
-                    <p>page {{ currentPage }} / {{ totalPages }}</p>
-                    <div class="flex items-center gap-2">
-                      <USelect
-                        id="page-size"
-                        v-model="draft.limit"
-                        :items="limitOptions"
-                        value-key="value"
-                        size="xs"
-                        class="w-32"
-                        aria-label="Results per page"
-                        @update:model-value="submitSearch"
-                      />
-                      <UButton
-                        size="xs"
-                        color="neutral"
-                        variant="outline"
-                        icon="i-lucide-chevron-left"
-                        :disabled="!hasPreviousPage"
-                        aria-label="Go to previous page"
-                        @click="goToPage(currentPage - 1)"
-                      >
-                        Prev
-                      </UButton>
-                      <UButton
-                        size="xs"
-                        color="neutral"
-                        variant="outline"
-                        trailing-icon="i-lucide-chevron-right"
-                        :disabled="!hasNextPage"
-                        aria-label="Go to next page"
-                        @click="goToPage(currentPage + 1)"
-                      >
-                        Next
-                      </UButton>
-                    </div>
-                  </nav>
+                  <div
+                    v-if="hasMoreResults"
+                    ref="loadMoreTrigger"
+                    data-testid="load-more-trigger"
+                    class="catalog-stream-status"
+                  >
+                    <p v-if="loadMoreError" role="alert">Additional resources could not be loaded.</p>
+                    <UButton
+                      size="sm"
+                      color="neutral"
+                      variant="outline"
+                      :loading="loadingMore"
+                      :disabled="loadingMore"
+                      :aria-label="loadMoreError ? 'Retry loading resources' : 'Load more resources'"
+                      @click="loadMore"
+                    >
+                      {{ loadMoreError ? 'Try again' : loadingMore ? 'Loading more…' : 'Load more' }}
+                    </UButton>
+                  </div>
+                  <p v-else class="catalog-stream-complete">All {{ displayedItems.length }} resources loaded.</p>
                 </div>
               </div>
             </div>
@@ -577,19 +585,24 @@ useHead({
   margin-top: 14px;
 }
 
-.catalog-pagination {
+.catalog-stream-status {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
   padding: 1.25rem 0;
 }
 
-.catalog-pagination p {
+.catalog-stream-status p,
+.catalog-stream-complete {
+  padding: 1.25rem 0;
   color: var(--am-color-text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.catalog-stream-status p {
+  padding: 0;
 }
 
 .marketplace-footer {
@@ -626,12 +639,8 @@ useHead({
     padding-left: 1.5rem;
   }
 
-  .catalog-pagination,
   .marketplace-footer > div {
     flex-direction: row;
-  }
-
-  .marketplace-footer > div {
     align-items: center;
     justify-content: space-between;
     padding-right: 1.5rem;
