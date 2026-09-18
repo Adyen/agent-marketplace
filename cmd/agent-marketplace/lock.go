@@ -55,6 +55,8 @@ type lockMode struct {
 	stagedConfigEdits    []pipeline.StagedConfigEdit
 	commitReads          []dependencytxn.ReadAssertion
 	commitScope          dependencytxn.CommitScope
+	prepareInstall       *preparedInstallLocks
+	reuseInstall         *preparedInstallLocks
 	warningSink          *[]error
 }
 
@@ -65,6 +67,10 @@ type lockReconcileStats struct {
 
 func lockModeName(mode lockMode) string {
 	switch {
+	case mode.prepareInstall != nil:
+		return "install-prepare"
+	case mode.reuseInstall != nil:
+		return "install-commit"
 	case mode.upgrade:
 		return "upgrade"
 	case mode.locked:
@@ -419,7 +425,7 @@ func dependencyStateDir() (string, error) {
 }
 
 func (mode lockMode) readOnlyDependencies() bool {
-	return mode.check || mode.locked || mode.offline
+	return mode.check || mode.locked || mode.offline || mode.prepareInstall != nil
 }
 
 func prepareDependencyTransactions(ctx context.Context, readOnly bool) error {
@@ -732,6 +738,12 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		mode.offline = true
 		slog.Debug("blocked-registry removal reuses existing exact snapshots only")
 	}
+	if mode.prepareInstall != nil {
+		mode.prepareInstall.reads, err = installPreparationReads(ec, stagedEdits)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+	}
 	resolvedTargets, err := resolveUpgradeTargets(ec, mode)
 	if err != nil {
 		return nil, 0, nil, err
@@ -824,6 +836,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			return nil, changed, nil, loadErr
 		}
+		if mode.prepareInstall != nil {
+			mode.prepareInstall.reads = append(mode.prepareInstall.reads, dependencytxn.ReadAssertion{Path: lockPath, RequestedPath: requestedLockPath, Expected: generation})
+		}
 		if len(remote) > 0 {
 			lockExpectations[lockPath] = generation
 			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
@@ -883,11 +898,20 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if mode.upgrade && selected && !implicitOrg {
 			operation = lockfile.OperationUpgrade
 		}
-		gitDesired, gitFresh := reconcileLayerDocument(ctx, scope, remote, current, operation, mode.upgradeSelection, mode.offline, ensureSnapshotLease)
+		var gitDesired reconciledDocument
+		var gitFresh bool
+		if mode.reuseInstall != nil {
+			gitDesired, gitFresh = reuseInstallDocument(mode.reuseInstall, lockPath, remote, current)
+		} else {
+			gitDesired, gitFresh = reconcileLayerDocument(ctx, scope, remote, current, operation, mode.upgradeSelection, mode.offline, ensureSnapshotLease)
+		}
 		if gitDesired.err != nil {
 			return nil, changed, nil, gitDesired.err
 		}
 		doc := gitDesired.doc
+		if mode.prepareInstall != nil {
+			mode.prepareInstall.documents[lockPath] = doc
+		}
 		fresh := exists && gitFresh
 		if !fresh {
 			if mode.locked && !implicitOrg || implicitOrg && exists || !selected && !mode.upgrade {
@@ -932,7 +956,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 		}
 	}
-	if !mode.check && (len(desiredFiles) > 0 || mode.commitScope != nil) {
+	if !mode.check && mode.prepareInstall == nil && (len(desiredFiles) > 0 || mode.commitScope != nil) {
 		for _, layer := range ec.PresentLayers() {
 			if !layer.Source.IsWritable() && !mode.explicitOrganization {
 				continue
@@ -983,8 +1007,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		slog.Info("organization lock verification completed", "duration_ms", time.Since(verificationStarted).Milliseconds())
 	}
-	for path, data := range lockDesired {
-		lockExpectations[path] = dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(data)}
+	if mode.prepareInstall == nil {
+		for path, data := range lockDesired {
+			lockExpectations[path] = dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(data)}
+		}
 	}
 	validateExactLocks := func() error {
 		paths := make([]string, 0, len(lockExpectations))
@@ -1049,6 +1075,15 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, err
 		}
 		return release, nil
+	}
+	if mode.prepareInstall != nil {
+		if err := dependencytxn.ValidateReadAssertions(mode.prepareInstall.reads); err != nil {
+			return nil, changed, nil, err
+		}
+		mode.prepareInstall.ctx = ctx
+		mode.prepareInstall.discoveryConfig = ec.Merged
+		mode.prepareInstall.release = releaseSnapshotLease
+		releaseSnapshotLease = nil
 	}
 	return option, changed, resultLease, nil
 }

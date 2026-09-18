@@ -100,6 +100,59 @@ func TestConfiguredInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
 	}
 }
 
+func TestAdHocInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("TMPDIR", t.TempDir())
+	origin, working := createBareRepoWithWorkingClone(t, "adhoc-install-lock.git")
+	writeSkill(t, working, "locked", "Locked A", nil)
+	commitAndPushAll(t, working, "inventory A")
+	repo := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, configPath, "\nharnesses: [claude]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed sync: %v\n%s", err, output)
+	}
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	beforeConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeLock, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, working, "new", "New B", nil)
+	commitAndPushAll(t, working, "inventory B")
+	output, err := executeCommand("install", "new", "--from", origin, "--ref", "main")
+	if err == nil {
+		t.Fatalf("ad-hoc install reported success for mutable-only resource:\n%s", output)
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("ad-hoc install error = %v, want safe not-found result", err)
+	}
+	afterConfig, err := os.ReadFile(configPath)
+	if err != nil || !bytes.Equal(beforeConfig, afterConfig) {
+		t.Fatalf("failed install changed config: %v", err)
+	}
+	afterLock, err := os.ReadFile(lockPath)
+	if err != nil || !bytes.Equal(beforeLock, afterLock) {
+		t.Fatalf("failed install changed lock: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".claude", "skills", "new")); !os.IsNotExist(err) {
+		t.Fatalf("new output exists: %v", err)
+	}
+	if residue, err := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
+		t.Fatalf("staging residue = %v err=%v", residue, err)
+	}
+}
+
 func TestRemoveUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
