@@ -640,12 +640,22 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	artifacts = append(regularArtifacts, mergeArtifacts...)
 
 	// Determine which artifacts to write vs skip.
+	existingModes := make(map[string]fs.FileMode)
 	for _, a := range artifacts {
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
 
 		matches, exists, err := fileMatchesBytes(destPath, a.Bytes)
 		if err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
+		}
+		if exists && a.MergeWithExisting {
+			info, err := os.Lstat(destPath)
+			if err != nil {
+				return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
+			}
+			if info.Mode().IsRegular() {
+				existingModes[a.Path] = info.Mode().Perm()
+			}
 		}
 
 		if exists && matches {
@@ -705,13 +715,22 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 			_ = os.RemoveAll(stagingDir)
 			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), err)
 		}
-		mode := a.Mode
-		if mode == 0 {
-			mode = 0o644
+		mode, existingMode := existingModes[a.Path]
+		if !existingMode {
+			mode = a.Mode
+			if mode == 0 {
+				mode = 0o644
+			}
 		}
 		if err := os.WriteFile(destPath, a.Bytes, mode); err != nil {
 			_ = os.RemoveAll(stagingDir)
 			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, err)
+		}
+		if existingMode {
+			if err := os.Chmod(destPath, mode); err != nil {
+				_ = os.RemoveAll(stagingDir)
+				return nil, fmt.Errorf("harnesscompile.Materialize: chmod %s: %w", a.Path, err)
+			}
 		}
 	}
 
