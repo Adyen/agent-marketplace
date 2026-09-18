@@ -21,6 +21,153 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/attempts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminAttempts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Atomic audited change and durable work intent. Acceptance does not imply publication. Never automatically replay after session expiry or conflict. */
+        post: operations["applyAdminChange"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminConfiguration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/instance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminInstance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/jobs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Trusted proxy authenticated admin session (never cache) */
+        get: operations["getAdminSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Static validation only; does not acquire a repository or publish. Requires browser same-origin protection. */
+        post: operations["validateAdminChange"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/sha256/{digest}": {
         parameters: {
             query?: never;
@@ -408,6 +555,141 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AdminActor: {
+            issuer: string;
+            subject: string;
+        };
+        AdminAttempt: {
+            actor: components["schemas"]["AdminActor"];
+            attempt: number;
+            change_operation?: string;
+            /** Format: int64 */
+            configuration_revision: number;
+            expected_publication_id?: string;
+            job_id: string;
+            marketplace_id: string;
+            operation: string;
+            /** @enum {string} */
+            outcome: "started" | "failed" | "superseded" | "succeeded";
+            parent_job_id?: string;
+            /** Format: int64 */
+            policy_revision: number;
+            publication_id?: string;
+            /** Format: date-time */
+            recorded_at: string;
+            /** Format: int64 */
+            registry_generation: number;
+            registry_id: string;
+            request_id?: string;
+            /** Format: int64 */
+            sequence: number;
+            worker_id: string;
+        };
+        AdminChange: {
+            actor: components["schemas"]["AdminActor"];
+            /** Format: date-time */
+            created_at: string;
+            idempotency_key: string;
+            job_ids: string[] | null;
+            marketplace_id: string;
+            operation: string;
+            /** Format: int64 */
+            parent_revision: number;
+            reason: string;
+            request_digest: string;
+            request_id: string;
+            /** Format: int64 */
+            revision: number;
+            snapshot: components["schemas"]["AdminSnapshot"];
+        };
+        AdminConfiguration: {
+            /** Format: int64 */
+            revision: number;
+            snapshot: components["schemas"]["AdminSnapshot"];
+        };
+        AdminInstance: {
+            management_mode: string;
+            name: string;
+            /** Format: int64 */
+            revision: number;
+            version: string;
+            worker_status: string;
+        };
+        AdminJob: {
+            attempt: number;
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            kind: string;
+            max_attempts: number;
+            status: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AdminLicensePolicy: {
+            allowlist: string[] | null;
+            /** @enum {string} */
+            undeclared: "reject" | "warn" | "allow" | "";
+        };
+        AdminProfiles: {
+            profiles: {
+                allowed_origins: string[];
+                id: string;
+            }[];
+            source_harnesses: string[];
+        };
+        AdminProposal: {
+            /** @enum {string} */
+            action: "upsert_registry" | "set_policy" | "pause" | "resume" | "withdraw" | "restore" | "retire" | "restore_retired" | "reindex";
+            confirm_origin_move?: boolean;
+            confirm_unrestricted?: boolean;
+            license_policy?: components["schemas"]["AdminLicensePolicy"];
+            reason: string;
+            registry?: components["schemas"]["AdminRegistry"];
+            registry_id?: string;
+        };
+        AdminRegistry: {
+            /** @enum {string} */
+            acquisition: "index-only" | "mirror";
+            aliases: string[] | null;
+            /** Format: int64 */
+            generation: number;
+            historical_origins: string[] | null;
+            id: string;
+            license: string;
+            license_override?: components["schemas"]["AdminLicensePolicy"];
+            lifecycle: string;
+            non_license_overrides?: {
+                [key: string]: unknown;
+            };
+            origin: string;
+            paused: boolean;
+            profile_id?: string;
+            publisher: {
+                name?: string;
+                url?: string;
+            };
+            ref: string;
+            retired: boolean;
+            roots: {
+                path: string;
+                source_harness?: string;
+            }[] | null;
+            slug: string;
+            withdrawn: boolean;
+        };
+        AdminSession: {
+            actor: components["schemas"]["AdminActor"];
+            capabilities: string[];
+        };
+        AdminSnapshot: {
+            license_policy: components["schemas"]["AdminLicensePolicy"];
+            /** Format: int64 */
+            policy_revision: number;
+            registries: components["schemas"]["AdminRegistry"][];
+            source_fingerprint: string;
+            version: number;
+        };
         AssessmentFinding: {
             code: string;
             location?: components["schemas"]["FindingLocation"];
@@ -693,8 +975,29 @@ export interface components {
             instance_id: string;
         };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description Stable error; no-store. 401 unauthenticated, 403 forbidden, 428 precondition_required, 409 revision_conflict or idempotency_conflict, 422 invalid_configuration. */
+        AdminError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": {
+                    code: string;
+                    fields?: {
+                        [key: string]: string;
+                    };
+                    message: string;
+                };
+            };
+        };
+    };
+    parameters: {
+        AdminIdempotency: string;
+        AdminMarker: "1";
+        /** @description Quoted managed revision read from configuration */
+        AdminRevision: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -719,6 +1022,233 @@ export interface operations {
                     "application/json": components["schemas"]["WellKnown"];
                 };
             };
+        };
+    };
+    getAdminActivity: {
+        parameters: {
+            query?: {
+                before?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Append-only changes; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        changes: components["schemas"]["AdminChange"][];
+                    };
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    getAdminAttempts: {
+        parameters: {
+            query?: {
+                before?: number;
+                job_id?: string;
+                limit?: number;
+                registry_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded refresh attempt history; no-store. A nonzero next_before is the cursor for an older page, which may be empty. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        attempts: components["schemas"]["AdminAttempt"][];
+                        /** Format: int64 */
+                        next_before: number;
+                    };
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    applyAdminChange: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["AdminIdempotency"];
+                /** @description Quoted managed revision read from configuration */
+                "If-Match": components["parameters"]["AdminRevision"];
+                "X-Marketplace-Admin": components["parameters"]["AdminMarker"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProposal"];
+            };
+        };
+        responses: {
+            /** @description Accepted configuration or operational request; Cache-Control no-store */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminChange"];
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    getAdminConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Managed configuration; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminConfiguration"];
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    getAdminInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sanitized deployment information; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminInstance"];
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    getAdminJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe job status without payloads or raw logs; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJob"];
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    getAdminProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Opaque approved references only; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProfiles"];
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    getAdminSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authenticated session; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminSession"];
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    validateAdminChange: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["AdminIdempotency"];
+                /** @description Quoted managed revision read from configuration */
+                "If-Match": components["parameters"]["AdminRevision"];
+                "X-Marketplace-Admin": components["parameters"]["AdminMarker"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProposal"];
+            };
+        };
+        responses: {
+            /** @description Statically valid proposal; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {boolean} */
+                        valid: true;
+                        warnings: string[];
+                    };
+                };
+            };
+            default: components["responses"]["AdminError"];
         };
     };
     getArtifact: {

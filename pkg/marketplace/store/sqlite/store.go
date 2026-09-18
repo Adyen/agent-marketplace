@@ -454,7 +454,7 @@ func (s *Store) RegistryHistory(ctx context.Context, id store.RegistryID) ([]sto
 	rows, err := s.q.QueryContext(ctx,
 		fmt.Sprintf(`SELECT registry_id, ref, roots, revision_commit, manifest_digest, acquisition,
 		        mirrored_artifact_digest, source_origin, occurred_at
-		 FROM registry_occurrences WHERE registry_id=? ORDER BY occurred_at DESC, revision_commit DESC
+		 FROM all_registry_occurrences WHERE registry_id=? ORDER BY occurred_at DESC, occurrence_key DESC
 		 LIMIT %d`, store.MaxRegistryHistoryEntries),
 		id,
 	)

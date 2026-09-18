@@ -16,7 +16,8 @@ func (s *Store) GetRegistryOccurrence(ctx context.Context, registry store.Regist
 	row := s.q.QueryRowContext(ctx,
 		`SELECT registry_id, ref, roots, revision_commit, manifest_digest, acquisition,
 		        mirrored_artifact_digest, source_origin, occurred_at
-		 FROM registry_occurrences WHERE registry_id=$1 AND revision_commit=$2`,
+		 FROM all_registry_occurrences WHERE registry_id=$1 AND revision_commit=$2
+		 ORDER BY CASE WHEN occurrence_key LIKE 'legacy:%' THEN 0 ELSE 1 END, occurred_at DESC, occurrence_key DESC LIMIT 1`,
 		registry, commit,
 	)
 	return s.scanRegistryOccurrence(row)
@@ -166,8 +167,8 @@ func (s *Store) LatestRegistryOccurrence(ctx context.Context, registry store.Reg
 	row := s.q.QueryRowContext(ctx,
 		`SELECT so.registry_id, so.ref, so.roots, so.revision_commit, so.manifest_digest, so.acquisition,
 		        so.mirrored_artifact_digest, so.source_origin, so.occurred_at
-		 FROM registry_heads sh JOIN registry_occurrences so
-		   ON so.registry_id=sh.registry_id AND so.revision_commit=sh.revision_commit
+		 FROM effective_registry_heads sh JOIN all_registry_occurrences so
+		   ON so.registry_id=sh.registry_id AND so.occurrence_key=sh.occurrence_key
 		 WHERE sh.registry_id=$1`, registry)
 	return s.scanRegistryOccurrence(row)
 }
@@ -678,11 +679,11 @@ func (s *Store) CheckIntegrity(ctx context.Context, blobs store.BlobStore) error
 		 WHERE archive_digest IS NOT NULL AND archive_digest != ''
 		UNION
 		 SELECT DISTINCT manifest_digest AS digest, 0 AS inspection
-		 FROM registry_occurrences
+		 FROM all_registry_occurrences
 		 WHERE manifest_digest IS NOT NULL AND manifest_digest != ''
 		UNION
 		 SELECT DISTINCT mirrored_artifact_digest AS digest, 0 AS inspection
-		 FROM registry_occurrences
+		 FROM all_registry_occurrences
 		 WHERE mirrored_artifact_digest IS NOT NULL AND mirrored_artifact_digest != ''
 		UNION
 		 SELECT DISTINCT manifest_digest AS digest, 0 AS inspection

@@ -12,7 +12,7 @@ The API and worker can start concurrently. SQLite and PostgreSQL migration runne
 
 ## Network boundary
 
-The application has no built-in user authentication or authorization. Treat every public API and browser route as unauthenticated. Put it behind a TLS-terminating, authenticated network boundary, or keep it on a private network. Restrict the proxy port with firewall/security-group policy.
+Public catalog APIs have no built-in user authentication or authorization. Put them behind a TLS-terminating, authenticated network boundary, or keep them on a private network. Restrict the proxy port with firewall/security-group policy. The optional administration API separately authorizes identities asserted by an explicitly trusted immediate proxy; it does not provide accounts or an SSO login flow.
 
 `operations_listen` serves `/readyz` and `/metrics`. It defaults to loopback and must not be published through a container port or reverse proxy; the public listener returns 404 for both paths. If operators need metrics, collect them from a private sidecar/network path with its own access controls. `/healthz` is a liveness endpoint and does not prove storage readiness. Container API healthchecks use the private `/readyz` listener.
 
@@ -61,6 +61,45 @@ registries:
 ```
 
 When distinct registry paths publish the same kind and registry-local name, ingestion keeps the first occurrence in configured root order and logs `marketplace.ingest.duplicate-resource` with both paths and the remediation to assign distinct registry-local names. Repeating the same path remains an operator configuration error.
+
+## Exercise database-managed administration in an isolated deployment
+
+**Implementation status:** the managed backend can run after explicit adoption. The complete admin product is still experimental: acquisition previews, full resource diagnostics/impact analysis, and complete browser acceptance are not finished. Validate this procedure against a disposable copy of metadata and blobs first; this is not a production rollout approval.
+
+### Prepare the deployment and identity boundary
+
+1. Use the same managed-capable release for every API, worker, and maintenance process. Do not mix old workers with an adopted database.
+2. Keep storage, listener addresses, instance identity, global non-license limits, and deployment revocations in operator YAML. Add `management.mode: database` and `management.allowed_origins`, listing exact allowed protocol/host/port authorities without repository paths. Database mode refuses to start before adoption.
+3. If a registry uses credentials or a private CA, provision an entry in `management.profiles` with its `allowed_origins`, `credentials`, and optional `ca_file`. Adoption requires an unambiguous profile matching the registry's existing credential/trust references. Mount those references on every worker. Do not send secret values or filesystem paths to the browser.
+4. Configure `admin.enabled`, an HTTPS `admin.origin` without a path, `admin.trusted_proxies` containing the immediate proxy CIDRs, `admin.issuer`, `admin.subject_header`, `admin.groups_header`, and `admin.admin_groups`. The proxy must strip client-supplied identity headers and replace them after authentication. The subject header contains one stable subject; the groups header contains a JSON string array, such as `["marketplace-admins"]`, not a comma-separated list. Never trust a forwarded client IP as the immediate peer.
+5. Protect both `/api/v1/admin/**` and the browser's `/marketplace/admin/**` routes at the gateway, and prevent direct access around that gateway. Keep admin requests same-origin. Public SSR must not synthesize or forward an admin identity. Admin reads and writes are private and must not be shared-cacheable.
+
+### Adopt during a maintenance window
+
+1. Stop **all** API and worker processes. Take coordinated metadata and blob backups using the [backup guide](marketplace-backup-restore.md).
+2. Invalidate controllable shared caches that may contain previously public immutable artifacts. Confirm the proxy will revalidate managed content through the API, including HEAD and conditional requests, and cannot bypass availability through direct object-store URLs. Previously downloaded content and browser caches cannot be recalled.
+3. Retain every stored registry identity in the adoption YAML. Run the maintenance command with an operator identity, a reason, and a stable retry key:
+
+   ```sh
+   agent-marketplace serve adopt --config marketplace.yaml \
+     --actor operator-id --reason 'Adopt catalog management' \
+     --idempotency-key maintenance-cutover-1 --confirm-maintenance
+   ```
+
+   Expected output begins `Adopted marketplace configuration at revision 1.` Ownership backfill runs in bounded batches before the authority transaction. The acknowledgement flag does not independently prove shutdown, backup, or cache invalidation. If any step fails, keep processes stopped and resolve the failure; retry with the same request inputs and key rather than assuming adoption did not commit.
+
+4. Start API and worker roles with `management.mode: database`. Confirm private `/readyz` succeeds, the authenticated configuration read returns the adopted revision, and an untrusted direct admin request is denied. Missing/corrupt authority state or missing runtime store capabilities must block startup. File mode cannot reopen an adopted database.
+5. Verify an indexing attempt and a public resource read. In an isolated acceptance fixture, pause refresh and confirm existing content still serves, withdraw it and confirm downloads are denied, then restore availability and confirm the registry remains paused. A successful configuration request is not a successful publication.
+
+### Operate after adoption
+
+Database settings own registry configuration, lifecycle, and license policy. Restarting with stale registry YAML must not overwrite them. Remove obsolete registry entries from runtime YAML after preserving the adoption input separately; configuration loading still validates any entries left in that file. Keep deployment-owned profile definitions and non-license limits current.
+
+`serve reindex --config marketplace.yaml` selects active managed registries, not the YAML registry list. A named registry is resolved against its managed ID or current slug and remains subject to worker lifecycle checks. Disabled/withdrawn registries are not implicitly resumed. Scheduled and manual work reads live settings and rechecks publication authority transactionally.
+
+Use configuration activity and `/api/v1/admin/attempts` separately: an accepted change can have a failed or superseded attempt, and a failed attempt does not erase its previous successful publication. Attempt history accepts `registry_id`, `job_id`, a `before` cursor, and a limit of 1–100. It is not a worker heartbeat.
+
+To remove access to administration, set `admin.enabled: false`; keep database mode. Disabling the interface does **not** restore YAML authority. Returning to file authority needs a separately reviewed export/cutover. Do not delete the adoption marker or restore metadata independently of its associated blobs.
 
 ## License policy
 

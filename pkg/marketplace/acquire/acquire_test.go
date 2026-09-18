@@ -495,6 +495,64 @@ func TestTokenWorkspaceNeedsNoExecutableTemporaryFiles(t *testing.T) {
 	}
 }
 
+func TestCloneRejectsAuthenticatedHTTPRedirects(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("NO_PROXY", "127.0.0.1,localhost")
+	repo := createGitRepo(t, map[string]string{"README.md": "hello"})
+	runGitTestCommand(t, repo, "git", "update-server-info")
+	var destinationRequests, authenticated atomic.Int64
+	files := http.FileServer(http.Dir(filepath.Join(repo, ".git")))
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		destinationRequests.Add(1)
+		user, pass, ok := r.BasicAuth()
+		if ok && user == "synthetic-token" && pass == "synthetic-token" {
+			authenticated.Add(1)
+		}
+		files.ServeHTTP(w, r)
+	}))
+	defer destination.Close()
+	cred := Credentials{Token: "synthetic-token"}
+	res, err := Clone(context.Background(), destination.URL, "main", cred, Limits{}, time.Minute)
+	if err != nil {
+		t.Fatalf("direct authenticated acquisition: %v", err)
+	}
+	defer func() { _ = res.Release() }()
+	data, err := os.ReadFile(filepath.Join(res.Dir, "README.md"))
+	if err != nil || string(data) != "hello" || authenticated.Load() == 0 {
+		t.Fatalf("direct acquisition control failed: data=%q err=%v authenticated=%d", data, err, authenticated.Load())
+	}
+	for _, status := range []int{301, 302, 303, 307, 308} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			var sourceAuthenticated atomic.Int64
+			target := strings.Replace(destination.URL, "127.0.0.1", "localhost", 1)
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				user, pass, ok := r.BasicAuth()
+				if ok && user == "synthetic-token" && pass == "synthetic-token" {
+					sourceAuthenticated.Add(1)
+				}
+				http.Redirect(w, r, target+r.URL.RequestURI(), status)
+			}))
+			defer source.Close()
+			before := destinationRequests.Load()
+			result, err := Clone(context.Background(), source.URL, "main", cred, Limits{}, time.Minute)
+			if result != nil {
+				_ = result.Release()
+			}
+			if err == nil {
+				t.Error("redirected acquisition succeeded")
+			}
+			if sourceAuthenticated.Load() == 0 {
+				t.Error("redirect fixture did not receive an authenticated request")
+			}
+			if got := destinationRequests.Load() - before; got != 0 {
+				t.Errorf("unauthorized redirect destination received %d requests", got)
+			}
+		})
+	}
+}
+
 func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
 	sourceRepo := createGitRepo(t, map[string]string{
 		"README.md": "hello",
@@ -541,6 +599,14 @@ func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
 	}
 
 	origin := server.URL + repoPath
+	t.Setenv("GIT_SSL_NO_VERIFY", "1")
+	untrusted, err := Clone(context.Background(), origin, "main", Credentials{Token: "synthetic-token"}, Limits{}, time.Minute)
+	if untrusted != nil {
+		_ = untrusted.Release()
+	}
+	if err == nil || accepted.Load() != 0 {
+		t.Fatal("acquisition accepted an untrusted TLS certificate")
+	}
 	res, err := Clone(context.Background(), origin, "main", Credentials{Token: "  synthetic-token\n", CAFile: caFile}, Limits{}, time.Minute)
 	if err != nil {
 		t.Fatalf("Clone: %v", err)

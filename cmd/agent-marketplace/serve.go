@@ -112,7 +112,7 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 	cmd.Flags().StringVar(&role, "role", "all", "Server role (worker|api|all)")
 	_ = cmd.MarkFlagRequired("config")
 
-	cmd.AddCommand(newServeReindexCmd())
+	cmd.AddCommand(newServeReindexCmd(), newServeAdoptCmd())
 	return cmd
 }
 
@@ -145,7 +145,7 @@ registry is provided, all configured registries are reindexed.`,
 				slog.Error("reindex failed", "reason", "load operator config", "error", err)
 				return fmt.Errorf("load operator config: %w", err)
 			}
-			if len(args) == 1 && !hasRegistry(cfg, args[0]) {
+			if cfg.Management.Mode != "database" && len(args) == 1 && !hasRegistry(cfg, args[0]) {
 				err := fmt.Errorf("registry %q not found in config", args[0])
 				slog.Error("reindex failed", "registry", args[0], "error", err)
 				return err
@@ -174,29 +174,17 @@ registry is provided, all configured registries are reindexed.`,
 			ctx, cancel := context.WithTimeout(ctx, time.Hour)
 			defer cancel()
 
+			targets, err := reindexTargets(ctx, meta, cfg, registryArg)
+			if err != nil {
+				return fmt.Errorf("select reindex targets: %w", err)
+			}
 			var reindexErrs []error
-			switch len(args) {
-			case 0:
-				for _, registry := range cfg.Registries {
-					slugOrID := registry.Slug
-					if slugOrID == "" {
-						slugOrID = registry.ID
-					}
-					slog.Info("reindexing registry", "registry", registry.ID, "slug_or_id", slugOrID)
-					if err := worker.Reindex(ctx, deps, cfg, slugOrID); err != nil {
-						slog.Error("reindex failed", "registry", registry.ID, "error", err)
-						reindexErrs = append(reindexErrs, fmt.Errorf("reindex registry %q: %w", registry.ID, err))
-					}
+			for _, target := range targets {
+				slog.Info("reindexing registry", "registry", target)
+				if err := worker.Reindex(ctx, deps, cfg, target); err != nil {
+					slog.Error("reindex failed", "registry", target, "error", err)
+					reindexErrs = append(reindexErrs, fmt.Errorf("reindex registry %q: %w", target, err))
 				}
-			case 1:
-				slog.Info("reindexing registry", "registry", args[0])
-				if err := worker.Reindex(ctx, deps, cfg, args[0]); err != nil {
-					slog.Error("reindex failed", "registry", args[0], "error", err)
-					return fmt.Errorf("reindex registry %q: %w", args[0], err)
-				}
-			default:
-				slog.Error("reindex failed", "reason", "too many arguments")
-				return errors.New("accepts at most one registry slug or id")
 			}
 
 			if err := meta.CheckIntegrity(ctx, blobs); err != nil {
@@ -206,7 +194,7 @@ registry is provided, all configured registries are reindexed.`,
 			if err := errors.Join(reindexErrs...); err != nil {
 				return err
 			}
-			slog.Info("reindex complete", "registries", len(cfg.Registries))
+			slog.Info("reindex complete", "registries", len(targets))
 			return nil
 		},
 	}

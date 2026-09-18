@@ -60,6 +60,21 @@ func (s *Store) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, er
 	return data, nil
 }
 
+func (s *Store) GetBounded(ctx context.Context, digest store.ArchiveDigest, limit int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(s.path(digest))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open bounded blob: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	return store.ReadBlobBounded(file, limit)
+}
+
 // Put stores data under the given digest using a temporary file and atomic
 // rename. Existing content at the same digest is replaced.
 func (s *Store) Put(ctx context.Context, digest store.ArchiveDigest, data []byte) error {

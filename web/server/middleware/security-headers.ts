@@ -5,6 +5,12 @@ import { basePolicy, generateCspNonce, imagePolicy, scriptPolicy } from '../util
 
 export default defineEventHandler(event => {
   const config = useRuntimeConfig(event)
+  const browserBase = String(config.app.baseURL || '/').replace(/\/$/, '')
+  const adminPath = `${browserBase}/admin`
+  if (event.path.split('?')[0] === adminPath || event.path.startsWith(`${adminPath}/`)) {
+    setResponseHeader(event, 'Cache-Control', 'no-store')
+    setResponseHeader(event, 'X-Robots-Tag', 'noindex, nofollow, noarchive')
+  }
   const rawApiBase = String(config.public.apiBase ?? '/').trim()
   const apiBase = normalizeApiBase(rawApiBase)
 

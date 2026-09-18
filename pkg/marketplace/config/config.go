@@ -111,6 +111,8 @@ func (d Duration) Duration() time.Duration { return time.Duration(d) }
 
 // Config is the top-level Marketplace operator configuration.
 type Config struct {
+	Admin              Administration    `yaml:"admin"`
+	Management         Management        `yaml:"management"`
 	APIVersion         string            `yaml:"apiVersion"`
 	Instance           Instance          `yaml:"instance"`
 	Listen             string            `yaml:"listen"`
@@ -331,6 +333,9 @@ func LoadConfig(path string) (Config, error) {
 }
 
 func applyDefaults(cfg *Config) {
+	if cfg.Management.Mode == "" {
+		cfg.Management.Mode = "file"
+	}
 	if cfg.Listen == "" {
 		cfg.Listen = defaultListen
 	}
@@ -385,6 +390,12 @@ func applyDefaults(cfg *Config) {
 // Validate returns a combined error for invalid configuration.
 func (cfg Config) Validate() error {
 	var errs []error
+	if err := cfg.Admin.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := cfg.Management.Validate(); err != nil {
+		errs = append(errs, err)
+	}
 	if cfg.APIVersion != apiVersionV1 {
 		errs = append(errs, fmt.Errorf("apiVersion must be %q", apiVersionV1))
 	}
