@@ -5,12 +5,17 @@ package main
 // regression in either verb is caught by the same test.
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 // configContainsSkill reports whether any registry entry in cfg includes the
@@ -896,6 +901,265 @@ allowed_registries: []
 
 	if factoryPresent {
 		assertFactorySkillAbsent(t, repoRoot, "vm-lifecycle")
+	}
+}
+
+type blockedRemovalAcquisitionFixture struct {
+	home, repo   string
+	originA      string
+	originB      string
+	originC      string
+	configPath   string
+	lockPath     string
+	aPath, bPath string
+	cPath        string
+}
+
+func setupBlockedRemovalAcquisitionFixture(t *testing.T) blockedRemovalAcquisitionFixture {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".state"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	originA, workingA := createBareRepoWithWorkingClone(t, "blocked-a.git")
+	writeSkill(t, workingA, "skill-a", "BODY-A", nil)
+	commitAndPushAll(t, workingA, "seed A")
+	originB, workingB := createBareRepoWithWorkingClone(t, "blocked-b.git")
+	writeSkill(t, workingB, "skill-b", "BODY-B", nil)
+	commitAndPushAll(t, workingB, "seed B")
+	originC, workingC := createBareRepoWithWorkingClone(t, "blocked-c.git")
+	writeSkill(t, workingC, "skill-c", "BODY-C", nil)
+	commitAndPushAll(t, workingC, "seed C")
+	repo := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
+	writeConfig(t, configPath, "\nregistries:\n  - url: "+originA+"\n    ref: main\n    default: true\n  - url: "+originB+"\n    ref: main\n    default: true\n")
+	withWorkingDir(t, repo)
+	if out, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, out)
+	}
+	aPath := filepath.Join(repo, ".factory", "skills", "skill-a", "SKILL.md")
+	bPath := filepath.Join(repo, ".factory", "skills", "skill-b", "SKILL.md")
+	for path, body := range map[string]string{aPath: "BODY-A", bPath: "BODY-B"} {
+		data, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(data), body) {
+			t.Fatalf("installed skill %s = %q err=%v", path, data, err)
+		}
+	}
+	return blockedRemovalAcquisitionFixture{home: home, repo: repo, originA: originA, originB: originB, originC: originC, configPath: configPath, lockPath: filepath.Join(repo, ".agents", "lock.yaml"), aPath: aPath, bPath: bPath, cPath: filepath.Join(repo, ".factory", "skills", "skill-c", "SKILL.md")}
+}
+
+func addBlockedRemovalThirdRegistry(t *testing.T, fixture blockedRemovalAcquisitionFixture) {
+	t.Helper()
+	writeConfig(t, fixture.configPath, "\nregistries:\n  - url: "+fixture.originA+"\n    ref: main\n    default: true\n  - url: "+fixture.originB+"\n    ref: main\n    default: true\n  - url: "+fixture.originC+"\n    ref: main\n    default: true\n")
+}
+
+func TestRemoveBlockedRegistryRefusesNewAcquisition(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := setupBlockedRemovalAcquisitionFixture(t)
+	addBlockedRemovalThirdRegistry(t, fixture)
+	writeConfig(t, filepath.Join(fixture.home, ".agents", "config.yaml"), "\nharnesses: [factory]\nallowed_registries: []\n")
+	beforeConfig, err := os.ReadFile(fixture.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeLock, err := os.ReadFile(fixture.lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeA, err := os.ReadFile(fixture.aPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeB, err := os.ReadFile(fixture.bPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acquisitions atomic.Int32
+	originalHook := lockSnapshotAcquiredHook
+	lockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
+	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+	out, err := executeCommand("remove", "--from", fixture.originA)
+	var lifecycle *lockLifecycleError
+	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.offline-resolution" {
+		t.Fatalf("remove error = %v, want lock.offline-resolution\n%s", err, out)
+	}
+	if acquisitions.Load() != 0 {
+		t.Fatalf("snapshot acquisitions = %d", acquisitions.Load())
+	}
+	afterConfig, configErr := os.ReadFile(fixture.configPath)
+	afterLock, lockErr := os.ReadFile(fixture.lockPath)
+	if configErr != nil || lockErr != nil || !bytes.Equal(beforeConfig, afterConfig) || !bytes.Equal(beforeLock, afterLock) {
+		t.Fatalf("failed removal changed config/lock: configErr=%v lockErr=%v", configErr, lockErr)
+	}
+	afterA, aErr := os.ReadFile(fixture.aPath)
+	afterB, bErr := os.ReadFile(fixture.bPath)
+	if aErr != nil || bErr != nil || !bytes.Equal(beforeA, afterA) || !bytes.Equal(beforeB, afterB) {
+		t.Fatalf("existing output bytes changed: aErr=%v bErr=%v", aErr, bErr)
+	}
+	if _, err := os.Stat(fixture.cPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("new registry output exists: %v", err)
+	}
+}
+
+func TestRemoveBlockedRegistryMissingExactSnapshot(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := setupBlockedRemovalAcquisitionFixture(t)
+	writeConfig(t, filepath.Join(fixture.home, ".agents", "config.yaml"), "\nharnesses: [factory]\nallowed_registries: []\n")
+	beforeConfig, err := os.ReadFile(fixture.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeLock, err := os.ReadFile(fixture.lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeA, err := os.ReadFile(fixture.aPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeB, err := os.ReadFile(fixture.bPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeBInfo, err := os.Lstat(fixture.bPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeBLink := ""
+	if beforeBInfo.Mode()&os.ModeSymlink != 0 {
+		beforeBLink, err = os.Readlink(fixture.bPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	doc, err := lockfile.Read(fixture.lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalB, err := canonicalRegistryURL(fixture.originB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := ""
+	for _, registry := range doc.Registries {
+		if registry.URL != canonicalB {
+			continue
+		}
+		oid, err := cache.ParseGitOID(registry.Commit.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err = cache.OpenExactGit(canonicalB, oid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		break
+	}
+	if snapshot == "" {
+		t.Fatal("B exact snapshot not found in seeded lock")
+	}
+	if err := os.RemoveAll(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var acquisitions atomic.Int32
+	originalHook := lockSnapshotAcquiredHook
+	lockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
+	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+	out, err := executeCommand("remove", "--from", fixture.originA)
+	var lifecycle *lockLifecycleError
+	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.offline-snapshot-missing" {
+		t.Fatalf("remove error = %v, want lock.offline-snapshot-missing\n%s", err, out)
+	}
+	if acquisitions.Load() != 0 {
+		t.Fatalf("snapshot acquisitions = %d", acquisitions.Load())
+	}
+	afterConfig, configErr := os.ReadFile(fixture.configPath)
+	afterLock, lockErr := os.ReadFile(fixture.lockPath)
+	if configErr != nil || lockErr != nil || !bytes.Equal(beforeConfig, afterConfig) || !bytes.Equal(beforeLock, afterLock) {
+		t.Fatalf("failed removal changed config/lock: configErr=%v lockErr=%v", configErr, lockErr)
+	}
+	afterA, aErr := os.ReadFile(fixture.aPath)
+	if aErr != nil || !bytes.Equal(beforeA, afterA) {
+		t.Fatalf("A output changed: %q err=%v", afterA, aErr)
+	}
+	afterB, bErr := os.ReadFile(fixture.bPath)
+	if bErr == nil {
+		if !bytes.Equal(beforeB, afterB) {
+			t.Fatalf("B output changed: %q", afterB)
+		}
+	} else {
+		if !errors.Is(bErr, os.ErrNotExist) || beforeBInfo.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("B output unreadable: %v", bErr)
+		}
+		afterBInfo, err := os.Lstat(fixture.bPath)
+		if err != nil || afterBInfo.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("B link changed: %v/%v", afterBInfo, err)
+		}
+		afterBLink, err := os.Readlink(fixture.bPath)
+		if err != nil || afterBLink != beforeBLink {
+			t.Fatalf("B link target changed: %q/%v", afterBLink, err)
+		}
+	}
+}
+
+func TestRemoveFromBlockedWarmLockedRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := setupBlockedRemovalAcquisitionFixture(t)
+	writeConfig(t, filepath.Join(fixture.home, ".agents", "config.yaml"), "\nharnesses: [factory]\nallowed_registries: []\n")
+	beforeB, err := os.ReadFile(fixture.bPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acquisitions atomic.Int32
+	originalHook := lockSnapshotAcquiredHook
+	lockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
+	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+	if out, err := executeCommand("remove", "--from", fixture.originA); err != nil {
+		t.Fatalf("remove blocked warm registry: %v\n%s", err, out)
+	}
+	if acquisitions.Load() != 0 {
+		t.Fatalf("snapshot acquisitions = %d", acquisitions.Load())
+	}
+	if _, err := os.Stat(fixture.aPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed registry output remains: %v", err)
+	}
+	afterB, err := os.ReadFile(fixture.bPath)
+	if err != nil || !bytes.Equal(beforeB, afterB) {
+		t.Fatalf("unrelated output changed: %q err=%v", afterB, err)
+	}
+}
+
+func TestRemoveFromAllowedRegistryMayAcquireNewDependency(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := setupBlockedRemovalAcquisitionFixture(t)
+	addBlockedRemovalThirdRegistry(t, fixture)
+	var acquisitions atomic.Int32
+	originalHook := lockSnapshotAcquiredHook
+	lockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
+	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+	if out, err := executeCommand("remove", "--from", fixture.originA); err != nil {
+		t.Fatalf("remove allowed registry: %v\n%s", err, out)
+	}
+	if acquisitions.Load() == 0 {
+		t.Fatal("allowed removal did not acquire newly configured registry")
+	}
+	if _, err := os.Stat(fixture.aPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed registry output remains: %v", err)
+	}
+	data, err := os.ReadFile(fixture.cPath)
+	if err != nil || !strings.Contains(string(data), "BODY-C") {
+		t.Fatalf("new allowed output = %q err=%v", data, err)
 	}
 }
 

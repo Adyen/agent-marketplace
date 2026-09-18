@@ -58,6 +58,9 @@ credential-bearing services, or build attack demonstrations during testing.
   exception used to remove a blocked registry also permits unrelated blocked
   resources to acquire or materialize. If so, narrow the exception without
   making blocked entries impossible to remove or altering required policy.
+  - [x] Prevent new acquisition when tolerating blocked-registry errors; require
+    existing cached input rather than silently omitting missing registries.
+  - [ ] Implement targeted removal without unrelated upserts or content rewrites.
 - [ ] **R1e: Web URLs with slash-containing refs.** Check GitHub/GitLab URL
   interpretation and explicit `--ref`/`--path` behavior. Reject genuinely
   ambiguous input or use existing explicit selectors; do not introduce
@@ -224,12 +227,27 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   content. Fail clearly before mutation if existing state cannot prove safe
   cleanup. Do not replace this with a blanket refusal while blocked entries
   remain.
-- R1d implementation remains open. Both remove and deinit currently use general
-  reconciliation, not a reusable targeted cleanup engine. The next layer must
-  use existing exact state and ownership evidence, separate removals from
-  upserts, and preserve unrelated shared-aggregate entries and ordinary files.
-  Tests must cover warm valid state, missing/corrupt state, multiple blocked
-  registries, drifted siblings, and no-network/no-unrelated-write assertions.
+- R1d acquisition guard implemented: when the removal exception actually
+  suppresses registry-policy errors, dependency reconciliation must reuse
+  existing exact state without acquisition. Catalog resolution uses the
+  existing strict read-only `Inspect` mode; missing cache is an error, not an
+  empty desired set. Marketplace resolution follows the existing offline mode.
+  Ordinary allowed-policy removals retain their normal behavior.
+- R1d regressions: the previous CLI acquired newly configured blocked content
+  while removing another registry. It now refuses before publishing the config
+  and lock in that case, with zero snapshot acquisitions and byte-identical
+  existing output. Warm locked removal succeeds; missing exact snapshots fail
+  closed; allowed-policy acquisition remains a positive control. Both default
+  and custom pipeline loaders reject absent cache without calling clone/pull.
+  Focused command/pipeline tests, lint, the full Go suite, and build pass.
+- R1d normal warm-lock benchmark: 78.90 to 79.77 ms/op (+1.11%); memory and
+  allocations have no statistically significant difference. This workload
+  includes local disk and normal command processing, not Internet access.
+- R1d targeted-write implementation remains open. Both remove and deinit still
+  use general reconciliation, not a removal-only engine. The next layer must
+  preserve unrelated shared-aggregate entries and ordinary files, including
+  drifted siblings, using existing ownership evidence. The acquisition guard
+  alone does not guarantee no unrelated upserts or no writes on every error.
 - Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
   planning and first three implementation layers are published as PRs 210–213
   in stack 214. Native compatibility and real-terminal TUI checks remain CI
