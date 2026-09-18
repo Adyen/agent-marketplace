@@ -254,14 +254,14 @@ test.describe('Marketplace browser discovery', () => {
         const resources = document.querySelector('[data-testid="resources-section"]')!.getBoundingClientRect()
         const footer = document.querySelector('footer')!.getBoundingClientRect()
         return {
-          viewportWidth: document.documentElement.clientWidth,
+          pageWidth: document.body.getBoundingClientRect().width,
           resources: { x: resources.x, y: resources.y, width: resources.width, bottom: resources.bottom },
           introBottom: intro.bottom,
           footerTop: footer.top,
         }
       })
       expect(sectionGeometry.resources.x).toBe(0)
-      expect(sectionGeometry.resources.width).toBe(sectionGeometry.viewportWidth)
+      expect(sectionGeometry.resources.width).toBe(sectionGeometry.pageWidth)
       expect(Math.abs(sectionGeometry.resources.y - sectionGeometry.introBottom)).toBeLessThanOrEqual(1)
       expect(Math.abs(sectionGeometry.resources.bottom - sectionGeometry.footerTop)).toBeLessThanOrEqual(1)
 
