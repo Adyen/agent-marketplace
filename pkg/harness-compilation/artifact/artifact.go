@@ -20,12 +20,14 @@ type Artifact struct {
 	Fragment          bool        // True if this is a fragment to be merged
 	FragmentKey       string      // Key for grouping fragments (empty if not a fragment)
 	FragmentOrderKey  string      // Optional deterministic ordering key within a fragment group
-	MergeWithExisting bool        // True if materialization merges into an existing file
-	// ExternalReconciliationRequired marks shared files whose ownership-safe
-	// patching belongs to the distribution layer rather than generic merging.
+	MergeWithExisting bool        // Deprecated: use Reconciliation.Mode instead.
+	// Reconciliation is the authoritative ownership policy for this artifact.
+	Reconciliation ReconciliationPolicy
+	// Deprecated compatibility fields. New compilers should set Reconciliation
+	// and consumers should use Policy() rather than these overlapping flags.
 	ExternalReconciliationRequired bool
-	ManagedByField                 string // Ownership marker field injected into managed entries
-	ManagedByValue                 string // Ownership marker value injected into managed entries
+	ManagedByField                 string
+	ManagedByValue                 string
 
 	// DedupeFragmentEntries makes JSON fragment merging collapse semantically
 	// identical entries instead of accumulating them, for the arrays of objects

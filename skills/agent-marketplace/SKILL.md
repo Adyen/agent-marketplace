@@ -45,7 +45,7 @@ agent-marketplace sync
 agent-marketplace status
 ```
 
-The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, and MCP servers. Configuration is the source of selection policy and generated locks provide exact Git acquisition; standalone artifacts are recreated by `agent-marketplace sync`, while shared native files are reconciled entry by entry. Keep generated harness output out of source control:
+The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, and MCP servers. Configuration is the source of selection policy and generated locks provide exact Git acquisition; standalone artifacts are recreated by `agent-marketplace sync`, while shared native files are reconciled entry by entry according to the target's marker or external ownership policy. Keep generated harness output out of source control:
 
 ```gitignore
 .agents/skills/
@@ -98,12 +98,12 @@ Subagents go to `agents/<name>.toml`, hooks to `hooks.json`, and MCP servers to
 `CODEX_HOME` never relocates the `.agents` partition.
 
 Codex is a full conversion target (`convert --from/--to codex`,
-`source_harness: codex`). `convert --to codex` requires a destination without
-pre-existing `.codex/hooks.json` or `.codex/config.toml`; choose a new or empty
-destination rather than overwriting shared configuration. Autodetection
-requires `.codex`; the shared `.agents/skills` layout alone is not
-Codex-specific. Rules, `AGENTS.md` generation, and emitted legacy
-`.codex/prompts` are excluded.
+`source_harness: codex`). One-shot `convert --to codex` is a non-owning,
+staged publication and requires a destination without pre-existing
+`.codex/hooks.json` or `.codex/config.toml`; choose a new or empty destination
+rather than overwriting shared configuration. Autodetection requires `.codex`;
+the shared `.agents/skills` layout alone is not Codex-specific. Rules,
+`AGENTS.md` generation, and emitted legacy `.codex/prompts` are excluded.
 
 `hooks.json` and `config.toml` are reconciled entry by entry through durable
 ownership state and mandatory backups. Missing or corrupt state preserves every
@@ -126,9 +126,9 @@ Roots are `<repo>/.devin` and `~/.config/devin`. Outputs:
 | Hook | repo `hooks.v1.json`; machine `config.json` → `hooks` member |
 | MCP server | `mcp_config.json` (same relative path in both scopes) |
 
-Rules are not a selectable kind and are unsupported by this target. The links shown above are the default; `materialization.mode: file` installs regular skill/command trees and subagent files through the same generic materializer used by other targets. Shared hooks and MCP configuration retain ownership-safe reconciliation in both modes.
+Rules are not a selectable kind and are unsupported by this target. The links shown above are the default; `materialization.mode: file` installs regular skill/command trees and subagent files through the same generic materializer used by other targets. During sync, shared hooks and MCP configuration retain ownership-safe reconciliation in both modes.
 
-Devin is also a full conversion target: `convert --from devin`, `convert --to devin`, and `source_harness: devin` all work. Autodetection prefers a `.devin` workspace marker over compatibility layouts; a direct user-shaped root (`skills/`, `agents/`, `config.json`, `mcp_config.json` at the top level) is never autodetected and needs an explicit `--from devin`.
+Devin is also a full conversion target: `convert --from devin`, `convert --to devin`, and `source_harness: devin` all work. One-shot conversion is non-owning and staged, and refuses existing shared destinations. Autodetection prefers a `.devin` workspace marker over compatibility layouts; a direct user-shaped root (`skills/`, `agents/`, `config.json`, `mcp_config.json` at the top level) is never autodetected and needs an explicit `--from devin`.
 
 ### Shared Devin files
 
@@ -352,6 +352,6 @@ repo intentionally tracks generated harness files.
 - **Private registries should use SSH URLs** — HTTPS can fail when terminal prompts are disabled.
 - **Cache keys are URL-dependent** — changing the registry URL creates a separate cache entry.
 - **No target selection means no target output** — if you expected `.devin/` or `.codex/` output and got none, check that the target is in the effective `harnesses:` list (`status` → HARNESS TARGETS).
-- **Devin needs symlinks** — with `materialization.mode: file` the Devin target is refused outright rather than writing regular files. Other targets in the same run are unaffected.
+- **Devin file mode writes regular trees** — `materialization.mode: file` writes regular Devin skill/command trees and subagent files, while shared hooks and MCP aggregates retain ownership-safe reconciliation.
 - **`CODEX_HOME` moves only Codex configuration** — it must be absolute; machine skills and converted commands remain under `~/.agents/skills`.
 - **Do not delete `~/.local/state/agent-marketplace` to "reset" Devin or Codex** — it is the ownership authority, not a cache. Without it every existing aggregate entry becomes unmanaged, so `sync` stops pruning what it previously wrote. Use `doctor --repair` to re-adopt instead.

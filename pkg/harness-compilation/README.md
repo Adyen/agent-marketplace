@@ -173,10 +173,11 @@ Codex-specific notes:
 - The ingester detects a `.codex` workspace and then reads sibling
   `.agents/skills`. `.agents/skills` by itself is cross-agent and is never
   autodetected as Codex; callers may still select `TargetCodex` explicitly.
-- Hook and MCP artifacts set `ExternalReconciliationRequired`: they are shared
-  native files, so consumers must reconcile entries rather than overwrite the
-  file. Rules and `AGENTS.md` generation are out of scope. Deprecated
-  `.codex/prompts/*.md` files are ingest-only commands and are never emitted.
+- Hook and MCP artifacts use `ReconciliationPolicy.Mode == ReconciliationExternal`:
+  they are shared native files, so owning consumers must reconcile entries;
+  generic `Materialize` refuses them rather than overwriting the file. Rules and
+  `AGENTS.md` generation are out of scope. Deprecated `.codex/prompts/*.md`
+  files are ingest-only commands and are never emitted.
 - The supported native schema was verified on 2026-08-19 against the official
   Codex documentation for [skills](https://developers.openai.com/codex/skills),
   [subagents](https://developers.openai.com/codex/subagents),

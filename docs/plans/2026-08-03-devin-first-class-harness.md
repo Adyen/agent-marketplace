@@ -72,7 +72,7 @@ sync or conversion. See `pkg/harness-compilation/diag/codes.md`.
 
 User-scope paths are relative to the user root. User hook reconciliation patches only the `hooks` member of `~/.config/devin/config.json` and preserves unrelated settings.
 
-Skills use directory symlinks and flat subagents use file symlinks. Both shapes are release requirements: 3000.3 runtime verification must cover project and user scopes before the target ships. There is no real-file fallback in this increment. Aggregate files are real files updated through syntax-preserving structural patches.
+Skills use directory symlinks and flat subagents use file symlinks by default; `materialization.mode: file` is also supported and writes regular skill/command trees and subagent files through the generic materializer. Both modes are supported release shapes: 3000.3 runtime verification must cover project and user scopes before the target ships. Aggregate files are real files updated through syntax-preserving structural patches, and their shared ownership reconciliation is independent of resource-file mode and remains safe in either mode.
 
 ### Bidirectional conversion
 

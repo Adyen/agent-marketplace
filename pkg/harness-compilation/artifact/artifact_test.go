@@ -51,6 +51,97 @@ func TestArtifactValidate(t *testing.T) {
 	}
 }
 
+func TestReconciliationPolicyValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		artifact Artifact
+		wantErr  bool
+	}{
+		{name: "replace", artifact: Artifact{Path: "out.txt"}},
+		{name: "marker", artifact: Artifact{Path: "out.json", Fragment: true, Reconciliation: ReconciliationPolicy{Mode: ReconciliationMarker, MarkerField: "_managed_by", MarkerValue: "marketplace"}}},
+		{name: "external", artifact: Artifact{Path: "shared.json", Fragment: true, Reconciliation: ReconciliationPolicy{Mode: ReconciliationExternal}}},
+		{name: "marker without fragment", artifact: Artifact{Path: "out.json", Reconciliation: ReconciliationPolicy{Mode: ReconciliationMarker, MarkerField: "_managed_by", MarkerValue: "marketplace"}}, wantErr: true},
+		{name: "external with marker", artifact: Artifact{Path: "shared.json", Fragment: true, Reconciliation: ReconciliationPolicy{Mode: ReconciliationExternal, MarkerField: "_managed_by", MarkerValue: "marketplace"}}, wantErr: true},
+		{name: "partial marker metadata", artifact: Artifact{Path: "out.json", Fragment: true, Reconciliation: ReconciliationPolicy{Mode: ReconciliationMarker, MarkerField: "_managed_by"}}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.artifact.ValidatePolicy()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidatePolicy() = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPolicy_ExplicitPolicyWinsOverLegacyFields(t *testing.T) {
+	a := Artifact{
+		Path:                           "shared.json",
+		Fragment:                       true,
+		MergeWithExisting:              true,
+		ExternalReconciliationRequired: false,
+		ManagedByField:                 "_managed_by",
+		ManagedByValue:                 "legacy",
+		Reconciliation:                 ReconciliationPolicy{Mode: ReconciliationExternal},
+	}
+	policy, err := a.Policy()
+	if err != nil {
+		t.Fatalf("Policy() = %v", err)
+	}
+	if !policy.IsExternal() {
+		t.Fatalf("Policy() = %+v, want external", policy)
+	}
+}
+
+func TestMergeFragments_PreservesExplicitExternalPolicy(t *testing.T) {
+	input := []Artifact{
+		{Path: "shared.json", Bytes: []byte(`{"one":1}`), Fragment: true, FragmentKey: "shared", MergeWithExisting: true, ManagedByField: "_managed_by", ManagedByValue: "legacy", Reconciliation: ReconciliationPolicy{Mode: ReconciliationExternal}},
+		{Path: "shared.json", Bytes: []byte(`{"two":2}`), Fragment: true, FragmentKey: "shared", Reconciliation: ReconciliationPolicy{Mode: ReconciliationExternal}},
+	}
+	merged, err := MergeFragments(input)
+	if err != nil {
+		t.Fatalf("MergeFragments: %v", err)
+	}
+	if len(merged) != 1 {
+		t.Fatalf("merged artifacts = %d, want 1", len(merged))
+	}
+	policy, err := merged[0].Policy()
+	if err != nil {
+		t.Fatalf("merged Policy() = %v", err)
+	}
+	if !policy.IsExternal() {
+		t.Fatalf("merged policy = %+v, want external", policy)
+	}
+}
+
+func TestMergeFragments_ExplicitPolicyOverridesLegacyAggregateFlags(t *testing.T) {
+	input := []Artifact{
+		{
+			Path:                           "config.json",
+			Bytes:                          []byte(`{"one":1}`),
+			Fragment:                       true,
+			FragmentKey:                    "config",
+			Reconciliation:                 ReconciliationPolicy{Mode: ReconciliationReplace},
+			ExternalReconciliationRequired: true,
+			MergeWithExisting:              true,
+			ManagedByField:                 "_managed_by",
+			ManagedByValue:                 "stale",
+		},
+		{Path: "config.json", Bytes: []byte(`{"two":2}`), Fragment: true, FragmentKey: "config"},
+	}
+	merged, err := MergeFragments(input)
+	if err != nil {
+		t.Fatalf("MergeFragments: %v", err)
+	}
+	policy, err := merged[0].Policy()
+	if err != nil {
+		t.Fatalf("merged Policy() = %v", err)
+	}
+	if policy != (ReconciliationPolicy{Mode: ReconciliationReplace}) {
+		t.Fatalf("merged policy = %+v, want explicit replacement", policy)
+	}
+}
+
 func TestMergeFragments_PassThrough(t *testing.T) {
 	input := []Artifact{
 		{Path: "skills/a.md", Bytes: []byte("skill-a")},
