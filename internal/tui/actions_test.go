@@ -1022,10 +1022,11 @@ func TestBuildRowsKeepsMarketplaceKindsSeparate(t *testing.T) {
 		URL: "https://market.example", InstanceID: "market-id", Resources: []config.MarketplaceResourcePin{skillPin, commandPin}, Source: config.RepoCommitted,
 	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
-	catalogKey := marketplaceCatalogKey(entry, skillPin)
+	skillCatalogKey := marketplaceCatalogKey(entry, skillPin)
+	commandCatalogKey := marketplaceCatalogKey(entry, commandPin)
 	resolved := []resolver.ResolvedArtifact{
-		{Entry: pkgcatalog.Entry{Kind: ir.KindSkill, Name: "shared"}, CatalogKey: catalogKey, IsMarketplace: true},
-		{Entry: pkgcatalog.Entry{Kind: ir.KindCommand, Name: "shared"}, CatalogKey: catalogKey, IsMarketplace: true},
+		{Entry: pkgcatalog.Entry{Kind: ir.KindSkill, Name: "shared"}, CatalogKey: skillCatalogKey, IsMarketplace: true},
+		{Entry: pkgcatalog.Entry{Kind: ir.KindCommand, Name: "shared"}, CatalogKey: commandCatalogKey, IsMarketplace: true},
 	}
 
 	rows := buildRows(cfg, nil, resolved, nil, materialize.DriftReport{})

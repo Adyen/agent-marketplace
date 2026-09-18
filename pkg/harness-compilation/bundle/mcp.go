@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
@@ -115,7 +117,7 @@ func (e *mcpServerEntry) UnmarshalJSON(data []byte) error {
 		OAuthResource     string            `json:"oauthResource"`
 	}
 	var k known
-	if err := json.Unmarshal(data, &k); err != nil {
+	if err := jsonutil.Unmarshal("", data, &k); err != nil {
 		return err
 	}
 	e.Command = k.Command
@@ -129,9 +131,20 @@ func (e *mcpServerEntry) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &all); err != nil {
 		return err
 	}
-	_, e.DisabledSet = all["disabled"]
-	for _, key := range []string{"command", "args", "env", "url", "transport", "headers", "disabled", "oauthClientId", "oauthClientSecret", "oauthResource"} {
-		delete(all, key)
+	e.DisabledSet = false
+	e.Extra = nil
+	knownKeys := []string{"command", "args", "env", "url", "transport", "headers", "disabled", "oauthClientId", "oauthClientSecret", "oauthResource"}
+	for key := range all {
+		for _, knownKey := range knownKeys {
+			if !strings.EqualFold(key, knownKey) {
+				continue
+			}
+			if knownKey == "disabled" {
+				e.DisabledSet = true
+			}
+			delete(all, key)
+			break
+		}
 	}
 	if len(all) > 0 {
 		e.Extra = make(map[string]any, len(all))

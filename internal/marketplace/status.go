@@ -474,7 +474,7 @@ func validateCachedIndexOnlyStagingFacts(cache *Cache, entry config.MarketplaceE
 		return
 	}
 	identity := indexOnlyIdentity(entry, pin)
-	resourcePath := cachedReconstructedResourcePath(cache, identity, pin.Kind)
+	resourcePath := cachedReconstructedResourcePath(cache, identity, pin.Kind, pin.Name)
 	if err := validateCachedReconstructedResource(cache, resourcePath); err != nil {
 		status.Cache = CacheStateError
 		status.State = PinStateUnavailable

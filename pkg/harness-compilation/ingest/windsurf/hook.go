@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
@@ -43,7 +44,7 @@ type hookRule struct {
 
 func (h *hookRule) UnmarshalJSON(data []byte) error {
 	var decoded hookFile
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	if err := jsonutil.Unmarshal("", data, &decoded); err != nil {
 		return err
 	}
 	*h = hookRule{
