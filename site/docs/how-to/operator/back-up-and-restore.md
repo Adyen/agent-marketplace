@@ -14,27 +14,72 @@ Metadata and blobs must be captured together: a metadata row points at an archiv
 
 This topology is single-process, so the only consistent backup is one taken while nothing is writing.
 
-### Back up
+In Docker Compose deployments, state is kept in the `marketplace-data` named volume (`/var/lib/agent-marketplace` inside the container), so backup and restore commands run via a temporary helper container mounting that volume. In native host deployments, commands run directly against the host path.
+
+### Docker Compose
+
+#### Back up
 
 ```bash
-docker compose stop app                     # or systemctl stop <unit>
+docker compose stop app
+
+mkdir -p ./backups
+docker run --rm \
+  -v agent-marketplace-sqlite_marketplace-data:/var/lib/agent-marketplace:ro \
+  -v "$PWD/backups:/backups" \
+  alpine sh -c '
+    apk add --no-cache sqlite >/dev/null && \
+    sqlite3 /var/lib/agent-marketplace/marketplace.db ".backup '\''/backups/marketplace-$(date +%F).db'\''" && \
+    tar -C /var/lib/agent-marketplace -czf "/backups/blobs-$(date +%F).tar.gz" blobs
+  '
+
+docker compose run --rm --no-deps --entrypoint /app/agent-marketplace app --version > "./backups/version-$(date +%F).txt"
+docker compose start app
+```
+
+If your Compose project uses a custom name, adjust the volume name accordingly (check with `docker volume ls -f name=marketplace-data`).
+
+#### Restore
+
+```bash
+docker compose stop app
+
+docker run --rm \
+  -v agent-marketplace-sqlite_marketplace-data:/var/lib/agent-marketplace \
+  -v "$PWD/backups:/backups" \
+  alpine sh -c '
+    cp /backups/marketplace-<date>.db /var/lib/agent-marketplace/marketplace.db && \
+    rm -rf /var/lib/agent-marketplace/blobs && \
+    tar -C /var/lib/agent-marketplace -xzf /backups/blobs-<date>.tar.gz && \
+    chown -R 1000:1000 /var/lib/agent-marketplace
+  '
+
+docker compose start app
+```
+
+### Native service (systemd)
+
+#### Back up
+
+```bash
+systemctl stop agent-marketplace
 sqlite3 /var/lib/agent-marketplace/marketplace.db ".backup '/backups/marketplace-$(date +%F).db'"
 tar -C /var/lib/agent-marketplace -czf "/backups/blobs-$(date +%F).tar.gz" blobs
 agent-marketplace --version > "/backups/version-$(date +%F).txt"
-docker compose start app
+systemctl start agent-marketplace
 ```
 
 Use SQLite's `.backup` command rather than `cp` on a live database file; if you snapshot the whole volume instead, snapshot the database and `blobs/` in the same snapshot.
 
-### Restore
+#### Restore
 
 ```bash
-docker compose stop app
+systemctl stop agent-marketplace
 cp /backups/marketplace-<date>.db /var/lib/agent-marketplace/marketplace.db
 rm -rf /var/lib/agent-marketplace/blobs
 tar -C /var/lib/agent-marketplace -xzf /backups/blobs-<date>.tar.gz
 chown -R 1000:1000 /var/lib/agent-marketplace
-docker compose start app
+systemctl start agent-marketplace
 ```
 
 Startup applies any pending migrations to the restored database, so restore with the same or a newer application version, never an older one.

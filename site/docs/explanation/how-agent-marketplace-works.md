@@ -36,9 +36,9 @@ Ingestion is semantic, not byte-exact: a Claude skill compiled back to Claude is
 | Checkout-only overrides | `.agents/config.local.yaml`, `.agents/lock.local.yaml` | gitignored | yes |
 | Cache | `~/.cache/agent-marketplace/` | no | yes; the next `sync` refetches the locked commits, which needs network access |
 | Ownership state for Devin and Codex aggregates | `$XDG_STATE_HOME/agent-marketplace/` | no | no; without it every existing aggregate entry is treated as unmanaged |
-| Generated harness output | `.claude/`, `.cursor/`, `~/.claude/`, … | gitignored | yes; recreated from config and lock |
+| Generated harness artifacts | Managed symlinks and generated files inside `.claude/`, `.cursor/`, `~/.claude/`, … | gitignored | yes; recreated from config and lock |
 
-Configuration is the source of truth. Everything in the last three rows can be rebuilt from the first four.
+Configuration and lockfiles are the source of truth for declared resources. Cache entries and demonstrably generated harness artifacts can be rebuilt by running `sync`. Never delete durable ownership state or handwritten harness files: deleting ownership state leaves existing aggregate entries unmanaged (refusing collisions and disabling pruning until repaired), and configuration cannot reconstruct handwritten settings or journaled safety backups.
 
 ## Related documentation
 

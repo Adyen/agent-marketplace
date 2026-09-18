@@ -38,7 +38,7 @@ registries:
         - some-team-skill
 ```
 
-The local layer merges above the committed one: `my-personal-skill` is added to the selection and `some-team-skill` is excluded for this checkout only. `apiVersion` and `harnesses` are not allowed in the local file. Only include resources that do not need to be shared.
+The local layer merges above the committed one: `my-personal-skill` is added to the selection and `some-team-skill` is excluded for this checkout only. `harnesses` is not allowed in the local file (`apiVersion` is optional for normal loading, though required if you run `agent-marketplace migrate`). Only include resources that do not need to be shared.
 
 ## 2. Sync
 

@@ -156,6 +156,18 @@ func TestDocsContract(t *testing.T) {
 			t.Errorf("marketplace-resource-locators.md: `mcpserver` not documented")
 		}
 	})
+
+	t.Run("section_helper", func(t *testing.T) {
+		docAtStart := "## Heading At Start\ncontent line 1\n# Next Top Heading\ncontent line 2"
+		if got := section(docAtStart, "## Heading At Start"); !strings.Contains(got, "content line 1") || strings.Contains(got, "content line 2") {
+			t.Errorf("expected heading at start to be parsed and stop at top heading, got %q", got)
+		}
+
+		docSub := "## Parent\n### Subsection\nsub content\n# Top Heading\ntop content"
+		if got := section(docSub, "### Subsection"); !strings.Contains(got, "sub content") || strings.Contains(got, "top content") {
+			t.Errorf("expected subsection to stop at top heading, got %q", got)
+		}
+	})
 }
 
 func repoRoot(t *testing.T) string {
@@ -186,14 +198,15 @@ func readDoc(t *testing.T, rel string) string {
 }
 
 func section(doc, heading string) string {
+	doc = "\n" + doc
 	idx := strings.Index(doc, "\n"+heading+"\n")
 	if idx < 0 {
 		return ""
 	}
 	body := doc[idx+1+len(heading)+1:]
-	stop := regexp.MustCompile("(?m)^## ")
+	stop := regexp.MustCompile("(?m)^#{1,2} ")
 	if strings.HasPrefix(heading, "### ") {
-		stop = regexp.MustCompile("(?m)^##{1,2} ")
+		stop = regexp.MustCompile("(?m)^#{1,3} ")
 	}
 	if m := stop.FindStringIndex(body); m != nil {
 		body = body[:m[0]]

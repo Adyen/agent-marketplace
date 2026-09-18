@@ -10,13 +10,25 @@ Fail a registry's CI when any resource it ships is malformed or cannot be compil
 
 ## 1. Install a pinned CLI
 
-Pin the version so CI results are reproducible and match what consumers run. Either download the release asset for that version, or:
+Pin the version so CI results are reproducible and match what consumers run. Download the release asset for that version, or build from source at a pinned tag:
 
 ```bash
-go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@v3.1.1
+# Download a pinned release binary (Linux runner example)
+VERSION="v3.1.1"
+ARCH="linux-amd64" # or linux-arm64, darwin-arm64, etc.
+curl -fsSL "https://github.com/Adyen/agent-marketplace/releases/download/${VERSION}/agent-marketplace-${VERSION}-${ARCH}" -o /usr/local/bin/agent-marketplace
+chmod +x /usr/local/bin/agent-marketplace
 ```
 
-Avoid `@latest` in CI: a new release can change diagnostics and make an unchanged registry fail.
+Or build from source at the pinned release tag:
+
+```bash
+git clone --depth 1 --branch v3.1.1 https://github.com/Adyen/agent-marketplace.git /tmp/agent-marketplace
+(cd /tmp/agent-marketplace && go build -o /usr/local/bin/agent-marketplace ./cmd/agent-marketplace)
+rm -rf /tmp/agent-marketplace
+```
+
+Avoid unpinned builds or `@latest` in CI: a new release can change diagnostics and make an unchanged registry fail.
 
 ## 2. Point a throwaway consumer at the checkout
 
