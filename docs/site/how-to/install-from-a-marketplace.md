@@ -114,6 +114,8 @@ agent-marketplace install \
 
 For non-interactive automation, `--yes` has the same consent effect. Both flags apply only to the exact revision verified by that invocation. A rejected or revoked revision remains blocked.
 
+Findings are grouped by analyzer in the preview. A gating analyzer that fails to complete is reported as `marketplace.policy.audit-unavailable`; this finding is non-consentable, so `--accept-risk` and `--yes` cannot clear it. The resource becomes installable only after the analyzer succeeds.
+
 If the resource name conflicts with an existing generated path, choose a safe local name:
 
 ```bash

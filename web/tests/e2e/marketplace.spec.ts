@@ -473,6 +473,26 @@ test.describe('Marketplace browser discovery', () => {
     await relativePage.close()
   })
 
+  test('legacy revisions render an empty analyzer audit state', async ({ page }) => {
+    const revokedDigest = `sha256:${'b'.repeat(64)}`
+    await page.goto(`/r/team-tools/command/deploy-preview/revisions/${encodeURIComponent(revokedDigest)}`)
+    await expect(page.getByRole('heading', { name: 'Analyzer audits', exact: true })).toBeVisible()
+    await expect(page.getByText('No analyzer audits were reported for this revision.')).toBeVisible()
+  })
+
+  test('navigates from an analyzer audit summary to the audit detail and source range', async ({ page }) => {
+    const secureReviewDigest = `sha256:${'a'.repeat(64)}`
+    await page.goto(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(secureReviewDigest)}`)
+    await expect(page.getByRole('heading', { name: 'Analyzer audits', exact: true })).toBeVisible()
+    await page.getByRole('link', { name: /e2e\.builtin\.policy/ }).click()
+    await expect(page).toHaveURL(/\/audit\/e2e\.builtin\.policy$/)
+    await expect(page.getByRole('heading', { name: /e2e\.builtin\.policy/ })).toBeVisible()
+    await expect(page.getByText('Network reference requires review.', { exact: true })).toBeVisible()
+    await expect(page.getByText('Cannot be bypassed')).toBeVisible()
+    await page.getByRole('link', { name: 'View source range' }).first().click()
+    await expect(page).toHaveURL(/\/r\/team-tools\/skill\/secure-review\/revisions\/[^?]*[?&]path=SKILL\.md/)
+  })
+
   test('keeps production homepage navigation under the basic performance budget', async ({ page }) => {
     await page.goto('/')
     const domContentLoaded = await page.evaluate(() => performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd || 0)

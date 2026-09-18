@@ -5,7 +5,7 @@ import type {
   ResourceKind,
   SearchParams,
 } from '~/types/marketplace'
-import { normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '~/lib/validation'
+import { normalizeAudit, normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '~/lib/validation'
 import { apiPath, devApiProxyTargets, isAbsoluteApiBase, wellKnownPath } from '~/lib/api-base'
 
 export { apiPath, devApiProxyTargets, isAbsoluteApiBase, normalizeApiBase, wellKnownPath } from '~/lib/api-base'
@@ -52,6 +52,8 @@ export function createMarketplaceApi(fetcher: ApiFetcher, apiBase?: string) {
       fetcher<unknown>(resourceRevisionsPath(apiBase, registry, kind, name)).then(payload => normalizeResourceRevisions(payload, { kind, name })),
     getResourceRevision: (registry: string, kind: ResourceKind, name: string, revision: string) =>
       fetcher<unknown>(resourceRevisionPath(apiBase, registry, kind, name, revision)).then(payload => normalizeResourceRevision(payload, { registry, kind, name, contentDigest: revision })),
+    getResourceAudit: (registry: string, kind: ResourceKind, name: string, revision: string, analyzerId: string) =>
+      fetcher<unknown>(resourceAuditPath(apiBase, registry, kind, name, revision, analyzerId)).then(normalizeAudit),
     getResourceInspection: (registry: string, kind: ResourceKind, name: string, revision: string) =>
       fetcher<unknown>(resourceInspectionPath(apiBase, registry, kind, name, revision)).then(payload => normalizeInspectionManifest(payload, { registry, kind, name, contentDigest: revision })),
     getResourceInspectionContent: (registry: string, kind: ResourceKind, name: string, revision: string, mediaType: InspectionFile['media_type'] = 'text/plain') =>
@@ -87,6 +89,10 @@ export function resourceRevisionPath(apiBase: string | undefined, registry: stri
 
 export function resourceRevisionsPath(apiBase: string | undefined, registry: string, kind: ResourceKind, name: string): string {
   return apiPath(apiBase, `/resources/${encodeURIComponent(registry)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/revisions`)
+}
+
+export function resourceAuditPath(apiBase: string | undefined, registry: string, kind: ResourceKind, name: string, revision: string, analyzerId: string): string {
+  return `${resourceRevisionPath(apiBase, registry, kind, name, revision)}/audits/${encodeURIComponent(analyzerId)}`
 }
 
 export function resourceInspectionPath(apiBase: string | undefined, registry: string, kind: ResourceKind, name: string, revision: string): string {

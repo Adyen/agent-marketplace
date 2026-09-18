@@ -68,6 +68,27 @@ func (c ResourceCoordinate) IsZero() bool {
 	return c.Marketplace == "" && c.Registry == "" && c.Kind == "" && c.Name == ""
 }
 
+// Validate returns an error if any required coordinate field is missing or
+// invalid.
+func (c ResourceCoordinate) Validate() error {
+	if c.Marketplace == "" {
+		return fmt.Errorf("resource coordinate marketplace is required")
+	}
+	if c.Registry == "" {
+		return fmt.Errorf("resource coordinate registry is required")
+	}
+	if c.Kind == "" {
+		return fmt.Errorf("resource coordinate kind is required")
+	}
+	if !IsMarketplaceResourceKind(c.Kind) {
+		return fmt.Errorf("unsupported resource kind %q", c.Kind)
+	}
+	if c.Name == "" {
+		return fmt.Errorf("resource coordinate name is required")
+	}
+	return nil
+}
+
 // ParseResourceCoordinate parses the canonical string form produced by
 // [ResourceCoordinate.String].
 func ParseResourceCoordinate(s string) (ResourceCoordinate, error) {
@@ -283,6 +304,14 @@ type Finding struct {
 	// Message is a human-readable description.
 	Message string `json:"message"`
 
+	// AnalyzerID is the analyzer that emitted this finding.
+	AnalyzerID string `json:"analyzer_id,omitempty"`
+
+	// Consentable marks whether the finding can be overridden by --accept-risk.
+	// It is omitted (nil) for consentable findings and set to false for
+	// non-consentable findings that cannot be bypassed.
+	Consentable *bool `json:"consentable,omitempty"`
+
 	Location *FindingLocation `json:"location,omitempty"`
 }
 
@@ -292,6 +321,19 @@ type FindingLocation struct {
 	Column    int    `json:"column,omitempty"`
 	StartByte int64  `json:"start_byte,omitempty"`
 	EndByte   int64  `json:"end_byte,omitempty"`
+}
+
+// ResourceAuditSummary is a lightweight, deterministic summary of one analyzer
+// audit attached to a resource revision response.
+type ResourceAuditSummary struct {
+	AnalyzerID      string      `json:"analyzer_id"`
+	AnalyzerVersion string      `json:"analyzer_version"`
+	Role            string      `json:"role"`
+	Verdict         string      `json:"verdict"`
+	Summary         string      `json:"summary"`
+	FindingCount    int         `json:"finding_count"`
+	DurationNS      int64       `json:"duration_ns"`
+	ResultDigest    AuditDigest `json:"result_digest"`
 }
 
 // AssessmentDecision is the explicit outcome of a resource assessment.
@@ -405,9 +447,10 @@ type ResourceOccurrence struct {
 // AssessedResourceRevision is the current read projection for one immutable resource revision.
 type AssessedResourceRevision struct {
 	ResourceRevision
-	Assessment ResourceAssessment `json:"assessment"`
-	Occurrence ResourceOccurrence `json:"occurrence"`
-	Revocation *Revocation        `json:"revocation,omitempty"`
+	Assessment ResourceAssessment     `json:"assessment"`
+	Occurrence ResourceOccurrence     `json:"occurrence"`
+	Revocation *Revocation            `json:"revocation,omitempty"`
+	Audits     []ResourceAuditSummary `json:"audits,omitempty"`
 }
 
 // RegistryOccurrence connects a registry revision manifest to an exact registry commit.

@@ -753,3 +753,33 @@ func TestUnavailableMarketplaceDiscoveryRowsCannotOpenInstallScope(t *testing.T)
 		})
 	}
 }
+
+func TestMarketplaceConsentPreviewSurfacesNonConsentableRefusal(t *testing.T) {
+	m := newTestModel()
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("failed to start install operation")
+	}
+	preview := strings.Join([]string{
+		"Marketplace install preview:",
+		"name: review",
+		"findings (1):",
+		`  analyzer: "marketplace.static"`,
+		`    1. severity: "warn"`,
+		`      code: "static-block"`,
+		`      policy: "warn"`,
+		`      consentable: no`,
+	}, "\n")
+	consent := &pipeline.MarketplaceConsentError{Preview: preview, Err: errors.New("marketplace revision contains a non-consentable finding")}
+	updated, _ := m.Update(discoveryInstallMsg{operation: operation, err: consent})
+	m = updated.(Model)
+	if m.pane != paneMarketplaceConsent {
+		t.Fatalf("pane = %v, want paneMarketplaceConsent", m.pane)
+	}
+	if !strings.Contains(m.marketplaceInstallPreview, "consentable: no") {
+		t.Fatalf("preview missing non-consentable refusal: %q", m.marketplaceInstallPreview)
+	}
+	if !strings.Contains(m.marketplaceInstallPreview, "static-block") {
+		t.Fatalf("preview missing refusal code: %q", m.marketplaceInstallPreview)
+	}
+}

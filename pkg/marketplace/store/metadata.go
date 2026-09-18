@@ -120,6 +120,14 @@ type MetadataStore interface {
 	CompleteJob(ctx context.Context, id JobID, workerID string) error
 	FailJob(ctx context.Context, id JobID, workerID string, backoff time.Duration) error
 
+	// Resource audits.
+	PutResourceAudit(ctx context.Context, audit ResourceAudit) error
+	GetResourceAudit(ctx context.Context, key ResourceAuditKey, resultDigest AuditDigest) (ResourceAudit, error)
+	GetCachedResourceAudit(ctx context.Context, key ResourceAuditKey) (ResourceAudit, error)
+	LinkResourceAssessmentAudit(ctx context.Context, link AssessmentAuditLink) error
+	ListResourceAuditsForAssessment(ctx context.Context, digest AssessmentDigest) ([]ResourceAudit, error)
+	GetResourceAuditForAssessment(ctx context.Context, digest AssessmentDigest, analyzerID string) (ResourceAudit, error)
+
 	// CheckIntegrity verifies that every published artifact has a matching blob.
 	// It returns [ErrBlobMissing] for the first missing digest.
 	CheckIntegrity(ctx context.Context, blobs BlobStore) error

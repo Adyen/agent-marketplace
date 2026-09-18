@@ -73,11 +73,12 @@ func TestBuildResourceArtifactRejects(t *testing.T) {
 func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
 	s := ir.NewSkill("review", "Review", "Review carefully.", nil, nil, ir.SourceRef{})
 	s.AllowedTools = []string{"read_file"}
+	files := analyze.FileSet{"run.sh": []byte("#!/bin/sh\necho hi\n")}
 
 	warnOpts := analyze.DefaultOptions()
 	warnOpts.Version = "analyzer-v1"
 	warnOpts.Registry = analyze.Registry{RegistryURL: "https://example.com/one.git", Ref: "main", Path: "skills/review", ID: "one", Slug: "one", License: "MIT"}
-	warn, err := BuildResourceArtifact(context.Background(), s, nil, warnOpts)
+	warn, err := BuildResourceArtifact(context.Background(), s, files, warnOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,9 +88,9 @@ func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
 
 	rejectOpts := analyze.DefaultOptions()
 	rejectOpts.Version = "analyzer-v2"
-	rejectOpts.Policy = analyze.Policy{Name: "strict", Outcomes: map[string]string{analyze.FindingToolGrant: analyze.OutcomeReject}}
+	rejectOpts.Policy = analyze.Policy{Name: "strict", Outcomes: map[string]string{analyze.FindingExecutableScript: analyze.OutcomeReject}}
 	rejectOpts.Registry = analyze.Registry{RegistryURL: "https://example.com/two.git", Ref: "release", Path: "other/review", ID: "two", Slug: "two", License: "Apache-2.0"}
-	rejected, err := BuildResourceArtifact(context.Background(), s, nil, rejectOpts)
+	rejected, err := BuildResourceArtifact(context.Background(), s, files, rejectOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +107,29 @@ func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
 	}
 	if manifest.RegistryID != "" || manifest.RegistrySlug != "" || manifest.Revision != "" || manifest.Provenance.RegistryURL != "" || manifest.Provenance.Ref != "" || manifest.Provenance.Path != "" {
 		t.Fatalf("canonical manifest contains occurrence provenance: %#v", manifest)
+	}
+}
+
+func TestBuildResourceArtifactAuditsAndDecision(t *testing.T) {
+	ctx := context.Background()
+	opts := analyze.DefaultOptions()
+	opts.Registry = analyze.Registry{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "id", Slug: "slug"}
+
+	s := ir.NewSkill("review", "Review", "Review the code carefully.", []string{"user"}, nil, ir.SourceRef{})
+	s.AllowedTools = []string{"read_file"}
+
+	result, err := BuildResourceArtifact(ctx, s, nil, opts)
+	if err != nil {
+		t.Fatalf("BuildResourceArtifact: %v", err)
+	}
+	if result.Decision == "" {
+		t.Fatal("expected Decision on BuildResult")
+	}
+	if len(result.Audits) == 0 {
+		t.Fatal("expected Audits on BuildResult")
+	}
+	if result.Audits[len(result.Audits)-1].AnalyzerID != analyze.AnalyzerCapabilities {
+		t.Fatalf("expected capabilities audit last, got %q", result.Audits[len(result.Audits)-1].AnalyzerID)
 	}
 }
 
@@ -151,6 +175,73 @@ func TestBuildCollectionManifestNil(t *testing.T) {
 	_, err := BuildCollectionManifest(context.Background(), nil, nil, analyze.DefaultOptions())
 	if err == nil {
 		t.Fatal("expected error for nil collection")
+	}
+}
+
+func TestBuildResourceArtifactExplicitEmptyRegistrations(t *testing.T) {
+	ctx := context.Background()
+	opts := analyze.DefaultOptions()
+	opts.Registrations = []analyze.Registration{}
+	opts.Registry = analyze.Registry{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "id", Slug: "slug"}
+
+	s := ir.NewSkill("review", "Review", "Review <!-- hidden --> carefully, then run eval(code).", []string{"user"}, nil, ir.SourceRef{})
+	s.AllowedTools = []string{"read_file"}
+
+	result, err := BuildResourceArtifact(ctx, s, nil, opts)
+	if err != nil {
+		t.Fatalf("BuildResourceArtifact: %v", err)
+	}
+	if len(result.Audits) != 0 {
+		t.Fatalf("explicit empty registrations should yield zero audits, got %d", len(result.Audits))
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("explicit empty registrations should yield zero findings, got %d", len(result.Findings))
+	}
+	if result.Decision != analyze.DecisionAllow {
+		t.Fatalf("explicit empty registrations should allow, got %q", result.Decision)
+	}
+	if result.Rejected {
+		t.Fatal("explicit empty registrations should not reject")
+	}
+	if len(result.RawArchive) == 0 {
+		t.Fatal("expected raw archive with zero analyzers")
+	}
+}
+
+func TestBuildCollectionManifestExplicitEmptyRegistrations(t *testing.T) {
+	ctx := context.Background()
+	opts := analyze.DefaultOptions()
+	opts.Registrations = []analyze.Registration{}
+	opts.Registry = analyze.Registry{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "registry-id"}
+
+	s := ir.NewSkill("review", "Review", "Body", nil, nil, ir.SourceRef{})
+	skillResult, err := BuildResourceArtifact(ctx, s, nil, opts)
+	if err != nil {
+		t.Fatalf("BuildResourceArtifact: %v", err)
+	}
+
+	c := ir.NewCollection("defaults", "1.0.0", "Desc", []ir.CollectionMember{
+		{Kind: ir.KindSkill, Name: "review"},
+	}, nil, nil, ir.SourceRef{})
+
+	result, err := BuildCollectionManifest(ctx, c, []BuildResult{skillResult}, opts)
+	if err != nil {
+		t.Fatalf("BuildCollectionManifest: %v", err)
+	}
+	if len(result.Audits) != 0 {
+		t.Fatalf("explicit empty registrations should yield zero collection audits, got %d", len(result.Audits))
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("explicit empty registrations should yield zero collection findings, got %d", len(result.Findings))
+	}
+	if result.Decision != analyze.DecisionAllow {
+		t.Fatalf("explicit empty registrations should allow collection, got %q", result.Decision)
+	}
+	if result.Rejected {
+		t.Fatal("explicit empty registrations should not reject collection")
+	}
+	if len(result.ManifestPayload) == 0 {
+		t.Fatal("expected collection manifest payload with zero analyzers")
 	}
 }
 

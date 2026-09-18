@@ -14,6 +14,7 @@ import (
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -92,6 +93,7 @@ func TestServerRoutes(t *testing.T) {
 		ArchiveDigest: store.ArchiveDigest(artifactDigest),
 		License:       "MIT",
 	}
+	subjectDigest := marketplaceartifact.SubjectDigest(string(rev.ContentDigest), nil)
 	manifestData, manifestDigest, err := marketplaceartifact.CanonicalRegistryRevisionPayload(marketplaceartifact.RegistryRevisionManifest{
 		SchemaVersion: marketplaceartifact.RegistryRevisionSchemaV1,
 		Generator:     "test source revision",
@@ -153,6 +155,69 @@ func TestServerRoutes(t *testing.T) {
 	if err := meta.SetCurrentResourceAssessment(ctx, assessment); err != nil {
 		t.Fatal(err)
 	}
+
+	// Seed a resource audit with the canonical subject digest for this revision.
+	audit, err := store.FinalizeResourceAudit(store.ResourceAudit{
+		ResourceAuditKey: store.ResourceAuditKey{
+			Coordinate:      rev.Coordinate,
+			SubjectDigest:   store.RevisionDigest(subjectDigest),
+			AnalyzerID:      "marketplace.hidden-content",
+			AnalyzerVersion: "1.0.0",
+			ConfigDigest:    store.PolicyDigest("sha256:" + strings.Repeat("c", 64)),
+		},
+		Role:       analyze.RoleGating,
+		Verdict:    analyze.VerdictPass,
+		Summary:    "no concerning findings",
+		Findings:   []store.Finding{},
+		Duration:   123456789 * time.Nanosecond,
+		AssessedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("finalize audit: %v", err)
+	}
+	if err := meta.PutResourceAudit(ctx, audit); err != nil {
+		t.Fatalf("put audit: %v", err)
+	}
+	if err := meta.LinkResourceAssessmentAudit(ctx, store.AssessmentAuditLink{
+		AssessmentDigest: assessment.AssessmentDigest,
+		Ordinal:          0,
+		AuditKey:         audit.ResourceAuditKey,
+		ResultDigest:     audit.ResultDigest,
+	}); err != nil {
+		t.Fatalf("link audit: %v", err)
+	}
+
+	// Seed a second audit to verify ordered summary output.
+	audit2, err := store.FinalizeResourceAudit(store.ResourceAudit{
+		ResourceAuditKey: store.ResourceAuditKey{
+			Coordinate:      rev.Coordinate,
+			SubjectDigest:   store.RevisionDigest(subjectDigest),
+			AnalyzerID:      "marketplace.assets",
+			AnalyzerVersion: "1.0.0",
+			ConfigDigest:    store.PolicyDigest("sha256:" + strings.Repeat("d", 64)),
+		},
+		Role:       analyze.RoleAdvisory,
+		Verdict:    analyze.VerdictWarn,
+		Summary:    "assets audit",
+		Findings:   []store.Finding{},
+		Duration:   987654321 * time.Nanosecond,
+		AssessedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("finalize second audit: %v", err)
+	}
+	if err := meta.PutResourceAudit(ctx, audit2); err != nil {
+		t.Fatalf("put second audit: %v", err)
+	}
+	if err := meta.LinkResourceAssessmentAudit(ctx, store.AssessmentAuditLink{
+		AssessmentDigest: assessment.AssessmentDigest,
+		Ordinal:          1,
+		AuditKey:         audit2.ResourceAuditKey,
+		ResultDigest:     audit2.ResultDigest,
+	}); err != nil {
+		t.Fatalf("link second audit: %v", err)
+	}
+
 	if err := blobs.Put(ctx, store.ArchiveDigest(assessment.InspectionManifestDigest), projection.Payload); err != nil {
 		t.Fatal(err)
 	}
@@ -325,9 +390,14 @@ func TestServerRoutes(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("resource status %d: %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, fmt.Sprintf(`"content_digest":"%s"`, rev.ContentDigest)) {
-		t.Fatalf("resource missing content_digest: %s", body)
+	var latest store.AssessedResourceRevision
+	if err := json.Unmarshal([]byte(body), &latest); err != nil {
+		t.Fatalf("decode latest resource: %v", err)
 	}
+	if latest.ContentDigest != rev.ContentDigest {
+		t.Fatalf("latest content_digest = %q, want %q", latest.ContentDigest, rev.ContentDigest)
+	}
+	assertAuditSummariesOrdered(t, latest.Audits)
 
 	// revisions
 	resp = mustGet(t, public.URL+"/api/v1/resources/test-source/skill/review/revisions")
@@ -335,9 +405,14 @@ func TestServerRoutes(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("revisions status %d: %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, `"name":"review"`) {
-		t.Fatalf("revisions missing resource: %s", body)
+	var list []store.AssessedResourceRevision
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("decode revisions list: %v", err)
 	}
+	if len(list) != 1 || list[0].Coordinate.Name != "review" {
+		t.Fatalf("revisions list = %+v", list)
+	}
+	assertAuditSummariesOrdered(t, list[0].Audits)
 
 	// specific revision
 	resp = mustGet(t, public.URL+"/api/v1/resources/test-source/skill/review/revisions/"+string(rev.ContentDigest))
@@ -345,8 +420,43 @@ func TestServerRoutes(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("revision status %d: %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, `"content_digest"`) {
-		t.Fatalf("revision missing content_digest: %s", body)
+	var exact store.AssessedResourceRevision
+	if err := json.Unmarshal([]byte(body), &exact); err != nil {
+		t.Fatalf("decode exact revision: %v", err)
+	}
+	if exact.ContentDigest != rev.ContentDigest {
+		t.Fatalf("exact revision content_digest = %q, want %q", exact.ContentDigest, rev.ContentDigest)
+	}
+	assertAuditSummariesOrdered(t, exact.Audits)
+
+	// audit detail
+	auditDetailPath := public.URL + "/api/v1/resources/test-source/skill/review/revisions/" + string(rev.ContentDigest) + "/audits/marketplace.hidden-content"
+	resp = mustGet(t, auditDetailPath)
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("audit detail status %d: %s", resp.StatusCode, body)
+	}
+	var detail resourceAuditDetail
+	if err := json.Unmarshal([]byte(body), &detail); err != nil {
+		t.Fatalf("decode audit detail: %v", err)
+	}
+	if detail.AnalyzerID != "marketplace.hidden-content" || detail.FindingCount != 0 || detail.DurationNS != 123456789 || detail.ResultDigest != audit.ResultDigest {
+		t.Fatalf("audit detail = %+v", detail)
+	}
+	if strings.Contains(body, `"findings":null`) {
+		t.Fatalf("audit detail findings should be an empty array, not null: %s", body)
+	}
+	if len(detail.Findings) != 0 {
+		t.Fatalf("audit detail findings should be empty: %v", detail.Findings)
+	}
+	if detail.AssessedAt.IsZero() {
+		t.Fatalf("audit detail assessed_at missing")
+	}
+	if etag := resp.Header.Get("ETag"); etag == "" || etag != fmt.Sprintf("%q", audit.ResultDigest) {
+		t.Fatalf("audit detail ETag = %q, want %q", etag, fmt.Sprintf("%q", audit.ResultDigest))
+	}
+	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Fatalf("audit detail Cache-Control = %q, want immutable", cc)
 	}
 
 	// manifest
@@ -785,6 +895,21 @@ func (s *mismatchedResourceStore) GetResourceRevision(context.Context, store.Res
 
 func (s *mismatchedResourceStore) ListResourceRevisions(context.Context, store.ResourceCoordinate) ([]store.AssessedResourceRevision, error) {
 	return s.revisions, nil
+}
+
+func assertAuditSummariesOrdered(t *testing.T, summaries []store.ResourceAuditSummary) {
+	t.Helper()
+	if len(summaries) != 2 {
+		t.Fatalf("got %d audit summaries, want 2", len(summaries))
+	}
+	if summaries[0].AnalyzerID != "marketplace.hidden-content" || summaries[1].AnalyzerID != "marketplace.assets" {
+		t.Fatalf("audit summaries order = %v", summaries)
+	}
+	for i, s := range summaries {
+		if s.AnalyzerID == "" || s.AnalyzerVersion == "" || s.Role == "" || s.Verdict == "" || s.Summary == "" || s.ResultDigest == "" || s.DurationNS < 0 || s.FindingCount < 0 {
+			t.Fatalf("audit summary %d missing required fields: %+v", i, s)
+		}
+	}
 }
 
 func mustGet(t *testing.T, url string) *http.Response {

@@ -24,6 +24,8 @@ type BuildResult struct {
 	ArchiveDigest   string
 	RevisionDigest  string
 	Findings        []analyze.Finding
+	Audits          []analyze.Audit
+	Decision        string
 	Capabilities    []string
 	Name            string
 	Kind            string
@@ -35,6 +37,36 @@ type BuildResult struct {
 	Description  string
 	Rejected     bool
 	RejectReason string
+}
+
+// engineFromOptions selects the analyzer engine. A non-nil Registrations slice
+// on Options takes precedence, so an explicit empty list installs zero
+// analyzers. A nil slice falls back to the default built-in suite with the
+// configured policy applied to every built-in analyzer.
+func engineFromOptions(opts analyze.Options) *analyze.Engine {
+	if opts.Registrations != nil {
+		return analyze.NewEngineWith(opts.Registrations)
+	}
+	regs := analyze.DefaultRegistrations()
+	if opts.Policy.Name != "" || opts.Policy.Outcomes != nil {
+		for i := range regs {
+			regs[i].Policy = opts.Policy
+		}
+	}
+	return analyze.NewEngineWith(regs)
+}
+
+// runArtifactAnalyze invokes the configured analyzer adapter or the selected
+// Engine. The content digest is computed before analysis so cache-aware adapters
+// can decide which registrations to execute before the BuildResult is finalized.
+func runArtifactAnalyze(ctx context.Context, subject analyze.Subject, contentDigest string, opts analyze.Options) (analyze.Report, error) {
+	if opts.Analyze != nil {
+		return opts.Analyze(ctx, subject, contentDigest)
+	}
+	if opts.Registrations != nil && len(opts.Registrations) == 0 {
+		return analyze.Report{Decision: analyze.DecisionAllow, Rejected: false, Audits: []analyze.Audit{}, Findings: []analyze.Finding{}}, nil
+	}
+	return engineFromOptions(opts).Analyze(ctx, subject)
 }
 
 // BuildResourceArtifact analyzes a resource, extracts capabilities, and produces a
@@ -51,12 +83,6 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 	base, err := hccartifact.FromIR(r)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("from IR: %w", err)
-	}
-
-	engine := analyze.NewEngine()
-	report, err := engine.Analyze(ctx, r, files, opts)
-	if err != nil {
-		return BuildResult{}, fmt.Errorf("analyze: %w", err)
 	}
 
 	// Only properties derived from the resource belong in the canonical archive.
@@ -76,7 +102,19 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		return BuildResult{}, fmt.Errorf("decode artifact: %w", err)
 	}
 
-	revisionDigest, err := buildRevisionDigest(r, base.Manifest.ContentDigest, digest, opts)
+	subject := analyze.Subject{
+		Resource: r,
+		Files:    files,
+		Registry: opts.Registry,
+		Limits:   opts.Limits,
+	}
+	contentDigest := base.Manifest.ContentDigest
+	report, err := runArtifactAnalyze(ctx, subject, contentDigest, opts)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("analyze: %w", err)
+	}
+
+	revisionDigest, err := buildRevisionDigest(r, contentDigest, digest, opts)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("revision digest: %w", err)
 	}
@@ -92,10 +130,12 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		License:        opts.Registry.License,
 		Description:    description,
 		RawArchive:     raw,
-		ContentDigest:  base.Manifest.ContentDigest,
+		ContentDigest:  contentDigest,
 		ArchiveDigest:  digest,
 		RevisionDigest: revisionDigest,
 		Findings:       report.Findings,
+		Audits:         report.Audits,
+		Decision:       report.Decision,
 		Capabilities:   caps,
 		Rejected:       report.Rejected,
 		RejectReason:   rejectReason,
@@ -111,12 +151,6 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 		return BuildResult{}, fmt.Errorf("nil collection")
 	}
 
-	engine := analyze.NewEngine()
-	report, err := engine.Analyze(ctx, c, nil, opts)
-	if err != nil {
-		return BuildResult{}, fmt.Errorf("analyze collection: %w", err)
-	}
-
 	caps := ExtractCapabilities(c)
 	description := ExtractDescription(c)
 
@@ -127,14 +161,9 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	if manifest.SupportedSchemas == nil {
 		manifest.SupportedSchemas = []string{hccartifact.CollectionSchemaV1}
 	}
+
 	seenMemberRevisions := make(map[string]string, len(memberResults))
-	findings := append([]analyze.Finding(nil), report.Findings...)
-	rejected := report.Rejected
 	for _, member := range memberResults {
-		if member.Rejected {
-			rejected = true
-			findings = append(findings, member.Findings...)
-		}
 		kind := member.Kind
 		if kind == "" {
 			kind = memberKind(member)
@@ -174,6 +203,28 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 		Payload: payload,
 	}
 
+	// Analyzer execution runs after the canonical manifest/content digest exists
+	// so cache-aware adapters can key on the stable collection identity.
+	subject := analyze.Subject{
+		Resource: c,
+		Files:    nil,
+		Registry: opts.Registry,
+		Limits:   opts.Limits,
+	}
+	report, err := runArtifactAnalyze(ctx, subject, manifestDigest, opts)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("analyze collection: %w", err)
+	}
+
+	findings := append([]analyze.Finding(nil), report.Findings...)
+	rejected := report.Rejected
+	for _, member := range memberResults {
+		if member.Rejected {
+			rejected = true
+			findings = append(findings, member.Findings...)
+		}
+	}
+
 	revisionDigest := ""
 	if len(memberResults) > 0 {
 		revManifest := RegistryRevisionManifest{
@@ -204,8 +255,10 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	}
 
 	rejectReason := ""
+	decision := report.Decision
 	if rejected {
 		rejectReason = "policy rejected the collection or one of its members"
+		decision = analyze.DecisionReject
 	}
 	return BuildResult{
 		Artifact:        artifact,
@@ -218,6 +271,8 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 		ContentDigest:   manifestDigest,
 		RevisionDigest:  revisionDigest,
 		Findings:        findings,
+		Audits:          report.Audits,
+		Decision:        decision,
 		Capabilities:    caps,
 		Rejected:        rejected,
 		RejectReason:    rejectReason,

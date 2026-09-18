@@ -22,6 +22,7 @@ func TestSourceRangeAt(t *testing.T) {
 }
 
 func TestToCanonicalFinding(t *testing.T) {
+	falseVal := false
 	f := Finding{
 		Code:            FindingHTMLComment,
 		Severity:        OutcomeReject,
@@ -30,6 +31,7 @@ func TestToCanonicalFinding(t *testing.T) {
 		AnalyzerVersion: AnalyzerVersionV1,
 		PolicyOutcome:   OutcomeReject,
 		SourceRange:     &SourceRange{File: "skill/review/body", Line: 1, Column: 1},
+		Consentable:     &falseVal,
 	}
 	cf := ToCanonicalFinding(f)
 	if cf.Code != FindingHTMLComment {
@@ -43,6 +45,9 @@ func TestToCanonicalFinding(t *testing.T) {
 	}
 	if cf.AnalyzerVersion != AnalyzerVersionV1 {
 		t.Errorf("analyzer_version = %q", cf.AnalyzerVersion)
+	}
+	if cf.Consentable == nil || *cf.Consentable {
+		t.Errorf("consentable should be preserved as false")
 	}
 	_ = hccartifact.CanonicalFinding{}
 }

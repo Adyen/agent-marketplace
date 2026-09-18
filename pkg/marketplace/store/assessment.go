@@ -28,20 +28,22 @@ func FinalizeResourceAssessment(assessment ResourceAssessment) (ResourceAssessme
 	}
 
 	// Do not retain the caller's mutable slice backing array in the finalized
-	// value. A zero-length findings list has one canonical representation.
-	assessment.Findings = append([]Finding{}, assessment.Findings...)
+	// value. Findings are validated, canonicalized, and deep-cloned.
+	assessment.Findings = append([]Finding(nil), assessment.Findings...)
 	for i := range assessment.Findings {
-		if assessment.Findings[i].Location != nil {
-			location := *assessment.Findings[i].Location
-			assessment.Findings[i].Location = &location
+		f, err := validateFinding(assessment.Findings[i], i)
+		if err != nil {
+			return ResourceAssessment{}, err
 		}
+		assessment.Findings[i] = f
 	}
+
 	digest, err := resourceAssessmentDigest(assessment)
 	if err != nil {
 		return ResourceAssessment{}, err
 	}
 	if assessment.AssessmentDigest != "" {
-		if err := validateSHA256Digest("assessment digest", string(assessment.AssessmentDigest)); err != nil {
+		if err := ValidateSHA256Digest("assessment digest", string(assessment.AssessmentDigest)); err != nil {
 			return ResourceAssessment{}, err
 		}
 		if assessment.AssessmentDigest != digest {
@@ -112,31 +114,20 @@ func validateResourceAssessmentFields(assessment ResourceAssessment) error {
 	if !IsMarketplaceResourceKind(assessment.Coordinate.Kind) {
 		return fmt.Errorf("unsupported resource kind %q", assessment.Coordinate.Kind)
 	}
-	if err := validateSHA256Digest("content digest", string(assessment.ContentDigest)); err != nil {
+	if err := ValidateSHA256Digest("content digest", string(assessment.ContentDigest)); err != nil {
 		return err
 	}
-	if assessment.AnalyzerVersion == "" {
-		return fmt.Errorf("analyzer version is required")
+	if err := ValidateAnalyzerVersion(assessment.AnalyzerVersion); err != nil {
+		return err
 	}
-	if err := validateSHA256Digest("policy digest", string(assessment.PolicyDigest)); err != nil {
+	if err := ValidateSHA256Digest("policy digest", string(assessment.PolicyDigest)); err != nil {
 		return err
 	}
 	if err := assessment.Decision.Validate(); err != nil {
 		return err
 	}
-	if err := validateSHA256Digest("inspection manifest digest", string(assessment.InspectionManifestDigest)); err != nil {
+	if err := ValidateSHA256Digest("inspection manifest digest", string(assessment.InspectionManifestDigest)); err != nil {
 		return err
-	}
-	for i, finding := range assessment.Findings {
-		if finding.Code == "" || finding.Severity == "" {
-			return fmt.Errorf("finding %d requires code and severity", i)
-		}
-		if finding.Location != nil {
-			location := finding.Location
-			if location.Path == "" || location.Line < 0 || location.Column < 0 || location.StartByte < 0 || location.EndByte < location.StartByte {
-				return fmt.Errorf("finding %d has invalid location", i)
-			}
-		}
 	}
 	if assessment.AssessedAt.IsZero() {
 		return fmt.Errorf("assessed at is required")
@@ -144,7 +135,7 @@ func validateResourceAssessmentFields(assessment ResourceAssessment) error {
 	return nil
 }
 
-func validateSHA256Digest(label, digest string) error {
+func ValidateSHA256Digest(label, digest string) error {
 	const prefix = "sha256:"
 	if len(digest) != len(prefix)+sha256.Size*2 || digest[:len(prefix)] != prefix {
 		return fmt.Errorf("%s must be sha256:<64 lowercase hex>", label)

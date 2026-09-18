@@ -598,6 +598,9 @@ func (s *Store) PutResourceAssessment(ctx context.Context, assessment store.Reso
 }
 
 func (s *Store) GetResourceAssessment(ctx context.Context, digest store.AssessmentDigest) (store.ResourceAssessment, error) {
+	if err := store.ValidateSHA256Digest("assessment digest", string(digest)); err != nil {
+		return store.ResourceAssessment{}, err
+	}
 	row := s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
 		assessment_digest, analyzer_version, policy_digest, decision, findings,
 		inspection_manifest_digest, assessed_at FROM resource_assessments WHERE assessment_digest=$1`, digest)

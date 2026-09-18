@@ -252,6 +252,9 @@ func (s *Store) SetCurrentResourceAssessment(ctx context.Context, assessment sto
 }
 
 func (s *Store) GetResourceAssessment(ctx context.Context, digest store.AssessmentDigest) (store.ResourceAssessment, error) {
+	if err := store.ValidateSHA256Digest("assessment digest", string(digest)); err != nil {
+		return store.ResourceAssessment{}, err
+	}
 	return scanResourceAssessment(s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
 		assessment_digest, analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at
 		FROM resource_assessments WHERE assessment_digest=? LIMIT 1`, digest))

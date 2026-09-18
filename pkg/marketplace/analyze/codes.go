@@ -20,11 +20,6 @@ const (
 )
 
 // Stable finding codes emitted by operator policy enforcement during ingest.
-//
-// These are not analyzer detections: they record a policy decision about a
-// resource that analysis itself accepted. They live here, next to the analyzer
-// codes, because a consumer UI keys off the code string, so the vocabulary must
-// have exactly one definition rather than an inline literal per call site.
 const (
 	// PolicyLicenseNotAllowed reports a resource that declares a license which
 	// the configured license allowlist does not contain.
@@ -35,18 +30,60 @@ const (
 	PolicyLicenseUndeclared = "marketplace.policy.license-undeclared"
 	// PolicyArtifactTooLarge reports an artifact above the configured size limit.
 	PolicyArtifactTooLarge = "marketplace.policy.artifact-too-large"
+	// PolicyAuditUnavailable reports a gating analyzer that could not complete
+	// its audit. It is a non-consentable warning: the resource is visible but
+	// not installable until the analyzer succeeds.
+	PolicyAuditUnavailable = "marketplace.policy.audit-unavailable"
 )
 
-// AnalyzerVersionV1 is the version of the Marketplace security analyzer suite.
-//
-// Bump this whenever detection behaviour changes. Every revision stores the
-// version that produced its findings, so leaving it fixed would make two
-// different analyzers indistinguishable in the record. 1.2.0 separates
-// structural blockers from heuristic review signals: asset path escapes and
-// opaque executables still reject, readable scripts and raw execution calls
-// warn, content paths are limited to sensitive targets, and Unicode emoji
-// presentation sequences are accepted.
+// AnalyzerVersionV1 is the legacy suite version retained for assessment
+// compatibility. Built-in and rulepack construction use their own version
+// constants so each analyzer can be bumped independently.
 const AnalyzerVersionV1 = "1.2.0"
+
+// Built-in analyzer identifiers.
+const (
+	AnalyzerHiddenContent = "marketplace.hidden-content"
+	AnalyzerObfuscation   = "marketplace.obfuscation"
+	AnalyzerAssets        = "marketplace.assets"
+	AnalyzerReferences    = "marketplace.references"
+	AnalyzerCapabilities  = "marketplace.capabilities"
+)
+
+// Built-in analyzer version constants. Each built-in can be bumped independently.
+const (
+	AnalyzerHiddenContentVersionV1 = "1.2.0"
+	AnalyzerObfuscationVersionV1   = "1.2.0"
+	AnalyzerAssetsVersionV1        = "1.2.0"
+	AnalyzerReferencesVersionV1    = "1.2.0"
+	AnalyzerCapabilitiesVersionV1  = "1.2.0"
+)
+
+// AnalyzerRulepackVersionV1 is the version used for the built-in rulepack
+// analyzer. It is separate from the legacy suite version.
+const AnalyzerRulepackVersionV1 = "1.0.0"
+
+// Analyzer roles.
+const (
+	RoleGating   = "gating"
+	RoleAdvisory = "advisory"
+)
+
+// Per-audit verdicts.
+const (
+	VerdictPass    = "pass"
+	VerdictWarn    = "warn"
+	VerdictFail    = "fail"
+	VerdictError   = "error"
+	VerdictSkipped = "skipped"
+)
+
+// Derived rollup decisions.
+const (
+	DecisionAllow  = "allow"
+	DecisionWarn   = "warn"
+	DecisionReject = "reject"
+)
 
 // Policy outcomes.
 const (
@@ -63,6 +100,11 @@ type SourceRange struct {
 }
 
 // Finding is a single analyzer finding.
+//
+// Consentable is omitted (nil) for ordinary, consentable findings that
+// --accept-risk can override, and emitted as false for findings that cannot be
+// consented to (for example, marketplace.policy.audit-unavailable). Scanners
+// and analyzers that emit ordinary findings do not need to set it.
 type Finding struct {
 	Analyzer        string       `json:"analyzer"`
 	AnalyzerVersion string       `json:"analyzer_version"`
@@ -71,11 +113,10 @@ type Finding struct {
 	PolicyOutcome   string       `json:"policy_outcome"` // reject | warn | allow
 	Message         string       `json:"message,omitempty"`
 	SourceRange     *SourceRange `json:"source_range,omitempty"`
+	Consentable     *bool        `json:"consentable,omitempty"`
 }
 
-// FindingCodes returns the complete set of stable finding codes. It is the
-// single source of truth for code constants and is used by tests and the
-// documentation catalog.
+// FindingCodes returns the complete set of stable finding codes.
 func FindingCodes() []string {
 	return []string{
 		FindingHTMLComment,
@@ -96,13 +137,21 @@ func FindingCodes() []string {
 	}
 }
 
-// PolicyCodes returns the complete set of stable policy finding codes. Like
-// FindingCodes it is the single source of truth for the constants above and is
-// used by tests and the documentation catalog.
+// PolicyCodes returns the complete set of stable policy finding codes.
 func PolicyCodes() []string {
 	return []string{
 		PolicyLicenseNotAllowed,
 		PolicyLicenseUndeclared,
 		PolicyArtifactTooLarge,
+		PolicyAuditUnavailable,
 	}
+}
+
+// BuiltinMetadata describes a built-in analyzer for plugin registration and UI
+// consumers.
+type BuiltinMetadata struct {
+	ID           string
+	Version      string
+	DefaultRole  string
+	FindingCodes []string
 }

@@ -40,6 +40,12 @@ type RegistryRevisionPublication struct {
 
 	Assessments []ResourceAssessment
 
+	// Audits are the finalized analyzer results linked to the assessments.
+	Audits []ResourceAudit
+
+	// AssessmentAuditLinks connect each assessment to its ordered audits.
+	AssessmentAuditLinks []AssessmentAuditLink
+
 	// Collection is retained for compatibility with callers publishing one
 	// collection revision.
 	Collection *CollectionRevision
@@ -67,6 +73,9 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 	if err := validateRegistryRevisionPublication(req); err != nil {
 		return err
 	}
+	if err := validateAuditsAndLinks(req); err != nil {
+		return err
+	}
 	uploads, err := prepareUploads(req)
 	if err != nil {
 		return err
@@ -84,6 +93,9 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 		}
 	}
 
+	// Transaction order: resource revisions, registry occurrence, resource
+	// occurrences, audits, assessments, audit-assessment links, current-
+	// assessment pointers, collection revisions, and finally the registry head.
 	return meta.WithTx(ctx, func(txCtx context.Context, tx MetadataStore) error {
 		for _, rev := range req.Resources {
 			if err := tx.PutResourceRevision(txCtx, rev); err != nil {
@@ -98,10 +110,22 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 				return err
 			}
 		}
+		for _, audit := range req.Audits {
+			if err := tx.PutResourceAudit(txCtx, audit); err != nil {
+				return err
+			}
+		}
 		for _, assessment := range req.Assessments {
 			if err := tx.PutResourceAssessment(txCtx, assessment); err != nil {
 				return err
 			}
+		}
+		for _, link := range req.AssessmentAuditLinks {
+			if err := tx.LinkResourceAssessmentAudit(txCtx, link); err != nil {
+				return err
+			}
+		}
+		for _, assessment := range req.Assessments {
 			if err := tx.SetCurrentResourceAssessment(txCtx, assessment); err != nil {
 				return err
 			}
@@ -139,6 +163,96 @@ func PublishResourceRevision(ctx context.Context, meta MetadataStore, blobs Blob
 	return meta.WithTx(ctx, func(txCtx context.Context, tx MetadataStore) error {
 		return tx.PutResourceRevision(txCtx, pub.Revision)
 	})
+}
+
+func validateAuditsAndLinks(req RegistryRevisionPublication) error {
+	resourceCoords := make(map[ResourceCoordinate]struct{}, len(req.Resources))
+	for _, rev := range req.Resources {
+		resourceCoords[rev.Coordinate] = struct{}{}
+	}
+
+	auditsByKey := make(map[ResourceAuditKey]ResourceAudit, len(req.Audits))
+	for _, audit := range req.Audits {
+		if err := audit.Validate(); err != nil {
+			return fmt.Errorf("invalid audit %v: %w", audit.ResourceAuditKey, err)
+		}
+		if _, ok := resourceCoords[audit.Coordinate]; !ok {
+			return fmt.Errorf("audit %v references unknown resource coordinate %v", audit.ResourceAuditKey, audit.Coordinate)
+		}
+		if _, ok := auditsByKey[audit.ResourceAuditKey]; ok {
+			return fmt.Errorf("duplicate audit %v", audit.ResourceAuditKey)
+		}
+		auditsByKey[audit.ResourceAuditKey] = audit
+	}
+
+	assessmentsByDigest := make(map[AssessmentDigest]ResourceAssessment, len(req.Assessments))
+	for _, a := range req.Assessments {
+		if _, ok := assessmentsByDigest[a.AssessmentDigest]; ok {
+			return fmt.Errorf("duplicate assessment digest %s", a.AssessmentDigest)
+		}
+		assessmentsByDigest[a.AssessmentDigest] = a
+	}
+
+	linksByAssessment := make(map[AssessmentDigest]map[int]struct{})
+	analyzersByAssessment := make(map[AssessmentDigest]map[string]struct{})
+	linkedAudits := make(map[ResourceAuditKey]struct{})
+	for _, link := range req.AssessmentAuditLinks {
+		if err := link.Validate(); err != nil {
+			return fmt.Errorf("invalid assessment-audit link %s/%d: %w", link.AssessmentDigest, link.Ordinal, err)
+		}
+		audit, ok := auditsByKey[link.AuditKey]
+		if !ok {
+			return fmt.Errorf("link %s/%d references unknown audit %v", link.AssessmentDigest, link.Ordinal, link.AuditKey)
+		}
+		if audit.ResultDigest != link.ResultDigest {
+			return fmt.Errorf("link %s/%d result digest mismatch: audit has %s, link has %s", link.AssessmentDigest, link.Ordinal, audit.ResultDigest, link.ResultDigest)
+		}
+		assessment, ok := assessmentsByDigest[link.AssessmentDigest]
+		if !ok {
+			return fmt.Errorf("link %s/%d references unknown assessment", link.AssessmentDigest, link.Ordinal)
+		}
+		if link.AuditKey.Coordinate != assessment.Coordinate {
+			return fmt.Errorf("link %s/%d cross-assessment coordinate: audit %v, assessment %v", link.AssessmentDigest, link.Ordinal, link.AuditKey.Coordinate, assessment.Coordinate)
+		}
+		ordinals := linksByAssessment[link.AssessmentDigest]
+		if ordinals == nil {
+			ordinals = make(map[int]struct{})
+			linksByAssessment[link.AssessmentDigest] = ordinals
+		}
+		if _, exists := ordinals[link.Ordinal]; exists {
+			return fmt.Errorf("link %s/%d duplicate ordinal", link.AssessmentDigest, link.Ordinal)
+		}
+		ordinals[link.Ordinal] = struct{}{}
+
+		analyzerSet := analyzersByAssessment[link.AssessmentDigest]
+		if analyzerSet == nil {
+			analyzerSet = make(map[string]struct{})
+			analyzersByAssessment[link.AssessmentDigest] = analyzerSet
+		}
+		if _, exists := analyzerSet[link.AuditKey.AnalyzerID]; exists {
+			return fmt.Errorf("assessment %s has duplicate analyzer id %s", link.AssessmentDigest, link.AuditKey.AnalyzerID)
+		}
+		analyzerSet[link.AuditKey.AnalyzerID] = struct{}{}
+
+		linkedAudits[link.AuditKey] = struct{}{}
+	}
+
+	for digest, ordinals := range linksByAssessment {
+		count := len(ordinals)
+		for i := 0; i < count; i++ {
+			if _, ok := ordinals[i]; !ok {
+				return fmt.Errorf("assessment %s has noncontiguous audit link ordinals", digest)
+			}
+		}
+	}
+
+	for _, audit := range req.Audits {
+		if _, ok := linkedAudits[audit.ResourceAuditKey]; !ok {
+			return fmt.Errorf("audit %v is not referenced by any assessment-audit link", audit.ResourceAuditKey)
+		}
+	}
+
+	return nil
 }
 
 func validateRegistryRevisionPublication(req RegistryRevisionPublication) error {

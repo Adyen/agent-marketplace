@@ -42,6 +42,10 @@ export function resourceInspectionContentAsyncDataKey(registry: string, kind: Re
   return JSON.stringify(['marketplace-resource-inspection-content', registry, kind, name, revision])
 }
 
+export function resourceAuditAsyncDataKey(registry: string, kind: ResourceKind, name: string, revision: string, analyzerId: string): string {
+  return JSON.stringify(['marketplace-resource-audit', registry, kind, name, revision, analyzerId])
+}
+
 export function isSafeResourceRoute(registry: string, kind: string, name: string, revision?: string): boolean {
   return isSafeRouteToken(registry) && isResourceKind(kind) && isSafeRouteToken(name) && (revision === undefined || isSafeRouteToken(revision))
 }

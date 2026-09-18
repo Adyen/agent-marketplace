@@ -151,7 +151,7 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 
 Registering an endpoint verifies its well-known identity and canonical URL before writing it. Re-registering the same identity in the same or a broader scope is a no-op.
 
-A Marketplace resource install resolves and verifies the exact artifact before configuration mutation, prints its digest, license, findings, capabilities, provenance, and acquisition mode, and writes an exact pin under `marketplaces[].resources`. Rejected or revoked resources cannot be installed. Warning findings and active capabilities require `--accept-risk` or `--yes`; consent applies only to that verified invocation.
+A Marketplace resource install resolves and verifies the exact artifact before configuration mutation, prints its digest, license, findings, capabilities, provenance, and acquisition mode, and writes an exact pin under `marketplaces[].resources`. Rejected or revoked resources cannot be installed. Warning findings and active capabilities require `--accept-risk` or `--yes`; consent applies only to that verified invocation. A non-consentable `marketplace.policy.audit-unavailable` finding from a failed gating analyzer cannot be accepted and blocks installation until the analyzer succeeds.
 
 A successful resource installation prints a scope-specific confirmation:
 

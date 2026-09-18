@@ -12,6 +12,7 @@ type ResourceInspectionPreviewOptions = {
   apiBase?: string
   inspection?: InspectionManifest
   primaryContent?: string
+  initialSelectedPath?: string
   loadInspectionFile?: (file: InspectionFile) => Promise<string | Blob>
 }
 
@@ -77,7 +78,9 @@ export function useResourceInspectionPreview(options: ResourceInspectionPreviewO
   const binaryFiles = computed(() => inspection.value?.files.filter(file => file.inspection_class === 'metadata') ?? [])
 
   watch(() => inspection.value?.revision_digest, () => {
-    selectedDigest.value = primaryFile.value?.content_digest ?? ''
+    const requested = options.initialSelectedPath?.trim()
+    const requestedFile = requested ? inspection.value?.files.find(file => file.path === requested && file.inspection_class === 'text') : undefined
+    selectedDigest.value = requestedFile?.content_digest ?? primaryFile.value?.content_digest ?? ''
     loadedContents.value = {}
     unavailableContents.value = {}
   }, { immediate: true })

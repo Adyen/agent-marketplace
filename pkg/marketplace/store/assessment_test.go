@@ -93,6 +93,41 @@ func TestResourceAssessmentRejectsInvalidDecision(t *testing.T) {
 	}
 }
 
+func TestResourceAssessmentRejectsInvalidAnalyzerVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{"empty", ""},
+		{"whitespace prefix", " 1.0.0"},
+		{"whitespace suffix", "1.0.0 "},
+		{"control character", "1.0.0\x00"},
+		{"invalid utf-8", "1.0.0\xC0"},
+		{"too long", strings.Repeat("x", 257)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := validResourceAssessment()
+			a.AnalyzerVersion = tc.version
+			if _, err := store.FinalizeResourceAssessment(a); err == nil {
+				t.Fatalf("FinalizeResourceAssessment accepted analyzer version %q", tc.version)
+			}
+		})
+	}
+}
+
+func TestResourceAssessmentAcceptsLegacyArbitraryPrintableVersion(t *testing.T) {
+	versions := []string{"v1.2.3", "1.0.0-rc1+build.2", "my-analyzer/2025-09-16", "1.0.0-é"}
+	for _, version := range versions {
+		a := validResourceAssessment()
+		a.AnalyzerVersion = version
+		a.AssessmentDigest = ""
+		if _, err := store.FinalizeResourceAssessment(a); err != nil {
+			t.Fatalf("FinalizeResourceAssessment rejected legacy analyzer version %q: %v", version, err)
+		}
+	}
+}
+
 func TestResourceAssessmentRejectsInvalidDigests(t *testing.T) {
 	tests := map[string]func(*store.ResourceAssessment){
 		"content digest": func(a *store.ResourceAssessment) { a.ContentDigest = "sha256:not-hex" },
@@ -129,6 +164,73 @@ func TestResourceAssessmentValidateDetectsIdentityMismatch(t *testing.T) {
 	assessment.AnalyzerVersion = "analyzer/v2"
 	if err := assessment.Validate(); err == nil {
 		t.Fatal("Validate accepted an assessment digest for different content")
+	}
+}
+
+func TestFinalizeResourceAssessmentRejectsInvalidFinding(t *testing.T) {
+	trueVal := true
+	tests := []struct {
+		name  string
+		apply func(*store.ResourceAssessment)
+	}{
+		{"explicit true consentable", func(a *store.ResourceAssessment) { a.Findings[0].Consentable = &trueVal }},
+		{"invalid analyzer id", func(a *store.ResourceAssessment) { a.Findings[0].AnalyzerID = "Analyzer!" }},
+		{"oversize finding message", func(a *store.ResourceAssessment) { a.Findings[0].Message = strings.Repeat("x", 5000) }},
+		{"control character in message", func(a *store.ResourceAssessment) { a.Findings[0].Message = "bad\x00msg" }},
+		{"invalid byte in message", func(a *store.ResourceAssessment) { a.Findings[0].Message = "bad\xC0msg" }},
+		{"invalid location path", func(a *store.ResourceAssessment) {
+			a.Findings[0].Location = &store.FindingLocation{Path: "bad\x1bpath", Line: 1, Column: 1, StartByte: 0, EndByte: 1}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := validResourceAssessment()
+			a.Findings = append([]store.Finding(nil), a.Findings...)
+			tc.apply(&a)
+			if _, err := store.FinalizeResourceAssessment(a); err == nil {
+				t.Fatalf("FinalizeResourceAssessment accepted %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestFinalizeResourceAssessmentClonesFindings(t *testing.T) {
+	falseVal := false
+	a := validResourceAssessment()
+	a.Findings = []store.Finding{{
+		Code:        "safe",
+		Severity:    "info",
+		Policy:      "allow",
+		Message:     "ok",
+		Consentable: &falseVal,
+		Location:    &store.FindingLocation{Path: "x", Line: 1, Column: 1, StartByte: 0, EndByte: 1},
+	}}
+	finalized, err := store.FinalizeResourceAssessment(a)
+	if err != nil {
+		t.Fatalf("FinalizeResourceAssessment: %v", err)
+	}
+	digestBefore := finalized.AssessmentDigest
+	a.Findings[0].Message = "mutated"
+	a.Findings[0].Consentable = nil
+	a.Findings[0].Location.Column = 999
+	finalized2, err := store.FinalizeResourceAssessment(a)
+	if err != nil {
+		t.Fatalf("FinalizeResourceAssessment after mutation: %v", err)
+	}
+	if finalized.AssessmentDigest != digestBefore {
+		t.Fatalf("caller finding mutation changed finalized assessment digest")
+	}
+	if finalized2.AssessmentDigest == finalized.AssessmentDigest {
+		t.Fatalf("mutated finding did not produce a different assessment digest")
+	}
+	if finalized.Findings[0].Message == "mutated" {
+		t.Fatalf("finalized finding shares backing data with caller")
+	}
+	if finalized.Findings[0].Consentable == nil || finalized.Findings[0].Consentable == &falseVal || *finalized.Findings[0].Consentable != false {
+		t.Fatalf("finalized finding consentable not deep-cloned and preserved")
+	}
+	if finalized.Findings[0].Location.Column == 999 {
+		t.Fatalf("finalized finding location shares backing data with caller")
 	}
 }
 

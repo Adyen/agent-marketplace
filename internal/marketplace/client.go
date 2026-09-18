@@ -864,6 +864,16 @@ func validateAPIResourceRevision(rev store.AssessedResourceRevision) error {
 	if err := validateSHA256Digest(string(rev.Occurrence.ManifestDigest)); err != nil {
 		return fmt.Errorf("occurrence manifest digest: %w", err)
 	}
+	seen := make(map[string]struct{})
+	for i, summary := range rev.Audits {
+		if err := summary.Validate(); err != nil {
+			return fmt.Errorf("audit summary %d: %w", i, err)
+		}
+		if _, ok := seen[summary.AnalyzerID]; ok {
+			return fmt.Errorf("duplicate analyzer id %q in audit summaries", summary.AnalyzerID)
+		}
+		seen[summary.AnalyzerID] = struct{}{}
+	}
 	return nil
 }
 

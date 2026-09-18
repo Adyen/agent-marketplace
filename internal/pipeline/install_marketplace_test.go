@@ -155,22 +155,48 @@ func TestMarketplaceConsentRejectsPolicyFindingAndRequiresRiskAcceptance(t *test
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 	}
-	plan := &marketplace.PreparedInstall{
-		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, []store.Finding{{Code: "exec", Severity: "high", Policy: "warn"}}),
-		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"command:exec"}}},
+	falseVal := false
+	plan := func(findings []store.Finding) *marketplace.PreparedInstall {
+		return &marketplace.PreparedInstall{
+			Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, findings),
+		}
 	}
-	if err := evaluateMarketplaceConsent(plan, false); err == nil || !strings.Contains(err.Error(), "risk acceptance") {
-		t.Fatalf("consent error = %v", err)
+
+	// Ordinary warn requires risk acceptance and then succeeds when accepted.
+	warnPlan := plan([]store.Finding{{Code: "exec", Severity: "high", Policy: "warn"}})
+	if err := evaluateMarketplaceConsent(warnPlan, false); err == nil || !strings.Contains(err.Error(), "risk acceptance") {
+		t.Fatalf("ordinary warn without accept = %v", err)
 	}
-	if err := evaluateMarketplaceConsent(plan, true); err != nil {
-		t.Fatalf("accepted risk rejected: %v", err)
+	if err := evaluateMarketplaceConsent(warnPlan, true); err != nil {
+		t.Fatalf("ordinary warn with accept rejected: %v", err)
 	}
-	plan.Revision = testAssessedResourceRevision(t, revision, store.AssessmentDecisionReject, []store.Finding{{Code: "exec", Severity: "high", Policy: "reject"}})
-	if err := evaluateMarketplaceConsent(plan, true); err == nil || !strings.Contains(err.Error(), "cannot bypass") {
+
+	// Ordinary advisory-error warning is consentable.
+	advisoryPlan := plan([]store.Finding{{Code: "advisory-error", Severity: "error", Policy: "warn", AnalyzerID: "marketplace.advisory"}})
+	if err := evaluateMarketplaceConsent(advisoryPlan, false); err == nil || !strings.Contains(err.Error(), "risk acceptance") {
+		t.Fatalf("advisory-error warn without accept = %v", err)
+	}
+	if err := evaluateMarketplaceConsent(advisoryPlan, true); err != nil {
+		t.Fatalf("advisory-error warn with accept rejected: %v", err)
+	}
+
+	// consentable:false warn refuses both accept=false and accept=true.
+	nonConsentable := plan([]store.Finding{{Code: "static-block", Severity: "warn", Policy: "warn", AnalyzerID: "marketplace.static", Consentable: &falseVal}})
+	for _, accept := range []bool{false, true} {
+		if err := evaluateMarketplaceConsent(nonConsentable, accept); err == nil || !strings.Contains(err.Error(), "non-consentable") {
+			t.Fatalf("non-consentable warn with accept=%t = %v", accept, err)
+		}
+	}
+
+	// reject never bypasses --accept-risk.
+	rejectPlan := plan([]store.Finding{{Code: "exec", Severity: "high", Policy: "reject"}})
+	if err := evaluateMarketplaceConsent(rejectPlan, true); err == nil || !strings.Contains(err.Error(), "cannot bypass") {
 		t.Fatalf("policy rejection error = %v", err)
 	}
-	plan.Revision = testAssessedResourceRevision(t, revision, store.AssessmentDecisionReject, []store.Finding{{Code: "exec", Severity: "high", Policy: "block"}})
-	if err := evaluateMarketplaceConsent(plan, true); err == nil || !strings.Contains(err.Error(), "unknown policy outcome") {
+
+	// Unknown policy outcome is rejected.
+	unknownPlan := plan([]store.Finding{{Code: "exec", Severity: "high", Policy: "block"}})
+	if err := evaluateMarketplaceConsent(unknownPlan, true); err == nil || !strings.Contains(err.Error(), "unknown policy outcome") {
 		t.Fatalf("unknown policy outcome error = %v", err)
 	}
 }
@@ -343,23 +369,44 @@ func TestMarketplaceInstallPreviewFormatsFindingsForHumans(t *testing.T) {
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(digest),
 	}
+	falseVal := false
+	findings := []store.Finding{
+		{Code: "legacy-warn", Severity: "warn", Message: "legacy warning", Policy: "warn"},
+		{Code: "advisory-error", Severity: "error", Message: "advisory error warning", Policy: "warn", AnalyzerID: "marketplace.assets"},
+		{Code: "non-consentable", Severity: "warn", Message: "non-consentable warning", Policy: "warn", AnalyzerID: "marketplace.static", Consentable: &falseVal},
+	}
 	plan := &marketplace.PreparedInstall{
 		Pin:      config.MarketplaceResourcePin{RegistryID: "src", RegistrySlug: "slug", Kind: "skill", Name: "review", Revision: digest, Digest: digest},
 		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
-		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, []store.Finding{{Code: "secret", Severity: "high", Message: "line 1\nsecret=do-not-log\x1b[31m\u202e", Location: &store.FindingLocation{Path: "skills/review/SKILL.md\tunsafe", Line: 12}, Policy: "warn"}}, "scanner\r"),
-		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"exec\x1b\n"}, Provenance: hccartifact.CanonicalProvenance{RegistryURL: "https://market.example\nunsafe", Ref: "main\u202e", Path: "skills/review", Generator: "scanner\x1b"}}},
+		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, findings),
+		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{
+			License:      "MIT",
+			Capabilities: []string{"exec\x1b\n"},
+			Provenance:   hccartifact.CanonicalProvenance{RegistryURL: "https://market.example", Ref: "main", Path: "skills/review", Generator: "scanner\x1b\r\n\u202e"},
+		}},
 	}
 	preview, err := marketplaceInstallPreview(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"findings (1):", `  1. severity: "high"`, `     message: "line 1\nsecret=do-not-log`,
-		`     location: "skills/review/SKILL.md\tunsafe":12`, `     code: "secret"`,
-		`     policy: "warn"`, `     analyzer: "scanner\r"`,
+		"findings (3):",
+		`  analyzer: "legacy"`,
+		`    1. severity: "warn"`,
+		`      code: "legacy-warn"`,
+		`      policy: "warn"`,
+		`  analyzer: "marketplace.assets"`,
+		`    2. severity: "error"`,
+		`      code: "advisory-error"`,
+		`  analyzer: "marketplace.static"`,
+		`    3. severity: "warn"`,
+		`      code: "non-consentable"`,
+		`      consentable: no`,
+		// Terminal escaping is applied to untrusted provenance and capability metadata.
+		`\x1b`, `\r`, `\n`, `\u202e`,
 	} {
 		if !strings.Contains(preview, want) {
-			t.Fatalf("preview missing %q: %s", want, preview)
+			t.Fatalf("preview missing %q:\n%s", want, preview)
 		}
 	}
 	if strings.Contains(preview, `findings: [{"code"`) {
@@ -370,11 +417,6 @@ func TestMarketplaceInstallPreviewFormatsFindingsForHumans(t *testing.T) {
 	}
 	if strings.ContainsAny(preview, "\x00\x1b\r\t") || strings.Contains(preview, "\u202e") {
 		t.Fatalf("preview contains raw terminal data: %q", preview)
-	}
-	for _, escaped := range []string{`\x1b`, `\n`, `\r`, `\u202e`} {
-		if !strings.Contains(preview, escaped) {
-			t.Fatalf("preview missing escaped terminal data %q: %s", escaped, preview)
-		}
 	}
 }
 

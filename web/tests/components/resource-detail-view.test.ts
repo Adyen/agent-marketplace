@@ -32,6 +32,17 @@ const assessmentBase = {
 }
 const occurrence = { coordinate, content_digest: digest, commit: 'a'.repeat(40), manifest_digest: 'sha256:' + '4'.repeat(64) }
 const revocation = { kind: 'revision' as const, target_id: digest, reason: 'security', applied_at: '2026-01-03T03:04:05Z' }
+const audits = [{
+  analyzer_id: 'builtin.policy',
+  analyzer_version: '1.0.0',
+  role: 'gating',
+  verdict: 'pass',
+  summary: 'No policy violations.',
+  finding_count: 0,
+  duration_ns: 1_250_000,
+  result_digest: 'sha256:' + '9'.repeat(64),
+}]
+
 const resource = {
   coordinate,
   content_digest: digest,
@@ -39,6 +50,7 @@ const resource = {
   license: 'Apache-2.0',
   assessment: { ...assessmentBase, findings: [{ code: 'metadata-check', severity: 'low', policy: 'content-policy', message: '<script>not markup</script>' }] },
   occurrence,
+  audits,
 }
 
 describe('ResourceDetailView', () => {
@@ -63,6 +75,32 @@ describe('ResourceDetailView', () => {
     expect(wrapper.text()).toContain('Policy: content-policy')
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.findAll('h2').length).toBeGreaterThan(1)
+  })
+
+  it('lists analyzer audits in server order with verdict, duration, and detail links', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource, registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example' },
+      global: { stubs },
+    })
+
+    const section = wrapper.get('[aria-labelledby="audits-heading"]')
+    expect(section.text()).toContain('Analyzer audits')
+    expect(section.text()).toContain('builtin.policy')
+    expect(section.text()).toContain('pass')
+    expect(section.text()).toContain('gating')
+    expect(section.text()).toContain('No policy violations.')
+    expect(section.text()).toContain('1.25 ms')
+    expect(section.text()).toContain('0 findings')
+    expect(section.get('a').attributes('href')).toContain('/audit/builtin.policy')
+  })
+
+  it('renders a restrained empty state for legacy revisions without audits', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource: { ...resource, audits: [] }, registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example' },
+      global: { stubs },
+    })
+
+    expect(wrapper.get('[aria-labelledby="audits-heading"]').text()).toContain('No analyzer audits were reported for this revision.')
   })
 
   it('renders exact digest revision links and preserves revoked history state', () => {

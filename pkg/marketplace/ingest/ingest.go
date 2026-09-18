@@ -37,14 +37,16 @@ import (
 
 // Revision is the result of ingesting a single registry commit.
 type Revision struct {
-	Occurrence          store.RegistryOccurrence
-	Resources           []store.ResourceRevision
-	ResourceOccurrences []store.ResourceOccurrence
-	Assessments         []store.ResourceAssessment
-	ExtraBlobs          []store.BlobUpload
-	InspectionBlobs     []store.BlobUpload
-	ManifestPayload     []byte
-	ManifestDigest      store.RevisionDigest
+	Occurrence           store.RegistryOccurrence
+	Resources            []store.ResourceRevision
+	ResourceOccurrences  []store.ResourceOccurrence
+	Assessments          []store.ResourceAssessment
+	Audits               []store.ResourceAudit
+	AssessmentAuditLinks []store.AssessmentAuditLink
+	ExtraBlobs           []store.BlobUpload
+	InspectionBlobs      []store.BlobUpload
+	ManifestPayload      []byte
+	ManifestDigest       store.RevisionDigest
 	// CollectionManifests contains standalone canonical collection manifests.
 	// They are uploaded by the worker under their manifest content digest; the
 	// collection remains virtual and its tar archive is never used for install.
@@ -58,7 +60,14 @@ type Revision struct {
 
 // BuildRegistryRevision discovers resources under dir for the given registry and
 // commit, builds artifacts, applies policy, and produces a publishable revision.
+// It does not use an audit cache; every analyzer registration executes.
 func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.MarketplaceID, registry store.Registry, dir, commit string) (Revision, error) {
+	return BuildRegistryRevisionWithAuditStore(ctx, cfg, mpID, registry, dir, commit, nil)
+}
+
+// BuildRegistryRevisionWithAuditStore is the production cache-aware path. A nil
+// metadata store disables caching and every analyzer registration executes.
+func BuildRegistryRevisionWithAuditStore(ctx context.Context, cfg config.Config, mpID store.MarketplaceID, registry store.Registry, dir, commit string, meta store.MetadataStore) (Revision, error) {
 	var rev Revision
 
 	if mpID == "" {
@@ -78,7 +87,13 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	policy := effectivePolicy(cfg, registry.PolicyOverrides)
 	limits := effectiveLimits(cfg.Policy.Limits, registry.PolicyOverrides)
 	license := effectiveLicensePolicy(cfg.Policy, registry.PolicyOverrides)
-	policyDigest, err := resourcePolicyDigest(policy, limits, license)
+
+	resolvedSet, err := resolveAnalyzers(cfg.Policy, policy, limits)
+	if err != nil {
+		return rev, fmt.Errorf("resolve analyzers: %w", err)
+	}
+
+	policyDigest, err := resourcePolicyDigest(policy, limits, license, resolvedSet)
 	if err != nil {
 		return rev, err
 	}
@@ -89,9 +104,12 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	type processed struct {
 		entry             catalog.Entry
 		result            artifact.BuildResult
+		storeAudits       []store.ResourceAudit
 		supportFiles      map[string]string
 		inspectionBody    []byte
 		inspectionSupport analyze.FileSet
+		files             analyze.FileSet
+		assessedAt        time.Time
 	}
 
 	var processedResults []processed
@@ -165,7 +183,8 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			if err != nil {
 				return rev, fmt.Errorf("support files for %s %q: %w", kind, entry.Name, err)
 			}
-			r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, files, nil)
+			assessedAt := time.Now().UTC()
+			r, storeAudits, err := buildResource(ctx, mpID, registry, root, entry, origin, commit, resolvedSet, policy, limits, meta, files, nil, assessedAt)
 			if err != nil {
 				return rev, fmt.Errorf("build %s %q: %w", kind, entry.Name, err)
 			}
@@ -175,7 +194,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				resourceArchives[key] = rawArchive
 				resourceArchiveDigests[key] = rawArchiveDigest
 			}
-			p := processed{entry: entry, result: r, supportFiles: supportFileDigests(files)}
+			p := processed{entry: entry, result: r, storeAudits: storeAudits, supportFiles: artifact.SupportFileDigests(files), files: files, assessedAt: assessedAt}
 			primary, projectionSupport := inspectionInput(entry.Resource, r, files)
 			p.inspectionBody, p.inspectionSupport = primary, projectionSupport
 			projection, err := inspection.Build(
@@ -206,26 +225,29 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		paths  [][]string
 	}
 	type resolvedCollection struct {
-		result artifact.BuildResult
-		leaves []collectionLeaf
+		result      artifact.BuildResult
+		storeAudits []store.ResourceAudit
+		leaves      []collectionLeaf
+		files       analyze.FileSet
+		assessedAt  time.Time
 	}
 	collectionCache := make(map[string]resolvedCollection)
 
-	var resolveCollection func(name string, visiting map[string]bool) (artifact.BuildResult, []collectionLeaf, error)
-	resolveCollection = func(name string, visiting map[string]bool) (artifact.BuildResult, []collectionLeaf, error) {
+	var resolveCollection func(name string, visiting map[string]bool) (resolvedCollection, error)
+	resolveCollection = func(name string, visiting map[string]bool) (resolvedCollection, error) {
 		if visiting[name] {
-			return artifact.BuildResult{}, nil, fmt.Errorf("cyclic collection reference: %q", name)
+			return resolvedCollection{}, fmt.Errorf("cyclic collection reference: %q", name)
 		}
 		if cached, ok := collectionCache[name]; ok {
-			return cached.result, cached.leaves, nil
+			return cached, nil
 		}
 		entry, ok := collectionByName[name]
 		if !ok {
-			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q not found", name)
+			return resolvedCollection{}, fmt.Errorf("collection %q not found", name)
 		}
 		c, ok := entry.Resource.(*hccir.Collection)
 		if !ok {
-			return artifact.BuildResult{}, nil, fmt.Errorf("resource %q is not a collection", name)
+			return resolvedCollection{}, fmt.Errorf("resource %q is not a collection", name)
 		}
 		visiting[name] = true
 		defer func() { delete(visiting, name) }()
@@ -247,12 +269,12 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			return nil
 		}
 		resolveChild := func(childName string, path []string) error {
-			child, childLeaves, err := resolveCollection(childName, visiting)
+			child, err := resolveCollection(childName, visiting)
 			if err != nil {
 				return err
 			}
-			directResults = append(directResults, child)
-			for _, leaf := range childLeaves {
+			directResults = append(directResults, child.result)
+			for _, leaf := range child.leaves {
 				for _, childPath := range leaf.paths {
 					fullPath := append(append([]string{name}, path...), childPath...)
 					if err := addLeaf(leaf.result, fullPath); err != nil {
@@ -277,11 +299,11 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				effectiveRef = c.SourceRef
 			}
 			if effectiveRegistry != origin || effectiveRef != registry.Ref {
-				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %q references external registry/ref which is not supported", name, m.Name)
+				return resolvedCollection{}, fmt.Errorf("collection %q member %q references external registry/ref which is not supported", name, m.Name)
 			}
 			if memberKind == hccir.KindCollection {
 				if err := resolveChild(m.Name, nil); err != nil {
-					return artifact.BuildResult{}, nil, err
+					return resolvedCollection{}, err
 				}
 				continue
 			}
@@ -289,36 +311,40 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			key := kind + "/" + m.Name
 			rp, ok := resourceResults[key]
 			if !ok {
-				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s %q not found in registry", name, kind, m.Name)
+				return resolvedCollection{}, fmt.Errorf("collection %q member %s %q not found in registry", name, kind, m.Name)
 			}
 			directResults = append(directResults, rp.result)
 			if err := addLeaf(rp.result, []string{name}); err != nil {
-				return artifact.BuildResult{}, nil, err
+				return resolvedCollection{}, err
 			}
 		}
 		for _, inc := range c.Includes {
 			if err := resolveChild(inc, nil); err != nil {
-				return artifact.BuildResult{}, nil, err
+				return resolvedCollection{}, err
 			}
 		}
 
 		savedURL, savedRef, savedKey, savedPath := c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = "", "", "", ""
-		r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, nil, directResults)
+		assessedAt := time.Now().UTC()
+		r, _, err := buildResource(ctx, mpID, registry, root, entry, origin, commit, resolvedSet, policy, limits, meta, nil, directResults, assessedAt)
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = savedURL, savedRef, savedKey, savedPath
 		if err != nil {
-			return artifact.BuildResult{}, nil, fmt.Errorf("build collection %q: %w", name, err)
+			return resolvedCollection{}, fmt.Errorf("build collection %q: %w", name, err)
 		}
-		r = applyPolicyToResult(r, registry.ID, limits, license, registry.Acquisition)
 		if registry.Acquisition != store.AcquisitionMirror {
-			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q requires mirror acquisition", name)
+			return resolvedCollection{}, fmt.Errorf("collection %q requires mirror acquisition", name)
 		}
+
+		// Finalize the collection manifest before running analyzers: the canonical
+		// manifest digest is the stable cache identity, and analyzers must see the
+		// complete leaf set.
 		manifest, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(r.ManifestPayload))
 		if err != nil {
-			return artifact.BuildResult{}, nil, fmt.Errorf("decode collection %q manifest: %w", name, err)
+			return resolvedCollection{}, fmt.Errorf("decode collection %q manifest: %w", name, err)
 		}
 		if err := hccartifact.VerifyCollectionManifest(manifest, payload); err != nil {
-			return artifact.BuildResult{}, nil, fmt.Errorf("verify collection %q manifest: %w", name, err)
+			return resolvedCollection{}, fmt.Errorf("verify collection %q manifest: %w", name, err)
 		}
 		manifest.Leaves = nil
 		for _, leaf := range leaves {
@@ -327,11 +353,70 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 		manifestPayload, manifestDigest, err := hccartifact.EncodeCollectionManifest(manifest)
 		if err != nil {
-			return artifact.BuildResult{}, nil, fmt.Errorf("encode collection %q graph: %w", name, err)
+			return resolvedCollection{}, fmt.Errorf("encode collection %q graph: %w", name, err)
 		}
 		r.ManifestPayload, r.ManifestDigest, r.ContentDigest = manifestPayload, manifestDigest, manifestDigest
 		r.Artifact.Manifest.ContentDigest = manifestDigest
 		r.Artifact.Payload = manifestPayload
+
+		// Run collection analyzers against the finalized canonical manifest.
+		memberFindings := r.Findings
+		memberRejected := r.Rejected
+
+		primaryPath := inspection.PrimaryPath("collection")
+		body := append([]byte(nil), r.ManifestPayload...)
+		support := analyze.FileSet(nil)
+		coord := store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: "collection", Name: entry.Name}
+		subject := analyze.Subject{
+			Resource: entry.Resource,
+			Files:    nil,
+			Registry: analyze.Registry{
+				RegistryURL: origin,
+				Ref:         registry.Ref,
+				Path:        root.Path,
+				ID:          string(registry.ID),
+				Slug:        registry.Slug,
+				License:     resolvedResourceLicense(entry.Resource, registry.License, nil),
+			},
+			Limits: analyze.Limits{
+				MaxFileBytes:  limits.FileBytes,
+				MaxTotalBytes: limits.RepositoryBytes,
+				MaxFiles:      limits.FileCount,
+				MaxFindings:   defaultMaxFindings,
+			},
+		}
+
+		var report analyze.Report
+		var storeAudits []store.ResourceAudit
+		var run auditRun
+		if meta != nil {
+			report, err = cacheAwareAnalyze(meta, coord, resolvedSet, assessedAt, primaryPath, body, support, &run)(ctx, subject, manifestDigest)
+			storeAudits = run.audits
+		} else {
+			report, err = analyze.NewEngineWith(resolvedSet.Registrations()).Analyze(ctx, subject)
+			if err == nil {
+				storeAudits, err = storeAuditsFromAnalyze(report.Audits, resolvedSet, coord, manifestDigest, nil, assessedAt, primaryPath, body, support)
+			}
+		}
+		if err != nil {
+			return resolvedCollection{}, fmt.Errorf("analyze collection %q: %w", name, err)
+		}
+		r.Findings = report.Findings
+		r.Decision = report.Decision
+		r.Rejected = report.Rejected
+		r.Audits = report.Audits
+
+		// Apply license and artifact-size policy to the analyzer result.
+		r = applyPolicyToResult(r, registry.ID, limits, license, registry.Acquisition)
+
+		// If a member was already rejected, preserve its findings alongside the
+		// analyzer/policy findings and force a reject decision.
+		if memberRejected {
+			r.Rejected = true
+			r.Decision = analyze.DecisionReject
+			r.Findings = append(r.Findings, memberFindings...)
+		}
+
 		primary, projectionSupport := inspectionInput(entry.Resource, r, nil)
 		projection, err := inspection.Build(
 			store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: "collection", Name: entry.Name},
@@ -339,7 +424,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
 		)
 		if err != nil {
-			return artifact.BuildResult{}, nil, fmt.Errorf("inspection projection for collection %q: %w", name, err)
+			return resolvedCollection{}, fmt.Errorf("inspection projection for collection %q: %w", name, err)
 		}
 		key := "collection/" + entry.Name
 		inspectionDigests[key] = projection.Manifest.ManifestDigest
@@ -347,8 +432,8 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		for digest, data := range projection.Bodies {
 			inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(digest), data)
 		}
-		collectionCache[name] = resolvedCollection{result: r, leaves: leaves}
-		return r, leaves, nil
+		collectionCache[name] = resolvedCollection{result: r, storeAudits: storeAudits, leaves: leaves, files: nil, assessedAt: assessedAt}
+		return resolvedCollection{result: r, storeAudits: storeAudits, leaves: leaves, files: nil, assessedAt: assessedAt}, nil
 	}
 
 	for _, entry := range collectionEntries {
@@ -356,7 +441,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			slog.Warn("skipping collection for non-mirror registry", "registry", registry.ID, "collection", entry.Name, "acquisition", registry.Acquisition)
 			continue
 		}
-		r, _, err := resolveCollection(entry.Name, make(map[string]bool))
+		rc, err := resolveCollection(entry.Name, make(map[string]bool))
 		if err != nil {
 			if strings.Contains(err.Error(), "rejected") {
 				slog.Warn("skipping collection without publishable leaves", "registry", registry.ID, "collection", entry.Name, "err", err)
@@ -364,8 +449,8 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			}
 			return rev, fmt.Errorf("resolve collection %q: %w", entry.Name, err)
 		}
-		body, support := inspectionInput(entry.Resource, r, nil)
-		processedResults = append(processedResults, processed{entry: entry, result: r, inspectionBody: body, inspectionSupport: support})
+		body, support := inspectionInput(entry.Resource, rc.result, nil)
+		processedResults = append(processedResults, processed{entry: entry, result: rc.result, storeAudits: rc.storeAudits, inspectionBody: body, inspectionSupport: support, files: rc.files, assessedAt: rc.assessedAt})
 	}
 
 	// Validate every published collection against the complete set of manifests
@@ -433,6 +518,8 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	var resources []store.ResourceRevision
 	var resourceOccurrences []store.ResourceOccurrence
 	var assessments []store.ResourceAssessment
+	var audits []store.ResourceAudit
+	var auditLinks []store.AssessmentAuditLink
 	var extraBlobs []store.BlobUpload
 	var collectionManifests []store.BlobUpload
 	var collections []store.CollectionRevision
@@ -461,12 +548,12 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
 			Coordinate:               coord,
 			ContentDigest:            rev.ContentDigest,
-			AnalyzerVersion:          analyze.AnalyzerVersionV1,
+			AnalyzerVersion:          resolvedSet.AuditSetVersion,
 			PolicyDigest:             policyDigest,
 			Decision:                 assessmentDecision(p.result),
 			Findings:                 toStoreFindings(p.result.Findings, inspection.PrimaryPath(kind), p.inspectionBody, p.inspectionSupport),
 			InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+p.entry.Name]),
-			AssessedAt:               time.Now().UTC(),
+			AssessedAt:               p.assessedAt,
 		})
 		if err != nil {
 			return Revision{}, fmt.Errorf("finalize assessment for %s %q: %w", kind, p.entry.Name, err)
@@ -474,6 +561,16 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		resources = append(resources, rev)
 		resourceOccurrences = append(resourceOccurrences, store.ResourceOccurrence{Coordinate: coord, ContentDigest: rev.ContentDigest, Commit: commit, ManifestDigest: store.RevisionDigest(digest)})
 		assessments = append(assessments, assessment)
+
+		for i, storeAudit := range p.storeAudits {
+			audits = append(audits, storeAudit)
+			auditLinks = append(auditLinks, store.AssessmentAuditLink{
+				AssessmentDigest: assessment.AssessmentDigest,
+				Ordinal:          i,
+				AuditKey:         storeAudit.ResourceAuditKey,
+				ResultDigest:     storeAudit.ResultDigest,
+			})
+		}
 
 		if kind == "collection" {
 			if p.result.ManifestDigest == "" || len(p.result.ManifestPayload) == 0 {
@@ -510,6 +607,8 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		Resources:             resources,
 		ResourceOccurrences:   resourceOccurrences,
 		Assessments:           assessments,
+		Audits:                audits,
+		AssessmentAuditLinks:  auditLinks,
 		ExtraBlobs:            append(extraBlobs, collectionManifests...),
 		InspectionBlobs:       inspectionBlobs,
 		CollectionManifests:   collectionManifests,
@@ -584,6 +683,157 @@ func appendUniquePath(paths [][]string, candidate []string) [][]string {
 	return append(paths, append([]string(nil), candidate...))
 }
 
+func analyzerAppliesTo(kind hccir.ResourceKind, kinds []hccir.ResourceKind) bool {
+	if len(kinds) == 0 {
+		return true
+	}
+	for _, k := range kinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// auditRun collects the finalized store audits produced by cacheAwareAnalyze.
+type auditRun struct {
+	audits []store.ResourceAudit
+}
+
+// cacheAwareAnalyze returns an AnalyzeFunc that resolves each analyzer once,
+// consults the metadata store for cached audits, runs the remaining analyzers
+// through a single Engine, and fills the exact result slot for each applicable
+// analyzer. The returned report preserves the resolved analyzer order.
+func cacheAwareAnalyze(meta store.MetadataStore, coord store.ResourceCoordinate, resolvedSet resolvedAnalyzerSet, assessedAt time.Time, primaryPath string, body []byte, support analyze.FileSet, run *auditRun) analyze.AnalyzeFunc {
+	return func(ctx context.Context, subject analyze.Subject, contentDigest string) (analyze.Report, error) {
+		subjectDigest := artifact.SubjectDigest(contentDigest, subject.Files)
+		configByAnalyzer := make(map[string]store.PolicyDigest, len(resolvedSet.Entries))
+		for _, e := range resolvedSet.Entries {
+			configByAnalyzer[e.Registration.Analyzer.ID()] = e.ConfigDigest
+		}
+
+		applicable := make([]resolvedAnalyzer, 0, len(resolvedSet.Entries))
+		for _, entry := range resolvedSet.Entries {
+			if analyzerAppliesTo(subject.Resource.Kind(), entry.Registration.Analyzer.Kinds()) {
+				applicable = append(applicable, entry)
+			}
+		}
+
+		auditSlots := make([]analyze.Audit, len(applicable))
+		storeAuditSlots := make([]store.ResourceAudit, len(applicable))
+		var missRegs []analyze.Registration
+		var missIdx []int
+		for i, entry := range applicable {
+			key := store.ResourceAuditKey{
+				Coordinate:      coord,
+				SubjectDigest:   store.RevisionDigest(subjectDigest),
+				AnalyzerID:      entry.Registration.Analyzer.ID(),
+				AnalyzerVersion: entry.Registration.Analyzer.Version(),
+				ConfigDigest:    entry.ConfigDigest,
+			}
+			cached, err := meta.GetCachedResourceAudit(ctx, key)
+			if err == nil {
+				if err := validateCachedAudit(cached, key, entry.Registration.Role); err != nil {
+					return analyze.Report{}, fmt.Errorf("cached audit %s: %w", key.AnalyzerID, err)
+				}
+				slog.Debug("audit cache hit", "analyzer", key.AnalyzerID, "version", key.AnalyzerVersion)
+				storeAuditSlots[i] = cached
+				auditSlots[i] = store.ResourceAuditToAnalyze(cached)
+				continue
+			}
+			if !errors.Is(err, store.ErrNotFound) {
+				return analyze.Report{}, fmt.Errorf("get cached audit %s: %w", key.AnalyzerID, err)
+			}
+			slog.Debug("audit cache miss", "analyzer", key.AnalyzerID, "version", key.AnalyzerVersion)
+			missRegs = append(missRegs, entry.Registration)
+			missIdx = append(missIdx, i)
+		}
+
+		if len(missRegs) > 0 {
+			report, err := analyze.NewEngineWith(missRegs).Analyze(ctx, subject)
+			if err != nil {
+				return analyze.Report{}, err
+			}
+			if len(report.Audits) != len(missRegs) {
+				return analyze.Report{}, fmt.Errorf("expected %d audits, got %d", len(missRegs), len(report.Audits))
+			}
+			for j, audit := range report.Audits {
+				configDigest, ok := configByAnalyzer[audit.AnalyzerID]
+				if !ok {
+					return analyze.Report{}, fmt.Errorf("missing config digest for analyzer %s", audit.AnalyzerID)
+				}
+				key := store.ResourceAuditKey{
+					Coordinate:      coord,
+					SubjectDigest:   store.RevisionDigest(subjectDigest),
+					AnalyzerID:      audit.AnalyzerID,
+					AnalyzerVersion: audit.AnalyzerVersion,
+					ConfigDigest:    configDigest,
+				}
+				storeFindings := toStoreFindings(audit.Findings, primaryPath, body, support)
+				storeAudit, err := store.ResourceAuditFromMappedFindings(audit, key, assessedAt, storeFindings)
+				if err != nil {
+					return analyze.Report{}, fmt.Errorf("finalize audit %s: %w", audit.AnalyzerID, err)
+				}
+				storeAuditSlots[missIdx[j]] = storeAudit
+				auditSlots[missIdx[j]] = audit
+			}
+		}
+
+		report, err := analyze.ReportFromAudits(auditSlots)
+		if err != nil {
+			return analyze.Report{}, err
+		}
+		run.audits = storeAuditSlots
+		return report, nil
+	}
+}
+
+func validateCachedAudit(cached store.ResourceAudit, key store.ResourceAuditKey, expectedRole string) error {
+	if cached.Coordinate != key.Coordinate ||
+		cached.SubjectDigest != key.SubjectDigest ||
+		cached.AnalyzerID != key.AnalyzerID ||
+		cached.AnalyzerVersion != key.AnalyzerVersion ||
+		cached.ConfigDigest != key.ConfigDigest {
+		return fmt.Errorf("cached audit identity mismatch: got %v, want %v", cached.ResourceAuditKey, key)
+	}
+	if cached.Role != expectedRole {
+		return fmt.Errorf("cached audit role mismatch: got %q, want %q", cached.Role, expectedRole)
+	}
+	return nil
+}
+
+func storeAuditsFromAnalyze(audits []analyze.Audit, resolvedSet resolvedAnalyzerSet, coord store.ResourceCoordinate, contentDigest string, files analyze.FileSet, assessedAt time.Time, primaryPath string, body []byte, support analyze.FileSet) ([]store.ResourceAudit, error) {
+	if len(audits) == 0 {
+		return nil, nil
+	}
+	configByAnalyzer := make(map[string]store.PolicyDigest, len(resolvedSet.Entries))
+	for _, e := range resolvedSet.Entries {
+		configByAnalyzer[e.Registration.Analyzer.ID()] = e.ConfigDigest
+	}
+	subjectDigest := artifact.SubjectDigest(contentDigest, files)
+	out := make([]store.ResourceAudit, 0, len(audits))
+	for _, audit := range audits {
+		configDigest, ok := configByAnalyzer[audit.AnalyzerID]
+		if !ok {
+			return nil, fmt.Errorf("missing config digest for analyzer %s", audit.AnalyzerID)
+		}
+		key := store.ResourceAuditKey{
+			Coordinate:      coord,
+			SubjectDigest:   store.RevisionDigest(subjectDigest),
+			AnalyzerID:      audit.AnalyzerID,
+			AnalyzerVersion: audit.AnalyzerVersion,
+			ConfigDigest:    configDigest,
+		}
+		findings := toStoreFindings(audit.Findings, primaryPath, body, support)
+		storeAudit, err := store.ResourceAuditFromMappedFindings(audit, key, assessedAt, findings)
+		if err != nil {
+			return nil, fmt.Errorf("finalize audit %s: %w", audit.AnalyzerID, err)
+		}
+		out = append(out, storeAudit)
+	}
+	return out, nil
+}
+
 func registryEntryPath(dir string, root store.RegistryRoot, entry catalog.Entry) string {
 	path := entry.Path
 	if path == "" {
@@ -602,7 +852,12 @@ func registryEntryPath(dir string, root store.RegistryRoot, entry catalog.Entry)
 // buildResource analyzes one catalog entry and builds its artifact. License
 // policy is deliberately not an input here: analysis is independent of it, and
 // the license decision is taken once, afterwards, in applyPolicyToResult.
-func buildResource(ctx context.Context, registry store.Registry, root store.RegistryRoot, entry catalog.Entry, origin, commit string, policy analyze.Policy, limits config.Limits, files analyze.FileSet, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
+//
+// For resources, the returned store audits are in the same order as the
+// applicable analyzer set; for collections, analyzers are run later by
+// resolveCollection after the canonical manifest digest is finalized, so this
+// returns an empty audit slice.
+func buildResource(ctx context.Context, mpID store.MarketplaceID, registry store.Registry, root store.RegistryRoot, entry catalog.Entry, origin, commit string, resolvedSet resolvedAnalyzerSet, policy analyze.Policy, limits config.Limits, meta store.MetadataStore, files analyze.FileSet, memberResults []artifact.BuildResult, assessedAt time.Time) (artifact.BuildResult, []store.ResourceAudit, error) {
 	opts := analyze.DefaultOptions()
 	opts.Policy = policy
 	opts.Registry = analyze.Registry{
@@ -620,16 +875,55 @@ func buildResource(ctx context.Context, registry store.Registry, root store.Regi
 		MaxFindings:   defaultMaxFindings,
 	}
 
+	kind := api.FromIR(entry.Kind)
 	switch r := entry.Resource.(type) {
 	case *hccir.Collection:
+		// Collection analyzers must run after leaves are resolved and the
+		// canonical manifest digest is known, so the envelope is built without
+		// analyzers here. Use a non-nil empty slice so engineFromOptions does
+		// not fall back to the default registration set.
+		opts.Registrations = []analyze.Registration{}
+		opts.Analyze = nil
 		if r.SourcePath != "" {
 			opts.Registry.Path = r.SourcePath
 		}
-		return artifact.BuildCollectionManifest(ctx, r, memberResults, opts)
+		built, err := artifact.BuildCollectionManifest(ctx, r, memberResults, opts)
+		return built, nil, err
 	case hccir.Resource:
-		return artifact.BuildResourceArtifact(ctx, r, files, opts)
+		// Wire up the cache-aware analyzer before building so it can fold into
+		// the artifact decision.
+		primaryPath := inspection.PrimaryPath(kind)
+		body, support := inspectionInput(entry.Resource, artifact.BuildResult{}, files)
+		var run auditRun
+		if meta != nil && kind != "" {
+			opts.Analyze = cacheAwareAnalyze(meta, store.ResourceCoordinate{
+				Marketplace: mpID,
+				Registry:    registry.ID,
+				Kind:        kind,
+				Name:        entry.Name,
+			}, resolvedSet, assessedAt, primaryPath, body, support, &run)
+		} else {
+			opts.Registrations = resolvedSet.Registrations()
+		}
+		built, err := artifact.BuildResourceArtifact(ctx, r, files, opts)
+		if err != nil {
+			return artifact.BuildResult{}, nil, err
+		}
+		storeAudits := run.audits
+		if storeAudits == nil {
+			storeAudits, err = storeAuditsFromAnalyze(built.Audits, resolvedSet, store.ResourceCoordinate{
+				Marketplace: mpID,
+				Registry:    registry.ID,
+				Kind:        kind,
+				Name:        entry.Name,
+			}, built.ContentDigest, files, assessedAt, primaryPath, body, support)
+			if err != nil {
+				return artifact.BuildResult{}, nil, fmt.Errorf("finalize resource audits: %w", err)
+			}
+		}
+		return built, storeAudits, nil
 	default:
-		return artifact.BuildResult{}, fmt.Errorf("unknown resource type %T", entry.Resource)
+		return artifact.BuildResult{}, nil, fmt.Errorf("unknown resource type %T", entry.Resource)
 	}
 }
 
@@ -742,17 +1036,6 @@ func safeURLOrigin(raw string) string {
 	// credentials. Scheme and authority are sufficient to identify the endpoint
 	// without copying attacker-controlled URL values into a public projection.
 	return parsed.Scheme + "://" + parsed.Host
-}
-
-func supportFileDigests(files analyze.FileSet) map[string]string {
-	if len(files) == 0 {
-		return nil
-	}
-	digests := make(map[string]string, len(files))
-	for name, data := range files {
-		digests[name] = artifact.RevisionDigest(data)
-	}
-	return digests
 }
 
 func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, error) {
@@ -1192,26 +1475,67 @@ func applyPolicyToResult(r artifact.BuildResult, registryID store.RegistryID, li
 }
 
 func assessmentDecision(result artifact.BuildResult) store.AssessmentDecision {
-	if result.Rejected {
-		return store.AssessmentDecisionReject
+	rank := decisionRank(result.Decision)
+	if result.Rejected && rank < 3 {
+		rank = 3
 	}
 	for _, finding := range result.Findings {
-		if finding.PolicyOutcome == analyze.OutcomeWarn || finding.Severity == analyze.OutcomeWarn {
-			return store.AssessmentDecisionWarn
+		// License and artifact policy findings are independent of the analyzer
+		// fold and can strengthen the assessment decision.
+		if !strings.HasPrefix(finding.Code, "marketplace.policy.") {
+			continue
+		}
+		if finding.PolicyOutcome == analyze.OutcomeReject || finding.Severity == analyze.OutcomeReject {
+			rank = 3
+		} else if rank < 2 && (finding.PolicyOutcome == analyze.OutcomeWarn || finding.Severity == analyze.OutcomeWarn) {
+			rank = 2
 		}
 	}
-	return store.AssessmentDecisionAllow
+	switch rank {
+	case 3:
+		return store.AssessmentDecisionReject
+	case 2:
+		return store.AssessmentDecisionWarn
+	default:
+		return store.AssessmentDecisionAllow
+	}
 }
 
-func resourcePolicyDigest(policy analyze.Policy, limits config.Limits, license licensePolicy) (store.PolicyDigest, error) {
+func decisionRank(decision string) int {
+	switch decision {
+	case analyze.DecisionReject:
+		return 3
+	case analyze.DecisionWarn:
+		return 2
+	case analyze.DecisionAllow:
+		return 0
+	}
+	return 0
+}
+
+func resourcePolicyDigest(policy analyze.Policy, limits config.Limits, license licensePolicy, resolvedSet resolvedAnalyzerSet) (store.PolicyDigest, error) {
 	allowlist := append([]string(nil), license.allowlist...)
 	sort.Strings(allowlist)
+
+	// Preserve the resolved/authored analyzer order. Sorting by ID breaks
+	// alignment with per-resource assessment digests and audit links.
+	analyzers := make([]analyzerPolicyEntry, 0, len(resolvedSet.Entries))
+	for _, e := range resolvedSet.Entries {
+		analyzers = append(analyzers, analyzerPolicyEntry{
+			ID:           e.Registration.Analyzer.ID(),
+			Version:      e.Registration.Analyzer.Version(),
+			Role:         e.Registration.Role,
+			ConfigDigest: string(e.ConfigDigest),
+		})
+	}
+
 	payload, err := json.Marshal(struct {
-		Policy            analyze.Policy `json:"policy"`
-		Limits            config.Limits  `json:"limits"`
-		LicenseAllowlist  []string       `json:"license_allowlist"`
-		LicenseUndeclared string         `json:"license_undeclared"`
-	}{policy, limits, allowlist, license.undeclared})
+		Policy            analyze.Policy        `json:"policy"`
+		Limits            config.Limits         `json:"limits"`
+		LicenseAllowlist  []string              `json:"license_allowlist"`
+		LicenseUndeclared string                `json:"license_undeclared"`
+		Analyzers         []analyzerPolicyEntry `json:"analyzers"`
+	}{policy, limits, allowlist, license.undeclared, analyzers})
 	if err != nil {
 		return "", fmt.Errorf("encode assessment policy: %w", err)
 	}
@@ -1222,7 +1546,14 @@ func resourcePolicyDigest(policy analyze.Policy, limits config.Limits, license l
 func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte, support analyze.FileSet) []store.Finding {
 	out := make([]store.Finding, 0, len(findings))
 	for _, f := range findings {
-		finding := store.Finding{Code: f.Code, Severity: f.Severity, Policy: f.PolicyOutcome, Message: f.Message}
+		finding := store.Finding{
+			Code:        f.Code,
+			Severity:    f.Severity,
+			Policy:      f.PolicyOutcome,
+			Message:     f.Message,
+			AnalyzerID:  f.Analyzer,
+			Consentable: f.Consentable,
+		}
 		if f.SourceRange != nil {
 			location := &store.FindingLocation{Path: primaryPath, Line: f.SourceRange.Line, Column: f.SourceRange.Column}
 			file := strings.ReplaceAll(f.SourceRange.File, "\\", "/")

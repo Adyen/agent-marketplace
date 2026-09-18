@@ -62,8 +62,74 @@ ship a Markdown catalog that documents each code.
 
 - **WHEN** `FindingCodes()` is called
 - **THEN** every returned code MUST appear in `pkg/marketplace/analyze/codes.md`
-- **AND** every code MUST use the `marketplace.find.` prefix
+- **AND** every built-in code MUST use the `marketplace.find.` prefix
 - **AND** the code set MUST contain no duplicates
+
+#### Scenario: Third-party analyzer code namespace
+
+- **WHEN** an out-of-process analyzer emits a finding
+- **THEN** the finding code MUST be prefixed with the analyzer's configured `id` followed by `.`
+- **AND** the response MUST echo the configured `analyzer_version`
+
+### Requirement: Analyzer plugin model
+
+The protocol SHALL support a named, versioned, independently enabled, gating or advisory analyzer model.
+
+#### Scenario: Omitted and empty analyzer sets
+
+- **WHEN** `policy.analyzers` is omitted from the operator configuration
+- **THEN** the marketplace MUST run the five built-in analyzers (`marketplace.hidden-content`, `marketplace.obfuscation`, `marketplace.assets`, `marketplace.references`, `marketplace.capabilities`) at their default roles
+- **AND** the built-in `marketplace.rulepack` MUST NOT run unless it is explicitly enabled
+
+- **WHEN** `policy.analyzers` is an explicit empty list
+- **THEN** the marketplace MUST produce a `pass` assessment for every resource with no findings and no audit rows
+
+#### Scenario: Built-in overrides
+
+- **WHEN** a built-in analyzer entry overrides `role` or `enabled`
+- **THEN** the overridden role MUST be used in the decision fold
+- **AND** an `enabled: false` entry MUST be excluded from the ordered revision audit summaries
+- **AND** the default built-in version and codes MUST remain unchanged
+
+#### Scenario: External runner identity and version echo
+
+- **WHEN** an analyzer declares a `run` block with an `implementation_digest` and a `version`
+- **THEN** the marketplace MUST hash the executable at `run.command` and refuse to run it when the digest does not match
+- **AND** the runner MUST echo the configured `version` in its JSON response
+- **AND** a version mismatch, malformed output, or non-zero exit MUST produce an `error` verdict with a non-consentable `marketplace.policy.audit-unavailable` finding
+
+#### Scenario: Rulepack analyzer
+
+- **WHEN** `marketplace.rulepack` is enabled with a `rulepack.path`
+- **THEN** the marketplace MUST load the rulepack from the absolute path
+- **AND** findings emitted by the rulepack MUST be namespaced as `marketplace.rulepack.<code>`
+
+#### Scenario: Audit cache key and uncached errors
+
+- **WHEN** a resource is assessed with a configured analyzer set
+- **THEN** each audit MUST be keyed on a `subject_digest` covering the content digest plus support-file digests, and a `config_digest` covering the resolved analyzer entry, opaque `config`, and policy outcomes
+- **AND** a cache hit MUST reuse the stored audit byte-for-byte
+- **AND** an `error` or timeout audit MUST NOT be cached
+- **AND** re-running the same analyzer with the same subject and config MUST return the same `result_digest`
+
+#### Scenario: Ordered revision summaries and detail route
+
+- **WHEN** a `ResourceRevision` is returned
+- **THEN** its `audits` array MUST contain one `AuditSummary` per enabled analyzer in stable order
+- **AND** each summary MUST include `analyzer_id`, `analyzer_version`, `role`, `verdict`, `summary`, `finding_count`, `duration_ns`, and a non-empty `result_digest`
+- **AND** the detail route `GET /api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/audits/{analyzer_id}` MUST return the full `Audit` with the same `result_digest`
+
+#### Scenario: Explicit non-consentable gating refusal
+
+- **WHEN** a gating analyzer yields an `error` verdict and the assessment is `warn`
+- **THEN** the rollup MUST include a `marketplace.policy.audit-unavailable` finding with `consentable: false`
+- **AND** consumer `install` commands with `--accept-risk` or `--yes` MUST refuse the resource and report that the finding cannot be bypassed
+
+#### Scenario: Legacy omitted audit fields
+
+- **WHEN** a stored `Finding` omits `analyzer_id` or `consentable`
+- **THEN** consumers MUST treat `consentable` as `true` when absent
+- **AND** consumers MUST render a missing `analyzer_id` as `legacy`
 
 ### Requirement: Consumer config fields
 

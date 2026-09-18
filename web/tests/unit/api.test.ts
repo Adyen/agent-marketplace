@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { apiPath, createMarketplaceApi, devApiProxyTargets, isRasterMediaType, isResourceKind, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, selectMarketplacePublicApiBase, serializeSearchQuery, registryHistoryPath, registryPath, wellKnownPath } from '../../app/lib/api'
+import { apiPath, createMarketplaceApi, devApiProxyTargets, isRasterMediaType, isResourceKind, normalizeApiBase, resourceAuditPath, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, selectMarketplacePublicApiBase, serializeSearchQuery, registryHistoryPath, registryPath, wellKnownPath } from '../../app/lib/api'
 import { RESOURCE_KINDS } from '../../app/types/marketplace'
-import { ApiValidationError, MAX_ASSESSMENT_FINDINGS, MAX_RESOURCE_REVISION_ENTRIES, MAX_REGISTRY_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '../../app/lib/validation'
+import { ApiValidationError, MAX_ASSESSMENT_FINDINGS, MAX_AUDIT_SUMMARIES, MAX_RESOURCE_REVISION_ENTRIES, MAX_REGISTRY_HISTORY_ENTRIES, normalizeAudit, normalizeAuditSummary, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
 function revisionPayload(contentDigest: string, overrides: Record<string, unknown> = {}) {
@@ -292,5 +292,85 @@ describe('search result availability', () => {
 
   it('rejects a malformed non-string availability', () => {
     expect(() => search(7)).toThrow(ApiValidationError)
+  })
+})
+
+describe('analyzer audit validation', () => {
+  const digest = 'sha256:' + 'a'.repeat(64)
+  const auditSummary = (overrides: Record<string, unknown> = {}) => ({
+    analyzer_id: 'builtin.policy',
+    analyzer_version: '1.0.0',
+    role: 'gating',
+    verdict: 'pass',
+    summary: 'No policy violations.',
+    finding_count: 0,
+    duration_ns: 1_250_000,
+    result_digest: digest,
+    ...overrides,
+  })
+
+  const auditDetail = (overrides: Record<string, unknown> = {}) => ({
+    analyzer_id: 'builtin.policy',
+    analyzer_version: '1.0.0',
+    role: 'gating',
+    verdict: 'warn',
+    summary: 'One advisory.',
+    findings: [],
+    finding_count: 0,
+    duration_ns: 1_250_000,
+    assessed_at: '2026-01-02T03:04:05Z',
+    result_digest: digest,
+    ...overrides,
+  })
+
+  it('normalizes audit summaries and enforces enums, bounds, and digest patterns', () => {
+    expect(normalizeAuditSummary(auditSummary())).toMatchObject({ analyzer_id: 'builtin.policy', verdict: 'pass' })
+    expect(() => normalizeAuditSummary(auditSummary({ analyzer_id: '1invalid' }))).toThrow(/valid analyzer id/)
+    expect(() => normalizeAuditSummary(auditSummary({ role: 'gatekeeper' }))).toThrow(/role is unsupported/)
+    expect(() => normalizeAuditSummary(auditSummary({ verdict: 'blocked' }))).toThrow(/verdict is unsupported/)
+    expect(() => normalizeAuditSummary(auditSummary({ finding_count: -1 }))).toThrow(/bounded non-negative integer/)
+    expect(() => normalizeAuditSummary(auditSummary({ duration_ns: -1 }))).toThrow(/bounded non-negative integer/)
+    expect(() => normalizeAuditSummary(auditSummary({ result_digest: 'sha256:short' }))).toThrow(/SHA-256 digest/)
+    expect(() => normalizeAuditSummary(auditSummary({ summary: '' }))).toThrow(/summary must not be empty/)
+  })
+
+  it('accepts the largest safe integer duration and rejects overflow', () => {
+    expect(normalizeAuditSummary(auditSummary({ duration_ns: Number.MAX_SAFE_INTEGER })).duration_ns).toBe(Number.MAX_SAFE_INTEGER)
+    expect(() => normalizeAuditSummary(auditSummary({ duration_ns: Number.MAX_SAFE_INTEGER + 1 }))).toThrow(/bounded non-negative integer/)
+  })
+
+  it('normalizes audit detail findings and rejects explicit consentable:true', () => {
+    const withFinding = auditDetail({
+      findings: [{
+        code: 'audit-finding',
+        severity: 'warn',
+        message: 'Review this.',
+        analyzer_id: 'builtin.policy',
+        location: { path: 'SKILL.md', line: 1, column: 2 },
+      }],
+      finding_count: 1,
+    })
+    const audit = normalizeAudit(withFinding)
+    expect(audit.findings[0]?.consentable).toBe(true)
+    expect(audit.findings[0]?.analyzer_id).toBe('builtin.policy')
+
+    expect(() => normalizeAudit({ ...withFinding, findings: [{ code: 'x', severity: 'warn', consentable: true }] })).toThrow(/consentable must be omitted or false/)
+    expect(() => normalizeAudit({ ...withFinding, findings: [{ code: 'x', severity: 'warn', consentable: false, analyzer_id: 'Invalid' }] })).toThrow(/valid analyzer id/)
+  })
+
+  it('bounds audit summary arrays and rejects malformed enums and digests', () => {
+    const revision = normalizeResourceRevision(revisionPayload(digest, { audits: [auditSummary(), auditSummary({ analyzer_id: 'builtin.trust' })] }))
+    expect(revision.audits).toHaveLength(2)
+    expect(revision.audits?.[0]?.analyzer_id).toBe('builtin.policy')
+    expect(revision.audits?.[1]?.analyzer_id).toBe('builtin.trust')
+
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { audits: Array.from({ length: MAX_AUDIT_SUMMARIES + 1 }, () => auditSummary()) }))).toThrow(/audits must be a bounded array/)
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { audits: [auditSummary({ result_digest: 'md5:' + 'a'.repeat(32) })] }))).toThrow(/SHA-256 digest/)
+  })
+
+  it('builds the exact audit API path and exposes getResourceAudit', async () => {
+    expect(resourceAuditPath('/api/v1', 'team/tools', 'skill', 'code review', digest, 'builtin.policy')).toBe(resourceRevisionPath('/api/v1', 'team/tools', 'skill', 'code review', digest) + '/audits/builtin.policy')
+    const api = createMarketplaceApi(async () => auditDetail())
+    await expect(api.getResourceAudit('team/tools', 'skill', 'code review', digest, 'builtin.policy')).resolves.toMatchObject({ analyzer_id: 'builtin.policy' })
   })
 })

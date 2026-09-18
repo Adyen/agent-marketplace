@@ -3,6 +3,8 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"net/http"
@@ -309,7 +311,11 @@ func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
 		hccir.WithMcpHeaders(map[string]string{"Authorization": "Bearer " + headerSecret}),
 		hccir.WithMcpOAuth("public-client", oauthSecret, "https://mcp.example.invalid/resource?token="+urlSecret),
 	)
-	report, err := analyze.NewEngine().Analyze(context.Background(), mcp, nil, analyze.DefaultOptions())
+	report, err := analyze.NewEngine().Analyze(context.Background(), analyze.Subject{
+		Resource: mcp,
+		Files:    nil,
+		Limits:   analyze.DefaultLimits(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -969,4 +975,182 @@ func testConfig(tb testing.TB, repoDir string) config.Config {
 			},
 		},
 	}
+}
+
+func TestBuildRegistryRevisionCollectionAnalyzerDeferredAndCached(t *testing.T) {
+	ctx := context.Background()
+	repoDir := createIngestRepo(t)
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+
+	script, counter, digest := writeCounterAnalyzer(t)
+	cfg := testConfig(t, repoDir)
+	cfg.Policy.Analyzers = []config.Analyzer{{
+		ID:      "marketplace.test",
+		Role:    analyze.RoleGating,
+		Version: "1.0.0",
+		Run: &config.AnalyzerRun{
+			Command:              script,
+			Args:                 []string{counter},
+			Timeout:              config.Duration(time.Minute),
+			ImplementationDigest: digest,
+		},
+	}}
+
+	source := store.Registry{
+		ID:          store.RegistryID("src-test"),
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repoDir},
+		Acquisition: store.AcquisitionMirror,
+		License:     "MIT",
+		Roots: []store.RegistryRoot{
+			{Path: ".agents", SourceHarness: "factory"},
+		},
+	}
+
+	db := filepath.Join(t.TempDir(), "marketplace.db")
+	meta := sqlite.New(db)
+	if err := meta.Open(ctx); err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+
+	rev1, err := BuildRegistryRevisionWithAuditStore(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit, meta)
+	if err != nil {
+		t.Fatalf("BuildRegistryRevisionWithAuditStore: %v", err)
+	}
+	if got := counterSize(t, counter); got != 2 {
+		t.Fatalf("first build counter=%d, want 2 (skill + collection)", got)
+	}
+	collectionAudit1 := findCollectionAudit(t, rev1.Audits, "defaults")
+	if collectionAudit1.SubjectDigest == "" {
+		t.Fatal("collection audit missing subject digest")
+	}
+	if collectionAudit1.ResultDigest == "" {
+		t.Fatal("collection audit missing result digest")
+	}
+
+	for _, a := range rev1.Audits {
+		if err := meta.PutResourceAudit(ctx, a); err != nil {
+			t.Fatalf("PutResourceAudit: %v", err)
+		}
+	}
+
+	rev2, err := BuildRegistryRevisionWithAuditStore(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit, meta)
+	if err != nil {
+		t.Fatalf("BuildRegistryRevisionWithAuditStore second build: %v", err)
+	}
+	if got := counterSize(t, counter); got != 2 {
+		t.Fatalf("second build counter=%d, want 2 (cache hit)", got)
+	}
+	collectionAudit2 := findCollectionAudit(t, rev2.Audits, "defaults")
+	if collectionAudit2.SubjectDigest != collectionAudit1.SubjectDigest {
+		t.Fatalf("cached collection subject digest changed: %s != %s", collectionAudit2.SubjectDigest, collectionAudit1.SubjectDigest)
+	}
+	if collectionAudit2.ResultDigest != collectionAudit1.ResultDigest {
+		t.Fatalf("cached collection result digest changed: %s != %s", collectionAudit2.ResultDigest, collectionAudit1.ResultDigest)
+	}
+	if !collectionAudit2.AssessedAt.Equal(collectionAudit1.AssessedAt) {
+		t.Fatalf("cached collection assessed_at changed: %v != %v", collectionAudit2.AssessedAt, collectionAudit1.AssessedAt)
+	}
+
+	skillPath := filepath.Join(repoDir, ".agents", "skills", "review", "SKILL.md")
+	skillBody, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read skill body: %v", err)
+	}
+	if err := os.WriteFile(skillPath, append(skillBody, []byte("\n<!-- changed -->\n")...), 0o644); err != nil {
+		t.Fatalf("write skill body: %v", err)
+	}
+	for _, c := range [][]string{{"git", "add", "."}, {"git", "commit", "-q", "-m", "changed"}} {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", c, err, out)
+		}
+	}
+
+	newCommit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit after change: %v", err)
+	}
+	rev3, err := BuildRegistryRevisionWithAuditStore(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, newCommit, meta)
+	if err != nil {
+		t.Fatalf("BuildRegistryRevisionWithAuditStore after leaf change: %v", err)
+	}
+	if got := counterSize(t, counter); got != 4 {
+		t.Fatalf("after leaf change counter=%d, want 4 (skill + collection rerun)", got)
+	}
+
+	collectionRev1 := findResourceRevision(t, rev1.Resources, "collection", "defaults")
+	collectionRev3 := findResourceRevision(t, rev3.Resources, "collection", "defaults")
+	if collectionRev1.ContentDigest == collectionRev3.ContentDigest {
+		t.Fatalf("collection manifest digest did not change after leaf change")
+	}
+	collectionAudit3 := findCollectionAudit(t, rev3.Audits, "defaults")
+	if collectionAudit3.SubjectDigest == collectionAudit1.SubjectDigest {
+		t.Fatalf("collection subject digest did not change after leaf change")
+	}
+	if collectionAudit3.ResultDigest == "" {
+		t.Fatal("collection audit after leaf change missing result digest")
+	}
+}
+
+func writeCounterAnalyzer(t *testing.T) (script, counter, digest string) {
+	t.Helper()
+	dir := t.TempDir()
+	counter = filepath.Join(dir, "counter")
+	script = filepath.Join(dir, "counter.sh")
+	content := `#!/bin/sh
+read -r _
+printf '%s\n' '{"schema_version":"agent-marketplace.analyzer/v1","analyzer_id":"marketplace.test","analyzer_version":"1.0.0","verdict":"pass","summary":"ok"}'
+printf 'x' >> "$1"
+`
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("write counter script: %v", err)
+	}
+	data, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read counter script: %v", err)
+	}
+	sum := sha256.Sum256(data)
+	digest = "sha256:" + hex.EncodeToString(sum[:])
+	return
+}
+
+func counterSize(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatalf("read counter: %v", err)
+	}
+	return len(data)
+}
+
+func findCollectionAudit(t *testing.T, audits []store.ResourceAudit, name string) store.ResourceAudit {
+	t.Helper()
+	for _, a := range audits {
+		if a.Coordinate.Kind == "collection" && a.Coordinate.Name == name {
+			return a
+		}
+	}
+	t.Fatalf("no collection audit for %q", name)
+	return store.ResourceAudit{}
+}
+
+func findResourceRevision(t *testing.T, revs []store.ResourceRevision, kind, name string) store.ResourceRevision {
+	t.Helper()
+	for _, r := range revs {
+		if r.Coordinate.Kind == kind && r.Coordinate.Name == name {
+			return r
+		}
+	}
+	t.Fatalf("no %s/%s resource revision", kind, name)
+	return store.ResourceRevision{}
 }

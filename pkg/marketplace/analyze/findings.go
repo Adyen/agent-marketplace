@@ -59,6 +59,7 @@ func ToCanonicalFinding(f Finding) hccartifact.CanonicalFinding {
 		Analyzer:        f.Analyzer,
 		AnalyzerVersion: f.AnalyzerVersion,
 		PolicyOutcome:   f.PolicyOutcome,
+		Consentable:     NormalizeConsentable(f.Consentable),
 	}
 	if f.SourceRange != nil {
 		cf.File = f.SourceRange.File

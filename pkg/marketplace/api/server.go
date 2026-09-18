@@ -471,11 +471,19 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleResourceInspection(w, r, parts[0], parts[1], parts[2], parts[4])
 	case 7:
-		if parts[3] != "revisions" || parts[5] != "inspection" || parts[6] != "content" {
+		if parts[3] != "revisions" {
 			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		s.handleResourceInspectionContent(w, r, parts[0], parts[1], parts[2], parts[4], "")
+		if parts[5] == "audits" {
+			s.handleResourceAudit(w, r, parts[0], parts[1], parts[2], parts[4], parts[6])
+			return
+		}
+		if parts[5] == "inspection" && parts[6] == "content" {
+			s.handleResourceInspectionContent(w, r, parts[0], parts[1], parts[2], parts[4], "")
+			return
+		}
+		writeError(w, http.StatusNotFound, "not found")
 	case 8:
 		if parts[3] != "revisions" || parts[5] != "inspection" || parts[6] != "content" {
 			writeError(w, http.StatusNotFound, "not found")
@@ -522,6 +530,11 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
+	if err := s.loadResourceRevisionAudits(r.Context(), &rev); err != nil {
+		slog.Error("resource detail audit load failed", "coord", coord, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load resource")
+		return
+	}
 	writeJSON(w, http.StatusOK, s.applyEffectiveRevocation(rev))
 }
 
@@ -553,7 +566,13 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 			writeError(w, http.StatusInternalServerError, "failed to load revisions")
 			return
 		}
-		revs[i] = s.applyEffectiveRevocation(rev)
+		rev = s.applyEffectiveRevocation(rev)
+		if err := s.loadResourceRevisionAudits(r.Context(), &rev); err != nil {
+			slog.Error("resource revisions audit load failed", "coord", coord, "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to load revisions")
+			return
+		}
+		revs[i] = rev
 	}
 	writeJSON(w, http.StatusOK, revs)
 }
@@ -593,7 +612,146 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
+	if err := s.loadResourceRevisionAudits(r.Context(), &rev); err != nil {
+		slog.Error("revision detail audit load failed", "coord", coord, "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load revision")
+		return
+	}
 	writeJSON(w, http.StatusOK, s.applyEffectiveRevocation(rev))
+}
+
+func (s *Server) loadResourceRevisionAudits(ctx context.Context, rev *store.AssessedResourceRevision) error {
+	if rev.Assessment.AssessmentDigest == "" {
+		return nil
+	}
+	audits, err := s.meta.ListResourceAuditsForAssessment(ctx, rev.Assessment.AssessmentDigest)
+	if err != nil {
+		return err
+	}
+	summaries := make([]store.ResourceAuditSummary, 0, len(audits))
+	seen := make(map[string]struct{}, len(audits))
+	for _, a := range audits {
+		summary, err := store.NewResourceAuditSummary(a)
+		if err != nil {
+			return err
+		}
+		if _, ok := seen[summary.AnalyzerID]; ok {
+			return fmt.Errorf("duplicate analyzer id %q in audit list", summary.AnalyzerID)
+		}
+		seen[summary.AnalyzerID] = struct{}{}
+		summaries = append(summaries, summary)
+	}
+	rev.Audits = summaries
+	return nil
+}
+
+func (s *Server) handleResourceAudit(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest, analyzerID string) {
+	if !isCanonicalSHA256Digest(digest) {
+		writeError(w, http.StatusBadRequest, "invalid revision digest")
+		return
+	}
+	if !IsMarketplaceKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid kind")
+		return
+	}
+	if err := store.ValidateAnalyzerIdentifier(analyzerID); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid analyzer id")
+		return
+	}
+	src, err := s.resolveRegistry(r.Context(), registrySlug)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "registry not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load registry")
+		return
+	}
+
+	coord := store.ResourceCoordinate{Marketplace: s.mpID, Registry: src.ID, Kind: kind, Name: name}
+	rev, err := s.meta.GetResourceRevision(r.Context(), coord, store.RevisionDigest(digest))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "revision not found")
+			return
+		}
+		slog.Error("audit detail failed", "coord", coord, "digest", digest, "analyzer", analyzerID, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load audit")
+		return
+	}
+	if err := validatePublicResourceRevisionMatches(rev, coord, digest); err != nil {
+		slog.Error("audit detail contains invalid revision", "coord", coord, "digest", digest, "analyzer", analyzerID, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load audit")
+		return
+	}
+
+	audit, err := s.meta.GetResourceAuditForAssessment(r.Context(), rev.Assessment.AssessmentDigest, analyzerID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "audit not found")
+			return
+		}
+		slog.Error("audit detail failed", "coord", coord, "digest", digest, "analyzer", analyzerID, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load audit")
+		return
+	}
+	if audit.Coordinate != coord {
+		slog.Error("audit detail coordinate mismatch", "coord", coord, "digest", digest, "analyzer", analyzerID, "audit_coordinate", audit.Coordinate)
+		writeError(w, http.StatusInternalServerError, "failed to load audit")
+		return
+	}
+	if audit.AnalyzerID != analyzerID {
+		slog.Error("audit detail analyzer mismatch", "coord", coord, "digest", digest, "analyzer", analyzerID, "audit_analyzer", audit.AnalyzerID)
+		writeError(w, http.StatusInternalServerError, "failed to load audit")
+		return
+	}
+	if err := audit.Validate(); err != nil {
+		slog.Error("audit detail corruption", "coord", coord, "digest", digest, "analyzer", analyzerID, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load audit")
+		return
+	}
+
+	detail := resourceAuditDetail{
+		AnalyzerID:      audit.AnalyzerID,
+		AnalyzerVersion: audit.AnalyzerVersion,
+		Role:            audit.Role,
+		Verdict:         audit.Verdict,
+		Summary:         audit.Summary,
+		Findings:        audit.Findings,
+		FindingCount:    len(audit.Findings),
+		DurationNS:      audit.Duration.Nanoseconds(),
+		Error:           audit.Error,
+		AssessedAt:      audit.AssessedAt,
+		ResultDigest:    audit.ResultDigest,
+	}
+	if detail.Findings == nil {
+		detail.Findings = []store.Finding{}
+	}
+	payload, err := json.Marshal(detail)
+	if err != nil {
+		slog.Error("audit detail encode failed", "coord", coord, "digest", digest, "analyzer", analyzerID, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load audit")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("ETag", fmt.Sprintf("%q", audit.ResultDigest))
+	setImmutableCache(w)
+	_, _ = w.Write(payload)
+}
+
+type resourceAuditDetail struct {
+	AnalyzerID      string            `json:"analyzer_id"`
+	AnalyzerVersion string            `json:"analyzer_version"`
+	Role            string            `json:"role"`
+	Verdict         string            `json:"verdict"`
+	Summary         string            `json:"summary"`
+	Findings        []store.Finding   `json:"findings"`
+	FindingCount    int               `json:"finding_count"`
+	DurationNS      int64             `json:"duration_ns"`
+	Error           string            `json:"error,omitempty"`
+	AssessedAt      time.Time         `json:"assessed_at"`
+	ResultDigest    store.AuditDigest `json:"result_digest"`
 }
 
 func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {

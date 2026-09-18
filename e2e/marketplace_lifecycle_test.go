@@ -2,6 +2,8 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,7 +14,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -387,4 +391,152 @@ func TestMarketplaceCollectionSelectorLifecycle(t *testing.T) {
 	}
 	consumer.AssertRepoFactorySkillAbsent("skill-one")
 	consumer.AssertFileAbsent("/workspace/.factory/commands/command-one.md")
+}
+
+func newMarketplaceAnalyzerFixture(t *testing.T, files map[string]string, analyzers []mpconfig.Analyzer) *marketplaceBehaviorFixture {
+	t.Helper()
+	fixture := newMarketplaceBehaviorFixture(t, files)
+	fixture.cfg.Policy.Analyzers = analyzers
+	fixture.reindex(t, fixture.cfg)
+	fixture.setHandler(mpapi.NewServer(fixture.cfg, fixture.meta, fixture.blobs).PublicHandler())
+	return fixture
+}
+
+func TestMarketplaceAnalyzerSingleBuiltin(t *testing.T) {
+	enabled := true
+	fixture := newMarketplaceAnalyzerFixture(t, marketplaceBehaviorFiles("<!-- hidden -->", false), []mpconfig.Analyzer{
+		{ID: analyze.AnalyzerHiddenContent, Enabled: &enabled},
+	})
+
+	digest := fixture.resourceDigest(t, "skill", "skill-one")
+	body := getPublicGate(t, fixture.server.URL+"/api/v1/resources/behavior-source/skill/skill-one/revisions/"+digest)
+	var rev struct {
+		Assessment struct {
+			Decision string `json:"decision"`
+		} `json:"assessment"`
+		Audits []struct {
+			AnalyzerID   string `json:"analyzer_id"`
+			ResultDigest string `json:"result_digest"`
+		} `json:"audits"`
+	}
+	if err := json.Unmarshal([]byte(body), &rev); err != nil {
+		t.Fatalf("decode revision: %v", err)
+	}
+	if rev.Assessment.Decision != string(store.AssessmentDecisionWarn) {
+		t.Fatalf("decision = %q, want %q", rev.Assessment.Decision, store.AssessmentDecisionWarn)
+	}
+	if len(rev.Audits) != 1 || rev.Audits[0].AnalyzerID != analyze.AnalyzerHiddenContent {
+		t.Fatalf("audits = %+v, want one %q audit", rev.Audits, analyze.AnalyzerHiddenContent)
+	}
+	if rev.Audits[0].ResultDigest == "" {
+		t.Fatalf("audit summary missing result_digest")
+	}
+	firstResultDigest := rev.Audits[0].ResultDigest
+
+	detail := getPublicGate(t, fixture.server.URL+"/api/v1/resources/behavior-source/skill/skill-one/revisions/"+digest+"/audits/"+analyze.AnalyzerHiddenContent)
+	if !strings.Contains(detail, `"verdict":"warn"`) {
+		t.Fatalf("audit detail did not warn: %s", detail)
+	}
+	if !strings.Contains(detail, analyze.FindingHTMLComment) {
+		t.Fatalf("audit detail missing HTML comment finding: %s", detail)
+	}
+
+	fixture.reindex(t, fixture.cfg)
+	body2 := getPublicGate(t, fixture.server.URL+"/api/v1/resources/behavior-source/skill/skill-one/revisions/"+digest)
+	var rev2 struct {
+		Assessment struct {
+			Decision string `json:"decision"`
+		} `json:"assessment"`
+		Audits []struct {
+			AnalyzerID   string `json:"analyzer_id"`
+			ResultDigest string `json:"result_digest"`
+		} `json:"audits"`
+	}
+	if err := json.Unmarshal([]byte(body2), &rev2); err != nil {
+		t.Fatalf("decode reindexed revision: %v", err)
+	}
+	if rev2.Assessment.Decision != string(store.AssessmentDecisionWarn) {
+		t.Fatalf("reindexed decision = %q, want %q", rev2.Assessment.Decision, store.AssessmentDecisionWarn)
+	}
+	if len(rev2.Audits) != 1 || rev2.Audits[0].AnalyzerID != analyze.AnalyzerHiddenContent {
+		t.Fatalf("reindexed audits = %+v, want one %q audit", rev2.Audits, analyze.AnalyzerHiddenContent)
+	}
+	if rev2.Audits[0].ResultDigest != firstResultDigest {
+		t.Fatalf("reindexed result_digest changed: %q != %q", rev2.Audits[0].ResultDigest, firstResultDigest)
+	}
+
+	detail2 := getPublicGate(t, fixture.server.URL+"/api/v1/resources/behavior-source/skill/skill-one/revisions/"+digest+"/audits/"+analyze.AnalyzerHiddenContent)
+	if detail2 != detail {
+		t.Fatalf("reindexed audit detail changed:\nfirst:\n%s\nsecond:\n%s", detail, detail2)
+	}
+}
+
+func TestMarketplaceAnalyzerRunnerRedactsStderrSecret(t *testing.T) {
+	secret := "super-secret-runner-token-xyz"
+	t.Setenv("RUNNER_SECRET", secret)
+
+	runnerPath := filepath.Join(t.TempDir(), "runner.sh")
+	script := "#!/bin/sh\necho \"$RUNNER_SECRET\" >&2\nexit 1\n"
+	if err := os.WriteFile(runnerPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write runner: %v", err)
+	}
+	sum := sha256.Sum256([]byte(script))
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+
+	enabled := true
+	fixture := newMarketplaceAnalyzerFixture(t, marketplaceBehaviorFiles("runner test", false), []mpconfig.Analyzer{
+		{
+			ID:      "e2e.runner",
+			Version: "1.0.0",
+			Role:    analyze.RoleGating,
+			Enabled: &enabled,
+			Run: &mpconfig.AnalyzerRun{
+				Command:              runnerPath,
+				Timeout:              mpconfig.Duration(30 * time.Second),
+				ImplementationDigest: digest,
+				EnvPassthrough:       []string{"RUNNER_SECRET"},
+			},
+		},
+	})
+
+	digest = fixture.resourceDigest(t, "skill", "skill-one")
+	detail := getPublicGate(t, fixture.server.URL+"/api/v1/resources/behavior-source/skill/skill-one/revisions/"+digest+"/audits/e2e.runner")
+	if strings.Contains(detail, secret) {
+		t.Fatalf("audit detail leaked runner secret: %s", detail)
+	}
+	if !strings.Contains(detail, "[REDACTED]") {
+		t.Fatalf("audit detail did not redact secret: %s", detail)
+	}
+	if !strings.Contains(detail, `"verdict":"error"`) {
+		t.Fatalf("audit detail did not report error verdict: %s", detail)
+	}
+	if !strings.Contains(detail, "marketplace.policy.audit-unavailable") {
+		t.Fatalf("audit detail missing audit-unavailable finding: %s", detail)
+	}
+	if !strings.Contains(detail, `"consentable":false`) {
+		t.Fatalf("audit detail missing non-consentable audit-unavailable finding: %s", detail)
+	}
+
+	consumer := fixture.newConsumer(t, fixture.server.URL)
+	beforeConfig := consumer.ReadFile("/workspace/.agents/config.yaml")
+	consumer.AssertFileAbsent("/workspace/.factory/skills/skill-one")
+
+	for _, flag := range []string{"--accept-risk", "--yes"} {
+		result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", flag)
+		if result.ExitCode == 0 {
+			t.Fatalf("install with %s succeeded (exit %d):\n%s", flag, result.ExitCode, result.Combined)
+		}
+		if strings.Contains(result.Combined, secret) {
+			t.Fatalf("install with %s leaked runner secret", flag)
+		}
+		if !strings.Contains(result.Combined, "marketplace.policy.audit-unavailable") ||
+			!strings.Contains(result.Combined, "non-consentable") ||
+			!strings.Contains(result.Combined, "cannot bypass") {
+			t.Fatalf("install with %s missing refusal messaging (exit %d):\n%s", flag, result.ExitCode, result.Combined)
+		}
+		if after := consumer.ReadFile("/workspace/.agents/config.yaml"); after != beforeConfig {
+			t.Fatalf("install with %s mutated config (exit %d):\nbefore:\n%s\nafter:\n%s", flag, result.ExitCode, beforeConfig, after)
+		}
+		consumer.AssertFileAbsent("/workspace/.factory/skills/skill-one")
+	}
 }

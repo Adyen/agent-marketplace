@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import CopyButton from '~/components/CopyButton.vue'
-import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, resourceRoute, registryLabel } from '~/lib/presentation'
+import { auditRoute, auditVerdictColor, formatDuration, installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, resourceRoute, registryLabel, shortDigest } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import type { InspectionFile, InspectionManifest, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
@@ -16,6 +16,7 @@ type Props = {
   apiBase?: string
   inspection?: InspectionManifest
   primaryContent?: string
+  initialSelectedPath?: string
   loadInspectionFile?: (file: InspectionFile) => Promise<string | Blob>
   revisions?: ResourceRevision[]
   revisionsError?: boolean
@@ -273,6 +274,26 @@ function formatValue(value: unknown): string {
         </li>
       </ul>
       <p v-else class="mt-3 text-sm text-muted">No findings were reported for this revision.</p>
+    </section>
+
+    <section class="border-b border-default py-6" aria-labelledby="audits-heading">
+      <h2 id="audits-heading" class="text-lg font-semibold text-highlighted">Analyzer audits</h2>
+      <p v-if="resource.audits?.length" class="mt-2 text-sm leading-6 text-muted">Every analyzer audit reported for this revision, in server order.</p>
+      <ul v-if="resource.audits?.length" class="mt-4 space-y-3" aria-label="Analyzer audits">
+        <li v-for="audit in resource.audits" :key="audit.analyzer_id" class="rounded-xl border border-default bg-muted/30 px-4 py-3">
+          <NuxtLink :to="auditRoute(registry, kind, name, resource.content_digest, audit.analyzer_id)" class="group block">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span class="font-semibold text-highlighted group-hover:underline">{{ audit.analyzer_id }}</span>
+              <span class="font-mono text-xs text-muted">{{ audit.analyzer_version }}</span>
+              <UBadge :color="auditVerdictColor(audit.verdict)" variant="subtle">{{ audit.verdict }}</UBadge>
+              <span class="text-sm text-muted">{{ audit.role }}</span>
+            </div>
+            <p class="mt-1 text-sm text-highlighted">{{ audit.summary }}</p>
+            <p class="mt-1 font-mono text-xs text-muted">{{ audit.finding_count }} finding{{ audit.finding_count === 1 ? '' : 's' }} · {{ formatDuration(audit.duration_ns) }} · {{ shortDigest(audit.result_digest) }}</p>
+          </NuxtLink>
+        </li>
+      </ul>
+      <p v-else class="mt-3 text-sm text-muted">No analyzer audits were reported for this revision.</p>
     </section>
 
     <section class="pt-6" aria-labelledby="acquisition-heading">

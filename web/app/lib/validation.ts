@@ -1,5 +1,5 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
-import type { Capabilities, InspectionFile, InspectionManifest, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Registry, RegistryOccurrence, RegistrySummary, WellKnown } from '~/types/marketplace'
+import type { AssessmentFinding, Audit, AuditSummary, Capabilities, InspectionFile, InspectionManifest, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Registry, RegistryOccurrence, RegistrySummary, WellKnown } from '~/types/marketplace'
 
 const MAX_STRING_LENGTH = 4096
 const MAX_ARRAY_LENGTH = 100
@@ -7,6 +7,16 @@ const MAX_REGISTRY_SUMMARIES = 1_000
 const MAX_OBJECT_KEYS = 100
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}$/
+const ANALYZER_ID_PATTERN = /^[a-z][a-z0-9_.-]*$/
+const AUDIT_ROLES = ['gating', 'advisory'] as const
+const AUDIT_VERDICTS = ['pass', 'warn', 'fail', 'error', 'skipped'] as const
+const MAX_AUDIT_SUMMARY = 1_024
+const MAX_AUDIT_VERSION = 256
+const MAX_AUDIT_ERROR = 512
+const MAX_AUDIT_FINDINGS = 1_000
+const MAX_LOCATION_LINE = 1_000_000_000
+const MAX_LOCATION_BYTE = 1_000_000_000
+const MAX_DURATION_NS = Number.MAX_SAFE_INTEGER
 
 /**
  * Maximum number of registry occurrences accepted from one response. The Go
@@ -24,6 +34,10 @@ export const MAX_RESOURCE_REVISION_ENTRIES = 100
 // The analyzer emits at most 1,000 findings by default. Keep that complete
 // security record renderable while still bounding an untrusted API response.
 export const MAX_ASSESSMENT_FINDINGS = 1_000
+
+// Audits are additive to the authoritative assessment. A bounded cap keeps the
+// UI predictable while still allowing a full default analyzer set plus extras.
+export const MAX_AUDIT_SUMMARIES = 128
 
 export function isSha256Digest(value: string): boolean {
   return DIGEST_PATTERN.test(value)
@@ -134,6 +148,102 @@ export function normalizeSearchResult(input: unknown): SearchResult {
   }
 }
 
+export function normalizeAssessmentFinding(value: unknown, label: string): AssessmentFinding {
+  const finding = asObject(value, label)
+  const locationObject = finding.location === undefined ? undefined : asObject(finding.location, `${label}.location`)
+  const startByte = locationObject?.start_byte === undefined ? undefined : boundedNonNegativeInteger(locationObject.start_byte, `${label}.location.start_byte`, MAX_LOCATION_BYTE)
+  const endByte = locationObject?.end_byte === undefined ? undefined : boundedNonNegativeInteger(locationObject.end_byte, `${label}.location.end_byte`, MAX_LOCATION_BYTE)
+  if (startByte !== undefined && endByte !== undefined && startByte > endByte) throw new ApiValidationError(`${label}.location has an inverted byte range`)
+  const path = locationObject === undefined ? undefined : boundedString(locationObject.path, `${label}.location.path`)
+  if (path !== undefined && path.length > 1_024) throw new ApiValidationError(`${label}.location.path exceeds 1024 characters`)
+  const location = locationObject === undefined ? undefined : {
+    path: path!,
+    ...(locationObject.line === undefined ? {} : { line: boundedNonNegativeInteger(locationObject.line, `${label}.location.line`, MAX_LOCATION_LINE) }),
+    ...(locationObject.column === undefined ? {} : { column: boundedNonNegativeInteger(locationObject.column, `${label}.location.column`, MAX_LOCATION_LINE) }),
+    ...(startByte === undefined ? {} : { start_byte: startByte }),
+    ...(endByte === undefined ? {} : { end_byte: endByte }),
+  }
+  const analyzerId = finding.analyzer_id === undefined ? undefined : analyzerIdString(finding.analyzer_id, `${label}.analyzer_id`)
+  const consentable = normalizeConsentable(finding.consentable, label)
+  return {
+    code: requiredString(finding.code, `${label}.code`),
+    severity: requiredString(finding.severity, `${label}.severity`),
+    ...optionalString(finding, 'policy'),
+    ...optionalString(finding, 'message'),
+    ...(analyzerId === undefined ? {} : { analyzer_id: analyzerId }),
+    consentable,
+    ...(location === undefined ? {} : { location }),
+  }
+}
+
+export function normalizeAuditSummary(value: unknown, label = 'audit summary'): AuditSummary {
+  const object = asObject(value, label)
+  const analyzerId = analyzerIdString(object.analyzer_id, `${label}.analyzer_id`)
+  const analyzerVersion = requiredString(object.analyzer_version, `${label}.analyzer_version`)
+  if (analyzerVersion.length > MAX_AUDIT_VERSION) throw new ApiValidationError(`${label}.analyzer_version exceeds ${MAX_AUDIT_VERSION} characters`)
+  const summary = requiredString(object.summary, `${label}.summary`)
+  if (summary.length > MAX_AUDIT_SUMMARY) throw new ApiValidationError(`${label}.summary exceeds ${MAX_AUDIT_SUMMARY} characters`)
+  return {
+    analyzer_id: analyzerId,
+    analyzer_version: analyzerVersion,
+    role: requiredAuditRole(object.role, `${label}.role`),
+    verdict: requiredAuditVerdict(object.verdict, `${label}.verdict`),
+    summary,
+    finding_count: boundedNonNegativeInteger(object.finding_count, `${label}.finding_count`, MAX_AUDIT_FINDINGS),
+    duration_ns: boundedNonNegativeInteger(object.duration_ns, `${label}.duration_ns`, MAX_DURATION_NS),
+    result_digest: requiredDigest(object.result_digest, `${label}.result_digest`),
+  }
+}
+
+export function normalizeAudit(value: unknown, label = 'audit'): Audit {
+  const object = asObject(value, label)
+  const analyzerId = analyzerIdString(object.analyzer_id, `${label}.analyzer_id`)
+  const analyzerVersion = requiredString(object.analyzer_version, `${label}.analyzer_version`)
+  if (analyzerVersion.length > MAX_AUDIT_VERSION) throw new ApiValidationError(`${label}.analyzer_version exceeds ${MAX_AUDIT_VERSION} characters`)
+  const summary = requiredString(object.summary, `${label}.summary`)
+  if (summary.length > MAX_AUDIT_SUMMARY) throw new ApiValidationError(`${label}.summary exceeds ${MAX_AUDIT_SUMMARY} characters`)
+  const findings = boundedArray(object.findings, `${label}.findings`, MAX_AUDIT_FINDINGS).map((item, index) => normalizeAssessmentFinding(item, `${label}.findings[${index}]`))
+  const error = object.error === undefined ? undefined : boundedString(object.error, `${label}.error`)
+  if (error !== undefined && error.length > MAX_AUDIT_ERROR) throw new ApiValidationError(`${label}.error exceeds ${MAX_AUDIT_ERROR} characters`)
+  return {
+    analyzer_id: analyzerId,
+    analyzer_version: analyzerVersion,
+    role: requiredAuditRole(object.role, `${label}.role`),
+    verdict: requiredAuditVerdict(object.verdict, `${label}.verdict`),
+    summary,
+    findings,
+    finding_count: boundedNonNegativeInteger(object.finding_count, `${label}.finding_count`, MAX_AUDIT_FINDINGS),
+    duration_ns: boundedNonNegativeInteger(object.duration_ns, `${label}.duration_ns`, MAX_DURATION_NS),
+    assessed_at: dateTimeString(object.assessed_at, `${label}.assessed_at`),
+    result_digest: requiredDigest(object.result_digest, `${label}.result_digest`),
+    ...(error === undefined ? {} : { error }),
+  }
+}
+
+function normalizeConsentable(value: unknown, label: string): boolean {
+  if (value === undefined) return true
+  if (value === false) return false
+  throw new ApiValidationError(`${label}.consentable must be omitted or false`)
+}
+
+function analyzerIdString(value: unknown, label: string): string {
+  const text = requiredString(value, label)
+  if (!ANALYZER_ID_PATTERN.test(text)) throw new ApiValidationError(`${label} is not a valid analyzer id`)
+  return text
+}
+
+function requiredAuditRole(value: unknown, label: string): AuditSummary['role'] {
+  const text = requiredString(value, label)
+  if (!(AUDIT_ROLES as readonly string[]).includes(text)) throw new ApiValidationError(`${label} is unsupported`)
+  return text as AuditSummary['role']
+}
+
+function requiredAuditVerdict(value: unknown, label: string): AuditSummary['verdict'] {
+  const text = requiredString(value, label)
+  if (!(AUDIT_VERDICTS as readonly string[]).includes(text)) throw new ApiValidationError(`${label} is unsupported`)
+  return text as AuditSummary['verdict']
+}
+
 export function normalizeResourceListItem(input: unknown, label = 'resource'): ResourceListItem {
   const object = asObject(input, label)
   const kind = requiredString(object.kind, `${label}.kind`)
@@ -205,27 +315,7 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
   const decision = requiredString(assessmentObject.decision, 'assessment.decision')
   if (!['allow', 'warn', 'reject'].includes(decision)) throw new ApiValidationError('assessment.decision is unsupported')
   const findingValues = assessmentObject.findings === undefined ? undefined : boundedArray(assessmentObject.findings, 'assessment.findings', MAX_ASSESSMENT_FINDINGS)
-  const findings = !includeFindings || findingValues === undefined ? undefined : findingValues.map((value, index) => {
-    const finding = asObject(value, `assessment.findings[${index}]`)
-    const locationObject = finding.location === undefined ? undefined : asObject(finding.location, `assessment.findings[${index}].location`)
-    const startByte = locationObject?.start_byte === undefined ? undefined : boundedInteger(locationObject.start_byte, `assessment.findings[${index}].location.start_byte`)
-    const endByte = locationObject?.end_byte === undefined ? undefined : boundedInteger(locationObject.end_byte, `assessment.findings[${index}].location.end_byte`)
-    if (startByte !== undefined && endByte !== undefined && startByte > endByte) throw new ApiValidationError(`assessment.findings[${index}].location has an inverted byte range`)
-    const location = locationObject === undefined ? undefined : {
-      path: requiredString(locationObject.path, `assessment.findings[${index}].location.path`),
-      ...(locationObject.line === undefined ? {} : { line: boundedInteger(locationObject.line, `assessment.findings[${index}].location.line`) }),
-      ...(locationObject.column === undefined ? {} : { column: boundedInteger(locationObject.column, `assessment.findings[${index}].location.column`) }),
-      ...(startByte === undefined ? {} : { start_byte: startByte }),
-      ...(endByte === undefined ? {} : { end_byte: endByte }),
-    }
-    return {
-      code: requiredString(finding.code, `assessment.findings[${index}].code`),
-      severity: requiredString(finding.severity, `assessment.findings[${index}].severity`),
-      ...optionalString(finding, 'policy'),
-      ...optionalString(finding, 'message'),
-      ...(location === undefined ? {} : { location }),
-    }
-  })
+  const findings = !includeFindings || findingValues === undefined ? undefined : findingValues.map((value, index) => normalizeAssessmentFinding(value, `assessment.findings[${index}]`))
   const assessment: ResourceRevision['assessment'] = {
     coordinate: assessmentCoordinate,
     content_digest: assessmentContentDigest,
@@ -237,6 +327,9 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     inspection_manifest_digest: requiredDigest(assessmentObject.inspection_manifest_digest, 'assessment.inspection_manifest_digest'),
     assessed_at: dateTimeString(assessmentObject.assessed_at, 'assessment.assessed_at'),
   }
+
+  const auditsRaw = object.audits === undefined ? undefined : boundedArray(object.audits, 'audits', MAX_AUDIT_SUMMARIES)
+  const audits = auditsRaw?.map((value, index) => normalizeAuditSummary(value, `audits[${index}]`))
 
   const occurrenceObject = asObject(object.occurrence, 'occurrence')
   const occurrence: ResourceRevision['occurrence'] = {
@@ -256,6 +349,7 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     ...optionalString(object, 'license'),
     ...optionalString(object, 'description'),
     assessment,
+    ...(audits === undefined ? {} : { audits }),
     occurrence,
     ...(revocationObject === undefined ? {} : { revocation: {
       kind: revocationKind as NonNullable<ResourceRevision['revocation']>['kind'],
@@ -515,6 +609,11 @@ function boundedUnknown(value: unknown, label: string, depth = 0): unknown {
 
 function boundedInteger(value: unknown, label: string): number {
   if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 1_000_000_000) throw new ApiValidationError(`${label} must be a bounded non-negative integer`)
+  return value as number
+}
+
+function boundedNonNegativeInteger(value: unknown, label: string, max: number): number {
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > max) throw new ApiValidationError(`${label} must be a bounded non-negative integer`)
   return value as number
 }
 

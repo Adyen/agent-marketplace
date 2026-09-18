@@ -259,6 +259,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/audits/{analyzer_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one analyzer audit for a specific resource revision */
+        get: operations["getResourceAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection": {
         parameters: {
             query?: never;
@@ -389,11 +406,45 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         AssessmentFinding: {
+            analyzer_id?: string;
             code: string;
+            /**
+             * @description Whether the finding can be overridden by --accept-risk. Producers omit this field for consentable findings and emit it as false for non-consentable findings that cannot be bypassed. The default true is preserved for legacy clients that send the field.
+             * @default true
+             */
+            consentable: boolean;
             location?: components["schemas"]["FindingLocation"];
             message?: string;
             policy?: string;
             severity: string;
+        };
+        Audit: {
+            analyzer_id: string;
+            analyzer_version: string;
+            /** Format: date-time */
+            assessed_at: string;
+            duration_ns: number;
+            error?: string;
+            finding_count: number;
+            findings: components["schemas"]["AssessmentFinding"][];
+            result_digest: string;
+            /** @enum {string} */
+            role: "gating" | "advisory";
+            summary: string;
+            /** @enum {string} */
+            verdict: "pass" | "warn" | "fail" | "error" | "skipped";
+        };
+        AuditSummary: {
+            analyzer_id: string;
+            analyzer_version: string;
+            duration_ns: number;
+            finding_count: number;
+            result_digest: string;
+            /** @enum {string} */
+            role: "gating" | "advisory";
+            summary: string;
+            /** @enum {string} */
+            verdict: "pass" | "warn" | "fail" | "error" | "skipped";
         };
         Capabilities: {
             acquisition_modes: ("index-only" | "mirror")[];
@@ -548,6 +599,7 @@ export interface components {
         ResourceRevision: {
             archive_digest?: string;
             assessment: components["schemas"]["ResourceAssessment"];
+            audits?: components["schemas"]["AuditSummary"][];
             content_digest: string;
             coordinate: components["schemas"]["ResourceCoordinate"];
             /** @description Author-written one-line summary from the upstream registry, bounded and normalized identically to ResourceListItem.description. */
@@ -957,6 +1009,59 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ResourceRevision"];
                 };
+            };
+        };
+    };
+    getResourceAudit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analyzer_id: string;
+                kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
+                /** @description Route-safe registry-local name. */
+                name: string;
+                /** @description Route-safe registry slug or ID. */
+                registry: string;
+                revision: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Analyzer audit detail */
+            200: {
+                headers: {
+                    /** @description public, max-age=31536000, immutable */
+                    "Cache-Control"?: string;
+                    /** @description Quoted result digest */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Audit"];
+                };
+            };
+            /** @description Invalid path parameter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Registry */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal server error or audit validation failure */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

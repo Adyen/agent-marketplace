@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/job"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -96,6 +97,31 @@ func TestRefreshEndToEnd(t *testing.T) {
 		rev := getRevision(t, ctx, meta, coord)
 		if rev.Coordinate.Kind != resource.kind || rev.Coordinate.Name != resource.name {
 			t.Fatalf("resource coordinate mismatch: got %+v", rev.Coordinate)
+		}
+		if rev.Assessment.AssessmentDigest == "" {
+			t.Fatalf("expected assessment for %s/%s", resource.kind, resource.name)
+		}
+		audits, err := meta.ListResourceAuditsForAssessment(ctx, rev.Assessment.AssessmentDigest)
+		if err != nil {
+			t.Fatalf("ListResourceAuditsForAssessment %s/%s: %v", resource.kind, resource.name, err)
+		}
+		wantAudits := []string{
+			analyze.AnalyzerHiddenContent,
+			analyze.AnalyzerObfuscation,
+			analyze.AnalyzerAssets,
+			analyze.AnalyzerReferences,
+			analyze.AnalyzerCapabilities,
+		}
+		if len(audits) != len(wantAudits) {
+			t.Fatalf("%s/%s audit count = %d, want %d", resource.kind, resource.name, len(audits), len(wantAudits))
+		}
+		for i, want := range wantAudits {
+			if audits[i].AnalyzerID != want {
+				t.Fatalf("%s/%s audit[%d].AnalyzerID = %s, want %s", resource.kind, resource.name, i, audits[i].AnalyzerID, want)
+			}
+			if audits[i].ResultDigest == "" {
+				t.Fatalf("%s/%s audit[%d] has empty result digest", resource.kind, resource.name, i)
+			}
 		}
 	}
 

@@ -7,17 +7,16 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func BenchmarkEngineAnalyzeSkill(b *testing.B) {
-	opts := DefaultOptions()
-	s := ir.NewSkill("review", "Review", "Review the code carefully.", []string{"user"}, nil, ir.SourceRef{})
-	s.AllowedTools = []string{"read_file"}
+func BenchmarkEngineAnalyze(b *testing.B) {
+	s := ir.NewSkillWithOptions("review", "Review", "Review the code carefully.", []string{"user"}, nil, ir.SourceRef{}, ir.WithSkillAllowedTools([]string{"read_file"}))
 	files := FileSet{"README.md": []byte("# Read me\n")}
 	engine := NewEngine()
+	subject := Subject{Resource: s, Files: files, Limits: DefaultLimits()}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := engine.Analyze(context.Background(), s, files, opts)
+		_, err := engine.Analyze(context.Background(), subject)
 		if err != nil {
 			b.Fatal(err)
 		}

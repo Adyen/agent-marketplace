@@ -14,7 +14,7 @@ import (
 const migrationTable = "marketplace_metadata_v2_migrations"
 const legacyMigrationTable = "marketplace_schema_migrations"
 
-var migrations = []string{migration0}
+var migrations = []string{migration0, migration1}
 
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
@@ -255,4 +255,52 @@ CREATE TABLE jobs (
 );
 CREATE UNIQUE INDEX idx_jobs_idempotency ON jobs(kind, idempotency_key) WHERE idempotency_key <> '';
 CREATE INDEX idx_jobs_lease ON jobs(status, lease_until, kind, attempt, max_attempts, created_at);
+`
+
+const migration1 = `
+CREATE TABLE resource_audits (
+    marketplace_id TEXT NOT NULL,
+    registry_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    subject_digest TEXT NOT NULL,
+    analyzer_id TEXT NOT NULL,
+    analyzer_version TEXT NOT NULL,
+    config_digest TEXT NOT NULL,
+    result_digest TEXT NOT NULL,
+    role TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    findings TEXT NOT NULL DEFAULT '[]',
+    duration_ns INTEGER NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    assessed_at INTEGER NOT NULL,
+    PRIMARY KEY (marketplace_id, registry_id, kind, name, subject_digest, analyzer_id, analyzer_version, config_digest, result_digest)
+);
+CREATE UNIQUE INDEX idx_resource_audits_non_error ON resource_audits(
+    marketplace_id, registry_id, kind, name, subject_digest, analyzer_id, analyzer_version, config_digest
+) WHERE verdict <> 'error';
+CREATE INDEX idx_resource_audits_analyzer ON resource_audits(
+    marketplace_id, registry_id, kind, name, subject_digest, analyzer_id
+);
+
+CREATE TABLE assessment_audits (
+    assessment_digest TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    marketplace_id TEXT NOT NULL,
+    registry_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    subject_digest TEXT NOT NULL,
+    analyzer_id TEXT NOT NULL,
+    analyzer_version TEXT NOT NULL,
+    config_digest TEXT NOT NULL,
+    result_digest TEXT NOT NULL,
+    PRIMARY KEY (assessment_digest, ordinal),
+    UNIQUE (assessment_digest, analyzer_id),
+    FOREIGN KEY (assessment_digest) REFERENCES resource_assessments(assessment_digest),
+    FOREIGN KEY (marketplace_id, registry_id, kind, name, subject_digest, analyzer_id, analyzer_version, config_digest, result_digest)
+        REFERENCES resource_audits(marketplace_id, registry_id, kind, name, subject_digest, analyzer_id, analyzer_version, config_digest, result_digest)
+);
+CREATE INDEX idx_assessment_audits_assessment ON assessment_audits(assessment_digest, ordinal);
 `

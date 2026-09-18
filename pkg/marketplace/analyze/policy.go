@@ -27,6 +27,8 @@ var defaultOutcomes = map[string]string{
 	FindingToolGrant:        OutcomeWarn,
 	FindingHookCapability:   OutcomeWarn,
 	FindingMcpCapability:    OutcomeWarn,
+
+	PolicyAuditUnavailable: OutcomeWarn,
 }
 
 // PublicPolicy returns the default public policy.

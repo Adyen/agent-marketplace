@@ -640,6 +640,13 @@ func evaluateMarketplacePreviewConsentRecursive(preview marketplace.InstallPrevi
 
 func evaluateMarketplacePreviewConsent(findings []hccartifact.CanonicalFinding, capabilities []string, accept bool) error {
 	for _, finding := range findings {
+		if finding.Consentable != nil && !*finding.Consentable {
+			analyzer := finding.Analyzer
+			if analyzer == "" {
+				analyzer = "legacy"
+			}
+			return fmt.Errorf("marketplace revision contains a non-consentable finding from analyzer %s (%s: %s); --accept-risk cannot bypass it", marketplace.QuoteTerminal(analyzer), marketplace.QuoteTerminal(finding.Code), marketplace.QuoteTerminal(finding.Message))
+		}
 		outcome := strings.ToLower(strings.TrimSpace(finding.PolicyOutcome))
 		switch outcome {
 		case "allow", "warn":
@@ -664,6 +671,7 @@ type marketplacePreviewFinding struct {
 	Line          int                        `json:"line"`
 	Analyzer      marketplace.TerminalString `json:"analyzer"`
 	PolicyOutcome marketplace.TerminalString `json:"policy_outcome"`
+	Consentable   *bool                      `json:"consentable,omitempty"`
 }
 
 type marketplacePreviewLeaf struct {
@@ -688,20 +696,54 @@ func marketplacePreviewFindings(values []hccartifact.CanonicalFinding) []marketp
 	for _, finding := range values {
 		analyzer := finding.Analyzer
 		if analyzer == "" {
-			analyzer = finding.AnalyzerVersion
+			analyzer = "legacy"
 		}
 		findings = append(findings, marketplacePreviewFinding{
-			Code: marketplace.TerminalString(finding.Code), Severity: marketplace.TerminalString(finding.Severity), Message: marketplace.TerminalString(finding.Message),
-			File: marketplace.TerminalString(finding.File), Line: finding.Line, Analyzer: marketplace.TerminalString(analyzer),
+			Code:          marketplace.TerminalString(finding.Code),
+			Severity:      marketplace.TerminalString(finding.Severity),
+			Message:       marketplace.TerminalString(finding.Message),
+			File:          marketplace.TerminalString(finding.File),
+			Line:          finding.Line,
+			Analyzer:      marketplace.TerminalString(analyzer),
 			PolicyOutcome: marketplace.TerminalString(finding.PolicyOutcome),
+			Consentable:   finding.Consentable,
 		})
 	}
 	slices.SortFunc(findings, func(a, b marketplacePreviewFinding) int {
-		left, _ := json.Marshal(a)
-		right, _ := json.Marshal(b)
-		return strings.Compare(string(left), string(right))
+		if c := strings.Compare(string(a.Analyzer), string(b.Analyzer)); c != 0 {
+			return c
+		}
+		if c := strings.Compare(string(a.Code), string(b.Code)); c != 0 {
+			return c
+		}
+		if c := strings.Compare(string(a.Severity), string(b.Severity)); c != 0 {
+			return c
+		}
+		if c := strings.Compare(string(a.PolicyOutcome), string(b.PolicyOutcome)); c != 0 {
+			return c
+		}
+		if c := strings.Compare(string(a.Message), string(b.Message)); c != 0 {
+			return c
+		}
+		if c := strings.Compare(string(a.File), string(b.File)); c != 0 {
+			return c
+		}
+		if a.Line != b.Line {
+			return a.Line - b.Line
+		}
+		return consentableRank(a.Consentable) - consentableRank(b.Consentable)
 	})
 	return findings
+}
+
+func consentableRank(c *bool) int {
+	if c == nil {
+		return 0
+	}
+	if *c {
+		return 2
+	}
+	return 1
 }
 
 func marketplacePreviewLeafFromPreview(preview marketplace.InstallPreview) marketplacePreviewLeaf {
@@ -746,23 +788,32 @@ func marketplacePreviewFindingsText(findings []marketplacePreviewFinding) string
 	}
 	var result strings.Builder
 	fmt.Fprintf(&result, "findings (%d):", len(findings))
+	var heading string
 	for i, finding := range findings {
-		fmt.Fprintf(&result, "\n  %d. severity: %s", i+1, marketplace.QuoteTerminal(string(finding.Severity)))
+		group := string(finding.Analyzer)
+		if group == "" {
+			group = "legacy"
+		}
+		if group != heading {
+			heading = group
+			fmt.Fprintf(&result, "\n  analyzer: %s", marketplace.QuoteTerminal(group))
+		}
+		fmt.Fprintf(&result, "\n    %d. severity: %s", i+1, marketplace.QuoteTerminal(string(finding.Severity)))
 		if finding.Message != "" {
-			fmt.Fprintf(&result, "\n     message: %s", marketplace.QuoteTerminal(string(finding.Message)))
+			fmt.Fprintf(&result, "\n      message: %s", marketplace.QuoteTerminal(string(finding.Message)))
 		}
 		if finding.File != "" {
-			fmt.Fprintf(&result, "\n     location: %s", marketplace.QuoteTerminal(string(finding.File)))
+			fmt.Fprintf(&result, "\n      location: %s", marketplace.QuoteTerminal(string(finding.File)))
 			if finding.Line > 0 {
 				fmt.Fprintf(&result, ":%d", finding.Line)
 			}
 		}
-		fmt.Fprintf(&result, "\n     code: %s", marketplace.QuoteTerminal(string(finding.Code)))
+		fmt.Fprintf(&result, "\n      code: %s", marketplace.QuoteTerminal(string(finding.Code)))
 		if finding.PolicyOutcome != "" {
-			fmt.Fprintf(&result, "\n     policy: %s", marketplace.QuoteTerminal(string(finding.PolicyOutcome)))
+			fmt.Fprintf(&result, "\n      policy: %s", marketplace.QuoteTerminal(string(finding.PolicyOutcome)))
 		}
-		if finding.Analyzer != "" {
-			fmt.Fprintf(&result, "\n     analyzer: %s", marketplace.QuoteTerminal(string(finding.Analyzer)))
+		if finding.Consentable != nil && !*finding.Consentable {
+			fmt.Fprint(&result, "\n      consentable: no")
 		}
 	}
 	return result.String()

@@ -83,21 +83,23 @@ func Refresh(ctx context.Context, deps Deps, registry store.Registry) error {
 	}
 	defer func() { _ = res.Release() }()
 
-	rev, err := ingest.BuildRegistryRevision(ctx, deps.Config, deps.Marketplace.ID, merged, res.Dir, res.Commit)
+	rev, err := ingest.BuildRegistryRevisionWithAuditStore(ctx, deps.Config, deps.Marketplace.ID, merged, res.Dir, res.Commit, deps.MetadataStore)
 	if err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
 	}
 
 	pub := store.RegistryRevisionPublication{
-		Occurrence:          rev.Occurrence,
-		ExpectedHeadCommit:  expectedHead,
-		Resources:           rev.Resources,
-		ResourceOccurrences: rev.ResourceOccurrences,
-		Assessments:         rev.Assessments,
-		Collections:         rev.Collections,
-		ManifestPayload:     rev.ManifestPayload,
-		ExtraBlobs:          rev.ExtraBlobs,
-		InspectionBlobs:     rev.InspectionBlobs,
+		Occurrence:           rev.Occurrence,
+		ExpectedHeadCommit:   expectedHead,
+		Resources:            rev.Resources,
+		ResourceOccurrences:  rev.ResourceOccurrences,
+		Assessments:          rev.Assessments,
+		Audits:               rev.Audits,
+		AssessmentAuditLinks: rev.AssessmentAuditLinks,
+		Collections:          rev.Collections,
+		ManifestPayload:      rev.ManifestPayload,
+		ExtraBlobs:           rev.ExtraBlobs,
+		InspectionBlobs:      rev.InspectionBlobs,
 	}
 	if err := store.PublishRegistryRevision(ctx, deps.MetadataStore, deps.BlobStore, pub); err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)

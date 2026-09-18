@@ -303,6 +303,61 @@ paths:
               schema:
                 $ref: "#/components/schemas/ResourceRevision"
 
+  /api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/audits/{analyzer_id}:
+    get:
+      operationId: getResourceAudit
+      summary: Get one analyzer audit for a specific resource revision
+      parameters:
+        - in: path
+          name: registry
+          required: true
+          description: Route-safe registry slug or ID.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum: [skill, command, subagent, hook, mcpserver, collection]
+        - in: path
+          name: name
+          required: true
+          description: Route-safe registry-local name.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: revision
+          required: true
+          schema:
+            type: string
+            pattern: "^sha256:[0-9a-f]{64}$"
+        - in: path
+          name: analyzer_id
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-z][a-z0-9_.-]*$"
+      responses:
+        "200":
+          description: Analyzer audit detail
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: public, max-age=31536000, immutable
+            ETag:
+              schema: { type: string }
+              description: Quoted result digest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Audit"
+        "400": { description: Invalid path parameter }
+        "404": { description: Registry, revision, or audit not found }
+        "500": { description: Internal server error or audit validation failure }
+
   /api/v1/manifests/{registry-revision}:
     get:
       operationId: getManifest
@@ -924,6 +979,9 @@ components:
           $ref: "#/components/schemas/ResourceAssessment"
         occurrence:
           $ref: "#/components/schemas/ResourceOccurrence"
+        audits:
+          type: array
+          items: { $ref: "#/components/schemas/AuditSummary" }
         revocation:
           $ref: "#/components/schemas/Revocation"
 
@@ -953,7 +1011,16 @@ components:
         code: { type: string }
         severity: { type: string }
         policy: { type: string }
-        message: { type: string }
+        message: { type: string, maxLength: 4096 }
+        analyzer_id: { type: string }
+        consentable:
+          type: boolean
+          default: true
+          description: >-
+            Whether the finding can be overridden by --accept-risk. Producers
+            omit this field for consentable findings and emit it as false for
+            non-consentable findings that cannot be bypassed. The default true
+            is preserved for legacy clients that send the field.
         location:
           $ref: "#/components/schemas/FindingLocation"
 
@@ -962,7 +1029,7 @@ components:
       additionalProperties: false
       required: [path]
       properties:
-        path: { type: string, minLength: 1 }
+        path: { type: string, minLength: 1, maxLength: 1024 }
         line: { type: integer, minimum: 1 }
         column: { type: integer, minimum: 1 }
         start_byte: { type: integer, minimum: 0 }
@@ -988,6 +1055,39 @@ components:
         target_id: { type: string }
         reason: { type: string }
         applied_at: { type: string, format: date-time }
+
+    AuditSummary:
+      type: object
+      additionalProperties: false
+      required: [analyzer_id, analyzer_version, role, verdict, summary, finding_count, duration_ns, result_digest]
+      properties:
+        analyzer_id: { type: string, pattern: "^[a-z][a-z0-9_.-]*$" }
+        analyzer_version: { type: string, minLength: 1, maxLength: 256 }
+        role: { type: string, enum: [gating, advisory] }
+        verdict: { type: string, enum: [pass, warn, fail, error, skipped] }
+        summary: { type: string, minLength: 1, maxLength: 1024 }
+        finding_count: { type: integer, minimum: 0 }
+        duration_ns: { type: integer, minimum: 0 }
+        result_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+
+    Audit:
+      type: object
+      additionalProperties: false
+      required: [analyzer_id, analyzer_version, role, verdict, summary, findings, finding_count, duration_ns, result_digest, assessed_at]
+      properties:
+        analyzer_id: { type: string, pattern: "^[a-z][a-z0-9_.-]*$" }
+        analyzer_version: { type: string, minLength: 1, maxLength: 256 }
+        role: { type: string, enum: [gating, advisory] }
+        verdict: { type: string, enum: [pass, warn, fail, error, skipped] }
+        summary: { type: string, minLength: 1, maxLength: 1024 }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/AssessmentFinding" }
+        finding_count: { type: integer, minimum: 0 }
+        duration_ns: { type: integer, minimum: 0 }
+        error: { type: string, maxLength: 512 }
+        assessed_at: { type: string, format: date-time }
+        result_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
 
     InspectionManifest:
       type: object

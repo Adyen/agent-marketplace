@@ -37,21 +37,6 @@ var suspiciousTokens = []string{
 	"cmd", "powershell", "python", "perl", "ruby", "settimeout", "setinterval",
 }
 
-// runSharedScanners runs all content scanners on a single sample.
-func runSharedScanners(content, file, analyzer string) []Finding {
-	var findings []Finding
-	findings = append(findings, ScanHTMLComments(content, file, analyzer)...)
-	findings = append(findings, ScanZeroWidth(content, file, analyzer)...)
-	findings = append(findings, ScanUnsafeBidi(content, file, analyzer)...)
-	findings = append(findings, ScanTerminalControl(content, file, analyzer)...)
-	findings = append(findings, ScanDangerousURLs(content, file, analyzer)...)
-	findings = append(findings, ScanRemoteReferences(content, file, analyzer)...)
-	findings = append(findings, ScanSuspiciousPaths(content, file, analyzer)...)
-	findings = append(findings, ScanDynamicExecution(content, file, analyzer)...)
-	findings = append(findings, ScanObfuscatedInstructions(content, file, analyzer)...)
-	return findings
-}
-
 // ScanHTMLComments finds HTML-style comments.
 func ScanHTMLComments(content, file, analyzer string) []Finding {
 	var findings []Finding

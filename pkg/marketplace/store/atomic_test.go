@@ -13,6 +13,7 @@ import (
 	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
@@ -561,5 +562,336 @@ func TestPublishResourceRevision(t *testing.T) {
 	}
 	if string(got) != string(archive) {
 		t.Fatalf("blob content = %q, want %q", got, archive)
+	}
+}
+
+func auditFor(t *testing.T, coord store.ResourceCoordinate, analyzerID, analyzerVersion, configDigest string) store.ResourceAudit {
+	t.Helper()
+	key := store.ResourceAuditKey{
+		Coordinate:      coord,
+		SubjectDigest:   store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+		AnalyzerID:      analyzerID,
+		AnalyzerVersion: analyzerVersion,
+		ConfigDigest:    store.PolicyDigest(configDigest),
+	}
+	audit, err := store.FinalizeResourceAudit(store.ResourceAudit{
+		ResourceAuditKey: key,
+		Role:             analyze.RoleGating,
+		Verdict:          analyze.VerdictPass,
+		Summary:          "ok",
+		Duration:         1,
+		AssessedAt:       time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("FinalizeResourceAudit: %v", err)
+	}
+	return audit
+}
+
+func TestPublishRegistryRevisionAuditsAndLinks(t *testing.T) {
+	ctx := context.Background()
+	meta, blobs := openAtomicStores(t)
+
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}
+	rev := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64))}
+	body := []byte("# review\n")
+	projection, err := inspection.Build(coord, string(rev.ContentDigest), body, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment := assessmentFor(t, rev, projection.Manifest.ManifestDigest)
+	audit := auditFor(t, coord, "marketplace.hidden-content", "1.2.0", "sha256:"+strings.Repeat("c", 64))
+
+	manifestPayload := []byte(`{"schema_version":"v1","generator":"test"}`)
+	manifestDigest := sha256Digest(manifestPayload)
+	req := store.RegistryRevisionPublication{
+		Occurrence: store.RegistryOccurrence{
+			RegistryID:                     "src",
+			Ref:                            "main",
+			Commit:                         "abc123",
+			RegistryRevisionManifestDigest: store.RevisionDigest(manifestDigest),
+			Acquisition:                    store.AcquisitionMirror,
+			OccurredAt:                     time.Now().UTC(),
+		},
+		Resources:           []store.ResourceRevision{rev},
+		ResourceOccurrences: []store.ResourceOccurrence{{Coordinate: coord, ContentDigest: rev.ContentDigest, Commit: "abc123", ManifestDigest: store.RevisionDigest(manifestDigest)}},
+		Assessments:         []store.ResourceAssessment{assessment},
+		Audits:              []store.ResourceAudit{audit},
+		AssessmentAuditLinks: []store.AssessmentAuditLink{{
+			AssessmentDigest: assessment.AssessmentDigest,
+			Ordinal:          0,
+			AuditKey:         audit.ResourceAuditKey,
+			ResultDigest:     audit.ResultDigest,
+		}},
+		ManifestPayload: manifestPayload,
+		InspectionBlobs: []store.BlobUpload{
+			{Digest: store.ArchiveDigest(projection.Manifest.ManifestDigest), Data: projection.Payload},
+			{Digest: store.ArchiveDigest(inspection.Digest(body)), Data: body},
+		},
+	}
+
+	if err := store.PublishRegistryRevision(ctx, meta, blobs, req); err != nil {
+		t.Fatalf("PublishRegistryRevision: %v", err)
+	}
+
+	got, err := meta.ListResourceAuditsForAssessment(ctx, assessment.AssessmentDigest)
+	if err != nil {
+		t.Fatalf("ListResourceAuditsForAssessment: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 audit for assessment, got %d", len(got))
+	}
+	if got[0].AnalyzerID != audit.AnalyzerID {
+		t.Fatalf("audit analyzer = %q, want %q", got[0].AnalyzerID, audit.AnalyzerID)
+	}
+}
+
+func TestPublishRegistryRevisionRejectsInvalidAuditLinks(t *testing.T) {
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}
+	otherCoord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "other"}
+	rev := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64))}
+	otherRev := store.ResourceRevision{Coordinate: otherCoord, ContentDigest: rev.ContentDigest}
+	assessment := assessmentFor(t, rev, "sha256:"+strings.Repeat("0", 64))
+	audit := auditFor(t, coord, "marketplace.hidden-content", "1.2.0", "sha256:"+strings.Repeat("c", 64))
+	audit2 := auditFor(t, coord, "marketplace.assets", "1.2.0", "sha256:"+strings.Repeat("d", 64))
+
+	cases := []struct {
+		name string
+		req  store.RegistryRevisionPublication
+		want string
+	}{
+		{
+			name: "audit references unknown resource",
+			req: store.RegistryRevisionPublication{
+				Resources: []store.ResourceRevision{rev},
+				Audits:    []store.ResourceAudit{auditFor(t, otherCoord, "marketplace.hidden-content", "1.2.0", "sha256:"+strings.Repeat("c", 64))},
+			},
+			want: "unknown resource coordinate",
+		},
+		{
+			name: "duplicate audit",
+			req: store.RegistryRevisionPublication{
+				Resources: []store.ResourceRevision{rev},
+				Audits:    []store.ResourceAudit{audit, audit},
+			},
+			want: "duplicate audit",
+		},
+		{
+			name: "link references unknown audit",
+			req: store.RegistryRevisionPublication{
+				Resources:   []store.ResourceRevision{rev},
+				Assessments: []store.ResourceAssessment{assessment},
+				Audits:      []store.ResourceAudit{audit},
+				AssessmentAuditLinks: []store.AssessmentAuditLink{{
+					AssessmentDigest: assessment.AssessmentDigest,
+					Ordinal:          0,
+					AuditKey: store.ResourceAuditKey{
+						Coordinate:      coord,
+						SubjectDigest:   store.RevisionDigest("sha256:" + strings.Repeat("2", 64)),
+						AnalyzerID:      "marketplace.missing",
+						AnalyzerVersion: "1.2.0",
+						ConfigDigest:    store.PolicyDigest("sha256:" + strings.Repeat("c", 64)),
+					},
+					ResultDigest: audit.ResultDigest,
+				}},
+			},
+			want: "unknown audit",
+		},
+		{
+			name: "link result digest mismatch",
+			req: store.RegistryRevisionPublication{
+				Resources:   []store.ResourceRevision{rev},
+				Assessments: []store.ResourceAssessment{assessment},
+				Audits:      []store.ResourceAudit{audit},
+				AssessmentAuditLinks: []store.AssessmentAuditLink{{
+					AssessmentDigest: assessment.AssessmentDigest,
+					Ordinal:          0,
+					AuditKey:         audit.ResourceAuditKey,
+					ResultDigest:     store.AuditDigest("sha256:" + strings.Repeat("4", 64)),
+				}},
+			},
+			want: "result digest mismatch",
+		},
+		{
+			name: "link references unknown assessment",
+			req: store.RegistryRevisionPublication{
+				Resources: []store.ResourceRevision{rev},
+				Audits:    []store.ResourceAudit{audit},
+				AssessmentAuditLinks: []store.AssessmentAuditLink{{
+					AssessmentDigest: store.AssessmentDigest("sha256:" + strings.Repeat("3", 64)),
+					Ordinal:          0,
+					AuditKey:         audit.ResourceAuditKey,
+					ResultDigest:     audit.ResultDigest,
+				}},
+			},
+			want: "unknown assessment",
+		},
+		{
+			name: "cross-assessment coordinate",
+			req: store.RegistryRevisionPublication{
+				Resources:   []store.ResourceRevision{rev, otherRev},
+				Assessments: []store.ResourceAssessment{assessment},
+				Audits:      []store.ResourceAudit{auditFor(t, otherCoord, "marketplace.hidden-content", "1.2.0", "sha256:"+strings.Repeat("c", 64))},
+				AssessmentAuditLinks: []store.AssessmentAuditLink{{
+					AssessmentDigest: assessment.AssessmentDigest,
+					Ordinal:          0,
+					AuditKey:         auditFor(t, otherCoord, "marketplace.hidden-content", "1.2.0", "sha256:"+strings.Repeat("c", 64)).ResourceAuditKey,
+					ResultDigest:     auditFor(t, otherCoord, "marketplace.hidden-content", "1.2.0", "sha256:"+strings.Repeat("c", 64)).ResultDigest,
+				}},
+			},
+			want: "cross-assessment coordinate",
+		},
+		{
+			name: "duplicate ordinal",
+			req: store.RegistryRevisionPublication{
+				Resources:   []store.ResourceRevision{rev},
+				Assessments: []store.ResourceAssessment{assessment},
+				Audits:      []store.ResourceAudit{audit, audit2},
+				AssessmentAuditLinks: []store.AssessmentAuditLink{
+					{AssessmentDigest: assessment.AssessmentDigest, Ordinal: 0, AuditKey: audit.ResourceAuditKey, ResultDigest: audit.ResultDigest},
+					{AssessmentDigest: assessment.AssessmentDigest, Ordinal: 0, AuditKey: audit2.ResourceAuditKey, ResultDigest: audit2.ResultDigest},
+				},
+			},
+			want: "duplicate ordinal",
+		},
+		{
+			name: "noncontiguous ordinals",
+			req: store.RegistryRevisionPublication{
+				Resources:   []store.ResourceRevision{rev},
+				Assessments: []store.ResourceAssessment{assessment},
+				Audits:      []store.ResourceAudit{audit, audit2},
+				AssessmentAuditLinks: []store.AssessmentAuditLink{
+					{AssessmentDigest: assessment.AssessmentDigest, Ordinal: 0, AuditKey: audit.ResourceAuditKey, ResultDigest: audit.ResultDigest},
+					{AssessmentDigest: assessment.AssessmentDigest, Ordinal: 2, AuditKey: audit2.ResourceAuditKey, ResultDigest: audit2.ResultDigest},
+				},
+			},
+			want: "noncontiguous",
+		},
+		{
+			name: "duplicate assessment digest",
+			req: store.RegistryRevisionPublication{
+				Resources:   []store.ResourceRevision{rev},
+				Assessments: []store.ResourceAssessment{assessment, assessment},
+			},
+			want: "duplicate assessment digest",
+		},
+		{
+			name: "duplicate analyzer id within assessment",
+			req: store.RegistryRevisionPublication{
+				Resources:   []store.ResourceRevision{rev},
+				Assessments: []store.ResourceAssessment{assessment},
+				Audits:      []store.ResourceAudit{audit, auditFor(t, coord, "marketplace.hidden-content", "2.0.0", "sha256:"+strings.Repeat("e", 64))},
+				AssessmentAuditLinks: []store.AssessmentAuditLink{
+					{AssessmentDigest: assessment.AssessmentDigest, Ordinal: 0, AuditKey: audit.ResourceAuditKey, ResultDigest: audit.ResultDigest},
+					{AssessmentDigest: assessment.AssessmentDigest, Ordinal: 1, AuditKey: auditFor(t, coord, "marketplace.hidden-content", "2.0.0", "sha256:"+strings.Repeat("e", 64)).ResourceAuditKey, ResultDigest: auditFor(t, coord, "marketplace.hidden-content", "2.0.0", "sha256:"+strings.Repeat("e", 64)).ResultDigest},
+				},
+			},
+			want: "duplicate analyzer id",
+		},
+		{
+			name: "unreferenced request audit",
+			req: store.RegistryRevisionPublication{
+				Resources:   []store.ResourceRevision{rev},
+				Assessments: []store.ResourceAssessment{assessment},
+				Audits:      []store.ResourceAudit{audit, audit2},
+				AssessmentAuditLinks: []store.AssessmentAuditLink{
+					{AssessmentDigest: assessment.AssessmentDigest, Ordinal: 0, AuditKey: audit.ResourceAuditKey, ResultDigest: audit.ResultDigest},
+				},
+			},
+			want: "not referenced",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := store.PublishRegistryRevision(context.Background(), nil, nil, tc.req)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PublishRegistryRevision error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPublishRegistryRevisionRollsBackOnInvalidAssessment(t *testing.T) {
+	ctx := context.Background()
+	meta, blobs := openAtomicStores(t)
+
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}
+	rev := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64))}
+	audit := auditFor(t, coord, "marketplace.hidden-content", "1.2.0", "sha256:"+strings.Repeat("c", 64))
+	badCoord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "missing"}
+	badAssessment := assessmentFor(t, store.ResourceRevision{Coordinate: badCoord, ContentDigest: rev.ContentDigest}, "sha256:"+strings.Repeat("0", 64))
+
+	req := store.RegistryRevisionPublication{
+		Occurrence: store.RegistryOccurrence{
+			RegistryID:                     "src",
+			Ref:                            "main",
+			Commit:                         "abc123",
+			RegistryRevisionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("5", 64)),
+			Acquisition:                    store.AcquisitionMirror,
+			OccurredAt:                     time.Now().UTC(),
+		},
+		Resources:           []store.ResourceRevision{rev},
+		ResourceOccurrences: []store.ResourceOccurrence{{Coordinate: coord, ContentDigest: rev.ContentDigest, Commit: "abc123", ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("5", 64))}},
+		Assessments:         []store.ResourceAssessment{badAssessment},
+		Audits:              []store.ResourceAudit{audit},
+	}
+
+	if err := store.PublishRegistryRevision(ctx, meta, blobs, req); err == nil {
+		t.Fatalf("expected publish to fail")
+	}
+
+	if _, err := meta.GetResourceRevision(ctx, coord, rev.ContentDigest); err == nil {
+		t.Fatalf("expected resource revision to be rolled back")
+	}
+	if _, err := meta.GetResourceAudit(ctx, audit.ResourceAuditKey, audit.ResultDigest); err == nil {
+		t.Fatalf("expected audit to be rolled back")
+	}
+}
+
+func TestPublishRegistryRevisionAuditValidationLeavesStateUnchanged(t *testing.T) {
+	ctx := context.Background()
+	meta, blobs := openAtomicStores(t)
+
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}
+	rev := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64))}
+	assessment := assessmentFor(t, rev, "sha256:"+strings.Repeat("0", 64))
+	audit := auditFor(t, coord, "marketplace.hidden-content", "1.2.0", "sha256:"+strings.Repeat("c", 64))
+	audit2 := auditFor(t, coord, "marketplace.assets", "1.2.0", "sha256:"+strings.Repeat("d", 64))
+	manifestDigest := store.ArchiveDigest("sha256:" + strings.Repeat("5", 64))
+
+	badReq := store.RegistryRevisionPublication{
+		Occurrence: store.RegistryOccurrence{
+			RegistryID:                     "src",
+			Ref:                            "main",
+			Commit:                         "abc123",
+			RegistryRevisionManifestDigest: store.RevisionDigest(manifestDigest),
+			Acquisition:                    store.AcquisitionMirror,
+			OccurredAt:                     time.Now().UTC(),
+		},
+		Resources:   []store.ResourceRevision{rev},
+		Assessments: []store.ResourceAssessment{assessment},
+		Audits:      []store.ResourceAudit{audit, audit2},
+		AssessmentAuditLinks: []store.AssessmentAuditLink{
+			{AssessmentDigest: assessment.AssessmentDigest, Ordinal: 0, AuditKey: audit.ResourceAuditKey, ResultDigest: audit.ResultDigest},
+		},
+		ManifestPayload: []byte(`{"schema_version":"v1","generator":"test"}`),
+	}
+
+	if err := store.PublishRegistryRevision(ctx, meta, blobs, badReq); err == nil {
+		t.Fatalf("expected publish to fail")
+	}
+
+	if _, err := meta.GetResourceRevision(ctx, coord, rev.ContentDigest); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected no resource revision after failed publish, got err=%v", err)
+	}
+	if _, err := meta.GetResourceAssessment(ctx, assessment.AssessmentDigest); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected no assessment after failed publish, got err=%v", err)
+	}
+	if _, err := meta.GetResourceAudit(ctx, audit.ResourceAuditKey, audit.ResultDigest); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected no audit after failed publish, got err=%v", err)
+	}
+	if _, err := blobs.Get(ctx, manifestDigest); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected no blob upload after failed publish, got err=%v", err)
 	}
 }

@@ -92,9 +92,21 @@ func canonicalFindingsFromRevision(revision store.AssessedResourceRevision) []hc
 	}
 	findings := make([]hccartifact.CanonicalFinding, len(revision.Assessment.Findings))
 	for i, finding := range revision.Assessment.Findings {
+		var consentable *bool
+		if finding.Consentable != nil && !*finding.Consentable {
+			v := false
+			consentable = &v
+		}
 		findings[i] = hccartifact.CanonicalFinding{
-			Code: finding.Code, Severity: finding.Severity, Message: finding.Message,
-			PolicyOutcome: finding.Policy, AnalyzerVersion: revision.Assessment.AnalyzerVersion,
+			Code:          finding.Code,
+			Severity:      finding.Severity,
+			Message:       finding.Message,
+			PolicyOutcome: finding.Policy,
+			Analyzer:      finding.AnalyzerID,
+			Consentable:   consentable,
+		}
+		if finding.AnalyzerID == "" {
+			findings[i].AnalyzerVersion = revision.Assessment.AnalyzerVersion
 		}
 		if finding.Location != nil {
 			findings[i].File, findings[i].Line, findings[i].Column = finding.Location.Path, finding.Location.Line, finding.Location.Column

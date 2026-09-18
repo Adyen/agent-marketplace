@@ -57,6 +57,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/assessments/sha256/{digest}",
 		"/api/v1/inspection/sha256/{digest}",
 		"/api/v1/content/sha256/{digest}",
+		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/audits/{analyzer_id}",
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection",
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content",
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
@@ -79,7 +80,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("openapi schemas missing")
 	}
-	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Registry", "RegistryOccurrence", "ExactRegistryOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceAssessment", "AssessmentFinding", "ResourceOccurrence", "Revocation", "ResourceCoordinate", "InspectionManifest", "InspectionFile"} {
+	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Registry", "RegistryOccurrence", "ExactRegistryOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceAssessment", "AssessmentFinding", "ResourceOccurrence", "Revocation", "ResourceCoordinate", "InspectionManifest", "InspectionFile", "Audit", "AuditSummary"} {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
 		}

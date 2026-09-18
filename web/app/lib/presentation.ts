@@ -1,6 +1,9 @@
+import { RESOURCE_KINDS } from '~/types/marketplace'
 import type { ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
 import { isSafeRouteToken, isSafeResourceRoute } from '~/lib/routes'
 import { isSha256Digest } from '~/lib/validation'
+
+const ANALYZER_ID_PATTERN = /^[a-z][a-z0-9_.-]*$/
 
 export const KIND_LABELS: Record<ResourceKind, string> = {
   skill: 'Skill',
@@ -65,6 +68,54 @@ export function resourceLocator(item: ResourceListItem, browserBase: string): st
   const canonical = safeCanonicalUrl(browserBase)
   const route = resourceRoute(item)
   return canonical && route ? `${canonical}${route}` : ''
+}
+
+export function auditRoute(registry: string, kind: ResourceKind, name: string, revision: string, analyzerId: string): string {
+  if (!isSafeRouteToken(registry) || !(RESOURCE_KINDS as readonly string[]).includes(kind) || !isSafeRouteToken(name) || !isSha256Digest(revision) || !ANALYZER_ID_PATTERN.test(analyzerId)) return ''
+  return `/r/${encodeURIComponent(registry)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/${encodeURIComponent(revision)}/audit/${encodeURIComponent(analyzerId)}`
+}
+
+export function auditLocator(registry: string, kind: ResourceKind, name: string, revision: string, analyzerId: string, browserBase: string): string {
+  const canonical = safeCanonicalUrl(browserBase)
+  const route = auditRoute(registry, kind, name, revision, analyzerId)
+  return canonical && route ? `${canonical}${route}` : ''
+}
+
+export type SourceRangeParams = {
+  path: string
+  line?: number
+  column?: number
+  start_byte?: number
+  end_byte?: number
+}
+
+export function resourceSourceRangeRoute(registry: string, kind: ResourceKind, name: string, revision: string, range: SourceRangeParams): string {
+  const base = resourceRoute({ registry_id: registry, kind, name, revision, content_digest: revision })
+  if (!base) return ''
+  const params = new URLSearchParams()
+  params.set('path', range.path)
+  if (range.line !== undefined && Number.isInteger(range.line) && range.line > 0) params.set('line', String(range.line))
+  if (range.column !== undefined && Number.isInteger(range.column) && range.column > 0) params.set('column', String(range.column))
+  if (range.start_byte !== undefined && Number.isInteger(range.start_byte) && range.start_byte >= 0) params.set('start_byte', String(range.start_byte))
+  if (range.end_byte !== undefined && Number.isInteger(range.end_byte) && range.end_byte >= 0) params.set('end_byte', String(range.end_byte))
+  return `${base}?${params.toString()}`
+}
+
+export function auditVerdictColor(verdict: string): 'success' | 'warning' | 'error' | 'neutral' {
+  switch (verdict) {
+    case 'pass': return 'success'
+    case 'warn': return 'warning'
+    case 'fail':
+    case 'error': return 'error'
+    default: return 'neutral'
+  }
+}
+
+export function formatDuration(ns: number): string {
+  if (ns < 1_000) return `${ns} ns`
+  if (ns < 1_000_000) return `${(ns / 1_000).toFixed(1)} µs`
+  if (ns < 1_000_000_000) return `${(ns / 1_000_000).toFixed(2)} ms`
+  return `${(ns / 1_000_000_000).toFixed(2)} s`
 }
 
 export function installCommand(item: ResourceListItem, browserBase: string): string {

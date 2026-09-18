@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 )
 
 const (
@@ -44,6 +46,54 @@ type RevisionResource struct {
 func RevisionDigest(payload []byte) string {
 	h := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+// SupportFileDigests returns a map of support file path to sha256 content digest
+// for each file in files.
+func SupportFileDigests(files analyze.FileSet) map[string]string {
+	if len(files) == 0 {
+		return nil
+	}
+	digests := make(map[string]string, len(files))
+	for name, data := range files {
+		digests[name] = RevisionDigest(data)
+	}
+	return digests
+}
+
+// SubjectDigest returns a canonical sha256 digest over the artifact content
+// digest and the sorted support-file path and content digest pairs.
+func SubjectDigest(contentDigest string, files analyze.FileSet) string {
+	return SubjectDigestFromDigests(contentDigest, SupportFileDigests(files))
+}
+
+// SubjectDigestFromDigests returns a canonical sha256 digest over the artifact
+// content digest and the sorted support-file path and digest pairs.
+func SubjectDigestFromDigests(contentDigest string, supportDigests map[string]string) string {
+	type fileDigest struct {
+		Path   string `json:"path"`
+		Digest string `json:"digest"`
+	}
+
+	digests := supportDigests
+	if digests == nil {
+		digests = map[string]string{}
+	}
+	paths := make([]string, 0, len(digests))
+	for p := range digests {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	support := make([]fileDigest, len(paths))
+	for i, p := range paths {
+		support[i] = fileDigest{Path: p, Digest: digests[p]}
+	}
+
+	payload, _ := json.Marshal(struct {
+		ContentDigest string       `json:"content_digest"`
+		SupportFiles  []fileDigest `json:"support_files"`
+	}{contentDigest, support})
+	return RevisionDigest(payload)
 }
 
 func isCanonicalDigest(value string) bool {

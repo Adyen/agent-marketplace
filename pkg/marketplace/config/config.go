@@ -213,6 +213,9 @@ type Policy struct {
 	// configured, because license policy is not enforced at all then.
 	LicenseUndeclared string `yaml:"license_undeclared"`
 	Limits            Limits `yaml:"limits"`
+	// Analyzers is an optional explicit list of analyzers. nil means the five
+	// built-in analyzers are used; an explicit empty list disables all analyzers.
+	Analyzers []Analyzer `yaml:"analyzers,omitempty"`
 }
 
 // UndeclaredLicenseOutcome returns the effective outcome for a resource that
@@ -623,6 +626,7 @@ func (p Policy) Validate() []error {
 	if p.Limits.IngestionDuration.Duration() <= 0 {
 		errs = append(errs, errors.New("policy.limits.ingestion_duration must be positive"))
 	}
+	errs = append(errs, validateAnalyzers(p.Analyzers)...)
 	return errs
 }
 

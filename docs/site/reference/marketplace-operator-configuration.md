@@ -125,6 +125,7 @@ Exactly one of `dsn`, `dsn_env`, and `dsn_file` must resolve to a usable value. 
 | `hidden_content` | string | no | `warn` | `reject` or `warn`. Controls the outcome for hidden repository content. |
 | `license_allowlist` | list of SPDX-like strings | no | `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause` | Allowed declared licenses. An empty list disables license enforcement. |
 | `license_undeclared` | string | no | `reject` | `reject`, `warn`, or `allow` when the allowlist is non-empty and a resource declares no license. |
+| `analyzers` | list | no | five built-ins | Analyzer plugin set. Omitting keeps the built-ins; an explicit empty list disables analysis. |
 | `limits` | mapping | no | values below | Positive acquisition and ingestion bounds. |
 
 ### `policy.limits`
@@ -197,6 +198,60 @@ policy_overrides:
   license_undeclared: warn
   limits:
     repository_bytes: 52428800
+```
+
+## `policy.analyzers`
+
+`policy.analyzers` is a list of analyzer entries. Omitting it keeps the built-in default set; an explicit empty list disables analysis.
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `id` | string | yes | none | Analyzer identity. Built-in IDs and `marketplace.rulepack` are known; all other IDs require a `run` block. |
+| `enabled` | boolean | no | `true` | Whether this analyzer is active. |
+| `role` | string | no | built-in default; `gating` for `run` analyzers | `gating` or `advisory`. |
+| `version` | string | yes for `run` analyzers | built-in version | Protocol echo version; the runner must return it in its JSON response. |
+| `run` | mapping | yes for external analyzers | none | `command`, `args`, `timeout`, `env_passthrough`, and `implementation_digest`. |
+| `rulepack` | mapping | yes for `marketplace.rulepack` | none | `path`: an absolute path to a rulepack file. |
+| `config` | mapping | no | empty | Opaque analyzer configuration that is hashed into the cache key. |
+
+### `analyzers[].run`
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `command` | absolute path | yes | none | Absolute path to the executable. |
+| `args` | list of strings | no | empty | Ordered arguments passed to `command`. |
+| `timeout` | duration | yes | none | Positive execution timeout. |
+| `env_passthrough` | list of strings | no | empty | Ordered allowlist of environment variable names passed to the runner. |
+| `implementation_digest` | `sha256:<64 lowercase hex>` | yes | none | Digest of the executable at `command`; verified before every invocation. |
+
+### `analyzers[].rulepack`
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `path` | absolute path | yes | none | Absolute path to a rulepack definition file. |
+
+### Secret-literal rules
+
+`config` and `run.args` must not contain literal secrets. Any key whose name contains `token`, `secret`, `password`, `credential`, `private_key`, `api_key`, `authorization`, or `cookie` must hold a single `file:` or `env:` reference. `run.args` may not place a secret literal after a secret-looking option, and may not contain inline `=`-delimited secret assignments.
+
+### Example
+
+```yaml
+policy:
+  analyzers:
+    - id: marketplace.capabilities
+      role: advisory
+    - id: custom.sast
+      version: "2.1.0"
+      role: gating
+      run:
+        command: /usr/local/libexec/custom-sast
+        args: ["--json"]
+        timeout: 30s
+        env_passthrough: [SAST_TOKEN_FILE]
+        implementation_digest: sha256:<64 lowercase hex>
+      config:
+        rules_file: /etc/custom/sast-rules.yaml
 ```
 
 ## `revocations`

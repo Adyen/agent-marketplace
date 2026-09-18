@@ -18,6 +18,11 @@ if (!isResourceKind(kindValue)) throw createError({ statusCode: 404, statusMessa
 if (!isSha256Digest(revision)) throw createError({ statusCode: 404, statusMessage: 'Resource revision not found' })
 const kind = kindValue
 
+const selectedPath = computed(() => {
+  const value = route.query.path
+  return Array.isArray(value) ? (value[0] || '') : (value || '')
+})
+
 const { data: metadata } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
 const { data: registryRecord } = await useAsyncData(`marketplace-registry:${registry}`, () => api.getRegistry(registry))
 const { data: resource, pending, error, refresh } = await useAsyncData(
@@ -72,7 +77,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This exact revision could not be loaded. It may be revoked, retained only by policy, or unavailable from the Marketplace.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :registry="registry" :acquisition="registryRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :registry="registry" :acquisition="registryRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" :initial-selected-path="selectedPath" />
     </main>
   </div>
 </template>

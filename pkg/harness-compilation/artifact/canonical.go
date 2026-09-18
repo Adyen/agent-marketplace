@@ -70,6 +70,9 @@ type CanonicalFinding struct {
 	PolicyOutcome   string `json:"policy_outcome,omitempty"`
 	Analyzer        string `json:"analyzer,omitempty"`
 	AnalyzerVersion string `json:"analyzer_version,omitempty"`
+	// Consentable is omitted for consentable findings and emitted as false for
+	// non-consentable findings that --accept-risk cannot bypass.
+	Consentable *bool `json:"consentable,omitempty"`
 }
 
 // CanonicalProvenance records where the artifact came from.
@@ -458,6 +461,9 @@ func (m CanonicalManifest) Validate() error {
 		case "reject", "warn", "info":
 		default:
 			return fmt.Errorf("findings[%d].severity %q is invalid", i, f.Severity)
+		}
+		if f.Consentable != nil && *f.Consentable && f.PolicyOutcome == "reject" {
+			return fmt.Errorf("findings[%d].consentable cannot be true when policy_outcome is reject", i)
 		}
 	}
 	return nil

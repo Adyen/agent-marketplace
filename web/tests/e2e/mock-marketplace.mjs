@@ -62,6 +62,39 @@ const wellKnown = {
   features: ['search', 'registry-history', 'inspection'],
 }
 
+const auditAnalyzerId = 'e2e.builtin.policy'
+const auditSummary = {
+  analyzer_id: auditAnalyzerId,
+  analyzer_version: '1.0.0',
+  role: 'gating',
+  verdict: 'warn',
+  summary: 'Network reference requires review.',
+  finding_count: 1,
+  duration_ns: 2_100_000,
+  result_digest: `sha256:${'0'.repeat(64)}`,
+}
+
+const auditDetail = {
+  analyzer_id: auditAnalyzerId,
+  analyzer_version: '1.0.0',
+  role: 'gating',
+  verdict: 'warn',
+  summary: 'Network reference requires review.',
+  findings: [{
+    code: 'remote-reference',
+    severity: 'warn',
+    policy: 'network-policy',
+    message: 'External reference requires review.',
+    analyzer_id: auditAnalyzerId,
+    consentable: false,
+    location: { path: 'SKILL.md', line: 1, column: 1, start_byte: 0, end_byte: 1 },
+  }],
+  finding_count: 1,
+  duration_ns: 2_100_000,
+  assessed_at: '2026-01-02T03:04:05Z',
+  result_digest: `sha256:${'0'.repeat(64)}`,
+}
+
 function resource(item, contentDigest = item.content_digest, revocation) {
   const coordinate = { marketplace: 'e2e-marketplace', registry: item.registry_id, kind: item.kind, name: item.name }
   const reason = revocation?.reason ?? (revocation === undefined && item.name === 'deploy-preview' ? 'security review' : '')
@@ -83,6 +116,7 @@ function resource(item, contentDigest = item.content_digest, revocation) {
       assessed_at: '2026-01-02T03:04:05Z',
     },
     occurrence: { coordinate, content_digest: contentDigest, commit: '8'.repeat(40), manifest_digest: `sha256:${'5'.repeat(64)}` },
+    ...(item.name === 'secure-review' ? { audits: [auditSummary] } : {}),
     ...(reason ? { revocation: { kind: 'revision', target_id: contentDigest, reason, applied_at: '2026-01-03T03:04:05Z' } } : {}),
   }
 }
@@ -156,6 +190,10 @@ const server = createServer((request, response) => {
       return sendJson(response, 200, [resource(item), resource(item, previousDigest, item.name === 'secure-review' ? { reason: 'superseded policy' } : undefined)])
     }
     if (parts[6] === 'revisions' && ![item.content_digest, previousDigest].includes(requestedRevision)) return sendJson(response, 404, { error: 'revision not found' })
+    if (parts[8] === 'audits') {
+      if (item.name !== 'secure-review' || parts[9] !== auditAnalyzerId) return sendJson(response, 404, { error: 'audit not found' })
+      return sendJson(response, 200, auditDetail)
+    }
     if (parts[8] === 'inspection') {
       if (parts[9] === 'content') {
         if (parts[10] === notesDigest) {
