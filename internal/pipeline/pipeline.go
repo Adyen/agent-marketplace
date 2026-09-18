@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/backup"
@@ -991,43 +993,67 @@ func coveredByAncestor(rel string, collected []string) bool {
 	return false
 }
 
+var errUnsafeGitignore = errors.New("gitignore is not a regular singly linked file")
+
 func EnsureLocalConfigGitignored(repoRoot string) {
 	localConfigPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
 	if _, err := os.Stat(localConfigPath); err != nil {
 		return
 	}
-
-	gitignorePath := filepath.Join(repoRoot, ".gitignore")
-	entries := []string{".agents/config.local.yaml", ".agents/lock.local.yaml"}
-
-	data, err := os.ReadFile(gitignorePath)
+	root, err := os.OpenRoot(repoRoot)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			slog.Warn("failed to read gitignore", "path", gitignorePath, "error", err)
-			return
-		}
-		if err := os.WriteFile(gitignorePath, []byte(strings.Join(entries, "\n")+"\n"), 0o644); err != nil {
-			slog.Warn("failed to create gitignore", "path", gitignorePath, "error", err)
-		}
+		slog.Warn("failed to open gitignore root", "path", repoRoot, "code", "pipeline.gitignore.write-refused", "error", err)
 		return
 	}
+	defer func() { _ = root.Close() }()
+	flags := os.O_RDWR | os.O_APPEND | os.O_CREATE | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+	f, err := root.OpenFile(".gitignore", flags, 0o644)
+	if err != nil {
+		slog.Warn("refused gitignore update", "path", filepath.Join(repoRoot, ".gitignore"), "code", "pipeline.gitignore.write-refused", "error", err)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	if err := appendLocalConfigIgnoreEntries(f); err != nil {
+		slog.Warn("refused gitignore update", "code", "pipeline.gitignore.write-refused", "error", err)
+	}
+}
 
+func appendLocalConfigIgnoreEntries(f *os.File) error {
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat gitignore: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.Mode().IsRegular() || !ok || stat.Nlink != 1 {
+		return errUnsafeGitignore
+	}
+	if err := syscall.SetNonblock(int(f.Fd()), false); err != nil {
+		return fmt.Errorf("restore blocking gitignore I/O: %w", err)
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("read gitignore: %w", err)
+	}
+	entries := []string{".agents/config.local.yaml", ".agents/lock.local.yaml"}
 	present := make(map[string]bool, len(entries))
 	for _, line := range strings.Split(string(data), "\n") {
 		present[strings.TrimSpace(line)] = true
 	}
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		slog.Warn("failed to open gitignore for appending", "path", gitignorePath, "error", err)
-		return
-	}
-	defer func() { _ = f.Close() }()
-	if !strings.HasSuffix(string(data), "\n") {
-		_, _ = f.WriteString("\n")
-	}
+	var missing []string
 	for _, entry := range entries {
 		if !present[entry] {
-			_, _ = f.WriteString(entry + "\n")
+			missing = append(missing, entry)
 		}
 	}
+	if len(missing) == 0 {
+		return nil
+	}
+	addition := strings.Join(missing, "\n") + "\n"
+	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+		addition = "\n" + addition
+	}
+	if _, err := f.WriteString(addition); err != nil {
+		return fmt.Errorf("append gitignore: %w", err)
+	}
+	return nil
 }
