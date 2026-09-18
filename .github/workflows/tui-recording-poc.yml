@@ -1,0 +1,72 @@
+name: TUI Recording POC
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tui-recording-poc.yml'
+      - 'cmd/agent-marketplace/**'
+      - 'docs/assets/tui-test-recording-poc.gif'
+      - 'internal/tui/**'
+      - 'tools/tui-qa/**'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  record:
+    name: Record browse and inspect GIF
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: tools/tui-qa/.node-version
+
+      - name: Enable pinned pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+
+      - name: Install exact TUI QA dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: tools/tui-qa
+
+      - name: Record isolated TUI journey
+        env:
+          AM_TUI_RECORDING_DIR: ${{ runner.temp }}/tui-recording
+        run: tools/tui-qa/record-poc.sh
+
+      - name: Upload recording
+        id: recording
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tui-test-recording-${{ github.run_id }}
+          path: ${{ runner.temp }}/tui-recording/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Display recording
+        env:
+          ARTIFACT_URL: ${{ steps.recording.outputs.artifact-url }}
+          PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          preview_url="https://github.com/${GITHUB_REPOSITORY}/blob/${PREVIEW_SHA}/docs/assets/tui-test-recording-poc.gif?raw=true"
+          {
+            echo '## TUI recording POC'
+            echo
+            printf '![Browse and inspect journey](%s)\n' "$preview_url"
+            echo
+            printf '[Download the fresh pipeline recording](%s)\n' "$ARTIFACT_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

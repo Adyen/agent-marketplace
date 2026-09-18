@@ -47,3 +47,25 @@ make tui-qa
 `make tui-qa-check` typechecks the journeys and verifies the PTY adapter. `make tui-qa` builds the e2e-tagged test binary and runs every journey listed above once. Failures use the test runner's console report and current terminal screen; the suite does not write snapshots or traces.
 
 `AM_TUI_QA_BINARY` may select an already-built test binary. `AM_TUI_QA_REPO_ROOT` may select its repository root. The default suite requires no direnv or organization-specific image, certificate, registry, or infrastructure path.
+
+## Recording POC
+
+`record-poc.sh` reuses the isolated QA fixture to record the browse-and-inspect
+journey as a GIF:
+
+```sh
+tools/tui-qa/record-poc.sh
+```
+
+The script uses semantic `tui-test` assertions as interaction barriers and adds
+short pauses only for presentation pacing. It downloads the
+`tui-test 0.1.0-beta.4` release for the current macOS or Linux architecture and
+checks its published SHA-256 before execution. The package remains pinned at
+`0.0.4` because the beta is not yet available from the configured npm registry.
+
+Local output is written to `tools/tui-qa/artifacts/tui-test-recording-poc/`.
+The `TUI Recording POC` workflow uploads a fresh GIF and PNG as a seven-day
+artifact. Its job summary embeds the checked-in preview below so the result is
+visible directly in the pipeline.
+
+![tui-test browse and inspect recording](../../docs/assets/tui-test-recording-poc.gif)
