@@ -30,7 +30,7 @@ func Fail(ctx context.Context, s store.MetadataStore, id store.JobID, workerID s
 	if err != nil {
 		return err
 	}
-	if j.Status != Leased || j.WorkerID != workerID || time.Now().After(j.LeaseUntil) {
+	if j.Status != Leased || j.WorkerID != workerID {
 		return fmt.Errorf("%w: cannot fail job %q", store.ErrLeaseExpired, id)
 	}
 	backoff := NextRetryDelay(j.Attempt)

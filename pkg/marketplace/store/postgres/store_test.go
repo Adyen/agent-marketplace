@@ -549,6 +549,65 @@ func TestJobCRUD(t *testing.T) {
 	}
 }
 
+func TestPostgresFailJobUsesMicrosecondsForRetryLease(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newTestStore(t)
+	job := store.Job{
+		ID:          store.JobID("job-retry-lease"),
+		Kind:        "index-registry",
+		Payload:     []byte(`{"registry":"reg-1"}`),
+		MaxAttempts: 3,
+	}
+	if err := s.EnqueueJob(ctx, job); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	if _, err := s.LeaseJob(ctx, job.Kind, "worker-1", time.Minute); err != nil {
+		t.Fatalf("LeaseJob: %v", err)
+	}
+
+	const backoff = 5 * time.Second
+	if err := s.FailJob(ctx, job.ID, "worker-1", backoff); err != nil {
+		t.Fatalf("FailJob: %v", err)
+	}
+	failed, err := s.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if failed.Status != store.JobStatusFailed {
+		t.Fatalf("status = %q, want failed", failed.Status)
+	}
+	if failed.Backoff != backoff {
+		t.Fatalf("backoff = %v, want %v", failed.Backoff, backoff)
+	}
+	if failed.LeaseUntil.Before(time.Now().Add(4*time.Second)) || failed.LeaseUntil.After(time.Now().Add(6*time.Second)) {
+		t.Fatalf("retry lease_until = %v, want approximately %v from now", failed.LeaseUntil, backoff)
+	}
+}
+
+func TestPostgresGetJobNormalizesEmptyPayload(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newTestStore(t)
+	job := store.Job{
+		ID:          store.JobID("job-empty-payload"),
+		Kind:        "index-registry",
+		Payload:     []byte{},
+		MaxAttempts: 1,
+	}
+	if err := s.EnqueueJob(ctx, job); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	got, err := s.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Payload == nil {
+		t.Fatal("GetJob returned nil payload, want non-nil empty bytes")
+	}
+	if len(got.Payload) != 0 {
+		t.Fatalf("GetJob payload = %q, want empty", got.Payload)
+	}
+}
+
 func TestJobIdempotency(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)

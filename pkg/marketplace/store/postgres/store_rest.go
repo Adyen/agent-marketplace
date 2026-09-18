@@ -416,6 +416,9 @@ func (s *Store) getJob(ctx context.Context, id store.JobID) (store.Job, error) {
 	j.CreatedAt = microToTime(created)
 	j.UpdatedAt = microToTime(updated)
 	j.Payload = append([]byte(nil), j.Payload...)
+	if j.Payload == nil {
+		j.Payload = []byte{}
+	}
 	return j, nil
 }
 
@@ -650,10 +653,10 @@ func (s *Store) failJob(ctx context.Context, id store.JobID, workerID string, ba
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
 		 SET status=CASE WHEN attempt >= max_attempts THEN $1 ELSE $2 END,
-		     worker_id=NULL, lease_until=CASE WHEN attempt >= max_attempts THEN NULL ELSE `+dbNowMicro+`+CASE WHEN $3 > 0 THEN $3 ELSE 0 END END,
+		     worker_id=NULL, lease_until=CASE WHEN attempt >= max_attempts THEN NULL ELSE `+dbNowMicro+`+CASE WHEN $4 > 0 THEN $4 ELSE 0 END END,
 		     backoff=$3, updated_at=`+dbNowMicro+`
-		 WHERE id=$4 AND worker_id=$5 AND status=$6 AND lease_until > `+dbNowMicro,
-		store.JobStatusTerminalFailed, store.JobStatusFailed, int64(backoff),
+		 WHERE id=$5 AND worker_id=$6 AND status=$7 AND lease_until > `+dbNowMicro,
+		store.JobStatusTerminalFailed, store.JobStatusFailed, int64(backoff), backoff.Microseconds(),
 		id, workerID, store.JobStatusLeased,
 	)
 	if err != nil {

@@ -22,6 +22,25 @@ func newTestStore(t *testing.T) *sqlite.Store {
 	return s
 }
 
+type skewedClientLeaseStore struct {
+	store.MetadataStore
+	backend *sqlite.Store
+}
+
+func (s skewedClientLeaseStore) GetJob(ctx context.Context, id store.JobID) (store.Job, error) {
+	j, err := s.backend.GetJob(ctx, id)
+	if err != nil {
+		return store.Job{}, err
+	}
+	// Simulate a client clock that believes the lease has already expired.
+	j.LeaseUntil = time.Unix(0, 0)
+	return j, nil
+}
+
+func (s skewedClientLeaseStore) FailJob(ctx context.Context, id store.JobID, workerID string, backoff time.Duration) error {
+	return s.backend.FailJob(ctx, id, workerID, backoff)
+}
+
 func TestNextRetryDelay(t *testing.T) {
 	for attempt := 1; attempt <= 5; attempt++ {
 		d := job.NextRetryDelay(attempt)
@@ -164,6 +183,36 @@ func TestJobRetryBackoff(t *testing.T) {
 	}
 	if retried.Attempt != 2 {
 		t.Fatalf("retried attempt %d, want 2", retried.Attempt)
+	}
+}
+
+func TestJobFailUsesStoreClock(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if err := s.EnqueueJob(ctx, store.Job{
+		ID:          store.JobID("job-1"),
+		Kind:        "index-source",
+		Payload:     []byte(`{}`),
+		MaxAttempts: 3,
+	}); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	if _, err := job.Lease(ctx, s, "index-source", "worker-a", time.Minute); err != nil {
+		t.Fatalf("Lease: %v", err)
+	}
+
+	clientSkewedStore := skewedClientLeaseStore{backend: s}
+	if err := job.Fail(ctx, clientSkewedStore, store.JobID("job-1"), "worker-a"); err != nil {
+		t.Fatalf("Fail with skewed client clock: %v", err)
+	}
+
+	failed, err := s.GetJob(ctx, store.JobID("job-1"))
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if failed.Status != job.Failed {
+		t.Fatalf("status = %q, want failed", failed.Status)
 	}
 }
 
