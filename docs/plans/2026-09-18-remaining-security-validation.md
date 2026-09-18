@@ -204,7 +204,8 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   warm-cache fallback. Malformed locks and unavailable snapshots fail closed.
   Regression tests demonstrate both a missed locked collision and a false
   mutable-cache collision before the fix, and assert no config/lock writes or
-  fetches. Focused pipeline tests, Marketplace E2E, and lint pass.
+  Git clone/pull operations. Existing Marketplace pins may still refresh over
+  HTTP during preflight. Focused pipeline tests, Marketplace E2E, and lint pass.
 - R1c warm-registry benchmark: 855.2 to 867.6 microseconds/op (no significant
   timing difference), zero refreshes/op, 310.6 to 314.3 KiB/op and 2988 to 3031
   allocations/op. This does not measure a cold exact-snapshot acquisition.

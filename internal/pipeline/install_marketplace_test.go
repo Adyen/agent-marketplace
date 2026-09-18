@@ -556,6 +556,9 @@ func TestMarketplaceCollisionRejectsInvalidOrUnavailableExactLock(t *testing.T) 
 			repoRoot := filepath.Dir(filepath.Dir(ec.Repo.Path))
 			tc.breakFixture(t, repoRoot, snapshot)
 			loaded := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot})
+			if len(loaded.Errors) > 0 {
+				t.Fatal(errors.Join(loaded.Errors...))
+			}
 			var clones atomic.Int32
 			opts := InstallOptions{RepoRoot: repoRoot, CatalogOption: []catalog.LoadOption{catalog.WithCloneOrPull(func(string, string) (string, error) {
 				clones.Add(1)
