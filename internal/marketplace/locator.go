@@ -62,28 +62,38 @@ func ParseMarketplaceLocator(raw string) (MarketplaceLocator, error) {
 // Marketplace browser resource route marker. Callers can reject malformed
 // routes before generic Git URL parsing turns them into SSH clone URLs.
 //
-// Detection is anchored to the [/prefix]/r/registry/kind/name[/revisions/digest]
-// route shape: a mid-path "r" segment only marks a route when it starts a
-// complete route suffix, so legitimate endpoint bases and generic Git URLs
-// containing an "r" path segment stay generic. A route truncated at the path
-// root (/r, /r/registry, /r/registry/kind) cannot be an endpoint base or a
-// group/project Git path, so it is still rejected fail-closed.
+// Recognized Git hosting hosts (github.com, gitlab.com, and self-hosted
+// hostnames carrying a github/gitlab label) keep generic Git parsing, so
+// their paths are never Marketplace-looking. On every other host the check
+// fails closed: any "r" path segment marks the URL as a Marketplace browser
+// route, whether it starts a complete
+// [/prefix]/r/registry/kind/name[/revisions/digest] route or a truncated or
+// over-long malformed one. Endpoint bases containing an "r" segment are
+// deliberately unsupported on unrecognized hosts; ordinary endpoint bases
+// without one stay generic.
 func LooksLikeMarketplaceBrowserURL(raw string) bool {
 	input := strings.TrimSpace(raw)
 	u, err := url.Parse(input)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return false
 	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	for i, part := range parts {
-		if part != "r" {
-			continue
-		}
-		tail := len(parts) - i
-		if tail == 4 || (tail == 6 && parts[len(parts)-2] == "revisions") {
+	if isRecognizedGitHost(u.Hostname()) {
+		return false
+	}
+	for _, part := range strings.Split(strings.Trim(u.Path, "/"), "/") {
+		if part == "r" {
 			return true
 		}
-		if i == 0 && tail < 4 {
+	}
+	return false
+}
+
+// isRecognizedGitHost reports whether hostname is a recognized Git hosting
+// host: github.com, gitlab.com, or a self-hosted hostname carrying a
+// github/gitlab label (for example gitlab.example.com).
+func isRecognizedGitHost(hostname string) bool {
+	for _, label := range strings.Split(strings.ToLower(hostname), ".") {
+		if label == "github" || label == "gitlab" {
 			return true
 		}
 	}
