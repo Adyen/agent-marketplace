@@ -18,6 +18,12 @@ func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 		}
 		return a.Harnesses
 	}
+	urlOf := func(a ResolvedArtifact) string {
+		if a.IsMarketplace {
+			return a.MarketplaceURL
+		}
+		return a.RegistryURL
+	}
 	keyOf := func(a ResolvedArtifact, t hcc.Target) key {
 		kind := a.Kind
 		if a.Resource != nil {
@@ -36,7 +42,7 @@ func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 				continue
 			}
 			if prior, ok := winners[k]; ok {
-				winner := pickCollisionWinner([]skillOccurrence{{resolved: resolved[prior], url: resolved[prior].RegistryURL, order: prior}, {resolved: a, url: a.RegistryURL, order: i}})
+				winner := pickCollisionWinner([]skillOccurrence{{resolved: resolved[prior], url: urlOf(resolved[prior]), order: prior}, {resolved: a, url: urlOf(a), order: i}})
 				winners[k] = winner.order
 			} else {
 				winners[k] = i

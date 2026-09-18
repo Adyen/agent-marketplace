@@ -78,6 +78,44 @@ func TestMaterializationWinnersPreservesScopesAndKinds(t *testing.T) {
 	}
 }
 
+func TestMaterializationWinnersMarketplaceURLTieBreak(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		marketplaceURL      string
+		marketplaceOrigin   string
+		marketplaceRequired bool
+		want                string
+	}{
+		{name: "marketplace endpoint wins over acquisition origin", marketplaceURL: "https://a.example", marketplaceOrigin: "https://z.example/repo.git", want: "marketplace"},
+		{name: "Git wins over marketplace endpoint", marketplaceURL: "https://z.example", marketplaceOrigin: "https://a.example/repo.git", want: "git"},
+		{name: "empty marketplace origin uses endpoint", marketplaceURL: "https://z.example", want: "git"},
+		{name: "mirror URLs agree", marketplaceURL: "https://a.example", marketplaceOrigin: "https://a.example", want: "marketplace"},
+		{name: "required marketplace wins before URL", marketplaceURL: "https://z.example", marketplaceOrigin: "https://z.example/repo.git", marketplaceRequired: true, want: "marketplace"},
+	} {
+		for _, reverse := range []bool{false, true} {
+			t.Run(tc.name+map[bool]string{false: "/forward", true: "/reverse"}[reverse], func(t *testing.T) {
+				marketplace := materializationArtifact("shared", "marketplace", ir.KindSkill, config.RepoCommitted, []hcc.Target{hcc.TargetFactory})
+				marketplace.CatalogKey = "marketplace"
+				marketplace.IsMarketplace = true
+				marketplace.MarketplaceURL = tc.marketplaceURL
+				marketplace.RegistryURL = tc.marketplaceOrigin
+				marketplace.Required = tc.marketplaceRequired
+				git := materializationArtifact("shared", "git", ir.KindSkill, config.RepoCommitted, []hcc.Target{hcc.TargetFactory})
+				git.CatalogKey = "git"
+				git.RegistryURL = "https://m.example/repo.git"
+				input := []ResolvedArtifact{marketplace, git}
+				if reverse {
+					input[0], input[1] = input[1], input[0]
+				}
+				out := MaterializationWinners(input)
+				if len(out) != 1 || out[0].CatalogKey != tc.want {
+					t.Fatalf("winner = %#v, want %q", out, tc.want)
+				}
+			})
+		}
+	}
+}
+
 func TestMaterializationWinnersPreservesAdditiveHooks(t *testing.T) {
 	first := materializationArtifact("startup", "first", ir.KindHook, config.UserPersonal, []hcc.Target{hcc.TargetFactory})
 	second := materializationArtifact("startup", "second", ir.KindHook, config.Organization, []hcc.Target{hcc.TargetFactory})
