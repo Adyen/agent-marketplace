@@ -9,6 +9,7 @@ import CommandBlock from '../../app/components/CommandBlock.vue'
 const stubs = {
   // Rendered for real: it is derived from untrusted digest input.
   ResourceFingerprint,
+  RegistryOverview: defineComponent({ setup: () => () => h('section', 'Registry details') }),
   // Rendered for real: it decides whether the command is shown at all.
   CommandBlock,
   NuxtLink: defineComponent({ props: { to: { type: [String, Object], default: '' } }, setup(props, { attrs, slots }) { return () => h('a', { ...attrs, href: String(props.to) }, slots.default?.()) } }),
@@ -61,7 +62,8 @@ describe('ResourceDetailView', () => {
     expect(wrapper.find('[data-testid="revision-summary"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="installation-panel"]').text()).not.toContain('exact version')
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').text()).toBe('Copy command')
-    expect(wrapper.get('header button[aria-label^="Copy detail URL"]').text()).toBe('Copy link')
+    expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
+    expect(wrapper.get('button[aria-label^="Copy revision"]').exists()).toBe(true)
     expect(wrapper.get('a[href="/docs/"]').text()).toBe('Set up CLI')
 
     const installPosition = wrapper.html().indexOf('data-testid="installation-panel"')
@@ -71,7 +73,7 @@ describe('ResourceDetailView', () => {
     expect(tabsPosition).toBeLessThan(contentPosition)
 
     const tabs = wrapper.findAll('[role="tab"]')
-    expect(tabs.map(tab => tab.text())).toEqual(['Content', 'Security', 'Revisions', 'Technical details'])
+    expect(tabs.map(tab => tab.text())).toEqual(['Content', 'Security', 'Revisions', 'Registry', 'Technical details'])
     expect(tabs[0]?.attributes('aria-selected')).toBe('true')
     expect(wrapper.get('[data-testid="safe-markdown"]').text()).toContain('Resource instructions.')
     expect(wrapper.find('[aria-labelledby="security-tab"]').exists()).toBe(false)
@@ -95,8 +97,8 @@ describe('ResourceDetailView', () => {
     })
 
     expect(wrapper.find('[data-testid="revision-summary"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('You’re viewing an older revision.')
-    expect(wrapper.get(`a[href="/r/team-tools/skill/review/revisions/${encodeURIComponent(currentDigest)}"]`).text()).toBe('View latest')
+    expect(wrapper.text()).toContain('Newer revision available')
+    expect(wrapper.get(`a[href="/r/team-tools/skill/review/revisions/${encodeURIComponent(currentDigest)}"]`).text()).toBe('Newer revision available')
   })
 
   it('shows read-only provenance, findings, and digest-pinned actions as text', async () => {
@@ -107,7 +109,7 @@ describe('ResourceDetailView', () => {
 
     expect(wrapper.get('h1').text()).toBe('review')
     expect(wrapper.get('code').text()).toContain(`/revisions/sha256%3A${'c'.repeat(64)}`)
-    expect(wrapper.get('button[aria-label^="Copy detail URL"]').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
     expect(wrapper.find('script').exists()).toBe(false)
     expect(wrapper.find('[onerror]').exists()).toBe(false)
     expect(wrapper.find('[aria-live="polite"]').exists()).toBe(true)
@@ -119,7 +121,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.text()).toContain('Severity: low')
     expect(wrapper.text()).toContain('Policy: content-policy')
 
-    await wrapper.findAll('[role="tab"]')[3]!.trigger('click')
+    await wrapper.findAll('[role="tab"]')[4]!.trigger('click')
     expect(wrapper.text()).toContain('Apache-2.0')
     expect(wrapper.find('button[aria-label="Copy License"]').exists()).toBe(false)
     expect(wrapper.find('button[aria-label="Copy Archive digest"]').exists()).toBe(true)
@@ -142,14 +144,14 @@ describe('ResourceDetailView', () => {
     expect(wrapper.text()).toContain('Scanned Jan 2, 2026')
   })
 
-  it('keeps the install command but disables the detail URL when the browser base is empty', () => {
+  it('keeps the install command without rendering a detail URL action', () => {
     const wrapper = mount(ResourceDetailView, {
       props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: '' },
       global: { stubs },
     })
 
     expect(wrapper.get('code').text()).toBe(`agent-marketplace install "https://market.example/r/team-tools/skill/review/revisions/${encodeURIComponent(digest)}"`)
-    expect(wrapper.get('button[aria-label^="Copy detail URL"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
   })
 
   it('renders exact digest revision links and preserves revoked history state', async () => {
@@ -167,10 +169,10 @@ describe('ResourceDetailView', () => {
 
     await wrapper.findAll('[role="tab"]')[2]!.trigger('click')
     const history = wrapper.get('[aria-labelledby="revisions-tab"]')
-    expect(history.get(`a[href="/r/registry/skill/review/revisions/${encodeURIComponent(previousDigest)}"]`).attributes('title')).toBe(previousDigest)
+    expect(history.get(`a[href="/r/registry/skill/review/revisions/${encodeURIComponent(previousDigest)}?tab=revisions"]`).exists()).toBe(true)
     expect(history.text()).toContain('Revoked')
     expect(history.text()).toContain('Latest')
-    expect(history.get(`a[href="/r/registry/skill/review/revisions/${encodeURIComponent(digest)}"]`).attributes('aria-current')).toBe('page')
+    expect(history.get(`a[href="/r/registry/skill/review/revisions/${encodeURIComponent(digest)}?tab=revisions"]`).attributes('aria-current')).toBe('page')
   })
 
   it.each([
@@ -325,7 +327,7 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
     expect(wrapper.text()).toContain('COMMAND.md')
-    await wrapper.findAll('[role="tab"]')[3]!.trigger('click')
+    await wrapper.findAll('[role="tab"]')[4]!.trigger('click')
     expect(wrapper.text()).toContain('Binary metadata (not rendered)')
     expect(wrapper.find('img').exists()).toBe(false)
     // No SVG may come from the payload. The only SVG allowed in the tree is the
@@ -351,8 +353,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('[role="alert"]').text()).toContain('This revision is revoked')
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').exists()).toBe(true)
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('button[aria-label^="Copy detail URL"]').exists()).toBe(true)
-    expect(wrapper.get('button[aria-label^="Copy detail URL"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
   })
 
   it('calls a policy-rejected revision blocked and withholds the install command', () => {
@@ -371,7 +372,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('[role="status"]').text()).toContain('Installation is disabled because the current assessment rejects this revision')
     expect(wrapper.get('[role="status"]').text()).toContain('Metadata and inspection remain available.')
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('button[aria-label^="Copy detail URL"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
     expect(wrapper.get('[aria-live="polite"]').text()).toContain('Install status for review: Blocked by policy.')
   })
 

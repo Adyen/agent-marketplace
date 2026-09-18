@@ -8,6 +8,7 @@ const stubs = {
   NuxtLink: defineComponent({ props: { to: String }, setup(props, { slots }) { return () => h('a', { href: props.to }, slots.default?.()) } }),
   ResourceRow: defineComponent({ props: { item: Object }, setup(props) { return () => h('article', String((props.item as { name?: string })?.name || '')) } }),
   UBadge: defineComponent({ setup(_, { slots }) { return () => h('span', slots.default?.()) } }),
+  UButton: defineComponent({ props: { to: { type: [String, Object], default: '' } }, setup(_, { slots }) { return () => h('button', slots.default?.()) } }),
   UInput: defineComponent({ setup: () => () => h('input') }),
 }
 
@@ -41,17 +42,16 @@ describe('registry discovery surfaces', () => {
       props: {
         registry,
         operator: { id: 'operator-id', name: 'Marketplace operator', canonical_url: 'https://market.example' },
-        resources: [{ registry_id: 'registry', kind: 'skill', name: 'review', revision: 'sha256:' + 'a'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64) }],
-        canonicalUrl: 'https://market.example',
+        resourceCount: 1,
       },
       global: { stubs },
     })
 
-    expect(wrapper.text()).toContain('Publisher:')
+    expect(wrapper.text()).toContain('Publisher')
     expect(wrapper.text()).toContain('Marketplace operator')
-    expect(wrapper.text()).toContain('review')
-    expect(wrapper.html().indexOf('registry-resources-heading')).toBeLessThan(wrapper.html().indexOf('About this registry'))
-    expect(wrapper.get('details').attributes('open')).toBeUndefined()
+    expect(wrapper.text()).toContain('View 1 resource')
+    expect(wrapper.html().indexOf('About this registry')).toBeLessThan(wrapper.html().indexOf('Technical details'))
+    expect(wrapper.find('details').exists()).toBe(false)
     expect(wrapper.find('script').exists()).toBe(false)
     expect(wrapper.text()).toContain(hostile)
   })
