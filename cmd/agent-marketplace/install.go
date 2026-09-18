@@ -133,6 +133,7 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 	if err != nil {
 		return err
 	}
+	detailsShown := false
 
 	repoRoot := config.FindRepoRoot()
 	result, err := pipeline.Install(ctx, pipeline.InstallOptions{
@@ -163,6 +164,7 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 			if err != nil || result == nil {
 				return err
 			}
+			detailsShown = true
 		} else {
 			if writeErr := writeMarketplaceConsentRequired(out, consentErr, verbose); writeErr != nil {
 				return writeErr
@@ -184,7 +186,7 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 		return err
 	}
 
-	return writeInstallResult(out, result, scope, verbose)
+	return writeInstallResult(out, result, scope, verbose, detailsShown)
 }
 
 var (
@@ -307,14 +309,16 @@ func writeMarketplaceInstallDetails(out io.Writer, summary pipeline.MarketplaceI
 	return err
 }
 
-func writeInstallResult(out io.Writer, result *pipeline.InstallResult, scope pipeline.Scope, verbose bool) error {
+func writeInstallResult(out io.Writer, result *pipeline.InstallResult, scope pipeline.Scope, verbose, detailsShown bool) error {
 	if result.MarketplacePreview != "" || result.MarketplaceSummary.Name != "" {
-		if err := writeMarketplaceInstallDetails(out, result.MarketplaceSummary, verbose); err != nil {
-			return err
-		}
-		if verbose && result.MarketplacePreview != "" {
-			if _, err := fmt.Fprintf(out, "%s\n\n", result.MarketplacePreview); err != nil {
+		if !detailsShown {
+			if err := writeMarketplaceInstallDetails(out, result.MarketplaceSummary, verbose); err != nil {
 				return err
+			}
+			if verbose && result.MarketplacePreview != "" {
+				if _, err := fmt.Fprintf(out, "%s\n\n", result.MarketplacePreview); err != nil {
+					return err
+				}
 			}
 		}
 		name := result.MarketplaceSummary.Name

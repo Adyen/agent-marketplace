@@ -387,7 +387,7 @@ func TestMarketplaceInstallOutputShowsCompactVerifiedDetails(t *testing.T) {
 	}
 
 	var compact bytes.Buffer
-	if err := writeInstallResult(&compact, result, pipeline.ScopeRepo, false); err != nil {
+	if err := writeInstallResult(&compact, result, pipeline.ScopeRepo, false, false); err != nil {
 		t.Fatal(err)
 	}
 	want := "Installing coderabbit-skills · collection\n\nIncludes 3 skills:\n  explain\n  fix\n  review\n\nSource: awesome-ai\n\n✓ Installed coderabbit-skills · 3 skills\n"
@@ -401,7 +401,7 @@ func TestMarketplaceInstallOutputShowsCompactVerifiedDetails(t *testing.T) {
 	}
 
 	var verbose bytes.Buffer
-	if err := writeInstallResult(&verbose, result, pipeline.ScopeRepo, true); err != nil {
+	if err := writeInstallResult(&verbose, result, pipeline.ScopeRepo, true, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"Includes 3 skills:", "Marketplace install preview:", "content_digest:", "collection_leaves:", "✓ Installed coderabbit-skills · 3 skills"} {
@@ -457,7 +457,7 @@ func TestMarketplaceInstallResultColorsOnTerminal(t *testing.T) {
 
 	var success bytes.Buffer
 	result := &pipeline.InstallResult{Installed: []string{"review"}, MarketplaceSummary: pipeline.MarketplaceInstallSummary{Name: "review", Kind: "skill"}}
-	if err := writeInstallResult(&success, result, pipeline.ScopeRepo, false); err != nil {
+	if err := writeInstallResult(&success, result, pipeline.ScopeRepo, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(success.String(), "\x1b[32m✓ Installed review\x1b[0m") {
@@ -503,6 +503,12 @@ func TestMarketplaceRiskConfirmationShowsDetailsAndAcceptsYes(t *testing.T) {
 		if strings.Contains(out.String(), hidden) {
 			t.Fatalf("confirmation output retained %q:\n%s", hidden, out.String())
 		}
+	}
+	if err := writeInstallResult(&out, result, pipeline.ScopeRepo, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "Installing coderabbit-skills") != 1 || !strings.HasSuffix(out.String(), "✓ Installed coderabbit-skills · 3 skills\n") {
+		t.Fatalf("post-confirmation output repeated install details:\n%s", out.String())
 	}
 }
 
