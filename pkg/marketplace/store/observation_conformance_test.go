@@ -244,43 +244,6 @@ func TestEnqueueNilPayloadIsEmptyAcrossBackends(t *testing.T) {
 	}
 }
 
-func TestObservationDesiredRefreshRejectsMissingOrTerminalJob(t *testing.T) {
-	ctx := context.Background()
-	for _, tc := range []struct {
-		name   string
-		status store.JobStatus
-		want   error
-	}{
-		{name: "missing", want: store.ErrNotFound},
-		{name: "completed", status: store.JobStatusCompleted, want: store.ErrConflict},
-		{name: "terminal failed", status: store.JobStatusTerminalFailed, want: store.ErrConflict},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			meta, _ := openStores(t)
-			registryID := store.RegistryID("invalid-refresh-" + tc.name)
-			if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: registryID}); err != nil {
-				t.Fatal(err)
-			}
-			jobID := store.JobID("invalid-job-" + tc.name)
-			if tc.status != "" {
-				if err := meta.EnqueueJob(ctx, store.Job{ID: jobID, Kind: "refresh", Status: tc.status, Payload: []byte("payload")}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, err := meta.SetDesiredRefresh(ctx, registryID, store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: jobID, Trigger: "source-change"}); !errors.Is(err, tc.want) {
-				t.Fatalf("SetDesiredRefresh error = %v, want %v", err, tc.want)
-			}
-			current, err := meta.GetRegistryObservation(ctx, registryID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if current.ActiveRefreshJobID != "" {
-				t.Fatalf("invalid desired job became active: %q", current.ActiveRefreshJobID)
-			}
-		})
-	}
-}
-
 func TestObservationDesiredRefreshCoalescesAndClearsActiveJob(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)
@@ -356,6 +319,13 @@ func TestObservationDesiredRefreshRecoversAfterInvalidJob(t *testing.T) {
 			}
 			if _, err := meta.SetDesiredRefresh(ctx, registryID, store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: invalidJobID, Trigger: "source-change"}); !errors.Is(err, tc.want) {
 				t.Fatalf("invalid SetDesiredRefresh error = %v, want %v", err, tc.want)
+			}
+			current, err := meta.GetRegistryObservation(ctx, registryID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.ActiveRefreshJobID != "" {
+				t.Fatalf("invalid desired job became active: %q", current.ActiveRefreshJobID)
 			}
 			replacementJobID := store.JobID("replacement-" + tc.name)
 			if err := meta.EnqueueJob(ctx, store.Job{ID: replacementJobID, Kind: "refresh", Payload: []byte("payload")}); err != nil {

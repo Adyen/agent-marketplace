@@ -171,9 +171,6 @@ func (s *Store) ReleaseRegistryLease(ctx context.Context, id store.RegistryID, o
 			return store.ErrConflict
 		}
 		now := time.Now().UTC()
-		if current.WorkLeaseUntil.IsZero() || !current.WorkLeaseUntil.After(now) {
-			return store.ErrLeaseExpired
-		}
 		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, work_lease_owner='', work_lease_until=0
 			WHERE registry_id=? AND work_lease_owner=? AND work_lease_epoch=? AND work_lease_until>?`, id, owner, int64(leaseEpoch), timeToMicro(now))
 		if err != nil {
