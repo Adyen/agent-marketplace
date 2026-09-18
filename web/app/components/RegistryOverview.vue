@@ -11,7 +11,7 @@ const operatorCanonicalUrl = computed(() => safeCanonicalUrl(props.operator?.can
 </script>
 
 <template>
-  <article class="rounded-2xl border border-default bg-default p-6 shadow-sm sm:p-8">
+  <article class="rounded-2xl border border-default bg-[var(--am-color-bg-surface)] p-6 shadow-sm sm:p-8">
     <div class="flex flex-wrap items-start justify-between gap-4 border-b border-default pb-6">
       <div class="min-w-0">
         <p class="text-sm font-medium text-primary">Registry overview</p>
@@ -23,14 +23,14 @@ const operatorCanonicalUrl = computed(() => safeCanonicalUrl(props.operator?.can
 
     <section class="border-b border-default py-6" aria-labelledby="registry-trust-heading">
       <h2 id="registry-trust-heading" class="text-lg font-semibold text-highlighted">Publisher and operator</h2>
-      <p class="mt-2 text-sm leading-6 text-muted">The publisher owns the registry repository. The Marketplace operator approves this registry for discovery and distribution; approval is not a safety certification or endorsement.</p>
+      <p class="mt-2 text-sm leading-6 text-toned">The publisher owns the registry repository. The Marketplace operator approves this registry for discovery and distribution; approval is not a safety certification or endorsement.</p>
       <dl class="mt-4 grid gap-4 sm:grid-cols-2">
-        <div class="rounded-xl border border-default bg-muted/30 p-4">
+        <div class="rounded-xl border border-default bg-[var(--am-color-bg-subtle)] p-4">
           <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Registry publisher</dt>
           <dd class="mt-2 break-words text-sm text-highlighted">{{ registry.publisher?.name || 'Not provided' }}</dd>
           <dd v-if="registry.publisher?.url" class="mt-1 break-all font-mono text-xs text-muted">{{ registry.publisher.url }}</dd>
         </div>
-        <div class="rounded-xl border border-default bg-muted/30 p-4">
+        <div class="rounded-xl border border-default bg-[var(--am-color-bg-subtle)] p-4">
           <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Marketplace operator</dt>
           <dd class="mt-2 break-words text-sm text-highlighted">{{ operator?.name || 'Marketplace instance' }}</dd>
           <dd class="mt-1 break-all font-mono text-xs text-muted">{{ operator?.id || 'Not provided' }}</dd>
@@ -78,7 +78,7 @@ const operatorCanonicalUrl = computed(() => safeCanonicalUrl(props.operator?.can
     <section class="pt-6" aria-labelledby="registry-origins-heading">
       <h2 id="registry-origins-heading" class="text-lg font-semibold text-highlighted">Current and historical origins</h2>
       <ul v-if="registry.origins.length" class="mt-4 space-y-2">
-        <li v-for="(origin, index) in registry.origins" :key="`${origin}-${index}`" class="break-all rounded-xl border border-default bg-muted/30 px-4 py-3 font-mono text-sm text-highlighted">{{ origin }}</li>
+        <li v-for="(origin, index) in registry.origins" :key="`${origin}-${index}`" class="break-all rounded-xl border border-default bg-[var(--am-color-bg-subtle)] px-4 py-3 font-mono text-sm text-highlighted">{{ origin }}</li>
       </ul>
       <p v-else class="mt-3 text-sm text-muted">No origins were provided.</p>
     </section>

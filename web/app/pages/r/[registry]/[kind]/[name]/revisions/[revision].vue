@@ -60,17 +60,17 @@ useHead(() => ({
 </script>
 
 <template>
-  <div class="min-h-screen bg-muted/30 text-default">
+  <div class="min-h-screen bg-[var(--am-color-bg-canvas)] text-default">
     <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Resource revision' }]" />
 
     <main id="main-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
-      <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-default p-8">
+      <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-[var(--am-color-bg-surface)] p-8">
         <h1 class="text-2xl font-semibold text-highlighted">Loading resource revision</h1>
-        <p class="mt-3 text-sm text-muted">Fetching this exact verified revision and its metadata.</p>
+        <p class="mt-3 text-sm text-toned">Fetching this exact verified revision and its metadata.</p>
       </div>
-      <section v-else-if="error" role="alert" class="rounded-2xl border border-error/30 bg-default p-8">
+      <section v-else-if="error" role="alert" class="rounded-2xl border border-error/30 bg-[var(--am-color-bg-surface)] p-8">
         <h1 class="text-2xl font-semibold text-error">Resource revision unavailable</h1>
-        <p class="mt-3 text-sm leading-6 text-muted">This exact revision could not be loaded. It may be revoked, retained only by policy, or unavailable from the Marketplace.</p>
+        <p class="mt-3 text-sm leading-6 text-toned">This exact revision could not be loaded. It may be revoked, retained only by policy, or unavailable from the Marketplace.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
       <ResourceDetailView v-else-if="resource" :resource="resource" :registry="registry" :acquisition="registryRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :browser-base="browserBase" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />

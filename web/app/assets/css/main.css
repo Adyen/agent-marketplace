@@ -21,6 +21,10 @@ html {
   scrollbar-gutter: stable;
 }
 
+.marketplace-resource-row[data-interactive="true"]:hover {
+  background: var(--am-color-bg-hover);
+}
+
 .marketplace-markdown {
   max-width: 72ch;
   margin-inline: auto;
@@ -114,22 +118,22 @@ html {
 }
 
 .marketplace-markdown :not(pre) > code {
-  border: 1px solid var(--ui-border);
+  border: 1px solid var(--am-color-code-border);
   border-radius: 0.25rem;
-  background: var(--ui-bg-muted);
+  background: var(--am-color-code-bg);
   padding: 0.1em 0.35em;
-  color: var(--ui-text-highlighted);
+  color: var(--am-color-code-text);
   font-family: var(--font-mono);
   font-size: 0.875em;
 }
 
 .marketplace-markdown pre {
   overflow-x: auto;
-  border: 1px solid var(--ui-border);
+  border: 1px solid var(--am-color-code-border);
   border-radius: 0.375rem;
-  background: var(--ui-bg-muted);
+  background: var(--am-color-code-bg);
   padding: 1rem;
-  color: var(--ui-text-highlighted);
+  color: var(--am-color-code-text);
   font-family: var(--font-mono);
   font-size: 0.8125rem;
   line-height: 1.65;

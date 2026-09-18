@@ -29,12 +29,12 @@ const isCopied = computed(() => copied.value === 'command')
   <div>
     <!-- Filled, unbordered, prompt-prefixed: a command is output to be taken,
          not a field to be typed in, so it must not borrow input chrome. -->
-    <div class="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 rounded-xl bg-muted px-4 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+    <div class="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 rounded-xl border border-[var(--am-color-code-border)] bg-[var(--am-color-code-bg)] px-4 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
       <span class="select-none font-mono text-sm leading-6 text-dimmed" aria-hidden="true">$</span>
       <code
         v-if="available"
         data-testid="command-text"
-        class="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono text-sm leading-6 text-highlighted"
+        class="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono text-sm leading-6 text-[var(--am-color-code-text)]"
       >{{ command }}</code>
       <span v-else class="min-w-0 flex-1 font-mono text-sm leading-6 text-dimmed">command unavailable</span>
 

@@ -9,7 +9,7 @@ const inspectionDigest = `sha256:${'d'.repeat(64)}`
 const primaryDigest = `sha256:${'e'.repeat(64)}`
 const notesDigest = `sha256:${'f'.repeat(64)}`
 const configDigest = `sha256:${'1'.repeat(64)}`
-const primaryContent = '# Safe review\n\n[docs](https://example.com/docs)\n\n![remote image](https://evil.invalid/pixel.png)\n\n<div>raw HTML</div>\n<script>alert("xss")</script>\n'
+const primaryContent = '# Safe review\n\n[docs](https://example.com/docs)\n\nRun `agent-marketplace status` first.\n\n```sh\nagent-marketplace install example\n```\n\n![remote image](https://evil.invalid/pixel.png)\n\n<div>raw HTML</div>\n<script>alert("xss")</script>\n'
 const notesContent = '# Additional notes\n\n<script>alert("support-xss")</script>\n'
 const configContent = '{"html":"<script>escaped</script>"}'
 
