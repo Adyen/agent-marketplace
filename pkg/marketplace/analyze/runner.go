@@ -3,6 +3,8 @@ package analyze
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -83,21 +86,19 @@ func (r *Runner) Analyze(ctx context.Context, s Subject, cfg AnalyzerConfig) (Au
 		return Audit{}, err
 	}
 
-	// Hash the actual executable bytes immediately before each launch.
-	actualDigest, err := sha256Hex(r.cfg.Command)
-	if err != nil {
-		return Audit{}, fmt.Errorf("cannot hash runner executable: %w", err)
-	}
-	if actualDigest != r.digest {
-		return Audit{}, fmt.Errorf("implementation digest mismatch: expected sha256:%s, got sha256:%s", r.digest, actualDigest)
-	}
-
-	// Isolated temp cwd.
+	// Isolated temp cwd; the verified executable copy is staged here so the
+	// hashed bytes and the executed bytes are the same file, and cleanup is
+	// owned by the run directory.
 	tmpDir, err := os.MkdirTemp("", "am-analyzer-*")
 	if err != nil {
 		return Audit{}, fmt.Errorf("cannot create analyzer temp dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	execPath, err := r.stageVerifiedExecutable(tmpDir)
+	if err != nil {
+		return Audit{}, err
+	}
 
 	// Build the allowlisted, otherwise empty environment. The slice must stay
 	// non-nil: a nil cmd.Env would silently inherit the entire parent
@@ -124,11 +125,15 @@ func (r *Runner) Analyze(ctx context.Context, s Subject, cfg AnalyzerConfig) (Au
 	ctx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, r.cfg.Command, r.cfg.Args...)
+	cmd := exec.CommandContext(ctx, execPath, r.cfg.Args...)
 	// Kill the whole process group on timeout so a descendant holding the
 	// inherited stdout/stderr pipes cannot keep Wait's pipe drain blocked
 	// beyond the configured timeout.
 	bindRunnerProcessGroup(cmd)
+	// Bound Wait's post-kill pipe drain so a descendant that escaped the
+	// process group (e.g. via setsid) and still holds inherited pipes cannot
+	// block shutdown past the configured timeout.
+	cmd.WaitDelay = runnerWaitDelay
 	cmd.Dir = tmpDir
 	cmd.Env = env
 	cmd.Stdin = bytes.NewReader(reqJSON)
@@ -169,6 +174,43 @@ func (r *Runner) Analyze(ctx context.Context, s Subject, cfg AnalyzerConfig) (Au
 	}
 
 	return r.parseResponse(stdoutW.Bytes(), envValues)
+}
+
+// runnerWaitDelay bounds how long Wait drains the child's inherited pipes
+// after the process exits or is killed. A descendant that escaped the process
+// group can keep the pipes open; without a bound Wait would block past the
+// configured timeout.
+const runnerWaitDelay = 2 * time.Second
+
+// stageVerifiedExecutable reads the configured command once, binds those exact
+// bytes to the declared implementation_digest, and stages a private executable
+// copy inside the isolated run directory. Executing the staged copy instead of
+// re-opening cfg.Command closes the hash-then-exec TOCTOU window: replacing
+// the original path after verification cannot change what runs.
+func (r *Runner) stageVerifiedExecutable(dir string) (string, error) {
+	fi, err := os.Stat(r.cfg.Command)
+	if err != nil {
+		return "", fmt.Errorf("cannot stat runner executable: %w", err)
+	}
+	data, err := os.ReadFile(r.cfg.Command)
+	if err != nil {
+		return "", fmt.Errorf("cannot read runner executable: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	actualDigest := hex.EncodeToString(sum[:])
+	if actualDigest != r.digest {
+		return "", fmt.Errorf("implementation digest mismatch: expected sha256:%s, got sha256:%s", r.digest, actualDigest)
+	}
+	path := filepath.Join(dir, "runner-executable")
+	if err := os.WriteFile(path, data, fi.Mode().Perm()|0o700); err != nil {
+		return "", fmt.Errorf("cannot stage runner executable: %w", err)
+	}
+	// WriteFile perm passes through the umask; chmod restores the source
+	// executable bits so a restrictive umask cannot strip them.
+	if err := os.Chmod(path, fi.Mode().Perm()|0o700); err != nil {
+		return "", fmt.Errorf("cannot stage runner executable: %w", err)
+	}
+	return path, nil
 }
 
 type boundedWriter struct {

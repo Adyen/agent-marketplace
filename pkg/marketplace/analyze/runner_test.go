@@ -510,6 +510,83 @@ printf 'x'
 	}
 }
 
+// TestRunnerExecutesStagedCopy proves Analyze executes the private staged copy
+// inside the isolated run directory rather than re-opening the configured
+// command path after hashing.
+func TestRunnerExecutesStagedCopy(t *testing.T) {
+	script, digest := newRunnerScript(t, `#!/bin/sh
+read -r _
+printf '{"schema_version":"agent-marketplace.analyzer/v1","analyzer_id":"acme.runner","analyzer_version":"1.0.0","verdict":"pass","summary":"%s","findings":[]}' "$0"
+`)
+
+	r, err := NewRunner("acme.runner", "1.0.0", defaultRunnerConfig(script, digest, nil))
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+
+	audit, err := r.Analyze(context.Background(), Subject{
+		Resource: &fakeResource{kind: "skill", name: "test"},
+		Limits:   DefaultLimits(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if audit.Summary == script {
+		t.Fatalf("runner executed the configured path %q instead of a staged copy", script)
+	}
+	if !strings.Contains(audit.Summary, "am-analyzer-") || !strings.HasSuffix(audit.Summary, "runner-executable") {
+		t.Fatalf("runner did not execute the staged copy, executed: %q", audit.Summary)
+	}
+}
+
+// TestRunnerStageVerifiedExecutable proves the staged copy carries exactly the
+// bytes that were hashed and an executable mode, so implementation_digest binds
+// the executed file identity.
+func TestRunnerStageVerifiedExecutable(t *testing.T) {
+	content := "#!/bin/sh\nread -r _\nexit 0\n"
+	script, digest := newRunnerScript(t, content)
+
+	r, err := NewRunner("acme.runner", "1.0.0", defaultRunnerConfig(script, digest, nil))
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+
+	dir := t.TempDir()
+	staged, err := r.stageVerifiedExecutable(dir)
+	if err != nil {
+		t.Fatalf("stageVerifiedExecutable: %v", err)
+	}
+	if filepath.Dir(staged) != dir {
+		t.Fatalf("staged copy escaped the run dir: %q", staged)
+	}
+	got, err := os.ReadFile(staged)
+	if err != nil {
+		t.Fatalf("ReadFile staged: %v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("staged bytes differ from hashed bytes: %q", got)
+	}
+	fi, err := os.Stat(staged)
+	if err != nil {
+		t.Fatalf("Stat staged: %v", err)
+	}
+	if fi.Mode().Perm()&0111 == 0 {
+		t.Fatalf("staged copy is not executable: %v", fi.Mode().Perm())
+	}
+
+	// Mutating the configured path after staging must not affect the copy.
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 42\n"), 0755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	got, err = os.ReadFile(staged)
+	if err != nil {
+		t.Fatalf("ReadFile staged after mutation: %v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("staged copy changed with the configured path: %q", got)
+	}
+}
+
 func TestRunnerRequiresAbsoluteCommand(t *testing.T) {
 	_, err := NewRunner("acme.runner", "1.0.0", defaultRunnerConfig("relative-script", "sha256:"+strings.Repeat("0", 64), nil))
 	if err == nil {
