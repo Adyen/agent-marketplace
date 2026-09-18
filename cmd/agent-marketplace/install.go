@@ -153,6 +153,7 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 		AcceptRisk:          acceptRisk,
 		Marketplace:         marketplace,
 		DependencyReconcile: reconcileCommandDependencies,
+		PrepareDependencies: prepareInstallDependencies,
 	})
 	if err != nil {
 		var consentErr *pipeline.MarketplaceConsentError

@@ -55,6 +55,38 @@ func BenchmarkLoadStableEffectiveIncludes(b *testing.B) {
 	}
 }
 
+// BenchmarkInstallFromWarmExactLock measures repeated warm remote installs.
+// This benchmark includes local disk I/O but excludes network requests (no Internet).
+func BenchmarkInstallFromWarmExactLock(b *testing.B) {
+	repoRoot, path := setupWarmLockedGitSyncBenchmark(b)
+	cfg, err := config.LoadConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	if err != nil || cfg == nil || len(cfg.Registries) != 1 {
+		b.Fatalf("load benchmark registry: %v", err)
+	}
+	args := []string{"install", "review-0", "--from", cfg.Registries[0].URL, "--ref", cfg.Registries[0].Ref}
+	if out, err := executeCommand(args...); err != nil {
+		b.Fatalf("warm install: %v\n%s", err, out)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.StartTimer()
+	for range b.N {
+		config.ResetRepoRootCache()
+		if out, err := executeCommand(args...); err != nil {
+			b.Fatalf("install: %v\n%s", err, out)
+		}
+	}
+	b.StopTimer()
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		b.Fatalf("warm install changed lock: %v", err)
+	}
+}
+
 func BenchmarkSyncWarmUnchangedRemoteGitLock(b *testing.B) {
 	_, lockPath := setupWarmLockedGitSyncBenchmark(b)
 

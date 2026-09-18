@@ -49,6 +49,9 @@ credential-bearing services, or build attack demonstrations during testing.
   select mutable-cache content and then lock different content in one operation.
   If reproduced, bind discovery and mutation to the same exact revision while
   preserving local registries, reusable locks, and transactional rollback.
+  - [x] Bind remote ad-hoc CLI discovery and publication to prepared exact pins.
+  - [ ] Validate and bind remaining configured-install discovery paths, including
+    missing-lock bootstrap and concurrent changes to existing exact inputs.
 - [x] **R1c: Marketplace preview/consent identity.** Trace prepared-plan commit
   and collision checks. Distinguish an interactive preview-to-commit mismatch
   from explicitly accepting the currently resolved revision in a new CLI run.
@@ -219,9 +222,38 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
 - R1c warm-registry benchmark: 855.2 to 867.6 microseconds/op (no significant
   timing difference), zero refreshes/op, 310.6 to 314.3 KiB/op and 2988 to 3031
   allocations/op. This does not measure a cold exact-snapshot acquisition.
-- R1b remains open: discovery-to-lock consistency requires a guarantee before
-  publishing the staged config/lock transaction; checking only after commit
-  would not preserve rollback or prevent the mismatch.
+- R1b remote ad-hoc slice, based on merged `a371a5d`: a real CLI regression
+  confirmed that `install new --from ...` reported success for a resource only
+  in mutable commit B while the owning lock still contained commit A.
+- Remote `--from` installs now prepare exact lock documents and the effective
+  discovery config without publishing dependency files. Discovery consumes that
+  exact view; final reconciliation reuses the prepared documents offline and
+  validates frozen config/include/absent-layer/lock generations before publication.
+  The exact-cache lease spans preparation, selection, publication, and sync.
+- Regressions cover warm-lock refusal and valid installation, cold named/bundle/
+  inferred/user installs with a ref move after discovery, changed included config
+  before reconciliation and immediately before commit, newly created local config,
+  changed locks and final requirements, and missing-selection preservation with
+  released-plan refusal. GC cannot cross the prepared lease and can run after a
+  failed selection. A built-binary E2E case verifies the warm locked consumer.
+  Install-focused command/pipeline tests, race-enabled ad-hoc regressions, focused
+  E2E, full `make test`, build, and CI lint passed before publication.
+- Adversarial review checked pin reuse, generation checks, pre-publication errors,
+  cache-lease ownership, scope boundaries, and the actual consumer/test paths.
+  Discovery also uses the prepared effective config rather than an earlier load.
+  An alleged extra lease acquisition was rejected after checking the actual code;
+  the acquired lease is transferred once and released by the plan. No remaining
+  blocker was identified within the remote ad-hoc contract.
+- Repeated warm remote `--from` install benchmark (local Git/disk included, no
+  Internet): 166.5 to 146.9 ms/op (-11.80%), 1.910 to 2.684 MiB/op (+40.50%),
+  and 13.25k to 18.86k allocations/op (+42.38%). Five samples per revision;
+  benchstat reports p=0.008 but cannot estimate a 95% confidence interval with
+  this sample count. This is not a cold-install or general-sync benchmark.
+- R1b remains open for configured-install bootstrap and other unbound discovery
+  paths. Local registries and the explicitly unlocked organization layer retain
+  their existing semantics; this slice does not promise immutable local input or
+  global filesystem atomicity. A post-publication sync failure retains committed
+  dependency state under the existing error contract.
 - R1e partial fix: an explicit `--ref release/v1` now removes the full matched
   ref from a GitHub/GitLab web URL before deriving the directory. Tree/blob,
   root, encoded slash, mismatching ref, component-boundary, and explicit-path
