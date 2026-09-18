@@ -73,7 +73,7 @@ These are suspected scope-boundary defects, not a blanket symlink ban.
   scope. Preserve supported config symlinks to valid targets and user scope.
 - [ ] **R2b: Harness output roots.** Trace destination adapters and validation
   before canonicalization. Test existing root and ancestor symlinks for every
-  affected target; distinguish authorized symlinked HOME/checkouts from escapes
+  affected target; distinguish authorized symlinked `HOME`/checkouts from escapes
   within a repository. Explicit conversion destinations have their own contract.
 - [ ] **R2c: Aggregate leaves and support files.** Check whether foreign bytes
   can be read into output or written through links. Cover source acquisition,
@@ -160,7 +160,7 @@ These claims remain candidates until reachability and cost are measured.
 
 ## Prior controls and exclusions to preserve
 
-- Standard PATH lookup, supported SSH environment configuration, and an explicit
+- Standard `PATH` lookup, supported SSH environment configuration, and an explicit
   local log-path override are not independently proven privilege boundaries.
   Change them only when a lower-trust input crosses an actual authority boundary.
 - Current additive hook behavior and incomplete-compilation pruning suppression
@@ -174,7 +174,7 @@ These claims remain candidates until reachability and cost are measured.
 
 Use regressions through real consumers with valid controls, stable diagnostic
 codes or typed errors, unchanged external bytes, and no staging residue where
-applicable. Isolate HOME/XDG/organization config and potentially blocking tests.
+applicable. Isolate `HOME`/`XDG_*`/organization config and potentially blocking tests.
 Measure changed hot paths before and after per `CODING_STANDARDS.md`; do not
 weaken safety to obtain faster benchmarks. Native harness and real-terminal TUI
 checks remain CI gates; never bypass pinned tooling or repository policy.
