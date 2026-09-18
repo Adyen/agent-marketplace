@@ -226,7 +226,11 @@ func EnsureRegistryWithDefaultInConfig(configPath, url, ref, path string) error 
 				continue
 			}
 			urlNode := findRegistryURLNode(entryNode)
-			if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(url) {
+			if strings.TrimSpace(ref) != "" {
+				if !registryEntryMatchesExactURLPathRef(entryNode, url, path, ref) {
+					continue
+				}
+			} else if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(url) {
 				continue
 			}
 			existingPath := yamlEntryPath(entryNode)
@@ -642,6 +646,13 @@ func AddResourceToExactRegistryEntry(configPath, registryURL, registryPath strin
 	// Clean up stale exclude for the same name so the resolver does not
 	// suppress a resource that was just enabled.
 	return removeValuesFromExactRegistryEntry(configPath, registryURL, registryPath, kind, "exclude", []string{name})
+}
+
+func AddResourceToExactRegistryEntryAtRef(configPath, registryURL, registryPath, registryRef string, kind ir.ResourceKind, name string) error {
+	if err := addValuesToExactRegistryEntryAtRef(configPath, registryURL, registryPath, registryRef, kind, "include", []string{name}); err != nil {
+		return err
+	}
+	return removeValuesFromExactRegistryEntryAtRef(configPath, registryURL, registryPath, registryRef, kind, "exclude", []string{name})
 }
 
 // addValuesToExactRegistryEntry adds values to a sub-key (e.g. "include" or

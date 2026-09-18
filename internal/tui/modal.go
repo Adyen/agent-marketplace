@@ -333,10 +333,30 @@ func runDependencyScopedToggle(ctx context.Context, repoRoot string, act toggleA
 	}
 }
 
+func competingRowsInScope(rows []row, targetScope scope) []row {
+	var source config.Source
+	switch targetScope {
+	case scopeGlobal:
+		source = config.UserPersonal
+	case scopeProject:
+		source = config.RepoCommitted
+	default:
+		return nil
+	}
+	var eligible []row
+	for _, r := range rows {
+		if r.Artifact.Source == source && !r.Artifact.Required && !r.Artifact.IsMarketplace {
+			eligible = append(eligible, r)
+		}
+	}
+	return eligible
+}
+
 // excludeCompetingRegistriesCmd returns a tea.Cmd that adds excludes for
 // competing registry URLs that provide the same resource name. This resolves
 // name collisions when the user toggles ON a colliding skill.
 func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction) tea.Cmd {
+	rows = competingRowsInScope(rows, act.scope)
 	competing := competingRegistryURLs(rows, act.kind, act.skillName, act.registryURL)
 	if len(competing) == 0 {
 		return nil
@@ -555,7 +575,7 @@ func validateToggleRegistryWrite(rows []row, errs []error, act toggleAction) err
 	}
 	entries := []config.RegistryEntry{{URL: act.registryURL}}
 	if hasCollisionError(errs, act.kind, act.skillName) {
-		for _, url := range competingRegistryURLs(rows, act.kind, act.skillName, act.registryURL) {
+		for _, url := range competingRegistryURLs(competingRowsInScope(rows, act.scope), act.kind, act.skillName, act.registryURL) {
 			entries = append(entries, config.RegistryEntry{URL: url})
 		}
 	}

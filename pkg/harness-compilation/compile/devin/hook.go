@@ -215,7 +215,7 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 		hookKeyTimeout: true,
 		hooksKey:       true,
 	})
-	extraKeys, extraDiags := compile.ExtraKeys(h.Extra, canonical, mapping.TargetDevin, name, source)
+	extraKeys, extraDiags := compile.HookExtraKeys(h.Extra, canonical, mapping.TargetDevin, name, source)
 	diags = append(diags, extraDiags...)
 	for _, key := range extraKeys {
 		rule[key] = h.Extra[key]

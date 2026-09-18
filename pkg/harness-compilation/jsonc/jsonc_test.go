@@ -173,6 +173,24 @@ func TestUnmarshalReportsTypeMismatchAsMalformed(t *testing.T) {
 	}
 }
 
+func TestDocumentDecodeRejectsCaseCollidingAliases(t *testing.T) {
+	doc, err := Parse("f.json", []byte(`{"name":"safe","Name":"name-secret"}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var decoded struct {
+		Name string `json:"name"`
+	}
+	err = doc.Decode(&decoded)
+	coded, ok := diag.AsCodedError(err)
+	if !ok || coded.Code != diag.CodeJSONDuplicateKey {
+		t.Fatalf("error = %v, want coded duplicate-key error", err)
+	}
+	if strings.Contains(err.Error(), "name-secret") {
+		t.Fatalf("error %q leaked payload value", err)
+	}
+}
+
 func TestSetMemberPreservesCommentsAndKeyOrder(t *testing.T) {
 	in := "{\n  // handwritten first\n  \"alpha\": {\"keep\": true},\n  // about beta\n  \"beta\": 2\n}\n"
 	doc, err := Parse("f.json", []byte(in))

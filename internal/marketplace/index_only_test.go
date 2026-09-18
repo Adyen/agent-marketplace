@@ -129,7 +129,7 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 	if len(offlineErrs) != 0 || len(offlineResolved) != 1 || offlineResolved[0].Resource == nil {
 		t.Fatalf("offline index-only resolve = %d artifacts, errors %v", len(offlineResolved), offlineErrs)
 	}
-	if _, err := os.Stat(filepath.Join(offlineResolved[0].Path, "docs", "support.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(filepath.Dir(offlineResolved[0].Path), "docs", "support.txt")); err != nil {
 		t.Fatalf("offline reconstructed support file missing: %v", err)
 	}
 
@@ -398,7 +398,7 @@ func TestCachedIndexOnlyFailuresInvalidateOccurrenceMarker(t *testing.T) {
 			if err := cache.MarkIndexOnlyArtifactVerified(identity, pin.Digest); err != nil {
 				t.Fatal(err)
 			}
-			stagedDir := cachedReconstructedResourcePath(cache, identity, pin.Kind)
+			stagedDir := cachedReconstructedResourcePath(cache, identity, pin.Kind, pin.Name)
 			if tc.stageFault {
 				outside := t.TempDir()
 				if err := os.Symlink(outside, filepath.Join(cache.root, "compiled")); err != nil {
