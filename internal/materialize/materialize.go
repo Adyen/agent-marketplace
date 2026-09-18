@@ -519,7 +519,7 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 	allOutputs := make(map[outputKey]bool)
 	blocked := make(blockedOutputs)
 
-	for _, s := range resolved {
+	for _, s := range resolver.MaterializationWinners(resolved) {
 		if s.Unresolved {
 			// Metadata-only status rows do not materialize and should not
 			// claim output keys.

@@ -634,7 +634,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 		return ctx.Err()
 	}
 	marketplaceMode := resolver.MarketplaceResolveModeRefresh
-	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode})
+	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true})
 	if len(resolved.Errors) > 0 {
 		return errors.Join(resolved.Errors...)
 	}

@@ -16,6 +16,8 @@ The `XDG_*` defaults below apply only when those variables are not set.
 - `~/.agents/lock.yaml`: user personal generated lock.
 - `~/.cache/agent-marketplace/`: disposable cache of clones, snapshots, and compiled artifacts.
 - `$XDG_STATE_HOME/agent-marketplace/` (default `~/.local/state/agent-marketplace/`): durable state for Devin and Codex ownership and safety backups.
+- `$XDG_STATE_HOME/agent-marketplace/diagnostic/`: retained `--diagnostic` telemetry payloads awaiting review or export.
+- `~/.agent-marketplace/backups/<harness>/`: timestamped on-demand and pre-sync backups of machine-scope harness output (`backup create`, `backup list`, `backup restore`).
 - `~/.agent-marketplace/materialization-manifest.yaml`: generated management state for file-mode machine output.
 - `~/.agent-marketplace/logs/agent-marketplace.log`: default structured log file.
 

@@ -158,10 +158,7 @@ export default defineConfig({
             { text: 'Git registries and hosted Marketplaces', link: `${DOCS_PATH}explanation/git-registries-and-hosted-marketplaces` },
             { text: 'Telemetry and privacy', link: `${DOCS_PATH}explanation/telemetry-and-privacy` },
             { text: 'Marketplace architecture', link: `${DOCS_PATH}explanation/marketplace-architecture` },
-            { text: 'Marketplace trust model', link: `${DOCS_PATH}explanation/marketplace-trust-model` },
-            { text: 'Resource identity, revisions, and installed names', link: `${DOCS_PATH}explanation/resource-identity-revisions-and-installed-names` },
-            { text: 'Mirror and index-only acquisition', link: `${DOCS_PATH}explanation/mirror-and-index-only-acquisition` },
-            { text: 'Resource discovery and compilation', link: `${DOCS_PATH}explanation/resource-discovery-and-compilation` }
+            { text: 'Marketplace trust model', link: `${DOCS_PATH}explanation/marketplace-trust-model` }
           ]
         }
       ]

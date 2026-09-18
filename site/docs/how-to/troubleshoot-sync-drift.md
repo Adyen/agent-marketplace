@@ -48,7 +48,8 @@ agent-marketplace sync
 | `name collision` warning | Two registries select the same resource name | Use `remove` with `--from` and `--path`, or add an explicit `exclude` on the lower-priority source |
 | `unmet requirements` | A selected resource lists a missing prerequisite | Install the prerequisite explicitly |
 | `Malformed` resources | A resource file failed ingestion | Open the resource source and fix the harness layout |
-| `lock` drift | A locked commit no longer matches the remote ref | Run `agent-marketplace lock` to reconcile, or `agent-marketplace update` to advance intentionally |
+| `lock.stale` or `lock.missing` | The committed lock no longer matches the configuration (a registry, ref, or path was added, removed, or edited) or the lock was never generated | Run a writing `agent-marketplace sync` or `agent-marketplace lock` to reconcile, then commit the lock |
+| Lock unchanged although the remote branch moved | Expected. A healthy lock keeps its exact commit until you advance it | Run `agent-marketplace update` or `lock --upgrade` when you want the new commit, then commit the lock |
 
 Do not set `required: true` to silence a collision. `required` is for policy enforcement, not name disambiguation.
 

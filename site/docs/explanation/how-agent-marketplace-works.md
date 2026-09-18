@@ -1,34 +1,48 @@
 # How agent-marketplace works
 
-`agent-marketplace` is a package manager for AI agent resources. It reads committed or personal configuration, discovers resources in Git registries or a hosted Marketplace, and writes them into the native layout of each coding harness you use.
+`agent-marketplace` is a package manager for AI agent resources. You declare which registries and resources you want in configuration; it resolves them to exact Git commits, compiles each resource into the file format every one of your coding harnesses expects, and writes those files where the harness looks for them.
 
-## Core pieces
+## A worked example
 
-- **Configuration layers** decide which registries and resources are selected. Layers stack from organization policy down to personal-local overrides. See the [configuration layers reference](../reference/configuration-layers.md) for the exact merge order.
-- **Git locks** record the exact commit and source manifest for every remote Git requirement, so a `sync` recreates the same bytes on any machine.
-- **Harness compilation** translates a canonical intermediate representation into each target's native files. Skills, commands, subagents, hooks, and MCP servers each become the files the harness expects.
-- **Materialization** writes the native output to the repository or user machine. Configuration is the source of truth; the generated files are recreated from configuration and locks.
+Suppose `.agents/config.yaml` selects the `frontend-design` skill from Anthropic's public skills repository and targets Claude Code and Cursor. A `sync` does this:
 
-## Data flow
+1. **Load configuration.** Four layers merge, lowest precedence first: organization (`/etc/agent-marketplace/config.yaml`), user (`~/.agents/config.yaml`), repository (`.agents/config.yaml`), and repository-personal (`.agents/config.local.yaml`). The [configuration layers reference](../reference/configuration-layers.md) gives the exact rules.
+2. **Reconcile the lock.** The registry's `ref: main` is resolved to one commit and recorded in `.agents/lock.yaml`, together with a digest of every resource in the registry. If a matching lock already exists, its commit is kept even when `main` has moved on.
+3. **Acquire the snapshot.** The exact commit is fetched into `~/.cache/agent-marketplace/` and verified against the lock's manifest digest.
+4. **Discover and select.** The snapshot is walked for resources in its native layout (here, Claude's `skills/<name>/SKILL.md`). Selectors, tags, collections, excludes, and cross-layer precedence decide that `frontend-design` is the one skill to materialize.
+5. **Ingest into the canonical form.** The `SKILL.md` is parsed into an in-memory description of "a skill named `frontend-design` with this description, body, and support files" that no longer depends on which harness wrote it. Commands, subagents, hooks, and MCP servers each have their own canonical shape.
+6. **Compile per target.** That canonical skill is turned into Claude Code's `.claude/skills/frontend-design/SKILL.md` and Cursor's `.cursor/skills/frontend-design/SKILL.md`. When a target cannot represent something (a field, a hook event, a whole resource kind) the compiler emits a diagnostic with a stable code instead of guessing.
+7. **Materialize.** Files are written atomically. Skills are symlinks into the cache by default; shared aggregate files such as `.mcp.json` are merged entry by entry. Generated output that configuration no longer selects is pruned.
 
-1. Load the four configuration layers: organization, user, repository, and repository-personal.
-2. Reconcile layer-owned locks so every configured Git requirement resolves to an exact commit.
-3. Acquire the exact snapshots for the resolved commits.
-4. Discover registry resources and apply selectors, tags, collections, excludes, and precedence rules.
-5. Compile each selected resource for the effective target harness set.
-6. Materialize native files and prune stale generated output.
+The same seven steps run for every `sync`, `install`, and `sync --check`; only the last step changes between writing and reporting.
+
+## Discovery: how resources are found
+
+Discovery looks for each source harness's native layout signatures, not for generic folders. A Claude registry ships subagents as `agents/<name>.md` and MCP servers as a root-level `.mcp.json`; a Codex registry uses `.codex/agents/<name>.toml` and `.codex/config.toml`. `path:` on a registry entry restricts the walk to a subtree, and `source_harness:` fixes the layout when autodetection would be ambiguous. Collections (`collections/<name>/COLLECTION.yaml`) are read in the same pass and expanded into their member resources before selection. The [registry layout reference](../reference/registry-layout.md) lists every recognized path.
+
+## Compilation: why there is a canonical form
+
+Without a canonical form, supporting seven harnesses would need forty-two pairwise converters. With one, each harness needs an ingester (native → canonical) and a compiler (canonical → native), and any harness can be a source or a destination. The `convert` command exposes the same machinery directly.
+
+Ingestion is semantic, not byte-exact: a Claude skill compiled back to Claude is byte-stable, but Windsurf has no subagents and Codex hooks accept only some events, so those conversions are lossy by construction. Every lossy case is reported as a diagnostic (`compile.*`, `skill.*`, `hook.*`, and so on) rather than silently dropped; see the [diagnostics reference](../reference/diagnostics.md).
 
 ## Where state lives
 
-- **Committed**: `.agents/config.yaml` and `.agents/lock.yaml` go in source control.
-- **Personal**: `~/.agents/config.yaml` and `~/.agents/lock.yaml` stay on the machine.
-- **Local overrides**: `.agents/config.local.yaml` and `.agents/lock.local.yaml` are gitignored.
-- **Cache**: `~/.cache/agent-marketplace/` is disposable. Deleting it does not change configuration, locks, or durable ownership state, but later `sync` may need to reacquire exact commits from the remote. Reacquisition can fail offline or when the remote no longer serves the locked commit.
-- **Ownership state**: Devin and Codex aggregate ownership lives in durable XDG state outside the cache, so cache deletion does not affect owned shared configuration.
+| State | Location | Committed? | Safe to delete? |
+|---|---|---|---|
+| Repository selections | `.agents/config.yaml` | yes | no |
+| Repository lock | `.agents/lock.yaml` | yes | regenerated by a writing `sync`, but you lose the exact pin |
+| Personal selections | `~/.agents/config.yaml`, `~/.agents/lock.yaml` | no | no |
+| Checkout-only overrides | `.agents/config.local.yaml`, `.agents/lock.local.yaml` | gitignored | yes |
+| Cache | `~/.cache/agent-marketplace/` | no | yes; the next `sync` refetches the locked commits, which needs network access |
+| Ownership state for Devin and Codex aggregates | `$XDG_STATE_HOME/agent-marketplace/` | no | no; without it every existing aggregate entry is treated as unmanaged |
+| Generated harness artifacts | Managed symlinks and generated files inside `.claude/`, `.cursor/`, `~/.claude/`, … | gitignored | yes; recreated from config and lock |
+
+Configuration and lockfiles are the source of truth for declared resources. Cache entries and demonstrably generated harness artifacts can be rebuilt by running `sync`. Never delete durable ownership state or handwritten harness files: deleting ownership state leaves existing aggregate entries unmanaged (refusing collisions and disabling pruning until repaired), and configuration cannot reconstruct handwritten settings or journaled safety backups.
 
 ## Related documentation
 
-- [Configuration layers reference](../reference/configuration-layers.md)
-- [Scopes, selection, and precedence](../explanation/scopes-selection-and-precedence.md)
-- [Reproducibility and lockfiles](../explanation/reproducibility-and-lockfiles.md)
-- [Native harness materialization](../explanation/native-harness-materialization.md)
+- [Scopes, selection, and precedence](./scopes-selection-and-precedence.md)
+- [Reproducibility and lockfiles](./reproducibility-and-lockfiles.md)
+- [Native harness materialization](./native-harness-materialization.md)
+- [Harnesses and output paths reference](../reference/harnesses-and-output-paths.md)
