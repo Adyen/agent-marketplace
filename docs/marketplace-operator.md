@@ -100,7 +100,7 @@ policy:
         path: /etc/agent-marketplace/rulepack.yaml
 ```
 
-The example covers built-in role override, disabling, an out-of-process runner with absolute command, ordered args, a positive timeout, an env name allowlist, an implementation digest, and an opaque `config` with a file reference; the rulepack analyzer uses an absolute path. Do not place literal secrets in `config` or `args`; secret-bearing keys must use a single `file:` or `env:` reference.
+Do not place literal secrets in `config` or `args`; secret-bearing keys must use a single `file:` or `env:` reference.
 
 ### Validation and behavior
 
