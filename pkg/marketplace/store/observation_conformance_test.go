@@ -13,6 +13,11 @@ func TestObservationStoreLeasesAndDueSelection(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)
 	base := time.Unix(1000, 0).UTC()
+	for _, registryID := range []store.RegistryID{"due-b", "not-due", "due-a"} {
+		if err := meta.PutRegistry(ctx, store.Registry{ID: registryID, Slug: string(registryID), Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}); err != nil {
+			t.Fatalf("PutRegistry(%s): %v", registryID, err)
+		}
+	}
 	for _, item := range []store.RegistryObservation{
 		{RegistryID: "due-b", NextProbeAt: base, NextReconcileAt: base.Add(time.Hour)},
 		{RegistryID: "not-due", NextProbeAt: base.Add(time.Hour), NextReconcileAt: base.Add(time.Hour)},
@@ -34,6 +39,58 @@ func TestObservationStoreLeasesAndDueSelection(t *testing.T) {
 	}
 	if _, err := meta.AcquireRegistryLease(ctx, "due-a", "worker-b", time.Minute); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("second registry lease error = %v, want conflict", err)
+	}
+}
+
+func TestListDueRegistryObservationsExcludesUnlistedAndMissingRegistries(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	now := time.Unix(1000, 0).UTC()
+	for _, registry := range []store.Registry{
+		{ID: "listed", Slug: "listed", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true},
+		{ID: "unlisted", Slug: "unlisted", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: false},
+	} {
+		if err := meta.PutRegistry(ctx, registry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, registryID := range []store.RegistryID{"listed", "unlisted", "missing"} {
+		if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: registryID, NextProbeAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := meta.ListDueRegistryObservations(ctx, now, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].RegistryID != "listed" {
+		t.Fatalf("due observations = %#v, want only listed registry", got)
+	}
+}
+
+func TestPutRegistryObservationRejectsExistingSchedulerState(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{
+		RegistryID:         "protected",
+		ObservedCommit:     "observed-commit",
+		WorkLeaseOwner:     "scheduler",
+		WorkLeaseUntil:     time.Now().UTC().Add(time.Hour),
+		DesiredCommit:      "desired-commit",
+		DesiredGeneration:  "desired-generation",
+		ActiveRefreshJobID: "active-job",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: "protected", ObservedCommit: "replacement"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("existing observation write error = %v, want conflict", err)
+	}
+	current, err := meta.GetRegistryObservation(ctx, "protected")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ObservedCommit != "observed-commit" || current.WorkLeaseOwner != "scheduler" || current.ActiveRefreshJobID != "active-job" {
+		t.Fatalf("existing scheduler state changed after rejected write: %#v", current)
 	}
 }
 
@@ -80,6 +137,9 @@ func TestObservationFencingRejectsInterleavedDesiredStateWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := meta.AcquireRegistryLease(ctx, "fenced", "worker", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.EnqueueJob(ctx, store.Job{ID: "job", Kind: "refresh", Payload: []byte("payload")}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := meta.SetDesiredRefresh(ctx, "fenced", store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: "job", Trigger: "source-change"}); err != nil {
@@ -173,6 +233,43 @@ func TestEnqueueNilPayloadIsEmptyAcrossBackends(t *testing.T) {
 	}
 }
 
+func TestObservationDesiredRefreshRejectsMissingOrTerminalJob(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		status store.JobStatus
+		want   error
+	}{
+		{name: "missing", want: store.ErrNotFound},
+		{name: "completed", status: store.JobStatusCompleted, want: store.ErrConflict},
+		{name: "terminal failed", status: store.JobStatusTerminalFailed, want: store.ErrConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta, _ := openStores(t)
+			registryID := store.RegistryID("invalid-refresh-" + tc.name)
+			if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: registryID}); err != nil {
+				t.Fatal(err)
+			}
+			jobID := store.JobID("invalid-job-" + tc.name)
+			if tc.status != "" {
+				if err := meta.EnqueueJob(ctx, store.Job{ID: jobID, Kind: "refresh", Status: tc.status, Payload: []byte("payload")}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := meta.SetDesiredRefresh(ctx, registryID, store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: jobID, Trigger: "source-change"}); !errors.Is(err, tc.want) {
+				t.Fatalf("SetDesiredRefresh error = %v, want %v", err, tc.want)
+			}
+			current, err := meta.GetRegistryObservation(ctx, registryID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.ActiveRefreshJobID != "" {
+				t.Fatalf("invalid desired job became active: %q", current.ActiveRefreshJobID)
+			}
+		})
+	}
+}
+
 func TestObservationDesiredRefreshCoalescesAndClearsActiveJob(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)
@@ -203,6 +300,9 @@ func TestObservationDesiredRefreshCoalescesAndClearsActiveJob(t *testing.T) {
 	if cleared.ActiveRefreshJobID != "" {
 		t.Fatalf("terminal cleanup left active job %q", cleared.ActiveRefreshJobID)
 	}
+	if err := meta.EnqueueJob(ctx, store.Job{ID: "job-3", Kind: "refresh", Payload: []byte("payload")}); err != nil {
+		t.Fatal(err)
+	}
 	again, err := meta.SetDesiredRefresh(ctx, store.RegistryID("refresh"), store.DesiredRefresh{Commit: "commit-1", Generation: "generation-1", JobID: "job-3", Trigger: "manual"})
 	if err != nil {
 		t.Fatalf("later SetDesiredRefresh: %v", err)
@@ -220,15 +320,16 @@ func TestObservationCompareAndSwapMissingObservationReturnsNotFound(t *testing.T
 	}
 }
 
-func TestObservationDesiredRefreshRecoversMissingOrTerminalActiveJob(t *testing.T) {
+func TestObservationDesiredRefreshRecoversAfterInvalidJob(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name   string
 		status store.JobStatus
+		want   error
 	}{
-		{name: "missing", status: ""},
-		{name: "completed", status: store.JobStatusCompleted},
-		{name: "terminal failed", status: store.JobStatusTerminalFailed},
+		{name: "missing", want: store.ErrNotFound},
+		{name: "completed", status: store.JobStatusCompleted, want: store.ErrConflict},
+		{name: "terminal failed", status: store.JobStatusTerminalFailed, want: store.ErrConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			meta, _ := openStores(t)
@@ -236,26 +337,25 @@ func TestObservationDesiredRefreshRecoversMissingOrTerminalActiveJob(t *testing.
 			if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: registryID}); err != nil {
 				t.Fatal(err)
 			}
-			activeJobID := store.JobID("active-" + tc.name)
+			invalidJobID := store.JobID("invalid-" + tc.name)
 			if tc.status != "" {
-				if err := meta.EnqueueJob(ctx, store.Job{ID: activeJobID, Kind: "refresh", Status: tc.status, Payload: []byte("payload")}); err != nil {
+				if err := meta.EnqueueJob(ctx, store.Job{ID: invalidJobID, Kind: "refresh", Status: tc.status, Payload: []byte("payload")}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			first, err := meta.SetDesiredRefresh(ctx, registryID, store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: activeJobID, Trigger: "source-change"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if first.ActiveRefreshJobID != activeJobID {
-				t.Fatalf("initial active job = %q, want %q", first.ActiveRefreshJobID, activeJobID)
+			if _, err := meta.SetDesiredRefresh(ctx, registryID, store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: invalidJobID, Trigger: "source-change"}); !errors.Is(err, tc.want) {
+				t.Fatalf("invalid SetDesiredRefresh error = %v, want %v", err, tc.want)
 			}
 			replacementJobID := store.JobID("replacement-" + tc.name)
+			if err := meta.EnqueueJob(ctx, store.Job{ID: replacementJobID, Kind: "refresh", Payload: []byte("payload")}); err != nil {
+				t.Fatal(err)
+			}
 			second, err := meta.SetDesiredRefresh(ctx, registryID, store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: replacementJobID, Trigger: "manual"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if second.ActiveRefreshJobID != store.JobID("replacement-"+tc.name) {
-				t.Fatalf("replacement active job = %q, want replacement job", second.ActiveRefreshJobID)
+			if second.ActiveRefreshJobID != replacementJobID {
+				t.Fatalf("replacement active job = %q, want %q", second.ActiveRefreshJobID, replacementJobID)
 			}
 		})
 	}

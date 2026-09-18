@@ -51,22 +51,25 @@ func (s *Store) putRegistryObservation(ctx context.Context, o store.RegistryObse
 	if o.RegistryID == "" {
 		return fmt.Errorf("registry observation requires registry id")
 	}
-	_, err := s.q.ExecContext(ctx, `INSERT INTO registry_observations (`+observationColumns+`)
+	result, err := s.q.ExecContext(ctx, `INSERT INTO registry_observations (`+observationColumns+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-		ON CONFLICT(registry_id) DO UPDATE SET observation_version=registry_observations.observation_version+1, observed_commit=EXCLUDED.observed_commit, observed_at=EXCLUDED.observed_at,
-		 probe_status=EXCLUDED.probe_status, probe_error=EXCLUDED.probe_error, next_probe_at=EXCLUDED.next_probe_at,
-		 next_reconcile_at=EXCLUDED.next_reconcile_at, consecutive_probe_failures=EXCLUDED.consecutive_probe_failures,
-		 work_lease_owner=EXCLUDED.work_lease_owner, work_lease_until=EXCLUDED.work_lease_until,
-		 desired_commit=EXCLUDED.desired_commit, desired_generation=EXCLUDED.desired_generation,
-		 active_refresh_job_id=EXCLUDED.active_refresh_job_id, active_refresh_trigger=EXCLUDED.active_refresh_trigger,
-		 successful_commit=EXCLUDED.successful_commit, successful_generation=EXCLUDED.successful_generation,
-		 last_successful_index_at=EXCLUDED.last_successful_index_at`,
+		ON CONFLICT(registry_id) DO NOTHING`,
 		o.RegistryID, int64(1), o.ObservedCommit, timeToMicro(o.ObservedAt), o.ProbeStatus, o.ProbeError,
 		timeToMicro(o.NextProbeAt), timeToMicro(o.NextReconcileAt), o.ConsecutiveProbeFailures,
 		o.WorkLeaseOwner, timeToMicro(o.WorkLeaseUntil), o.DesiredCommit, o.DesiredGeneration,
 		o.ActiveRefreshJobID, o.ActiveRefreshTrigger, o.SuccessfulCommit, o.SuccessfulGeneration,
 		timeToMicro(o.LastSuccessfulIndexAt))
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("%w: registry observation %q already exists", store.ErrConflict, o.RegistryID)
+	}
+	return nil
 }
 
 func (s *Store) ListDueRegistryObservations(ctx context.Context, now time.Time, limit int) ([]store.RegistryObservation, error) {
@@ -75,8 +78,9 @@ func (s *Store) ListDueRegistryObservations(ctx context.Context, now time.Time, 
 	}
 	nowMicro := timeToMicro(now)
 	rows, err := s.q.QueryContext(ctx, `SELECT `+observationColumns+` FROM registry_observations
-		WHERE (next_probe_at=0 OR next_probe_at<= $1 OR next_reconcile_at=0 OR next_reconcile_at<=$1)
-		ORDER BY CASE WHEN next_probe_at=0 OR next_reconcile_at=0 THEN 0 WHEN next_reconcile_at<next_probe_at THEN next_reconcile_at ELSE next_probe_at END, registry_id LIMIT $2`, nowMicro, limit)
+		JOIN registries ON registries.id=registry_observations.registry_id
+		WHERE registries.listed=TRUE AND (next_probe_at=0 OR next_probe_at<= $1 OR next_reconcile_at=0 OR next_reconcile_at<=$1)
+		ORDER BY CASE WHEN next_probe_at=0 OR next_reconcile_at=0 THEN 0 WHEN next_reconcile_at<next_probe_at THEN next_reconcile_at ELSE next_probe_at END, registry_observations.registry_id LIMIT $2`, nowMicro, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -197,6 +201,13 @@ func (s *Store) SetDesiredRefresh(ctx context.Context, id store.RegistryID, desi
 			}
 		}
 		if !activeJobLive || current.DesiredCommit != desired.Commit || current.DesiredGeneration != desired.Generation {
+			desiredJob, err := tx.GetJob(ctx, desired.JobID)
+			if err != nil {
+				return err
+			}
+			if desiredJob.Status.IsTerminal() {
+				return fmt.Errorf("%w: desired refresh job %q is terminal", store.ErrConflict, desired.JobID)
+			}
 			if _, err = tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, desired_commit=$1, desired_generation=$2, active_refresh_job_id=$3, active_refresh_trigger=$4 WHERE registry_id=$5`, desired.Commit, desired.Generation, desired.JobID, desired.Trigger, id); err != nil {
 				return err
 			}
