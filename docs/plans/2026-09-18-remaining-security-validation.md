@@ -49,7 +49,7 @@ credential-bearing services, or build attack demonstrations during testing.
   select mutable-cache content and then lock different content in one operation.
   If reproduced, bind discovery and mutation to the same exact revision while
   preserving local registries, reusable locks, and transactional rollback.
-- [ ] **R1c: Marketplace preview/consent identity.** Trace prepared-plan commit
+- [x] **R1c: Marketplace preview/consent identity.** Trace prepared-plan commit
   and collision checks. Distinguish an interactive preview-to-commit mismatch
   from explicitly accepting the currently resolved revision in a new CLI run.
   Reuse digest-bound prepared plans; require a product decision before changing
@@ -196,4 +196,19 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
 - R1a benchmark (101 inputs, including existing filesystem inspection):
   190.4 to 208.3 microseconds/op (+9.44%), 194.4 to 242.4 KiB/op (+24.72%),
   and 938 to 942 allocations/op. The added policy check has a measured cost.
+- R1c: existing prepare/commit flow already retains the approved Marketplace
+  plan and exact pins. A new CLI invocation with `--accept-risk` accepts the
+  currently resolved revision; no persistent consent redesign was made.
+- R1c: collision checks now use read-only exact Git inventories when locks are
+  present, instead of the mutable cache. Only absent locks may use the existing
+  warm-cache fallback. Malformed locks and unavailable snapshots fail closed.
+  Regression tests demonstrate both a missed locked collision and a false
+  mutable-cache collision before the fix, and assert no config/lock writes or
+  fetches. Focused pipeline tests, Marketplace E2E, and lint pass.
+- R1c warm-registry benchmark: 855.2 to 867.6 microseconds/op (no significant
+  timing difference), zero refreshes/op, 310.6 to 314.3 KiB/op and 2988 to 3031
+  allocations/op. This does not measure a cold exact-snapshot acquisition.
+- R1b remains open: discovery-to-lock consistency requires a guarantee before
+  publishing the staged config/lock transaction; checking only after commit
+  would not preserve rollback or prevent the mismatch.
 - All other unchecked items remain open.
