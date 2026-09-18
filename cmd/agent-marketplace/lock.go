@@ -739,7 +739,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		slog.Debug("blocked-registry removal reuses existing exact snapshots only")
 	}
 	if mode.prepareInstall != nil {
-		mode.prepareInstall.reads, err = installPreparationReads(ec, stagedEdits)
+		mode.prepareInstall.reads, err = installPreparationReads(ec, stagedEdits, mode.prepareInstall)
 		if err != nil {
 			return nil, 0, nil, err
 		}
@@ -836,9 +836,6 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			return nil, changed, nil, loadErr
 		}
-		if mode.prepareInstall != nil {
-			mode.prepareInstall.reads = append(mode.prepareInstall.reads, dependencytxn.ReadAssertion{Path: lockPath, RequestedPath: requestedLockPath, Expected: generation})
-		}
 		if len(remote) > 0 {
 			lockExpectations[lockPath] = generation
 			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
@@ -851,7 +848,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			continue
 		}
 		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
-		if implicitOrg && !exists {
+		if implicitOrg && !exists && mode.prepareInstall == nil {
 			for _, entry := range remote {
 				canonical, err := canonicalRegistryURL(entry.URL)
 				if err != nil {
@@ -901,7 +898,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		var gitDesired reconciledDocument
 		var gitFresh bool
 		if mode.reuseInstall != nil {
-			gitDesired, gitFresh = reuseInstallDocument(mode.reuseInstall, lockPath, remote, current)
+			gitDesired, gitFresh = reuseInstallDocument(mode.reuseInstall, lockPath, scope, remote, current)
 		} else {
 			gitDesired, gitFresh = reconcileLayerDocument(ctx, scope, remote, current, operation, mode.upgradeSelection, mode.offline, ensureSnapshotLease)
 		}

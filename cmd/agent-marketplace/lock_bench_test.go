@@ -87,6 +87,32 @@ func BenchmarkInstallFromWarmExactLock(b *testing.B) {
 	}
 }
 
+func BenchmarkConfiguredInstallWarmExactLockLocalGitDiskNoNetwork(b *testing.B) {
+	_, path := setupWarmLockedGitSyncBenchmark(b)
+	args := []string{"install", "review-0"}
+	if out, err := executeCommand(args...); err != nil {
+		b.Fatalf("warm install: %v\n%s", err, out)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.StartTimer()
+	for range b.N {
+		config.ResetRepoRootCache()
+		if out, err := executeCommand(args...); err != nil {
+			b.Fatalf("install: %v\n%s", err, out)
+		}
+	}
+	b.StopTimer()
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		b.Fatalf("warm install changed lock: %v", err)
+	}
+}
+
 func BenchmarkSyncWarmUnchangedRemoteGitLock(b *testing.B) {
 	_, lockPath := setupWarmLockedGitSyncBenchmark(b)
 

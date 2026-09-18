@@ -45,13 +45,15 @@ credential-bearing services, or build attack demonstrations during testing.
   machine/repository scopes. Preserve documented soft collision warnings and
   additive hooks; do not turn all name collisions into hard failures merely
   because a low-level helper accepts duplicate inputs.
-- [ ] **R1b: Discovery and exact snapshots.** Verify whether ad-hoc install can
+- [x] **R1b: Discovery and exact snapshots.** Verify whether ad-hoc install can
   select mutable-cache content and then lock different content in one operation.
   If reproduced, bind discovery and mutation to the same exact revision while
   preserving local registries, reusable locks, and transactional rollback.
   - [x] Bind remote ad-hoc CLI discovery and publication to prepared exact pins.
-  - [ ] Validate and bind remaining configured-install discovery paths, including
-    missing-lock bootstrap and concurrent changes to existing exact inputs.
+  - [x] Validate and bind configured CLI install discovery, including missing-lock
+    bootstrap, scope copies, and concurrent changes to existing exact inputs.
+  - Live local registries and the explicitly unlocked organization's own outputs
+    retain their existing mutable contracts; no universal snapshot guarantee is claimed.
 - [x] **R1c: Marketplace preview/consent identity.** Trace prepared-plan commit
   and collision checks. Distinguish an interactive preview-to-commit mismatch
   from explicitly accepting the currently resolved revision in a new CLI run.
@@ -249,11 +251,42 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   and 13.25k to 18.86k allocations/op (+42.38%). Five samples per revision;
   benchstat reports p=0.008 but cannot estimate a 95% confidence interval with
   this sample count. This is not a cold-install or general-sync benchmark.
-- R1b remains open for configured-install bootstrap and other unbound discovery
-  paths. Local registries and the explicitly unlocked organization layer retain
-  their existing semantics; this slice does not promise immutable local input or
-  global filesystem atomicity. A post-publication sync failure retains committed
-  dependency state under the existing error contract.
+- At the ad-hoc checkpoint, configured-install discovery remained open. Local
+  registries and explicitly unlocked organization output are intentionally mutable;
+  neither slice promises immutable local input or global filesystem atomicity.
+  A post-publication sync failure retains committed dependency state under the
+  existing error contract.
+- R1b configured slice, based on merged `99ba279`: consumer regressions reproduced
+  revision drift after discovery both for missing-lock bootstrap and when copying
+  a user registry into repo scope. Configured CLI installs now use the shared
+  preparation path while preserving the existing refusal of invalid/stale locks.
+- Scope copies bind the actual selected provider's prepared URL/ref/root/commit
+  into the destination layer. Roots are projected from the verified manifest,
+  not acquired again. Conflicting commits or manifests for one destination
+  identity fail before publication rather than silently choosing another pin.
+  Lock generations, including absent destination locks, are captured up front.
+- Named, all, tag, collection, repo/user/local copy, and nested-bundle controls
+  retain the discovered commit when the ref moves. Real lock upgrades, include
+  changes before reconciliation and immediately before commit, new local config,
+  and changed final requirements refuse without overwriting the foreign input.
+  An E2E command copies a warm user pin into repo scope after the origin advances.
+- Organization discovery may capture an ephemeral pin for a writable scope copy;
+  its own unlocked materialization remains mutable and no organization lock is
+  created. A GC control preserves installed organization output. Missing-selection
+  and released-handle controls cover cleanup without dependency publication.
+- Adversarial review checked copied-provider identity, scope isolation, root
+  projection, incompatible pins, generation timing, lease lifetime, and refusal
+  side effects. Benchmark verification exposed an absent nonstandard organization
+  filename with unset source metadata; explicit layer roles now determine the
+  adjacent lock path, with a failing-then-passing regression. No remaining blocker
+  was identified within the CLI Git-backed binding contract. Focused install and
+  E2E checks, race-enabled regressions, full Go tests, build, and CI lint passed.
+- Repeated warm configured install benchmark, with local Git and disk I/O and no
+  network: 136.4 to 202.8 ms/op (+48.69%), 2.288 to 3.361 MiB/op (+46.89%), and
+  14.71k to 21.58k allocations/op (+46.67%). Five samples per revision; benchstat
+  reports p=0.008 but cannot estimate a 95% confidence interval with this sample
+  count. This measured validation overhead remains an optimization follow-up;
+  no safety checks or processing budgets were weakened.
 - R1e partial fix: an explicit `--ref release/v1` now removes the full matched
   ref from a GitHub/GitLab web URL before deriving the directory. Tree/blob,
   root, encoded slash, mismatching ref, component-boundary, and explicit-path

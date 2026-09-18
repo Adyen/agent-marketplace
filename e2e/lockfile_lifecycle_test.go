@@ -141,6 +141,36 @@ func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
 	}
 }
 
+func TestConfiguredInstallCopiesProviderPinAcrossScopes(t *testing.T) {
+	fixture := newLockfileGitFixture(t, "configured-provider-pin", Skill{Name: "review", Description: "Provider version A"})
+	fixture.env.WriteGlobalConfig(fmt.Sprintf("harnesses: [factory]\nregistries:\n  - url: %s\n    ref: main", fixture.url))
+	fixture.env.WriteRepoConfig("harnesses: [factory]\nregistries: []")
+	if result := fixture.env.RunAM("lock", "--scope", "user"); result.ExitCode != 0 {
+		t.Fatalf("seed user lock: %s", result.Combined)
+	}
+	beforeConfig := fixture.env.ReadFile("/root/.agents/config.yaml")
+	beforeLock := fixture.env.ReadFile("/root/.agents/lock.yaml")
+	commitLine := ""
+	for _, line := range strings.Split(beforeLock, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "commit:") {
+			commitLine = strings.TrimSpace(line)
+			break
+		}
+	}
+	if commitLine == "" {
+		t.Fatal("user fixture has no exact commit")
+	}
+	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Unselected version B"})
+	if result := fixture.env.RunAM("install", "review"); result.ExitCode != 0 {
+		t.Fatalf("configured install: %s", result.Combined)
+	}
+	fixture.env.AssertFileContains("/workspace/.agents/lock.yaml", commitLine)
+	fixture.env.AssertFileContains("/workspace/.factory/skills/review/SKILL.md", "Provider version A")
+	if fixture.env.ReadFile("/root/.agents/config.yaml") != beforeConfig || fixture.env.ReadFile("/root/.agents/lock.yaml") != beforeLock {
+		t.Fatal("scope copy rewrote provider config or pin")
+	}
+}
+
 func TestOrganizationIncludeTrustBlocksSyncWithoutMutation(t *testing.T) {
 	for _, unsafe := range []string{"writable", "symlink-dotdot"} {
 		t.Run(unsafe, func(t *testing.T) {
