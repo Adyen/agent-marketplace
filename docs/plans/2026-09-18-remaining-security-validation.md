@@ -62,6 +62,8 @@ credential-bearing services, or build attack demonstrations during testing.
   interpretation and explicit `--ref`/`--path` behavior. Reject genuinely
   ambiguous input or use existing explicit selectors; do not introduce
   speculative network resolution or silently change simple-ref compatibility.
+  - [x] Explicit slash-containing refs disambiguate the parsed directory.
+  - [ ] Decide handling of intrinsically ambiguous URLs without explicit refs.
 
 ## Stack R2 — Repository filesystem boundaries
 
@@ -212,4 +214,13 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
 - R1b remains open: discovery-to-lock consistency requires a guarantee before
   publishing the staged config/lock transaction; checking only after commit
   would not preserve rollback or prevent the mismatch.
+- R1e partial fix: an explicit `--ref release/v1` now removes the full matched
+  ref from a GitHub/GitLab web URL before deriving the directory. Tree/blob,
+  root, encoded slash, mismatching ref, component-boundary, and explicit-path
+  controls pass. Legacy unqualified URL interpretation remains unchanged.
+  URL benchmark: 242.8 to 266.1 ns/op, 240 to 264 B/op, 3 to 4 allocations/op.
+- R1d compatibility constraint: the existing named-resource removal test requires
+  other resources from the now-blocked registry to stay installed. Narrowing
+  the blanket exception must preserve cleanup without silently fetching new
+  blocked content or broadening removal to unrelated installed resources.
 - All other unchecked items remain open.
