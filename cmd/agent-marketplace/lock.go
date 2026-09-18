@@ -53,6 +53,8 @@ type lockMode struct {
 	ignoreBlocked        bool
 	reconcileUnselected  bool
 	stagedConfigEdits    []pipeline.StagedConfigEdit
+	commitReads          []dependencytxn.ReadAssertion
+	commitScope          dependencytxn.CommitScope
 	warningSink          *[]error
 }
 
@@ -529,6 +531,11 @@ func reconcileCommandDependencies(ctx context.Context, repoRoot, localDir string
 	return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, nil
 }
 
+func reconcileCleanupDependencies(ctx context.Context, root string, edits []pipeline.StagedConfigEdit, reads []dependencytxn.ReadAssertion, scope dependencytxn.CommitScope) error {
+	_, _, _, err := prepareRuntimeLocks(ctx, root, "", lockMode{offline: true, ignoreBlocked: true, stagedConfigEdits: edits, commitReads: reads, commitScope: scope})
+	return err
+}
+
 type configTransactionSnapshot struct {
 	path         string
 	generation   dependencytxn.Generation
@@ -663,6 +670,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 
 	stateDir, err := dependencyStateDir()
 	if err != nil {
+		return nil, 0, nil, err
+	}
+	if err := dependencytxn.ValidateReadAssertions(mode.commitReads); err != nil {
 		return nil, 0, nil, err
 	}
 	if err := prepareDependencyTransactions(ctx, mode.readOnlyDependencies()); err != nil {
@@ -922,7 +932,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 		}
 	}
-	if !mode.check && len(desiredFiles) > 0 {
+	if !mode.check && (len(desiredFiles) > 0 || mode.commitScope != nil) {
 		for _, layer := range ec.PresentLayers() {
 			if !layer.Source.IsWritable() && !mode.explicitOrganization {
 				continue
@@ -947,8 +957,16 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if err != nil {
 			return nil, changed, nil, err
 		}
+		reads = append(reads, mode.commitReads...)
+		if mode.commitScope != nil && len(desiredFiles) == 0 {
+			return nil, changed, nil, errors.New("owned cleanup dependency transaction has no desired files")
+		}
+		commitOptions := []dependencytxn.Option{dependencytxn.WithReadAssertions(reads)}
+		if mode.commitScope != nil {
+			commitOptions = append(commitOptions, dependencytxn.WithCommitScope(mode.commitScope))
+		}
 		commitStarted := time.Now()
-		commitResult, err := commitDependencyTransaction(ctx, stateDir, desiredFiles, dependencytxn.WithReadAssertions(reads))
+		commitResult, err := commitDependencyTransaction(ctx, stateDir, desiredFiles, commitOptions...)
 		if err != nil {
 			slog.Error("lock transaction commit failed", "files", len(desiredFiles), "duration_ms", time.Since(commitStarted).Milliseconds(), "error", err)
 			return nil, changed, nil, fmt.Errorf("commit dependency config and locks: %w", err)

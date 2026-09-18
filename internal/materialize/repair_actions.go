@@ -205,68 +205,11 @@ func (f *RepairFile) RemoveOwned(ctx context.Context, want ownership.EntryValue,
 	}
 	var result ownership.Result
 	err := f.store.WithWriteSessionContext(ctx, "cleanup-owned-entry", func() error {
-		root, err := ownership.CanonicalRoot(f.OutDir)
-		if err != nil {
-			return fmt.Errorf("%w: cleanup root: %w", ErrRepairCandidateStale, err)
-		}
-		if root != f.store.CanonicalRoot() {
-			return fmt.Errorf("%w: cleanup root differs from its bound ownership store", ErrRepairCandidateStale)
-		}
-		rel := f.Rel
-		if err := f.requireCompleteGeneration(); err != nil {
-			return err
-		}
-		for _, desired := range f.repairDesiredValues() {
-			if desired.ID == want.ID {
-				return fmt.Errorf("%w: entry is still selected", ErrRepairCandidateStale)
-			}
-		}
-		key := outputKey{target: f.Target, machineScope: f.MachineScope}
-		state, diags := f.adapter.read(f.store, key, root, rel)
-		if state == nil || state.remove == nil {
-			return fmt.Errorf("%w: cleanup aggregate unavailable (%s)", ErrRepairCandidateStale, f.adapter.diagnosticSummary(diags))
-		}
-		if state.proof.File() != rel || state.proof.Classify(want.ID, want.ValueDigest) != ownership.StatusOwnedClean {
-			return fmt.Errorf("%w: entry is not proven owned at the requested value", ErrRepairCandidateStale)
-		}
-		found := false
-		for _, existing := range state.existing {
-			if existing == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("%w: requested value is no longer present", ErrRepairCandidateStale)
-		}
-		entries, err := f.recordedEntries()
+		mutation, err := f.ownedRemovalMutation(want)
 		if err != nil {
 			return err
 		}
-		retained := entries[:0]
-		removed := false
-		for _, entry := range entries {
-			if entry.ID() == want.ID {
-				if entry.ValueDigest != want.ValueDigest {
-					return fmt.Errorf("%w: recorded value changed", ErrRepairCandidateStale)
-				}
-				removed = true
-				continue
-			}
-			retained = append(retained, entry)
-		}
-		if !removed {
-			return fmt.Errorf("%w: ownership entry disappeared", ErrRepairCandidateStale)
-		}
-		next, err := state.remove(want.ID, want.ValueDigest)
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrRepairCandidateStale, err)
-		}
-		if bytes.Equal(state.raw, next) {
-			return fmt.Errorf("%w: cleanup produced no edit", ErrRepairCandidateStale)
-		}
-		priorGen, priorDigest := ownedAggregatePriorForApply(state.raw, nil, state.proof)
-		result, err = f.store.Apply(ownership.Mutation{Rel: rel, AbsFile: filepath.Join(root, rel), NextBytes: next, Entries: retained, Reason: ownership.ReasonSync, ExpectPriorGeneration: priorGen, ExpectPriorDigest: priorDigest})
+		result, err = f.store.Apply(mutation)
 		return err
 	})
 	if err != nil {
@@ -274,6 +217,71 @@ func (f *RepairFile) RemoveOwned(ctx context.Context, want ownership.EntryValue,
 	}
 	slog.Info("removed proven owned entry without updating siblings", "target", f.Target, "file", f.Rel, "generation", result.Generation)
 	return result, nil
+}
+
+func (f *RepairFile) ownedRemovalMutation(want ownership.EntryValue) (ownership.Mutation, error) {
+	root, err := ownership.CanonicalRoot(f.OutDir)
+	if err != nil {
+		return ownership.Mutation{}, fmt.Errorf("%w: cleanup root: %w", ErrRepairCandidateStale, err)
+	}
+	if root != f.store.CanonicalRoot() {
+		return ownership.Mutation{}, fmt.Errorf("%w: cleanup root differs from its bound ownership store", ErrRepairCandidateStale)
+	}
+	rel := f.Rel
+	if err := f.requireCompleteGeneration(); err != nil {
+		return ownership.Mutation{}, err
+	}
+	for _, desired := range f.repairDesiredValues() {
+		if desired.ID == want.ID {
+			return ownership.Mutation{}, fmt.Errorf("%w: entry is still selected", ErrRepairCandidateStale)
+		}
+	}
+	key := outputKey{target: f.Target, machineScope: f.MachineScope}
+	state, diags := f.adapter.read(f.store, key, root, rel)
+	if state == nil || state.remove == nil {
+		return ownership.Mutation{}, fmt.Errorf("%w: cleanup aggregate unavailable (%s)", ErrRepairCandidateStale, f.adapter.diagnosticSummary(diags))
+	}
+	if state.proof.File() != rel || state.proof.Classify(want.ID, want.ValueDigest) != ownership.StatusOwnedClean {
+		return ownership.Mutation{}, fmt.Errorf("%w: entry is not proven owned at the requested value", ErrRepairCandidateStale)
+	}
+	found := false
+	for _, existing := range state.existing {
+		if existing == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ownership.Mutation{}, fmt.Errorf("%w: requested value is no longer present", ErrRepairCandidateStale)
+	}
+	entries, err := f.recordedEntries()
+	if err != nil {
+		return ownership.Mutation{}, err
+	}
+	retained := entries[:0]
+	removed := false
+	for _, entry := range entries {
+		if entry.ID() == want.ID {
+			if entry.ValueDigest != want.ValueDigest {
+				return ownership.Mutation{}, fmt.Errorf("%w: recorded value changed", ErrRepairCandidateStale)
+			}
+			removed = true
+			continue
+		}
+		retained = append(retained, entry)
+	}
+	if !removed {
+		return ownership.Mutation{}, fmt.Errorf("%w: ownership entry disappeared", ErrRepairCandidateStale)
+	}
+	next, err := state.remove(want.ID, want.ValueDigest)
+	if err != nil {
+		return ownership.Mutation{}, fmt.Errorf("%w: %w", ErrRepairCandidateStale, err)
+	}
+	if bytes.Equal(state.raw, next) {
+		return ownership.Mutation{}, fmt.Errorf("%w: cleanup produced no edit", ErrRepairCandidateStale)
+	}
+	priorGen, priorDigest := ownedAggregatePriorForApply(state.raw, nil, state.proof)
+	return ownership.Mutation{Rel: rel, AbsFile: filepath.Join(root, rel), NextBytes: next, Entries: retained, Reason: ownership.ReasonSync, ExpectPriorGeneration: priorGen, ExpectPriorDigest: priorDigest}, nil
 }
 
 // RemoveOrphan removes ONE evidence-backed orphan entry.

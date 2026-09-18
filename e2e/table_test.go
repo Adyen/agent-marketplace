@@ -180,6 +180,28 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/blocked_owned_mcp_cleanup",
+		Desc: "Given an exact locked Devin MCP registry blocked after sync, When one named owned MCP is removed, Then edited and handwritten siblings remain unchanged",
+		Registries: []RegistryDef{
+			{Name: "blocked-owned-mcp", MCPServers: []MCPServer{
+				{Name: "remove", Command: "remove-binary"},
+				{Name: "keep", Command: "keep-binary"},
+			}},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: {{REG:blocked-owned-mcp}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.devin/mcp_config.json": "keep-binary"}},
+			{Action: ActionWriteFile, Path: "/workspace/.devin/mcp_config.json", Body: "{\n  // retained comment\n  \"custom\": true,\n  \"mcpServers\": {\n    \"handwritten\": {\"command\": \"manual\"},\n    \"keep\": {\"command\": \"keep-edited\"},\n    \"remove\": {\"command\": \"remove-binary\"}\n  }\n}\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n"},
+			{Args: []string{"remove", "remove", "--kind", "mcp", "--from", "{{REG:blocked-owned-mcp}}"}, MustPass: true,
+				FileContains: map[string]string{
+					"/workspace/.devin/mcp_config.json": "\"handwritten\": {\"command\": \"manual\"},\n    \"keep\": {\"command\": \"keep-edited\"}",
+				},
+				FileNotContains: map[string]string{"/workspace/.devin/mcp_config.json": "remove-binary"}},
+		},
+	},
+	{
 		Name:    "security/config_include_size",
 		Desc:    "Given an oversized valid included config, When sync runs, Then it fails without mutating the inputs or materializing output",
 		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: [large.yaml]\nregistries: []\n",

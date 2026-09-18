@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -26,6 +27,7 @@ var (
 	ErrRecoveryBlocked    = errors.New("dependency transaction: recovery blocked")
 	ErrRecoveryRequired   = errors.New("dependency.recovery-required: pending transaction; run sync or lock without --locked, --offline, or --check to recover")
 	ErrLockTimeout        = errors.New("dependency transaction: lock timeout")
+	ErrCommitScopeClosed  = errors.New("dependency transaction: commit scope is closed")
 )
 
 type Generation struct {
@@ -56,6 +58,18 @@ type Result struct {
 	Changed []string
 }
 
+type CommitScope func(context.Context, func() (Result, error)) (Result, error)
+
+type CommittedScopeError struct {
+	Err error
+}
+
+func (e *CommittedScopeError) Error() string {
+	return "dependency changes committed; cleanup failed: " + e.Err.Error()
+}
+
+func (e *CommittedScopeError) Unwrap() error { return e.Err }
+
 type FaultStage string
 
 const (
@@ -82,6 +96,11 @@ type options struct {
 	fault   FaultHook
 	syncDir func(string) error
 	reads   []ReadAssertion
+	scope   CommitScope
+}
+
+func WithCommitScope(scope CommitScope) Option {
+	return func(o *options) { o.scope = scope }
 }
 
 func WithReadAssertions(reads []ReadAssertion) Option {
@@ -200,7 +219,7 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 	if err != nil {
 		return Result{}, err
 	}
-	if len(files) == 0 {
+	if cfg.scope == nil && len(files) == 0 {
 		return Result{}, ValidateReadAssertions(cfg.reads)
 	}
 	stateDir, err = prepareStateDir(stateDir)
@@ -208,6 +227,23 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 		return Result{}, err
 	}
 	paths := desiredPaths(files)
+	if cfg.scope != nil {
+		seen := make(map[string]struct{}, len(paths)+len(cfg.reads))
+		for _, path := range paths {
+			seen[path] = struct{}{}
+		}
+		for _, read := range cfg.reads {
+			if err := validateReadAssertion(read); err != nil {
+				return Result{}, err
+			}
+			seen[read.Path] = struct{}{}
+		}
+		paths = paths[:0]
+		for path := range seen {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+	}
 	locks, err := acquireLocks(ctx, paths)
 	if err != nil {
 		return Result{}, err
@@ -216,7 +252,90 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 	if err := inject(cfg, FaultPoint{Stage: FaultAfterLocks, Index: -1}); err != nil {
 		return Result{}, err
 	}
+	if cfg.scope == nil {
+		return commitLocked(ctx, stateDir, files, cfg)
+	}
+	if err := checkPendingDestinations(stateDir, paths); err != nil {
+		return Result{}, err
+	}
+	if err := ValidateReadAssertions(cfg.reads); err != nil {
+		return Result{}, err
+	}
+	var publishMu sync.Mutex
+	active := true
+	closeScope := func() {
+		publishMu.Lock()
+		active = false
+		publishMu.Unlock()
+	}
+	defer closeScope()
+	called := false
+	published := false
+	var committedResult Result
+	var publishErr error
+	publish := func() (Result, error) {
+		publishMu.Lock()
+		defer publishMu.Unlock()
+		if !active {
+			return Result{}, ErrCommitScopeClosed
+		}
+		if called {
+			publishErr = errors.New("dependency transaction: commit scope publish called more than once")
+			return committedResult, publishErr
+		}
+		called = true
+		result, err := commitLocked(ctx, stateDir, files, cfg)
+		if err != nil {
+			publishErr = err
+			return result, err
+		}
+		published = true
+		committedResult = result
+		publishedMap := make(map[string]Generation, len(files))
+		for _, file := range files {
+			next := Generation{Exists: !file.Delete}
+			if !file.Delete {
+				next.Digest = Digest(file.Bytes)
+			}
+			publishedMap[file.Path] = next
+		}
+		postReads := append([]ReadAssertion(nil), cfg.reads...)
+		for i := range postReads {
+			if next, ok := publishedMap[postReads[i].Path]; ok {
+				postReads[i].Expected = next
+			}
+		}
+		for _, file := range files {
+			postReads = append(postReads, ReadAssertion{Path: file.Path, RequestedPath: file.Path, Expected: publishedMap[file.Path]})
+		}
+		if err := ValidateReadAssertions(postReads); err != nil {
+			publishErr = err
+			return result, err
+		}
+		return result, nil
+	}
+	result, scopeErr := cfg.scope(ctx, publish)
+	closeScope()
+	if !called && scopeErr == nil {
+		return Result{}, errors.New("dependency transaction: commit scope returned without publishing")
+	}
+	if publishErr != nil {
+		if published {
+			return committedResult, &CommittedScopeError{Err: publishErr}
+		}
+		return result, publishErr
+	}
+	if scopeErr != nil {
+		if published {
+			return committedResult, &CommittedScopeError{Err: scopeErr}
+		}
+		return result, scopeErr
+	}
+	return committedResult, nil
+}
 
+func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg options) (Result, error) {
+	paths := desiredPaths(files)
 	if err := checkPendingDestinations(stateDir, paths); err != nil {
 		return Result{}, err
 	}
@@ -818,9 +937,7 @@ func validateReadAssertions(reads []ReadAssertion, published map[string]Generati
 		next, owned := published[read.Path]
 		canonical, err := filepath.EvalSymlinks(read.RequestedPath)
 		if errors.Is(err, os.ErrNotExist) && (!read.Expected.Exists || owned && !next.Exists) {
-			var parent string
-			parent, err = filepath.EvalSymlinks(filepath.Dir(read.RequestedPath))
-			canonical = filepath.Join(parent, filepath.Base(read.RequestedPath))
+			canonical, err = CanonicalConfigDestination(read.RequestedPath)
 		}
 		if err != nil || canonical != read.Path {
 			return fmt.Errorf("%w: config read path changed at %s", ErrGenerationConflict, read.RequestedPath)
