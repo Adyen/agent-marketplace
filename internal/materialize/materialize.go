@@ -2020,6 +2020,9 @@ func linkedComponents(groups map[string]*skillLinkGroup) map[string]bool {
 }
 
 func materializationSourcePath(resolved resolver.ResolvedArtifact) string {
+	if resolved.IsMarketplace {
+		return resolved.Path
+	}
 	var source string
 	switch resource := resolved.Resource.(type) {
 	case *ir.Skill:

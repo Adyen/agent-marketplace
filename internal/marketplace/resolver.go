@@ -3,6 +3,7 @@ package marketplace
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -26,6 +27,9 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 )
+
+var ErrArtifactIdentityMismatch = errors.New("marketplace artifact identity mismatch")
+var ErrArtifactSourcePath = errors.New("marketplace artifact source path is invalid")
 
 // Resolver resolves Marketplace entries into resolver.ResolvedArtifact values.
 type Resolver struct {
@@ -288,11 +292,7 @@ func canonicalMarketplaceEntry(entry config.MarketplaceEntry) (config.Marketplac
 // endpoint and pin. The instance ID matters because an endpoint URL can host
 // different Marketplace instances over time or behind different deployments.
 func marketplaceCatalogKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {
-	key := fmt.Sprintf("marketplace:%s:%s:%s:%s:%s", entry.URL, entry.InstanceID, pin.RegistryID, pin.Digest, pin.Revision)
-	if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
-		key += fmt.Sprintf(":occurrence:%s:%s", pin.RegistryCommit, pin.RegistryManifestDigest)
-	}
-	return key
+	return config.MarketplaceCatalogKey(entry, pin)
 }
 
 // marketplacePinRequired derives the resolver policy for an exact pin from the
@@ -498,6 +498,14 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode resource: %w", err)
 	}
+	if err := validateDecodedArtifactIdentity(pin, resource); err != nil {
+		cache.InvalidateArtifactVerified(archiveDigest)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+	}
+	if err := validateMirrorSourcePath(resource); err != nil {
+		cache.InvalidateArtifactVerified(archiveDigest)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+	}
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
 	artifact.Path = cache.ArtifactPath(archiveDigest)
@@ -676,8 +684,8 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode re-ingested resource: %w", err)
 	}
-	if resource.Kind().String() != pin.Kind || resource.Name() != pin.Name {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decoded resource identity does not match pin: got %s/%q, want %s/%q", resource.Kind(), resource.Name(), pin.Kind, pin.Name)
+	if err := validateDecodedArtifactIdentity(pin, resource); err != nil {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	var supportFiles []string
 	if skill, ok := resource.(*ir.Skill); ok {
@@ -687,8 +695,19 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	if checkoutDir != "" {
 		resourcePath, err = stageReconstructedResource(cache, identity, checkoutDir, registry, pin.Kind, pin.Name, supportFiles)
 	} else {
-		resourcePath = cachedReconstructedResourcePath(cache, identity, pin.Kind)
-		if err = validateCachedReconstructedResource(cache, resourcePath); err != nil {
+		dir := cachedReconstructedResourcePath(cache, identity, pin.Kind, pin.Name)
+		if err = validateCachedReconstructedResource(cache, dir); err != nil {
+			resourcePath = dir
+		} else if pin.Kind == "hook" {
+			if _, statErr := os.Stat(filepath.Join(dir, "hooks.json")); statErr == nil {
+				resourcePath = filepath.Join(dir, "hooks.json")
+			} else {
+				resourcePath = filepath.Join(dir, "SKILL.md")
+			}
+		} else {
+			resourcePath = filepath.Join(dir, "SKILL.md")
+		}
+		if err != nil {
 			err = fmt.Errorf("cached reconstructed source is not within the Marketplace cache: %w", err)
 		}
 	}
@@ -756,7 +775,10 @@ func stageReconstructedResource(cache *Cache, identity IndexOnlyIdentity, checko
 		return "", fmt.Errorf("resource %s/%q was not found in exact source checkout", kind, name)
 	}
 
-	stagedDir := cachedReconstructedResourcePath(cache, identity, kind)
+	if err := ir.ValidateName(name); err != nil {
+		return "", err
+	}
+	stagedDir := cachedReconstructedResourcePath(cache, identity, kind, name)
 	if err := validateCacheDirectory(cache.root, stagedDir); err != nil {
 		return "", fmt.Errorf("validate reconstructed staging path: %w", err)
 	}
@@ -790,8 +812,8 @@ func stageReconstructedResource(cache *Cache, identity IndexOnlyIdentity, checko
 	return filepath.Join(stagedDir, "SKILL.md"), nil
 }
 
-func cachedReconstructedResourcePath(cache *Cache, identity IndexOnlyIdentity, kind string) string {
-	return filepath.Join(cache.root, "compiled", "marketplace-sources", IndexOnlyKey(identity), kind)
+func cachedReconstructedResourcePath(cache *Cache, identity IndexOnlyIdentity, kind, name string) string {
+	return filepath.Join(cache.root, "compiled", "marketplace-sources", IndexOnlyKey(identity), kind, name)
 }
 
 func validateCachedReconstructedResource(cache *Cache, resourcePath string) error {
@@ -1035,6 +1057,40 @@ func validateReconstructedArtifactIdentity(pin config.MarketplaceResourcePin, ar
 	}
 	if manifest.Name != pin.Name || manifest.Kind != pin.Kind {
 		return fmt.Errorf("re-ingested resource identity mismatch: got %s/%q, want %s/%q", manifest.Kind, manifest.Name, pin.Kind, pin.Name)
+	}
+	return nil
+}
+
+func validateDecodedArtifactIdentity(pin config.MarketplaceResourcePin, resource ir.Resource) error {
+	if resource.Kind().String() != pin.Kind || resource.Name() != pin.Name {
+		return fmt.Errorf("%w: decoded resource does not match pin", ErrArtifactIdentityMismatch)
+	}
+	return nil
+}
+
+func validateMirrorSourcePath(resource ir.Resource) error {
+	var source string
+	switch typed := resource.(type) {
+	case *ir.Skill:
+		source = typed.Source.File
+	case *ir.Command:
+		source = typed.Source.File
+	case *ir.Subagent:
+		source = typed.Source.File
+	case *ir.Hook:
+		source = typed.Source.File
+	case *ir.McpServer:
+		source = typed.Source.File
+	case *ir.Rule:
+		source = typed.Source.File
+	case *ir.Collection:
+		source = typed.Source.File
+	}
+	if source == "" {
+		return nil
+	}
+	if filepath.IsAbs(source) || strings.Contains(source, "\\") || hccartifact.ValidatePath(source) != nil {
+		return ErrArtifactSourcePath
 	}
 	return nil
 }
