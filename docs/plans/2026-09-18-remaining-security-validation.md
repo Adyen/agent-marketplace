@@ -219,8 +219,19 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   root, encoded slash, mismatching ref, component-boundary, and explicit-path
   controls pass. Legacy unqualified URL interpretation remains unchanged.
   URL benchmark: 242.8 to 266.1 ns/op, 240 to 264 B/op, 3 to 4 allocations/op.
-- R1d compatibility constraint: the existing named-resource removal test requires
-  other resources from the now-blocked registry to stay installed. Narrowing
-  the blanket exception must preserve cleanup without silently fetching new
-  blocked content or broadening removal to unrelated installed resources.
+- R1d decision approved: cleanup-only removal. Remove the requested selection,
+  preserve unrelated installed resources, and neither fetch nor rewrite blocked
+  content. Fail clearly before mutation if existing state cannot prove safe
+  cleanup. Do not replace this with a blanket refusal while blocked entries
+  remain.
+- R1d implementation remains open. Both remove and deinit currently use general
+  reconciliation, not a reusable targeted cleanup engine. The next layer must
+  use existing exact state and ownership evidence, separate removals from
+  upserts, and preserve unrelated shared-aggregate entries and ordinary files.
+  Tests must cover warm valid state, missing/corrupt state, multiple blocked
+  registries, drifted siblings, and no-network/no-unrelated-write assertions.
+- Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
+  planning and first three implementation layers are published as PRs 210–213
+  in stack 214. Native compatibility and real-terminal TUI checks remain CI
+  gates; publication does not mark the rest of the backlog complete.
 - All other unchecked items remain open.
