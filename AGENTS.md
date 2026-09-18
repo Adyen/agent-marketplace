@@ -231,6 +231,8 @@ Full design rationale is in `docs/plans/2026-04-24-harness-compilation-integrati
 6. **Verify** - All changes committed AND pushed
 7. **Hand off** - Provide context for next session
 
+**Pre-push adversarial review:** Before every GitHub push, run an adversarial review of the intended changes, including consumer-path reachability, failure behavior, unintended writes, ownership/scope boundaries, and regression-test validity. Validate reported findings against the code; fix actionable issues and rerun affected checks before pushing. Record the reviewed revision or diff and the outcome. Do not treat a passing test suite or a clean review as proof that no defects remain.
+
 **CRITICAL RULES:**
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally

@@ -24,9 +24,31 @@ import (
 // MarketplaceConsentError carries the verified preview even when consent
 // prevents mutation, so automation can log the exact artifact it declined.
 type MarketplaceConsentError struct {
-	Preview  string
-	Prepared *PreparedMarketplaceInstall
-	Err      error
+	Preview    string
+	Prepared   *PreparedMarketplaceInstall
+	Summary    MarketplaceInstallSummary
+	Acceptable bool
+	Err        error
+}
+
+type MarketplaceInstallResource struct {
+	Name string
+	Kind string
+}
+
+type MarketplaceInstallFinding struct {
+	Resource string
+	Severity string
+	Message  string
+}
+
+type MarketplaceInstallSummary struct {
+	Name         string
+	Kind         string
+	Sources      []string
+	Resources    []MarketplaceInstallResource
+	Findings     []MarketplaceInstallFinding
+	Capabilities []string
 }
 
 type PreparedMarketplaceInstall struct {
@@ -348,7 +370,65 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	for _, identity := range identities {
 		installed = append(installed, identity.name)
 	}
-	return &InstallResult{Installed: installed, IsCollection: len(prepared.plan.CollectionMembers) > 0, CollectionLabel: prepared.plan.Pin.Name, MarketplacePreview: prepared.preview, RequirementWarnings: requirementWarnings}, nil
+	return &InstallResult{
+		Installed: installed, IsCollection: len(prepared.plan.CollectionMembers) > 0,
+		CollectionLabel: prepared.plan.Pin.Name, MarketplacePreview: prepared.preview,
+		MarketplaceSummary: marketplaceInstallSummary(prepared.plan), RequirementWarnings: requirementWarnings,
+	}, nil
+}
+
+func marketplaceInstallSummary(plan *marketplace.PreparedInstall) MarketplaceInstallSummary {
+	summary := MarketplaceInstallSummary{Name: plan.Pin.Name, Kind: plan.Pin.Kind}
+	sources, capabilities := map[string]struct{}{}, map[string]struct{}{}
+	findings := map[MarketplaceInstallFinding]struct{}{}
+	var add func(*marketplace.PreparedInstall, bool)
+	add = func(current *marketplace.PreparedInstall, leaf bool) {
+		source := nonEmpty(current.Pin.RegistrySlug, current.Pin.RegistryID)
+		if source != "" {
+			sources[source] = struct{}{}
+		}
+		for _, capability := range current.Artifact.Manifest.Capabilities {
+			capabilities[capability] = struct{}{}
+		}
+		for _, finding := range current.Revision.Assessment.Findings {
+			message := nonEmpty(finding.Message, finding.Code)
+			findings[MarketplaceInstallFinding{Resource: current.Pin.Name, Severity: finding.Severity, Message: message}] = struct{}{}
+		}
+		if leaf {
+			summary.Resources = append(summary.Resources, MarketplaceInstallResource{Name: current.Pin.Name, Kind: current.Pin.Kind})
+		}
+		for _, member := range current.CollectionMembers {
+			add(member, len(member.CollectionMembers) == 0)
+		}
+	}
+	add(plan, len(plan.CollectionMembers) == 0)
+	for source := range sources {
+		summary.Sources = append(summary.Sources, source)
+	}
+	for capability := range capabilities {
+		summary.Capabilities = append(summary.Capabilities, capability)
+	}
+	for finding := range findings {
+		summary.Findings = append(summary.Findings, finding)
+	}
+	sort.Strings(summary.Sources)
+	sort.Strings(summary.Capabilities)
+	slices.SortFunc(summary.Resources, func(a, b MarketplaceInstallResource) int {
+		if byKind := strings.Compare(a.Kind, b.Kind); byKind != 0 {
+			return byKind
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	slices.SortFunc(summary.Findings, func(a, b MarketplaceInstallFinding) int {
+		if byResource := strings.Compare(a.Resource, b.Resource); byResource != 0 {
+			return byResource
+		}
+		if bySeverity := strings.Compare(a.Severity, b.Severity); bySeverity != 0 {
+			return bySeverity
+		}
+		return strings.Compare(a.Message, b.Message)
+	})
+	return summary
 }
 
 func cloneStringPolicy(policy *[]string) *[]string {
@@ -623,23 +703,19 @@ func evaluateMarketplaceConsent(plan *marketplace.PreparedInstall, accept bool) 
 	// Evaluate the virtual collection revision before descending into leaves. A
 	// collection finding is part of the trust decision even though the root has
 	// no materialized artifact.
-	return evaluateMarketplacePreviewConsentRecursive(plan.Preview(), accept)
-}
-
-func evaluateMarketplacePreviewConsentRecursive(preview marketplace.InstallPreview, accept bool) error {
-	if err := evaluateMarketplacePreviewConsent(preview.Findings, preview.Capabilities, accept); err != nil {
+	preview := plan.Preview()
+	if err := validateMarketplacePreviewConsentRecursive(preview); err != nil {
 		return err
 	}
-	for _, member := range preview.CollectionMembers {
-		if err := evaluateMarketplacePreviewConsentRecursive(member, accept); err != nil {
-			return err
-		}
+	summary := marketplaceInstallSummary(plan)
+	if (len(summary.Findings) > 0 || len(summary.Capabilities) > 0) && !accept {
+		return fmt.Errorf("marketplace install requires risk acceptance: %d finding(s), %d active capability(ies); re-run with --accept-risk (or --yes)", len(summary.Findings), len(summary.Capabilities))
 	}
 	return nil
 }
 
-func evaluateMarketplacePreviewConsent(findings []hccartifact.CanonicalFinding, capabilities []string, accept bool) error {
-	for _, finding := range findings {
+func validateMarketplacePreviewConsentRecursive(preview marketplace.InstallPreview) error {
+	for _, finding := range preview.Findings {
 		outcome := strings.ToLower(strings.TrimSpace(finding.PolicyOutcome))
 		switch outcome {
 		case "allow", "warn":
@@ -650,8 +726,10 @@ func evaluateMarketplacePreviewConsent(findings []hccartifact.CanonicalFinding, 
 			return fmt.Errorf("marketplace finding %s has unknown policy outcome %q; refusing to continue", marketplace.QuoteTerminal(finding.Code), marketplace.QuoteTerminal(finding.PolicyOutcome))
 		}
 	}
-	if (len(findings) > 0 || len(capabilities) > 0) && !accept {
-		return fmt.Errorf("marketplace install requires risk acceptance: %d finding(s), %d active capability(ies); re-run with --accept-risk (or --yes)", len(findings), len(capabilities))
+	for _, member := range preview.CollectionMembers {
+		if err := validateMarketplacePreviewConsentRecursive(member); err != nil {
+			return err
+		}
 	}
 	return nil
 }
