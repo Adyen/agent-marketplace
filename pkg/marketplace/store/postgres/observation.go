@@ -99,7 +99,6 @@ func (s *Store) ListDueRegistryObservations(ctx context.Context, now time.Time, 
 
 func (s *Store) CompareAndSwapRegistryObservation(ctx context.Context, id store.RegistryID, expectedVersion uint64, next store.RegistryObservation) error {
 	return s.withTx(ctx, func(tx *Store) error {
-		next.RegistryID = id
 		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, observed_commit=$1, observed_at=$2, probe_status=$3, probe_error=$4,
 		 next_probe_at=$5, next_reconcile_at=$6, consecutive_probe_failures=$7, work_lease_owner=$8, work_lease_epoch=$9, work_lease_until=$10,
 		 desired_commit=$11, desired_generation=$12, active_refresh_job_id=$13, active_refresh_trigger=$14, successful_commit=$15,
