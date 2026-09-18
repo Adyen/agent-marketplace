@@ -259,7 +259,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// STEP 3: write the replacement into the staging file and fsync it.
 	// Invariant established: the patched bytes are durable, so the rename in step
 	// 4 cannot produce a truncated aggregate.
-	mode := os.FileMode(0o644)
+	mode := os.FileMode(0o600)
 	if fi, statErr := os.Stat(m.AbsFile); statErr == nil {
 		mode = fi.Mode().Perm()
 	}

@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
@@ -45,15 +46,17 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
 	if err := jsonc.Unmarshal(path, data, &rawWorkspace); err != nil {
 		return nil, nil, fmt.Errorf("bundle: parse: %w", err)
 	}
+	wrapped := false
 	if rawHooks, exists := rawWorkspace["hooks"]; exists {
-		var hooks map[string][]hookRule
+		var hooks map[string]json.RawMessage
 		if err := json.Unmarshal(rawHooks, &hooks); err != nil || hooks == nil {
 			if err == nil {
 				err = fmt.Errorf("value is null")
 			}
 			return nil, nil, fmt.Errorf("bundle: parse %s: top-level hooks must be an object of event arrays: %w", path, err)
 		}
-		return flattenHookRules(hooks, path)
+		rawWorkspace = hooks
+		wrapped = true
 	}
 
 	// Fall back to the Claude Code workspace format (top-level event keys).
@@ -65,9 +68,18 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
 	for event, raw := range rawWorkspace {
 		var groups []claudeHookGroup
 		if err := json.Unmarshal(raw, &groups); err != nil {
+			if _, coded := diag.AsCodedError(err); coded {
+				return nil, nil, err
+			}
+			if wrapped {
+				return nil, nil, fmt.Errorf("bundle: parse %s: hook event %q must contain valid hook groups: %w", path, event, err)
+			}
 			// Not an event array; skip non-event keys like
 			// "claudeHooksImported", "showHookOutput", etc.
 			continue
+		}
+		if wrapped && groups == nil {
+			return nil, nil, fmt.Errorf("bundle: parse %s: hook event %q must contain valid hook groups: value is null", path, event)
 		}
 		// Skip empty event arrays.
 		if len(groups) == 0 {
@@ -203,6 +215,9 @@ type claudeHookGroup struct {
 
 // UnmarshalJSON implements custom unmarshalling to capture extra fields.
 func (g *claudeHookGroup) UnmarshalJSON(data []byte) error {
+	if err := jsonutil.ValidateFieldAliases("", data, g); err != nil {
+		return err
+	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -217,6 +232,9 @@ func (g *claudeHookGroup) UnmarshalJSON(data []byte) error {
 	if v, ok := raw["hooks"]; ok {
 		if err := json.Unmarshal(v, &g.Hooks); err != nil {
 			return fmt.Errorf("hook group hooks: %w", err)
+		}
+		if g.Hooks == nil {
+			return fmt.Errorf("hook group hooks must be an array")
 		}
 		delete(raw, "hooks")
 	}
@@ -269,11 +287,14 @@ type hookRule struct {
 	Matcher string `json:"matcher,omitempty"`
 	// ExtraFields captures any additional JSON fields via the
 	// remaining key-value pairs after standard deserialization.
-	ExtraFields map[string]any
+	ExtraFields map[string]any `json:"-"`
 }
 
 // UnmarshalJSON implements custom unmarshalling to capture extra fields.
 func (r *hookRule) UnmarshalJSON(data []byte) error {
+	if err := jsonutil.ValidateFieldAliases("", data, r); err != nil {
+		return err
+	}
 	// First, unmarshal known fields.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {

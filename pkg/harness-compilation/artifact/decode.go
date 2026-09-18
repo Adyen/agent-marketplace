@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -19,7 +20,7 @@ func DecodeResource(kind string, payload []byte) (ir.Resource, error) {
 	}
 
 	var raw map[string]any
-	if err := json.Unmarshal(payload, &raw); err != nil {
+	if err := jsonutil.Unmarshal("", payload, &raw); err != nil {
 		return nil, fmt.Errorf("decode resource payload: %w", err)
 	}
 
@@ -42,6 +43,15 @@ func DecodeResource(kind string, payload []byte) (ir.Resource, error) {
 		resource = &ir.McpServer{}
 	default:
 		return nil, fmt.Errorf("unsupported resource kind %q for DecodeResource", kind)
+	}
+
+	if err := jsonutil.ValidateFieldAliasesValue("", raw, resource); err != nil {
+		return nil, fmt.Errorf("validate %s aliases: %w", kind, err)
+	}
+	if err := jsonutil.ValidateFieldAliasesValue("", raw, &struct {
+		Name string `json:"name"`
+	}{}); err != nil {
+		return nil, fmt.Errorf("validate %s name aliases: %w", kind, err)
 	}
 
 	extra, err := populateStructFromMap(raw, resource)
