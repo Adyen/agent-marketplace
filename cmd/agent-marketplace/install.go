@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
-	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	marketplacepkg "github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -47,7 +47,7 @@ func newInstallCmd() *cobra.Command {
 			marketplace = strings.TrimSpace(marketplace)
 			marketplaceFlags := acceptRisk || assumeYes || installedName != ""
 			marketplaceLocatorArg := len(args) == 1 && looksLikeMarketplaceLocator(args[0])
-			marketplaceBrowserURL := len(args) == 1 && looksLikeMarketplaceBrowserURL(args[0])
+			marketplaceBrowserURL := len(args) == 1 && marketplacepkg.LooksLikeMarketplaceBrowserURL(args[0])
 			marketplaceCoordinate := marketplace != "" || marketplaceLocatorArg
 
 			switch {
@@ -397,10 +397,6 @@ func looksLikeRegistryURL(arg string) bool {
 }
 
 func looksLikeMarketplaceLocator(arg string) bool {
-	_, err := marketplace.ParseMarketplaceLocator(arg)
+	_, err := marketplacepkg.ParseMarketplaceLocator(arg)
 	return err == nil
-}
-
-func looksLikeMarketplaceBrowserURL(arg string) bool {
-	return marketplace.LooksLikeMarketplaceBrowserURL(arg)
 }
