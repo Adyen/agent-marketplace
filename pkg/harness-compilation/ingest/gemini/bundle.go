@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
@@ -476,20 +477,20 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 }
 
 type hookRule struct {
-	Type        string `json:"type"`
-	Command     string `json:"command"`
-	Prompt      string `json:"prompt,omitempty"`
-	Timeout     *int   `json:"timeout,omitempty"`
-	Matcher     string `json:"matcher,omitempty"`
-	ExtraFields map[string]any
-	GroupExtra  map[string]any
+	Type        string         `json:"type"`
+	Command     string         `json:"command"`
+	Prompt      string         `json:"prompt,omitempty"`
+	Timeout     *int           `json:"timeout,omitempty"`
+	Matcher     string         `json:"matcher,omitempty"`
+	ExtraFields map[string]any `json:"-"`
+	GroupExtra  map[string]any `json:"-"`
 }
 
 type hookDefinition struct {
 	Matcher    string
 	Hooks      []hookRule
-	GroupExtra map[string]any
-	Flat       *hookRule
+	GroupExtra map[string]any `json:"-"`
+	Flat       *hookRule      `json:"-"`
 }
 
 func (r *hookDefinition) UnmarshalJSON(data []byte) error {
@@ -711,7 +712,7 @@ func (e *mcpServerEntry) UnmarshalJSON(data []byte) error {
 		OAuthResource     string            `json:"oauthResource"`
 	}
 	var k known
-	if err := json.Unmarshal(data, &k); err != nil {
+	if err := jsonutil.Unmarshal("", data, &k); err != nil {
 		return err
 	}
 	e.Command, e.Args, e.Env = k.Command, k.Args, k.Env
@@ -722,9 +723,20 @@ func (e *mcpServerEntry) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	_, e.DisabledSet = raw["disabled"]
-	for _, key := range []string{"command", "args", "env", "url", "transport", "headers", "disabled", "oauthClientId", "oauthClientSecret", "oauthResource"} {
-		delete(raw, key)
+	e.DisabledSet = false
+	e.Extra = nil
+	knownKeys := []string{"command", "args", "env", "url", "transport", "headers", "disabled", "oauthClientId", "oauthClientSecret", "oauthResource"}
+	for key := range raw {
+		for _, knownKey := range knownKeys {
+			if !strings.EqualFold(key, knownKey) {
+				continue
+			}
+			if knownKey == "disabled" {
+				e.DisabledSet = true
+			}
+			delete(raw, key)
+			break
+		}
 	}
 	if len(raw) > 0 {
 		e.Extra = make(map[string]any, len(raw))

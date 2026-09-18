@@ -120,6 +120,18 @@ func validateAllowedMarketplacePatterns(patterns *[]string) []error {
 	return errs
 }
 
+func MarketplaceCatalogKey(entry MarketplaceEntry, pin MarketplaceResourcePin) string {
+	endpoint := entry.URL
+	if normalized, err := NormalizeMarketplaceURL(endpoint); err == nil {
+		endpoint = normalized
+	}
+	acquisition := pin.Acquisition
+	if acquisition == "" {
+		acquisition = MarketplaceAcquisitionMirror
+	}
+	return "marketplace:" + strings.Join([]string{endpoint, entry.InstanceID, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, pin.Revision, acquisition, pin.RegistryCommit, pin.RegistryManifestDigest}, "\x00")
+}
+
 // ValidateMarketplaceEntries validates a slice of marketplace entries.
 func ValidateMarketplaceEntries(entries []MarketplaceEntry) []error {
 	type aliasUse struct {

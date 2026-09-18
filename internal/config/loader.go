@@ -323,7 +323,7 @@ func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
 	if staged {
 		data, err = boundedConfigData(overlay)
 	} else if !root || data == nil {
-		data, err = os.ReadFile(canonical)
+		data, err = readConfigFile(canonical)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", canonical, err)
@@ -612,7 +612,7 @@ func LoadRootConfigFromPath(path string) (*Config, error) {
 	} else if isGlobalConfigPath(path) {
 		kind = userLayer
 	}
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil

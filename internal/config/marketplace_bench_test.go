@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func BenchmarkValidateMarketplaceEntries(b *testing.B) {
 	entries := []MarketplaceEntry{{
@@ -18,6 +21,15 @@ func BenchmarkValidateMarketplaceEntries(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = ValidateMarketplaceEntries(entries)
+	}
+}
+
+func BenchmarkMarketplaceCatalogKey(b *testing.B) {
+	entry := MarketplaceEntry{URL: "https://market.example", InstanceID: "market-instance"}
+	pin := MarketplaceResourcePin{RegistryID: "registry", Kind: "mcpserver", Name: "server", Revision: "main", Digest: "sha256:" + strings.Repeat("a", 64), Acquisition: MarketplaceAcquisitionMirror}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = MarketplaceCatalogKey(entry, pin)
 	}
 }
 

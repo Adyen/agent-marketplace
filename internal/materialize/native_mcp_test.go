@@ -32,6 +32,47 @@ func nativeMCPResources(target hcc.Target, source config.Source) []resolver.Reso
 	return result
 }
 
+func TestGeminiMixedPrivateAggregateMode(t *testing.T) {
+	for _, reversed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "normal", true: "reversed"}[reversed], func(t *testing.T) {
+			home, repo := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			desired := nativeMCPResources(hcc.TargetGemini, config.RepoCommitted)
+			if reversed {
+				desired[0], desired[1] = desired[1], desired[0]
+			}
+			report, err := Run(context.Background(), repo, desired)
+			if err != nil || hasErrorDiagnostics(report.Diags) {
+				t.Fatalf("sync: %v %+v", err, report)
+			}
+			path := filepath.Join(repo, ".gemini", "settings.json")
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o600 {
+				t.Fatalf("settings mode = %o, want 600", info.Mode().Perm())
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings := nativeMCPDocument(t, raw)
+			servers, ok := settings["mcpServers"].(map[string]any)
+			if !ok || len(servers) != 2 {
+				t.Fatalf("servers = %v", settings["mcpServers"])
+			}
+			groups, ok := settings["hooks"].(map[string]any)["AfterTool"].([]any)
+			if !ok || len(groups) != 1 || !strings.Contains(string(raw), "echo audit") {
+				t.Fatalf("hooks = %v, settings = %s", settings["hooks"], raw)
+			}
+		})
+	}
+}
+
 func TestGeminiNativeMCPUsesStrictFieldsAndDurableOwnership(t *testing.T) {
 	home, repo := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)

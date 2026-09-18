@@ -312,7 +312,7 @@ func (c *cursorCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]arti
 		hookEntry["timeout"] = *h.Timeout
 	}
 	hookEntry["type"] = hookType
-	extraKeys, diags := compile.ExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": h.Matcher != "", "type": hookType != "", "command": h.Command != "", "prompt": false, "timeout": h.Timeout != nil}), mapping.TargetCursor, h.Name(), diag.SourceRef(h.Source))
+	extraKeys, diags := compile.HookExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": h.Matcher != "", "type": hookType != "", "command": h.Command != "", "prompt": false, "timeout": h.Timeout != nil}), mapping.TargetCursor, h.Name(), diag.SourceRef(h.Source))
 	for _, key := range extraKeys {
 		hookEntry[key] = h.Extra[key]
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/gemini"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/gemini"
 )
 
@@ -28,11 +29,14 @@ func TestNativeHookGroupsPreserveMatcherAndExtraLocations(t *testing.T) {
 	if err := json.Unmarshal(result.Artifacts[0].Bytes, &got); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(`{"hooks":{"BeforeTool":[{"matcher":"Read","sequential":true,"x-group":{"policy":"keep"},"hooks":[{"type":"command","command":"echo one","matcher":"ignored-inner","x-rule":"one","hooks":[{"unknown":true}]}]}]}}`), &want); err != nil {
+	if err := json.Unmarshal([]byte(`{"hooks":{"BeforeTool":[{"matcher":"Read","sequential":true,"x-group":{"policy":"keep"},"hooks":[{"type":"command","command":"echo one","x-rule":"one"}]}]}}`), &want); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("group/rule fields moved or unselected siblings emitted: %s", result.Artifacts[0].Bytes)
+	}
+	if !diag.HasCode(result.Diagnostics, diag.CodeCanonicalFieldOverridesExtra) {
+		t.Fatalf("diagnostics = %#v, want canonical-field diagnostic", result.Diagnostics)
 	}
 }
 

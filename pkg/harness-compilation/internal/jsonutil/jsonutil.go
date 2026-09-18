@@ -61,10 +61,7 @@ func Unmarshal(file string, data []byte, v any) error {
 	if err := Validate(file, data); err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, v); err != nil {
-		return diag.NewCodedError(diag.CodeJSONMalformed, diag.SourceRef{File: file, Line: 1}, err)
-	}
-	return nil
+	return Decode(file, data, v)
 }
 
 // Validate reports whether data is well-formed JSON with unique object keys at
