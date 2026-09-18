@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -367,6 +371,189 @@ func newMarketplaceEndpointServer(t *testing.T, instanceID, canonicalURL string,
 		}
 		_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, canonical))
 	}))
+}
+
+func TestMarketplaceInstallOutputIsConciseUnlessVerbose(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	result := &pipeline.InstallResult{
+		Installed:          []string{"review", "fix", "explain"},
+		IsCollection:       true,
+		CollectionLabel:    "coderabbit-skills",
+		MarketplacePreview: "Marketplace install preview:\ncontent_digest: sha256:secret\ncollection_leaves: [{\"name\":\"review\"}]",
+		MarketplaceSummary: pipeline.MarketplaceInstallSummary{Name: "coderabbit-skills", ResourceKinds: []string{"skill", "skill", "skill"}},
+	}
+
+	var concise bytes.Buffer
+	if err := writeInstallResult(&concise, result, pipeline.ScopeRepo, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := concise.String(), "✓ Installed coderabbit-skills · 3 skills\n"; got != want {
+		t.Fatalf("concise output = %q, want %q", got, want)
+	}
+
+	var verbose bytes.Buffer
+	if err := writeInstallResult(&verbose, result, pipeline.ScopeRepo, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Marketplace install preview:", "content_digest:", "collection_leaves:", "✓ Installed coderabbit-skills · 3 skills"} {
+		if !strings.Contains(verbose.String(), want) {
+			t.Fatalf("verbose output missing %q:\n%s", want, verbose.String())
+		}
+	}
+
+	var single bytes.Buffer
+	if err := writeInstallResult(&single, &pipeline.InstallResult{Installed: []string{"review"}, MarketplaceSummary: pipeline.MarketplaceInstallSummary{Name: "review"}}, pipeline.ScopeRepo, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := single.String(), "✓ Installed review\n"; got != want {
+		t.Fatalf("single-resource output = %q, want %q", got, want)
+	}
+}
+
+func TestMarketplaceInstallResultColorsOnTerminal(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	oldStyle := installOutputStyle
+	defer func() { installOutputStyle = oldStyle }()
+	installOutputStyle = func(io.Writer) syncOutputStyle { return syncOutputStyle{color: true} }
+
+	var success bytes.Buffer
+	result := &pipeline.InstallResult{Installed: []string{"review"}, MarketplaceSummary: pipeline.MarketplaceInstallSummary{Name: "review"}}
+	if err := writeInstallResult(&success, result, pipeline.ScopeRepo, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := success.String(), "\x1b[32m✓ Installed review\x1b[0m\n"; got != want {
+		t.Fatalf("colored success = %q, want %q", got, want)
+	}
+
+	var warning bytes.Buffer
+	consent := &pipeline.MarketplaceConsentError{Summary: pipeline.MarketplaceInstallSummary{Name: "review", ResourceKinds: []string{"skill"}, Capabilities: 1}, Acceptable: true}
+	if err := writeMarketplaceConsentRequired(&warning, consent, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := warning.String(), "\x1b[38;5;208mWarning: review includes 1 skill with 0 findings and 1 active capability; risk acceptance is required.\x1b[0m\n\x1b[31mNothing has been installed.\x1b[0m\n"; got != want {
+		t.Fatalf("colored warning = %q, want %q", got, want)
+	}
+}
+
+func TestMarketplaceRiskConfirmationCanViewDetailsThenInstall(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	prepared := &pipeline.PreparedMarketplaceInstall{}
+	consent := &pipeline.MarketplaceConsentError{
+		Preview:  "Marketplace install preview:\ncontent_digest: sha256:secret",
+		Prepared: prepared,
+		Summary: pipeline.MarketplaceInstallSummary{
+			Name: "coderabbit-skills", ResourceKinds: []string{"skill", "skill", "skill"}, Findings: 2, Capabilities: 1,
+		},
+		Acceptable: true,
+		Err:        errors.New("risk acceptance required"),
+	}
+	oldCommit := commitMarketplaceInstall
+	defer func() { commitMarketplaceInstall = oldCommit }()
+	commitMarketplaceInstall = func(_ context.Context, got *pipeline.PreparedMarketplaceInstall) (*pipeline.InstallResult, error) {
+		if got != prepared {
+			t.Fatal("confirmation did not commit the prepared plan")
+		}
+		return &pipeline.InstallResult{Installed: []string{"review", "fix", "explain"}, IsCollection: true, CollectionLabel: "coderabbit-skills", MarketplaceSummary: consent.Summary}, nil
+	}
+
+	var out bytes.Buffer
+	result, err := confirmMarketplaceInstall(context.Background(), &out, strings.NewReader("1\n2\n"), consent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil {
+		t.Fatal("accepted install returned no result")
+	}
+	for _, want := range []string{
+		"Warning: coderabbit-skills includes 3 skills with 2 findings and 1 active capability; risk acceptance is required.",
+		"View details", "Accept risks and install", "Cancel (default)", "content_digest: sha256:secret",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("confirmation output missing %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "Nothing has been installed.") {
+		t.Fatalf("accepted flow claimed nothing was installed:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "3. Cancel (default)\n\nChoose [1-3]: ") {
+		t.Fatalf("confirmation prompt has no space before Choose:\n%s", out.String())
+	}
+}
+
+func TestMarketplaceRiskSummaryDeclinesWithoutLeakingDetails(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	consent := &pipeline.MarketplaceConsentError{
+		Preview:    "content_digest: sha256:secret\ncollection_leaves: [{\"name\":\"review\"}]",
+		Summary:    pipeline.MarketplaceInstallSummary{Name: "coderabbit-skills", ResourceKinds: []string{"skill", "skill", "skill"}, Findings: 2, Capabilities: 1},
+		Acceptable: true,
+		Err:        errors.New("risk acceptance required"),
+	}
+	var out bytes.Buffer
+	if err := writeMarketplaceConsentRequired(&out, consent, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "Warning: coderabbit-skills includes 3 skills with 2 findings and 1 active capability; risk acceptance is required.\nNothing has been installed.\n"; got != want {
+		t.Fatalf("summary output = %q, want %q", got, want)
+	}
+	for _, hidden := range []string{"sha256:secret", "collection_leaves", "review"} {
+		if strings.Contains(out.String(), hidden) {
+			t.Fatalf("concise output leaked %q: %s", hidden, out.String())
+		}
+	}
+}
+
+func TestMarketplaceRiskConfirmationDefaultsToCancel(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	consent := &pipeline.MarketplaceConsentError{
+		Prepared:   &pipeline.PreparedMarketplaceInstall{},
+		Summary:    pipeline.MarketplaceInstallSummary{Name: "review", ResourceKinds: []string{"skill"}, Capabilities: 1},
+		Acceptable: true,
+		Err:        errors.New("risk acceptance required"),
+	}
+	oldCommit := commitMarketplaceInstall
+	defer func() { commitMarketplaceInstall = oldCommit }()
+	commitMarketplaceInstall = func(context.Context, *pipeline.PreparedMarketplaceInstall) (*pipeline.InstallResult, error) {
+		t.Fatal("default cancel committed the install")
+		return nil, nil
+	}
+
+	var out bytes.Buffer
+	result, err := confirmMarketplaceInstall(context.Background(), &out, strings.NewReader("\n"), consent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil || !strings.HasSuffix(out.String(), "Nothing has been installed.\n") {
+		t.Fatalf("default cancel result/output = %#v/%q", result, out.String())
+	}
+}
+
+func TestMarketplaceBlockedInstallIsAlwaysSurfaced(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	consent := &pipeline.MarketplaceConsentError{
+		Summary: pipeline.MarketplaceInstallSummary{Name: "secure-tools", ResourceKinds: []string{"skill", "skill"}, Findings: 1},
+		Err:     errors.New("blocked-resource: policy rejection"),
+	}
+	var out bytes.Buffer
+	if err := writeMarketplaceConsentRequired(&out, consent, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Blocked: secure-tools includes 2 skills", "installation is not permitted", "Nothing has been installed."} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("blocked output missing %q: %s", want, out.String())
+		}
+	}
 }
 
 func TestInstallCommandNormalizesMCPKindForMarketplace(t *testing.T) {

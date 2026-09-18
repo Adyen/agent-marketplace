@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,6 +15,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
+
+const installOrange = "\x1b[38;5;208m"
 
 func newInstallCmd() *cobra.Command {
 	var tag string
@@ -27,6 +31,7 @@ func newInstallCmd() *cobra.Command {
 	var acceptRisk bool
 	var assumeYes bool
 	var marketplace string
+	var verbose bool
 
 	cmd := &cobra.Command{
 		Use:   "install [resource-name|marketplace-endpoint]",
@@ -99,7 +104,10 @@ func newInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runInstall(cmd.Context(), cmd.OutOrStdout(), args, tag, installAll, registry, scope, cmd.Flags().Changed("scope"), kindFilter, fromURL, fromRef, fromPath, installedName, acceptRisk || assumeYes, marketplace)
+			in := cmd.InOrStdin()
+			fd, hasFD := in.(interface{ Fd() uintptr })
+			interactive := hasFD && isTerminal(fd.Fd()) && !acceptRisk && !assumeYes
+			return runInstall(cmd.Context(), cmd.OutOrStdout(), in, interactive, verbose, args, tag, installAll, registry, scope, cmd.Flags().Changed("scope"), kindFilter, fromURL, fromRef, fromPath, installedName, acceptRisk || assumeYes, marketplace)
 		},
 	}
 
@@ -115,11 +123,12 @@ func newInstallCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&acceptRisk, "accept-risk", false, "Accept Marketplace findings and active capabilities")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "Accept Marketplace findings and active capabilities (automation)")
 	cmd.Flags().StringVar(&marketplace, "marketplace", "", "Marketplace alias or endpoint for a Marketplace locator")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show full Marketplace resource and security details")
 
 	return cmd
 }
 
-func runInstall(ctx context.Context, out io.Writer, args []string, tag string, installAll bool, registry string, scope pipeline.Scope, scopeSpecified bool, kindFilter, fromURL, fromRef, fromPath, installedName string, acceptRisk bool, marketplace string) error {
+func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, verbose bool, args []string, tag string, installAll bool, registry string, scope pipeline.Scope, scopeSpecified bool, kindFilter, fromURL, fromRef, fromPath, installedName string, acceptRisk bool, marketplace string) error {
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
@@ -146,12 +155,20 @@ func runInstall(ctx context.Context, out io.Writer, args []string, tag string, i
 	})
 	if err != nil {
 		var consentErr *pipeline.MarketplaceConsentError
-		if errors.As(err, &consentErr) && consentErr.Preview != "" {
-			if _, writeErr := fmt.Fprintln(out, consentErr.Preview); writeErr != nil {
+		if !errors.As(err, &consentErr) {
+			return err
+		}
+		if interactive && consentErr.Acceptable {
+			result, err = confirmMarketplaceInstall(ctx, out, in, consentErr, verbose)
+			if err != nil || result == nil {
+				return err
+			}
+		} else {
+			if writeErr := writeMarketplaceConsentRequired(out, consentErr, verbose); writeErr != nil {
 				return writeErr
 			}
+			return err
 		}
-		return err
 	}
 
 	if result.MarketplaceEndpoint != "" {
@@ -167,21 +184,134 @@ func runInstall(ctx context.Context, out io.Writer, args []string, tag string, i
 		return err
 	}
 
-	if result.MarketplacePreview != "" {
-		if _, err = fmt.Fprintln(out, result.MarketplacePreview); err != nil {
+	return writeInstallResult(out, result, scope, verbose)
+}
+
+var (
+	commitMarketplaceInstall = pipeline.CommitPreparedMarketplaceInstall
+	installOutputStyle       = newSyncOutputStyle
+)
+
+func confirmMarketplaceInstall(ctx context.Context, out io.Writer, in io.Reader, consent *pipeline.MarketplaceConsentError, verbose bool) (*pipeline.InstallResult, error) {
+	if err := writeMarketplaceRiskSummary(out, consent); err != nil {
+		return nil, err
+	}
+	if verbose && consent.Preview != "" {
+		if _, err := fmt.Fprintln(out, consent.Preview); err != nil {
+			return nil, err
+		}
+	}
+	reader := bufio.NewReader(in)
+	for {
+		if _, err := fmt.Fprint(out, "\n1. View details\n2. Accept risks and install\n3. Cancel (default)\n\nChoose [1-3]: "); err != nil {
+			return nil, err
+		}
+		reply, readErr := reader.ReadString('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return nil, readErr
+		}
+		switch strings.ToLower(strings.TrimSpace(reply)) {
+		case "1", "v", "view", "details":
+			if consent.Preview != "" {
+				if _, err := fmt.Fprintf(out, "\n%s\n", consent.Preview); err != nil {
+					return nil, err
+				}
+			}
+		case "2", "a", "accept", "yes", "y":
+			slog.Info("Marketplace install risks accepted interactively", "resource", consent.Summary.Name, "findings", consent.Summary.Findings, "capabilities", consent.Summary.Capabilities)
+			return commitMarketplaceInstall(ctx, consent.Prepared)
+		case "", "3", "c", "cancel", "n", "no":
+			return nil, writeInstallStatus(out, syncRed, "Nothing has been installed.")
+		default:
+			if _, err := fmt.Fprintln(out, "Choose 1, 2, or 3."); err != nil {
+				return nil, err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil, writeInstallStatus(out, syncRed, "Nothing has been installed.")
+		}
+	}
+}
+
+func writeMarketplaceConsentRequired(out io.Writer, consent *pipeline.MarketplaceConsentError, verbose bool) error {
+	if err := writeMarketplaceRiskSummary(out, consent); err != nil {
+		return err
+	}
+	if verbose && consent.Preview != "" {
+		if _, err := fmt.Fprintln(out, consent.Preview); err != nil {
 			return err
 		}
 	}
+	return writeInstallStatus(out, syncRed, "Nothing has been installed.")
+}
 
+func writeMarketplaceRiskSummary(out io.Writer, consent *pipeline.MarketplaceConsentError) error {
+	prefix, suffix, color := "Warning", "risk acceptance is required", installOrange
+	if !consent.Acceptable {
+		prefix, suffix, color = "Blocked", "installation is not permitted", syncRed
+	}
+	summary := consent.Summary
+	included := marketplaceIncludedLabel(summary.ResourceKinds)
+	if included != "" {
+		return writeInstallStatus(out, color, fmt.Sprintf("%s: %s includes %s with %s and %s; %s.", prefix, summary.Name, included, countLabel(summary.Findings, "finding"), countLabel(summary.Capabilities, "active capability"), suffix))
+	}
+	return writeInstallStatus(out, color, fmt.Sprintf("%s: %s has %s and %s; %s.", prefix, summary.Name, countLabel(summary.Findings, "finding"), countLabel(summary.Capabilities, "active capability"), suffix))
+}
+
+func writeInstallResult(out io.Writer, result *pipeline.InstallResult, scope pipeline.Scope, verbose bool) error {
+	if result.MarketplacePreview != "" || result.MarketplaceSummary.Name != "" {
+		if verbose && result.MarketplacePreview != "" {
+			if _, err := fmt.Fprintln(out, result.MarketplacePreview); err != nil {
+				return err
+			}
+		}
+		name := result.MarketplaceSummary.Name
+		if name == "" && len(result.Installed) > 0 {
+			name = result.Installed[0]
+		}
+		if result.IsCollection {
+			return writeInstallStatus(out, syncGreen, fmt.Sprintf("✓ Installed %s · %s", name, marketplaceIncludedLabel(result.MarketplaceSummary.ResourceKinds)))
+		}
+		return writeInstallStatus(out, syncGreen, fmt.Sprintf("✓ Installed %s", name))
+	}
 	if result.IsCollection {
-		_, err = fmt.Fprintf(out, "Installed collection %s %s\n", result.CollectionLabel, pipeline.InstallScopeLabel(scope))
+		_, err := fmt.Fprintf(out, "Installed collection %s %s\n", result.CollectionLabel, pipeline.InstallScopeLabel(scope))
 		return err
 	}
+	_, err := fmt.Fprintf(out, "Installed %s %s\n", strings.Join(result.Installed, ", "), pipeline.InstallScopeLabel(scope))
+	return err
+}
 
-	if _, err = fmt.Fprintf(out, "Installed %s %s\n", strings.Join(result.Installed, ", "), pipeline.InstallScopeLabel(scope)); err != nil {
-		return err
+func writeInstallStatus(out io.Writer, color, text string) error {
+	_, err := fmt.Fprintln(out, installOutputStyle(out).paint(color, text))
+	return err
+}
+
+func marketplaceIncludedLabel(kinds []string) string {
+	if len(kinds) == 0 {
+		return ""
 	}
-	return nil
+	kind := kinds[0]
+	for _, candidate := range kinds[1:] {
+		if candidate != kind {
+			return countLabel(len(kinds), "resource")
+		}
+	}
+	singular := map[string]string{"skill": "skill", "command": "command", "subagent": "subagent", "hook": "hook", "mcpserver": "MCP server"}[kind]
+	if singular == "" {
+		singular = "resource"
+	}
+	return countLabel(len(kinds), singular)
+}
+
+func countLabel(count int, singular string) string {
+	if count == 1 {
+		return fmt.Sprintf("1 %s", singular)
+	}
+	if strings.HasSuffix(singular, "y") {
+		return fmt.Sprintf("%d %sies", count, strings.TrimSuffix(singular, "y"))
+	}
+	return fmt.Sprintf("%d %ss", count, singular)
 }
 
 // looksLikeRegistryURL reports whether the argument looks like a Git hosting
