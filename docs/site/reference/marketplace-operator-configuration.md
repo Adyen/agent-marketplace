@@ -208,8 +208,8 @@ policy_overrides:
 |---|---|:---:|---|---|
 | `id` | string | yes | none | Analyzer identity. Built-in IDs and `marketplace.rulepack` are known; all other IDs require a `run` block. |
 | `enabled` | boolean | no | `true` | Whether this analyzer is active. |
-| `role` | string | no | built-in default; `gating` for `run` analyzers | `gating` or `advisory`. |
-| `version` | string | yes for `run` analyzers | built-in version | Protocol echo version; the runner must return it in its JSON response. |
+| `role` | string | yes for `run` analyzers | built-in default; `gating` for `marketplace.rulepack` | `gating` or `advisory`. Run-backed analyzers have no default and must declare it. |
+| `version` | string | yes for `run` analyzers | built-in version | Protocol echo version; the runner must return it in its JSON response. Built-in versions are fixed: an explicit value equal to the built-in is accepted and any other value is rejected. `version` is not configurable for `marketplace.rulepack`. |
 | `run` | mapping | yes for external analyzers | none | `command`, `args`, `timeout`, `env_passthrough`, and `implementation_digest`. |
 | `rulepack` | mapping | yes for `marketplace.rulepack` | none | `path`: an absolute path to a rulepack file. |
 | `config` | mapping | no | empty | Opaque analyzer configuration that is hashed into the cache key. |

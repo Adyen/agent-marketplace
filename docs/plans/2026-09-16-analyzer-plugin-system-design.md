@@ -272,12 +272,13 @@ Additive only.
 
 ### 8. Web
 
-- New badge row on `ResourceDetailView.vue`, above the existing findings section: one badge per
-  audit with verdict color, analyzer name, and summary, linking to the per-audit page.
+- New `Analyzer audits` section on `ResourceDetailView.vue`, below the existing findings section:
+  one entry per audit in server order with verdict color, analyzer name, and summary. Each entry
+  links to the per-audit page.
 - New page under the existing `/r/{registry}/{kind}/{name}/revisions/{digest}/` tree rendering one
   audit: verdict, analyzer identity and version, role, summary, its findings with the existing
   source-range highlighting, and its error text when it failed.
-- The existing flat findings list stays and is grouped by analyzer, so
+- The existing flat findings list stays flat and ungrouped, so
   `resource-detail-view.test.ts` assertions on the `Security findings` heading, `Severity:`,
   `Policy:`, code, message, and range text keep passing.
 - Gating authority is unchanged: `presentation.ts:209-219` continues to treat the assessment

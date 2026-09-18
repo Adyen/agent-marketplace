@@ -105,13 +105,13 @@ The example covers built-in role override, disabling, an out-of-process runner w
 ### Validation and behavior
 
 - IDs must be known built-ins, `marketplace.rulepack`, or have a `run` block.
-- Out-of-process analyzers must declare `version`; the runner must echo it back.
+- Out-of-process analyzers must declare `role` and `version`; the runner must echo the version back.
 - `run.command` must be an absolute path and the file at that path must match `implementation_digest`.
 - `run.timeout` must be positive.
 - `run.env_passthrough` is an ordered allowlist of environment variable names passed to the runner.
 - `run.args` are passed in order; they may not contain inline secret literals or a secret option followed by a literal value.
 - `config` is opaque to the marketplace and participates in the analyzer's cache key.
-- Built-in versions are fixed; do not set `version` on them.
+- Built-in versions are fixed. An explicit `version` equal to the built-in is accepted; any other value is rejected. `version` is not configurable for `marketplace.rulepack`.
 - A gating analyzer that cannot complete produces a non-consentable `marketplace.policy.audit-unavailable` finding. The resource remains visible and auditable, but it cannot be installed until the analyzer succeeds.
 
 ### Caching and retry
