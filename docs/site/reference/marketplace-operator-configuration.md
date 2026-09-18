@@ -221,7 +221,7 @@ policy_overrides:
 | `command` | absolute path | yes | none | Absolute path to the executable. |
 | `args` | list of strings | no | empty | Ordered arguments passed to `command`. |
 | `timeout` | duration | yes | none | Positive execution timeout. |
-| `env_passthrough` | list of strings | no | empty | Ordered allowlist of environment variable names passed to the runner. |
+| `env_passthrough` | list of strings | no | empty | Sorted allowlist of environment variable names passed to the runner. |
 | `implementation_digest` | `sha256:<64 lowercase hex>` | yes | none | Digest of the executable at `command`; verified before every invocation. |
 
 ### `analyzers[].rulepack`
@@ -229,6 +229,33 @@ policy_overrides:
 | Field | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `path` | absolute path | yes | none | Absolute path to a rulepack definition file. |
+
+The rulepack file is a strict YAML document; unknown fields, duplicate keys, and trailing documents are rejected.
+
+```yaml
+apiVersion: agent-marketplace.analyzer/v1
+rules:
+  - code: internal-token-format
+    pattern: 'internal-[0-9a-f]{32}'
+    message: Internal token format found in published content.
+    kinds: [skill, command]
+```
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `apiVersion` | string | yes | none | Must be `agent-marketplace.analyzer/v1`. |
+| `rules` | list of rules | yes | none | The rules to match against public text samples and support files. |
+
+Each `rules[]` entry accepts:
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `code` | string | yes | none | Rule code; letters, digits, `.`, `_`, and `-`. Codes are namespaced as `marketplace.rulepack.<code>`; a code already carrying that prefix is used as-is. Duplicates are rejected. |
+| `pattern` | string | yes | none | Regular expression matched against sampled content. |
+| `message` | string | yes | none | Non-empty finding message. |
+| `kinds` | list of strings | no | all kinds | Resource kinds the rule applies to (`skill`, `command`, `subagent`, `hook`, `mcp`, `collection`, `rule`). |
+
+Every rulepack finding defaults to a `warn` outcome policy.
 
 ### Secret-literal rules
 

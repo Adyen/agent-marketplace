@@ -270,7 +270,7 @@ Additive only.
   `verdict`, `summary`, `finding_count`, `duration_ns`, and `result_digest`. Findings themselves stay in
   `assessment.findings` and carry `analyzer_id`; a `Finding` may optionally carry `consentable: false` to
   mark non-consentable findings that `--accept-risk` cannot bypass.
-- New route `GET /api/v1/resources/{registry}/{kind}/{name}/revisions/{digest}/audits/{analyzer_id}`
+- New route `GET /api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/audits/{analyzer_id}`
   returns one audit with its findings and is immutable for the same `result_digest`.
 - `AssessmentFinding` gains optional `analyzer_id` and optional `consentable`.
 - `api/openapi.yaml` declares `Audit` and `AuditSummary`.
@@ -280,7 +280,7 @@ Additive only.
 - New `Analyzer audits` section on `ResourceDetailView.vue`, below the existing findings section:
   one entry per audit in server order with verdict color, analyzer name, and summary. Each entry
   links to the per-audit page.
-- New page at the sibling audit route `/r/{registry}/{kind}/{name}/{digest}/audit/{analyzerId}`
+- New page at the sibling audit route `/r/{registry}/{kind}/{name}/{revision}/audit/{analyzerId}`
   rendering one audit: verdict, analyzer identity and version, role, summary, its findings with the
   existing source-range highlighting, and its error text when it failed.
 - The existing flat findings list stays flat and ungrouped, so

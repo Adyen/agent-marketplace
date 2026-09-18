@@ -108,11 +108,30 @@ Do not place literal secrets in `config` or `args`; secret-bearing keys must use
 - Out-of-process analyzers must declare `role` and `version`; the runner must echo the version back.
 - `run.command` must be an absolute path and the file at that path must match `implementation_digest`.
 - `run.timeout` must be positive.
-- `run.env_passthrough` is an ordered allowlist of environment variable names passed to the runner.
+- `run.env_passthrough` is a sorted allowlist of environment variable names passed to the runner.
 - `run.args` are passed in order; they may not contain inline secret literals or a secret option followed by a literal value.
 - `config` is opaque to the marketplace and participates in the analyzer's cache key.
 - Built-in versions are fixed. An explicit `version` equal to the built-in is accepted; any other value is rejected. `version` is not configurable for `marketplace.rulepack`.
 - A gating analyzer that cannot complete produces a non-consentable `marketplace.policy.audit-unavailable` finding. The resource remains visible and auditable, but it cannot be installed until the analyzer succeeds.
+
+### Rulepack file schema
+
+The `rulepack.path` file is a strict YAML document; unknown fields, duplicate keys, and trailing documents are rejected.
+
+```yaml
+apiVersion: agent-marketplace.analyzer/v1
+rules:
+  - code: internal-token-format
+    pattern: 'internal-[0-9a-f]{32}'
+    message: Internal token format found in published content.
+    kinds: [skill, command]
+```
+
+- `apiVersion` is required and must be `agent-marketplace.analyzer/v1`.
+- `rules` is a list of rules. `code`, `pattern`, and `message` are required for every rule; `kinds` is an optional list of resource kinds (`skill`, `command`, `subagent`, `hook`, `mcp`, `collection`, `rule`) that restricts which resources the rule audits. A rule without `kinds` applies to every resource kind.
+- `code` accepts letters, digits, `.`, `_`, and `-`. Codes are namespaced as `marketplace.rulepack.<code>`; a `code` already carrying the `marketplace.rulepack.` prefix is used as-is. Duplicate codes are rejected.
+- `pattern` must be a valid regular expression.
+- Every rulepack finding defaults to a `warn` outcome policy.
 
 ### Caching and retry
 
@@ -120,7 +139,7 @@ Each audit is keyed on the `subject_digest` (content plus support files) and a `
 
 ### Audit API and UI
 
-The public API and web detail page list one badge per audit with its verdict, role, analyzer identity and version, summary, `finding_count`, `duration_ns`, and a deterministic `result_digest`. The per-analyzer detail route is `GET /api/v1/resources/{registry}/{kind}/{name}/revisions/{digest}/audits/{analyzer_id}` and is immutable for the same `result_digest`.
+The public API and web detail page list one badge per audit with its verdict, role, analyzer identity and version, summary, `finding_count`, `duration_ns`, and a deterministic `result_digest`. The per-analyzer detail route is `GET /api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/audits/{analyzer_id}` and is immutable for the same `result_digest`.
 
 ### Rollout and troubleshooting
 
