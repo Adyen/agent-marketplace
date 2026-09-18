@@ -55,6 +55,8 @@ func BenchmarkLoadStableEffectiveIncludes(b *testing.B) {
 	}
 }
 
+// BenchmarkInstallFromWarmExactLock measures repeated warm remote installs.
+// This benchmark includes local disk I/O but excludes network requests (no Internet).
 func BenchmarkInstallFromWarmExactLock(b *testing.B) {
 	repoRoot, path := setupWarmLockedGitSyncBenchmark(b)
 	cfg, err := config.LoadConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
