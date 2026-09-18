@@ -2637,3 +2637,61 @@ registries:
 		t.Fatalf("expected registry URL /local/skills, got %q", cfg.Registries[0].URL)
 	}
 }
+
+func TestRegistryDefaultAndResourceAtRefStayScoped(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	initial := "apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.invalid/repo.git\n    ref: alternate\n    path: skills\n    exclude_all: true\n  - url: https://example.invalid/repo.git\n    ref: main\n    path: skills\n    skills:\n      exclude: [review]\n"
+	mustWriteFile(t, configPath, []byte(initial))
+	if err := EnsureRegistryWithDefaultInConfig(configPath, "https://example.invalid/repo.git", "main", "skills"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadProjectConfig(t, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Registries) != 2 || !cfg.Registries[0].ExcludeAll || !cfg.Registries[1].Default {
+		t.Fatalf("registries = %#v", cfg.Registries)
+	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureRegistryWithDefaultInConfig(configPath, "https://example.invalid/repo.git", "main", "skills"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("idempotent bytes changed: %q %v", after, err)
+	}
+	missingRefPath := filepath.Join(dir, "missing.yaml")
+	mustWriteFile(t, missingRefPath, []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.invalid/repo.git\n    ref: alternate\n    path: skills\n"))
+	if err := EnsureRegistryWithDefaultInConfig(missingRefPath, "https://example.invalid/repo.git", "main", "skills"); err != nil {
+		t.Fatal(err)
+	}
+	missingCfg, err := loadProjectConfig(t, missingRefPath)
+	if err != nil || len(missingCfg.Registries) != 2 {
+		t.Fatalf("missing ref registries = %#v err=%v", missingCfg.Registries, err)
+	}
+	localPath := filepath.Join(dir, "local.yaml")
+	mustWriteFile(t, localPath, []byte("registries:\n  - path: ./registry\n"))
+	if err := EnsureRegistryWithDefaultInConfig(localPath, "./registry", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	localCfg, err := LoadLocalConfigFromPath(localPath)
+	if err != nil || len(localCfg.Registries) != 1 {
+		t.Fatalf("local registries = %#v err=%v", localCfg.Registries, err)
+	}
+	resourcePath := filepath.Join(dir, "resource.yaml")
+	mustWriteFile(t, resourcePath, []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.invalid/repo.git\n    ref: alternate\n    path: skills\n    skills:\n      exclude: [review]\n  - url: https://example.invalid/repo.git\n    ref: main\n    path: skills\n    skills:\n      exclude: [review]\n"))
+	if err := AddResourceToExactRegistryEntryAtRef(resourcePath, "https://example.invalid/repo.git", "skills", "main", ir.KindSkill, "review"); err != nil {
+		t.Fatal(err)
+	}
+	resourceCfg, err := loadProjectConfig(t, resourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resourceCfg.Registries[0].Skills.Exclude == nil || resourceCfg.Registries[1].Skills.Exclude != nil || !slices.Contains(resourceCfg.Registries[1].Skills.Include, "review") {
+		t.Fatalf("resource ref scope = %#v", resourceCfg.Registries)
+	}
+}
