@@ -151,10 +151,7 @@ func (d *Document) ReplaceRoot(raw []byte) {
 // duplicate keys were already rejected by Parse, so the canonical rendering is
 // safe to hand to encoding/json.
 func (d *Document) Decode(v any) error {
-	if err := json.Unmarshal(d.root.Canonical(), v); err != nil {
-		return jsonutil.Coded(d.file, nil, err)
-	}
-	return nil
+	return jsonutil.Decode(d.file, d.root.Canonical(), v)
 }
 
 // Canonical returns strict comment-free JSON for the node, preserving the
@@ -481,10 +478,7 @@ func Unmarshal(file string, data []byte, v any) error {
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(canonical, v); err != nil {
-		return jsonutil.Coded(file, data, err)
-	}
-	return nil
+	return jsonutil.Decode(file, canonical, v)
 }
 
 func (n *Node) writeCanonical(buf *bytes.Buffer) {
