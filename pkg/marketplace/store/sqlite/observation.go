@@ -10,7 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-const observationColumns = `registry_id, observed_commit, observed_at, probe_status,
+const observationColumns = `registry_id, observation_version, observed_commit, observed_at, probe_status,
  probe_error, next_probe_at, next_reconcile_at, consecutive_probe_failures,
  work_lease_owner, work_lease_until, desired_commit, desired_generation,
  active_refresh_job_id, active_refresh_trigger, successful_commit,
@@ -22,9 +22,10 @@ func (s *Store) GetRegistryObservation(ctx context.Context, id store.RegistryID)
 
 func scanObservation(sc interface{ Scan(...any) error }) (store.RegistryObservation, error) {
 	var o store.RegistryObservation
+	var observationVersion int64
 	var observedAt, nextProbe, nextReconcile, leaseUntil, indexedAt int64
 	var jobID string
-	err := sc.Scan(&o.RegistryID, &o.ObservedCommit, &observedAt, &o.ProbeStatus,
+	err := sc.Scan(&o.RegistryID, &observationVersion, &o.ObservedCommit, &observedAt, &o.ProbeStatus,
 		&o.ProbeError, &nextProbe, &nextReconcile, &o.ConsecutiveProbeFailures,
 		&o.WorkLeaseOwner, &leaseUntil, &o.DesiredCommit, &o.DesiredGeneration,
 		&jobID, &o.ActiveRefreshTrigger, &o.SuccessfulCommit, &o.SuccessfulGeneration,
@@ -35,6 +36,7 @@ func scanObservation(sc interface{ Scan(...any) error }) (store.RegistryObservat
 	if err != nil {
 		return store.RegistryObservation{}, err
 	}
+	o.ObservationVersion = uint64(observationVersion)
 	o.ObservedAt = microToTime(observedAt)
 	o.NextProbeAt = microToTime(nextProbe)
 	o.NextReconcileAt = microToTime(nextReconcile)
@@ -53,8 +55,9 @@ func (s *Store) putRegistryObservation(ctx context.Context, o store.RegistryObse
 		return fmt.Errorf("registry observation requires registry id")
 	}
 	_, err := s.q.ExecContext(ctx, `INSERT INTO registry_observations (`+observationColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(registry_id) DO UPDATE SET
+		 observation_version=registry_observations.observation_version+1,
 		 observed_commit=excluded.observed_commit, observed_at=excluded.observed_at,
 		 probe_status=excluded.probe_status, probe_error=excluded.probe_error,
 		 next_probe_at=excluded.next_probe_at, next_reconcile_at=excluded.next_reconcile_at,
@@ -65,7 +68,7 @@ func (s *Store) putRegistryObservation(ctx context.Context, o store.RegistryObse
 		 active_refresh_trigger=excluded.active_refresh_trigger,
 		 successful_commit=excluded.successful_commit, successful_generation=excluded.successful_generation,
 		 last_successful_index_at=excluded.last_successful_index_at`,
-		o.RegistryID, o.ObservedCommit, timeToMicro(o.ObservedAt), o.ProbeStatus, o.ProbeError,
+		o.RegistryID, int64(1), o.ObservedCommit, timeToMicro(o.ObservedAt), o.ProbeStatus, o.ProbeError,
 		timeToMicro(o.NextProbeAt), timeToMicro(o.NextReconcileAt), o.ConsecutiveProbeFailures,
 		o.WorkLeaseOwner, timeToMicro(o.WorkLeaseUntil), o.DesiredCommit, o.DesiredGeneration,
 		o.ActiveRefreshJobID, o.ActiveRefreshTrigger, o.SuccessfulCommit, o.SuccessfulGeneration,
@@ -97,19 +100,19 @@ func (s *Store) ListDueRegistryObservations(ctx context.Context, now time.Time, 
 	return out, rows.Err()
 }
 
-func (s *Store) CompareAndSwapRegistryObservation(ctx context.Context, id store.RegistryID, expectedObservedAt time.Time, next store.RegistryObservation) error {
+func (s *Store) CompareAndSwapRegistryObservation(ctx context.Context, id store.RegistryID, expectedVersion uint64, next store.RegistryObservation) error {
 	return s.withTx(ctx, func(tx *Store) error {
 		next.RegistryID = id
 		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET
-		 observed_commit=?, observed_at=?, probe_status=?, probe_error=?, next_probe_at=?, next_reconcile_at=?,
+		 observation_version=observation_version+1, observed_commit=?, observed_at=?, probe_status=?, probe_error=?, next_probe_at=?, next_reconcile_at=?,
 		 consecutive_probe_failures=?, work_lease_owner=?, work_lease_until=?, desired_commit=?, desired_generation=?,
 		 active_refresh_job_id=?, active_refresh_trigger=?, successful_commit=?, successful_generation=?, last_successful_index_at=?
-		 WHERE registry_id=? AND observed_at=?`,
+		 WHERE registry_id=? AND observation_version=?`,
 			next.ObservedCommit, timeToMicro(next.ObservedAt), next.ProbeStatus, next.ProbeError,
 			timeToMicro(next.NextProbeAt), timeToMicro(next.NextReconcileAt), next.ConsecutiveProbeFailures,
 			next.WorkLeaseOwner, timeToMicro(next.WorkLeaseUntil), next.DesiredCommit, next.DesiredGeneration,
 			next.ActiveRefreshJobID, next.ActiveRefreshTrigger, next.SuccessfulCommit, next.SuccessfulGeneration,
-			timeToMicro(next.LastSuccessfulIndexAt), id, timeToMicro(expectedObservedAt))
+			timeToMicro(next.LastSuccessfulIndexAt), id, int64(expectedVersion))
 		if err != nil {
 			return err
 		}
@@ -131,8 +134,8 @@ func (s *Store) AcquireRegistryLease(ctx context.Context, id store.RegistryID, o
 			return store.ErrTopology
 		}
 		now := time.Now().UTC()
-		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET work_lease_owner=?, work_lease_until=?
-			WHERE registry_id=? AND (work_lease_owner='' OR work_lease_until<=?)`, owner, timeToMicro(now.Add(duration)), id, timeToMicro(now))
+		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, work_lease_owner=?, work_lease_until=?
+			WHERE registry_id=? AND (work_lease_owner='' OR work_lease_owner=? OR work_lease_until<=?)`, owner, timeToMicro(now.Add(duration)), id, owner, timeToMicro(now))
 		if err != nil {
 			return err
 		}
@@ -154,8 +157,19 @@ func (s *Store) AcquireRegistryLease(ctx context.Context, id store.RegistryID, o
 
 func (s *Store) ReleaseRegistryLease(ctx context.Context, id store.RegistryID, owner string) error {
 	return s.withTx(ctx, func(tx *Store) error {
-		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET work_lease_owner='', work_lease_until=0
-			WHERE registry_id=? AND work_lease_owner=? AND work_lease_until>?`, id, owner, timeToMicro(time.Now().UTC()))
+		current, err := tx.GetRegistryObservation(ctx, id)
+		if err != nil {
+			return err
+		}
+		if current.WorkLeaseOwner != owner {
+			return store.ErrConflict
+		}
+		now := time.Now().UTC()
+		if current.WorkLeaseUntil.IsZero() || !current.WorkLeaseUntil.After(now) {
+			return store.ErrLeaseExpired
+		}
+		result, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, work_lease_owner='', work_lease_until=0
+			WHERE registry_id=? AND work_lease_owner=? AND work_lease_until>?`, id, owner, timeToMicro(now))
 		if err != nil {
 			return err
 		}
@@ -178,7 +192,7 @@ func (s *Store) SetDesiredRefresh(ctx context.Context, id store.RegistryID, desi
 			return err
 		}
 		if current.ActiveRefreshJobID == "" || current.DesiredCommit != desired.Commit || current.DesiredGeneration != desired.Generation {
-			_, err = tx.q.ExecContext(ctx, `UPDATE registry_observations SET desired_commit=?, desired_generation=?, active_refresh_job_id=?, active_refresh_trigger=? WHERE registry_id=?`, desired.Commit, desired.Generation, desired.JobID, desired.Trigger, id)
+			_, err = tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, desired_commit=?, desired_generation=?, active_refresh_job_id=?, active_refresh_trigger=? WHERE registry_id=?`, desired.Commit, desired.Generation, desired.JobID, desired.Trigger, id)
 			if err != nil {
 				return err
 			}
@@ -192,7 +206,7 @@ func (s *Store) SetDesiredRefresh(ctx context.Context, id store.RegistryID, desi
 func (s *Store) ClearActiveRefresh(ctx context.Context, id store.RegistryID, jobID store.JobID) (store.RegistryObservation, error) {
 	var out store.RegistryObservation
 	err := s.withTx(ctx, func(tx *Store) error {
-		_, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET active_refresh_job_id='', active_refresh_trigger='' WHERE registry_id=? AND active_refresh_job_id=?`, id, jobID)
+		_, err := tx.q.ExecContext(ctx, `UPDATE registry_observations SET observation_version=observation_version+1, active_refresh_job_id='', active_refresh_trigger='' WHERE registry_id=? AND active_refresh_job_id=?`, id, jobID)
 		if err != nil {
 			return err
 		}

@@ -164,7 +164,7 @@ type MetadataStore interface {
 	GetRegistryObservation(ctx context.Context, registry RegistryID) (RegistryObservation, error)
 	PutRegistryObservation(ctx context.Context, observation RegistryObservation) error
 	ListDueRegistryObservations(ctx context.Context, now time.Time, limit int) ([]RegistryObservation, error)
-	CompareAndSwapRegistryObservation(ctx context.Context, registry RegistryID, expectedObservedAt time.Time, next RegistryObservation) error
+	CompareAndSwapRegistryObservation(ctx context.Context, registry RegistryID, expectedVersion uint64, next RegistryObservation) error
 	AcquireRegistryLease(ctx context.Context, registry RegistryID, owner string, leaseDuration time.Duration) (RegistryObservation, error)
 	ReleaseRegistryLease(ctx context.Context, registry RegistryID, owner string) error
 	SetDesiredRefresh(ctx context.Context, registry RegistryID, desired DesiredRefresh) (RegistryObservation, error)

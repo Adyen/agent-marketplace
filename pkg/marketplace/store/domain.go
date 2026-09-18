@@ -217,7 +217,10 @@ const (
 // health and desired/successful indexing identities are intentionally separate
 // from the public Registry record and immutable occurrences.
 type RegistryObservation struct {
-	RegistryID               RegistryID          `json:"registry_id"`
+	RegistryID RegistryID `json:"registry_id"`
+
+	// ObservationVersion is a durable fencing token for every observation-row mutation.
+	ObservationVersion       uint64              `json:"observation_version"`
 	ObservedCommit           string              `json:"observed_commit,omitempty"`
 	ObservedAt               time.Time           `json:"observed_at,omitempty"`
 	ProbeStatus              RegistryProbeStatus `json:"probe_status,omitempty"`
@@ -579,6 +582,10 @@ const (
 	// JobStatusFailed means the job failed and may be retried until
 	// max_attempts is reached.
 	JobStatusFailed JobStatus = "failed"
+
+	// JobStatusTerminalFailed means the job exhausted its retry budget and will
+	// not be leased again.
+	JobStatusTerminalFailed JobStatus = "terminal_failed"
 )
 
 // Job is a durable, leased unit of work.

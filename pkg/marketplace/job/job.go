@@ -10,8 +10,9 @@ type Status = store.JobStatus
 
 // Status constants.
 const (
-	Pending   = store.JobStatusPending
-	Leased    = store.JobStatusLeased
-	Completed = store.JobStatusCompleted
-	Failed    = store.JobStatusFailed
+	Pending        = store.JobStatusPending
+	Leased         = store.JobStatusLeased
+	Completed      = store.JobStatusCompleted
+	Failed         = store.JobStatusFailed
+	TerminalFailed = store.JobStatusTerminalFailed
 )

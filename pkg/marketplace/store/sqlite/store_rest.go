@@ -456,6 +456,9 @@ func (s *Store) getJob(ctx context.Context, id store.JobID) (store.Job, error) {
 	j.CreatedAt = microToTime(created)
 	j.UpdatedAt = microToTime(updated)
 	j.Payload = append([]byte(nil), j.Payload...)
+	if j.Payload == nil {
+		j.Payload = []byte{}
+	}
 	return j, nil
 }
 
@@ -479,6 +482,9 @@ func (s *Store) enqueueJob(ctx context.Context, job store.Job) error {
 	}
 	if job.UpdatedAt.IsZero() {
 		job.UpdatedAt = now
+	}
+	if job.Payload == nil {
+		job.Payload = []byte{}
 	}
 
 	if job.IdempotencyKey != "" {
@@ -510,6 +516,9 @@ func (s *Store) enqueueJob(ctx context.Context, job store.Job) error {
 }
 
 func (s *Store) LeaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (store.Job, error) {
+	if err := s.markExpiredTerminalJobs(ctx, kind); err != nil {
+		return store.Job{}, err
+	}
 	var leased store.Job
 	err := s.withTx(ctx, func(tx *Store) error {
 		var err error
@@ -517,6 +526,22 @@ func (s *Store) LeaseJob(ctx context.Context, kind, workerID string, leaseDurati
 		return err
 	})
 	return leased, err
+}
+
+func (s *Store) markExpiredTerminalJobs(ctx context.Context, kind string) error {
+	now := timeToMicro(time.Now().UTC())
+	_, err := s.q.ExecContext(ctx, `UPDATE jobs SET status=?, worker_id=NULL, lease_until=NULL, updated_at=?
+		WHERE kind=? AND status=? AND attempt >= max_attempts AND lease_until IS NOT NULL AND lease_until <= ?`,
+		store.JobStatusTerminalFailed, now, kind, store.JobStatusLeased, now)
+	return err
+}
+
+func (s *Store) markExpiredTerminalJob(ctx context.Context, id store.JobID) error {
+	now := timeToMicro(time.Now().UTC())
+	_, err := s.q.ExecContext(ctx, `UPDATE jobs SET status=?, worker_id=NULL, lease_until=NULL, updated_at=?
+		WHERE id=? AND status=? AND attempt >= max_attempts AND lease_until IS NOT NULL AND lease_until <= ?`,
+		store.JobStatusTerminalFailed, now, id, store.JobStatusLeased, now)
+	return err
 }
 
 func (s *Store) leaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (store.Job, error) {
@@ -551,6 +576,9 @@ func (s *Store) leaseJob(ctx context.Context, kind, workerID string, leaseDurati
 }
 
 func (s *Store) LeaseJobByID(ctx context.Context, id store.JobID, workerID string, leaseDuration time.Duration) (store.Job, error) {
+	if err := s.markExpiredTerminalJob(ctx, id); err != nil {
+		return store.Job{}, err
+	}
 	var leased store.Job
 	err := s.withTx(ctx, func(tx *Store) error {
 		var err error
@@ -683,9 +711,11 @@ func (s *Store) failJob(ctx context.Context, id store.JobID, workerID string, ba
 
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
-		 SET status=?, worker_id=NULL, lease_until=?, backoff=?, updated_at=?
+		 SET status=CASE WHEN attempt >= max_attempts THEN ? ELSE ? END,
+		     worker_id=NULL, lease_until=CASE WHEN attempt >= max_attempts THEN NULL ELSE ? END,
+		     backoff=?, updated_at=?
 		 WHERE id=? AND worker_id=? AND status=? AND lease_until > ?`,
-		store.JobStatusFailed, retryAt, int64(backoff), nowMicro,
+		store.JobStatusTerminalFailed, store.JobStatusFailed, retryAt, int64(backoff), nowMicro,
 		id, workerID, store.JobStatusLeased, nowMicro,
 	)
 	if err != nil {

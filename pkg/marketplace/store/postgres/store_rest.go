@@ -467,6 +467,9 @@ func (s *Store) enqueueJob(ctx context.Context, job store.Job) error {
 }
 
 func (s *Store) LeaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (store.Job, error) {
+	if err := s.markExpiredTerminalJobs(ctx, kind); err != nil {
+		return store.Job{}, err
+	}
 	var leased store.Job
 	err := s.withTx(ctx, func(tx *Store) error {
 		var err error
@@ -474,6 +477,22 @@ func (s *Store) LeaseJob(ctx context.Context, kind, workerID string, leaseDurati
 		return err
 	})
 	return leased, err
+}
+
+func (s *Store) markExpiredTerminalJobs(ctx context.Context, kind string) error {
+	now := timeToMicro(time.Now().UTC())
+	_, err := s.q.ExecContext(ctx, `UPDATE jobs SET status=$1, worker_id=NULL, lease_until=NULL, updated_at=$2
+		WHERE kind=$3 AND status=$4 AND attempt >= max_attempts AND lease_until IS NOT NULL AND lease_until <= $5`,
+		store.JobStatusTerminalFailed, now, kind, store.JobStatusLeased, now)
+	return err
+}
+
+func (s *Store) markExpiredTerminalJob(ctx context.Context, id store.JobID) error {
+	now := timeToMicro(time.Now().UTC())
+	_, err := s.q.ExecContext(ctx, `UPDATE jobs SET status=$1, worker_id=NULL, lease_until=NULL, updated_at=$2
+		WHERE id=$3 AND status=$4 AND attempt >= max_attempts AND lease_until IS NOT NULL AND lease_until <= $5`,
+		store.JobStatusTerminalFailed, now, id, store.JobStatusLeased, now)
+	return err
 }
 
 func (s *Store) leaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (store.Job, error) {
@@ -508,6 +527,9 @@ func (s *Store) leaseJob(ctx context.Context, kind, workerID string, leaseDurati
 }
 
 func (s *Store) LeaseJobByID(ctx context.Context, id store.JobID, workerID string, leaseDuration time.Duration) (store.Job, error) {
+	if err := s.markExpiredTerminalJob(ctx, id); err != nil {
+		return store.Job{}, err
+	}
 	var leased store.Job
 	err := s.withTx(ctx, func(tx *Store) error {
 		var err error
@@ -640,9 +662,11 @@ func (s *Store) failJob(ctx context.Context, id store.JobID, workerID string, ba
 
 	res, err := s.q.ExecContext(ctx,
 		`UPDATE jobs
-		 SET status=$1, worker_id=NULL, lease_until=$2, backoff=$3, updated_at=$4
-		 WHERE id=$5 AND worker_id=$6 AND status=$7 AND lease_until > $8`,
-		store.JobStatusFailed, retryAt, int64(backoff), nowMicro,
+		 SET status=CASE WHEN attempt >= max_attempts THEN $1 ELSE $2 END,
+		     worker_id=NULL, lease_until=CASE WHEN attempt >= max_attempts THEN NULL ELSE $3 END,
+		     backoff=$4, updated_at=$5
+		 WHERE id=$6 AND worker_id=$7 AND status=$8 AND lease_until > $9`,
+		store.JobStatusTerminalFailed, store.JobStatusFailed, retryAt, int64(backoff), nowMicro,
 		id, workerID, store.JobStatusLeased, nowMicro,
 	)
 	if err != nil {

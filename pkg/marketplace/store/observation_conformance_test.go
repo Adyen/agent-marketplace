@@ -43,6 +43,10 @@ func TestObservationExpiredLeaseAndCompareAndSwap(t *testing.T) {
 	if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: "lease", NextProbeAt: time.Unix(1, 0).UTC()}); err != nil {
 		t.Fatal(err)
 	}
+	before, err := meta.GetRegistryObservation(ctx, "lease")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := meta.AcquireRegistryLease(ctx, "lease", "worker-a", time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
@@ -50,14 +54,122 @@ func TestObservationExpiredLeaseAndCompareAndSwap(t *testing.T) {
 	if _, err := meta.AcquireRegistryLease(ctx, "lease", "worker-b", time.Minute); err != nil {
 		t.Fatalf("expired lease reclaim: %v", err)
 	}
+	stale := before
+	stale.WorkLeaseOwner = ""
+	stale.WorkLeaseUntil = time.Time{}
+	if err := meta.CompareAndSwapRegistryObservation(ctx, "lease", before.ObservationVersion, stale); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale observation CAS error = %v, want conflict", err)
+	}
 	current, err := meta.GetRegistryObservation(ctx, "lease")
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale := current
-	stale.ObservedAt = current.ObservedAt.Add(-time.Second)
-	if err := meta.CompareAndSwapRegistryObservation(ctx, "lease", current.ObservedAt.Add(-time.Second), stale); !errors.Is(err, store.ErrConflict) {
-		t.Fatalf("stale observation CAS error = %v, want conflict", err)
+	if current.WorkLeaseOwner != "worker-b" {
+		t.Fatalf("stale CAS erased active lease owner %q", current.WorkLeaseOwner)
+	}
+}
+
+func TestObservationFencingRejectsInterleavedDesiredStateWriter(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: "fenced"}); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := meta.GetRegistryObservation(ctx, "fenced")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := meta.AcquireRegistryLease(ctx, "fenced", "worker", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := meta.SetDesiredRefresh(ctx, "fenced", store.DesiredRefresh{Commit: "commit", Generation: "generation", JobID: "job", Trigger: "source-change"}); err != nil {
+		t.Fatal(err)
+	}
+	stale.ObservedCommit = "stale-commit"
+	if err := meta.CompareAndSwapRegistryObservation(ctx, "fenced", stale.ObservationVersion, stale); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("interleaved stale CAS error = %v, want conflict", err)
+	}
+	current, err := meta.GetRegistryObservation(ctx, "fenced")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.WorkLeaseOwner != "worker" || current.DesiredCommit != "commit" {
+		t.Fatalf("stale writer changed current observation: %#v", current)
+	}
+}
+
+func TestRegistryLeaseRenewalAndReleaseErrors(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	if err := meta.PutRegistryObservation(ctx, store.RegistryObservation{RegistryID: "release"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := meta.AcquireRegistryLease(ctx, "release", "owner-a", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := meta.AcquireRegistryLease(ctx, "release", "owner-a", 2*time.Minute)
+	if err != nil {
+		t.Fatalf("same-owner renewal: %v", err)
+	}
+	if renewed.WorkLeaseUntil.Before(first.WorkLeaseUntil) || renewed.ObservationVersion <= first.ObservationVersion {
+		t.Fatalf("renewal did not advance lease state: first=%#v renewed=%#v", first, renewed)
+	}
+	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-b"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("wrong-owner release error = %v, want conflict", err)
+	}
+	if err := meta.ReleaseRegistryLease(ctx, "missing", "owner-a"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing release error = %v, want not found", err)
+	}
+	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a"); err != nil {
+		t.Fatalf("owner release: %v", err)
+	}
+	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("released lease error = %v, want conflict", err)
+	}
+	if _, err := meta.AcquireRegistryLease(ctx, "release", "owner-a", time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := meta.ReleaseRegistryLease(ctx, "release", "owner-a"); !errors.Is(err, store.ErrLeaseExpired) {
+		t.Fatalf("expired lease error = %v, want lease expired", err)
+	}
+}
+
+func TestExpiredMaxAttemptJobBecomesTerminal(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	if err := meta.EnqueueJob(ctx, store.Job{ID: "terminal-job", Kind: "refresh", MaxAttempts: 1, Payload: []byte("payload")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := meta.LeaseJob(ctx, "refresh", "worker-a", time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if _, err := meta.LeaseJob(ctx, "refresh", "worker-b", time.Minute); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("releasing expired max-attempt job returned %v, want not found", err)
+	}
+	job, err := meta.GetJob(ctx, "terminal-job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != store.JobStatusTerminalFailed || job.Attempt != 1 || job.WorkerID != "" || !job.LeaseUntil.IsZero() {
+		t.Fatalf("terminal job state = %#v", job)
+	}
+}
+
+func TestEnqueueNilPayloadIsEmptyAcrossBackends(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	if err := meta.EnqueueJob(ctx, store.Job{ID: "empty-payload", Kind: "refresh", Payload: nil}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := meta.GetJob(ctx, "empty-payload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Payload == nil || len(job.Payload) != 0 {
+		t.Fatalf("nil payload round-tripped as %#v, want non-nil empty bytes", job.Payload)
 	}
 }
 
