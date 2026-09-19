@@ -10,13 +10,11 @@ defineProps<{
 </script>
 
 <template>
-  <div class="border-b border-default bg-[var(--am-color-bg-surface)]">
-    <nav aria-label="Breadcrumb" class="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
-      <template v-for="(breadcrumb, index) in breadcrumbs" :key="`${breadcrumb.label}-${breadcrumb.to ?? 'current'}`">
-        <NuxtLink v-if="breadcrumb.to" :to="breadcrumb.to" class="truncate text-sm text-muted underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">{{ breadcrumb.label }}</NuxtLink>
-        <span v-else class="truncate text-sm text-muted" aria-current="page">{{ breadcrumb.label }}</span>
-        <span v-if="index < breadcrumbs.length - 1" class="text-muted" aria-hidden="true">/</span>
-      </template>
-    </nav>
-  </div>
+  <nav aria-label="Breadcrumb" class="mb-7 flex min-w-0 items-center gap-2 overflow-hidden">
+    <template v-for="(breadcrumb, index) in breadcrumbs" :key="`${breadcrumb.label}-${breadcrumb.to ?? 'current'}`">
+      <NuxtLink v-if="breadcrumb.to" :to="breadcrumb.to" class="truncate text-sm text-muted underline-offset-4 hover:text-highlighted hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">{{ breadcrumb.label }}</NuxtLink>
+      <span v-else class="truncate text-sm text-muted" aria-current="page">{{ breadcrumb.label }}</span>
+      <span v-if="index < breadcrumbs.length - 1" class="text-muted" aria-hidden="true">/</span>
+    </template>
+  </nav>
 </template>

@@ -18,6 +18,7 @@ const kind = kindValue
 
 const { data: metadata } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
 const { data: registryRecord } = await useAsyncData(`marketplace-registry:${registry}`, () => api.getRegistry(registry))
+const { data: operator } = await useAsyncData('marketplace-instance', () => api.getInstance())
 const { data: resource, pending, error, refresh } = await useAsyncData(
   resourceAsyncDataKey(registry, kind, name),
   () => api.getResource(registry, kind, name),
@@ -25,6 +26,10 @@ const { data: resource, pending, error, refresh } = await useAsyncData(
 const { data: revisions, error: revisionsError } = await useAsyncData(
   `${resourceAsyncDataKey(registry, kind, name)}:revisions`,
   () => api.listResourceRevisions(registry, kind, name),
+)
+const { data: relatedResources } = await useAsyncData(
+  `${resourceAsyncDataKey(registry, kind, name)}:related`,
+  () => kind === 'collection' ? api.search({ q: '', kind: '', registry: [registry], offset: 0, limit: 100 }) : Promise.resolve(null),
 )
 const revision = computed(() => {
   const digest = resource.value?.content_digest ?? ''
@@ -68,9 +73,8 @@ useHead(() => ({
 
 <template>
   <div class="min-h-screen bg-[var(--am-color-bg-canvas)] text-default">
-    <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Resource detail' }]" />
-
-    <main id="main-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
+    <main id="main-content" class="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8" tabindex="-1">
+      <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Marketplace', to: '/' }, { label: `${registry}/${name}` }]" />
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-[var(--am-color-bg-surface)] p-8">
         <h1 class="text-2xl font-semibold text-highlighted">Loading resource</h1>
         <p class="mt-3 text-sm text-toned">Fetching the latest verified revision and its metadata.</p>
@@ -80,7 +84,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-toned">This resource could not be loaded. The Marketplace may be unavailable or the resource may no longer be listed.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :registry="registry" :acquisition="registryRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :browser-base="browserBase" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :registry="registry" :acquisition="registryRecord?.acquisition" :registry-details="registryRecord" :operator="operator" :kind="kind" :name="name" :canonical-url="canonicalUrl" :browser-base="browserBase" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" :current-revision-digest="resource.content_digest" :related-resources="relatedResources?.items || []" :initial-tab="route.query.tab === 'revisions' ? 'revisions' : 'content'" />
     </main>
   </div>
 </template>

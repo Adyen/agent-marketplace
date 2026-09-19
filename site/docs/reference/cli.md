@@ -342,7 +342,9 @@ Converted claude -> factory into plugin-factory
 Written 4, Skipped 0, Removed 0, Diagnostics 0
 ```
 
-A partial conversion writes complete resources, reports skipped resources and diagnostics, suppresses unsafe pruning when applicable, and returns exit status 1. Codex conversion refuses a destination that already contains shared `.codex/hooks.json` or `.codex/config.toml` configuration.
+A partial conversion writes complete resources, reports skipped resources and diagnostics, suppresses unsafe pruning when applicable, and returns exit status 1. Source and output paths are canonicalized, including existing symlinks. Conversion refuses equal, nested, or ancestor relationships before reading or mutating either tree, including with `--sync`.
+
+Codex conversion refuses a destination that already contains shared `.codex/hooks.json` or `.codex/config.toml` configuration. Devin conversion also refuses an existing shared destination (`mcp_config.json`, `hooks.v1.json`, or the user `config.json` hook aggregate) rather than adopting or merging it. Both targets stage all artifacts, validate staged aggregate syntax, publish with guarded hard links, and roll back only artifacts published by that transaction when publication fails. One-shot conversion does not create durable aggregate-ownership state and never adopts a destination; sync also does not adopt pre-existing entries. Only explicit `doctor --repair` may adopt an entry, and only when its bytes exactly match the desired generated value. Missing or corrupt ownership state remains fail-closed.
 
 ## `doctor`
 

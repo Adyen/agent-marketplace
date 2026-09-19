@@ -191,23 +191,23 @@ test.describe('Marketplace browser discovery', () => {
     }
   })
 
-  test('applies distinct Marketplace roles without changing the Landing palette', async ({ page }) => {
+  test('applies the Marketplace palette without changing the Landing palette', async ({ page }) => {
     const themes = {
       light: {
         marketplace: {
-          canvas: 'rgb(243, 246, 244)',
+          canvas: 'rgb(255, 255, 255)',
           surface: 'rgb(255, 255, 255)',
-          subtle: 'rgb(237, 242, 239)',
+          subtle: 'rgb(245, 246, 245)',
           raised: 'rgb(255, 255, 255)',
           chrome: 'rgb(255, 255, 255)',
           control: 'rgb(255, 255, 255)',
-          hover: 'rgb(232, 238, 234)',
-          code: 'rgb(237, 242, 239)',
+          hover: 'rgb(244, 245, 244)',
+          code: 'rgb(245, 246, 245)',
           primaryText: 'rgb(27, 38, 32)',
           secondaryText: 'rgb(83, 97, 90)',
           mutedText: 'rgb(95, 110, 101)',
-          border: 'rgb(214, 223, 217)',
-          controlBorder: 'rgb(132, 149, 139)',
+          border: 'rgb(222, 223, 222)',
+          controlBorder: 'rgb(133, 136, 133)',
           action: 'rgb(8, 122, 61)',
           actionSoft: 'rgb(229, 243, 234)',
         },
@@ -284,7 +284,7 @@ test.describe('Marketplace browser discovery', () => {
       await page.getByRole('button', { name: 'Clear', exact: true }).click()
       const row = page.getByTestId('search-results').locator('article').first()
       const namespace = row.locator('h2 span').first()
-      const resourceName = row.locator('h2 span').last()
+      const resourceName = row.locator('h2 a span.font-semibold')
       const description = row.locator('p.text-toned')
       await expect(namespace).toHaveCSS('color', theme.marketplace.mutedText)
       await expect(resourceName).toHaveCSS('color', theme.marketplace.primaryText)
@@ -314,9 +314,8 @@ test.describe('Marketplace browser discovery', () => {
       await expect(disabledPrevious).toHaveCSS('background-color', theme.marketplace.subtle)
 
       await page.goto(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
-      const detailSurface = page.locator('main > article')
-      await expect(detailSurface).toHaveCSS('background-color', theme.marketplace.surface)
-      await expect(page.locator('main > article > div').first().locator('p.text-toned')).toHaveCSS('color', theme.marketplace.secondaryText)
+      await expect(page.getByTestId('installation-panel')).toHaveCSS('border-top-width', '0px')
+      await expect(page.locator('main > article header p.text-toned')).toHaveCSS('color', theme.marketplace.secondaryText)
 
       const inspectionSelect = page.getByLabel('Inspection file')
       await expect(inspectionSelect).toHaveCSS('background-color', theme.marketplace.control)
@@ -325,18 +324,17 @@ test.describe('Marketplace browser discovery', () => {
       await expect(inspectionSelect).toHaveCSS('outline-color', theme.marketplace.action)
 
       const markdown = page.getByTestId('safe-markdown')
-      await expect(markdown.locator('..')).toHaveCSS('background-color', theme.marketplace.raised)
       await expect(markdown.locator('code').first()).toHaveCSS('background-color', theme.marketplace.code)
       await expect(markdown.locator('code').first()).toHaveCSS('color', theme.marketplace.primaryText)
       await expect(markdown.locator('pre')).toHaveCSS('background-color', theme.marketplace.code)
       await expect(markdown.locator('pre')).toHaveCSS('border-color', theme.marketplace.border)
 
       const command = page.getByTestId('command-text')
-      await expect(command.locator('..')).toHaveCSS('background-color', theme.marketplace.code)
+      await expect(command.locator('../..')).toHaveCSS('background-color', theme.marketplace.code)
       await expect(command).toHaveCSS('color', theme.marketplace.primaryText)
+      await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toHaveCSS('background-color', theme.marketplace.action)
 
-      const availableBadge = page.locator('span[data-slot="base"]').filter({ hasText: /^Available$/ }).first()
-      await expect(availableBadge).toHaveCSS('color', theme.marketplace.action)
+      await expect(page.getByTestId('revision-summary')).toHaveCount(0)
 
       await page.goto(sharedOriginURL)
       await page.evaluate(
@@ -533,26 +531,40 @@ test.describe('Marketplace browser discovery', () => {
     await page.getByRole('link', { name: 'team-tools/secure-review', exact: true }).click()
 
     await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
-    await expect(page.getByRole('heading', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
-    await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
-    await expect(page.getByRole('link', { name: previousDigest, exact: true })).toBeVisible()
-    await expect(page.getByTestId('command-text')).toHaveText(`agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
-    await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeEnabled()
-    const copyDetail = page.getByRole('button', { name: /Copy detail URL/ })
-    await expect(copyDetail).toBeEnabled()
-    await copyDetail.click()
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toBe(`${appURL}/marketplace/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
-    await expect(page.getByRole('heading', { name: 'Security findings', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
+    await expect(page.getByTestId('revision-summary')).toHaveCount(0)
+    const pinnedCommand = `agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`
+    await expect(page.getByTestId('command-text')).toHaveText(pinnedCommand)
+    const copyCommand = page.getByRole('button', { name: /Copy pinned CLI install command/ })
+    await expect(copyCommand).toBeEnabled()
+    await copyCommand.click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(pinnedCommand)
+    const copyRevision = page.getByRole('button', { name: /Copy revision/ }).first()
+    await expect(copyRevision).toBeEnabled()
+    await copyRevision.click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(digest)
+    await expect(page.getByRole('button', { name: /Copy detail URL/ })).toHaveCount(0)
+
+    await page.getByRole('tab', { name: 'Security', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Automated scan', exact: true })).toBeVisible()
+    await page.getByText('Analyzer and assessment parameters', { exact: true }).click()
     await expect(page.getByText('e2e-analyzer-2', { exact: true })).toBeVisible()
-    await expect(page.getByText(`sha256:${'6'.repeat(64)}`, { exact: true })).toBeVisible()
+    await expect(page.getByText(`${'6'.repeat(12)}…`, { exact: true })).toBeVisible()
+    const copyAssessment = page.getByRole('button', { name: 'Copy Assessment digest', exact: true })
+    await copyAssessment.click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`sha256:${'6'.repeat(64)}`)
     await expect(page.getByText('remote-reference', { exact: true })).toBeVisible()
 
+    await page.getByRole('tab', { name: 'Revisions', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
+    const previousRevision = page.locator(`a[href="/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(previousDigest)}?tab=revisions"]`)
+    await expect(previousRevision).toBeVisible()
     const exactRevisionResponse = page.waitForResponse(response => response.url().includes(`/revisions/${encodeURIComponent(previousDigest)}`) && !response.url().includes('/inspection'))
-    await page.getByRole('link', { name: previousDigest, exact: true }).click()
+    await previousRevision.click()
     expect((await exactRevisionResponse).status()).toBe(200)
-    await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(previousDigest)}`)
+    await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(previousDigest)}?tab=revisions`)
+    await expect(page.getByRole('tab', { name: 'Revisions', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('link', { name: 'Newer revision available', exact: true })).toHaveAttribute('href', `/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
     await expect(page.getByRole('alert', { name: 'This revision is revoked' })).toContainText('superseded policy')
   })
 
@@ -564,11 +576,8 @@ test.describe('Marketplace browser discovery', () => {
     await page.goto(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
 
     await expect(page).toHaveURL(new RegExp(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}$`))
-    await expect(page.getByRole('heading', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
-    await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
-    await expect(page.getByRole('link', { name: `sha256:${'9'.repeat(64)}`, exact: true })).toHaveAttribute('href', `/r/team-tools/skill/secure-review/revisions/sha256%3A${'9'.repeat(64)}`)
-    await expect(page.getByRole('heading', { name: 'Inspection preview', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
+    await expect(page.getByLabel('Inspection file')).toHaveValue(`sha256:${'e'.repeat(64)}`)
     await expect(page.getByRole('heading', { name: 'Safe review', exact: true })).toBeVisible()
     await expect(page.locator('[data-testid="safe-markdown"] a')).toHaveAttribute('href', 'https://example.com/docs')
     await expect(page.locator('[data-testid="safe-markdown"] a')).toHaveAttribute('target', '_blank')
@@ -578,10 +587,17 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('[data-testid="safe-markdown"] img')).toHaveCount(0)
     await expect(page.locator('[data-testid="safe-markdown"] script')).toHaveCount(0)
     await expect(page.locator('[data-testid="safe-markdown"]')).not.toContainText('evil.invalid')
+
+    await page.getByRole('button', { name: 'Raw', exact: true }).click()
     await expect(page.locator('[data-testid="escaped-raw"]')).toContainText('<script>alert("xss")</script>')
     await expect(page.locator('[data-testid="escaped-raw"] mark')).toHaveAttribute('aria-label', /remote-reference \(warn\)/)
+
+    await page.getByRole('tab', { name: 'Security', exact: true }).click()
     await expect(page.getByText('Severity: warn', { exact: true })).toBeVisible()
     await expect(page.getByText('Policy: network-policy', { exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: 'Revisions', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
+    await expect(page.locator(`a[href="/r/team-tools/skill/secure-review/revisions/sha256%3A${'9'.repeat(64)}?tab=revisions"]`)).toBeVisible()
     expect(remoteRequests).toEqual([])
   })
 
@@ -612,11 +628,29 @@ test.describe('Marketplace browser discovery', () => {
     const revokedDigest = `sha256:${'b'.repeat(64)}`
     await page.goto(`/r/team-tools/command/deploy-preview/revisions/${encodeURIComponent(revokedDigest)}`)
 
-    await expect(page.getByRole('heading', { name: 'team-tools/deploy-preview', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'deploy-preview', exact: true })).toBeVisible()
     await expect(page.getByRole('alert')).toContainText('This revision is revoked')
+    await expect(page.getByTestId('revision-summary')).toHaveCount(0)
+    await page.getByRole('tab', { name: 'Technical details', exact: true }).click()
     await expect(page.getByText(revokedDigest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeDisabled()
-    await expect(page.getByRole('button', { name: /Copy detail URL/ })).toBeEnabled()
+    await expect(page.getByRole('button', { name: /Copy detail URL/ })).toHaveCount(0)
+  })
+
+  test('shows registry details in the resource tab and redirects the standalone route', async ({ page }) => {
+    await page.goto('/r/team-tools/skill/secure-review')
+
+    const breadcrumbs = page.getByRole('navigation', { name: 'Breadcrumb' })
+    await expect(breadcrumbs.getByText('team-tools/secure-review', { exact: true })).toBeVisible()
+    await expect(breadcrumbs.getByRole('link', { name: 'team-tools', exact: true })).toHaveCount(0)
+    await page.getByRole('tab', { name: 'Registry', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'team-tools', exact: true })).toBeVisible()
+    await expect(page.getByText('Platform Team', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Technical details', exact: true })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'View resources', exact: true })).toHaveAttribute('href', '/?registry=team-tools')
+
+    await page.goto('/registries/team-tools')
+    await expect(page).toHaveURL(`${appURL}/?registry=team-tools`)
   })
 
   test('shows the registry history empty state', async ({ page }) => {
@@ -624,7 +658,7 @@ test.describe('Marketplace browser discovery', () => {
 
     await expect(page.getByRole('heading', { name: 'team-tools', exact: true })).toBeVisible()
     await expect(page.getByText('No registry occurrences have been recorded.', { exact: true })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Registry overview', exact: true })).toHaveAttribute('href', '/registries/team-tools')
+    await expect(page.getByRole('link', { name: 'Back to registry', exact: true })).toHaveAttribute('href', '/?registry=team-tools')
   })
 
   test('supports skip-link and form keyboard navigation', async ({ page }) => {

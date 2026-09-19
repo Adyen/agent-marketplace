@@ -6,81 +6,74 @@ import type { Marketplace, Registry } from '~/types/marketplace'
 const props = defineProps<{
   registry: Registry
   operator?: Marketplace
+  resourceCount?: number
 }>()
 const operatorCanonicalUrl = computed(() => safeCanonicalUrl(props.operator?.canonical_url))
+const publisherUrl = computed(() => safeCanonicalUrl(props.registry.publisher?.url))
+const historyPath = computed(() => `/registries/${encodeURIComponent(props.registry.slug)}/history`)
+const marketplaceRoute = computed(() => ({ path: '/', query: { registry: props.registry.slug } }))
 </script>
 
 <template>
-  <article class="rounded-2xl border border-default bg-[var(--am-color-bg-surface)] p-6 shadow-sm sm:p-8">
-    <div class="flex flex-wrap items-start justify-between gap-4 border-b border-default pb-6">
-      <div class="min-w-0">
-        <p class="text-sm font-medium text-primary">Registry overview</p>
-        <h1 class="mt-1 break-words text-3xl font-semibold tracking-tight text-highlighted">{{ registry.slug }}</h1>
-        <p class="mt-2 break-all font-mono text-xs text-muted">ID: {{ registry.id }}</p>
-      </div>
-      <UBadge :color="registry.listed ? 'success' : 'neutral'" variant="subtle">{{ registry.listed ? 'Listed' : 'Unlisted' }}</UBadge>
-    </div>
+  <article>
+    <header>
+      <p class="text-sm font-medium text-muted">Registry</p>
+      <h1 class="mt-1 break-words text-3xl font-semibold tracking-tight text-highlighted">{{ registry.slug }}</h1>
+      <p class="mt-2 max-w-3xl text-base leading-7 text-toned">Resources published through this registry.</p>
+      <UButton :to="marketplaceRoute" color="primary" class="mt-4">{{ resourceCount === undefined ? 'View resources' : `View ${resourceCount} resource${resourceCount === 1 ? '' : 's'}` }}</UButton>
+    </header>
 
-    <section class="border-b border-default py-6" aria-labelledby="registry-trust-heading">
-      <h2 id="registry-trust-heading" class="text-lg font-semibold text-highlighted">Publisher and operator</h2>
-      <p class="mt-2 text-sm leading-6 text-toned">The publisher owns the registry repository. The Marketplace operator approves this registry for discovery and distribution; approval is not a safety certification or endorsement.</p>
-      <dl class="mt-4 grid gap-4 sm:grid-cols-2">
-        <div class="rounded-xl border border-default bg-[var(--am-color-bg-subtle)] p-4">
-          <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Registry publisher</dt>
-          <dd class="mt-2 break-words text-sm text-highlighted">{{ registry.publisher?.name || 'Not provided' }}</dd>
-          <dd v-if="registry.publisher?.url" class="mt-1 break-all font-mono text-xs text-muted">{{ registry.publisher.url }}</dd>
+    <section class="mt-8 border-t border-default pt-6" aria-labelledby="registry-about-heading">
+      <h2 id="registry-about-heading" class="text-xl font-semibold text-highlighted">About this registry</h2>
+      <dl class="mt-5 grid gap-x-8 gap-y-5 sm:grid-cols-2">
+        <div>
+          <dt class="text-sm text-muted">Publisher</dt>
+          <dd class="mt-1 text-sm text-highlighted">
+            <a v-if="publisherUrl" :href="publisherUrl" class="font-medium text-primary underline-offset-4 hover:underline">{{ registry.publisher?.name || publisherUrl }}</a>
+            <span v-else class="font-medium">{{ registry.publisher?.name || 'Not provided' }}</span>
+          </dd>
         </div>
-        <div class="rounded-xl border border-default bg-[var(--am-color-bg-subtle)] p-4">
-          <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Marketplace operator</dt>
-          <dd class="mt-2 break-words text-sm text-highlighted">{{ operator?.name || 'Marketplace instance' }}</dd>
-          <dd class="mt-1 break-all font-mono text-xs text-muted">{{ operator?.id || 'Not provided' }}</dd>
-          <dd v-if="operatorCanonicalUrl" class="mt-1 break-all font-mono text-xs text-muted">{{ operatorCanonicalUrl }}</dd>
+        <div>
+          <dt class="text-sm text-muted">Marketplace status</dt>
+          <dd class="mt-1 text-sm text-highlighted">{{ registry.listed ? 'Listed' : 'Unlisted' }}</dd>
+        </div>
+        <div>
+          <dt class="text-sm text-muted">License</dt>
+          <dd class="mt-1 text-sm text-highlighted">{{ registry.license || 'Not provided' }}</dd>
         </div>
       </dl>
     </section>
 
-    <section class="border-b border-default py-6" aria-labelledby="registry-details-heading">
-      <h2 id="registry-details-heading" class="text-lg font-semibold text-highlighted">Acquisition and identity</h2>
-      <dl class="mt-4 grid gap-x-6 gap-y-5 sm:grid-cols-2">
+    <section class="mt-8 border-t border-default pt-6" aria-labelledby="registry-technical-heading">
+      <h2 id="registry-technical-heading" class="text-xl font-semibold text-highlighted">Technical details</h2>
+      <dl class="mt-5 grid gap-x-8 gap-y-5 sm:grid-cols-2">
         <div>
-          <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Acquisition</dt>
+          <dt class="text-sm text-muted">Acquisition</dt>
           <dd class="mt-1 text-sm text-highlighted">{{ registry.acquisition }}</dd>
         </div>
         <div>
-          <dt class="text-xs font-semibold uppercase tracking-wide text-muted">License</dt>
-          <dd class="mt-1 break-words text-sm text-highlighted">{{ registry.license || 'Not provided' }}</dd>
-        </div>
-        <div class="sm:col-span-2">
-          <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Configured ref</dt>
+          <dt class="text-sm text-muted">Configured ref</dt>
           <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ registry.ref }}</dd>
         </div>
-        <div class="sm:col-span-2">
-          <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Aliases</dt>
-          <dd v-if="registry.aliases?.length" class="mt-1 break-words text-sm text-highlighted">{{ registry.aliases.join(', ') }}</dd>
-          <dd v-else class="mt-1 text-sm text-muted">No aliases recorded.</dd>
+        <div>
+          <dt class="text-sm text-muted">Marketplace operator</dt>
+          <dd class="mt-1 text-sm text-highlighted">{{ operator?.name || 'Marketplace instance' }}</dd>
+          <dd v-if="operatorCanonicalUrl" class="mt-1 break-all text-xs text-muted">{{ operatorCanonicalUrl }}</dd>
+        </div>
+        <div>
+          <dt class="text-sm text-muted">Registry ID</dt>
+          <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ registry.id }}</dd>
+        </div>
+        <div v-if="registry.roots.length" class="sm:col-span-2">
+          <dt class="text-sm text-muted">Roots</dt>
+          <dd class="mt-1 text-sm text-highlighted">{{ registry.roots.map(root => root.path).join(', ') }}</dd>
+        </div>
+        <div v-if="registry.origins.length" class="sm:col-span-2">
+          <dt class="text-sm text-muted">Origins</dt>
+          <dd class="mt-1 break-all text-sm text-highlighted">{{ registry.origins.join(', ') }}</dd>
         </div>
       </dl>
-    </section>
-
-    <section class="border-b border-default py-6" aria-labelledby="registry-roots-heading">
-      <h2 id="registry-roots-heading" class="text-lg font-semibold text-highlighted">Registry roots</h2>
-      <ul v-if="registry.roots.length" class="mt-4 divide-y divide-default rounded-xl border border-default">
-        <li v-for="(root, index) in registry.roots" :key="`${root.path}-${index}`" class="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(8rem,0.35fr)_1fr] sm:gap-4">
-          <span class="text-sm font-medium text-muted">Path</span>
-          <span class="break-all font-mono text-sm text-highlighted">{{ root.path }}</span>
-          <span v-if="root.source_harness" class="text-sm font-medium text-muted">Source harness</span>
-          <span v-if="root.source_harness" class="break-words text-sm text-highlighted">{{ root.source_harness }}</span>
-        </li>
-      </ul>
-      <p v-else class="mt-3 text-sm text-muted">No registry roots were provided.</p>
-    </section>
-
-    <section class="pt-6" aria-labelledby="registry-origins-heading">
-      <h2 id="registry-origins-heading" class="text-lg font-semibold text-highlighted">Current and historical origins</h2>
-      <ul v-if="registry.origins.length" class="mt-4 space-y-2">
-        <li v-for="(origin, index) in registry.origins" :key="`${origin}-${index}`" class="break-all rounded-xl border border-default bg-[var(--am-color-bg-subtle)] px-4 py-3 font-mono text-sm text-highlighted">{{ origin }}</li>
-      </ul>
-      <p v-else class="mt-3 text-sm text-muted">No origins were provided.</p>
+      <NuxtLink :to="historyPath" class="mt-5 inline-block text-sm font-medium text-primary underline-offset-4 hover:underline">View registry history</NuxtLink>
     </section>
   </article>
 </template>

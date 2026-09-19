@@ -47,7 +47,7 @@ describe('ResourceRow', () => {
     expect(wrapper.text()).not.toContain('Copy URL')
   })
 
-  it('shows the visual fingerprint without printing digest infrastructure', () => {
+  it('shows the visual fingerprint and uses one combined resource route', () => {
     const contentDigest = 'sha256:0e90224a1b2c' + '3'.repeat(52)
     const wrapper = mount(ResourceRow, {
       props: {
@@ -58,6 +58,8 @@ describe('ResourceRow', () => {
     })
 
     expect(wrapper.text()).not.toContain(contentDigest)
+    expect(wrapper.find('a[href="/registries/registry-id"]').exists()).toBe(false)
+    expect(wrapper.get('a[href^="/r/registry-id/skill/review/revisions/"]').text()).toBe('registry-id/review')
   })
 
   const digest = 'sha256:' + 'c'.repeat(64)
