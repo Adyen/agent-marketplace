@@ -1188,17 +1188,15 @@ harnesses:
 registries:
   - url: `+origin+`
     ref: main
+    default: true
 `)
 	withWorkingDir(t, repoRoot)
 
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync failed: %v\n%s", err, out)
 	}
-	factoryPresent := map[string]bool{}
 	for _, name := range []string{"vm-lifecycle", "k8s-onboarding"} {
-		if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", name, "SKILL.md")); err == nil {
-			factoryPresent[name] = true
-		}
+		assertFactorySkillExists(t, repoRoot, name)
 	}
 
 	// Tighten the allowlist so the previously-allowed registry is now blocked.
@@ -1229,10 +1227,6 @@ allowed_registries: []
 		t.Fatalf("expected vm-lifecycle in skills exclude, got %v", entry.Skills.Exclude)
 	}
 
-	if factoryPresent["vm-lifecycle"] {
-		assertFactorySkillAbsent(t, repoRoot, "vm-lifecycle")
-	}
-	if factoryPresent["k8s-onboarding"] {
-		assertFactorySkillExists(t, repoRoot, "k8s-onboarding")
-	}
+	assertFactorySkillAbsent(t, repoRoot, "vm-lifecycle")
+	assertFactorySkillExists(t, repoRoot, "k8s-onboarding")
 }

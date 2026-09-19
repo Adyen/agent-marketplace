@@ -180,6 +180,24 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:       "security/blocked_skill_link_cleanup",
+		Desc:       "Given locked skill symlinks and an edited installed sibling, When a blocked registry skill is removed, Then only its link is unlinked without rewriting siblings",
+		Registries: []RegistryDef{{Name: "blocked-skill-links", Skills: []Skill{{Name: "remove", Description: "Remove original"}, {Name: "keep", Description: "Keep original"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:blocked-skill-links}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/remove/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"}},
+			{Action: ActionWriteFile, Path: "/workspace/.factory/skills/keep/SKILL.md", Body: "KEEP EDITED BY USER\n"},
+			{Action: ActionWriteFile, Path: "/workspace/.factory/skills/manual/SKILL.md", Body: "HANDWRITTEN\n"},
+			{Action: ActionWriteFile, Path: "/workspace/.gitignore", Body: "handwritten-ignore\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nallowed_registries: []\n"},
+			{Args: []string{"remove", "remove", "--kind", "skill", "--from", "{{REG:blocked-skill-links}}", "--ref", "main"}, MustPass: true,
+				FilesAbsent:    []string{"/workspace/.factory/skills/remove"},
+				FileContains:   map[string]string{"/workspace/.factory/skills/keep/SKILL.md": "KEEP EDITED BY USER", "/workspace/.factory/skills/manual/SKILL.md": "HANDWRITTEN"},
+				PathsUnchanged: []string{"/workspace/.factory/skills/keep/SKILL.md", "/workspace/.factory/skills/manual", "/workspace/.agents/lock.yaml", "/workspace/.gitignore"}},
+		},
+	},
+	{
 		Name: "security/blocked_owned_mcp_cleanup",
 		Desc: "Given an exact locked Devin MCP registry blocked after sync, When one named owned MCP is removed, Then edited and handwritten siblings remain unchanged",
 		Registries: []RegistryDef{

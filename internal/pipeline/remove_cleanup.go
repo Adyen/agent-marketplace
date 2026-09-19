@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -24,12 +25,12 @@ type ownedRemovalPreparation struct {
 	option  catalog.LoadOption
 }
 
-func prepareBlockedOwnedMCPRemoval(ctx context.Context, opts RemoveOptions, ec config.EffectiveConfig, original resolver.ResolvedArtifact, name, url, path, ref string, kind ir.ResourceKind) (*ownedRemovalPreparation, error) {
-	if opts.configStaging == nil || opts.CleanupDependencies == nil || kind != ir.KindMcpServer {
+func prepareBlockedOwnedRemoval(ctx context.Context, opts RemoveOptions, ec config.EffectiveConfig, original resolver.ResolvedArtifact, name, url, path, ref string, kind ir.ResourceKind) (*ownedRemovalPreparation, error) {
+	if opts.configStaging == nil || opts.CleanupDependencies == nil || (kind != ir.KindMcpServer && kind != ir.KindSkill) {
 		return nil, fmt.Errorf("%w: cleanup transaction is unavailable", materialize.ErrOwnedCleanupUnsupported)
 	}
 	if ec.Merged == nil {
-		return nil, errors.New("blocked MCP cleanup has no effective configuration")
+		return nil, errors.New("blocked resource cleanup has no effective configuration")
 	}
 	for _, entry := range ec.Merged.Registries {
 		if entry.IsLocal() {
@@ -55,7 +56,7 @@ func prepareBlockedOwnedMCPRemoval(ctx context.Context, opts RemoveOptions, ec c
 			if err == nil {
 				err = errors.New("exact snapshot is unavailable")
 			}
-			return nil, fmt.Errorf("blocked MCP cleanup requires exact registry input: %w", err)
+			return nil, fmt.Errorf("blocked resource cleanup requires exact registry input: %w", err)
 		}
 	}
 	result := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, CatalogMode: catalog.LoadModeInspect, Offline: true, IgnoreBlockedRegistries: true, SkipInventory: true, CatalogOption: []catalog.LoadOption{view.catalogOption}})
@@ -76,20 +77,25 @@ func prepareBlockedOwnedMCPRemoval(ctx context.Context, opts RemoveOptions, ec c
 	if err != nil || selected == nil {
 		view.release()
 		if err == nil {
-			err = errors.New("selected MCP target is unresolved")
+			err = errors.New("selected cleanup target is unresolved")
 		}
 		return nil, err
 	}
 	if !sameCleanupTarget(original, *selected) {
 		view.release()
-		return nil, fmt.Errorf("%w: blocked MCP cleanup target changed", dependencytxn.ErrGenerationConflict)
+		return nil, fmt.Errorf("%w: blocked resource cleanup target changed", dependencytxn.ErrGenerationConflict)
 	}
 	machine := opts.Scope == ScopeUser
 	if selected.Source.IsMachineScope() != machine {
 		view.release()
-		return nil, fmt.Errorf("%w: blocked MCP cleanup scope does not match selected source", materialize.ErrOwnedCleanupUnsupported)
+		return nil, fmt.Errorf("%w: blocked resource cleanup scope does not match selected source", materialize.ErrOwnedCleanupUnsupported)
 	}
 	return &ownedRemovalPreparation{ctx: ctx, release: view.release, target: *selected, reads: reads, option: view.catalogOption}, nil
+}
+
+type ownedCleanupCommitPlan interface {
+	CommitScope(context.Context, func() (dependencytxn.Result, error)) (dependencytxn.Result, error)
+	Diagnostics() []diag.Diagnostic
 }
 
 func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
@@ -104,7 +110,12 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	if err := dependencytxn.ValidateReadAssertions(p.reads); err != nil {
 		return err
 	}
-	plan, err := materialize.PrepareOwnedMCPRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved))
+	var plan ownedCleanupCommitPlan
+	if p.target.Kind == ir.KindSkill {
+		plan, err = materialize.PrepareManagedSkillLinkRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved), after.MaterializationModes)
+	} else {
+		plan, err = materialize.PrepareOwnedMCPRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved))
+	}
 	if err != nil {
 		return err
 	}

@@ -146,6 +146,47 @@ func BenchmarkConfiguredInstallWarmExactLockLocalGitDiskNoNetwork(b *testing.B) 
 	}
 }
 
+func BenchmarkRemoveBlockedSkillSymlinkLocalGitDiskNoNetwork(b *testing.B) {
+	repo, _ := setupWarmLockedGitSyncBenchmark(b)
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		b.Fatal(err)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil || cfg == nil || len(cfg.Registries) != 1 {
+		b.Fatalf("load removal fixture: %v", err)
+	}
+	link := filepath.Join(repo, ".factory", "skills", "review-0")
+	target, err := os.Readlink(link)
+	if err != nil {
+		b.Fatal(err)
+	}
+	writeSyncBenchmarkFile(b, filepath.Join(os.Getenv("HOME"), ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nallowed_registries: []\n")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		b.StopTimer()
+		if err := os.WriteFile(configPath, before, 0o644); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+			b.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			b.Fatal(err)
+		}
+		config.ResetRepoRootCache()
+		b.StartTimer()
+		if out, err := executeCommand("remove", "review-0", "--kind", "skill", "--from", cfg.Registries[0].URL, "--ref", cfg.Registries[0].Ref); err != nil {
+			b.Fatalf("blocked removal: %v\n%s", err, out)
+		}
+		if _, err := os.Lstat(link); !os.IsNotExist(err) {
+			b.Fatalf("removed link remains: %v", err)
+		}
+	}
+}
+
 func BenchmarkSyncWarmUnchangedRemoteGitLock(b *testing.B) {
 	_, lockPath := setupWarmLockedGitSyncBenchmark(b)
 
