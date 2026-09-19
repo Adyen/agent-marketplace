@@ -180,6 +180,22 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:      "security/blocked_registry_credentials_redacted",
+		Desc:      "Given a denied credential-bearing registry, When sync loads effective config, Then error output and the persisted log redact credentials without changing the configured identity",
+		GlobalCfg: "harnesses: [factory]\nallowed_registries: []\n",
+		RepoCfg:   "registries:\n  - url: https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.invalid/repo.git?token=YOUR_QUERY_HERE#YOUR_FRAGMENT_HERE\n    ref: main\n    default: true\n",
+		Steps: []Step{{
+			Args: []string{"sync"}, AssertExitCode: intPtr(1),
+			OutContains:     []string{"blocked by allowed_registries", "example.invalid/repo.git"},
+			OutNotContains:  []string{"YOUR_USER_HERE", "YOUR_TOKEN_HERE", "YOUR_QUERY_HERE", "YOUR_FRAGMENT_HERE"},
+			FilesExist:      []string{"/root/.agent-marketplace/logs/agent-marketplace.log"},
+			FileContains:    map[string]string{"/root/.agent-marketplace/logs/agent-marketplace.log": "blocked by allowed_registries"},
+			FileNotContains: map[string]string{"/root/.agent-marketplace/logs/agent-marketplace.log": "YOUR_"},
+			FilesAbsent:     []string{"/workspace/.agents/lock.yaml", "/workspace/.factory"},
+			PathsUnchanged:  []string{"/workspace/.agents/config.yaml"},
+		}},
+	},
+	{
 		Name:       "security/blocked_command_link_cleanup",
 		Desc:       "Given locked commands with an edited sibling, When one blocked command is removed, Then only its directory link is unlinked",
 		Registries: []RegistryDef{{Name: "blocked-command-links", Commands: []Command{{Name: "remove"}, {Name: "keep"}}}},

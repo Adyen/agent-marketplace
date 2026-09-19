@@ -614,7 +614,7 @@ type SelectedMalformedError struct {
 }
 
 func (e *SelectedMalformedError) Error() string {
-	loc := e.URL
+	loc := redact.URL(e.URL)
 	if e.Path != "" {
 		loc += " (" + e.Path + ")"
 	}

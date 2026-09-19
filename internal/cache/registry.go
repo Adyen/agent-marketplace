@@ -77,7 +77,10 @@ func cloneOrPull(url, ref string) (string, error) {
 		if _, err := validateRegistryCachePath(cachePath); err != nil {
 			return "", fmt.Errorf("validate cache path before fetch %q: %w", cachePath, err)
 		}
-		if err := runGit(cachePath, "fetch"); err != nil {
+		if err := sanitizeLegacyGitOrigin(cachePath, url); err != nil {
+			return "", fmt.Errorf("sanitize cached registry origin: %w", err)
+		}
+		if err := runGit(cachePath, "fetch", url); err != nil {
 			slog.Warn("using stale cache after fetch failed", "url", redactedURL, "ref", ref, "error", err)
 			if _, validateErr := validateRegistryCachePath(cachePath); validateErr != nil {
 				return "", fmt.Errorf("validate stale cache at %q: %w", cachePath, validateErr)
@@ -200,10 +203,16 @@ func prepareGitArgs(repoDir string, args []string) ([]string, error) {
 		}
 		safeArgs = []string{"clone", "--", url, dir}
 	case "fetch":
-		if len(args) != 1 {
-			return nil, fmt.Errorf("runGit: fetch takes no arguments, got %d args", len(args))
+		if len(args) != 1 && len(args) != 2 {
+			return nil, fmt.Errorf("runGit: fetch requires zero or one source, got %d args", len(args)-1)
 		}
-		safeArgs = []string{"fetch", "--tags", "--prune", "--", "origin"}
+		safeArgs = []string{"fetch", "--tags", "--prune", "--no-write-fetch-head", "--", "origin"}
+		if len(args) == 2 {
+			if err := validateGitURL(args[1]); err != nil {
+				return nil, err
+			}
+			safeArgs = []string{"fetch", "--tags", "--prune", "--no-write-fetch-head", "--", args[1], "+refs/heads/*:refs/remotes/origin/*"}
+		}
 	case "checkout":
 		var ref string
 		switch {
@@ -304,6 +313,19 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 		cmd.Env, resolvedSource, err = gitAuthEnvironment(ctx, repoDir, cmd.Env, source)
 		if err != nil {
 			return nil, err
+		}
+		var publicSource string
+		cmd.Env, publicSource, err = gitCredentialEnvironment(cmd.Env, source)
+		if err != nil {
+			return nil, err
+		}
+		if publicSource != source {
+			for i, arg := range cmd.Args {
+				if arg == source {
+					cmd.Args[i] = publicSource
+					break
+				}
+			}
 		}
 		if err := cmd.Run(); err != nil {
 			diagnostic := gitTransportFailureDiagnostic(resolvedSource)
