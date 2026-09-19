@@ -146,14 +146,15 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 		return err
 	}
 	dryRunReport, dryRunErr := materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
-	if names := driftUnknownPinNames(result.MarketplaceInspection); len(names) > 0 && dryRunReport != nil {
+	if pins := driftUnknownPins(result.MarketplaceInspection); len(pins) > 0 && dryRunReport != nil {
 		// An unresolved pin without cached acquisition facts cannot prove its
 		// managed output absent or present, so suppress only the removal
-		// candidates carrying its installed name and report the unknowns —
-		// unrelated drift stays visible.
+		// candidates in the namespaces its kind materializes into that carry
+		// its installed name, and report the unknowns — unrelated drift stays
+		// visible.
 		var suppressed int
-		dryRunReport, suppressed = suppressIncompletePinRemovals(dryRunReport, names)
-		if _, err := fmt.Fprintf(errOut, "warning: Marketplace drift is unknown for pin(s) %s: %d removal candidate(s) suppressed because the cache cannot prove their managed output\n", strings.Join(slices.Sorted(maps.Keys(names)), ", "), suppressed); err != nil {
+		dryRunReport, suppressed = suppressIncompletePinRemovals(dryRunReport, pins)
+		if _, err := fmt.Fprintf(errOut, "warning: Marketplace drift is unknown for pin(s) %s: %d removal candidate(s) suppressed because the cache cannot prove their managed output\n", strings.Join(slices.Sorted(maps.Keys(driftUnknownPinNames(pins))), ", "), suppressed); err != nil {
 			return err
 		}
 	}

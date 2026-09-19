@@ -451,12 +451,17 @@ func (r *Resolver) finishInspectedPin(ctx context.Context, cache *Cache, entry c
 }
 
 // inspectResolvedArtifact returns the fully resolved artifact for a pin the
-// inspection proved healthy, so the inspection feeds generic resolution and
-// the materialization dry-run the same resolved resources that sync --check
-// produces. Resolution is strictly cache-only and performs no fetches or
-// verification writes: a pin whose verified artifact is not already in the
-// cache keeps its unresolved metadata stub, which Inspection.Resolve filters
-// out — matching the resolve error sync reports for that same pin.
+// inspection proved healthy — or classified missing — so the inspection feeds
+// generic resolution and the materialization dry-run the same resolved
+// resources that sync --check produces. Resolution is strictly cache-only and
+// performs no fetches or verification writes: a pin whose verified artifact is
+// not already in the cache keeps its unresolved metadata stub, which
+// Inspection.Resolve filters out — matching the resolve error sync reports
+// for that same pin. Missing pins resolve too: partial cache loss (cached
+// metadata without its artifact) must surface a hard diagnostic rather than
+// let the drift dry-run read the pin's managed output as orphaned, while a
+// never-acquired missing pin fails the same proof without cached facts and
+// stays drift-incomplete.
 func (r *Resolver) inspectResolvedArtifact(ctx context.Context, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, status PinStatus, fallback resolver.ResolvedArtifact, allowedRegistries []string) (resolver.ResolvedArtifact, error) {
 	// Collection roots are virtual pins; they never carry a materializable
 	// artifact, and their revocation is enforced through the block list.
@@ -464,7 +469,7 @@ func (r *Resolver) inspectResolvedArtifact(ctx context.Context, cache *Cache, en
 		return fallback, nil
 	}
 	switch status.State {
-	case PinStateCurrent, PinStateUpdateAvailable, PinStateCached, PinStateStale:
+	case PinStateCurrent, PinStateUpdateAvailable, PinStateCached, PinStateStale, PinStateMissing:
 	default:
 		return fallback, nil
 	}

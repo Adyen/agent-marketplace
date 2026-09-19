@@ -893,6 +893,63 @@ func TestInspectCacheWipeWithManagedOutputYieldsDriftIncomplete(t *testing.T) {
 	}
 }
 
+// TestInspectPartialCacheLossYieldsHardMissingDiagnostic pins the partial
+// cache-loss contract: cached metadata proves the pin was acquired, but its
+// artifact is gone, so the inspection classifies the pin missing. That failed
+// materialization proof must become a hard resolve error — status can never
+// let the drift dry-run read the pin's managed output as orphaned — while a
+// never-acquired missing pin beside it stays drift-incomplete.
+func TestInspectPartialCacheLossYieldsHardMissingDiagnostic(t *testing.T) {
+	contentDigest := "sha256:" + strings.Repeat("c", 64)
+	archiveDigest := "sha256:" + strings.Repeat("d", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "mp")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+			ContentDigest: store.RevisionDigest(contentDigest),
+			ArchiveDigest: store.ArchiveDigest(archiveDigest),
+		}))
+	}))
+	defer server.Close()
+
+	cache := NewCache(t.TempDir())
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{
+		{RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest},
+		{RegistryID: "src", Kind: "skill", Name: "never-acquired", Revision: "v1", Digest: "sha256:" + strings.Repeat("e", 64)},
+	}}
+	// Metadata survives, the artifact does not: partial cache loss.
+	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "review", contentDigest, assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+
+	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeCached)
+	if len(inspection.Pins) != 2 {
+		t.Fatalf("inspected %d pins, want 2", len(inspection.Pins))
+	}
+	states := make(map[string]PinStatus, len(inspection.Pins))
+	for _, pin := range inspection.Pins {
+		states[pin.Name] = pin
+	}
+	if pin := states["review"]; pin.State != PinStateMissing || !pin.MetadataCached {
+		t.Fatalf("partial-loss pin = %#v, want missing state with cached metadata", pin)
+	}
+	if pin := states["never-acquired"]; pin.State != PinStateMissing || pin.MetadataCached {
+		t.Fatalf("never-acquired pin = %#v, want missing state without cached facts", pin)
+	}
+	if len(inspection.ResolveErrors) != 1 {
+		t.Fatalf("partial-loss pin resolve errors = %v, want one hard diagnostic", inspection.ResolveErrors)
+	}
+	if len(inspection.DriftIncomplete) != 1 || inspection.DriftIncomplete[0].Name != "never-acquired" {
+		t.Fatalf("drift-incomplete = %v, want only the never-acquired pin", inspection.DriftIncomplete)
+	}
+}
+
 // TestInspectUnavailableNonRequiredPinWithCacheYieldsResolveError covers the
 // unavailable-endpoint path of the same contract: cached facts prove the pin
 // was acquired and managed output may exist, so even a non-required pin must

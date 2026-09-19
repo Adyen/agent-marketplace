@@ -153,14 +153,15 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			materializeErrs = append(materializeErrs, dryRunErr)
 		}
 	}
-	if names := driftUnknownPinNames(result.MarketplaceInspection); len(names) > 0 && dryRunReport != nil {
+	if pins := driftUnknownPins(result.MarketplaceInspection); len(pins) > 0 && dryRunReport != nil {
 		// An unresolved pin without cached acquisition facts cannot prove its
-		// managed output absent or present, so removal candidates carrying its
-		// installed name are unattributable. Suppress only those candidates —
-		// unrelated drift stays visible — and report the unknowns.
+		// managed output absent or present, so removal candidates in the
+		// namespaces its kind materializes into and carrying its installed
+		// name are unattributable. Suppress only those candidates — unrelated
+		// drift stays visible — and report the unknowns.
 		var suppressed int
-		dryRunReport, suppressed = suppressIncompletePinRemovals(dryRunReport, names)
-		result.Warnings = append(result.Warnings, fmt.Errorf("marketplace drift is unknown for pin(s) %s: %d removal candidate(s) suppressed because the cache cannot prove their managed output", strings.Join(slices.Sorted(maps.Keys(names)), ", "), suppressed))
+		dryRunReport, suppressed = suppressIncompletePinRemovals(dryRunReport, pins)
+		result.Warnings = append(result.Warnings, fmt.Errorf("marketplace drift is unknown for pin(s) %s: %d removal candidate(s) suppressed because the cache cannot prove their managed output", strings.Join(slices.Sorted(maps.Keys(driftUnknownPinNames(pins))), ", "), suppressed))
 	}
 
 	// Build orphaned rows from files that would be removed.
@@ -408,15 +409,21 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 	return rows
 }
 
-// driftUnknownPinNames indexes drift-incomplete Marketplace pins by the
-// installed name their managed output would carry, so the drift dry-run's
-// suppression stays scoped to unattributable removal candidates.
-func driftUnknownPinNames(inspection *marketplace.Inspection) map[string]bool {
+// driftUnknownPins returns the drift-incomplete Marketplace pins whose
+// removal candidates the drift dry-run cannot attribute, so suppression stays
+// scoped to those pins' own output namespaces and installed names.
+func driftUnknownPins(inspection *marketplace.Inspection) []marketplace.DriftIncompletePin {
 	if inspection == nil || len(inspection.DriftIncomplete) == 0 {
 		return nil
 	}
-	names := make(map[string]bool, len(inspection.DriftIncomplete))
-	for _, incomplete := range inspection.DriftIncomplete {
+	return inspection.DriftIncomplete
+}
+
+// driftUnknownPinNames indexes drift-incomplete pins by installed name for
+// the unknown-drift warning message.
+func driftUnknownPinNames(pins []marketplace.DriftIncompletePin) map[string]bool {
+	names := make(map[string]bool, len(pins))
+	for _, incomplete := range pins {
 		if incomplete.Name != "" {
 			names[incomplete.Name] = true
 		}
@@ -424,28 +431,107 @@ func driftUnknownPinNames(inspection *marketplace.Inspection) map[string]bool {
 	return names
 }
 
+// driftRemovalNamespaces maps a drift-incomplete pin kind to the output
+// namespaces its materialized candidates can occupy inside a harness root.
+// The second return value reports whether the kind's namespace ownership is
+// known: an unrecognized kind keeps the previous name-only suppression
+// because its candidates cannot be proven unrelated, while kinds that never
+// produce name-attributable removal rows (mcp servers live in shared
+// aggregate files, collections are virtual) are scoped to an empty set so a
+// same-named removal in another kind's namespace stays visible.
+func driftRemovalNamespaces(kind string) (map[string]bool, bool) {
+	switch kind {
+	case "skill":
+		return map[string]bool{"skills": true}, true
+	case "command":
+		// Commands materialize as command files where the target has a
+		// dedicated command directory and as skill-shaped directories where
+		// it does not (Devin, Codex).
+		return map[string]bool{"skills": true, "commands": true}, true
+	case "subagent":
+		return map[string]bool{"agents": true}, true
+	case "hook":
+		return map[string]bool{"hooks": true}, true
+	case "mcpserver", "collection":
+		return map[string]bool{}, true
+	}
+	return nil, false
+}
+
+// removalNamespace returns the output namespace a removal candidate belongs
+// to: the leading path element when it names a resource directory
+// (skills/review under .claude), else the candidate report's own directory
+// when that directory is itself a namespace (review under .factory/skills).
+// An empty result means attribution cannot be disproven from the path.
+func removalNamespace(rel, outDir string) string {
+	slash := filepath.ToSlash(rel)
+	if i := strings.Index(slash, "/"); i > 0 {
+		switch first := slash[:i]; first {
+		case "skills", "commands", "agents", "hooks":
+			return first
+		}
+		return ""
+	}
+	switch base := filepath.Base(filepath.Clean(outDir)); base {
+	case "skills", "commands", "agents", "hooks":
+		return base
+	}
+	return ""
+}
+
+// removalNameMatches reports whether a removal candidate's artifact name —
+// or its file base name without extension — equals the pin's installed name.
+func removalNameMatches(rel, name string) bool {
+	if artifactName(rel) == name {
+		return true
+	}
+	base := filepath.Base(rel)
+	return strings.TrimSuffix(base, filepath.Ext(base)) == name
+}
+
+// incompletePinSuppresses reports whether a drift-incomplete pin owns the
+// removal candidate: the installed name must match and, when both the pin
+// kind's namespace ownership and the candidate's namespace are known, the
+// namespaces must agree. Candidates whose namespace cannot be determined stay
+// suppressed only for kinds that own a real namespace — attribution cannot be
+// disproven — while aggregate-only and virtual kinds never suppress.
+func incompletePinSuppresses(pin marketplace.DriftIncompletePin, rel, outDir string) bool {
+	if pin.Name == "" || !removalNameMatches(rel, pin.Name) {
+		return false
+	}
+	allowed, scoped := driftRemovalNamespaces(pin.Kind)
+	if !scoped {
+		return true
+	}
+	if ns := removalNamespace(rel, outDir); ns != "" {
+		return allowed[ns]
+	}
+	return len(allowed) > 0
+}
+
 // suppressIncompletePinRemovals returns a copy of the dry-run report with the
 // removal candidates attributable to drift-incomplete pins filtered out. A
-// candidate matches when its artifact name — or its file base name without
-// extension — equals an incomplete pin's installed name. The report itself is
-// not mutated, and unrelated removals stay visible. The second return value
-// counts the suppressed candidates.
-func suppressIncompletePinRemovals(report *materialize.Report, names map[string]bool) (*materialize.Report, int) {
-	if report == nil || len(names) == 0 {
+// candidate matches when its name equals an incomplete pin's installed name
+// and its path sits in an output namespace that pin kind can own, so a
+// same-named removal in an unrelated kind's namespace or root stays visible.
+// The report itself is not mutated. The second return value counts the
+// suppressed candidates.
+func suppressIncompletePinRemovals(report *materialize.Report, pins []marketplace.DriftIncompletePin) (*materialize.Report, int) {
+	if report == nil || len(pins) == 0 {
 		return report, 0
 	}
 	suppressed := 0
-	matches := func(rel string) bool {
-		if names[artifactName(rel)] {
-			return true
-		}
-		base := filepath.Base(rel)
-		return names[strings.TrimSuffix(base, filepath.Ext(base))]
-	}
-	filterRemoved := func(removed []string) []string {
+	filterRemoved := func(tr materialize.TargetReport, removed []string) []string {
 		kept := make([]string, 0, len(removed))
 		for _, rel := range removed {
-			if matches(rel) {
+			matched := false
+			for _, pin := range pins {
+				if incompletePinSuppresses(pin, rel, tr.OutDir) {
+					matched = true
+					break
+				}
+			}
+			if matched {
 				suppressed++
 				continue
 			}
@@ -457,14 +543,14 @@ func suppressIncompletePinRemovals(report *materialize.Report, names map[string]
 	if len(report.PerRoot) > 0 {
 		filtered.PerRoot = make([]materialize.TargetReport, len(report.PerRoot))
 		for i, tr := range report.PerRoot {
-			tr.Removed = filterRemoved(tr.Removed)
+			tr.Removed = filterRemoved(tr, tr.Removed)
 			filtered.PerRoot[i] = tr
 		}
 	}
 	if len(report.PerTarget) > 0 {
 		filtered.PerTarget = make(map[hcc.Target]materialize.TargetReport, len(report.PerTarget))
 		for target, tr := range report.PerTarget {
-			tr.Removed = filterRemoved(tr.Removed)
+			tr.Removed = filterRemoved(tr, tr.Removed)
 			filtered.PerTarget[target] = tr
 		}
 	}
