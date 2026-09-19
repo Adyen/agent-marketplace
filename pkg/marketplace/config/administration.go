@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,20 +47,8 @@ func (a Administration) Validate() error {
 			return invalid
 		}
 	}
-	validHeader := func(value string) bool {
-		if value == "" {
-			return false
-		}
-		for _, c := range value {
-			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", c) {
-				continue
-			}
-			return false
-		}
-		return true
-	}
-	if !validHeader(a.SubjectHeader) || !validHeader(a.GroupsHeader) || strings.EqualFold(a.SubjectHeader, a.GroupsHeader) {
-		return invalid
+	if !validIdentityHeader(a.SubjectHeader) || !validIdentityHeader(a.GroupsHeader) || strings.EqualFold(a.SubjectHeader, a.GroupsHeader) {
+		return errors.New("admin requires distinct dedicated identity headers; X-Forwarded-* and reserved HTTP headers are not permitted")
 	}
 	for _, group := range a.AdminGroups {
 		if strings.TrimSpace(group) == "" || strings.TrimSpace(group) != group || strings.ContainsAny(group, "\x00\r\n") {
@@ -67,6 +56,13 @@ func (a Administration) Validate() error {
 		}
 	}
 	return nil
+}
+
+var identityHeaderPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`)
+
+func validIdentityHeader(value string) bool {
+	lower := strings.ToLower(value)
+	return identityHeaderPattern.MatchString(value) && !strings.HasPrefix(lower, "x-forwarded-") && !slices.Contains([]string{"host", "origin", "forwarded", "cookie", "authorization", "content-type", "content-length", "connection", "x-marketplace-admin", "if-match", "idempotency-key", "set-cookie", "referer", "traceparent", "upgrade", "expect", "te", "trailer"}, lower)
 }
 
 func SourceHarnesses() []string {

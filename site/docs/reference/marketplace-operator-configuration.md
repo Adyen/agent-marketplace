@@ -72,8 +72,8 @@ admin:
   origin: https://marketplace.example.com
   trusted_proxies: []
   issuer: https://sso.example.com
-  subject_header: X-Forwarded-User
-  groups_header: X-Forwarded-Groups
+  subject_header: X-Marketplace-Subject
+  groups_header: X-Marketplace-Groups
   admin_groups: []
 ```
 
@@ -264,14 +264,16 @@ management:
 
 Configures the browser-based administration API and trusted-proxy identity verification.
 
+Identity header names must be distinct (case-insensitively) and match `[A-Za-z][A-Za-z0-9-]*`. `X-Forwarded-*` names and reserved HTTP headers such as `Authorization`, `Cookie`, and `Origin` are rejected at startup. Use dedicated headers that the trusted proxy overwrites with authenticated claims.
+
 | Field | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `enabled` | boolean | no | `false` | Enables the `/api/v1/admin/**` API endpoints. |
 | `origin` | HTTPS URL | if enabled | none | Expected HTTPS origin for admin requests (e.g. `https://marketplace.example.com`). Must contain protocol and host/port only. |
 | `trusted_proxies` | list of CIDRs | if enabled | empty | Immediate reverse proxy CIDRs allowed to assert identity headers. Forwarded client IPs do not bypass this check. |
 | `issuer` | string | if enabled | none | Identity provider or SSO issuer identifier. |
-| `subject_header` | string | if enabled | none | HTTP header containing the authenticated subject identity (e.g. `X-Forwarded-User`). |
-| `groups_header` | string | if enabled | none | HTTP header containing a JSON string array of group names (e.g. `X-Forwarded-Groups`). |
+| `subject_header` | string | if enabled | none | HTTP header containing the authenticated subject identity (e.g. `X-Marketplace-Subject`). |
+| `groups_header` | string | if enabled | none | HTTP header containing a JSON string array of group names (e.g. `X-Marketplace-Groups`). |
 | `admin_groups` | list of strings | if enabled | empty | Group names authorized to access administration endpoints. |
 
 ```yaml
@@ -282,8 +284,8 @@ admin:
     - 10.0.0.0/8
     - 172.16.0.0/12
   issuer: https://sso.example.com
-  subject_header: X-Forwarded-User
-  groups_header: X-Forwarded-Groups
+  subject_header: X-Marketplace-Subject
+  groups_header: X-Marketplace-Groups
   admin_groups:
     - marketplace-admins
 ```

@@ -68,8 +68,8 @@ admin:
     - 10.0.0.0/8
     - 172.16.0.0/12
   issuer: https://sso.example.com
-  subject_header: X-Forwarded-User
-  groups_header: X-Forwarded-Groups
+  subject_header: X-Marketplace-Subject
+  groups_header: X-Marketplace-Groups
   admin_groups:
     - marketplace-admins
 ```
@@ -117,8 +117,8 @@ server {
     # SSL configuration ...
 
     # 1. Strip incoming identity headers from the client
-    proxy_set_header X-Forwarded-User "";
-    proxy_set_header X-Forwarded-Groups "";
+    proxy_set_header X-Marketplace-Subject "";
+    proxy_set_header X-Marketplace-Groups "";
 
     # 2. Public endpoints (no authentication required)
     location / {
@@ -145,8 +145,8 @@ server {
         auth_request_set $auth_user $upstream_http_x_auth_request_user;
         auth_request_set $auth_groups $upstream_http_x_auth_request_groups;
 
-        proxy_set_header X-Forwarded-User $auth_user;
-        proxy_set_header X-Forwarded-Groups $auth_groups; # Must be JSON array: ["marketplace-admins"]
+        proxy_set_header X-Marketplace-Subject $auth_user;
+        proxy_set_header X-Marketplace-Groups $auth_groups; # Must be JSON array: ["marketplace-admins"]
 
         proxy_pass http://marketplace_web;
         include /etc/nginx/proxy-headers.conf;
@@ -159,8 +159,8 @@ server {
         auth_request_set $auth_user $upstream_http_x_auth_request_user;
         auth_request_set $auth_groups $upstream_http_x_auth_request_groups;
 
-        proxy_set_header X-Forwarded-User $auth_user;
-        proxy_set_header X-Forwarded-Groups $auth_groups; # Must be JSON array: ["marketplace-admins"]
+        proxy_set_header X-Marketplace-Subject $auth_user;
+        proxy_set_header X-Marketplace-Groups $auth_groups; # Must be JSON array: ["marketplace-admins"]
 
         proxy_pass http://marketplace_api;
         include /etc/nginx/proxy-headers.conf;

@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -31,9 +30,6 @@ func newAdminGuard(options AdminAuthOptions, next http.Handler) (http.Handler, e
 	invalid := errors.New("invalid administration trust configuration")
 	options.Enabled = true
 	if options.Validate() != nil || !validIdentityValue(options.Issuer) || next == nil {
-		return nil, invalid
-	}
-	if !validIdentityHeader(options.SubjectHeader) || !validIdentityHeader(options.GroupsHeader) || strings.EqualFold(options.SubjectHeader, options.GroupsHeader) {
 		return nil, invalid
 	}
 	prefixes := make([]netip.Prefix, 0, len(options.TrustedProxies))
@@ -148,13 +144,6 @@ func singleAdminHeader(r *http.Request, name string) (string, bool) {
 		return "", false
 	}
 	return values[0], true
-}
-
-var identityHeaderPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`)
-
-func validIdentityHeader(value string) bool {
-	lower := strings.ToLower(value)
-	return identityHeaderPattern.MatchString(value) && !strings.HasPrefix(lower, "x-forwarded-") && !slices.Contains([]string{"host", "origin", "forwarded", "cookie", "authorization", "content-type", "content-length", "connection", "x-marketplace-admin", "if-match", "idempotency-key", "set-cookie", "referer", "traceparent", "upgrade", "expect", "te", "trailer"}, lower)
 }
 
 func validIdentityValue(value string) bool {

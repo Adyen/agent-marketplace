@@ -28,10 +28,17 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer) })
 </script>
 
 <template>
-  <div class="space-y-3">
-    <p v-if="error" role="alert">{{ error }}</p>
-    <p v-if="!ids.length">No resulting job IDs were returned.</p>
-    <ul class="space-y-2"><li v-for="job in jobs" :key="job.id" class="rounded border border-default p-3"><p class="break-all font-medium">{{ job.kind }} · {{ job.status }} · {{ job.id }}</p><p class="text-sm text-muted">Attempt {{ job.attempt }} / {{ job.max_attempts }} · Updated {{ job.updated_at }}</p></li></ul>
-    <UButton v-if="ids.length" color="neutral" variant="outline" :loading="busy" @click="refresh">Refresh observed job status</UButton>
+  <div class="space-y-2">
+    <p v-if="error" role="alert" class="text-sm text-error">{{ error }}</p>
+    <p v-if="!ids.length" class="text-xs text-muted">No jobs were queued by this request.</p>
+    <ul v-else class="space-y-1.5">
+      <li v-for="job in jobs" :key="job.id" class="flex flex-wrap items-center gap-2 rounded-lg border border-default bg-[var(--am-color-bg-subtle)] px-3 py-2 text-sm">
+        <AdminStatusBadge :value="job.status" kind="outcome" />
+        <span class="font-medium text-highlighted">{{ job.kind }}</span>
+        <span class="text-xs text-muted">attempt {{ job.attempt }} of {{ job.max_attempts }} · updated <AdminTime :value="job.updated_at" /></span>
+        <AdminIdChip label="Job" :value="job.id" class="ml-auto" />
+      </li>
+    </ul>
+    <UButton v-if="ids.length" color="neutral" variant="ghost" size="xs" icon="i-lucide-refresh-cw" :loading="busy" @click="refresh">Refresh job status</UButton>
   </div>
 </template>

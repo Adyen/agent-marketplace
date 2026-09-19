@@ -36,7 +36,7 @@ Preserve `Host`, `X-Real-IP`, `X-Forwarded-For`, and `X-Forwarded-Proto`. At the
 If the database-managed admin panel is enabled, protect `/marketplace/admin` and `/api/v1/admin/` with your SSO gateway or identity-aware proxy.
 
 The reverse proxy must:
-1. Strip incoming client-supplied identity headers (`X-Forwarded-User`, `X-Forwarded-Groups`).
+1. Strip incoming client-supplied identity headers (`X-Marketplace-Subject`, `X-Marketplace-Groups`).
 2. Authenticate the operator and inject trusted identity headers.
 3. Format the groups header as a JSON string array (for example `["marketplace-admins"]`).
 

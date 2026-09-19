@@ -6,6 +6,17 @@ function json(body: unknown, status = 200) {
 }
 
 describe('private admin transport', () => {
+  it.each(['validate', 'apply'] as const)('%s sends the current registry ID for upserts without mutating the draft', async (operation) => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => json({ valid: true }))
+    const registry = { ...newAdminRegistry(), id: 'edited-id' }
+    const proposal = { action: 'upsert_registry' as const, registry_id: 'old-id', registry, reason: 'Create or restore settings' }
+    await createAdminApi(fetcher)[operation](proposal, 1)
+    expect(JSON.parse(fetcher.mock.calls[0]![1]!.body as string)).toMatchObject({ registry_id: 'edited-id', registry: { id: 'edited-id' } })
+    expect(proposal.registry_id).toBe('old-id')
+    await createAdminApi(fetcher)[operation]({ action: 'upsert_registry', registry, reason: 'Edit settings' }, 1)
+    expect(JSON.parse(fetcher.mock.calls[1]![1]!.body as string).registry_id).toBe('edited-id')
+  })
+
   it('sends same-origin no-store requests with explicit concurrency and CSRF headers', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({ revision: 4 }))
     const proposal = { action: 'reindex' as const, registry_id: 'team', reason: 'retry acquisition' }

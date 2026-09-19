@@ -9,6 +9,7 @@ export type AdminInstance = components['schemas']['AdminInstance']
 export type AdminProposal = components['schemas']['AdminProposal']
 export type AdminChange = components['schemas']['AdminChange']
 export type AdminJob = components['schemas']['AdminJob']
+export type AdminAttempt = components['schemas']['AdminAttempt']
 
 export class AdminError extends Error {
   constructor(public code: string, message: string, public fields: Record<string, string> = {}) {
@@ -21,6 +22,7 @@ export class AdminError extends Error {
 export function createAdminApi(fetcher: typeof fetch = fetch) {
   async function request<T>(path: string, proposal?: AdminProposal, revision?: number): Promise<T> {
     if (typeof window === 'undefined') throw new AdminError('client_only', 'Administration is only available in the browser.')
+    if (proposal?.action === 'upsert_registry' && proposal.registry) proposal = { ...proposal, registry_id: proposal.registry.id }
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (proposal) {
       headers['Content-Type'] = 'application/json'
@@ -57,6 +59,7 @@ export function createAdminApi(fetcher: typeof fetch = fetch) {
     instance: () => request<AdminInstance>('/instance'),
     activity: (before?: number) => request<{ changes: AdminChange[] }>(`/activity?limit=25${before ? `&before=${before}` : ''}`),
     job: (id: string) => request<AdminJob>(`/jobs/${encodeURIComponent(id)}`),
+    attempts: (registryID: string, before?: number) => request<{ attempts: AdminAttempt[], next_before: number }>(`/attempts?registry_id=${encodeURIComponent(registryID)}&limit=25${before ? `&before=${before}` : ''}`),
     validate: (proposal: AdminProposal, revision: number) => request<{ valid: true, warnings: string[] }>('/validate', proposal, revision),
     apply: (proposal: AdminProposal, revision: number) => request<AdminChange>('/changes', proposal, revision),
   }

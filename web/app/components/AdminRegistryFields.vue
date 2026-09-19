@@ -1,7 +1,12 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { AdminRegistry, AdminProfiles } from '~/lib/admin'
 const registry = defineModel<AdminRegistry>({ required: true })
-defineProps<{ profiles: AdminProfiles, existing: boolean }>()
+const props = defineProps<{ profiles: AdminProfiles, existing: boolean }>()
+const acquisitionItems = [{ label: 'Index only', value: 'index-only' }, { label: 'Mirror', value: 'mirror' }]
+const harnessItems = computed(() => [{ label: 'Autodetect', value: '' }, ...props.profiles.source_harnesses.map(value => ({ label: value, value }))])
+const profileItems = computed(() => [{ label: 'No profile', value: '' }, ...props.profiles.profiles.map(profile => ({ label: `${profile.id} — ${profile.allowed_origins.join(', ')}`, value: profile.id }))])
+const control = 'w-full rounded-md border border-default bg-default px-2.5 py-1.5 text-sm text-highlighted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary disabled:opacity-60'
 function moveRoot(index: number, direction: number) {
   const roots = registry.value.roots || []
   const target = index + direction
@@ -9,6 +14,9 @@ function moveRoot(index: number, direction: number) {
   const root = roots.splice(index, 1)[0]
   if (root) roots.splice(target, 0, root)
 }
+// Optional string fields may be absent from the API payload; a native select
+// needs an explicit '' to show its "none" option.
+function selected(event: Event) { return (event.target as HTMLSelectElement).value }
 function setOverride(event: Event) {
   if ((event.target as HTMLInputElement).checked) registry.value.license_override = { allowlist: [], undeclared: '' }
   else delete registry.value.license_override
@@ -16,34 +24,51 @@ function setOverride(event: Event) {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <div class="grid gap-4 sm:grid-cols-2">
-      <div><label for="registry-id" class="block font-medium">Immutable registry ID</label><input id="registry-id" v-model="registry.id" :readonly="existing" required class="mt-1 w-full rounded border border-default bg-default p-2" :aria-describedby="existing ? 'immutable-help' : undefined"><p v-if="existing" id="immutable-help" class="text-sm text-muted">Identity cannot be changed.</p></div>
-      <div><label for="registry-slug" class="block font-medium">Slug</label><input id="registry-slug" v-model="registry.slug" required class="mt-1 w-full rounded border border-default bg-default p-2"></div>
-      <div class="sm:col-span-2"><label for="registry-origin" class="block font-medium">Git origin</label><input id="registry-origin" v-model="registry.origin" required class="mt-1 w-full rounded border border-default bg-default p-2" aria-describedby="origin-help"><p id="origin-help" class="text-sm text-muted">Approved HTTPS or SSH origin only. Never include credentials or server paths.</p></div>
-      <div><label for="registry-ref" class="block font-medium">Ref or exact commit</label><input id="registry-ref" v-model="registry.ref" class="mt-1 w-full rounded border border-default bg-default p-2"></div>
-      <div><label for="registry-acquisition" class="block font-medium">Acquisition</label><select id="registry-acquisition" v-model="registry.acquisition" class="mt-1 w-full rounded border border-default bg-default p-2"><option value="index-only">Index only</option><option value="mirror">Mirror</option></select></div>
-    </div>
-    <fieldset class="space-y-3 rounded border border-default p-4">
-      <legend class="px-1 font-medium">Ordered source roots</legend>
-      <p class="text-sm text-muted">Order is significant. Use Move up and Move down with the keyboard.</p>
-      <div v-for="(root, index) in registry.roots" :key="index" class="flex flex-wrap items-end gap-2">
-        <div class="grow"><label :for="`root-${index}`" class="block">Root {{ index + 1 }} path</label><input :id="`root-${index}`" v-model="root.path" required class="w-full rounded border border-default bg-default p-2"></div>
-        <div><label :for="`harness-${index}`" class="block">Source harness</label><select :id="`harness-${index}`" v-model="root.source_harness" class="rounded border border-default bg-default p-2"><option value="">Autodetect</option><option v-for="harness in profiles.source_harnesses" :key="harness" :value="harness">{{ harness }}</option></select></div>
-        <UButton type="button" color="neutral" variant="outline" :disabled="index === 0" :aria-label="`Move root ${index + 1} up`" @click="moveRoot(index, -1)">Move up</UButton>
-        <UButton type="button" color="neutral" variant="outline" :disabled="index === (registry.roots?.length || 0) - 1" :aria-label="`Move root ${index + 1} down`" @click="moveRoot(index, 1)">Move down</UButton>
-        <UButton type="button" color="neutral" variant="outline" :aria-label="`Remove root ${index + 1}`" @click="registry.roots?.splice(index, 1)">Remove</UButton>
+  <div class="space-y-6">
+    <section class="space-y-4" aria-labelledby="identity-heading">
+      <h3 id="identity-heading" class="text-sm font-semibold uppercase tracking-wide text-muted">Identity and source</h3>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <AdminField id="registry-id" label="Immutable registry ID" required :description="existing ? 'Identity cannot be changed once created.' : 'Stable machine identity; the slug can change later, this cannot.'"><UInput id="registry-id" v-model="registry.id" :readonly="existing" required placeholder="team-skills" class="w-full font-mono" :ui="{ base: existing ? 'bg-[var(--am-color-bg-subtle)] text-muted' : '' }" /></AdminField>
+        <AdminField id="registry-slug" label="Slug" required description="Shown to users in the catalog and install commands."><UInput id="registry-slug" v-model="registry.slug" required placeholder="team" class="w-full" /></AdminField>
+        <AdminField id="registry-origin" label="Git origin" required description="Approved HTTPS or SSH origin only. Never include credentials or server paths." class="sm:col-span-2"><UInput id="registry-origin" v-model="registry.origin" required placeholder="https://git.example/org/repo" class="w-full font-mono" /></AdminField>
+        <AdminField id="registry-ref" label="Ref or exact commit" description="Branch, tag or commit SHA. Leave empty for the default branch."><UInput id="registry-ref" v-model="registry.ref" placeholder="main" class="w-full font-mono" /></AdminField>
+        <AdminField id="registry-acquisition" label="Acquisition" description="Mirror keeps a server-side copy; index only reads metadata."><USelect id="registry-acquisition" v-model="registry.acquisition" :items="acquisitionItems" class="w-full" /></AdminField>
       </div>
-      <UButton type="button" color="neutral" variant="outline" @click="(registry.roots ||= []).push({ path: '', source_harness: '' })">Add source root</UButton>
+    </section>
+
+    <fieldset class="space-y-3 rounded-lg border border-default p-4">
+      <legend class="px-1 text-sm font-semibold text-highlighted">Source roots</legend>
+      <p class="text-xs text-muted">Directories inside the repository to scan, in priority order. Reorder with the arrow buttons.</p>
+      <ol class="space-y-2">
+        <li v-for="(root, index) in registry.roots" :key="index" class="flex flex-wrap items-end gap-2 rounded-md bg-[var(--am-color-bg-subtle)] p-2 sm:flex-nowrap">
+          <span class="pb-2 text-xs text-muted" aria-hidden="true">{{ index + 1 }}.</span>
+          <AdminField :id="`root-${index}`" :label="`Root ${index + 1} path`" class="min-w-40 grow"><UInput :id="`root-${index}`" v-model="root.path" required placeholder="." class="w-full font-mono" /></AdminField>
+          <AdminField :id="`harness-${index}`" label="Source harness" class="min-w-40"><select :id="`harness-${index}`" :value="root.source_harness || ''" :class="control" @change="root.source_harness = selected($event)"><option v-for="item in harnessItems" :key="item.value" :value="item.value">{{ item.label }}</option></select></AdminField>
+          <div class="flex gap-1">
+            <UButton type="button" color="neutral" variant="ghost" size="sm" icon="i-lucide-arrow-up" :disabled="index === 0" :aria-label="`Move root ${index + 1} up`" @click="moveRoot(index, -1)" />
+            <UButton type="button" color="neutral" variant="ghost" size="sm" icon="i-lucide-arrow-down" :disabled="index === (registry.roots?.length || 0) - 1" :aria-label="`Move root ${index + 1} down`" @click="moveRoot(index, 1)" />
+            <UButton type="button" color="error" variant="ghost" size="sm" icon="i-lucide-trash-2" :aria-label="`Remove root ${index + 1}`" @click="registry.roots?.splice(index, 1)" />
+          </div>
+        </li>
+      </ol>
+      <UButton type="button" color="neutral" variant="outline" size="sm" icon="i-lucide-plus" @click="(registry.roots ||= []).push({ path: '', source_harness: '' })">Add source root</UButton>
     </fieldset>
-    <div><label for="registry-profile" class="block font-medium">Credential / trust profile reference</label><select id="registry-profile" v-model="registry.profile_id" class="mt-1 w-full rounded border border-default bg-default p-2"><option value="">No profile</option><option v-for="profile in profiles.profiles" :key="profile.id" :value="profile.id">{{ profile.id }} — {{ profile.allowed_origins.join(', ') }}</option></select><p class="text-sm text-muted">Opaque deployment-approved references only. Secrets cannot be viewed or edited.</p></div>
-    <div class="grid gap-4 sm:grid-cols-2">
-      <div><label for="publisher-name" class="block font-medium">Publisher name</label><input id="publisher-name" v-model="registry.publisher.name" class="mt-1 w-full rounded border border-default bg-default p-2"></div>
-      <div><label for="publisher-url" class="block font-medium">Publisher URL</label><input id="publisher-url" v-model="registry.publisher.url" type="url" class="mt-1 w-full rounded border border-default bg-default p-2"></div>
-      <div><label for="registry-license" class="block font-medium">Default license</label><input id="registry-license" v-model="registry.license" class="mt-1 w-full rounded border border-default bg-default p-2"></div>
-    </div>
-    <label class="flex items-center gap-2"><input type="checkbox" :checked="!!registry.license_override" @change="setOverride">Override inherited license policy</label>
-    <AdminPolicyFields v-if="registry.license_override" v-model="registry.license_override" prefix="override" override />
-    <details><summary class="cursor-pointer font-medium">Preserved read-only settings</summary><p class="my-2 text-sm text-muted">Aliases, historical origins, lifecycle, and non-license overrides are not edited here.</p><pre class="overflow-auto rounded bg-muted p-3 text-sm">{{ JSON.stringify({ aliases: registry.aliases, historical_origins: registry.historical_origins, non_license_overrides: registry.non_license_overrides }, null, 2) }}</pre></details>
+
+    <section class="space-y-4" aria-labelledby="publisher-heading">
+      <h3 id="publisher-heading" class="text-sm font-semibold uppercase tracking-wide text-muted">Trust and publisher</h3>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <AdminField id="registry-profile" label="Credential / trust profile" description="Deployment-approved reference only. Secrets cannot be viewed or edited here." class="sm:col-span-2"><select id="registry-profile" :value="registry.profile_id || ''" :class="control" @change="registry.profile_id = selected($event)"><option v-for="item in profileItems" :key="item.value" :value="item.value">{{ item.label }}</option></select></AdminField>
+        <AdminField id="publisher-name" label="Publisher name"><UInput id="publisher-name" v-model="registry.publisher.name" placeholder="Platform team" class="w-full" /></AdminField>
+        <AdminField id="publisher-url" label="Publisher URL"><UInput id="publisher-url" v-model="registry.publisher.url" type="url" placeholder="https://example.com/team" class="w-full font-mono" /></AdminField>
+        <AdminField id="registry-license" label="Default license" description="SPDX identifier used when a resource declares none."><UInput id="registry-license" v-model="registry.license" placeholder="MIT" class="w-full font-mono" /></AdminField>
+      </div>
+    </section>
+
+    <section class="space-y-3 rounded-lg border border-default p-4" aria-labelledby="override-heading">
+      <label id="override-heading" class="flex items-center gap-2 text-sm font-semibold text-highlighted"><input type="checkbox" :checked="!!registry.license_override" class="size-4 accent-[var(--ui-primary)]" @change="setOverride">Override the inherited license policy for this registry</label>
+      <AdminPolicyFields v-if="registry.license_override" v-model="registry.license_override" prefix="override" override />
+    </section>
+
+    <AdminHint summary="Preserved read-only settings"><p>Aliases, historical origins, lifecycle and non-license overrides are kept as they are and cannot be edited in this form.</p><pre class="overflow-auto rounded bg-[var(--am-color-bg-subtle)] p-3 font-mono text-xs">{{ JSON.stringify({ aliases: registry.aliases, historical_origins: registry.historical_origins, non_license_overrides: registry.non_license_overrides }, null, 2) }}</pre></AdminHint>
   </div>
 </template>
