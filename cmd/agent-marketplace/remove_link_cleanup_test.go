@@ -99,7 +99,7 @@ type managedSkillLinkFixture struct {
 	base, home, repo, origin, configPath, removePath, keepPath string
 }
 
-func newManagedSkillLinkFixture(t *testing.T, target, scope string) managedSkillLinkFixture {
+func newManagedResourceLinkFixture(t *testing.T, target, scope, kind string) managedSkillLinkFixture {
 	t.Helper()
 	base := t.TempDir()
 	home := filepath.Join(base, "home")
@@ -116,10 +116,20 @@ func newManagedSkillLinkFixture(t *testing.T, target, scope string) managedSkill
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("TMPDIR", tmp)
-	origin, working := createBareRepoWithWorkingClone(t, "blocked-skills-"+target+"-"+scope+".git")
-	writeSkill(t, working, "remove", "REMOVE ORIGINAL", nil)
-	writeSkill(t, working, "keep", "KEEP ORIGINAL", nil)
-	commitAndPushAll(t, working, "seed skills")
+	if target == "codex" && scope == "user" && kind == "subagent" {
+		t.Setenv("CODEX_HOME", filepath.Join(base, "external-codex"))
+	}
+	origin, working := createBareRepoWithWorkingClone(t, "blocked-resources-"+target+"-"+scope+"-"+kind+".git")
+	if kind == "skill" {
+		writeSkill(t, working, "remove", "REMOVE ORIGINAL", nil)
+		writeSkill(t, working, "keep", "KEEP ORIGINAL", nil)
+	} else {
+		dir := map[string]string{"command": "commands", "subagent": "agents"}[kind]
+		for _, name := range []string{"remove", "keep"} {
+			writeFile(t, filepath.Join(working, dir, name+".md"), "---\nname: "+name+"\ndescription: Test resource\n---\n\n"+name+" original\n")
+		}
+	}
+	commitAndPushAll(t, working, "seed resources")
 	harnesses := "[" + target + "]"
 	userPath := filepath.Join(home, ".agents", "config.yaml")
 	repoPath := filepath.Join(repo, ".agents", "config.yaml")
@@ -145,6 +155,13 @@ func newManagedSkillLinkFixture(t *testing.T, target, scope string) managedSkill
 	if scope == "user" && target == "codex" {
 		root = filepath.Join(home, ".agents")
 	}
+	if kind == "subagent" && target == "codex" {
+		if scope == "user" {
+			root = os.Getenv("CODEX_HOME")
+		} else {
+			root = filepath.Join(repo, ".codex")
+		}
+	}
 	switch target {
 	case "factory":
 		root = filepath.Join(root, ".factory")
@@ -163,17 +180,56 @@ func newManagedSkillLinkFixture(t *testing.T, target, scope string) managedSkill
 			root = filepath.Join(root, ".devin")
 		}
 	case "codex":
-		if scope == "repo" {
+		if scope == "repo" && kind != "subagent" {
 			root = filepath.Join(repo, ".agents")
 		}
 	}
-	for _, name := range []string{"remove", "keep"} {
-		info, err := os.Lstat(filepath.Join(root, "skills", name))
-		if err != nil || info.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("%s %s output is not a symlink: %v", target, name, err)
+	component := "skills"
+	if kind == "subagent" {
+		component = "agents"
+	}
+	ext := ".md"
+	if kind == "skill" {
+		ext = ""
+	}
+	if kind == "subagent" && target == "codex" {
+		ext = ".toml"
+	}
+	if kind == "subagent" && target == "factory" {
+		component = "droids"
+	}
+	if kind == "command" {
+		component = "commands"
+		if target == "devin" || target == "codex" {
+			component = "skills"
+			ext = ""
+		}
+		if target == "windsurf" {
+			component = "workflows"
+		}
+		if target == "gemini" {
+			ext = ".toml"
 		}
 	}
-	return managedSkillLinkFixture{base: base, home: home, repo: repo, origin: origin, configPath: map[bool]string{true: userPath, false: repoPath}[scope == "user"], removePath: filepath.Join(root, "skills", "remove"), keepPath: filepath.Join(root, "skills", "keep")}
+	removePath, keepPath := filepath.Join(root, component, "remove"+ext), filepath.Join(root, component, "keep"+ext)
+	for _, path := range []string{removePath, keepPath} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target == "factory" && kind == "command" {
+			if !info.Mode().IsRegular() {
+				t.Fatalf("forced-copy output is not regular: %s", path)
+			}
+		} else if info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s %s output is not a symlink", target, path)
+		}
+	}
+	return managedSkillLinkFixture{base: base, home: home, repo: repo, origin: origin, configPath: map[bool]string{true: userPath, false: repoPath}[scope == "user"], removePath: removePath, keepPath: keepPath}
+}
+
+func newManagedSkillLinkFixture(t *testing.T, target, scope string) managedSkillLinkFixture {
+	return newManagedResourceLinkFixture(t, target, scope, "skill")
 }
 
 func (f managedSkillLinkFixture) block(t *testing.T) {
@@ -192,16 +248,20 @@ func (f managedSkillLinkFixture) block(t *testing.T) {
 	}
 }
 
-func (f managedSkillLinkFixture) remove(t *testing.T, scope string, inferred bool) (string, error) {
+func (f managedSkillLinkFixture) removeKind(t *testing.T, scope, kind string, inferred bool) (string, error) {
 	t.Helper()
 	args := []string{"remove", "remove", "--from", f.origin, "--ref", "main"}
 	if !inferred {
-		args = append(args, "--kind", "skill")
+		args = append(args, "--kind", kind)
 	}
 	if scope == "user" {
 		args = append(args, "--scope", "user")
 	}
 	return executeCommand(args...)
+}
+
+func (f managedSkillLinkFixture) remove(t *testing.T, scope string, inferred bool) (string, error) {
+	return f.removeKind(t, scope, "skill", inferred)
 }
 
 func TestRemoveBlockedManagedSkillMatrix(t *testing.T) {
@@ -402,13 +462,23 @@ func TestRemoveBlockedManagedSkillRefusals(t *testing.T) {
 	}
 }
 
-func TestRemoveBlockedManagedSkillAuthorizationChanges(t *testing.T) {
+func TestRemoveBlockedManagedResourceAuthorizationChanges(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	for _, scenario := range []string{"include", "lock", "restored"} {
-		t.Run(scenario, func(t *testing.T) {
-			f := newManagedSkillLinkFixture(t, "factory", "repo")
+	cases := []struct{ kind, scenario string }{
+		{"skill", "include"}, {"skill", "lock"}, {"skill", "restored"},
+		{"command", "include"}, {"command", "lock"}, {"command", "restored"},
+		{"subagent", "include"}, {"subagent", "lock"}, {"subagent", "restored"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind+"/"+tc.scenario, func(t *testing.T) {
+			scenario := tc.scenario
+			target := "factory"
+			if tc.kind != "skill" {
+				target = "devin"
+			}
+			f := newManagedResourceLinkFixture(t, target, "repo", tc.kind)
 			if scenario == "include" {
 				fragment := filepath.Join(f.repo, ".agents", "fragment.yaml")
 				if err := os.WriteFile(fragment, []byte("tags: [before]\n"), 0o600); err != nil {
@@ -469,7 +539,7 @@ func TestRemoveBlockedManagedSkillAuthorizationChanges(t *testing.T) {
 				}
 				return original(ctx, state, desired, options...)
 			}
-			out, err := f.remove(t, "repo", false)
+			out, err := f.removeKind(t, "repo", tc.kind, false)
 			if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 				t.Fatalf("error=%v output=%s", err, out)
 			}
@@ -569,5 +639,178 @@ func TestRemoveBlockedManagedSkillSupportedMix(t *testing.T) {
 	cfg, err := config.LoadConfigFromPath(f.configPath)
 	if err != nil || cfg == nil || len(cfg.Registries) != 1 || !containsStr(cfg.Registries[0].Skills.Exclude, "remove") || containsStr(cfg.Registries[0].Skills.Exclude, "keep") {
 		t.Fatalf("config=%#v err=%v", cfg, err)
+	}
+}
+
+func TestRemoveBlockedManagedResourceRefusals(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	cases := []struct {
+		target, scope, kind, setup string
+		want                       error
+	}{
+		{"factory", "repo", "command", "copy", materialize.ErrOwnedCleanupUnsupported},
+		{"claude", "repo", "subagent", "shared", materialize.ErrOwnedCleanupUnsupported},
+		{"gemini", "repo", "subagent", "generic", materialize.ErrOwnedCleanupUnsupported},
+		{"codex", "repo", "subagent", "generic", materialize.ErrOwnedCleanupUnsupported},
+		{"codex", "user", "subagent", "custom-root", materialize.ErrOwnedCleanupUnsupported},
+		{"devin", "repo", "command", "file-mode", materialize.ErrOwnedCleanupUnsupported},
+		{"devin", "repo", "command", "mixed", materialize.ErrOwnedCleanupUnsupported},
+		{"devin", "repo", "subagent", "missing", materialize.ErrManagedLinkCleanupConflict},
+		{"devin", "repo", "subagent", "retarget", materialize.ErrManagedLinkCleanupConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.target+"/"+tc.scope+"/"+tc.kind+"/"+tc.setup, func(t *testing.T) {
+			f := newManagedResourceLinkFixture(t, tc.target, tc.scope, tc.kind)
+			switch tc.setup {
+			case "missing":
+				if err := os.Remove(f.removePath); err != nil {
+					t.Fatal(err)
+				}
+			case "retarget":
+				keep, err := os.Readlink(f.keepPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(f.removePath); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(keep, f.removePath); err != nil {
+					t.Fatal(err)
+				}
+			case "file-mode", "mixed":
+				raw, err := os.ReadFile(f.configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.setup == "file-mode" {
+					raw = append(raw, []byte("\nmaterialization:\n  mode: file\n")...)
+				} else {
+					raw = bytes.Replace(raw, []byte("harnesses: [devin]"), []byte("harnesses: [devin, factory]"), 1)
+				}
+				if err := os.WriteFile(f.configPath, raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if out, err := executeCommand("sync"); err != nil {
+					t.Fatalf("seed mode/mix: %v\n%s", err, out)
+				}
+				if tc.setup == "file-mode" {
+					info, err := os.Lstat(f.removePath)
+					if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+						t.Fatalf("not a file-mode tree: %v", err)
+					}
+				} else {
+					info, err := os.Lstat(filepath.Join(f.repo, ".factory", "commands", "remove.md"))
+					if err != nil || !info.Mode().IsRegular() {
+						t.Fatalf("mixed copy not installed: %v", err)
+					}
+				}
+			case "custom-root":
+				if f.removePath != filepath.Join(f.base, "external-codex", "agents", "remove.toml") {
+					t.Fatalf("wrong custom output: %s", f.removePath)
+				}
+			}
+			f.block(t)
+			before := ownedCommandSnapshot(t, f.base)
+			out, err := f.removeKind(t, tc.scope, tc.kind, false)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("error=%v want=%v output=%s", err, tc.want, out)
+			}
+			if after := ownedCommandSnapshot(t, f.base); !reflect.DeepEqual(before, after) {
+				t.Fatal("refused resource cleanup mutated fixture")
+			}
+		})
+	}
+}
+
+func TestRemoveBlockedManagedResourcePreservesSiblings(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	cases := []struct {
+		target, scope, kind string
+		inferred            bool
+	}{
+		{"claude", "repo", "command", false}, {"cursor", "repo", "command", false}, {"gemini", "repo", "command", true}, {"windsurf", "repo", "command", false}, {"devin", "repo", "command", false}, {"devin", "user", "command", false}, {"codex", "repo", "command", false}, {"codex", "user", "command", false},
+		{"factory", "repo", "subagent", false}, {"cursor", "repo", "subagent", true}, {"devin", "repo", "subagent", false}, {"devin", "user", "subagent", false},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%s/%s/%s/inferred=%t", tc.target, tc.scope, tc.kind, tc.inferred), func(t *testing.T) {
+			f := newManagedResourceLinkFixture(t, tc.target, tc.scope, tc.kind)
+			for _, path := range []string{f.removePath, f.keepPath} {
+				info, err := os.Lstat(path)
+				if err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("%s: %v", path, err)
+				}
+			}
+			removeCache, err := os.Readlink(f.removePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			keepCache, err := os.Readlink(f.keepPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			keepBytes := []byte("KEEP EDITED RESOURCE\n")
+			keepPath := f.keepPath
+			if tc.kind == "command" && (tc.target == "devin" || tc.target == "codex") {
+				keepPath = filepath.Join(f.keepPath, "SKILL.md")
+			}
+			if err := os.WriteFile(keepPath, keepBytes, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			f.block(t)
+			before := ownedCommandSnapshot(t, f.base)
+			out, err := f.removeKind(t, tc.scope, tc.kind, tc.inferred)
+			if err != nil {
+				t.Fatalf("remove: %v\n%s", err, out)
+			}
+			after := ownedCommandSnapshot(t, f.base)
+			for _, path := range []string{f.configPath, f.removePath} {
+				rel, err := filepath.Rel(f.base, path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				delete(before, filepath.ToSlash(rel))
+				delete(after, filepath.ToSlash(rel))
+			}
+			if !reflect.DeepEqual(before, after) {
+				changed := make([]string, 0)
+				for path, value := range before {
+					if after[path] != value {
+						changed = append(changed, path)
+					}
+				}
+				for path := range after {
+					if _, ok := before[path]; !ok {
+						changed = append(changed, path)
+					}
+				}
+				t.Fatalf("resource cleanup changed unrelated state: %v", changed)
+			}
+			if _, err := os.Lstat(f.removePath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("target remains: %v", err)
+			}
+			if got, err := os.ReadFile(keepPath); err != nil || !bytes.Equal(got, keepBytes) {
+				t.Fatalf("keep=%q err=%v", got, err)
+			}
+			if got, err := os.Readlink(f.keepPath); err != nil || got != keepCache {
+				t.Fatalf("keep link=%q error=%v", got, err)
+			}
+			if _, err := os.Stat(removeCache); err != nil {
+				t.Fatalf("removed resource cache changed: %v", err)
+			}
+			cfg, err := config.LoadConfigFromPath(f.configPath)
+			if err != nil || cfg == nil || len(cfg.Registries) != 1 {
+				t.Fatalf("config=%#v err=%v", cfg, err)
+			}
+			if tc.kind == "command" && (!containsStr(cfg.Registries[0].Commands.Exclude, "remove") || containsStr(cfg.Registries[0].Commands.Exclude, "keep")) {
+				t.Fatalf("command selector=%#v", cfg.Registries[0].Commands)
+			}
+			if tc.kind == "subagent" && (!containsStr(cfg.Registries[0].Subagents.Exclude, "remove") || containsStr(cfg.Registries[0].Subagents.Exclude, "keep")) {
+				t.Fatalf("subagent selector=%#v", cfg.Registries[0].Subagents)
+			}
+		})
 	}
 }

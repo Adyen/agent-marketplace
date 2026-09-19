@@ -180,6 +180,34 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:       "security/blocked_command_link_cleanup",
+		Desc:       "Given locked commands with an edited sibling, When one blocked command is removed, Then only its directory link is unlinked",
+		Registries: []RegistryDef{{Name: "blocked-command-links", Commands: []Command{{Name: "remove"}, {Name: "keep"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: {{REG:blocked-command-links}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.devin/skills/remove/SKILL.md", "/workspace/.devin/skills/keep/SKILL.md"}},
+			{Action: ActionWriteFile, Path: "/workspace/.devin/skills/keep/SKILL.md", Body: "COMMAND SIBLING EDITED\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n"},
+			{Args: []string{"remove", "remove", "--kind", "command", "--from", "{{REG:blocked-command-links}}"}, MustPass: true,
+				FilesAbsent: []string{"/workspace/.devin/skills/remove"}, FileContains: map[string]string{"/workspace/.devin/skills/keep/SKILL.md": "COMMAND SIBLING EDITED"}, PathsUnchanged: []string{"/workspace/.devin/skills/keep/SKILL.md", "/workspace/.agents/lock.yaml"}},
+		},
+	},
+	{
+		Name:       "security/blocked_subagent_link_cleanup",
+		Desc:       "Given locked subagents with an edited sibling, When one blocked subagent is removed, Then only its file link is unlinked",
+		Registries: []RegistryDef{{Name: "blocked-subagent-links", Subagents: []Subagent{{Name: "remove"}, {Name: "keep"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: {{REG:blocked-subagent-links}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.devin/agents/remove.md", "/workspace/.devin/agents/keep.md"}},
+			{Action: ActionWriteFile, Path: "/workspace/.devin/agents/keep.md", Body: "SUBAGENT SIBLING EDITED\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n"},
+			{Args: []string{"remove", "remove", "--kind", "subagent", "--from", "{{REG:blocked-subagent-links}}"}, MustPass: true,
+				FilesAbsent: []string{"/workspace/.devin/agents/remove.md"}, FileContains: map[string]string{"/workspace/.devin/agents/keep.md": "SUBAGENT SIBLING EDITED"}, PathsUnchanged: []string{"/workspace/.devin/agents/keep.md", "/workspace/.agents/lock.yaml"}},
+		},
+	},
+	{
 		Name:       "security/blocked_skill_link_cleanup",
 		Desc:       "Given locked skill symlinks and an edited installed sibling, When a blocked registry skill is removed, Then only its link is unlinked without rewriting siblings",
 		Registries: []RegistryDef{{Name: "blocked-skill-links", Skills: []Skill{{Name: "remove", Description: "Remove original"}, {Name: "keep", Description: "Keep original"}}}},

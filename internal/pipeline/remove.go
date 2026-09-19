@@ -1288,7 +1288,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if target != nil {
 		resolvedKind = target.Kind
 	}
-	cleanupOnly := config.OnlyRegistryURLBlockedErrors(ec.Errors) && (resolvedKind == ir.KindMcpServer || resolvedKind == ir.KindSkill)
+	cleanupOnly := config.OnlyRegistryURLBlockedErrors(ec.Errors) && blockedOwnedRemovalKind(resolvedKind)
 
 	// Cross-layer named exclude: when the entry lives only in a lower layer,
 	// validate that suppressing it at this scope is meaningful (a local/repo

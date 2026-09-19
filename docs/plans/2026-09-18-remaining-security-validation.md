@@ -71,9 +71,11 @@ credential-bearing services, or build attack demonstrations during testing.
     owned Devin/Codex aggregates into the config/lock publication scope.
   - [x] Extend named blocked-registry removal to complete managed-skill symlink
     outputs, with exact-target and descriptor-bound deletion safeguards.
+  - [x] Extend the same source-bound link cleanup to eligible command and
+    subagent outputs, retaining copied/shared/generic-cache output refusal.
   - [ ] Extend targeted removal to the remaining command paths and artifact
     types, including whole registries, collections, hooks, regular files/trees,
-    and skill outputs that also require shared-metadata cleanup.
+    shared component-cache link provenance, and shared-metadata cleanup.
 - [ ] **R1e: Web URLs with slash-containing refs.** Check GitHub/GitLab URL
   interpretation and explicit `--ref`/`--path` behavior. Reject genuinely
   ambiguous input or use existing explicit selectors; do not introduce
@@ -426,6 +428,45 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   process crashes may leave quarantine residue. It does not claim a general
   filesystem sandbox. Regular-file/tree cleanup, shared skill metadata, other
   kinds, whole registries, collections and non-`--from` paths remain open.
+- R1d command/subagent extension on merged baseline `84d73c22`: the existing
+  planner is now `PrepareManagedLinkRemoval`, with typed-kind agreement and
+  per-kind copy policy. Pipeline eligibility for skills, commands, subagents,
+  and MCP is centralized; MCP retains its separate aggregate planner. No changes
+  to the filesystem deletion primitive, normal sync, or cache routing are made.
+- Real Devin command and subagent regressions reproduced broad-sync rewrites of
+  edited sibling cache contents before the fix. Complete source-bound command
+  links are covered for Claude, Cursor, Gemini, Windsurf, Devin, and Codex;
+  complete subagent links for Factory, Cursor, and Devin. Devin/Codex command
+  user scope and Devin subagent user scope are covered, as is kind inference.
+- Factory command copies, Claude subagent shared metadata, explicit file mode,
+  and mixed unsupported targets refuse without publishing changes. Codex and
+  Gemini subagents also refuse: their standalone artifacts use generic shared
+  component-cache routing rather than this planner's source-specific link
+  groups. They are not claimed to emit extra shared compiler fragments. Adding
+  metadata solely to make the guard pass would change normal cache routing;
+  source provenance for those generic links remains a separate follow-up.
+- Full file/symlink fixture snapshots retain sibling bytes, modes, mtimes,
+  cache contents and targets, unrelated configs, locks and state. Missing and
+  retargeted file links refuse. An absolute external `CODEX_HOME` is explicitly
+  covered by the Codex subagent refusal. Cross-kind tests refuse command cleanup
+  when a skill still needs the same slot, and permit subagent cleanup while a
+  same-named skill occupies a different slot. Config/include/lock changes and
+  post-publication reselection tests cover all three link-resource kinds.
+- Six-sample warm last-resource removal measurements with local Git/disk and no
+  network, excluding fixture setup and per-iteration config/link reset:
+  command 177.9 to 233.2 ms/op (+31.09%), 2.319 to 3.164 MiB/op (+36.45%),
+  16.12k to 21.77k allocations/op (+35.06%); subagent 172.8 to 232.3 ms/op
+  (+34.47%), 2.355 to 3.217 MiB/op (+36.62%), 16.14k to 21.76k allocations/op
+  (+34.83%). All comparisons report p=0.002. These are Devin removal workloads,
+  not a universal performance claim. The validation-cost follow-up stays open.
+- Adversarial review of the resource-link extension checked route reachability,
+  per-kind output shape/copy policy, remaining-slot protection, exact source
+  binding, scope mapping, no cache writes, and regression validity. No remaining
+  blocker was identified in the declared scope. Full Go tests, focused race
+  regressions, the command/subagent/skill/MCP built-binary E2E cases, build and
+  CI lint passed. Existing late-failure, quarantine, and unsupported-input
+  limitations remain unchanged; no broader cleanup
+  completion, v4 resource-editor support, or filesystem atomicity is claimed.
 - Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
   planning and first three implementation layers are published as PRs 210–213
   in stack 214. Native compatibility and real-terminal TUI checks remain CI
