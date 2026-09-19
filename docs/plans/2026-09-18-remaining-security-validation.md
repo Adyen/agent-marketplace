@@ -103,6 +103,9 @@ These are suspected scope-boundary defects, not a blanket symlink ban.
 - [ ] **R2d: Aggregate/manifest reads and deinit.** Audit regular-file checks,
   read bounds, ownership recovery, and repo-scoped deinit/portable manifests.
   Reuse existing limits where applicable; new limits need an explicit policy.
+  - [x] Make shared dependency-transaction reads reject FIFOs without blocking
+    during open, including final config-read assertions and journal recovery.
+  - [ ] Complete remaining aggregate/manifest and deinit read-boundary validation.
 
 ## Stack R3 — Credential and terminal-output handling
 
@@ -467,6 +470,42 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   CI lint passed. Existing late-failure, quarantine, and unsupported-input
   limitations remain unchanged; no broader cleanup
   completion, v4 resource-editor support, or filesystem atomicity is claimed.
+- R2 dependency read boundary on merged baseline `d13f9923`: the shared
+  `dependencytxn.readRegularFile` opened a FIFO in blocking mode before it could
+  check the descriptor's type. A bounded real CLI removal regression replaces
+  an included config with a FIFO immediately before dependency commit; the old
+  reader hangs in the final authorization path instead of refusing it. Direct
+  snapshot/generation readers and journal recovery also hang. The separate
+  mode-reading API already refuses a static FIFO through its earlier check.
+- Exact old-code controls reached the CLI injection marker and timed out at the
+  30-second subprocess bound; snapshot/generation/recovery children reached their
+  10-second bounds. Restoring the fix makes these tests pass with typed unsafe-
+  path/generation-conflict/recovery-blocked errors as applicable. The tests use
+  no FIFO writer; they cannot accidentally unblock the faulty open.
+- The fix adds `O_NONBLOCK` to the existing no-follow/close-on-exec open, validates
+  the same opened descriptor and existing size limit, then restores blocking
+  mode only for regular-file content reads. Existing 4 MiB bounds, growth checks,
+  descriptor cleanup, symlink policy, and transaction semantics remain unchanged.
+  The CLI test preserves the injected FIFO inode/type and all other fixture
+  files/symlinks after staging cleanup. Direct reader refusals return no snapshot
+  data and leave no new state entries.
+- Review corrected two initial evidence gaps: a purported CLI test only called
+  the reader directly, and a noncanonical recovery fixture could fail before
+  reaching the journal. Current tests exercise actual commit/recovery consumers,
+  require precise nested error identities, and fail on preservation mismatches
+  rather than merely adding another error to an expected failure.
+- Six-sample local-disk measurements (setup excluded, no network): 4 KiB snapshot
+  read median 18.67 to 20.94 us/op, not statistically significant (p=0.065);
+  unchanged one-file commit 79.80 to 84.50 us/op (+5.89%, p=0.041). Byte allocation
+  and allocation counts are unchanged (10944 B/16 allocations for snapshot;
+  14592 B/139 allocations for unchanged commit). Timing variability is substantial;
+  these are narrow boundary measurements, not whole-command latency claims.
+- Full Go tests, race-enabled transaction and CLI regressions, focused built-
+  binary cleanup E2E, build and CI lint passed. Pre-push adversarial review found
+  no remaining blocker within the FIFO-open contract. This is not a general I/O
+  deadline, hardlink-policy change, inode/mode
+  pairing redesign, repository-containment fix, or completion of R2d. Aggregate,
+  manifest and deinit validation and the remaining R1 cleanup paths stay open.
 - Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
   planning and first three implementation layers are published as PRs 210–213
   in stack 214. Native compatibility and real-terminal TUI checks remain CI

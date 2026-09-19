@@ -1,11 +1,29 @@
 package dependencytxn
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func BenchmarkReadSnapshotRegularFile(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "config.yaml")
+	data := bytes.Repeat([]byte("x"), 4096)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		b.Fatal(err)
+	}
+	want := Generation{Exists: true, Digest: Digest(data)}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(data)))
+	for b.Loop() {
+		raw, generation, mode, err := ReadSnapshot(path)
+		if err != nil || !bytes.Equal(raw, data) || generation != want || mode != 0o600 {
+			b.Fatalf("snapshot generation=%#v mode=%o error=%v", generation, mode, err)
+		}
+	}
+}
 
 func BenchmarkCheckPending(b *testing.B) {
 	state, err := filepath.EvalSymlinks(b.TempDir())

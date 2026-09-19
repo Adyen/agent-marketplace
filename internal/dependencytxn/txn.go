@@ -247,7 +247,7 @@ func ReadSnapshot(path string) ([]byte, Generation, fs.FileMode, error) {
 }
 
 func readRegularFile(path string, maxSize int64) ([]byte, fs.FileInfo, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -262,6 +262,9 @@ func readRegularFile(path string, maxSize int64) ([]byte, fs.FileInfo, error) {
 	}
 	if maxSize > 0 && info.Size() > maxSize {
 		return nil, nil, fmt.Errorf("%w: file exceeds %d bytes", ErrRecoveryBlocked, maxSize)
+	}
+	if err := unix.SetNonblock(fd, false); err != nil {
+		return nil, nil, fmt.Errorf("restore blocking dependency reads %s: %w", path, err)
 	}
 	reader := io.Reader(file)
 	if maxSize > 0 {

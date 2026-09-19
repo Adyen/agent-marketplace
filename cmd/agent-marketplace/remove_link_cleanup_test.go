@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -812,5 +814,91 @@ func TestRemoveBlockedManagedResourcePreservesSiblings(t *testing.T) {
 				t.Fatalf("subagent selector=%#v", cfg.Registries[0].Subagents)
 			}
 		})
+	}
+}
+
+func TestRemoveBlockedManagedSkillFIFOAuthorization(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	if os.Getenv("DEPENDENCY_FIFO_CHILD") != "1" {
+		ready := filepath.Join(t.TempDir(), "ready")
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		result := runCommandProcess(ctx, t, t.Name(), exactCommandTestPattern(t.Name()), "DEPENDENCY_FIFO_CHILD=1", "DEPENDENCY_FIFO_READY="+ready)
+		raw, err := os.ReadFile(ready)
+		if err != nil || string(raw) != "ready" {
+			t.Fatalf("did not reach FIFO authorization read: %q %v; %s", raw, err, result.output)
+		}
+		if result.err != nil {
+			t.Fatalf("FIFO authorization did not refuse promptly: %v\n%s", result.err, result.output)
+		}
+		return
+	}
+	f := newManagedSkillLinkFixture(t, "factory", "repo")
+	fragment := filepath.Join(f.repo, ".agents", "fragment.yaml")
+	raw, err := os.ReadFile(f.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fragment, []byte("tags: [before]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.configPath, append(raw, []byte("\ninclude: [fragment.yaml]\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, f.repo)
+	if out, err := executeCommand("sync"); err != nil {
+		t.Fatalf("include seed: %v\n%s", err, out)
+	}
+	f.block(t)
+	original := commitDependencyTransaction
+	t.Cleanup(func() { commitDependencyTransaction = original })
+	var expected map[string]string
+	var fifoInfo os.FileInfo
+	commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
+		if fifoInfo != nil {
+			t.Fatal("unexpected second publication attempt")
+		}
+		if err := os.Rename(fragment, fragment+".saved"); err != nil {
+			return dependencytxn.Result{}, err
+		}
+		if err := syscall.Mkfifo(fragment, 0o600); err != nil {
+			return dependencytxn.Result{}, err
+		}
+		fifoInfo, err = os.Lstat(fragment)
+		if err != nil || fifoInfo.Mode()&os.ModeNamedPipe == 0 {
+			return dependencytxn.Result{}, fmt.Errorf("FIFO injection failed: %v", err)
+		}
+		expected = ownedCommandSnapshot(t, f.base, fragment)
+		for path := range expected {
+			if strings.HasPrefix(path, "tmp/.agent-marketplace-config-") {
+				delete(expected, path)
+			}
+		}
+		if err := os.WriteFile(os.Getenv("DEPENDENCY_FIFO_READY"), []byte("ready"), 0o600); err != nil {
+			return dependencytxn.Result{}, err
+		}
+		return original(ctx, state, desired, options...)
+	}
+	out, err := f.remove(t, "repo", false)
+	if !errors.Is(err, dependencytxn.ErrGenerationConflict) || !errors.Is(err, dependencytxn.ErrUnsafePath) {
+		t.Fatalf("error=%v output=%s", err, out)
+	}
+	if fifoInfo == nil || expected == nil {
+		t.Fatal("FIFO injection did not run")
+	}
+	info, statErr := os.Lstat(fragment)
+	if statErr != nil || info.Mode()&os.ModeNamedPipe == 0 || !os.SameFile(fifoInfo, info) {
+		t.Fatalf("FIFO changed: %v %v", info, statErr)
+	}
+	if after := ownedCommandSnapshot(t, f.base, fragment); !reflect.DeepEqual(expected, after) {
+		t.Fatal("FIFO refusal changed files or left staging residue")
+	}
+	if _, err := os.Readlink(f.removePath); err != nil {
+		t.Fatalf("remove link changed: %v", err)
+	}
+	if _, err := os.Readlink(f.keepPath); err != nil {
+		t.Fatalf("keep link changed: %v", err)
 	}
 }
