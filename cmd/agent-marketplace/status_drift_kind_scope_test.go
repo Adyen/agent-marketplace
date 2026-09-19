@@ -7,6 +7,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
 // TestSuppressIncompletePinRemovalsScopesByKindAndNamespace pins the
@@ -81,5 +82,35 @@ func TestSuppressIncompletePinRemovalsKeepsUnattributableNamespaceCandidates(t *
 	}
 	if !slices.Equal(filtered.PerRoot[0].Removed, []string{"bundle", "skills/bundle"}) {
 		t.Fatalf("removed = %v, want the collection-unattributable candidates visible", filtered.PerRoot[0].Removed)
+	}
+}
+
+// TestSuppressIncompletePinRemovalsCountsSharedCandidatesOnce pins the
+// suppressed-count contract: the materializer reports the same root report in
+// both PerRoot and PerTarget, so a suppressed candidate must be counted once
+// per output path — not once per report view — while still being filtered
+// from both views.
+func TestSuppressIncompletePinRemovalsCountsSharedCandidatesOnce(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	pins := []marketplace.DriftIncompletePin{
+		{Err: errors.New("cache wiped"), Kind: "skill", Name: "review"},
+	}
+	root := materialize.TargetReport{OutDir: "/repo/.claude", Removed: []string{"skills/review", "agents/review.md"}}
+	report := &materialize.Report{
+		PerRoot:   []materialize.TargetReport{root},
+		PerTarget: map[hcc.Target]materialize.TargetReport{hcc.TargetClaude: root},
+	}
+
+	filtered, suppressed := suppressIncompletePinRemovals(report, pins)
+	if suppressed != 1 {
+		t.Fatalf("suppressed = %d, want 1 (the shared candidate counted once)", suppressed)
+	}
+	if !slices.Equal(filtered.PerRoot[0].Removed, []string{"agents/review.md"}) {
+		t.Fatalf("per-root removed = %v, want the unrelated candidate visible", filtered.PerRoot[0].Removed)
+	}
+	if !slices.Equal(filtered.PerTarget[hcc.TargetClaude].Removed, []string{"agents/review.md"}) {
+		t.Fatalf("per-target removed = %v, want the unrelated candidate visible", filtered.PerTarget[hcc.TargetClaude].Removed)
 	}
 }

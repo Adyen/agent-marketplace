@@ -514,13 +514,15 @@ func incompletePinSuppresses(pin marketplace.DriftIncompletePin, rel, outDir str
 // candidate matches when its name equals an incomplete pin's installed name
 // and its path sits in an output namespace that pin kind can own, so a
 // same-named removal in an unrelated kind's namespace or root stays visible.
-// The report itself is not mutated. The second return value counts the
-// suppressed candidates.
+// The report itself is not mutated. The second return value counts each
+// suppressed candidate once even when the same root report appears in both
+// PerRoot and PerTarget.
 func suppressIncompletePinRemovals(report *materialize.Report, pins []marketplace.DriftIncompletePin) (*materialize.Report, int) {
 	if report == nil || len(pins) == 0 {
 		return report, 0
 	}
 	suppressed := 0
+	counted := make(map[string]bool)
 	filterRemoved := func(tr materialize.TargetReport, removed []string) []string {
 		kept := make([]string, 0, len(removed))
 		for _, rel := range removed {
@@ -532,7 +534,11 @@ func suppressIncompletePinRemovals(report *materialize.Report, pins []marketplac
 				}
 			}
 			if matched {
-				suppressed++
+				key := tr.OutDir + "\x00" + rel
+				if !counted[key] {
+					counted[key] = true
+					suppressed++
+				}
 				continue
 			}
 			kept = append(kept, rel)

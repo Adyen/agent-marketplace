@@ -950,6 +950,80 @@ func TestInspectPartialCacheLossYieldsHardMissingDiagnostic(t *testing.T) {
 	}
 }
 
+// TestInspectPinLevelFailuresRouteThroughAcquisitionFacts pins the per-pin
+// side of the same contract: a non-required pin the reachable endpoint cannot
+// prove materializable — a failed revision fetch or a revoked revision — may
+// still have managed output on disk. Cached acquisition facts make each
+// failure a hard resolve error so the drift dry-run cannot read that output
+// as orphaned, while a fully wiped cache leaves only drift incomplete.
+func TestInspectPinLevelFailuresRouteThroughAcquisitionFacts(t *testing.T) {
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	archiveDigest := "sha256:" + strings.Repeat("b", 64)
+	revision := revokedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "revoked"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}, "revoked")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "mp")
+			return
+		}
+		if strings.Contains(r.URL.Path, "/unavailable/") {
+			http.Error(w, "revision fetch failed", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(revision)
+	}))
+	defer server.Close()
+
+	pins := []config.MarketplaceResourcePin{
+		{RegistryID: "src", Kind: "skill", Name: "unavailable", Revision: "v1", Digest: contentDigest},
+		{RegistryID: "src", Kind: "skill", Name: "revoked", Revision: "v1", Digest: contentDigest},
+	}
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: pins}
+
+	// Cached metadata proves both pins were acquired: their failed proofs are
+	// hard resolve errors, not soft drift incompleteness.
+	cache := NewCache(t.TempDir())
+	for _, pin := range pins {
+		if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", pin.Name, contentDigest, assessedRevision(store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: pin.Name},
+			ContentDigest: store.RevisionDigest(contentDigest),
+			ArchiveDigest: store.ArchiveDigest(archiveDigest),
+		})); err != nil {
+			t.Fatalf("write metadata for %s: %v", pin.Name, err)
+		}
+	}
+	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeInspect)
+	states := make(map[string]PinStatus, len(inspection.Pins))
+	for _, pin := range inspection.Pins {
+		states[pin.Name] = pin
+	}
+	if got := states["unavailable"].State; got != PinStateUnavailable {
+		t.Fatalf("unavailable state = %q, want %q", got, PinStateUnavailable)
+	}
+	if got := states["revoked"].State; got != PinStateRevoked {
+		t.Fatalf("revoked state = %q, want %q", got, PinStateRevoked)
+	}
+	if len(inspection.ResolveErrors) != 2 {
+		t.Fatalf("cached-facts pin failures = %v, want two hard resolve errors", inspection.ResolveErrors)
+	}
+	if len(inspection.DriftIncomplete) != 0 {
+		t.Fatalf("cached-facts pin drift-incomplete = %v, want none", inspection.DriftIncomplete)
+	}
+
+	// A fully wiped cache cannot prove either pin was ever installed, so the
+	// same failures stay soft drift incompleteness rather than hard errors.
+	wiped := (&Resolver{Cache: NewCache(t.TempDir())}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeInspect)
+	if len(wiped.ResolveErrors) != 0 {
+		t.Fatalf("wiped-cache pin resolve errors = %v, want none", wiped.ResolveErrors)
+	}
+	if len(wiped.DriftIncomplete) != 2 {
+		t.Fatalf("wiped-cache drift-incomplete = %v, want both pin failures", wiped.DriftIncomplete)
+	}
+}
+
 // TestInspectUnavailableNonRequiredPinWithCacheYieldsResolveError covers the
 // unavailable-endpoint path of the same contract: cached facts prove the pin
 // was acquired and managed output may exist, so even a non-required pin must

@@ -139,6 +139,46 @@ func (i *Inspection) addResolveErr(err error, pin config.MarketplaceResourcePin,
 	i.DriftIncomplete = append(i.DriftIncomplete, DriftIncompletePin{Err: err, Kind: pin.Kind, Name: pinInstalledName(pin)})
 }
 
+// pinAcquisitionFacts reports whether cached evidence proves the pin was
+// acquired, reading the cache when the status itself was classified before
+// its cache facts were populated (for example a pin rejected before the
+// cache read). A cache read error is itself a cached-fact failure.
+func pinAcquisitionFacts(cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, status PinStatus) bool {
+	if pinHasAcquisitionFacts(status) {
+		return true
+	}
+	cached, metadataCached, cacheErr := readCachedPin(cache, entry, pin)
+	if cacheErr != nil {
+		return true
+	}
+	scratch := status
+	scratch.MetadataCached = metadataCached
+	populateCacheFacts(&scratch, cache, entry, pin, cached)
+	return pinHasAcquisitionFacts(scratch)
+}
+
+// addPinStateErr routes a pin whose inspection ended in an unmaterializable
+// state — unavailable, or revoked — through the same acquisition-facts
+// bucketing as a failed materialization proof. Managed output may be on disk,
+// so cached facts (or a cache read error) make it a hard resolve error, while
+// a pin with no cached facts only leaves drift incomplete: the cache cannot
+// prove nothing was ever installed. Required pins already surface
+// PinStatusError through Resolve and gate the drift dry-run outright, so they
+// are not double-reported here.
+func (i *Inspection) addPinStateErr(cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, status PinStatus, cause error) {
+	if status.Required || (status.State != PinStateUnavailable && status.State != PinStateRevoked) {
+		return
+	}
+	if cause == nil {
+		if status.Detail != "" {
+			cause = fmt.Errorf("pin is %s: %s", status.State, status.Detail)
+		} else {
+			cause = fmt.Errorf("pin is %s", status.State)
+		}
+	}
+	i.addResolveErr(fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, cause), pin, pinAcquisitionFacts(cache, entry, pin, status))
+}
+
 // pinInstalledName returns the name a pin's managed output is attributed to:
 // InstalledName when the pin renames the resource, else the source name.
 func pinInstalledName(pin config.MarketplaceResourcePin) string {
@@ -243,6 +283,7 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 				}
 				status.State = PinStateUnavailable
 				status.Detail = entryErr.Error()
+				inspection.addPinStateErr(cache, configuredEntry, pin, status, entryErr)
 				inspection.Pins = append(inspection.Pins, status)
 				inspection.Artifacts = append(inspection.Artifacts, artifact)
 			}
@@ -323,6 +364,7 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 				continue
 			}
 			if status.State == PinStateUnavailable && status.Detail != "" {
+				inspection.addPinStateErr(cache, entry, pin, status, nil)
 				inspection.Pins = append(inspection.Pins, status)
 				inspection.Artifacts = append(inspection.Artifacts, artifact)
 				logPinDecision(status)
@@ -351,6 +393,9 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 				applyCachedState(&status, cached, metadataCached, cacheErr)
 				status, resolvedArtifact, resolveErr, hard := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
 				inspection.addResolveErr(resolveErr, pin, hard)
+				if resolveErr == nil {
+					inspection.addPinStateErr(cache, entry, pin, status, nil)
+				}
 				inspection.Pins = append(inspection.Pins, status)
 				inspection.Artifacts = append(inspection.Artifacts, resolvedArtifact)
 				logPinDecision(status)
@@ -404,6 +449,9 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 			}
 			status, resolvedArtifact, resolveErr, hard := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
 			inspection.addResolveErr(resolveErr, pin, hard)
+			if resolveErr == nil {
+				inspection.addPinStateErr(cache, entry, pin, status, nil)
+			}
 			inspection.Pins = append(inspection.Pins, status)
 			inspection.Artifacts = append(inspection.Artifacts, resolvedArtifact)
 			logPinDecision(status)
@@ -488,6 +536,7 @@ func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEnt
 		}
 		if status.State == PinStateUnavailable && status.Detail != "" {
 			appendPinDetail(&status, err.Error())
+			i.addPinStateErr(cache, entry, pin, status, err)
 			i.Pins = append(i.Pins, status)
 			i.Artifacts = append(i.Artifacts, artifact)
 			logPinDecision(status)
@@ -511,16 +560,14 @@ func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEnt
 			status.State = PinStateUnavailable
 		}
 		appendPinDetail(&status, err.Error())
-		if status.State == PinStateUnavailable && !status.Required {
-			// Cached facts prove a prior acquisition, so managed output may be
-			// on disk. Surface a resolve error so status cannot conclude that
-			// output is orphaned while sync --check refreshes and reports
-			// in-sync; the unavailable pin detail stays on the status itself.
-			// Without cached facts the unreachable endpoint still cannot prove
-			// the pin was never installed, so drift is merely incomplete rather
-			// than a hard failure.
-			i.addResolveErr(fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err), pin, pinHasAcquisitionFacts(status))
-		}
+		// Cached facts prove a prior acquisition, so managed output may be on
+		// disk. Surface a resolve error so status cannot conclude that output
+		// is orphaned while sync --check refreshes and reports in-sync; the
+		// unavailable or revoked pin detail stays on the status itself.
+		// Without cached facts the unreachable endpoint still cannot prove
+		// the pin was never installed, so drift is merely incomplete rather
+		// than a hard failure.
+		i.addPinStateErr(cache, entry, pin, status, err)
 		i.Pins = append(i.Pins, status)
 		i.Artifacts = append(i.Artifacts, artifact)
 		logPinDecision(status)
