@@ -310,6 +310,9 @@ func applyEnvOverrides(userTC, orgTC *tmcfg.TelemetryConfig, orgActive bool) (*t
 			slog.Debug("skipping telemetry endpoint env override because organization policy is active", "var", EnvEndpoint)
 		} else {
 			slog.Info("applying telemetry endpoint override from environment", "var", EnvEndpoint, "endpoint", ep)
+			if ep != userTC.Endpoint {
+				userTC.Headers = nil
+			}
 			userTC.Endpoint = ep
 		}
 	}
