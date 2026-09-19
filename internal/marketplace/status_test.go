@@ -91,6 +91,99 @@ func TestInspectPreservesPinStates(t *testing.T) {
 	}
 }
 
+func TestInspectPreservesMaterializableArtifactForHealthyPin(t *testing.T) {
+	resource := ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.Revision = contentDigest
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "mp")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(revision)
+	}))
+	defer server.Close()
+
+	cache := NewCache(t.TempDir())
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+		RegistryID: "src", RegistrySlug: "source-slug", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest,
+	}}}
+	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "review", contentDigest, revision); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+		t.Fatalf("mark artifact verified: %v", err)
+	}
+
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
+	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if len(inspection.Pins) != 1 || inspection.Pins[0].State != PinStateCurrent {
+		t.Fatalf("pins = %#v, want one current pin", inspection.Pins)
+	}
+	// A healthy installed pin must carry the same resolved resource
+	// information sync --check resolves so status can report installed output
+	// and materialization drift identically.
+	resolved, errs := inspection.Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if len(errs) != 0 {
+		t.Fatalf("inspection resolver errors = %v, want none", errs)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("resolved artifacts = %#v, want the installed pin", resolved)
+	}
+	artifact := resolved[0]
+	if artifact.Unresolved || artifact.Resource == nil || artifact.Name != "review" || artifact.Kind != ir.KindSkill {
+		t.Fatalf("resolved artifact = %#v, want materializable review skill", artifact)
+	}
+	if !artifact.IsMarketplace || artifact.MarketplaceURL != server.URL || artifact.MarketplaceInstanceID != "mp" {
+		t.Fatalf("resolved artifact provenance = %#v, want Marketplace identity", artifact)
+	}
+}
+
+func TestInspectKeepsUnresolvedStubForUnverifiablePin(t *testing.T) {
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	archiveDigest := "sha256:" + strings.Repeat("b", 64)
+	revision := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "mp")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(revision)
+	}))
+	defer server.Close()
+
+	// The endpoint reports the pin healthy, but nothing verified is cached:
+	// the inspection must not fabricate a materializable artifact.
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+		RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest,
+	}}}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
+	inspection := (&Resolver{Cache: NewCache(t.TempDir())}).Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	resolved, errs := inspection.Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if len(resolved) != 0 || len(errs) != 0 {
+		t.Fatalf("unverifiable pin resolver output = %#v, %v; want no artifacts and no fabricated errors", resolved, errs)
+	}
+}
+
 func TestInspectCachedModeReportsVerifiedArtifact(t *testing.T) {
 	contentDigest := "sha256:" + strings.Repeat("c", 64)
 	archiveDigest := "sha256:" + strings.Repeat("d", 64)

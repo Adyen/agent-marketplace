@@ -276,7 +276,7 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 				}
 			}
 			inspection.Pins = append(inspection.Pins, status)
-			inspection.Artifacts = append(inspection.Artifacts, artifact)
+			inspection.Artifacts = append(inspection.Artifacts, r.inspectResolvedArtifact(ctx, cache, entry, pin, targetSet, status, artifact, allowedRegistries))
 			logPinDecision(status)
 		}
 	}
@@ -294,6 +294,26 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 	inspection.Err = ctx.Err()
 	slog.Debug("marketplace status inspection completed", "pins", len(inspection.Pins), "duration_ms", time.Since(start).Milliseconds())
 	return inspection
+}
+
+// inspectResolvedArtifact returns the fully resolved artifact for a pin the
+// inspection proved healthy, so the inspection feeds generic resolution and
+// the materialization dry-run the same resolved resources that sync --check
+// produces. Resolution is strictly cache-only and performs no fetches or
+// verification writes: a pin whose verified artifact is not already in the
+// cache keeps its unresolved metadata stub, which Inspection.Resolve filters
+// out — matching the resolve error sync reports for that same pin.
+func (r *Resolver) inspectResolvedArtifact(ctx context.Context, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, status PinStatus, fallback resolver.ResolvedArtifact, allowedRegistries []string) resolver.ResolvedArtifact {
+	switch status.State {
+	case PinStateCurrent, PinStateUpdateAvailable, PinStateCached, PinStateStale:
+	default:
+		return fallback
+	}
+	resolved, err := r.resolvePinWithPolicy(ctx, nil, cache, entry, pin, targetSet, resolver.MarketplaceResolveModeCached, nil, allowedRegistries)
+	if err != nil {
+		return fallback
+	}
+	return resolved
 }
 
 func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEntry, targetSet []hcc.Target, err error) {
