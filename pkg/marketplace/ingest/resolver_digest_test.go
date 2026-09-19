@@ -108,7 +108,7 @@ func TestRunnerConfigDigestSensitivity(t *testing.T) {
 		MaxOutputBytes:       1 << 20,
 	}
 
-	baseDigest, err := runnerConfigDigest("acme.runner", "1.0.0", analyze.RoleGating, nil, base)
+	baseDigest, err := runnerConfigDigest("acme.runner", "1.0.0", analyze.RoleGating, nil, base, analyze.PublicPolicy())
 	if err != nil {
 		t.Fatalf("runnerConfigDigest: %v", err)
 	}
@@ -153,13 +153,56 @@ func TestRunnerConfigDigestSensitivity(t *testing.T) {
 			role = analyze.RoleGating
 		}
 
-		digest, err := runnerConfigDigest("acme.runner", version, role, tc.opaque, tc.rc)
+		digest, err := runnerConfigDigest("acme.runner", version, role, tc.opaque, tc.rc, analyze.PublicPolicy())
 		if err != nil {
 			t.Fatalf("runnerConfigDigest %s: %v", tc.name, err)
 		}
 		if digest == baseDigest {
 			t.Fatalf("%s change did not alter runner config digest", tc.name)
 		}
+	}
+}
+
+func TestRunnerConfigDigestPolicyOutcomeSensitivity(t *testing.T) {
+	rc := analyze.RunnerConfig{
+		Command:              "/bin/sh",
+		Args:                 []string{"-c", "echo ok"},
+		Timeout:              30 * time.Second,
+		ImplementationDigest: "sha256:" + strings.Repeat("0", 64),
+		MaxOutputBytes:       1 << 20,
+	}
+
+	baseDigest, err := runnerConfigDigest("acme.runner", "1.0.0", analyze.RoleGating, nil, rc, analyze.PublicPolicy())
+	if err != nil {
+		t.Fatalf("runnerConfigDigest base: %v", err)
+	}
+
+	// A runner-emitted code is not known at resolution time; changing its
+	// effective policy outcome must still change the stored digest.
+	changedPolicy := analyze.Policy{
+		Name: "public",
+		Outcomes: map[string]string{
+			"acme.runner.emitted-code": analyze.OutcomeReject,
+		},
+	}
+	changedDigest, err := runnerConfigDigest("acme.runner", "1.0.0", analyze.RoleGating, nil, rc, changedPolicy)
+	if err != nil {
+		t.Fatalf("runnerConfigDigest changed: %v", err)
+	}
+	if changedDigest == baseDigest {
+		t.Fatal("runner-emitted code outcome change did not alter runner config digest")
+	}
+
+	// The same outcome change under a different policy identity must also
+	// produce a distinct digest.
+	renamedPolicy := changedPolicy
+	renamedPolicy.Name = "custom"
+	renamedDigest, err := runnerConfigDigest("acme.runner", "1.0.0", analyze.RoleGating, nil, rc, renamedPolicy)
+	if err != nil {
+		t.Fatalf("runnerConfigDigest renamed: %v", err)
+	}
+	if renamedDigest == changedDigest {
+		t.Fatal("policy identity change did not alter runner config digest")
 	}
 }
 

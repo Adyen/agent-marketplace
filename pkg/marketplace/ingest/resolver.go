@@ -268,7 +268,7 @@ func resolveRunner(cfg config.Analyzer, effective analyze.Policy, limits config.
 		Policy:   effective,
 	}
 
-	digest, err := runnerConfigDigest(cfg.ID, cfg.Version, cfg.Role, cfg.Config, rc)
+	digest, err := runnerConfigDigest(cfg.ID, cfg.Version, cfg.Role, cfg.Config, rc, effective)
 	if err != nil {
 		return resolvedAnalyzer{}, err
 	}
@@ -413,12 +413,29 @@ func rulepackConfigDigest(id, version, role string, cfg map[string]any, fileDige
 	return store.PolicyDigest("sha256:" + hex.EncodeToString(sum[:])), nil
 }
 
-func runnerConfigDigest(id, version, role string, cfg map[string]any, rc analyze.RunnerConfig) (store.PolicyDigest, error) {
+func runnerConfigDigest(id, version, role string, cfg map[string]any, rc analyze.RunnerConfig, effective analyze.Policy) (store.PolicyDigest, error) {
+	// Runner-emitted codes are not known at resolution time, so the digest must
+	// cover the complete deterministic effective policy outcome mapping and the
+	// policy identity rather than a per-code list like the builtin digest.
+	codes := make([]string, 0, len(effective.Outcomes))
+	for code := range effective.Outcomes {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	outcomes := make([]codeOutcome, 0, len(codes))
+	for _, code := range codes {
+		outcomes = append(outcomes, codeOutcome{Code: code, Outcome: effective.OutcomeFor(code)})
+	}
+
 	input := struct {
 		ID      string         `json:"id"`
 		Version string         `json:"version"`
 		Role    string         `json:"role"`
 		Config  map[string]any `json:"config,omitempty"`
+		Policy  struct {
+			Name     string        `json:"name,omitempty"`
+			Outcomes []codeOutcome `json:"outcomes"`
+		} `json:"policy"`
 		Runtime struct {
 			Command              string   `json:"command"`
 			Args                 []string `json:"args"`
@@ -433,6 +450,8 @@ func runnerConfigDigest(id, version, role string, cfg map[string]any, rc analyze
 		Role:    role,
 		Config:  cloneAnalyzerConfig(cfg),
 	}
+	input.Policy.Name = effective.Name
+	input.Policy.Outcomes = outcomes
 	input.Runtime.Command = rc.Command
 	input.Runtime.Args = append([]string(nil), rc.Args...)
 	input.Runtime.TimeoutNs = rc.Timeout.Nanoseconds()
