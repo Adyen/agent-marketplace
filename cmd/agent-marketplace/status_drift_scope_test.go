@@ -87,7 +87,7 @@ marketplaces:
 		"ORPHANED FILES",
 		"stray-orphan",
 		filepath.Join(repoRoot, ".factory", "skills", "stray-orphan"),
-		"Marketplace drift is unknown",
+		"marketplace drift is unknown",
 		"review",
 	} {
 		if !strings.Contains(output, needle) {

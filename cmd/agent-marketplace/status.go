@@ -160,7 +160,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		// unrelated drift stays visible — and report the unknowns.
 		var suppressed int
 		dryRunReport, suppressed = suppressIncompletePinRemovals(dryRunReport, names)
-		result.Warnings = append(result.Warnings, fmt.Errorf("Marketplace drift is unknown for pin(s) %s: %d removal candidate(s) suppressed because the cache cannot prove their managed output", strings.Join(slices.Sorted(maps.Keys(names)), ", "), suppressed))
+		result.Warnings = append(result.Warnings, fmt.Errorf("marketplace drift is unknown for pin(s) %s: %d removal candidate(s) suppressed because the cache cannot prove their managed output", strings.Join(slices.Sorted(maps.Keys(names)), ", "), suppressed))
 	}
 
 	// Build orphaned rows from files that would be removed.
