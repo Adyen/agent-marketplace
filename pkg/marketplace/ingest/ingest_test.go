@@ -1154,3 +1154,61 @@ func findResourceRevision(t *testing.T, revs []store.ResourceRevision, kind, nam
 	t.Fatalf("no %s/%s resource revision", kind, name)
 	return store.ResourceRevision{}
 }
+
+// TestToStoreFindingsSupportLocationByMembership proves support-file finding
+// locations resolve by exact FileSet membership, so support paths colliding
+// with primary-resource pseudo-path substrings (/body, /prompt, /Description,
+// /command, /url, /name) keep their correct persisted path and byte offsets.
+func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
+	body := []byte("primary body\n")
+	support := analyze.FileSet{
+		"notes/body":           []byte("alpha\nbeta\n"),
+		"docs/prompt.md":       []byte("g\ngamma\n"),
+		"guide/Description.md": []byte("del\ndelta\n"),
+		"plain.md":             []byte("epsilon\nx\n"),
+	}
+	primaryPath := inspection.PrimaryPath("skill")
+
+	cases := []struct {
+		name     string
+		file     string
+		wantPath string
+		wantByte int64
+	}{
+		{"body suffix collision", "notes/body", "support/notes/body", 6},
+		{"prompt substring collision", "docs/prompt.md", "support/docs/prompt.md", 2},
+		{"description substring collision", "guide/Description.md", "support/guide/Description.md", 4},
+		{"support-prefixed key", "support/plain.md", "support/plain.md", 8},
+		{"primary pseudo-path", "skill/demo/body", primaryPath, 0},
+		{"unknown path", "missing.md", primaryPath, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings := []analyze.Finding{{
+				Code:        "test.finding",
+				Severity:    analyze.OutcomeWarn,
+				Message:     "m",
+				SourceRange: &analyze.SourceRange{File: tc.file, Line: 2, Column: 1},
+			}}
+			got := toStoreFindings(findings, primaryPath, body, support)
+			if len(got) != 1 || got[0].Location == nil {
+				t.Fatalf("expected one located finding, got %+v", got)
+			}
+			loc := got[0].Location
+			if loc.Path != tc.wantPath {
+				t.Fatalf("location path = %q, want %q", loc.Path, tc.wantPath)
+			}
+			if tc.wantPath == primaryPath {
+				// Byte offsets come from the primary body: line 2 col 1 is
+				// past the end, clamped to len(body).
+				if loc.StartByte != int64(len(body)) {
+					t.Fatalf("primary start byte = %d, want %d", loc.StartByte, len(body))
+				}
+				return
+			}
+			if loc.StartByte != tc.wantByte {
+				t.Fatalf("support start byte = %d, want %d", loc.StartByte, tc.wantByte)
+			}
+		})
+	}
+}

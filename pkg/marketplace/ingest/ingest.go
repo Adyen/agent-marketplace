@@ -1573,11 +1573,12 @@ func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte
 			location := &store.FindingLocation{Path: primaryPath, Line: f.SourceRange.Line, Column: f.SourceRange.Column}
 			file := strings.ReplaceAll(f.SourceRange.File, "\\", "/")
 			content := body
-			if !strings.HasSuffix(file, "/body") && !strings.HasSuffix(file, "/name") && !strings.Contains(file, "/Description") && !strings.Contains(file, "/command") && !strings.Contains(file, "/prompt") && !strings.Contains(file, "/url") {
-				name := strings.TrimPrefix(file, "support/")
-				if data, ok := support[name]; ok {
-					location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
-				}
+			// A source range maps to a support file only by exact FileSet
+			// membership; substring heuristics misclassify support paths that
+			// collide with primary-resource pseudo-path segments.
+			name := strings.TrimPrefix(file, "support/")
+			if data, ok := support[name]; ok {
+				location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
 			}
 			if f.SourceRange.Line > 0 {
 				start, end := lineColumnBytes(content, f.SourceRange.Line, f.SourceRange.Column)
