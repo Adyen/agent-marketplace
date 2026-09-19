@@ -365,12 +365,9 @@ func (r *Resolver) finishInspectedPin(ctx context.Context, cache *Cache, entry c
 		return status, resolvedArtifact, nil
 	}
 	appendPinDetail(&status, resolveErr.Error())
-	if !status.MetadataCached && !status.ArtifactPresent {
-		// Nothing was ever acquired for this pin, so no managed output can be
-		// on disk to misreport as orphaned. Keep the degraded stub and detail
-		// without turning status into a hard failure.
-		return status, artifact, nil
-	}
+	// Every failed materialization proof yields a resolve error, even without
+	// cached acquisition facts: the cache is disposable while managed output
+	// persists, so a wiped cache cannot prove nothing was ever installed.
 	return status, artifact, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, resolveErr)
 }
 
@@ -430,6 +427,13 @@ func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEnt
 			status.State = PinStateUnavailable
 		}
 		appendPinDetail(&status, err.Error())
+		if status.State == PinStateUnavailable && !status.Required && (status.MetadataCached || status.ArtifactPresent) {
+			// Cached facts prove a prior acquisition, so managed output may be
+			// on disk. Surface a resolve error so status cannot conclude that
+			// output is orphaned while sync --check refreshes and reports
+			// in-sync; the unavailable pin detail stays on the status itself.
+			i.ResolveErrors = append(i.ResolveErrors, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err))
+		}
 		i.Pins = append(i.Pins, status)
 		i.Artifacts = append(i.Artifacts, artifact)
 		logPinDecision(status)

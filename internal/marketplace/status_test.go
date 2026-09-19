@@ -842,3 +842,95 @@ func TestInspectPreservesMirrorVerificationMarker(t *testing.T) {
 		t.Fatalf("corrupt artifact resolver errors = %v, want one drift-suppressing error", errs)
 	}
 }
+
+// TestInspectCacheWipeWithManagedOutputYieldsResolveError pins the
+// disposable-cache contract: a full cache wipe removes every acquisition fact
+// while managed output persists on disk. The healthy endpoint still classifies
+// the pin current, but the failed materialization proof must surface a resolve
+// error so status cannot report the installed output as orphaned while
+// sync --check refreshes and reports in-sync.
+func TestInspectCacheWipeWithManagedOutputYieldsResolveError(t *testing.T) {
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	archiveDigest := "sha256:" + strings.Repeat("b", 64)
+	revision := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "mp")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(revision)
+	}))
+	defer server.Close()
+
+	// The cache was fully wiped after the pin's managed output was installed:
+	// no metadata, no artifact, no verification marker remain.
+	cache := NewCache(t.TempDir())
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+		RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest,
+	}}}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
+	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if len(inspection.Pins) != 1 {
+		t.Fatalf("pins = %#v, want one pin", inspection.Pins)
+	}
+	pin := inspection.Pins[0]
+	if pin.State != PinStateCurrent || pin.MetadataCached || pin.ArtifactPresent {
+		t.Fatalf("wiped-cache pin = %#v, want current endpoint state without cached facts", pin)
+	}
+	resolved, errs := inspection.Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if len(resolved) != 0 {
+		t.Fatalf("wiped-cache pin resolved = %#v, want no materializable artifacts", resolved)
+	}
+	if len(errs) != 1 {
+		t.Fatalf("wiped-cache pin resolver errors = %v, want one drift-suppressing error", errs)
+	}
+}
+
+// TestInspectUnavailableNonRequiredPinWithCacheYieldsResolveError covers the
+// unavailable-endpoint path of the same contract: cached facts prove the pin
+// was acquired and managed output may exist, so even a non-required pin must
+// surface a resolve error that suppresses an unsafe orphaned-output drift
+// report while retaining its unavailable status detail.
+func TestInspectUnavailableNonRequiredPinWithCacheYieldsResolveError(t *testing.T) {
+	contentDigest := "sha256:" + strings.Repeat("c", 64)
+	archiveDigest := "sha256:" + strings.Repeat("d", 64)
+	revision := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "endpoint unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	cache := NewCache(t.TempDir())
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+		RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest,
+	}}}
+	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "review", contentDigest, revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteArtifact(archiveDigest, []byte("artifact")); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
+	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if len(inspection.Pins) != 1 {
+		t.Fatalf("pins = %#v, want one pin", inspection.Pins)
+	}
+	pin := inspection.Pins[0]
+	if pin.State != PinStateUnavailable || pin.Required || !pin.MetadataCached || !pin.ArtifactPresent || pin.Detail == "" {
+		t.Fatalf("unavailable pin = %#v, want non-required unavailable state with cached acquisition facts", pin)
+	}
+	resolved, errs := inspection.Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if len(resolved) != 0 {
+		t.Fatalf("unavailable pin resolved = %#v, want no materializable artifacts", resolved)
+	}
+	if len(errs) != 1 {
+		t.Fatalf("unavailable pin resolver errors = %v, want one drift-suppressing error", errs)
+	}
+}
