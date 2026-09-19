@@ -5,12 +5,45 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
+
+func BenchmarkMergeInstallBindingsInMemory(b *testing.B) {
+	commit, err := lockfile.ParseGitOID("sha1:" + strings.Repeat("a", 40))
+	if err != nil {
+		b.Fatal(err)
+	}
+	digest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	for _, count := range []int{1, 16} {
+		b.Run(fmt.Sprintf("registries=%d", count), func(b *testing.B) {
+			base := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}
+			for i := range count {
+				base.Registries = append(base.Registries, lockfile.GitRegistry{
+					URL: fmt.Sprintf("https://example.invalid/registry-%d", i), Ref: "main", Commit: commit,
+					Roots: []lockfile.GitRoot{{Path: ".", SourceHarness: "claude", RevisionSchema: "v3", RevisionDigest: digest,
+						Resources: []lockfile.GitResource{{Kind: "skill", Name: "review", ContentDigest: digest, ArchiveDigest: digest}}}},
+				})
+			}
+			base, err := lockfile.Normalize(base)
+			if err != nil {
+				b.Fatal(err)
+			}
+			bindings := append([]lockfile.GitRegistry(nil), base.Registries...)
+			b.ReportAllocs()
+			for b.Loop() {
+				merged, err := mergeInstallBindings(base, lockfile.ScopeRepo, bindings)
+				if err != nil || len(merged.Registries) != count {
+					b.Fatalf("merge: registries=%d error=%v", len(merged.Registries), err)
+				}
+			}
+		})
+	}
+}
 
 func BenchmarkProjectLockedRoots(b *testing.B) {
 	roots := make([]lockfile.GitRoot, 0, 32)
@@ -64,6 +97,32 @@ func BenchmarkInstallFromWarmExactLock(b *testing.B) {
 		b.Fatalf("load benchmark registry: %v", err)
 	}
 	args := []string{"install", "review-0", "--from", cfg.Registries[0].URL, "--ref", cfg.Registries[0].Ref}
+	if out, err := executeCommand(args...); err != nil {
+		b.Fatalf("warm install: %v\n%s", err, out)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.StartTimer()
+	for range b.N {
+		config.ResetRepoRootCache()
+		if out, err := executeCommand(args...); err != nil {
+			b.Fatalf("install: %v\n%s", err, out)
+		}
+	}
+	b.StopTimer()
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		b.Fatalf("warm install changed lock: %v", err)
+	}
+}
+
+func BenchmarkConfiguredInstallWarmExactLockLocalGitDiskNoNetwork(b *testing.B) {
+	_, path := setupWarmLockedGitSyncBenchmark(b)
+	args := []string{"install", "review-0"}
 	if out, err := executeCommand(args...); err != nil {
 		b.Fatalf("warm install: %v\n%s", err, out)
 	}
