@@ -551,7 +551,7 @@ func BuildRegistryRevisionWithAuditStore(ctx context.Context, cfg config.Config,
 			AnalyzerVersion:          resolvedSet.AuditSetVersion,
 			PolicyDigest:             policyDigest,
 			Decision:                 assessmentDecision(p.result),
-			Findings:                 toStoreFindings(p.result.Findings, inspection.PrimaryPath(kind), p.inspectionBody, p.inspectionSupport),
+			Findings:                 toStoreFindings(p.result.Findings, inspection.PrimaryPath(kind), p.entry.Name, p.inspectionBody, p.inspectionSupport),
 			InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+p.entry.Name]),
 			AssessedAt:               p.assessedAt,
 		})
@@ -769,7 +769,7 @@ func cacheAwareAnalyze(meta store.MetadataStore, coord store.ResourceCoordinate,
 					AnalyzerVersion: audit.AnalyzerVersion,
 					ConfigDigest:    configDigest,
 				}
-				storeFindings := toStoreFindings(audit.Findings, primaryPath, body, support)
+				storeFindings := toStoreFindings(audit.Findings, primaryPath, coord.Name, body, support)
 				storeAudit, err := store.ResourceAuditFromMappedFindings(audit, key, assessedAt, storeFindings)
 				if err != nil {
 					return analyze.Report{}, fmt.Errorf("finalize audit %s: %w", audit.AnalyzerID, err)
@@ -839,7 +839,7 @@ func storeAuditsFromAnalyze(audits []analyze.Audit, resolvedSet resolvedAnalyzer
 			AnalyzerVersion: audit.AnalyzerVersion,
 			ConfigDigest:    configDigest,
 		}
-		findings := toStoreFindings(audit.Findings, primaryPath, body, support)
+		findings := toStoreFindings(audit.Findings, primaryPath, coord.Name, body, support)
 		storeAudit, err := store.ResourceAuditFromMappedFindings(audit, key, assessedAt, findings)
 		if err != nil {
 			return nil, fmt.Errorf("finalize audit %s: %w", audit.AnalyzerID, err)
@@ -1558,7 +1558,7 @@ func resourcePolicyDigest(policy analyze.Policy, limits config.Limits, license l
 	return store.PolicyDigest("sha256:" + hex.EncodeToString(sum[:])), nil
 }
 
-func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte, support analyze.FileSet) []store.Finding {
+func toStoreFindings(findings []analyze.Finding, primaryPath, resourceName string, body []byte, support analyze.FileSet) []store.Finding {
 	out := make([]store.Finding, 0, len(findings))
 	for _, f := range findings {
 		finding := store.Finding{
@@ -1577,11 +1577,11 @@ func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte
 			// membership; substring heuristics misclassify support paths that
 			// collide with primary-resource pseudo-path segments. References
 			// inside the primary pseudo-path namespace (the canonical primary
-			// path itself or the resource's <kind>/<name>[/<field>] root) keep
-			// precedence over a colliding support key: that namespace is how
-			// analyzers address the primary document, so those ranges always
-			// resolve to the primary body.
-			if file != primaryPath && !isPrimaryPseudoPath(file, primaryPath) {
+			// path itself or the exact resource pseudo-root <kind>/<name> plus
+			// its slash-prefixed fields) keep precedence over a colliding
+			// support key: that namespace is how analyzers address the primary
+			// document, so those ranges always resolve to the primary body.
+			if file != primaryPath && !isPrimaryPseudoPath(file, primaryPseudoRoot(primaryPath, resourceName)) {
 				name := strings.TrimPrefix(file, "support/")
 				if data, ok := support[name]; ok {
 					location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
@@ -1598,14 +1598,24 @@ func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte
 	return out
 }
 
-// isPrimaryPseudoPath reports whether file lies inside the primary resource's
-// pseudo-path namespace: the canonical primary path or the <kind>/<name>
-// rooted paths analyzers use for primary fields (for example
-// "skill/demo/Body"). The kind prefix derives from the canonical primary path
-// so a support file can still live under another kind's root.
-func isPrimaryPseudoPath(file, primaryPath string) bool {
+// isPrimaryPseudoPath reports whether file is the exact resource pseudo-root
+// or a slash-prefixed field beneath it (for example "skill/demo" or
+// "skill/demo/Body"). Paths elsewhere in the <kind>/ subtree, such as a
+// support key "skill/helper.md" for resource "demo", are not primary
+// pseudo-paths.
+func isPrimaryPseudoPath(file, pseudoRoot string) bool {
+	return pseudoRoot != "" && (file == pseudoRoot || strings.HasPrefix(file, pseudoRoot+"/"))
+}
+
+// primaryPseudoRoot returns the exact <kind>/<resource-name> pseudo-root
+// analyzers use to address the primary resource, or "" when the canonical
+// primary path has no known kind prefix.
+func primaryPseudoRoot(primaryPath, resourceName string) string {
 	prefix := primaryPseudoPrefix(primaryPath)
-	return prefix != "" && strings.HasPrefix(file, prefix)
+	if prefix == "" || resourceName == "" {
+		return ""
+	}
+	return prefix + resourceName
 }
 
 func primaryPseudoPrefix(primaryPath string) string {

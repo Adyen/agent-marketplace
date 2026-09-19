@@ -1173,6 +1173,7 @@ func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 		"prompt.txt":           []byte("kappa\nlambda\n"),
 		"skill/demo":           []byte("zeta\neta\n"),
 		"skill/demo/Body":      []byte("theta\niota\n"),
+		"skill/helper.md":      []byte("mu\nnu\n"),
 	}
 	primaryPath := inspection.PrimaryPath("skill")
 
@@ -1193,6 +1194,7 @@ func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 		{"primary pseudo-root collision", "skill/demo", primaryPath, 0},
 		{"primary pseudo-prefix collision", "skill/demo/Body", primaryPath, 0},
 		{"primary pseudo-path", "skill/demo/body", primaryPath, 0},
+		{"non-colliding kind-subtree support key", "skill/helper.md", "support/skill/helper.md", 3},
 		{"unknown path", "missing.md", primaryPath, 0},
 	}
 	for _, tc := range cases {
@@ -1203,7 +1205,7 @@ func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 				Message:     "m",
 				SourceRange: &analyze.SourceRange{File: tc.file, Line: 2, Column: 1},
 			}}
-			got := toStoreFindings(findings, primaryPath, body, support)
+			got := toStoreFindings(findings, primaryPath, "demo", body, support)
 			if len(got) != 1 || got[0].Location == nil {
 				t.Fatalf("expected one located finding, got %+v", got)
 			}
