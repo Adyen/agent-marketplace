@@ -64,6 +64,41 @@ export function lifecycleBadge(state: string | undefined): Badge { return LIFECY
 export function outcomeBadge(outcome: string | undefined): Badge { return OUTCOME[outcome || ''] || fallbackBadge(outcome) }
 export const jobStatusBadge = outcomeBadge
 
+const CHANGE: Record<string, Badge> = {
+  added: { label: 'New', color: 'success' },
+  changed: { label: 'Changed', color: 'info' },
+  unchanged: { label: 'Unchanged', color: 'neutral' },
+  removed: { label: 'Removed', color: 'error' },
+}
+const DECISION: Record<string, Badge> = {
+  allow: { label: 'Allowed', color: 'success' },
+  warn: { label: 'Warnings', color: 'warning' },
+  reject: { label: 'Rejected', color: 'error' },
+}
+export function changeBadge(change: string | undefined): Badge { return CHANGE[change || ''] || fallbackBadge(change) }
+export function decisionBadge(decision: string | undefined): Badge { return DECISION[decision || ''] || fallbackBadge(decision) }
+
+// Preview failure codes come from the worker; the message names the offending
+// root or resource. These titles explain the class of problem and what to try.
+export const previewFailureCopy: Record<string, { title: string, hint: string }> = {
+  acquisition_failed: { title: 'The repository could not be acquired', hint: 'Check the origin URL, the ref and the credential profile. Git output is not shown because it can contain credentials.' },
+  profile_unavailable: { title: 'Origin or profile not permitted', hint: 'The deployment does not allow this origin, or the selected profile does not cover it.' },
+  root_missing: { title: 'A source root does not exist at this ref', hint: 'Check the spelling and that the directory is committed on the selected ref.' },
+  catalog_error: { title: 'The registry catalog could not be built', hint: 'Check the diagnostic below. Malformed skills are skipped when valid resources remain; a missing layout or registry-wide error still blocks indexing.' },
+  duplicate_resource: { title: 'Two roots expose the same resource', hint: 'Narrow the overlapping roots or rename one of the resources in the registry.' },
+  timeout: { title: 'The preview ran out of time', hint: 'The repository may be too large for the deployment limits. Try a narrower root.' },
+  discovery_failed: { title: 'Discovery failed', hint: 'The message below names the resource or root that could not be processed.' },
+}
+export function previewFailureTitle(code: string | undefined): { title: string, hint: string } {
+  return previewFailureCopy[code || ''] || { title: 'The preview could not be completed', hint: 'Indexing would most likely fail the same way. Fix the reported problem and preview again.' }
+}
+
+export function previewKindCounts(resources: readonly { kind: string }[]): [string, number][] {
+  const counts = new Map<string, number>()
+  for (const item of resources) counts.set(item.kind, (counts.get(item.kind) || 0) + 1)
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+}
+
 // Which lifecycle actions are meaningful for a registry in its current state.
 // The backend still validates; this only avoids showing obviously inapplicable buttons.
 export function applicableLifecycleActions(registry: { paused: boolean, withdrawn: boolean, retired: boolean }): AdminProposal['action'][] {

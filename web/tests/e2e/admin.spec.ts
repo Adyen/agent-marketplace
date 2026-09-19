@@ -5,6 +5,16 @@ const base = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || '4322'}/ma
 const registry = { id: 'stable-team', slug: 'team', aliases: ['old-team'], historical_origins: [], origin: 'https://git.example/team', ref: 'main', roots: [{ path: '.agents', source_harness: '' }, { path: '.claude', source_harness: 'claude' }], acquisition: 'index-only', publisher: { name: 'Team' }, license: 'MIT', generation: 2, lifecycle: 'active', paused: false, withdrawn: false, retired: false }
 const snapshot = { version: 1, policy_revision: 2, license_policy: { allowlist: ['MIT'], undeclared: 'reject' }, registries: [registry], source_fingerprint: 'fingerprint' }
 
+const preview = { id: 'preview-1', marketplace_id: 'test', actor: { issuer: 'test-sso', subject: 'operator' }, base_revision: 2, registry, existing: true, job_id: 'managed-preview-preview-1', status: 'pending', created_at: '2026-09-18T10:00:00Z' }
+const previewResult = {
+  commit: '0123456789abcdef0123456789abcdef01234567', ref: 'v2', observed_at: '2026-09-18T10:00:04Z', policy_revision: 2, diff_base: 'pub-1', total_resources: 2,
+  roots: [
+    { path: '.agents', resource_count: 2, resources: [{ kind: 'skill', name: 'review', source_path: '.agents/skills/review/SKILL.md', decision: 'allow', change: 'unchanged' }, { kind: 'command', name: 'lint', source_path: '.agents/commands/lint.md', decision: 'allow', change: 'added' }] },
+    { path: '.claude', source_harness: 'claude', resource_count: 0, resources: [] },
+  ],
+  removed: [{ kind: 'subagent', name: 'reviewer', change: 'removed' }],
+}
+
 const change = { marketplace_id: 'test', revision: 3, parent_revision: 2, actor: { issuer: 'test-sso', subject: 'operator' }, operation: 'upsert_registry', reason: 'Change ref', request_id: 'request-1', idempotency_key: 'key', request_digest: 'digest', snapshot, job_ids: ['job-1'], created_at: '2026-09-18T10:00:00Z' }
 
 async function mockAdmin(page: Page, status = 200, code = '') {
@@ -24,6 +34,12 @@ async function mockAdmin(page: Page, status = 200, code = '') {
       if (status !== 200) return route.fulfill({ status, json: { code, message: 'Rejected' } })
       body = change
     }
+    else if (path === '/previews') {
+      const proposal = request.postDataJSON()
+      if (proposal.action !== 'upsert_registry' || proposal.registry_id !== proposal.registry?.id) return route.fulfill({ status: 422, json: { code: 'invalid_configuration', message: 'Only registry drafts can be previewed.' } })
+      return route.fulfill({ status: 202, json: preview, headers: { 'Cache-Control': 'no-store' } })
+    }
+    else if (path === '/previews/preview-1') body = { ...preview, status: 'succeeded', completed_at: '2026-09-18T10:00:04Z', result: previewResult }
     else if (path === '/jobs/job-1') body = { id: 'job-1', kind: 'managed-reconcile', status: 'queued', attempt: 0, max_attempts: 5, created_at: '2026-09-18T10:00:00Z', updated_at: '2026-09-18T10:00:00Z' }
     else if (path === '/activity') body = { changes: [change] }
     else if (path === '/attempts') {
@@ -96,6 +112,32 @@ test.describe('Private administration', () => {
     expect(mutations[1]?.headers['if-match']).toBe('"2"')
     expect(mutations[1]?.headers['x-marketplace-admin']).toBe('1')
     expect(mutations[1]?.body).toEqual(mutations[0]?.body)
+  })
+
+  test('previews discovery for the exact draft, flags empty roots, and carries the outcome into review', async ({ page }) => {
+    const mutations = await mockAdmin(page)
+    await page.goto(`${base}/admin/registries/stable-team/configuration`)
+    await page.getByRole('button', { name: 'Edit configuration', exact: true }).click()
+    await page.getByLabel('Ref or exact commit').fill('v2')
+    const panel = page.getByRole('region', { name: 'Discovery preview' })
+    await panel.getByRole('button', { name: 'Preview discovery', exact: true }).click()
+    await expect(panel.getByText(/One root exposed no resources/)).toBeVisible()
+    expect(mutations.map(value => value.path)).toEqual(['/previews'])
+    expect(mutations[0]?.headers['if-match']).toBe('"2"')
+    expect((mutations[0]?.body.registry as { ref: string }).ref).toBe('v2')
+    await expect(panel.getByText('Nothing discoverable under this root', { exact: false })).toBeVisible()
+    await expect(panel.getByText('lint', { exact: true })).toBeVisible()
+    await expect(panel.getByText('Currently published but no longer discovered')).toBeVisible()
+    await expect(panel.getByRole('button', { name: 'Preview again', exact: true })).toBeVisible()
+    await page.getByLabel('Ref or exact commit').fill('v3')
+    await expect(panel.getByText(/draft changed since this preview/)).toBeVisible()
+    await page.getByLabel('Ref or exact commit').fill('v2')
+    await expect(panel.getByText(/draft changed since this preview/)).toHaveCount(0)
+    await page.getByLabel('Reason for change').fill('Change ref')
+    await page.getByRole('button', { name: 'Continue to review', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Review changes' })).toBeVisible()
+    await expect(page.getByText(/found 2 resources at commit 0123456789ab; 1 currently published resource would disappear/)).toBeVisible()
+    expect(mutations.map(value => value.path)).toEqual(['/previews', '/validate'])
   })
 
   for (const [status, code] of [[401, 'unauthenticated'], [409, 'revision_conflict']] as const) {

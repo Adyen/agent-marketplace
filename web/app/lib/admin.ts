@@ -10,6 +10,15 @@ export type AdminProposal = components['schemas']['AdminProposal']
 export type AdminChange = components['schemas']['AdminChange']
 export type AdminJob = components['schemas']['AdminJob']
 export type AdminAttempt = components['schemas']['AdminAttempt']
+export type AdminPreview = components['schemas']['AdminPreview']
+export type AdminPreviewResult = components['schemas']['AdminPreviewResult']
+export type AdminPreviewResource = components['schemas']['AdminPreviewResource']
+export type AdminPreviewRoot = AdminPreviewResult['roots'][number]
+
+// A preview plus the exact draft it was requested for. The server echoes the
+// proposal it stored, but the draft comparison uses this client-side snapshot so
+// field ordering and defaults added by the server never mask a real edit.
+export type AdminPreviewState = { preview: AdminPreview, registry: string }
 
 export class AdminError extends Error {
   constructor(public code: string, message: string, public fields: Record<string, string> = {}) {
@@ -61,6 +70,8 @@ export function createAdminApi(fetcher: typeof fetch = fetch) {
     job: (id: string) => request<AdminJob>(`/jobs/${encodeURIComponent(id)}`),
     attempts: (registryID: string, before?: number) => request<{ attempts: AdminAttempt[], next_before: number }>(`/attempts?registry_id=${encodeURIComponent(registryID)}&limit=25${before ? `&before=${before}` : ''}`),
     validate: (proposal: AdminProposal, revision: number) => request<{ valid: true, warnings: string[] }>('/validate', proposal, revision),
+    preview: (proposal: AdminProposal, revision: number) => request<AdminPreview>('/previews', proposal, revision),
+    previewStatus: (id: string) => request<AdminPreview>(`/previews/${encodeURIComponent(id)}`),
     apply: (proposal: AdminProposal, revision: number) => request<AdminChange>('/changes', proposal, revision),
   }
 }
@@ -76,6 +87,15 @@ export function newAdminRegistry(): AdminRegistry {
 // A historical settings restore must never restore old lifecycle or erase identity history.
 export function restoreRegistrySettings(current: AdminRegistry, previous: AdminRegistry): AdminRegistry {
   return { ...cloneAdmin(previous), id: current.id, aliases: cloneAdmin(current.aliases), historical_origins: cloneAdmin(current.historical_origins), generation: current.generation, lifecycle: current.lifecycle, paused: current.paused, withdrawn: current.withdrawn, retired: current.retired, non_license_overrides: cloneAdmin(current.non_license_overrides || {}) }
+}
+
+// Stable serialization of a registry draft for preview staleness checks.
+export function registryDraftKey(registry: AdminRegistry | undefined): string {
+  return JSON.stringify(registry ?? null)
+}
+
+export function previewIsStale(state: AdminPreviewState | undefined, registry: AdminRegistry | undefined): boolean {
+  return !!state && state.registry !== registryDraftKey(registry)
 }
 
 export function adminDiff(before: unknown, after: unknown): { field: string, before: string, after: string }[] {

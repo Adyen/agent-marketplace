@@ -163,6 +163,42 @@ paths:
                     items: { type: string }
         default:
           $ref: '#/components/responses/AdminError'
+  /api/v1/admin/previews:
+    post:
+      operationId: requestAdminPreview
+      description: Requests a worker-backed acquisition and discovery preview of an upsert_registry proposal. Static validation runs first; the preview job never publishes, never advances registry heads, and never returns credentials or raw Git output. Rate limited per actor and per instance.
+      parameters:
+        - $ref: '#/components/parameters/AdminRevision'
+        - $ref: '#/components/parameters/AdminMarker'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminProposal' }
+      responses:
+        '202':
+          description: Preview recorded and queued; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPreview' }
+        default:
+          $ref: '#/components/responses/AdminError'
+  /api/v1/admin/previews/{id}:
+    get:
+      operationId: getAdminPreview
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Current preview state and, once terminal, its result or failure; Cache-Control no-store. Previews are retained for a bounded period only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPreview' }
+        default:
+          $ref: '#/components/responses/AdminError'
   /api/v1/admin/changes:
     post:
       operationId: applyAdminChange
@@ -992,6 +1028,78 @@ components:
         publication_id: { type: string }
         expected_publication_id: { type: string }
         recorded_at: { type: string, format: date-time }
+    AdminPreview:
+      type: object
+      required: [id, marketplace_id, actor, base_revision, registry, existing, job_id, status, created_at]
+      properties:
+        id: { type: string }
+        marketplace_id: { type: string }
+        actor: { $ref: '#/components/schemas/AdminActor' }
+        base_revision: { type: integer, format: int64 }
+        registry:
+          description: The submitted proposal exactly as previewed; compare with the current draft to detect staleness.
+          $ref: '#/components/schemas/AdminRegistry'
+        existing: { type: boolean }
+        job_id: { type: string }
+        status: { type: string, enum: [pending, running, succeeded, failed] }
+        result: { $ref: '#/components/schemas/AdminPreviewResult' }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    AdminPreviewResult:
+      type: object
+      required: [commit, ref, observed_at, policy_revision, total_resources, roots]
+      properties:
+        commit: { type: string }
+        ref: { type: string }
+        observed_at: { type: string, format: date-time }
+        policy_revision: { type: integer, format: int64 }
+        diff_base:
+          type: string
+          description: Publication the change markers compare against; absent for registries without a current publication.
+        total_resources: { type: integer }
+        roots:
+          type: array
+          items:
+            type: object
+            required: [path, resource_count, resources]
+            properties:
+              path: { type: string }
+              source_harness: { type: string }
+              resource_count: { type: integer }
+              truncated: { type: boolean }
+              resources:
+                type: array
+                items: { $ref: '#/components/schemas/AdminPreviewResource' }
+        removed:
+          type: array
+          items: { $ref: '#/components/schemas/AdminPreviewResource' }
+        diagnostics:
+          type: array
+          items:
+            type: object
+            required: [root, code, message]
+            properties:
+              root: { type: string }
+              code: { type: string }
+              message: { type: string }
+              error: { type: boolean }
+    AdminPreviewResource:
+      type: object
+      required: [kind, name]
+      properties:
+        kind: { type: string }
+        name: { type: string }
+        source_path: { type: string }
+        description: { type: string }
+        decision: { type: string, enum: [allow, warn, reject] }
+        findings: { type: integer }
+        change: { type: string, enum: [added, changed, unchanged, removed] }
     AdminJob:
       type: object
       required: [id, kind, status, attempt, max_attempts, created_at, updated_at]

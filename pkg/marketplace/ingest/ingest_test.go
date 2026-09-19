@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	hccir "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	marketplaceapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -181,7 +181,7 @@ func TestBuildRegistryRevisionRejectsNestedBundleDiagnostics(t *testing.T) {
 	}
 
 	_, err = BuildRegistryRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, commit)
-	if err == nil || !strings.Contains(err.Error(), diag.CodeIngestClaudeLoadSkillFailed) {
+	if !errors.Is(err, ErrNoValidResources) {
 		t.Fatalf("BuildRegistryRevision error = %v", err)
 	}
 }

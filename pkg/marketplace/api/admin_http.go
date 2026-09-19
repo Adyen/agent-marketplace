@@ -27,8 +27,7 @@ func (s *Server) adminHandler() http.Handler {
 			writeAdminError(w, http.StatusNotFound, "not_found", "Administration is not enabled.")
 		})
 	}
-	auth := s.cfg.Admin
-	guard, err := newAdminGuard(AdminAuthOptions{TrustedProxies: auth.TrustedProxies, Origin: auth.Origin, Issuer: auth.Issuer, SubjectHeader: auth.SubjectHeader, GroupsHeader: auth.GroupsHeader, AdminGroups: auth.AdminGroups}, http.HandlerFunc(s.handleAdmin))
+	guard, err := newAdminGuard(s.cfg.Admin, http.HandlerFunc(s.handleAdmin))
 	if err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			writeAdminError(w, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.")
@@ -53,13 +52,25 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.handleAdminRead(w, r, service, view, route)
 		return
 	}
-	if r.Method != http.MethodPost || (route != "changes" && route != "validate") {
+	if r.Method != http.MethodPost || (route != "changes" && route != "validate" && route != "previews") {
 		writeAdminError(w, http.StatusMethodNotAllowed, "method_not_allowed", "This administration operation is not supported.")
 		return
 	}
 	mutation, err := decodeAdminMutation(r)
 	if err != nil {
 		writeAdminServiceError(w, err)
+		return
+	}
+	if route == "previews" {
+		// A preview is a durable acquisition request, not a configuration
+		// change: it has no idempotency contract and never advances revisions.
+		mutation.Actor, _ = adminActor(r.Context())
+		preview, err := service.Preview(r.Context(), s.mpID, mutation)
+		if err != nil {
+			writeAdminServiceError(w, err)
+			return
+		}
+		writeAdminJSON(w, r, http.StatusAccepted, preview)
 		return
 	}
 	if route == "validate" {
@@ -154,6 +165,15 @@ func (s *Server) handleAdminRead(w http.ResponseWriter, r *http.Request, service
 			WorkerStatus   string `json:"worker_status"`
 		}{s.cfg.Instance.Name, version, s.cfg.Management.Mode, view.Revision, "Worker heartbeat is not available; inspect job activity."})
 	default:
+		if id, ok := strings.CutPrefix(route, "previews/"); ok && !strings.Contains(id, "/") {
+			preview, err := service.GetPreview(r.Context(), s.mpID, id)
+			if err != nil {
+				writeAdminServiceError(w, err)
+				return
+			}
+			writeAdminJSON(w, r, http.StatusOK, preview)
+			return
+		}
 		if strings.HasPrefix(route, "jobs/") && !strings.Contains(strings.TrimPrefix(route, "jobs/"), "/") {
 			job, err := s.meta.GetJob(r.Context(), store.JobID(strings.TrimPrefix(route, "jobs/")))
 			if err != nil {

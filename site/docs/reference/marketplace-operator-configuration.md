@@ -269,7 +269,8 @@ Identity header names must be distinct (case-insensitively) and match `[A-Za-z][
 | Field | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `enabled` | boolean | no | `false` | Enables the `/api/v1/admin/**` API endpoints. |
-| `origin` | HTTPS URL | if enabled | none | Expected HTTPS origin for admin requests (e.g. `https://marketplace.example.com`). Must contain protocol and host/port only. |
+| `origin` | URL | if enabled | none | Expected HTTPS origin for admin requests (e.g. `https://marketplace.example.com`). Must contain protocol and host/port only. HTTP is permitted only by the localhost opt-in below. |
+| `allow_insecure_localhost` | boolean | no | `false` | Allows HTTP origins only for `localhost` or literal loopback IP addresses, for local development. Does not relax identity, proxy, or exact-origin checks. The operator must bind the public proxy to loopback; this flag does not change listener bindings. |
 | `trusted_proxies` | list of CIDRs | if enabled | empty | Immediate reverse proxy CIDRs allowed to assert identity headers. Forwarded client IPs do not bypass this check. |
 | `issuer` | string | if enabled | none | Identity provider or SSO issuer identifier. |
 | `subject_header` | string | if enabled | none | HTTP header containing the authenticated subject identity (e.g. `X-Marketplace-Subject`). |

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"gopkg.in/yaml.v3"
 	"reflect"
 	"testing"
@@ -50,6 +51,30 @@ func TestAdministrationValidation(t *testing.T) {
 	}
 	if err := yaml.Unmarshal([]byte("admin:\n  enabled: true\n  origin: https://marketplace.test\n  issuer: proxy\n  trusted_proxies: [127.0.0.1/32]\n  subject_header: X-User\n  groups_header: X-Groups\n  admin_groups: [admins]\n"), &cfg); err != nil || cfg.Admin.Validate() != nil {
 		t.Fatalf("admin yaml: %+v %v", cfg.Admin, err)
+	}
+}
+
+func TestAdministrationLocalHTTP(t *testing.T) {
+	for _, origin := range []string{"http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080", "http://192.168.1.1", "http://marketplace.test", "http://localhost.example", "http://0.0.0.0", "http://127.0.0.1.example", "http://localhost/path", "http://localhost?", "http://user@localhost", "http://localhost:99999", "http://[::1%25lo0]", "https://marketplace.test"} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/opt-in=%v", origin, enabled), func(t *testing.T) {
+				var cfg Config
+				input := fmt.Sprintf("admin:\n  enabled: true\n  allow_insecure_localhost: %v\n  origin: %s\n  issuer: proxy\n  trusted_proxies: [127.0.0.1/32]\n  subject_header: X-User\n  groups_header: X-Groups\n  admin_groups: [admins]\n", enabled, origin)
+				if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
+					t.Fatal(err)
+				}
+				want := origin == "https://marketplace.test" || enabled && (origin == "http://localhost:8080" || origin == "http://127.0.0.1:8080" || origin == "http://[::1]:8080")
+				if err := cfg.Admin.Validate(); (err == nil) != want {
+					t.Fatalf("Validate() = %v, want valid=%v", err, want)
+				}
+				if want {
+					cfg.Admin.TrustedProxies = nil
+					if cfg.Admin.Validate() == nil {
+						t.Fatal("local HTTP must not bypass proxy validation")
+					}
+				}
+			})
+		}
 	}
 }
 

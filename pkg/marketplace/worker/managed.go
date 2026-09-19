@@ -480,7 +480,7 @@ func managedWorkerLoop(ctx context.Context, deps Deps) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		for _, kind := range []string{"managed-reconcile", "managed-refresh"} {
+		for _, kind := range []string{"managed-reconcile", "managed-refresh", admin.PreviewJobKind} {
 			if ctx.Err() != nil {
 				return
 			}
@@ -492,9 +492,12 @@ func managedWorkerLoop(ctx context.Context, deps Deps) {
 				slog.ErrorContext(ctx, "managed lease failed")
 				break
 			}
-			if kind == "managed-reconcile" {
+			switch kind {
+			case "managed-reconcile":
 				err = processManagedReconcile(ctx, deps, j, worker)
-			} else {
+			case admin.PreviewJobKind:
+				err = processManagedPreview(ctx, deps, j, worker, acquire.Clone)
+			default:
 				err = processManagedRefresh(ctx, deps, j, worker, acquire.Clone)
 			}
 			if err != nil {

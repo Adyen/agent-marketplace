@@ -118,6 +118,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requests a worker-backed acquisition and discovery preview of an upsert_registry proposal. Static validation runs first; the preview job never publishes, never advances registry heads, and never returns credentials or raw Git output. Rate limited per actor and per instance. */
+        post: operations["requestAdminPreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/previews/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminPreview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/profiles": {
         parameters: {
             query?: never;
@@ -630,6 +663,64 @@ export interface components {
             allowlist: string[] | null;
             /** @enum {string} */
             undeclared: "reject" | "warn" | "allow" | "";
+        };
+        AdminPreview: {
+            actor: components["schemas"]["AdminActor"];
+            /** Format: int64 */
+            base_revision: number;
+            /** Format: date-time */
+            completed_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            existing: boolean;
+            failure?: {
+                code: string;
+                message: string;
+            };
+            id: string;
+            job_id: string;
+            marketplace_id: string;
+            /** @description The submitted proposal exactly as previewed; compare with the current draft to detect staleness. */
+            registry: components["schemas"]["AdminRegistry"];
+            result?: components["schemas"]["AdminPreviewResult"];
+            /** @enum {string} */
+            status: "pending" | "running" | "succeeded" | "failed";
+        };
+        AdminPreviewResource: {
+            /** @enum {string} */
+            change?: "added" | "changed" | "unchanged" | "removed";
+            /** @enum {string} */
+            decision?: "allow" | "warn" | "reject";
+            description?: string;
+            findings?: number;
+            kind: string;
+            name: string;
+            source_path?: string;
+        };
+        AdminPreviewResult: {
+            commit: string;
+            diagnostics?: {
+                code: string;
+                error?: boolean;
+                message: string;
+                root: string;
+            }[];
+            /** @description Publication the change markers compare against; absent for registries without a current publication. */
+            diff_base?: string;
+            /** Format: date-time */
+            observed_at: string;
+            /** Format: int64 */
+            policy_revision: number;
+            ref: string;
+            removed?: components["schemas"]["AdminPreviewResource"][];
+            roots: {
+                path: string;
+                resource_count: number;
+                resources: components["schemas"]["AdminPreviewResource"][];
+                source_harness?: string;
+                truncated?: boolean;
+            }[];
+            total_resources: number;
         };
         AdminProfiles: {
             profiles: {
@@ -1170,6 +1261,58 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminJob"];
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    requestAdminPreview: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Quoted managed revision read from configuration */
+                "If-Match": components["parameters"]["AdminRevision"];
+                "X-Marketplace-Admin": components["parameters"]["AdminMarker"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProposal"];
+            };
+        };
+        responses: {
+            /** @description Preview recorded and queued; Cache-Control no-store */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPreview"];
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    getAdminPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current preview state and, once terminal, its result or failure; Cache-Control no-store. Previews are retained for a bounded period only. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPreview"];
                 };
             };
             default: components["responses"]["AdminError"];

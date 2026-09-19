@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
-import { AdminError, adminDiff, cloneAdmin, createAdminApi, lifecycleActions, restoreRegistrySettings } from '~/lib/admin'
-import type { AdminChange, AdminConfiguration, AdminProfiles, AdminProposal } from '~/lib/admin'
+import { AdminError, adminDiff, cloneAdmin, createAdminApi, lifecycleActions, previewIsStale, restoreRegistrySettings } from '~/lib/admin'
+import type { AdminChange, AdminConfiguration, AdminPreviewState, AdminProfiles, AdminProposal } from '~/lib/admin'
 import { destructiveLifecycleActions } from '~/lib/admin-presentation'
 
 const props = defineProps<{ initial: AdminProposal, configuration: AdminConfiguration, profiles: AdminProfiles }>()
@@ -17,6 +17,16 @@ const warnings = ref<string[]>([])
 const accepted = ref<AdminChange>()
 const reviewed = ref<AdminProposal>()
 const acknowledgeUnknown = ref(false)
+const previewState = ref<AdminPreviewState>()
+// The review step reports on the preview only when it belongs to the draft
+// under review; a stale or unfinished preview is an unknown, not evidence.
+const previewSummary = computed(() => {
+  const preview = previewState.value?.preview
+  if (!preview || previewIsStale(previewState.value, draft.value.registry)) return { tone: 'warning' as const, text: preview ? 'The draft changed after its last discovery preview. Discovery for this exact draft has not been previewed.' : 'Discovery has not been previewed for this draft. Apply is still allowed, but a wrong root or unreachable origin will only surface when indexing runs.' }
+  if (preview.status === 'failed') return { tone: 'error' as const, text: `The discovery preview for this draft failed (${preview.failure?.code}). Indexing would most likely fail the same way.` }
+  if (preview.result) return { tone: preview.result.total_resources ? 'success' as const : 'warning' as const, text: `The discovery preview found ${preview.result.total_resources} ${preview.result.total_resources === 1 ? 'resource' : 'resources'} at commit ${preview.result.commit.slice(0, 12)}${preview.result.removed?.length ? `; ${preview.result.removed.length} currently published ${preview.result.removed.length === 1 ? 'resource' : 'resources'} would disappear` : ''}.` }
+  return { tone: 'warning' as const, text: 'The discovery preview for this draft has not finished yet.' }
+})
 const heading = ref<HTMLElement>()
 const errorSummary = ref<HTMLElement>()
 const steps = [{ id: 'edit', label: 'Edit' }, { id: 'review', label: 'Review' }, { id: 'observe', label: 'Result' }] as const
@@ -133,6 +143,7 @@ onBeforeRouteUpdate(canLeave)
         <form class="space-y-6" @submit.prevent="validate">
           <fieldset :disabled="busy || !!blocked" class="space-y-6">
             <AdminRegistryFields v-if="draft.registry" v-model="draft.registry" :profiles="profiles" :existing="!!originalRegistry" />
+            <AdminPreviewPanel v-if="draft.registry" v-model="previewState" :registry="draft.registry" :revision="baseline.revision" :disabled="busy || !!blocked" />
             <AdminPolicyFields v-if="draft.license_policy" v-model="draft.license_policy" prefix="global" />
             <div v-if="originMove || unrestricted" class="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4 text-sm">
               <label v-if="originMove" class="flex items-start gap-2"><input v-model="draft.confirm_origin_move" type="checkbox" required class="mt-1 size-4 accent-[var(--ui-primary)]"><span>I confirm the origin move for the same immutable registry identity.</span></label>
@@ -161,7 +172,8 @@ onBeforeRouteUpdate(canLeave)
         <div class="space-y-3 rounded-lg border border-default bg-[var(--am-color-bg-subtle)] p-4 text-sm">
           <h3 class="font-semibold text-highlighted">Before you apply</h3>
           <p class="text-toned">{{ lifecycle?.description || 'Existing publication is retained unless current policy or withdrawal blocks it. New registries have no resources until publication succeeds.' }}</p>
-          <AdminHint summary="What cannot be previewed"><p>Resource impact counts and retained-revision analysis are not available; this is not an exhaustive impact report.</p><p>Network preview is unavailable. A mutable ref can move before indexing; use an exact commit in the ref field if that matters.</p></AdminHint>
+          <p v-if="draft.registry" role="status" class="flex items-start gap-2 rounded-md border px-3 py-2" :class="{ 'border-success/40 bg-success/5': previewSummary.tone === 'success', 'border-warning/40 bg-warning/5': previewSummary.tone === 'warning', 'border-error/40 bg-error/5': previewSummary.tone === 'error' }"><UIcon :name="previewSummary.tone === 'success' ? 'i-lucide-telescope' : 'i-lucide-triangle-alert'" class="mt-0.5 size-4 shrink-0" :class="{ 'text-success': previewSummary.tone === 'success', 'text-warning': previewSummary.tone === 'warning', 'text-error': previewSummary.tone === 'error' }" aria-hidden="true" /><span class="text-toned">{{ previewSummary.text }}</span></p>
+          <AdminHint summary="What cannot be previewed"><p>Retained-revision and license impact analysis are not available; this is not an exhaustive impact report.</p><p>A discovery preview observes one commit. A mutable ref can move before indexing; use an exact commit in the ref field if that matters.</p></AdminHint>
           <label class="flex items-start gap-2 font-medium text-highlighted"><input v-model="acknowledgeUnknown" type="checkbox" class="mt-1 size-4 accent-[var(--ui-primary)]"><span>I have reviewed the diff and understand these availability impacts and unknowns.</span></label>
         </div>
         <div class="flex flex-wrap items-center gap-3 border-t border-default pt-5">

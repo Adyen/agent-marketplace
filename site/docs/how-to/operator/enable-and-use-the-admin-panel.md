@@ -2,6 +2,8 @@
 
 Enable the database-managed admin panel and manage registries, lifecycle states, license policies, and audit history from a browser.
 
+For laptop testing without an SSO provider, use [the local Docker Compose operator setup](./test-locally-with-compose.md). Its fixed development identity is not suitable for production.
+
 ## Overview
 
 The hosted Marketplace admin panel is a private, authenticated interface integrated into the Nuxt frontend (`/marketplace/admin`) and backed by the Go API (`/api/v1/admin`).
@@ -255,13 +257,25 @@ The **Registries** page lists all managed repositories with their slug, configur
    - **Publisher metadata:** optional display name and organization URL.
    - **Default license:** default SPDX license identifier for resources in this registry.
    - **Credential profile:** select an approved credential/trust profile configured in `management.profiles` if authentication or a private CA is required.
-3. Review the proposal diff, provide a mandatory **Reason** for the audit log, and click **Apply change**.
+3. Optionally click **Preview discovery** to see what indexing would find before anything is applied (see below).
+4. Review the proposal diff, provide a mandatory **Reason** for the audit log, and click **Apply change**.
+
+#### Previewing discovery before applying
+
+A wrong source root is the most common reason a new registry ends up empty. The **Discovery preview** panel under the source roots asks a worker to clone the origin at the configured ref and run the same discovery that indexing uses, without publishing anything:
+
+- Each root lists the skills, commands, subagents, hooks, MCP servers and collections it exposes, with the source path of every resource. A root that exposes nothing is called out explicitly.
+- For an existing registry, resources are marked **New** or **Changed** against the current publication, and resources that are currently published but would no longer be discovered are listed separately.
+- A root that does not exist at that ref, or that has no recognizable layout, fails the preview with the same error indexing would report, naming the offending root. Git output is never shown because it can contain credentials.
+- The result is bound to the exact draft it was requested for. Editing any field marks it stale; the Review step then says that this exact draft has not been previewed.
+
+Previews are rate limited per operator and retained for 24 hours. In an API-only deployment they stay queued until a worker process picks them up. A preview observes one commit: a mutable ref can still move before indexing runs, so pin an exact commit in the ref field when that matters. Applying never requires a successful preview; the Review step only warns.
 
 #### The Edit → Validate → Review → Apply workflow
 
 All admin mutations follow an explicit validation flow:
 
-1. **Edit:** make changes in page memory. Drafts remain in your browser session and are not autosaved to the server.
+1. **Edit:** make changes in page memory. Drafts remain in your browser session and are not autosaved to the server. Registry drafts can request a discovery preview from here.
 2. **Validate:** static checks verify syntax, paths, origin allowlists, and profile bindings.
 3. **Review:** the UI displays a structured field-by-field diff showing the current state versus the proposed state.
 4. **Apply:** the change is submitted with an optimistic concurrency check (`If-Match: "<revision>"`). If another operator applied a change in the meantime, the submission is rejected and you are prompted to reload the latest revision.

@@ -1,6 +1,6 @@
 # Hosted Marketplace administration design
 
-**Status:** Approved for implementation; implementation in progress. Managed backend runtime is available after explicit maintenance adoption and capability checks, with SQLite worker/HTTP integration and PostgreSQL store verification. Acquisition previews, complete diagnostics/impact views, remaining UI integration, and full browser acceptance remain unfinished; this is not production rollout approval.
+**Status:** Approved for implementation; implementation in progress. Managed backend runtime is available after explicit maintenance adoption and capability checks, with SQLite worker/HTTP integration and PostgreSQL store verification. Acquisition previews are implemented as the `managed-preview` job kind behind `POST/GET /api/v1/admin/previews`, with per-root discovery results, publication diffs, and sanitized diagnostics surfaced in the registry editor. Complete diagnostics/impact views, remaining UI integration, and full browser acceptance remain unfinished; this is not production rollout approval.
 **Date:** 2026-09-18.
 **Baseline:** `13333633dab636ddffcf0e95ba63cce9bfb232f0`.
 **Audience:** Marketplace maintainers, operators, and design reviewers.

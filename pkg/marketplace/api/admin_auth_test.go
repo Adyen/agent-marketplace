@@ -25,6 +25,20 @@ func adminAuthRequest(method string) *http.Request {
 }
 
 func TestAdminAuthorizationBoundary(t *testing.T) {
+	for _, localHTTP := range []bool{false, true} {
+		t.Run(map[bool]string{false: "https", true: "local-http"}[localHTTP], func(t *testing.T) {
+			testAdminAuthorizationBoundary(t, localHTTP)
+		})
+	}
+}
+
+func testAdminAuthorizationBoundary(t *testing.T, localHTTP bool) {
+	t.Helper()
+	options := testAdminAuth()
+	if localHTTP {
+		options.Origin = "http://localhost:8080"
+		options.AllowInsecureLocalhost = true
+	}
 	for _, tc := range []struct {
 		name   string
 		method string
@@ -47,7 +61,7 @@ func TestAdminAuthorizationBoundary(t *testing.T) {
 		{"cross-origin preflight", "OPTIONS", func(r *http.Request) { r.Header.Set("Origin", "https://other.test") }, 403},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			handler, err := newAdminGuard(testAdminAuth(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler, err := newAdminGuard(options, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				actor, ok := adminActor(r.Context())
 				if !ok || actor.Subject != "operator" || actor.Issuer != "test-sso" {
 					t.Error("authorized handler has no validated actor")
@@ -58,6 +72,9 @@ func TestAdminAuthorizationBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := adminAuthRequest(tc.method)
+			if tc.method != http.MethodGet {
+				r.Header.Set("Origin", options.Origin)
+			}
 			tc.mutate(r)
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
@@ -71,6 +88,20 @@ func TestAdminAuthorizationBoundary(t *testing.T) {
 				t.Fatal("admin CORS enabled")
 			}
 		})
+	}
+}
+
+func TestAdminHandlerLocalHTTP(t *testing.T) {
+	s, _ := adminHTTPFixture(t)
+	s.cfg.Admin.Origin = "http://localhost:8080"
+	s.cfg.Admin.AllowInsecureLocalhost = true
+	r := adminAuthRequest(http.MethodGet)
+	r.URL.Path = "/api/v1/admin/session"
+	r.Header.Set("Origin", "http://localhost:8080")
+	w := httptest.NewRecorder()
+	s.adminHandler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

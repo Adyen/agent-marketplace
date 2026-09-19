@@ -49,6 +49,8 @@ e2e/e2e-report.json
 /site/node_modules/
 /site/.vitepress/dist/
 /site/.vitepress/cache/
+/.pnpm-store
+/.playwright-mcp
 
 .agents/lock.local.yaml
 .agents/config.local.yaml

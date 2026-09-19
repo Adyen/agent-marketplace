@@ -1,3 +1,7 @@
+allowBuilds:
+  esbuild: set this to true or false
+  unrs-resolver: set this to true or false
+  vue-demi: set this to true or false
 overrides:
   "nanoid": "6.0.1"
   "semver@^6.0.0": "7.7.3"

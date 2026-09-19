@@ -11,22 +11,28 @@ import (
 )
 
 type Administration struct {
-	Enabled        bool     `yaml:"enabled"`
-	TrustedProxies []string `yaml:"trusted_proxies"`
-	Origin         string   `yaml:"origin"`
-	Issuer         string   `yaml:"issuer"`
-	SubjectHeader  string   `yaml:"subject_header"`
-	GroupsHeader   string   `yaml:"groups_header"`
-	AdminGroups    []string `yaml:"admin_groups"`
+	Enabled                bool     `yaml:"enabled"`
+	AllowInsecureLocalhost bool     `yaml:"allow_insecure_localhost"`
+	TrustedProxies         []string `yaml:"trusted_proxies"`
+	Origin                 string   `yaml:"origin"`
+	Issuer                 string   `yaml:"issuer"`
+	SubjectHeader          string   `yaml:"subject_header"`
+	GroupsHeader           string   `yaml:"groups_header"`
+	AdminGroups            []string `yaml:"admin_groups"`
 }
 
 func (a Administration) Validate() error {
 	if !a.Enabled {
 		return nil
 	}
-	invalid := errors.New("admin requires an HTTPS origin, explicit trusted proxy CIDRs, issuer, distinct identity headers and admin groups")
+	invalid := errors.New("admin requires an HTTPS origin (or explicit allow_insecure_localhost for loopback HTTP), explicit trusted proxy CIDRs, issuer, distinct identity headers and admin groups")
 	u, err := url.Parse(a.Origin)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(a.Origin, "#") || u.Opaque != "" {
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(a.Origin, "#") || u.Opaque != "" {
+		return invalid
+	}
+	ip, _ := netip.ParseAddr(u.Hostname())
+	localHTTP := a.AllowInsecureLocalhost && u.Scheme == "http" && (strings.EqualFold(u.Hostname(), "localhost") || ip.IsLoopback() && ip.Zone() == "")
+	if u.Scheme != "https" && !localHTTP {
 		return invalid
 	}
 	if port := u.Port(); port != "" {
