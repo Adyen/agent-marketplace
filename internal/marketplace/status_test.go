@@ -843,13 +843,14 @@ func TestInspectPreservesMirrorVerificationMarker(t *testing.T) {
 	}
 }
 
-// TestInspectCacheWipeWithManagedOutputYieldsResolveError pins the
+// TestInspectCacheWipeWithManagedOutputYieldsDriftIncomplete pins the
 // disposable-cache contract: a full cache wipe removes every acquisition fact
 // while managed output persists on disk. The healthy endpoint still classifies
-// the pin current, but the failed materialization proof must surface a resolve
-// error so status cannot report the installed output as orphaned while
-// sync --check refreshes and reports in-sync.
-func TestInspectCacheWipeWithManagedOutputYieldsResolveError(t *testing.T) {
+// the pin current, but the failed materialization proof must leave drift
+// incomplete — suppressing the status drift dry-run that would report the
+// installed output as orphaned — without a hard status error, because the
+// wiped cache cannot prove the pin was ever acquired.
+func TestInspectCacheWipeWithManagedOutputYieldsDriftIncomplete(t *testing.T) {
 	contentDigest := "sha256:" + strings.Repeat("a", 64)
 	archiveDigest := "sha256:" + strings.Repeat("b", 64)
 	revision := assessedRevision(store.ResourceRevision{
@@ -884,8 +885,11 @@ func TestInspectCacheWipeWithManagedOutputYieldsResolveError(t *testing.T) {
 	if len(resolved) != 0 {
 		t.Fatalf("wiped-cache pin resolved = %#v, want no materializable artifacts", resolved)
 	}
-	if len(errs) != 1 {
-		t.Fatalf("wiped-cache pin resolver errors = %v, want one drift-suppressing error", errs)
+	if len(errs) != 0 {
+		t.Fatalf("wiped-cache pin resolver errors = %v, want soft drift-incomplete suppression, not a hard error", errs)
+	}
+	if len(inspection.DriftIncomplete) != 1 {
+		t.Fatalf("wiped-cache pin drift-incomplete = %v, want one suppressed materialization proof", inspection.DriftIncomplete)
 	}
 }
 

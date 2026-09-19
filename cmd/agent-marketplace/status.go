@@ -145,11 +145,18 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	}
 	var dryRunReport *materialize.Report
 	if len(result.Errors) == 0 && err == nil {
-		var dryRunErr error
-		dryRunReport, dryRunErr = runStatusMaterialize(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
-		if dryRunErr != nil {
-			slog.Warn("status drift check failed", "error", dryRunErr)
-			materializeErrs = append(materializeErrs, dryRunErr)
+		if result.MarketplaceDriftUnknown() {
+			// An unresolved pin without cached acquisition facts cannot prove
+			// its managed output absent or present; running the dry-run would
+			// report its installed files as orphaned removals.
+			slog.Warn("status drift check skipped: Marketplace drift is incomplete")
+		} else {
+			var dryRunErr error
+			dryRunReport, dryRunErr = runStatusMaterialize(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+			if dryRunErr != nil {
+				slog.Warn("status drift check failed", "error", dryRunErr)
+				materializeErrs = append(materializeErrs, dryRunErr)
+			}
 		}
 	}
 

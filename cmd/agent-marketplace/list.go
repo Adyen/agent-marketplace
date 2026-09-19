@@ -144,7 +144,16 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
-	dryRunReport, dryRunErr := materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	var dryRunReport *materialize.Report
+	var dryRunErr error
+	if result.MarketplaceDriftUnknown() {
+		// An unresolved pin without cached acquisition facts cannot prove its
+		// managed output absent or present; the dry-run would report installed
+		// files as orphaned removals.
+		slog.Warn("list drift check skipped: Marketplace drift is incomplete")
+	} else {
+		dryRunReport, dryRunErr = materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	}
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode
 		// returns manifest and containment problems as hard errors that would

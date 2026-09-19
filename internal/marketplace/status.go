@@ -87,6 +87,38 @@ type Inspection struct {
 	// managed output is orphaned while sync --check refreshes and reports
 	// in-sync: the drift dry-run is skipped whenever resolution has errors.
 	ResolveErrors []error
+	// DriftIncomplete reports pins whose materializable output could neither
+	// be proven nor tied to any cached acquisition fact — a pin that was
+	// never acquired, or whose disposable cache was fully wiped while managed
+	// output persists on disk. Unlike ResolveErrors these stay soft: status
+	// must not hard-fail a pin it cannot disprove, but the materialization
+	// drift dry-run still cannot tell such a pin's output from orphans, so
+	// callers gate the dry-run on this signal instead of on result errors.
+	DriftIncomplete []error
+}
+
+// pinHasAcquisitionFacts reports whether cached evidence proves the pin was
+// acquired — cached metadata or artifact, or a cache read error, which is
+// itself a cached-fact failure. Without it a failed materialization proof is
+// only drift-incomplete: a never-acquired pin or a fully wiped disposable
+// cache cannot prove nothing was ever installed.
+func pinHasAcquisitionFacts(status PinStatus) bool {
+	return status.Cache == CacheStateError || status.MetadataCached || status.ArtifactPresent
+}
+
+// addResolveErr buckets a failed materialization proof: cached acquisition
+// facts (or a cache read error, itself a cached-fact failure) make it a hard
+// resolve error, while a genuinely never-acquired or fully wiped pin only
+// leaves drift unknown.
+func (i *Inspection) addResolveErr(err error, hard bool) {
+	if err == nil {
+		return
+	}
+	if hard {
+		i.ResolveErrors = append(i.ResolveErrors, err)
+		return
+	}
+	i.DriftIncomplete = append(i.DriftIncomplete, err)
 }
 
 // PinStatusError promotes an unhealthy required Marketplace pin to a pipeline
@@ -267,10 +299,8 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 
 			if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch {
 				applyCachedState(&status, cached, metadataCached, cacheErr)
-				status, resolvedArtifact, resolveErr := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
-				if resolveErr != nil {
-					inspection.ResolveErrors = append(inspection.ResolveErrors, resolveErr)
-				}
+				status, resolvedArtifact, resolveErr, hard := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
+				inspection.addResolveErr(resolveErr, hard)
 				inspection.Pins = append(inspection.Pins, status)
 				inspection.Artifacts = append(inspection.Artifacts, resolvedArtifact)
 				logPinDecision(status)
@@ -322,10 +352,8 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 					}
 				}
 			}
-			status, resolvedArtifact, resolveErr := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
-			if resolveErr != nil {
-				inspection.ResolveErrors = append(inspection.ResolveErrors, resolveErr)
-			}
+			status, resolvedArtifact, resolveErr, hard := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
+			inspection.addResolveErr(resolveErr, hard)
 			inspection.Pins = append(inspection.Pins, status)
 			inspection.Artifacts = append(inspection.Artifacts, resolvedArtifact)
 			logPinDecision(status)
@@ -351,9 +379,13 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 // inspection classified healthy, then applies the expanded-collection block
 // list sync resolution enforces. A pin that cannot be proven materializable
 // keeps its stub — filtered by Inspection.Resolve — and reports a degraded
-// detail plus a resolve error, so status cannot conclude its managed output
-// is orphaned while sync --check refreshes and reports in-sync.
-func (r *Resolver) finishInspectedPin(ctx context.Context, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, status PinStatus, artifact resolver.ResolvedArtifact, blockedCollections map[string]error, allowedRegistries []string) (PinStatus, resolver.ResolvedArtifact, error) {
+// detail plus a resolve failure, so status cannot conclude its managed output
+// is orphaned while sync --check refreshes and reports in-sync. The returned
+// flag marks the failure hard when cached acquisition facts (or a cache read
+// error) prove the pin was installed; a pin with no cached facts is only
+// drift-incomplete, because a wiped cache cannot prove nothing was ever
+// installed.
+func (r *Resolver) finishInspectedPin(ctx context.Context, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, status PinStatus, artifact resolver.ResolvedArtifact, blockedCollections map[string]error, allowedRegistries []string) (PinStatus, resolver.ResolvedArtifact, error, bool) {
 	var resolveErr error
 	resolvedArtifact := artifact
 	if blocked, ok := blockedCollectionForPin(pin, blockedCollections); ok {
@@ -362,13 +394,10 @@ func (r *Resolver) finishInspectedPin(ctx context.Context, cache *Cache, entry c
 		resolvedArtifact, resolveErr = r.inspectResolvedArtifact(ctx, cache, entry, pin, targetSet, status, artifact, allowedRegistries)
 	}
 	if resolveErr == nil {
-		return status, resolvedArtifact, nil
+		return status, resolvedArtifact, nil, false
 	}
 	appendPinDetail(&status, resolveErr.Error())
-	// Every failed materialization proof yields a resolve error, even without
-	// cached acquisition facts: the cache is disposable while managed output
-	// persists, so a wiped cache cannot prove nothing was ever installed.
-	return status, artifact, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, resolveErr)
+	return status, artifact, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, resolveErr), pinHasAcquisitionFacts(status)
 }
 
 // inspectResolvedArtifact returns the fully resolved artifact for a pin the
@@ -427,12 +456,15 @@ func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEnt
 			status.State = PinStateUnavailable
 		}
 		appendPinDetail(&status, err.Error())
-		if status.State == PinStateUnavailable && !status.Required && (status.MetadataCached || status.ArtifactPresent) {
+		if status.State == PinStateUnavailable && !status.Required {
 			// Cached facts prove a prior acquisition, so managed output may be
 			// on disk. Surface a resolve error so status cannot conclude that
 			// output is orphaned while sync --check refreshes and reports
 			// in-sync; the unavailable pin detail stays on the status itself.
-			i.ResolveErrors = append(i.ResolveErrors, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err))
+			// Without cached facts the unreachable endpoint still cannot prove
+			// the pin was never installed, so drift is merely incomplete rather
+			// than a hard failure.
+			i.addResolveErr(fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err), pinHasAcquisitionFacts(status))
 		}
 		i.Pins = append(i.Pins, status)
 		i.Artifacts = append(i.Artifacts, artifact)
