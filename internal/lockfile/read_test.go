@@ -65,3 +65,22 @@ func TestDecodeRejectsExcessiveYAMLDepth(t *testing.T) {
 		t.Fatalf("Decode(deep YAML) error = %v", err)
 	}
 }
+
+func TestReadBytesInfoRegularAndDirectory(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "valid.yaml")
+	data := []byte("apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, info, err := ReadBytesInfo(path)
+	if err != nil || string(got) != string(data) || info == nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("bytes=%q info=%v err=%v", got, info, err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "directory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadBytesInfo(filepath.Join(dir, "directory")); !errors.Is(err, ErrUnsafeFile) {
+		t.Fatalf("directory error=%v", err)
+	}
+}

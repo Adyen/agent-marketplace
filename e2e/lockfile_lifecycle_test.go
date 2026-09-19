@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -67,6 +68,56 @@ func (f *lockfileGitFixture) replaceSkills(t *testing.T, message string, skills 
 	gitRun(t, f.working, "add", "-A")
 	gitRun(t, f.working, "commit", "-m", message)
 	gitRun(t, f.working, "push", "origin", "main")
+}
+
+func TestReadOnlyCommandsRejectFIFOLock(t *testing.T) {
+	for _, args := range [][]string{{"status"}, {"gc", "--dry-run"}} {
+		t.Run(args[0], func(t *testing.T) {
+			fixture := newLockfileGitFixture(t, "fifo-lock", Skill{Name: "review"})
+			fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", fixture.url))
+			fixture.env.MustRunAM("sync")
+			fixture.env.MustRunAM(args...)
+			lockPath := filepath.Join(fixture.env.workspace, ".agents", "lock.yaml")
+			if err := os.Rename(lockPath, lockPath+".saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(lockPath, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Lstat(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			paths := []string{filepath.Join(fixture.env.workspace, ".agents", "config.yaml"), lockPath + ".saved", filepath.Join(fixture.env.workspace, ".factory")}
+			before := make(map[string]string)
+			for _, path := range paths {
+				fingerprint, err := pathFingerprint(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[path] = fingerprint
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, fixture.env.binary, args...)
+			cmd.Dir = fixture.env.workspace
+			cmd.Env = fixture.env.subprocessEnv()
+			output, err := cmd.CombinedOutput()
+			if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "unsafe lock file") {
+				t.Fatalf("FIFO command error=%v context=%v output=%s", err, ctx.Err(), output)
+			}
+			after, err := os.Lstat(lockPath)
+			if err != nil || after.Mode()&os.ModeNamedPipe == 0 || !os.SameFile(info, after) {
+				t.Fatalf("FIFO changed: %v", err)
+			}
+			for _, path := range paths {
+				fingerprint, err := pathFingerprint(path)
+				if err != nil || fingerprint != before[path] {
+					t.Fatalf("refusal changed %s: %v", path, err)
+				}
+			}
+		})
+	}
 }
 
 func TestLockfileFileURLGitLifecycleRetainsExactCommitUntilUpdate(t *testing.T) {
