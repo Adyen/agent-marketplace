@@ -3789,6 +3789,19 @@ registries:
 
 	// ===== deinit command =====
 	{
+		Name:       "deinit/manifest_failure_preserves_config_and_output",
+		Desc:       "Given installed output and an invalid manifest, When deinit attempts config purge, Then it reports failure and preserves state until the manifest is repaired",
+		Registries: []RegistryDef{{Name: "deinit-invalid-manifest", Skills: []Skill{{Name: "teardown-skill", Description: "Deinit preservation"}}}},
+		RepoCfg:    "registries:\n  - url: {{REG:deinit-invalid-manifest}}\n    ref: main\n    skills:\n      - teardown-skill\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/teardown-skill/SKILL.md", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: "version: 99\nentries: []\n"},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config", "--dry-run"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, OutNotContains: []string{"Would remove config", "Would remove lock", "No managed artifacts to remove"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.factory"}},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, OutNotContains: []string{"Removed config", "Removed lock", "No managed artifacts to remove"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.factory"}},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: "version: 1\nentries: []\n", Args: []string{"deinit", "--scope", "repo", "--purge-config"}, MustPass: true, OutContains: []string{"Removed config", "Removed lock"}, FilesAbsent: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.factory/skills/teardown-skill/SKILL.md"}},
+		},
+	},
+	{
 		Name: "deinit/repo_scope_removes_repo_artifacts",
 		Desc: "Given a synced repo with artifacts, When deinit --scope repo is run, Then repo-scoped artifacts are removed and machine-scope artifacts are untouched",
 		Registries: []RegistryDef{
