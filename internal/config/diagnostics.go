@@ -340,7 +340,7 @@ func inspectManagedConfig(path string, readErr error, cfg *Config, source Source
 	}
 
 	if cfg != nil {
-		validVersion := cfg.APIVersion == APIVersionV2 || cfg.APIVersion == APIVersionV3
+		validVersion := cfg.APIVersion == APIVersionV2 || cfg.APIVersion == APIVersionV3 || cfg.APIVersion == APIVersionV4
 		switch {
 		case source == Organization && validVersion:
 			d.State = ManagedInstallationManaged

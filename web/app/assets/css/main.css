@@ -21,13 +21,25 @@ html {
   scrollbar-gutter: stable;
 }
 
+.am-site-nav {
+  max-width: 72rem;
+}
+
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+button:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 .marketplace-resource-row[data-interactive="true"]:hover {
   background: var(--am-color-bg-hover);
 }
 
 .marketplace-markdown {
-  max-width: 72ch;
-  margin-inline: auto;
   color: var(--ui-text);
   font-size: 0.9375rem;
   line-height: 1.75;

@@ -60,7 +60,7 @@ func buildRepoScript(reposDir, name string, files map[string]string) string {
 	workPath := filepath.Join(reposDir, "work-"+name)
 	script := fmt.Sprintf(`set -e
 mkdir -p %q
-git init --bare %q
+git init --bare --initial-branch=main %q
 git -c init.defaultBranch=main clone %q %q
 cd %q
 `, reposDir, barePath, barePath, workPath, workPath)

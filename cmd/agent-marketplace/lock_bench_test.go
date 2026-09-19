@@ -5,12 +5,45 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
+
+func BenchmarkMergeInstallBindingsInMemory(b *testing.B) {
+	commit, err := lockfile.ParseGitOID("sha1:" + strings.Repeat("a", 40))
+	if err != nil {
+		b.Fatal(err)
+	}
+	digest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	for _, count := range []int{1, 16} {
+		b.Run(fmt.Sprintf("registries=%d", count), func(b *testing.B) {
+			base := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}
+			for i := range count {
+				base.Registries = append(base.Registries, lockfile.GitRegistry{
+					URL: fmt.Sprintf("https://example.invalid/registry-%d", i), Ref: "main", Commit: commit,
+					Roots: []lockfile.GitRoot{{Path: ".", SourceHarness: "claude", RevisionSchema: "v3", RevisionDigest: digest,
+						Resources: []lockfile.GitResource{{Kind: "skill", Name: "review", ContentDigest: digest, ArchiveDigest: digest}}}},
+				})
+			}
+			base, err := lockfile.Normalize(base)
+			if err != nil {
+				b.Fatal(err)
+			}
+			bindings := append([]lockfile.GitRegistry(nil), base.Registries...)
+			b.ReportAllocs()
+			for b.Loop() {
+				merged, err := mergeInstallBindings(base, lockfile.ScopeRepo, bindings)
+				if err != nil || len(merged.Registries) != count {
+					b.Fatalf("merge: registries=%d error=%v", len(merged.Registries), err)
+				}
+			}
+		})
+	}
+}
 
 func BenchmarkProjectLockedRoots(b *testing.B) {
 	roots := make([]lockfile.GitRoot, 0, 32)
@@ -51,6 +84,156 @@ func BenchmarkLoadStableEffectiveIncludes(b *testing.B) {
 	for b.Loop() {
 		if _, _, err := loadStableEffective(context.Background(), opts); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkInstallFromWarmExactLock measures repeated warm remote installs.
+// This benchmark includes local disk I/O but excludes network requests (no Internet).
+func BenchmarkInstallFromWarmExactLock(b *testing.B) {
+	repoRoot, path := setupWarmLockedGitSyncBenchmark(b)
+	cfg, err := config.LoadConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	if err != nil || cfg == nil || len(cfg.Registries) != 1 {
+		b.Fatalf("load benchmark registry: %v", err)
+	}
+	args := []string{"install", "review-0", "--from", cfg.Registries[0].URL, "--ref", cfg.Registries[0].Ref}
+	if out, err := executeCommand(args...); err != nil {
+		b.Fatalf("warm install: %v\n%s", err, out)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.StartTimer()
+	for range b.N {
+		config.ResetRepoRootCache()
+		if out, err := executeCommand(args...); err != nil {
+			b.Fatalf("install: %v\n%s", err, out)
+		}
+	}
+	b.StopTimer()
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		b.Fatalf("warm install changed lock: %v", err)
+	}
+}
+
+func BenchmarkConfiguredInstallWarmExactLockLocalGitDiskNoNetwork(b *testing.B) {
+	_, path := setupWarmLockedGitSyncBenchmark(b)
+	args := []string{"install", "review-0"}
+	if out, err := executeCommand(args...); err != nil {
+		b.Fatalf("warm install: %v\n%s", err, out)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.StartTimer()
+	for range b.N {
+		config.ResetRepoRootCache()
+		if out, err := executeCommand(args...); err != nil {
+			b.Fatalf("install: %v\n%s", err, out)
+		}
+	}
+	b.StopTimer()
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		b.Fatalf("warm install changed lock: %v", err)
+	}
+}
+
+func BenchmarkRemoveBlockedResourceLinkLocalGitDiskNoNetwork(b *testing.B) {
+	for _, kind := range []string{"command", "subagent"} {
+		b.Run(kind, func(b *testing.B) {
+			b.StopTimer()
+			repo := setupLocalGitSyncFixture(b, 0)
+			source := filepath.Join(filepath.Dir(repo), "resource-source")
+			origin := filepath.Join(filepath.Dir(repo), "resource-origin.git")
+			dir, native := "commands", filepath.Join(repo, ".devin", "skills", "remove")
+			if kind == "subagent" {
+				dir, native = "agents", filepath.Join(repo, ".devin", "agents", "remove.md")
+			}
+			runSyncBenchmarkGit(b, "", "init", "--initial-branch=main", source)
+			writeSyncBenchmarkFile(b, filepath.Join(source, dir, "remove.md"), "---\nname: remove\ndescription: Removal benchmark\n---\n\nReview changes.\n")
+			runSyncBenchmarkGit(b, source, "add", ".")
+			runSyncBenchmarkGit(b, source, "-c", "commit.gpgsign=false", "commit", "-m", "seed resource")
+			runSyncBenchmarkGit(b, "", "clone", "--bare", source, origin)
+			configPath := filepath.Join(repo, ".agents", "config.yaml")
+			body := "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: file://" + origin + "\n    ref: main\n    source_harness: claude\n    default: true\n"
+			writeSyncBenchmarkFile(b, configPath, body)
+			runSyncBenchmark(b)
+			linkTarget, err := os.Readlink(native)
+			if err != nil {
+				b.Fatal(err)
+			}
+			writeSyncBenchmarkFile(b, filepath.Join(os.Getenv("HOME"), ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				b.StopTimer()
+				if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+					b.Fatal(err)
+				}
+				if err := os.Remove(native); err != nil && !os.IsNotExist(err) {
+					b.Fatal(err)
+				}
+				if err := os.Symlink(linkTarget, native); err != nil {
+					b.Fatal(err)
+				}
+				config.ResetRepoRootCache()
+				b.StartTimer()
+				if out, err := executeCommand("remove", "remove", "--kind", kind, "--from", "file://"+origin, "--ref", "main"); err != nil {
+					b.Fatalf("blocked removal: %v\n%s", err, out)
+				}
+				if _, err := os.Lstat(native); !os.IsNotExist(err) {
+					b.Fatalf("removed link remains: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkRemoveBlockedSkillSymlinkLocalGitDiskNoNetwork(b *testing.B) {
+	repo, _ := setupWarmLockedGitSyncBenchmark(b)
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		b.Fatal(err)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil || cfg == nil || len(cfg.Registries) != 1 {
+		b.Fatalf("load removal fixture: %v", err)
+	}
+	link := filepath.Join(repo, ".factory", "skills", "review-0")
+	target, err := os.Readlink(link)
+	if err != nil {
+		b.Fatal(err)
+	}
+	writeSyncBenchmarkFile(b, filepath.Join(os.Getenv("HOME"), ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nallowed_registries: []\n")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		b.StopTimer()
+		if err := os.WriteFile(configPath, before, 0o644); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+			b.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			b.Fatal(err)
+		}
+		config.ResetRepoRootCache()
+		b.StartTimer()
+		if out, err := executeCommand("remove", "review-0", "--kind", "skill", "--from", cfg.Registries[0].URL, "--ref", cfg.Registries[0].Ref); err != nil {
+			b.Fatalf("blocked removal: %v\n%s", err, out)
+		}
+		if _, err := os.Lstat(link); !os.IsNotExist(err) {
+			b.Fatalf("removed link remains: %v", err)
 		}
 	}
 }

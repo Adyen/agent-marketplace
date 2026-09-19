@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"unicode"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
@@ -914,31 +913,10 @@ func validateMarketplaceAlias(label, value string) error {
 }
 
 func validateMarketplaceSegment(label, value string) error {
-	if strings.TrimSpace(value) == "" {
-		return fmt.Errorf("%s is required", label)
-	}
-	if value != strings.TrimSpace(value) {
-		return fmt.Errorf("%s must not have leading or trailing whitespace", label)
-	}
-	if value == "." || value == ".." {
-		return fmt.Errorf("%s must not be a dot path component", label)
-	}
-	if strings.ContainsAny(value, "/\\") {
-		return fmt.Errorf("%s contains an unsafe path separator", label)
-	}
-	if hasUnsafeMarketplaceText(value) {
-		return fmt.Errorf("%s contains a control character", label)
+	if err := nameutil.ValidateSegment(value); err != nil {
+		return fmt.Errorf("%s %s", label, err)
 	}
 	return nil
-}
-
-func hasUnsafeMarketplaceText(value string) bool {
-	for _, r := range value {
-		if unicode.IsControl(r) {
-			return true
-		}
-	}
-	return false
 }
 
 // NormalizeMarketplaceURL canonicalizes the endpoint portion of a Marketplace

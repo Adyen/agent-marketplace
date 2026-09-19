@@ -98,6 +98,12 @@ type MarketplaceResourcePin struct {
 	InstalledName          string                `yaml:"installed_name,omitempty"`
 	Direct                 bool                  `yaml:"direct,omitempty"`
 	SelectedBy             MarketplaceSelections `yaml:"selected_by,omitempty"`
+
+	// Runtime-only integrity fields hydrated from the owning acquisition lock.
+	// They are never serialized to user-facing configuration.
+	LockArchiveDigest            string `yaml:"-"`
+	LockCollectionManifestDigest string `yaml:"-"`
+	LockSourcePath               string `yaml:"-"`
 }
 
 const (

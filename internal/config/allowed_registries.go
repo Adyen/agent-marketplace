@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/redact"
 )
 
 // RegistryURLBlockedError is returned by ValidateRegistryURLs when one or more
@@ -20,7 +22,7 @@ func (e *RegistryURLBlockedError) Error() string {
 		return "registry URL blocked by allowed_registries policy"
 	}
 	return fmt.Sprintf("registry URL(s) blocked by allowed_registries policy: %s (allowed patterns: %s)",
-		strings.Join(e.BlockedURLs, ", "), strings.Join(e.AllowedPatterns, ", "))
+		strings.Join(redact.Strings(e.BlockedURLs), ", "), strings.Join(redact.Strings(e.AllowedPatterns), ", "))
 }
 
 // IsRegistryURLBlockedError reports whether err is or wraps a

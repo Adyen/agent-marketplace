@@ -51,9 +51,10 @@ func UserPersonalConfigExists() (bool, error) {
 }
 
 // InitializeUserPersonal creates the user personal config file with the
-// provided harnesses if it does not already exist. The written config uses
-// the canonical apiVersion agent-marketplace/v2 and contains only the
-// apiVersion and harnesses fields. It returns ErrAlreadyInitialized if the file exists.
+// provided harnesses if it does not already exist. Until resource editors are
+// v4-aware, the written config uses the editable agent-marketplace/v2 schema
+// and contains only the apiVersion and harnesses fields. It returns
+// ErrAlreadyInitialized if the file exists.
 func InitializeUserPersonal(harnesses []string) (string, error) {
 	path, err := GlobalConfigPath()
 	if err != nil {

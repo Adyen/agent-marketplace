@@ -43,9 +43,15 @@ export function safeCanonicalUrl(value: string | undefined): string {
   }
 }
 
+export function registryRoute(item: Pick<ResourceListItem, 'registry_id' | 'registry_slug'>): string {
+  const registry = item.registry_slug || item.registry_id
+  if (!isSafeRouteToken(item.registry_id) || (item.registry_slug !== undefined && !isSafeRouteToken(item.registry_slug))) return ''
+  return `/registries/${encodeURIComponent(registry)}`
+}
+
 export function resourceLatestRoute(item: ResourceListItem): string {
   const registry = item.registry_slug || item.registry_id
-  if (!isSafeRouteToken(item.registry_id) || (item.registry_slug !== undefined && !isSafeRouteToken(item.registry_slug)) || !isSafeResourceRoute(registry, item.kind, item.name)) return ''
+  if (!registryRoute(item) || !isSafeResourceRoute(registry, item.kind, item.name)) return ''
   return `/r/${encodeURIComponent(registry)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}`
 }
 

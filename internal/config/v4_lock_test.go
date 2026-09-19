@@ -1,0 +1,444 @@
+package config
+
+import (
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+)
+
+func v4sha(letter string) string { return "sha256:" + strings.Repeat(letter, 64) }
+
+func v4LockResource(registryName, registryID, kind, name, revision, content string) lockfile.MarketplaceResourceLock {
+	return lockfile.MarketplaceResourceLock{
+		RegistryName: registryName, RegistryID: registryID, Kind: kind, Name: name,
+		Revision: revision, ContentDigest: lockfile.Digest(content),
+		Acquisition: lockfile.MarketplaceAcquisitionMirror,
+	}
+}
+
+// v4LockFixture builds a normalized v2 lock with two registry bindings, a
+// directly requested collection, a derived mirror leaf, a derived index-only
+// leaf, and a direct-and-derived artifact.
+func v4LockFixture(t *testing.T, scope lockfile.Scope) lockfile.Document {
+	t.Helper()
+	onboarding := v4LockResource("main", "collections-id", "collection", "onboarding", v4sha("c"), v4sha("c"))
+	onboarding.CollectionManifestDigest = lockfile.Digest(v4sha("c"))
+	review := v4LockResource("tools", "tools-id", "skill", "review", v4sha("a"), v4sha("a"))
+	review.ArchiveDigest = lockfile.Digest(v4sha("b"))
+	review.SelectedBy = []lockfile.MarketplaceSelectionLock{
+		{RegistryID: "collections-id", Name: "onboarding", Revision: lockfile.Digest(v4sha("c"))},
+	}
+	leaf := v4LockResource("tools-alias", "tools-id", "skill", "leaf", v4sha("e"), v4sha("e"))
+	leaf.ArchiveDigest = lockfile.Digest(v4sha("f"))
+	leaf.SelectedBy = []lockfile.MarketplaceSelectionLock{
+		{RegistryID: "collections-id", Name: "onboarding", Revision: lockfile.Digest(v4sha("c"))},
+	}
+	idx := v4LockResource("tools", "tools-id", "skill", "idx", v4sha("7"), v4sha("7"))
+	idx.ArchiveDigest = lockfile.Digest(v4sha("8"))
+	idx.Acquisition = lockfile.MarketplaceAcquisitionIndexOnly
+	idx.RegistryCommit = strings.Repeat("9", 40)
+	idx.RegistryManifestDigest = lockfile.Digest(v4sha("6"))
+	idx.SourcePath = "skills/idx"
+	idx.SelectedBy = []lockfile.MarketplaceSelectionLock{
+		{RegistryID: "collections-id", Name: "onboarding", Revision: lockfile.Digest(v4sha("c"))},
+	}
+	doc, err := lockfile.Normalize(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      scope,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL:        "https://market.example",
+			InstanceID: "market-id",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{
+				{Name: "main", RegistryID: "collections-id"},
+				{Name: "tools", RegistryID: "tools-id"},
+				{Name: "tools-alias", RegistryID: "tools-id"},
+			},
+			Resources: []lockfile.MarketplaceResourceLock{onboarding, review, leaf, idx},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+const v4MarketplaceConfigYAML = `apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://MARKET.example/}}
+resources:
+  m:
+    include:
+      - tools/skill/review: {as: local-review, revision: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+      - main/collection/onboarding
+`
+
+func v4LockConfig(t *testing.T) *V4Config {
+	t.Helper()
+	cfg, err := ParseV4([]byte(v4MarketplaceConfigYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func TestV4MarketplaceLockHydration(t *testing.T) {
+	doc := v4LockFixture(t, lockfile.ScopeRepo)
+	cfg, err := v4LockConfig(t).ToLegacyConfigWithLock(repoLayer, &doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Marketplaces) != 1 {
+		t.Fatalf("marketplaces = %#v", cfg.Marketplaces)
+	}
+	entry := cfg.Marketplaces[0]
+	if entry.URL != "https://market.example" || entry.InstanceID != "market-id" || entry.Alias != "m" || entry.Source != RepoCommitted {
+		t.Fatalf("entry = %#v", entry)
+	}
+	if len(entry.Resources) != 4 {
+		t.Fatalf("pins = %#v", entry.Resources)
+	}
+	byName := map[string]MarketplaceResourcePin{}
+	for _, pin := range entry.Resources {
+		byName[pin.Kind+"/"+pin.Name] = pin
+	}
+	collection := byName["collection/onboarding"]
+	if !collection.Direct || collection.RegistrySlug != "main" || collection.LockCollectionManifestDigest != v4sha("c") ||
+		collection.LockArchiveDigest != "" || collection.LockSourcePath != "" {
+		t.Fatalf("collection pin = %#v", collection)
+	}
+	review := byName["skill/review"]
+	if !review.Direct || review.InstalledName != "local-review" || review.Revision != v4sha("a") ||
+		review.Digest != v4sha("a") || review.LockArchiveDigest != v4sha("b") || review.RegistrySlug != "tools" ||
+		review.LockCollectionManifestDigest != "" {
+		t.Fatalf("review pin = %#v", review)
+	}
+	if len(review.SelectedBy.List()) != 1 {
+		t.Fatalf("review selected_by = %#v", review.SelectedBy)
+	}
+	leaf := byName["skill/leaf"]
+	if leaf.Direct || leaf.RegistrySlug != "tools-alias" || leaf.LockArchiveDigest != v4sha("f") {
+		t.Fatalf("derived leaf = %#v", leaf)
+	}
+	idx := byName["skill/idx"]
+	if idx.Direct || idx.Acquisition != MarketplaceAcquisitionIndexOnly || idx.RegistryCommit != strings.Repeat("9", 40) ||
+		idx.RegistryManifestDigest != v4sha("6") || idx.LockSourcePath != "skills/idx" || idx.LockArchiveDigest != v4sha("8") {
+		t.Fatalf("index-only pin = %#v", idx)
+	}
+}
+
+func TestV4MarketplaceEndpointOnlyHydration(t *testing.T) {
+	cfg, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources: {m: {marketplace: https://market.example}}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := lockfile.Normalize(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{URL: "https://market.example", InstanceID: "market-id"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := cfg.ToLegacyConfigWithLock(repoLayer, &doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Marketplaces) != 1 || len(out.Marketplaces[0].Resources) != 0 || out.Marketplaces[0].Alias != "m" {
+		t.Fatalf("endpoint-only entry = %#v", out.Marketplaces)
+	}
+}
+
+func v4LockErrorCode(t *testing.T, cfg *V4Config, kind layerKind, doc *lockfile.Document) string {
+	t.Helper()
+	_, err := cfg.ToLegacyConfigWithLock(kind, doc)
+	var v4Err *V4ValidationError
+	if !errors.As(err, &v4Err) {
+		t.Fatalf("error = %T %v, want V4ValidationError", err, err)
+	}
+	return v4Err.Code
+}
+
+func TestV4MarketplaceLockRefusals(t *testing.T) {
+	repo := v4LockFixture(t, lockfile.ScopeRepo)
+	v1, err := lockfile.Normalize(lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongScope := v4LockFixture(t, lockfile.ScopeUser)
+	extraEndpoint := repo
+	extraEndpoint.Marketplaces = append(append([]lockfile.MarketplaceLock(nil), repo.Marketplaces...),
+		lockfile.MarketplaceLock{URL: "https://other.example", InstanceID: "other-id"})
+	otherEndpoint := repo
+	otherEndpoint.Marketplaces = append([]lockfile.MarketplaceLock(nil), repo.Marketplaces...)
+	otherEndpoint.Marketplaces[0].URL = "https://other.example"
+	extraResource := repo
+	extraResource.Marketplaces = append([]lockfile.MarketplaceLock(nil), repo.Marketplaces...)
+	extraResource.Marketplaces[0].Resources = append(append([]lockfile.MarketplaceResourceLock(nil), repo.Marketplaces[0].Resources...),
+		v4LockResource("tools", "tools-id", "skill", "orphan", v4sha("1"), v4sha("1")))
+	extraResource.Marketplaces[0].Resources[len(extraResource.Marketplaces[0].Resources)-1].ArchiveDigest = lockfile.Digest(v4sha("2"))
+
+	cases := map[string]struct {
+		yaml string
+		doc  *lockfile.Document
+		want string
+	}{
+		"nil lock":        {v4MarketplaceConfigYAML, nil, "v4.marketplace-lock-required"},
+		"v1 lock":         {v4MarketplaceConfigYAML, &v1, "v4.marketplace-lock-required"},
+		"wrong scope":     {v4MarketplaceConfigYAML, &wrongScope, "v4.marketplace-lock-mismatch"},
+		"extra endpoint":  {v4MarketplaceConfigYAML, &extraEndpoint, "v4.marketplace-lock-mismatch"},
+		"endpoint differ": {v4MarketplaceConfigYAML, &otherEndpoint, "v4.marketplace-lock-mismatch"},
+		"duplicate source endpoint": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}, m2: {marketplace: https://market.example/}}
+resources:
+  m:
+    include: [tools/skill/review]
+`, &repo, "v4.marketplace-lock-mismatch"},
+		"unknown binding": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [ghost/skill/review]
+`, &repo, "v4.marketplace-lock-mismatch"},
+		"unknown resource": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [tools/skill/missing]
+`, &repo, "v4.marketplace-lock-mismatch"},
+		"revision mismatch": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include:
+      - tools/skill/review: {revision: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+`, &repo, "v4.marketplace-lock-mismatch"},
+		"unreachable resource": {v4MarketplaceConfigYAML, &extraResource, "v4.marketplace-lock-mismatch"},
+		"conflicting binding request": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [tools/skill/review, tools-alias/skill/review, main/collection/onboarding]
+`, &repo, "v4.marketplace-lock-mismatch"},
+		"malformed lock": {
+			v4MarketplaceConfigYAML, &lockfile.Document{
+				APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+				Marketplaces: []lockfile.MarketplaceLock{{
+					URL: "https://market.example", InstanceID: "market-id",
+					RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "tools-id"}},
+					Resources:        []lockfile.MarketplaceResourceLock{v4LockResource("ghost", "tools-id", "skill", "review", v4sha("a"), v4sha("a"))},
+				}},
+			}, "v4.marketplace-lock-mismatch"},
+		"tags policy": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [tools/skill/review]
+    tags: [team]
+    registries: [tools]
+`, &repo, "v4.marketplace-runtime-unsupported"},
+		"all policy": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [tools/skill/review]
+    all: true
+    registries: [tools]
+`, &repo, "v4.marketplace-runtime-unsupported"},
+		"registries policy": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [tools/skill/review]
+    registries: [tools]
+`, &repo, "v4.marketplace-runtime-unsupported"},
+		"exclude policy": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [tools/skill/review]
+    exclude: [tools/skill/leaf]
+`, &repo, "v4.marketplace-runtime-unsupported"},
+		"required policy": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [tools/skill/review]
+    required: true
+`, &repo, "v4.marketplace-runtime-unsupported"},
+		"harnesses policy": {
+			`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [tools/skill/review]
+    harnesses: [factory]
+`, &repo, "v4.marketplace-runtime-unsupported"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := ParseV4([]byte(tc.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code := v4LockErrorCode(t, cfg, repoLayer, tc.doc); code != tc.want {
+				t.Fatalf("code = %q, want %q", code, tc.want)
+			}
+		})
+	}
+}
+
+func TestV4MarketplaceLockMissingEndpointDeterministic(t *testing.T) {
+	cfg, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
+sources:
+  z: {marketplace: https://z.example}
+  a: {marketplace: https://a.example}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := &lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo}
+	_, err = cfg.toLegacyConfig(repoLayer, doc)
+	var v4err *V4ValidationError
+	if !errors.As(err, &v4err) {
+		t.Fatalf("error = %T %v, want V4ValidationError", err, err)
+	}
+	if v4err.Code != "v4.marketplace-lock-mismatch" || v4err.Path != "sources.a" {
+		t.Fatalf("error = %q %q, want v4.marketplace-lock-mismatch at sources.a", v4err.Code, v4err.Path)
+	}
+}
+
+func TestV4MarketplaceLockHydrationNormalizesLock(t *testing.T) {
+	doc := v4LockFixture(t, lockfile.ScopeRepo)
+	doc.Marketplaces = append([]lockfile.MarketplaceLock(nil), doc.Marketplaces...)
+	doc.Marketplaces[0].URL = "https://MARKET.example/"
+	cfg, err := v4LockConfig(t).ToLegacyConfigWithLock(repoLayer, &doc)
+	if err != nil {
+		t.Fatalf("unnormalized lock rejected: %v", err)
+	}
+	if len(cfg.Marketplaces) != 1 || cfg.Marketplaces[0].URL != "https://market.example" {
+		t.Fatalf("marketplaces = %#v", cfg.Marketplaces)
+	}
+}
+
+func TestLoadV4MarketplaceConfigWithAdjacentLock(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(v4MarketplaceConfigYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc := v4LockFixture(t, lockfile.ScopeRepo)
+	data, err := lockfile.Encode(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lock.yaml"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Marketplaces) != 1 || len(cfg.Marketplaces[0].Resources) != 4 {
+		t.Fatalf("marketplaces = %#v", cfg.Marketplaces)
+	}
+}
+
+func TestLoadV4MarketplaceConfigRejectsInvalidLock(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(v4MarketplaceConfigYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lock.yaml"), []byte(`apiVersion: agent-marketplace-lock/v2
+scope: repo
+marketplaces:
+  - url: https://market.example
+    instance_id: market-id
+    registry_bindings:
+      - name: tools
+        registry_id: tools-id
+    resources:
+      - registry_name: ghost
+        registry_id: tools-id
+        kind: skill
+        name: review
+        revision: rev-a
+        content_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        archive_digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        acquisition: mirror
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfigFromPath(configPath)
+	if err == nil || !strings.Contains(err.Error(), "decode lock") {
+		t.Fatalf("invalid lock bypassed Decode: %v", err)
+	}
+}
+
+func TestLoadV4MarketplaceConfigMissingLock(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(v4MarketplaceConfigYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfigFromPath(configPath)
+	var v4Err *V4ValidationError
+	if !errors.As(err, &v4Err) || v4Err.Code != "v4.marketplace-lock-required" {
+		t.Fatalf("error = %v, want v4.marketplace-lock-required", err)
+	}
+}
+
+func TestLoadV4MarketplaceLockOverlayRead(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(v4MarketplaceConfigYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := canonicalConfigPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath, err := lockfile.PathForConfig(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := v4LockFixture(t, lockfile.ScopeRepo)
+	lockData, err := lockfile.Encode(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, reads, err := loadConfigTreeWithReads(configPath, canonical, data, repoLayer, map[string][]byte{lockPath: lockData})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Marketplaces) != 1 {
+		t.Fatalf("marketplaces = %#v", cfg.Marketplaces)
+	}
+	var lockRead *ConfigRead
+	for i := range reads {
+		if reads[i].Path == lockPath {
+			lockRead = &reads[i]
+		}
+	}
+	if lockRead == nil || !lockRead.Overlay || lockRead.Digest != fmt.Sprintf("%x", sha256.Sum256(lockData)) {
+		t.Fatalf("lock read = %#v, reads = %#v", lockRead, reads)
+	}
+}

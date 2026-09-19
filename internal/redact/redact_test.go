@@ -15,14 +15,24 @@ func TestURL(t *testing.T) {
 		{name: "SCP URL", value: "git@example.com:repo.git", want: "git@example.com:repo.git"},
 		{name: "SCP credentials", value: "user:token@example.com:repo.git", want: "***@example.com:repo.git"},
 		{name: "SSH URI credentials", value: "ssh://user:token@example.com/repo.git", want: "ssh://***@example.com/repo.git"},
-		{name: "query at sign", value: "https://example.com?email=user@example.net", want: "https://example.com?email=user@example.net"},
-		{name: "fragment at sign", value: "https://example.com#user@example.net", want: "https://example.com#user@example.net"},
+		{name: "query at sign", value: "https://example.com?email=user@example.net", want: "https://example.com?***"},
+		{name: "fragment at sign", value: "https://example.com#user@example.net", want: "https://example.com#***"},
+		{name: "all credential fields", value: "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/repo?key=YOUR_QUERY_HERE#YOUR_FRAGMENT_HERE", want: "https://***@example.com/repo?***"},
+		{name: "escaped suffix", value: "https://example.com/repo?key=YOUR%20TOKEN#fragment", want: "https://example.com/repo?***"},
+		{name: "malformed suffix", value: "https://example.com/repo?key=%ZZ\"YOUR_TOKEN_HERE", want: "https://example.com/repo?***"},
+		{name: "diagnostic", value: "failed https://example.com/repo?key=YOUR_TOKEN_HERE request", want: "failed https://example.com/repo?*** request"},
+		{name: "multiple URLs", value: "https://one.example/repo?one=SECRET https://two.example/repo#SECRET", want: "https://one.example/repo?*** https://two.example/repo#***"},
+		{name: "non URL punctuation", value: "why? retain # details", want: "why? retain # details"},
+		{name: "empty suffix", value: "https://example.com/repo?", want: "https://example.com/repo?***"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := URL(tt.value); got != tt.want {
 				t.Fatalf("URL(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+			if got := URL(tt.want); got != tt.want {
+				t.Fatalf("redaction is not idempotent: %q", got)
 			}
 		})
 	}

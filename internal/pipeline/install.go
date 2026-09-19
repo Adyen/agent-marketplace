@@ -23,6 +23,17 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+type PreparedInstallDependencies struct {
+	Context         context.Context
+	DiscoveryConfig *config.Config
+	View            DependencyLockView
+	Reconcile       DependencyReconciler
+	BindRegistry    func(config.Source, config.RegistryEntry) error
+	Release         func()
+}
+
+type InstallDependencyPreparer func(context.Context, string, string, []StagedConfigEdit) (PreparedInstallDependencies, error)
+
 // InstallOptions holds the arguments for an install operation.
 type InstallOptions struct {
 	RepoRoot                string
@@ -51,6 +62,8 @@ type InstallOptions struct {
 	// (ScopedConfigPath).
 	LocalConfigDir      string
 	DependencyReconcile DependencyReconciler
+	PrepareDependencies InstallDependencyPreparer
+	bindRegistry        func(config.RegistryEntry) error
 	configStaging       *configStagingManager
 }
 
@@ -92,6 +105,9 @@ type resourceIdentity struct {
 // Install adds resources to the appropriate config layer and re-syncs.
 // It handles --tag, --all, --from, collection, and single-resource installs.
 func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, retErr error) {
+	if opts.PrepareDependencies != nil && opts.DependencyReconcile == nil {
+		return nil, errors.New("install dependency preparation requires a dependency reconciler")
+	}
 	marketplaceEndpointRequested := isMarketplaceEndpointRegistration(opts)
 	if marketplaceEndpointRequested && !opts.ScopeSpecified {
 		opts.Scope = ScopeUser
@@ -308,6 +324,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	// Configured installs select only from the exact inventory represented by
 	// the current layer locks. A mutable ref may have advanced since the lock
 	// was written, but that must not make unreviewed resources installable.
+	preparationCtx := ctx
 	ctx, exactView := exactLockViewWithContext(ctx, ec, false)
 	if len(exactView.errors) > 0 && !onlyMissingInstallLocks(exactView.errors) {
 		exactView.release()
@@ -324,8 +341,29 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return snapshot, identity, snapshotErr
 	})
 	discoveryOptions := []catalog.LoadOption{catalog.WithExactSnapshots(installExactSnapshot)}
+	releaseDiscovery := exactView.release
+	if opts.PrepareDependencies != nil {
+		for _, entry := range discoveryCfg.Registries {
+			if entry.IsLocal() {
+				continue
+			}
+			if _, _, err := installExactSnapshot(entry); err != nil {
+				releaseDiscovery()
+				return nil, err
+			}
+		}
+		releaseDiscovery()
+		releaseDiscovery = func() {}
+		prepared, err := prepareInstallDiscovery(preparationCtx, &opts)
+		if err != nil {
+			return nil, err
+		}
+		defer prepared.Release()
+		ctx, discoveryCfg = prepared.Context, prepared.DiscoveryConfig
+		discoveryOptions = []catalog.LoadOption{prepared.View.CatalogOption}
+	}
 	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.RepoRoot, opts.LocalConfigDir, discoveryOptions...)
-	exactView.release()
+	releaseDiscovery()
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +379,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			if len(installed) == 0 {
 				return nil, fmt.Errorf("tag %q not found for %s resources in configured registries", trimmedTag, skill.KindLabel(kind))
 			}
-			if err := addResourcesToAllRegistries(configPath, discoveryCfg.Registries, catalogs, kind, installed); err != nil {
+			if err := addResourcesToAllRegistries(configPath, discoveryCfg.Registries, catalogs, kind, installed, opts.bindRegistry); err != nil {
 				return nil, err
 			}
 			installedResources = resourceIdentities(kind, installed)
@@ -370,7 +408,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 					return nil, err
 				}
 			} else {
-				if err := addResourcesToAllRegistries(configPath, discoveryCfg.Registries, catalogs, kind, installed); err != nil {
+				if err := addResourcesToAllRegistries(configPath, discoveryCfg.Registries, catalogs, kind, installed, opts.bindRegistry); err != nil {
 					return nil, err
 				}
 			}
@@ -393,7 +431,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 						return nil, err
 					}
 				} else {
-					if err := addResourcesToAllRegistries(configPath, discoveryCfg.Registries, catalogs, k, names); err != nil {
+					if err := addResourcesToAllRegistries(configPath, discoveryCfg.Registries, catalogs, k, names, opts.bindRegistry); err != nil {
 						return nil, err
 					}
 				}
@@ -470,6 +508,11 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			// registry-scoped (instead of a top-level skills.include) gives one
 			// consistent representation across scopes and avoids the
 			// scoped/non-scoped mix users found confusing.
+			if opts.bindRegistry != nil {
+				if err := opts.bindRegistry(*entry); err != nil {
+					return nil, err
+				}
+			}
 			if err := config.EnsureRegistryWithPathsInConfig(configPath, entry.URL, entry.Ref, entry.Path); err != nil {
 				return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
 			}
@@ -584,6 +627,44 @@ func filterRequirementWarnings(warnings []error, installed []resourceIdentity) [
 		"kept", len(requirementWarnings),
 	)
 	return requirementWarnings
+}
+
+func prepareInstallDiscovery(ctx context.Context, opts *InstallOptions) (PreparedInstallDependencies, error) {
+	if opts.configStaging == nil {
+		return PreparedInstallDependencies{}, errors.New("exact install preparation requires staged configuration")
+	}
+	edits, err := opts.configStaging.Edits()
+	if err != nil {
+		return PreparedInstallDependencies{}, err
+	}
+	prepared, err := opts.PrepareDependencies(ctx, opts.RepoRoot, opts.LocalConfigDir, edits)
+	if err != nil {
+		return PreparedInstallDependencies{}, err
+	}
+	if prepared.Context == nil || prepared.DiscoveryConfig == nil || prepared.View.CatalogOption == nil || prepared.Reconcile == nil || prepared.Release == nil {
+		if prepared.Release != nil {
+			prepared.Release()
+		}
+		return PreparedInstallDependencies{}, errors.New("exact install preparation returned an incomplete dependency view")
+	}
+	opts.DependencyReconcile = prepared.Reconcile
+	source := config.RepoCommitted
+	switch opts.Scope {
+	case ScopeUser:
+		source = config.UserPersonal
+	case ScopeLocal:
+		source = config.RepoPersonal
+	}
+	opts.bindRegistry = func(entry config.RegistryEntry) error {
+		if entry.IsLocal() {
+			return nil
+		}
+		if prepared.BindRegistry == nil {
+			return errors.New("exact install preparation cannot bind a registry selection")
+		}
+		return prepared.BindRegistry(source, entry)
+	}
+	return prepared, nil
 }
 
 func loadInstallDiscoveryConfig(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig) (*config.Config, error) {
@@ -750,7 +831,7 @@ func findProvidingEntry(cfg *config.Config, catalogs map[string]catalog.LoadedCa
 	return nil
 }
 
-func addResourcesToAllRegistries(configPath string, entries []config.RegistryEntry, catalogs map[string]catalog.LoadedCatalog, kind ir.ResourceKind, names []string) error {
+func addResourcesToAllRegistries(configPath string, entries []config.RegistryEntry, catalogs map[string]catalog.LoadedCatalog, kind ir.ResourceKind, names []string, bind func(config.RegistryEntry) error) error {
 	for i := range entries {
 		entry := &entries[i]
 		catalogForEntry, ok := catalogs[entry.CatalogKey]
@@ -768,6 +849,11 @@ func addResourcesToAllRegistries(configPath string, entries []config.RegistryEnt
 		}
 		if len(matching) == 0 {
 			continue
+		}
+		if bind != nil {
+			if err := bind(*entry); err != nil {
+				return err
+			}
 		}
 		if err := config.EnsureRegistryWithPathsInConfig(configPath, entry.URL, entry.Ref, entry.Path); err != nil {
 			return fmt.Errorf("ensure registry %s in config: %w", entry.URL, err)
@@ -1014,7 +1100,18 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err != nil {
 		return nil, err
 	}
-	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.RepoRoot, opts.LocalConfigDir)
+	var discoveryOptions []catalog.LoadOption
+	if opts.PrepareDependencies != nil && !syntheticEntry.IsLocal() {
+		prepared, err := prepareInstallDiscovery(ctx, &opts)
+		if err != nil {
+			return nil, err
+		}
+		defer prepared.Release()
+		ctx = prepared.Context
+		discoveryCfg = prepared.DiscoveryConfig
+		discoveryOptions = append(discoveryOptions, prepared.View.CatalogOption)
+	}
+	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.RepoRoot, opts.LocalConfigDir, discoveryOptions...)
 	if err != nil {
 		return nil, err
 	}

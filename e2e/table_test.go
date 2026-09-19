@@ -180,6 +180,68 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:      "security/blocked_registry_credentials_redacted",
+		Desc:      "Given a denied credential-bearing registry, When sync loads effective config, Then error output and the persisted log redact credentials without changing the configured identity",
+		GlobalCfg: "harnesses: [factory]\nallowed_registries: []\n",
+		RepoCfg:   "registries:\n  - url: https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.invalid/repo.git?token=YOUR_QUERY_HERE#YOUR_FRAGMENT_HERE\n    ref: main\n    default: true\n",
+		Steps: []Step{{
+			Args: []string{"sync"}, AssertExitCode: intPtr(1),
+			OutContains:     []string{"blocked by allowed_registries", "example.invalid/repo.git"},
+			OutNotContains:  []string{"YOUR_USER_HERE", "YOUR_TOKEN_HERE", "YOUR_QUERY_HERE", "YOUR_FRAGMENT_HERE"},
+			FilesExist:      []string{"/root/.agent-marketplace/logs/agent-marketplace.log"},
+			FileContains:    map[string]string{"/root/.agent-marketplace/logs/agent-marketplace.log": "blocked by allowed_registries"},
+			FileNotContains: map[string]string{"/root/.agent-marketplace/logs/agent-marketplace.log": "YOUR_"},
+			FilesAbsent:     []string{"/workspace/.agents/lock.yaml", "/workspace/.factory"},
+			PathsUnchanged:  []string{"/workspace/.agents/config.yaml"},
+		}},
+	},
+	{
+		Name:       "security/blocked_command_link_cleanup",
+		Desc:       "Given locked commands with an edited sibling, When one blocked command is removed, Then only its directory link is unlinked",
+		Registries: []RegistryDef{{Name: "blocked-command-links", Commands: []Command{{Name: "remove"}, {Name: "keep"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: {{REG:blocked-command-links}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.devin/skills/remove/SKILL.md", "/workspace/.devin/skills/keep/SKILL.md"}},
+			{Action: ActionWriteFile, Path: "/workspace/.devin/skills/keep/SKILL.md", Body: "COMMAND SIBLING EDITED\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n"},
+			{Args: []string{"remove", "remove", "--kind", "command", "--from", "{{REG:blocked-command-links}}"}, MustPass: true,
+				FilesAbsent: []string{"/workspace/.devin/skills/remove"}, FileContains: map[string]string{"/workspace/.devin/skills/keep/SKILL.md": "COMMAND SIBLING EDITED"}, PathsUnchanged: []string{"/workspace/.devin/skills/keep/SKILL.md", "/workspace/.agents/lock.yaml"}},
+		},
+	},
+	{
+		Name:       "security/blocked_subagent_link_cleanup",
+		Desc:       "Given locked subagents with an edited sibling, When one blocked subagent is removed, Then only its file link is unlinked",
+		Registries: []RegistryDef{{Name: "blocked-subagent-links", Subagents: []Subagent{{Name: "remove"}, {Name: "keep"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: {{REG:blocked-subagent-links}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.devin/agents/remove.md", "/workspace/.devin/agents/keep.md"}},
+			{Action: ActionWriteFile, Path: "/workspace/.devin/agents/keep.md", Body: "SUBAGENT SIBLING EDITED\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n"},
+			{Args: []string{"remove", "remove", "--kind", "subagent", "--from", "{{REG:blocked-subagent-links}}"}, MustPass: true,
+				FilesAbsent: []string{"/workspace/.devin/agents/remove.md"}, FileContains: map[string]string{"/workspace/.devin/agents/keep.md": "SUBAGENT SIBLING EDITED"}, PathsUnchanged: []string{"/workspace/.devin/agents/keep.md", "/workspace/.agents/lock.yaml"}},
+		},
+	},
+	{
+		Name:       "security/blocked_skill_link_cleanup",
+		Desc:       "Given locked skill symlinks and an edited installed sibling, When a blocked registry skill is removed, Then only its link is unlinked without rewriting siblings",
+		Registries: []RegistryDef{{Name: "blocked-skill-links", Skills: []Skill{{Name: "remove", Description: "Remove original"}, {Name: "keep", Description: "Keep original"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:blocked-skill-links}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/remove/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"}},
+			{Action: ActionWriteFile, Path: "/workspace/.factory/skills/keep/SKILL.md", Body: "KEEP EDITED BY USER\n"},
+			{Action: ActionWriteFile, Path: "/workspace/.factory/skills/manual/SKILL.md", Body: "HANDWRITTEN\n"},
+			{Action: ActionWriteFile, Path: "/workspace/.gitignore", Body: "handwritten-ignore\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nallowed_registries: []\n"},
+			{Args: []string{"remove", "remove", "--kind", "skill", "--from", "{{REG:blocked-skill-links}}", "--ref", "main"}, MustPass: true,
+				FilesAbsent:    []string{"/workspace/.factory/skills/remove"},
+				FileContains:   map[string]string{"/workspace/.factory/skills/keep/SKILL.md": "KEEP EDITED BY USER", "/workspace/.factory/skills/manual/SKILL.md": "HANDWRITTEN"},
+				PathsUnchanged: []string{"/workspace/.factory/skills/keep/SKILL.md", "/workspace/.factory/skills/manual", "/workspace/.agents/lock.yaml", "/workspace/.gitignore"}},
+		},
+	},
+	{
 		Name: "security/blocked_owned_mcp_cleanup",
 		Desc: "Given an exact locked Devin MCP registry blocked after sync, When one named owned MCP is removed, Then edited and handwritten siblings remain unchanged",
 		Registries: []RegistryDef{
@@ -199,6 +261,19 @@ var testTable = []TestCase{
 					"/workspace/.devin/mcp_config.json": "\"handwritten\": {\"command\": \"manual\"},\n    \"keep\": {\"command\": \"keep-edited\"}",
 				},
 				FileNotContains: map[string]string{"/workspace/.devin/mcp_config.json": "remove-binary"}},
+		},
+	},
+	{
+		Name:       "migration/source_free_local_selector_is_refused",
+		Desc:       "Given a source-free personal-local selector that sync honors, When local v4 migration is requested, Then migration refuses without changing selection and the next sync still honors it",
+		Registries: []RegistryDef{{Name: "local-selector", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "harnesses: [factory]\n",
+		RepoCfg:    "registries:\n  - url: {{REG:local-selector}}\n    ref: main\n",
+		LocalCfg:   "apiVersion: agent-marketplace/v2\nskills:\n  include: [review]\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"migrate", "--scope", "local"}, AssertExitCode: intPtr(1), OutContains: []string{"v4.migration-unsupported"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 		},
 	},
 	{
@@ -3729,6 +3804,19 @@ registries:
 	},
 
 	// ===== deinit command =====
+	{
+		Name:       "deinit/manifest_failure_preserves_config_and_output",
+		Desc:       "Given installed output and an invalid manifest, When deinit attempts config purge, Then it reports failure and preserves state until the manifest is repaired",
+		Registries: []RegistryDef{{Name: "deinit-invalid-manifest", Skills: []Skill{{Name: "teardown-skill", Description: "Deinit preservation"}}}},
+		RepoCfg:    "registries:\n  - url: {{REG:deinit-invalid-manifest}}\n    ref: main\n    skills:\n      - teardown-skill\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/teardown-skill/SKILL.md", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: "version: 99\nentries: []\n"},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config", "--dry-run"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, OutNotContains: []string{"Would remove config", "Would remove lock", "No managed artifacts to remove"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.factory"}},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, OutNotContains: []string{"Removed config", "Removed lock", "No managed artifacts to remove"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.factory"}},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: "version: 1\nentries: []\n", Args: []string{"deinit", "--scope", "repo", "--purge-config"}, MustPass: true, OutContains: []string{"Removed config", "Removed lock"}, FilesAbsent: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.factory/skills/teardown-skill/SKILL.md"}},
+		},
+	},
 	{
 		Name: "deinit/repo_scope_removes_repo_artifacts",
 		Desc: "Given a synced repo with artifacts, When deinit --scope repo is run, Then repo-scoped artifacts are removed and machine-scope artifacts are untouched",

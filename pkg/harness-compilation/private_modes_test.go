@@ -3,6 +3,7 @@ package harnesscompile_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -214,25 +215,21 @@ func TestMaterializePlainOverwritePreservesPrivateMode(t *testing.T) {
 	}
 }
 
-func TestMaterializeFreshDevinMCPIsPrivate(t *testing.T) {
+func TestMaterializeRejectsDevinMCPExternalAggregate(t *testing.T) {
 	server := ir.NewMcpServer("private", "echo", []string{"private"}, nil, nil, ir.SourceRef{})
 	result, err := hcc.Compile(server, hcc.TargetDevin)
 	if err != nil {
 		t.Fatal(err)
 	}
 	outDir := t.TempDir()
-	if _, err := hcc.Materialize(result, outDir); err != nil {
-		t.Fatal(err)
+	if _, err := hcc.Materialize(result, outDir); !errors.Is(err, hcc.ErrExternalReconciliationRequired) {
+		t.Fatalf("Materialize error = %v, want %v", err, hcc.ErrExternalReconciliationRequired)
 	}
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifacts = %d", len(result.Artifacts))
 	}
-	info, err := os.Stat(filepath.Join(outDir, filepath.FromSlash(result.Artifacts[0].Path)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+	if _, err := os.Stat(filepath.Join(outDir, filepath.FromSlash(result.Artifacts[0].Path))); !os.IsNotExist(err) {
+		t.Fatalf("external aggregate exists after refusal: %v", err)
 	}
 }
 

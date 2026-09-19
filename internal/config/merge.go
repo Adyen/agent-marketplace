@@ -53,7 +53,7 @@ func MergeLayers(layers []Layer) *Config {
 		// that display the merged config. Execution uses
 		// ResolveMaterializationModes so this value never affects machine scope.
 		if layer.Config.Materialization != nil && (layer.Source == UserPersonal || layer.Source == RepoCommitted || layer.Source == RepoPersonal) {
-			merged.Materialization = &MaterializationConfig{Mode: layer.Config.Materialization.Mode}
+			merged.Materialization = mergeMaterializationConfig(merged.Materialization, layer.Config.Materialization)
 		}
 		// AllowedRegistries and AllowedMarketplaces use first-non-nil-wins
 		// semantics so that Organization policy cannot be relaxed by
@@ -159,6 +159,36 @@ func Merge(global, repo *Config) *Config {
 	})
 }
 
+func mergeMaterializationConfig(base, override *MaterializationConfig) *MaterializationConfig {
+	if base == nil && override == nil {
+		return nil
+	}
+	out := &MaterializationConfig{}
+	if base != nil {
+		out.Mode = base.Mode
+		if len(base.Targets) > 0 {
+			out.Targets = make(map[string]string, len(base.Targets))
+			for target, mode := range base.Targets {
+				out.Targets[target] = mode
+			}
+		}
+	}
+	if override != nil {
+		if override.Mode != "" {
+			out.Mode = override.Mode
+		}
+		if len(override.Targets) > 0 {
+			if out.Targets == nil {
+				out.Targets = make(map[string]string, len(override.Targets))
+			}
+			for target, mode := range override.Targets {
+				out.Targets[target] = mode
+			}
+		}
+	}
+	return out
+}
+
 func (s Source) CanConfigureBackup() bool {
 	return s == Organization || s == UserPersonal
 }
@@ -175,6 +205,9 @@ func resolveRegistryEntry(cfg *Config, entry RegistryEntry) RegistryEntry {
 		Required:       entry.Required,
 		Default:        entry.Default,
 		SourceHarness:  entry.SourceHarness,
+		V4Kind:         entry.V4Kind,
+		V4All:          entry.V4All,
+		V4Decisions:    entry.V4Decisions,
 		FilePrecedence: entry.FilePrecedence,
 		Tags:           resolveInheritedList(cfg.Tags, entry.Tags),
 		Harnesses:      resolveInheritedList(cfg.Harnesses, entry.Harnesses),

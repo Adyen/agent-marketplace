@@ -54,7 +54,7 @@ When `install` or `remove` receives a name shared by multiple resource kinds, `-
 
 ## `init`
 
-Creates a minimal user configuration with the canonical v2 schema and an explicit harness list. It does not add registries or install resources. An existing user configuration is left unchanged.
+Creates a minimal user configuration with the v4 schema and an explicit harness list. It does not add sources or install resources. An existing user configuration is left unchanged.
 
 ```text
 agent-marketplace init [flags]
@@ -115,7 +115,7 @@ Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` colu
 
 ## `install`
 
-Adds selections to one configuration layer and synchronizes materialized output. It also registers hosted Marketplace endpoints and installs exact Marketplace resource revisions.
+Adds selections to one writable configuration layer and synchronizes materialized output. V4 roots are authored through their `sources` and `resources` maps; configuration-writing install operations do not rewrite a v4 root.
 
 ```text
 agent-marketplace install <resource-name> [flags]
@@ -150,9 +150,9 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--yes` | boolean | no | `false` | Automation spelling of `--accept-risk`. |
 | `--verbose` | boolean | no | `false` | Shows the complete collection inventory and technical Marketplace preview, including revisions, digests, acquisition details, and provenance. |
 
-Registering an endpoint verifies its well-known identity and canonical URL before writing it. Re-registering the same identity in the same or a broader scope is a no-op.
+A Marketplace endpoint lookup verifies its well-known identity and canonical URL. To use the endpoint from a v4 root, declare a named `marketplace` source and add an exact request to its `resources` group; keep the matching verified layer lock next to the configuration.
 
-A Marketplace resource install resolves and verifies the exact artifact before configuration mutation. By default it shows the resource kind, source, up to ten collection members, human-readable findings, and deduplicated active capabilities. `--verbose` shows the complete collection inventory and technical preview. Rejected or revoked resources cannot be installed.
+A Marketplace resource install resolves and verifies the exact artifact before configuration mutation. It prints the digest, license, findings, capabilities, provenance, and acquisition mode; by default it shows up to ten collection members, while `--verbose` shows the complete collection inventory and technical preview. Rejected or revoked resources cannot be installed. Warning findings and active capabilities require `--accept-risk` or `--yes`; consent applies only to that verified invocation.
 
 In an interactive terminal, warning findings and active capabilities produce an `Install despite these risks? [y/N]:` prompt. Accepting commits the exact prepared revision and prints only the result. Non-interactive execution still requires `--accept-risk` or `--yes` and returns a nonzero exit code without consent.
 
@@ -297,9 +297,21 @@ The report can contain these sections:
 
 Fatal resolution errors return exit status 1 after the report is printed.
 
+## Configuration authoring
+
+The CLI reads v4 roots and adapts their `sources` and `resources` model for discovery, status, synchronization, and materialization. A root must declare `apiVersion: agent-marketplace/v4`; included fragments may omit `apiVersion` and inherit v4 from the root.
+
+Source kinds are explicit:
+
+- `git` sources require `ref` and use the owning layer's exact Git lock.
+- `directory` sources are live, relative to the declaring file, and never acquire a Git lock.
+- `marketplace` sources require a matching verified layer lock for explicit requests.
+
+Use the [v4 configuration reference](configuration.md) to author source declarations and resource groups. Configuration edits preserve the authored v4 shape; unknown fields, mixed source kinds, invalid locators, and mismatched Marketplace lock evidence fail closed.
+
 ## `migrate`
 
-Performs transactional structural remediation across user, repository, and repository-personal configuration files. Valid v2 and v3 `apiVersion` values are preserved. Files containing legacy `identity` or `team_profiles` fields are refused without modification.
+Converts representable legacy user, repository, and repository-personal configuration to the v4 source/resource schema. Migration is transactional, preserves v2/v3 reads when declined or refused, and uses verified local Marketplace cache evidence without network access. Use `--to v2` for legacy structural remediation.
 
 ```text
 agent-marketplace migrate [flags]
@@ -307,15 +319,12 @@ agent-marketplace migrate [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--harnesses` | comma-separated strings | conditionally | existing user harnesses | Supplies the user harness set when remediation requires one. Accepted values are the seven supported harness targets. |
+| `--to` | string | no | `v4` | Target schema: `v4` or `v2`. |
+| `--scope` | string | no | `all` | V4 writable layer: `all`, `user`, `repo`, or `local`. |
+| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. |
+| `--harnesses` | comma-separated strings | v2 only | none | Target harnesses for legacy structural remediation. |
 
-When a harness set is required but absent, terminal execution prompts and non-terminal execution requires `--harnesses`. All inputs are validated before any file is written.
-
-Output identifies each changed file, or reports:
-
-```text
-No structural remediation needed; config files are already valid
-```
+The `--to v4` spelling is accepted as an alias. V4 migration refuses lossy inputs and incomplete Marketplace provenance without changing files; proven Marketplace conversions create or upgrade the owning v2 lock atomically with the migrated config. Organization configuration is never edited.
 
 ## `convert`
 
@@ -342,7 +351,9 @@ Converted claude -> factory into plugin-factory
 Written 4, Skipped 0, Removed 0, Diagnostics 0
 ```
 
-A partial conversion writes complete resources, reports skipped resources and diagnostics, suppresses unsafe pruning when applicable, and returns exit status 1. Codex conversion refuses a destination that already contains shared `.codex/hooks.json` or `.codex/config.toml` configuration.
+A partial conversion writes complete resources, reports skipped resources and diagnostics, suppresses unsafe pruning when applicable, and returns exit status 1. Source and output paths are canonicalized, including existing symlinks. Conversion refuses equal, nested, or ancestor relationships before reading or mutating either tree, including with `--sync`.
+
+Codex conversion refuses a destination that already contains shared `.codex/hooks.json` or `.codex/config.toml` configuration. Devin conversion also refuses an existing shared destination (`mcp_config.json`, `hooks.v1.json`, or the user `config.json` hook aggregate) rather than adopting or merging it. Both targets stage all artifacts, validate staged aggregate syntax, publish with guarded hard links, and roll back only artifacts published by that transaction when publication fails. One-shot conversion does not create durable aggregate-ownership state and never adopts a destination; sync also does not adopt pre-existing entries. Only explicit `doctor --repair` may adopt an entry, and only when its bytes exactly match the desired generated value. Missing or corrupt ownership state remains fail-closed.
 
 ## `doctor`
 

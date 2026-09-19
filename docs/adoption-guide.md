@@ -2,7 +2,7 @@
 
 For detailed precedence rules (layer order, excludes, collection behavior, collision/error cases), see [`docs/PRECEDENCE.md`](./PRECEDENCE.md).
 
-The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical. The loader accepts v3 as a compatibility alias and rejects v1 configs with no `apiVersion`. `agent-marketplace migrate` performs structural remediation without rewriting otherwise-valid v2 or v3 files; new or remediated files use canonical v2.
+Legacy configuration uses the **v2 schema** (`apiVersion: agent-marketplace/v2`); the loader accepts v3 as a compatibility alias and rejects v1 configs with no `apiVersion`. V4 is the canonical `sources`/`resources` schema (`apiVersion: agent-marketplace/v4`) that normal CLI readers consume. Interactive CLI startup and the TUI ask before migrating detected writable v2/v3 roots; declining or running non-interactively preserves legacy reads. `agent-marketplace migrate` targets v4 by default; use `--to v2` only for legacy structural remediation.
 
 ## 30-second setup
 
@@ -13,21 +13,22 @@ mkdir -p ~/.agents .agents
 
 # Machine-wide target harness set
 cat > ~/.agents/config.yaml << 'EOF_CONFIG'
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries: []
 EOF_CONFIG
 
-# Repo config selects resources from registries
+# Repo config binds a source and selects resources
 cat > .agents/config.yaml << 'EOF_CONFIG'
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@gitlab.example.com:example-user/infra-skills.git
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: git@gitlab.example.com:example-user/infra-skills.git
     ref: main
-    source_harness: claude
     path: skills
-    skills:
-      include: [vm-lifecycle, enc-debugging]
+    source_harness: claude
+resources:
+  infra:
+    include: [skill/vm-lifecycle, skill/enc-debugging]
 EOF_CONFIG
 
 agent-marketplace sync
@@ -45,7 +46,7 @@ target set. Existing installs and `migrate` do not add it automatically:
 
 ```yaml
 # ~/.agents/config.yaml
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses: [factory, codex]
 ```
 
@@ -84,10 +85,10 @@ allowed_registries:
 
 ## Remediating structurally invalid config
 
-v1 configs with no `apiVersion` are rejected and must first be converted to a v2 document. Use `migrate` for structural issues in v2/v3 files, such as legacy collection syntax:
+v1 configs with no `apiVersion` are rejected and must be converted to a supported legacy v2 document before they can be loaded. Use `migrate --to v2` for structural issues in v2/v3 files, such as legacy collection syntax:
 
 ```bash
-agent-marketplace migrate --harnesses factory,cursor
+agent-marketplace migrate --to v2 --harnesses factory,cursor
 agent-marketplace sync
 ```
 
@@ -112,7 +113,27 @@ registries:
       include: [vm-lifecycle]
 ```
 
-`migrate` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config. Structurally remediated output uses canonical v2.
+`migrate --to v2` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config. Structurally remediated output uses canonical v2.
+
+## Explicitly migrate v2/v3 to v4
+
+V4 migration is consent-based and format-only. Interactive CLI startup and the TUI ask before publishing; use an explicit dry run when reviewing the conversion:
+
+```bash
+agent-marketplace migrate --dry-run
+```
+
+By default this validates the writable user, repository, and repository-personal files together. To limit the operation to one layer, use `--scope user`, `--scope repo`, or `--scope local`:
+
+```bash
+agent-marketplace migrate --scope repo
+```
+
+Organization configuration is never touched. Git/directory-only conversion leaves generated locks unchanged; for a config carrying exact legacy Marketplace pins with verified local cache evidence, migration additionally emits `sources.<name>.marketplace` endpoints, direct requests under `resources`, and a generated `agent-marketplace-lock/v2` record carrying the identity, integrity, and selection state — published together with the config in one journaled transaction. Normal CLI readers then consume explicit Git/directory v4 roots for discovery, status, and synchronization, and hydrate explicit v4 Marketplace requests from the matching v2 lock. Use `directory` for live local content even when its name ends in `.git`; it is resolved from the declaring file, does not use a Git lock, and does not accept Git-only `ref` or `path`.
+
+The conversion is fail-closed and preserves semantics and selection behavior for representable inputs. It regenerates canonical v4 YAML and does not promise authored comments or formatting. It refuses legacy `include` trees, hosted Marketplace selections without proven pin provenance (missing verified cache evidence leaves the originals readable and unchanged), collection-derived aliases that cannot be represented, and any unrepresentable selector or policy. It validates generated v4 documents with the normal runtime adapter before publication, preserves originals, and rolls back earlier replacements if a later replacement fails. `--dry-run` performs these checks without writing either config or lock. The v4 runtime preserves ordered decisions: a v4 `required: true` group alone selects zero resources, while legacy implicit all-selection is represented explicitly as `all: true`; explicit empty `tags: []`/`harnesses: []` overrides remain distinct from omitted fields.
+
+After conversion, legacy configuration writers return `v4.writer-opt-in` rather than rewriting v4 as legacy YAML. A repository-personal v4 root rejects disallowed `harnesses`, allowlists, `backup`, `logging`, and `telemetry` fields with `v4.layer-field`. Edit v4 source/resource declarations directly. If migration is declined, non-interactive, or refuses an unsupported include/Marketplace input, the original v2/v3 configuration remains readable and unchanged.
 
 Keep `.agents/skills/` ignored when `codex` is selected; otherwise remove legacy
 ignore entries when they are no longer needed. Do not commit generated
@@ -221,6 +242,7 @@ agent-marketplace sync --locked
 agent-marketplace sync --check
 agent-marketplace status
 agent-marketplace update
+agent-marketplace migrate --dry-run
 agent-marketplace convert --from claude --to factory --out ./factory-plugin ./claude-plugin
 agent-marketplace doctor
 agent-marketplace doctor --repair

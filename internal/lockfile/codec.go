@@ -91,7 +91,16 @@ func Encode(doc Document) ([]byte, error) {
 
 func Normalize(input Document) (Document, error) {
 	doc := cloneDocument(input)
-	if doc.APIVersion != APIVersionV1 {
+	switch doc.APIVersion {
+	case APIVersionV1:
+		if len(doc.Marketplaces) > 0 {
+			return Document{}, coded(CodeUnsupportedVersion, "apiVersion %q cannot contain Marketplace records; use %q", doc.APIVersion, APIVersionV2)
+		}
+	case APIVersionV2:
+		if len(doc.Marketplaces) == 0 {
+			return Document{}, coded(CodeInvalidDocument, "apiVersion %q requires at least one Marketplace record", doc.APIVersion)
+		}
+	default:
 		return Document{}, coded(CodeUnsupportedVersion, "unsupported apiVersion %q", doc.APIVersion)
 	}
 	if !doc.Scope.Valid() {
@@ -190,6 +199,9 @@ func Normalize(input Document) (Document, error) {
 	var err error
 	doc.Registries, err = dedupeRegistries(doc.Registries)
 	if err != nil {
+		return Document{}, err
+	}
+	if err := normalizeMarketplaces(&doc); err != nil {
 		return Document{}, err
 	}
 	return doc, nil

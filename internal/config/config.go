@@ -442,9 +442,10 @@ func (p *IncludePaths) UnmarshalYAML(value *yaml.Node) error {
 type Config struct {
 	Include IncludePaths `yaml:"include,omitempty"`
 
-	// APIVersion is the schema version sentinel. The canonical version is
-	// "agent-marketplace/v2"; "agent-marketplace/v3" is retained as a
-	// compatibility alias. v1 configs have no apiVersion field and are
+	// APIVersion is the schema version sentinel. The canonical legacy version
+	// is "agent-marketplace/v2"; "agent-marketplace/v3" is retained as a
+	// compatibility alias. V4 values are read-only adapters from the explicit
+	// source/resource loader. v1 configs have no apiVersion field and are
 	// rejected by the loader.
 	APIVersion string `yaml:"apiVersion,omitempty"`
 
@@ -536,9 +537,10 @@ type LocalConfig struct {
 
 	// APIVersion is an optional schema-version sentinel. Local configs
 	// (config.local.yaml) are generated without it, but users may add
-	// "agent-marketplace/v2" or "agent-marketplace/v3" by hand (or copy it
-	// from a sibling config). It is accepted but not required; when present it
-	// must match one of the supported API versions. Without this field the strict
+	// "agent-marketplace/v2", "agent-marketplace/v3", or
+	// "agent-marketplace/v4" by hand (or copy it from a sibling config). It is
+	// accepted but not required; when present it must match one of the supported
+	// API versions. Without this field the strict
 	// (KnownFields) decoder rejects any hand-added apiVersion line.
 	APIVersion   string             `yaml:"apiVersion,omitempty"`
 	Registries   []RegistryEntry    `yaml:"registries,omitempty"`
@@ -630,6 +632,15 @@ type RegistryEntry struct {
 	// SourceHarness specifies the harness layout of this registry's content.
 	// Optional; defaults to hcc.Autodetect at sync time.
 	SourceHarness string `yaml:"source_harness,omitempty"`
+
+	// V4Kind preserves an explicit v4 source discriminator for the read-only
+	// legacy adapter. It is never serialized and prevents a directory named
+	// ".git" from being reclassified as a Git source at runtime.
+	V4Kind V4SourceKind `yaml:"-"`
+	// V4All preserves v4 all:true as an additive selection policy for the
+	// runtime resolver; Default alone cannot distinguish it from legacy policy.
+	V4All       bool                  `yaml:"-"`
+	V4Decisions []V4SelectionDecision `yaml:"-"`
 
 	// Harnesses overrides the top-level harnesses list for this entry.
 	// Optional; inherits from Config.Harnesses if unset.
@@ -769,6 +780,12 @@ func (e *RegistryEntry) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, b
 // suffix, a filesystem path is treated as a plain directory and ref is
 // optional (and ignored).
 func (e RegistryEntry) IsLocal() bool {
+	switch e.V4Kind {
+	case V4SourceDirectory:
+		return true
+	case V4SourceGit, V4SourceMarketplace:
+		return false
+	}
 	u := strings.TrimSpace(e.URL)
 	if u == "" {
 		return false
@@ -979,6 +996,9 @@ const (
 	// APIVersionV3 is an alias accepted for reading but not emitted by
 	// generators or documentation.
 	APIVersionV3 = "agent-marketplace/v3"
+	// APIVersionV4 is the explicit source/resource schema. Legacy Config values
+	// carrying v4 are read-only adapters produced by the v4 loader.
+	APIVersionV4 = "agent-marketplace/v4"
 )
 
 // Validate performs full structural validation of the config, including
@@ -999,15 +1019,16 @@ func (c Config) ValidateWithoutHarnesses() error {
 func (c Config) validate(requireHarnesses, requireAPIVersion bool, layer string) error {
 	var errs []error
 
-	// v2 is canonical; v3 is retained as a compatibility alias. apiVersion is
-	// required on Config-schema files (global/repo/org) but optional on local
-	// configs, which are generated without it.
+	// v2 is canonical for legacy documents; v3 is retained as a compatibility
+	// alias and v4 is accepted by the read-only source/resource adapter.
+	// apiVersion is required on Config-schema files (global/repo/org) but
+	// optional on local configs, which are generated without it.
 	if v := strings.TrimSpace(c.APIVersion); v == "" {
 		if requireAPIVersion {
 			errs = append(errs, fmt.Errorf("missing apiVersion: add %q", APIVersionV2))
 		}
-	} else if v != APIVersionV2 && v != APIVersionV3 {
-		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q or %q", v, APIVersionV2, APIVersionV3))
+	} else if v != APIVersionV2 && v != APIVersionV3 && v != APIVersionV4 {
+		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q, %q, or %q", v, APIVersionV2, APIVersionV3, APIVersionV4))
 	}
 
 	// harnesses is required on user-personal configs and must not be empty.
@@ -1178,15 +1199,15 @@ func (c LocalConfig) AllExcludes() []string {
 // ValidateBasic validates the structural fields of the LocalConfig without
 // enforcing v2 schema gating (apiVersion, harnesses). At minimum it ensures
 // every registry entry has a non-empty URL and no path-traversal in Path.
-// apiVersion is optional on local configs, but if present it must match
-// APIVersionV2 or APIVersionV3 so typos and stale versions are caught.
+// apiVersion is optional on local configs, but if present it must match a
+// supported schema version so typos and stale versions are caught.
 func (c LocalConfig) ValidateBasic() error {
 	var errs []error
 
 	errs = append(errs, validateRegistryHarnessTargets(c.Registries)...)
 
-	if v := strings.TrimSpace(c.APIVersion); v != "" && v != APIVersionV2 && v != APIVersionV3 {
-		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q or %q", v, APIVersionV2, APIVersionV3))
+	if v := strings.TrimSpace(c.APIVersion); v != "" && v != APIVersionV2 && v != APIVersionV3 && v != APIVersionV4 {
+		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q, %q, or %q", v, APIVersionV2, APIVersionV3, APIVersionV4))
 	}
 
 	errs = append(errs, validateRegistryEntries(c.Registries)...)

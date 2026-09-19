@@ -17,9 +17,9 @@ agent-marketplace remove code-review
 
 This deletes the entry from the selected config scope. The default scope is `repo`.
 
-## 2. Exclude an auto-selected or default resource
+## 2. Exclude an auto-selected resource
 
-If the resource was selected because the registry has `default: true` or because it was auto-selected, `remove` records an `exclude` instead:
+If the resource was selected by a source group's `all` or `tags` policy, `remove` records an `exclude` instead:
 
 ```bash
 agent-marketplace remove legacy-review

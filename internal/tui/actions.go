@@ -175,7 +175,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
 		targetHarnesses:      resolvedResult.TargetHarnesses,
 		targetHarnessSource:  resolvedResult.TargetHarnessSource,
-		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
+		pendingMigration:     migrationPrompt{},
 		driftAssessment:      driftFailed,
 		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
 	}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -69,6 +70,56 @@ func (f *lockfileGitFixture) replaceSkills(t *testing.T, message string, skills 
 	gitRun(t, f.working, "push", "origin", "main")
 }
 
+func TestReadOnlyCommandsRejectFIFOLock(t *testing.T) {
+	for _, args := range [][]string{{"status"}, {"gc", "--dry-run"}} {
+		t.Run(args[0], func(t *testing.T) {
+			fixture := newLockfileGitFixture(t, "fifo-lock", Skill{Name: "review"})
+			fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", fixture.url))
+			fixture.env.MustRunAM("sync")
+			fixture.env.MustRunAM(args...)
+			lockPath := filepath.Join(fixture.env.workspace, ".agents", "lock.yaml")
+			if err := os.Rename(lockPath, lockPath+".saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(lockPath, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Lstat(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			paths := []string{filepath.Join(fixture.env.workspace, ".agents", "config.yaml"), lockPath + ".saved", filepath.Join(fixture.env.workspace, ".factory")}
+			before := make(map[string]string)
+			for _, path := range paths {
+				fingerprint, err := pathFingerprint(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[path] = fingerprint
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, fixture.env.binary, args...)
+			cmd.Dir = fixture.env.workspace
+			cmd.Env = fixture.env.subprocessEnv()
+			output, err := cmd.CombinedOutput()
+			if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "unsafe lock file") {
+				t.Fatalf("FIFO command error=%v context=%v output=%s", err, ctx.Err(), output)
+			}
+			after, err := os.Lstat(lockPath)
+			if err != nil || after.Mode()&os.ModeNamedPipe == 0 || !os.SameFile(info, after) {
+				t.Fatalf("FIFO changed: %v", err)
+			}
+			for _, path := range paths {
+				fingerprint, err := pathFingerprint(path)
+				if err != nil || fingerprint != before[path] {
+					t.Fatalf("refusal changed %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
 func TestLockfileFileURLGitLifecycleRetainsExactCommitUntilUpdate(t *testing.T) {
 	fixture := newLockfileGitFixture(t, "lock-lifecycle", Skill{Name: "review", Description: "Review version one"})
 	// Keep this spelling literal: the regression is specifically the absolute
@@ -110,6 +161,65 @@ func TestLockfileFileURLGitLifecycleRetainsExactCommitUntilUpdate(t *testing.T) 
 		t.Fatalf("update retained the old lock:\n%s", lockAfter)
 	}
 	fixture.env.AssertFileContains("/workspace/.factory/skills/review/SKILL.md", "Review version two")
+}
+
+func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
+	fixture := newLockfileGitFixture(t, "install-exact-discovery", Skill{Name: "review", Description: "Reviewed version A"})
+	fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main", fixture.url))
+	if result := fixture.env.RunAM("sync"); result.ExitCode != 0 {
+		t.Fatalf("seed sync: %s", result.Combined)
+	}
+	beforeConfig := fixture.env.ReadFile("/workspace/.agents/config.yaml")
+	beforeLock := fixture.env.ReadFile("/workspace/.agents/lock.yaml")
+	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Changed version B"}, Skill{Name: "new", Description: "Only in B"})
+	result := fixture.env.RunAM("install", "new", "--from", fixture.url, "--ref", "main")
+	if result.ExitCode == 0 || !strings.Contains(result.Combined, "not found") {
+		t.Fatalf("mutable-only resource was not safely refused: %s", result.Combined)
+	}
+	if fixture.env.ReadFile("/workspace/.agents/config.yaml") != beforeConfig || fixture.env.ReadFile("/workspace/.agents/lock.yaml") != beforeLock {
+		t.Fatal("refused install changed configuration or lock")
+	}
+	if _, err := os.Lstat(filepath.Join(fixture.env.workspace, ".factory", "skills", "new")); !os.IsNotExist(err) {
+		t.Fatalf("mutable-only output exists: %v", err)
+	}
+	result = fixture.env.RunAM("install", "review", "--from", fixture.url, "--ref", "main")
+	if result.ExitCode != 0 {
+		t.Fatalf("locked resource install: %s", result.Combined)
+	}
+	fixture.env.AssertFileContains("/workspace/.factory/skills/review/SKILL.md", "Reviewed version A")
+	if fixture.env.ReadFile("/workspace/.agents/lock.yaml") != beforeLock {
+		t.Fatal("install advanced the existing exact lock")
+	}
+}
+
+func TestConfiguredInstallCopiesProviderPinAcrossScopes(t *testing.T) {
+	fixture := newLockfileGitFixture(t, "configured-provider-pin", Skill{Name: "review", Description: "Provider version A"})
+	fixture.env.WriteGlobalConfig(fmt.Sprintf("harnesses: [factory]\nregistries:\n  - url: %s\n    ref: main", fixture.url))
+	fixture.env.WriteRepoConfig("harnesses: [factory]\nregistries: []")
+	if result := fixture.env.RunAM("lock", "--scope", "user"); result.ExitCode != 0 {
+		t.Fatalf("seed user lock: %s", result.Combined)
+	}
+	beforeConfig := fixture.env.ReadFile("/root/.agents/config.yaml")
+	beforeLock := fixture.env.ReadFile("/root/.agents/lock.yaml")
+	commitLine := ""
+	for _, line := range strings.Split(beforeLock, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "commit:") {
+			commitLine = strings.TrimSpace(line)
+			break
+		}
+	}
+	if commitLine == "" {
+		t.Fatal("user fixture has no exact commit")
+	}
+	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Unselected version B"})
+	if result := fixture.env.RunAM("install", "review"); result.ExitCode != 0 {
+		t.Fatalf("configured install: %s", result.Combined)
+	}
+	fixture.env.AssertFileContains("/workspace/.agents/lock.yaml", commitLine)
+	fixture.env.AssertFileContains("/workspace/.factory/skills/review/SKILL.md", "Provider version A")
+	if fixture.env.ReadFile("/root/.agents/config.yaml") != beforeConfig || fixture.env.ReadFile("/root/.agents/lock.yaml") != beforeLock {
+		t.Fatal("scope copy rewrote provider config or pin")
+	}
 }
 
 func TestOrganizationIncludeTrustBlocksSyncWithoutMutation(t *testing.T) {

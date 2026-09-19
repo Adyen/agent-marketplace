@@ -896,6 +896,41 @@ func TestResolveMaterializationModesScopePrecedence(t *testing.T) {
 	}
 }
 
+func TestMaterializationTargetsComposeAcrossLegacyLayersAndLocalIncludes(t *testing.T) {
+	global := &Config{Materialization: &MaterializationConfig{
+		Mode:    "file",
+		Targets: map[string]string{"factory": "file", "devin": "symlink"},
+	}}
+	repo := &Config{Materialization: &MaterializationConfig{
+		Targets: map[string]string{"factory": "symlink"},
+	}}
+	local := &LocalConfig{Materialization: &MaterializationConfig{
+		Targets: map[string]string{"claude": "file"},
+	}}
+	merged := MergeLayers([]Layer{
+		{Source: UserPersonal, Config: global},
+		{Source: RepoCommitted, Config: repo},
+		*LocalConfigAsLayer(local),
+	})
+	if merged.Materialization == nil || len(merged.Materialization.Targets) != 3 || merged.Materialization.Targets["factory"] != "symlink" || merged.Materialization.Targets["devin"] != "symlink" || merged.Materialization.Targets["claude"] != "file" {
+		t.Fatalf("legacy layer target map = %#v", merged.Materialization)
+	}
+	included := mergeLocalIncludeLayers([]Layer{
+		{Config: &Config{Materialization: &MaterializationConfig{Targets: map[string]string{"devin": "file"}}}},
+		{Config: &Config{Materialization: &MaterializationConfig{Targets: map[string]string{"factory": "symlink", "devin": "symlink"}}}},
+	})
+	if included.Materialization == nil || len(included.Materialization.Targets) != 2 || included.Materialization.Targets["devin"] != "symlink" || included.Materialization.Targets["factory"] != "symlink" {
+		t.Fatalf("legacy include target map = %#v", included.Materialization)
+	}
+	modes, err := ResolveMaterializationModes(global, repo, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modes.For("factory", false) != MaterializationModeSymlink || modes.For("devin", false) != MaterializationModeSymlink || modes.For("claude", false) != MaterializationModeFile {
+		t.Fatalf("resolved legacy target modes = %+v", modes)
+	}
+}
+
 func TestResolveMaterializationModesDefaultsToSymlink(t *testing.T) {
 	modes, err := ResolveMaterializationModes(nil, nil, nil)
 	if err != nil {

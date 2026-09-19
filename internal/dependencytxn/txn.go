@@ -21,6 +21,54 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// StateDir returns the durable dependency-transaction state directory,
+// following the shared XDG/home policy: an absolute XDG_STATE_HOME (resolved
+// through existing parents) wins, otherwise ~/.local/state under the resolved
+// home directory.
+func StateDir() (string, error) {
+	if root := os.Getenv("XDG_STATE_HOME"); root != "" {
+		if !filepath.IsAbs(root) {
+			return "", errors.New("XDG_STATE_HOME must be absolute")
+		}
+		canonical, err := canonicalizeStatePath(root)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(canonical, "agent-marketplace", "dependencies"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	canonical, err := filepath.EvalSymlinks(home)
+	if err == nil {
+		home = canonical
+	}
+	return filepath.Join(home, ".local", "state", "agent-marketplace", "dependencies"), nil
+}
+
+// canonicalizeStatePath resolves a possibly nonexistent path through its
+// nearest existing ancestor so symlinks in existing components are honored.
+func canonicalizeStatePath(name string) (string, error) {
+	missing := []string{}
+	current := filepath.Clean(name)
+	for {
+		canonical, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				canonical = filepath.Join(canonical, missing[i])
+			}
+			return canonical, nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
 var (
 	ErrGenerationConflict = errors.New("dependency transaction: generation conflict")
 	ErrUnsafePath         = errors.New("dependency transaction: unsafe path")
@@ -182,8 +230,24 @@ func ReadGenerationAndMode(path string) (Generation, fs.FileMode, error) {
 	return inspectDestination(path)
 }
 
+// ReadSnapshot returns the destination bytes, content generation, and
+// permission bits from one open file state, so a caller can both parse the
+// current content and pass an exact compare-and-swap precondition for it.
+// A missing destination returns zero values without error; symlinks,
+// non-regular files, and oversize files are refused like other readers.
+func ReadSnapshot(path string) ([]byte, Generation, fs.FileMode, error) {
+	raw, info, err := readRegularFile(path, maxDependencyFileSize)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, Generation{}, 0, nil
+	}
+	if err != nil {
+		return nil, Generation{}, 0, fmt.Errorf("dependency transaction: snapshot %s: %w", path, err)
+	}
+	return raw, Generation{Exists: true, Digest: Digest(raw)}, info.Mode().Perm(), nil
+}
+
 func readRegularFile(path string, maxSize int64) ([]byte, fs.FileInfo, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -198,6 +262,9 @@ func readRegularFile(path string, maxSize int64) ([]byte, fs.FileInfo, error) {
 	}
 	if maxSize > 0 && info.Size() > maxSize {
 		return nil, nil, fmt.Errorf("%w: file exceeds %d bytes", ErrRecoveryBlocked, maxSize)
+	}
+	if err := unix.SetNonblock(fd, false); err != nil {
+		return nil, nil, fmt.Errorf("restore blocking dependency reads %s: %w", path, err)
 	}
 	reader := io.Reader(file)
 	if maxSize > 0 {

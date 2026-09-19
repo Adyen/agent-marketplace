@@ -11,6 +11,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -1287,7 +1288,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if target != nil {
 		resolvedKind = target.Kind
 	}
-	cleanupOnly := config.OnlyRegistryURLBlockedErrors(ec.Errors) && resolvedKind == ir.KindMcpServer
+	cleanupOnly := config.OnlyRegistryURLBlockedErrors(ec.Errors) && blockedOwnedRemovalKind(resolvedKind)
 
 	// Cross-layer named exclude: when the entry lives only in a lower layer,
 	// validate that suppressing it at this scope is meaningful (a local/repo
@@ -1304,9 +1305,9 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	var cleanup *ownedRemovalPreparation
 	if cleanupOnly {
 		if target == nil {
-			return nil, fmt.Errorf("blocked MCP cleanup target is unresolved")
+			return nil, fmt.Errorf("%w: blocked cleanup target is unresolved", materialize.ErrOwnedCleanupUnsupported)
 		}
-		cleanup, err = prepareBlockedOwnedMCPRemoval(ctx, opts, ec, *target, name, fromURL, selectedPath, shadowRef, resolvedKind)
+		cleanup, err = prepareBlockedOwnedRemoval(ctx, opts, ec, *target, name, fromURL, selectedPath, shadowRef, resolvedKind)
 		if err != nil {
 			return nil, err
 		}

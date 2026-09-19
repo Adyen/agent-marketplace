@@ -101,6 +101,10 @@ func Plan(requirements Requirements, current *Document, operation Operation) (Re
 		}
 		old = normalized
 	}
+	if old.APIVersion == APIVersionV2 {
+		plan.Desired.APIVersion = APIVersionV2
+		plan.Desired.Marketplaces = old.Marketplaces
+	}
 
 	gitRequirements, err := coalesceGitRequirements(requirements.Git)
 	if err != nil {

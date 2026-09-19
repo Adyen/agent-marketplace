@@ -228,6 +228,49 @@ func Validate(tc *TelemetryConfig, layer string) []error {
 	return errs
 }
 
+// ValidateParserSafe validates retained configuration values without applying
+// layer policy or performing DNS/network lookups. It is intended for strict
+// schema parsers that must reject malformed auxiliary values before dispatch.
+func ValidateParserSafe(tc *TelemetryConfig) []error {
+	if tc == nil {
+		return nil
+	}
+	var errs []error
+	if _, err := NormalizeLevel(tc.Level); err != nil {
+		errs = append(errs, err)
+	}
+	if err := ValidateEndpointSyntax(tc.Endpoint); err != nil {
+		errs = append(errs, err)
+	}
+	if err := ValidateRetentionPolicy(tc.RetentionPolicy); err != nil {
+		errs = append(errs, err)
+	}
+	if err := ValidateCAFile(tc.CAFile); err != nil {
+		errs = append(errs, err)
+	}
+	errs = append(errs, ValidateHeaders(tc.Headers)...)
+	return errs
+}
+
+// ValidateEndpointSyntax checks endpoint URL syntax without DNS or transport
+// policy checks. Layer-specific insecure HTTP policy belongs to dispatch.
+func ValidateEndpointSyntax(endpoint string) error {
+	if endpoint == "" {
+		return nil
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("endpoint %q is not a valid URL: %w", endpoint, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("endpoint %q must use http or https, got %q", endpoint, u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("endpoint %q must have a host", endpoint)
+	}
+	return nil
+}
+
 // ValidateEndpoint checks the endpoint syntax and static transport policy.
 // DNS-dependent private-hostname validation is best effort: a DNS failure is
 // logged and treated as a soft failure so offline configuration loading remains
@@ -334,6 +377,9 @@ func isPrivateOrLinkLocalIP(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
+// ValidateRetentionPolicy checks the optional retention-policy endpoint.
+func ValidateRetentionPolicy(urlStr string) error { return validateRetentionPolicy(urlStr) }
+
 func validateRetentionPolicy(urlStr string) error {
 	if urlStr == "" {
 		return nil
@@ -350,6 +396,9 @@ func validateRetentionPolicy(urlStr string) error {
 	}
 	return nil
 }
+
+// ValidateCAFile validates an optional CA file using the telemetry file policy.
+func ValidateCAFile(path string) error { return validateCAFile(path) }
 
 func validateCAFile(path string) error {
 	if path == "" {
@@ -426,13 +475,17 @@ func validateParentDirectory(path, kind string) error {
 	return validateFileOwnerAndPermission(info, parent, kind+" parent directory")
 }
 
+// ValidateHeaders validates header source declarations and any available
+// values without making network requests.
+func ValidateHeaders(headers map[string]HeaderSource) []error { return validateHeaders(headers) }
+
 func validateHeaders(headers map[string]HeaderSource) []error {
 	if len(headers) == 0 {
 		return nil
 	}
 	var errs []error
 	for name, src := range headers {
-		if name == "" {
+		if strings.TrimSpace(name) == "" {
 			errs = append(errs, fmt.Errorf("telemetry headers contain an empty header name"))
 			continue
 		}

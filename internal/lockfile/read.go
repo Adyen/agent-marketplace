@@ -30,7 +30,7 @@ func ReadBytes(path string) ([]byte, error) {
 }
 
 func ReadBytesInfo(path string) ([]byte, os.FileInfo, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, unix.ELOOP) {
 			return nil, nil, fmt.Errorf("%w: %q is a symlink", ErrUnsafeFile, path)
@@ -48,6 +48,9 @@ func ReadBytesInfo(path string) ([]byte, os.FileInfo, error) {
 	}
 	if info.Size() > MaxFileSize {
 		return nil, nil, fmt.Errorf("%w: %q exceeds %d bytes", ErrFileTooLarge, path, MaxFileSize)
+	}
+	if err := unix.SetNonblock(fd, false); err != nil {
+		return nil, nil, fmt.Errorf("restore blocking lock reads %q: %w", path, err)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, MaxFileSize+1))
 	if err != nil {

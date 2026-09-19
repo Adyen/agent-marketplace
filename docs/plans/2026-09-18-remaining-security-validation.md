@@ -45,10 +45,15 @@ credential-bearing services, or build attack demonstrations during testing.
   machine/repository scopes. Preserve documented soft collision warnings and
   additive hooks; do not turn all name collisions into hard failures merely
   because a low-level helper accepts duplicate inputs.
-- [ ] **R1b: Discovery and exact snapshots.** Verify whether ad-hoc install can
+- [x] **R1b: Discovery and exact snapshots.** Verify whether ad-hoc install can
   select mutable-cache content and then lock different content in one operation.
   If reproduced, bind discovery and mutation to the same exact revision while
   preserving local registries, reusable locks, and transactional rollback.
+  - [x] Bind remote ad-hoc CLI discovery and publication to prepared exact pins.
+  - [x] Validate and bind configured CLI install discovery, including missing-lock
+    bootstrap, scope copies, and concurrent changes to existing exact inputs.
+  - Live local registries and the explicitly unlocked organization's own outputs
+    retain their existing mutable contracts; no universal snapshot guarantee is claimed.
 - [x] **R1c: Marketplace preview/consent identity.** Trace prepared-plan commit
   and collision checks. Distinguish an interactive preview-to-commit mismatch
   from explicitly accepting the currently resolved revision in a new CLI run.
@@ -64,8 +69,13 @@ credential-bearing services, or build attack demonstrations during testing.
     JSON/TOML adapters, without replacing unrelated entries or their ownership.
   - [x] Integrate named blocked-registry MCP removal with exact inputs and
     owned Devin/Codex aggregates into the config/lock publication scope.
+  - [x] Extend named blocked-registry removal to complete managed-skill symlink
+    outputs, with exact-target and descriptor-bound deletion safeguards.
+  - [x] Extend the same source-bound link cleanup to eligible command and
+    subagent outputs, retaining copied/shared/generic-cache output refusal.
   - [ ] Extend targeted removal to the remaining command paths and artifact
-    types, including whole registries, collections, hooks, and ordinary files.
+    types, including whole registries, collections, hooks, regular files/trees,
+    shared component-cache link provenance, and shared-metadata cleanup.
 - [ ] **R1e: Web URLs with slash-containing refs.** Check GitHub/GitLab URL
   interpretation and explicit `--ref`/`--path` behavior. Reject genuinely
   ambiguous input or use existing explicit selectors; do not introduce
@@ -93,6 +103,11 @@ These are suspected scope-boundary defects, not a blanket symlink ban.
 - [ ] **R2d: Aggregate/manifest reads and deinit.** Audit regular-file checks,
   read bounds, ownership recovery, and repo-scoped deinit/portable manifests.
   Reuse existing limits where applicable; new limits need an explicit policy.
+  - [x] Make shared dependency-transaction reads reject FIFOs without blocking
+    during open, including final config-read assertions and journal recovery.
+  - [x] Apply the same descriptor-first refusal to the separate lockfile reader,
+    including read-only `status` and `gc --dry-run` consumers.
+  - [ ] Complete remaining aggregate/manifest and deinit read-boundary validation.
 
 ## Stack R3 — Credential and terminal-output handling
 
@@ -219,9 +234,69 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
 - R1c warm-registry benchmark: 855.2 to 867.6 microseconds/op (no significant
   timing difference), zero refreshes/op, 310.6 to 314.3 KiB/op and 2988 to 3031
   allocations/op. This does not measure a cold exact-snapshot acquisition.
-- R1b remains open: discovery-to-lock consistency requires a guarantee before
-  publishing the staged config/lock transaction; checking only after commit
-  would not preserve rollback or prevent the mismatch.
+- R1b remote ad-hoc slice, based on merged `a371a5d`: a real CLI regression
+  confirmed that `install new --from ...` reported success for a resource only
+  in mutable commit B while the owning lock still contained commit A.
+- Remote `--from` installs now prepare exact lock documents and the effective
+  discovery config without publishing dependency files. Discovery consumes that
+  exact view; final reconciliation reuses the prepared documents offline and
+  validates frozen config/include/absent-layer/lock generations before publication.
+  The exact-cache lease spans preparation, selection, publication, and sync.
+- Regressions cover warm-lock refusal and valid installation, cold named/bundle/
+  inferred/user installs with a ref move after discovery, changed included config
+  before reconciliation and immediately before commit, newly created local config,
+  changed locks and final requirements, and missing-selection preservation with
+  released-plan refusal. GC cannot cross the prepared lease and can run after a
+  failed selection. A built-binary E2E case verifies the warm locked consumer.
+  Install-focused command/pipeline tests, race-enabled ad-hoc regressions, focused
+  E2E, full `make test`, build, and CI lint passed before publication.
+- Adversarial review checked pin reuse, generation checks, pre-publication errors,
+  cache-lease ownership, scope boundaries, and the actual consumer/test paths.
+  Discovery also uses the prepared effective config rather than an earlier load.
+  An alleged extra lease acquisition was rejected after checking the actual code;
+  the acquired lease is transferred once and released by the plan. No remaining
+  blocker was identified within the remote ad-hoc contract.
+- Repeated warm remote `--from` install benchmark (local Git/disk included, no
+  Internet): 166.5 to 146.9 ms/op (-11.80%), 1.910 to 2.684 MiB/op (+40.50%),
+  and 13.25k to 18.86k allocations/op (+42.38%). Five samples per revision;
+  benchstat reports p=0.008 but cannot estimate a 95% confidence interval with
+  this sample count. This is not a cold-install or general-sync benchmark.
+- At the ad-hoc checkpoint, configured-install discovery remained open. Local
+  registries and explicitly unlocked organization output are intentionally mutable;
+  neither slice promises immutable local input or global filesystem atomicity.
+  A post-publication sync failure retains committed dependency state under the
+  existing error contract.
+- R1b configured slice, based on merged `99ba279`: consumer regressions reproduced
+  revision drift after discovery both for missing-lock bootstrap and when copying
+  a user registry into repo scope. Configured CLI installs now use the shared
+  preparation path while preserving the existing refusal of invalid/stale locks.
+- Scope copies bind the actual selected provider's prepared URL/ref/root/commit
+  into the destination layer. Roots are projected from the verified manifest,
+  not acquired again. Conflicting commits or manifests for one destination
+  identity fail before publication rather than silently choosing another pin.
+  Lock generations, including absent destination locks, are captured up front.
+- Named, all, tag, collection, repo/user/local copy, and nested-bundle controls
+  retain the discovered commit when the ref moves. Real lock upgrades, include
+  changes before reconciliation and immediately before commit, new local config,
+  and changed final requirements refuse without overwriting the foreign input.
+  An E2E command copies a warm user pin into repo scope after the origin advances.
+- Organization discovery may capture an ephemeral pin for a writable scope copy;
+  its own unlocked materialization remains mutable and no organization lock is
+  created. A GC control preserves installed organization output. Missing-selection
+  and released-handle controls cover cleanup without dependency publication.
+- Adversarial review checked copied-provider identity, scope isolation, root
+  projection, incompatible pins, generation timing, lease lifetime, and refusal
+  side effects. Benchmark verification exposed an absent nonstandard organization
+  filename with unset source metadata; explicit layer roles now determine the
+  adjacent lock path, with a failing-then-passing regression. No remaining blocker
+  was identified within the CLI Git-backed binding contract. Focused install and
+  E2E checks, race-enabled regressions, full Go tests, build, and CI lint passed.
+- Repeated warm configured install benchmark, with local Git and disk I/O and no
+  network: 136.4 to 202.8 ms/op (+48.69%), 2.288 to 3.361 MiB/op (+46.89%), and
+  14.71k to 21.58k allocations/op (+46.67%). Five samples per revision; benchstat
+  reports p=0.008 but cannot estimate a 95% confidence interval with this sample
+  count. This measured validation overhead remains an optimization follow-up;
+  no safety checks or processing budgets were weakened.
 - R1e partial fix: an explicit `--ref release/v1` now removes the full matched
   ref from a GitHub/GitLab web URL before deriving the directory. Tree/blob,
   root, encoded slash, mismatching ref, component-boundary, and explicit-path
@@ -306,6 +381,161 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   hook, ordinary-file, non-`--from`, and unblocked removal paths are unchanged
   by this slice and remain follow-up work. Existing adapter filesystem behavior
   remains a separate review surface; no general filesystem sandbox is claimed.
+- R1d managed-skill link extension on merged baseline `508b257e`: named blocked
+  `remove --from` now reuses the exact-backed publication scope for skills whose
+  complete compiled output consists of managed symlinks. Factory, Cursor,
+  Gemini, Windsurf, Devin, and Codex are covered; selection is shape-based, not
+  a new target allowlist. Claude's shared plugin fragment, file mode, missing
+  or changed links, and unsupported mixtures refuse before publication.
+- The CLI regression first reproduced an unrelated installed sibling's edited
+  cached `SKILL.md` being overwritten by broad sync. Targeted removal leaves
+  compiled caches, siblings, handwritten content, manifests, and aggregates
+  untouched. The original cache target survives; only the requested link is
+  removed. All selected targets are preflighted, and remaining physical output
+  paths protect fallbacks, cross-kind collisions, and aliased scopes.
+- The link primitive binds the scope root, each directory ancestor, the link
+  inode, and its exact compiled-cache target. Directory-descriptor operations
+  move the entry into a private quarantine, verify it, then unlink only the
+  matching symlink. A raced foreign replacement is restored without overwriting
+  a new original-path entry; a restore conflict retains both replacements and
+  reports the quarantine location. Cache targets are never traversed for deletion.
+- Pre-push adversarial review caught missing scope-root comparison, descriptor
+  cleanup, post-rename restoration, and tests that checked the wrong residue
+  directory in the draft. These were corrected, including empty-quarantine
+  cleanup guarded by its captured inode. Foreign or nonempty replacements are
+  preserved rather than recursively deleted. No remaining blocker was identified
+  within the declared named-skill symlink contract.
+- Compatibility boundary: unresolved/already-unselected names in blocked cleanup
+  now return `ErrOwnedCleanupUnsupported` instead of invoking broad sync. The
+  old named-removal test had no enabling selector and conditionally checked
+  installed output; its fixture now actually enables both skills and asserts
+  the intended removal/preservation unconditionally. A separate unselected-name
+  refusal verifies that edited siblings remain unchanged. Allowed-policy removal
+  retains its previous behavior.
+- Verification covers explicit/inferred kind, repo and user paths, supported
+  multi-target success, unsupported mixtures, file-mode controls, missing/drifted
+  links, root/parent/leaf substitutions, FIFOs, foreign descriptor refusal,
+  before/after-move faults, restoration conflicts, and retained-selector aliases.
+  Full-fixture CLI file/symlink snapshots include bytes, modes, mtimes, caches,
+  ownership, backup and staging files, excluding coordination locks; primitive
+  tests also inspect quarantine directories. Include/lock mutation and
+  post-publication original-selection restoration refuse deletion. Focused
+  built-binary E2E, race-enabled regressions, Go tests, build, and CI lint passed.
+- Warm last-selected-skill removal benchmark (local Git and disk I/O included,
+  no network; fixture setup and per-iteration config/link reset excluded):
+  171.2 to 238.9 ms/op (+39.53%), 2.375 to 3.335 MiB/op (+40.42%), and 15.71k
+  to 21.90k allocations/op (+39.40%), six samples per revision, p=0.002. This is
+  a removal-lifecycle measurement, not a general sync/install benchmark; repeated
+  exact validation remains an explicit optimization follow-up without relaxing
+  generation or ownership checks.
+- This link extension does not add a durable filesystem recovery journal or
+  multi-file rollback. Late failures may follow committed dependency changes;
+  process crashes may leave quarantine residue. It does not claim a general
+  filesystem sandbox. Regular-file/tree cleanup, shared skill metadata, other
+  kinds, whole registries, collections and non-`--from` paths remain open.
+- R1d command/subagent extension on merged baseline `84d73c22`: the existing
+  planner is now `PrepareManagedLinkRemoval`, with typed-kind agreement and
+  per-kind copy policy. Pipeline eligibility for skills, commands, subagents,
+  and MCP is centralized; MCP retains its separate aggregate planner. No changes
+  to the filesystem deletion primitive, normal sync, or cache routing are made.
+- Real Devin command and subagent regressions reproduced broad-sync rewrites of
+  edited sibling cache contents before the fix. Complete source-bound command
+  links are covered for Claude, Cursor, Gemini, Windsurf, Devin, and Codex;
+  complete subagent links for Factory, Cursor, and Devin. Devin/Codex command
+  user scope and Devin subagent user scope are covered, as is kind inference.
+- Factory command copies, Claude subagent shared metadata, explicit file mode,
+  and mixed unsupported targets refuse without publishing changes. Codex and
+  Gemini subagents also refuse: their standalone artifacts use generic shared
+  component-cache routing rather than this planner's source-specific link
+  groups. They are not claimed to emit extra shared compiler fragments. Adding
+  metadata solely to make the guard pass would change normal cache routing;
+  source provenance for those generic links remains a separate follow-up.
+- Full file/symlink fixture snapshots retain sibling bytes, modes, mtimes,
+  cache contents and targets, unrelated configs, locks and state. Missing and
+  retargeted file links refuse. An absolute external `CODEX_HOME` is explicitly
+  covered by the Codex subagent refusal. Cross-kind tests refuse command cleanup
+  when a skill still needs the same slot, and permit subagent cleanup while a
+  same-named skill occupies a different slot. Config/include/lock changes and
+  post-publication reselection tests cover all three link-resource kinds.
+- Six-sample warm last-resource removal measurements with local Git/disk and no
+  network, excluding fixture setup and per-iteration config/link reset:
+  command 177.9 to 233.2 ms/op (+31.09%), 2.319 to 3.164 MiB/op (+36.45%),
+  16.12k to 21.77k allocations/op (+35.06%); subagent 172.8 to 232.3 ms/op
+  (+34.47%), 2.355 to 3.217 MiB/op (+36.62%), 16.14k to 21.76k allocations/op
+  (+34.83%). All comparisons report p=0.002. These are Devin removal workloads,
+  not a universal performance claim. The validation-cost follow-up stays open.
+- Adversarial review of the resource-link extension checked route reachability,
+  per-kind output shape/copy policy, remaining-slot protection, exact source
+  binding, scope mapping, no cache writes, and regression validity. No remaining
+  blocker was identified in the declared scope. Full Go tests, focused race
+  regressions, the command/subagent/skill/MCP built-binary E2E cases, build and
+  CI lint passed. Existing late-failure, quarantine, and unsupported-input
+  limitations remain unchanged; no broader cleanup
+  completion, v4 resource-editor support, or filesystem atomicity is claimed.
+- R2 dependency read boundary on merged baseline `d13f9923`: the shared
+  `dependencytxn.readRegularFile` opened a FIFO in blocking mode before it could
+  check the descriptor's type. A bounded real CLI removal regression replaces
+  an included config with a FIFO immediately before dependency commit; the old
+  reader hangs in the final authorization path instead of refusing it. Direct
+  snapshot/generation readers and journal recovery also hang. The separate
+  mode-reading API already refuses a static FIFO through its earlier check.
+- Exact old-code controls reached the CLI injection marker and timed out at the
+  30-second subprocess bound; snapshot/generation/recovery children reached their
+  10-second bounds. Restoring the fix makes these tests pass with typed unsafe-
+  path/generation-conflict/recovery-blocked errors as applicable. The tests use
+  no FIFO writer; they cannot accidentally unblock the faulty open.
+- The fix adds `O_NONBLOCK` to the existing no-follow/close-on-exec open, validates
+  the same opened descriptor and existing size limit, then restores blocking
+  mode only for regular-file content reads. Existing 4 MiB bounds, growth checks,
+  descriptor cleanup, symlink policy, and transaction semantics remain unchanged.
+  The CLI test preserves the injected FIFO inode/type and all other fixture
+  files/symlinks after staging cleanup. Direct reader refusals return no snapshot
+  data and leave no new state entries.
+- Review corrected two initial evidence gaps: a purported CLI test only called
+  the reader directly, and a noncanonical recovery fixture could fail before
+  reaching the journal. Current tests exercise actual commit/recovery consumers,
+  require precise nested error identities, and fail on preservation mismatches
+  rather than merely adding another error to an expected failure.
+- Six-sample local-disk measurements (setup excluded, no network): 4 KiB snapshot
+  read median 18.67 to 20.94 us/op, not statistically significant (p=0.065);
+  unchanged one-file commit 79.80 to 84.50 us/op (+5.89%, p=0.041). Byte allocation
+  and allocation counts are unchanged (10944 B/16 allocations for snapshot;
+  14592 B/139 allocations for unchanged commit). Timing variability is substantial;
+  these are narrow boundary measurements, not whole-command latency claims.
+- Full Go tests, race-enabled transaction and CLI regressions, focused built-
+  binary cleanup E2E, build and CI lint passed. Pre-push adversarial review found
+  no remaining blocker within the FIFO-open contract. This is not a general I/O
+  deadline, hardlink-policy change, inode/mode
+  pairing redesign, repository-containment fix, or completion of R2d. Aggregate,
+  manifest and deinit validation and the remaining R1 cleanup paths stay open.
+- R2 lockfile read boundary on merged baseline `fed497c5`: the separate
+  `lockfile.ReadBytesInfo` still opened FIFOs in blocking mode before checking
+  descriptor type. Old-code controls for actual `status` and `gc --dry-run`
+  commands reached their readiness markers and timed out at 30 seconds; direct
+  `Read`, `ReadBytes`, and `ReadBytesInfo` controls timed out at 10 seconds.
+  Symlinks to FIFOs already refused under the existing no-follow policy.
+- The lockfile reader now opens nonblocking, checks regular-file type and the
+  existing size limit on that descriptor, then restores blocking mode on the
+  same descriptor. Existing 4 MiB byte/growth bounds, descriptor cleanup, and
+  symlink policy remain unchanged. No general I/O deadline is introduced.
+- Bounded unit and real-command regressions require `ErrUnsafeFile`, retain the
+  FIFO inode/type, and preserve fixture bytes, modes, mtimes, links, and cache
+  content under the existing snapshot helper's coordination-lock exclusions.
+  Each command has its own valid-lock control. Review corrected an initial
+  hardcoded `status` control in the GC test rather than weakening preservation
+  assertions. Built-binary E2E covers both commands with a 15-second bound and
+  checks FIFO identity plus config, saved-lock, and native-output fingerprints.
+- Six-sample local-disk 4 KiB reader benchmark (setup excluded, no network):
+  17.52 to 19.86 us/op (+13.37%, p=0.002); 10816 B/op and 14 allocations/op
+  unchanged. The after samples have substantial timing variability (benchstat
+  reports +/-28%); this is not a whole-command latency measurement.
+- Pre-push adversarial review of the lock-reader diff against `fed497c5` checked
+  descriptor identity/lifetime, error and size guards, actual read-only consumer
+  reachability, refusal side effects, and regression validity. No remaining
+  blocker was identified within the FIFO-open scope. Full `make test`, race-
+  enabled lockfile and CLI FIFO tests, focused FIFO/regular-lock lifecycle E2E,
+  `make build`, and `make ci-lint LINT_BASE=fed497c5` passed. Aggregate/manifest,
+  deinit, hardlink/containment policy, and the remaining R1 work stay open.
 - Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
   planning and first three implementation layers are published as PRs 210–213
   in stack 214. Native compatibility and real-terminal TUI checks remain CI

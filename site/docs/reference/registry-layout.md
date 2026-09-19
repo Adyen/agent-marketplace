@@ -31,18 +31,23 @@ The CLI attempts to autodetect the source layout for subagent, hook, and MCP fil
 
 ## Source harness
 
-Set `source_harness` on the registry entry when the layout is ambiguous:
+Set `source_harness` on the source declaration when the layout is ambiguous:
 
 ```yaml
-registries:
-  - url: https://github.com/example-org/agent-resources.git
+apiVersion: agent-marketplace/v4
+sources:
+  shared:
+    git: https://github.com/example-org/agent-resources.git
     ref: v1.4.0
     source_harness: claude
+resources:
+  shared:
+    all: true
 ```
 
 ## Ingestion roots
 
-A registry entry can limit discovery to one or more subdirectories with `path`. For example, `path: resources` discovers only `resources/skills/...`, `resources/commands/...`, and so on.
+A Git source can limit discovery to one subdirectory with `path`. For example, `path: resources` discovers only `resources/skills/...`, `resources/commands/...`, and so on.
 
 When operating a hosted Marketplace, `roots` declare ingestion paths relative to the registry origin.
 

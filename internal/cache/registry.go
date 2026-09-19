@@ -8,10 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/giturl"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 )
 
@@ -27,9 +27,6 @@ func redactSecrets(s string) string {
 func redactArgs(args []string) []string {
 	return redact.Strings(args)
 }
-
-// refNameRE matches a conservative set of safe git ref-name characters.
-var refNameRE = regexp.MustCompile(`^[A-Za-z0-9._+/@-]+$`)
 
 func CloneOrPull(url, ref string) (string, error) {
 	return withRegistryLocks(context.Background(), []string{url}, lockfileExclusive, func() (string, error) {
@@ -80,7 +77,10 @@ func cloneOrPull(url, ref string) (string, error) {
 		if _, err := validateRegistryCachePath(cachePath); err != nil {
 			return "", fmt.Errorf("validate cache path before fetch %q: %w", cachePath, err)
 		}
-		if err := runGit(cachePath, "fetch"); err != nil {
+		if err := sanitizeLegacyGitOrigin(cachePath, url); err != nil {
+			return "", fmt.Errorf("sanitize cached registry origin: %w", err)
+		}
+		if err := runGit(cachePath, "fetch", url); err != nil {
 			slog.Warn("using stale cache after fetch failed", "url", redactedURL, "ref", ref, "error", err)
 			if _, validateErr := validateRegistryCachePath(cachePath); validateErr != nil {
 				return "", fmt.Errorf("validate stale cache at %q: %w", cachePath, validateErr)
@@ -203,10 +203,16 @@ func prepareGitArgs(repoDir string, args []string) ([]string, error) {
 		}
 		safeArgs = []string{"clone", "--", url, dir}
 	case "fetch":
-		if len(args) != 1 {
-			return nil, fmt.Errorf("runGit: fetch takes no arguments, got %d args", len(args))
+		if len(args) != 1 && len(args) != 2 {
+			return nil, fmt.Errorf("runGit: fetch requires zero or one source, got %d args", len(args)-1)
 		}
-		safeArgs = []string{"fetch", "--tags", "--prune", "--", "origin"}
+		safeArgs = []string{"fetch", "--tags", "--prune", "--no-write-fetch-head", "--", "origin"}
+		if len(args) == 2 {
+			if err := validateGitURL(args[1]); err != nil {
+				return nil, err
+			}
+			safeArgs = []string{"fetch", "--tags", "--prune", "--no-write-fetch-head", "--", args[1], "+refs/heads/*:refs/remotes/origin/*"}
+		}
 	case "checkout":
 		var ref string
 		switch {
@@ -308,6 +314,19 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 		if err != nil {
 			return nil, err
 		}
+		var publicSource string
+		cmd.Env, publicSource, err = gitCredentialEnvironment(cmd.Env, source)
+		if err != nil {
+			return nil, err
+		}
+		if publicSource != source {
+			for i, arg := range cmd.Args {
+				if arg == source {
+					cmd.Args[i] = publicSource
+					break
+				}
+			}
+		}
 		if err := cmd.Run(); err != nil {
 			diagnostic := gitTransportFailureDiagnostic(resolvedSource)
 			return []byte(diagnostic), &gitTransportFailure{message: diagnostic, cause: err}
@@ -394,132 +413,11 @@ func gitEnv() []string {
 // validateGitURL rejects option-like URLs, NUL/vertical-tab characters, and
 // unsupported or dangerous transport protocols while allowing the protocols
 // used by the project (ssh, https, http, file) and local filesystem paths.
-func validateGitURL(raw string) error {
-	for i := 0; i < len(raw); i++ {
-		if raw[i] < 0x20 || raw[i] == 0x7f {
-			return errors.New("invalid git URL: control character")
-		}
-	}
+func validateGitURL(raw string) error { return giturl.ValidateURL(raw) }
 
-	u := strings.TrimSpace(raw)
-	if u == "" {
-		return errors.New("registry url is required")
-	}
-	if strings.HasPrefix(u, "-") {
-		return errors.New("invalid git URL: option-like")
-	}
-	if strings.Contains(u, "..") {
-		return errors.New("invalid git URL: path traversal")
-	}
-
-	for i := 0; i < len(u); i++ {
-		if u[i] < 0x20 || u[i] == 0x7f {
-			return errors.New("invalid git URL: control character")
-		}
-	}
-
-	lower := strings.ToLower(u)
-	if strings.Contains(lower, "ext::") || strings.Contains(lower, "remote::") || strings.Contains(lower, "helper::") {
-		return errors.New("invalid git URL: unsupported transport helper")
-	}
-
-	if scheme, rest, ok := strings.Cut(u, "://"); ok {
-		scheme = strings.ToLower(scheme)
-		switch scheme {
-		case "https", "http", "ssh", "file":
-			// Allowed protocols.
-		default:
-			if scheme == "git" {
-				return errors.New("invalid git URL: git:// protocol is not allowed")
-			}
-			return fmt.Errorf("invalid git URL: unsupported protocol %q", scheme)
-		}
-
-		// Reject hosts that start with '-', which can be interpreted as ssh/curl
-		// command-line options (e.g. ssh://-oProxyCommand=...).
-		if scheme != "file" {
-			auth := rest
-			if i := strings.IndexByte(auth, '/'); i >= 0 {
-				auth = auth[:i]
-			}
-			if i := strings.LastIndexByte(auth, '@'); i >= 0 {
-				auth = auth[i+1:]
-			}
-			if i := strings.LastIndexByte(auth, ':'); i > 0 {
-				auth = auth[:i]
-			}
-			if auth == "" || strings.HasPrefix(auth, "-") {
-				return errors.New("invalid git URL: host starts with '-'")
-			}
-		}
-		return nil
-	}
-
-	if strings.Contains(lower, "::") {
-		return errors.New("invalid git URL: unsupported transport helper")
-	}
-
-	if at := strings.IndexByte(u, '@'); at >= 0 {
-		host := u[at+1:]
-		var path string
-		switch colon := strings.IndexByte(host, ':'); colon {
-		case -1:
-			if slash := strings.IndexByte(host, '/'); slash >= 0 {
-				host = host[:slash]
-			}
-		default:
-			path = host[colon+1:]
-			host = host[:colon]
-		}
-		if host == "" || strings.HasPrefix(host, "-") {
-			return errors.New("invalid git URL: host starts with '-'")
-		}
-		if strings.HasPrefix(path, "-") {
-			return errors.New("invalid git URL: path starts with '-'")
-		}
-		return nil
-	}
-
-	if strings.HasPrefix(u, "~") {
-		return errors.New("invalid git URL: tilde path is not allowed")
-	}
-
-	return nil
-}
-
-// validateGitRef rejects option-like refs, path traversal patterns, control
-// characters, and git extended syntax that could alter rev-parse behaviour.
-func validateGitRef(raw string) error {
-	ref := strings.TrimSpace(raw)
-	if ref == "" {
-		return errors.New("registry ref is required")
-	}
-	if strings.HasPrefix(ref, "-") {
-		return errors.New("invalid git ref: option-like")
-	}
-	if strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, "~") {
-		return errors.New("invalid git ref: absolute or tilde path")
-	}
-	if strings.Contains(ref, "..") || strings.Contains(ref, "@{") {
-		return errors.New("invalid git ref: contains '..' or '@{'")
-	}
-
-	for i := 0; i < len(ref); i++ {
-		if ref[i] < 0x20 || ref[i] == 0x7f {
-			return errors.New("invalid git ref: control character")
-		}
-	}
-
-	if !refNameRE.MatchString(ref) {
-		return errors.New("invalid git ref: invalid character")
-	}
-
-	if strings.HasSuffix(ref, ".") || strings.HasSuffix(ref, "/") || strings.HasSuffix(ref, ".lock") {
-		return errors.New("invalid git ref: invalid suffix")
-	}
-
-	return nil
-}
+// validateGitRef delegates to the canonical Git safety policy shared with
+// configuration parsing and other acquisition paths.
+func validateGitRef(raw string) error { return giturl.ValidateRef(raw) }
 
 const maxGitErrorChars = 200
 

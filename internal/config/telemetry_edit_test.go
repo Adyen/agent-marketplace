@@ -32,6 +32,27 @@ func TestSetUserTelemetryLevel(t *testing.T) {
 	}
 }
 
+func TestSetUserTelemetryLevelUpdatesV4UserConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	path, err := GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, path, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"))
+
+	if err := SetUserTelemetryLevel(path, "basic"); err != nil {
+		t.Fatalf("SetUserTelemetryLevel on v4: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "apiVersion: agent-marketplace/v4") || !strings.Contains(string(data), "level: basic") {
+		t.Fatalf("expected v4 telemetry level, got:\n%s", data)
+	}
+}
+
 func TestSetUserTelemetryLevelRejectsInvalid(t *testing.T) {
 	path := setupUserConfig(t)
 
