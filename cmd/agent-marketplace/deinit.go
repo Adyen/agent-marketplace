@@ -151,7 +151,15 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 		defer releaseExactLease()
 		return materialize.Run(context.WithoutCancel(ctx), repoRoot, resolvedArtifacts, opts...)
 	}()
+	if report != nil {
+		for _, d := range report.Diags {
+			if d.IsError() {
+				err = errors.Join(err, pipeline.PromoteDiagnostic(d))
+			}
+		}
+	}
 	if err != nil {
+		slog.Error("deinit artifact removal failed; preserving cache and configuration", "scope", scope.String(), "dry_run", dryRun, "error", err)
 		return fmt.Errorf("removing artifacts: %w", err)
 	}
 
