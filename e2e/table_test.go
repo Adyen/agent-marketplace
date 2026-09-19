@@ -180,6 +180,20 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/nested_bundle_lock_inventory",
+		Desc: "Given an empty parent plugin with nested hook and MCP resources, When lock and locked sync run, Then both resources are inventoried before materialization",
+		Registries: []RegistryDef{{Name: "nested-inventory", Files: map[string]string{
+			".claude-plugin/plugin.json":     `{"name":"container","version":"1.0.0"}`,
+			"plugins/audit/.mcp.json":        `{"mcpServers":{"nested-server":{"command":"fixture-server"}}}`,
+			"plugins/audit/hooks/hooks.json": `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo audit"}]}]}}`,
+		}}},
+		RepoCfg: "harnesses: [factory]\nregistries:\n  - url: {{REG:nested-inventory}}\n    ref: main\n    source_harness: claude\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/lock.yaml": "kind: hook"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/lock.yaml": "name: nested-server", "/workspace/.factory/mcp.json": "fixture-server"}},
+		},
+	},
+	{
 		Name:      "security/blocked_registry_credentials_redacted",
 		Desc:      "Given a denied credential-bearing registry, When sync loads effective config, Then error output and the persisted log redact credentials without changing the configured identity",
 		GlobalCfg: "harnesses: [factory]\nallowed_registries: []\n",
