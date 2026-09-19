@@ -115,6 +115,7 @@ export default defineConfig({
               text: 'Marketplace operators',
               items: [
                 { text: 'Deploy a production Marketplace', link: `${DOCS_PATH}how-to/operator/deploy-a-production-marketplace` },
+                { text: 'Enable and use the admin panel', link: `${DOCS_PATH}how-to/operator/enable-and-use-the-admin-panel` },
                 { text: 'Configure a reverse proxy', link: `${DOCS_PATH}how-to/operator/configure-a-reverse-proxy` },
                 { text: 'Connect a private registry', link: `${DOCS_PATH}how-to/operator/connect-a-private-registry` },
                 { text: 'Back up and restore a Marketplace', link: `${DOCS_PATH}how-to/operator/back-up-and-restore` },

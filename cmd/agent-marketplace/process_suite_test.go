@@ -48,7 +48,7 @@ func TestCommandProcessTopLevelSelectors(t *testing.T) {
 		skip string
 	}{
 		{"exact", "^TestProcessIsolation$/^a\\[1\\]$", ""},
-		{"alternation", "Other/none|^TestProcessIsolation$/^a\\[1\\]$", ""},
+		{"alternation", "^Other/none|^TestProcessIsolation$/^a\\[1\\]$", ""},
 		{"skip", "^TestProcessIsolation$", "^TestProcessIsolation$/^a1$"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

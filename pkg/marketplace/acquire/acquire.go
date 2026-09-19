@@ -121,7 +121,9 @@ func clone(ctx context.Context, origin, ref, exactCommit string, roots []string,
 			return nil, fmt.Errorf("clone %q: %w", redactedOrigin, err)
 		}
 		slog.Info("acquire shallow fetch unsupported; retrying without depth", "origin", redactedOrigin)
-		fetchOutput, err = runGit(cloneCtx, workspace.env(), dir, fetchArgs(ref, false))
+		_, _ = runGit(cloneCtx, workspace.env(), dir, append(hardenedGitArgs(), "config", "--unset-all", "remote.origin.promisor"))
+		_, _ = runGit(cloneCtx, workspace.env(), dir, append(hardenedGitArgs(), "config", "--unset-all", "remote.origin.partialclonefilter"))
+		fetchOutput, err = runGit(cloneCtx, workspace.env(), dir, fetchArgsFiltered(ref, false, false))
 		if err != nil {
 			return nil, fmt.Errorf("clone %q: %w", redactedOrigin, err)
 		}
@@ -203,7 +205,15 @@ func hardenedGitArgs() []string {
 }
 
 func fetchArgs(ref string, shallow bool) []string {
-	args := append(hardenedGitArgs(), "fetch", "--filter=blob:none", "--no-tags")
+	return fetchArgsFiltered(ref, shallow, true)
+}
+
+func fetchArgsFiltered(ref string, shallow, filter bool) []string {
+	args := append(hardenedGitArgs(), "fetch")
+	if filter {
+		args = append(args, "--filter=blob:none")
+	}
+	args = append(args, "--no-tags")
 	if shallow {
 		args = append(args, "--depth=1")
 	}

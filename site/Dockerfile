@@ -38,4 +38,10 @@ COPY --from=build /site/.vitepress/dist/ /usr/share/nginx/html${SITE_BASE}
 
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -q -O - -T 5 http://127.0.0.1:8080/ >/dev/null || exit 1
+    CMD if command -v wget >/dev/null 2>&1; then \
+        wget -q -O - -T 5 http://127.0.0.1:8080/ >/dev/null; \
+    elif command -v curl >/dev/null 2>&1; then \
+        curl -fsS --max-time 5 http://127.0.0.1:8080/ >/dev/null; \
+    else \
+        exit 1; \
+    fi
