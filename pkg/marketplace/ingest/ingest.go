@@ -1575,10 +1575,17 @@ func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte
 			content := body
 			// A source range maps to a support file only by exact FileSet
 			// membership; substring heuristics misclassify support paths that
-			// collide with primary-resource pseudo-path segments.
-			name := strings.TrimPrefix(file, "support/")
-			if data, ok := support[name]; ok {
-				location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
+			// collide with primary-resource pseudo-path segments. References
+			// inside the primary pseudo-path namespace (the canonical primary
+			// path itself or the resource's <kind>/<name>[/<field>] root) keep
+			// precedence over a colliding support key: that namespace is how
+			// analyzers address the primary document, so those ranges always
+			// resolve to the primary body.
+			if file != primaryPath && !isPrimaryPseudoPath(file, primaryPath) {
+				name := strings.TrimPrefix(file, "support/")
+				if data, ok := support[name]; ok {
+					location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
+				}
 			}
 			if f.SourceRange.Line > 0 {
 				start, end := lineColumnBytes(content, f.SourceRange.Line, f.SourceRange.Column)
@@ -1589,6 +1596,35 @@ func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte
 		out = append(out, finding)
 	}
 	return out
+}
+
+// isPrimaryPseudoPath reports whether file lies inside the primary resource's
+// pseudo-path namespace: the canonical primary path or the <kind>/<name>
+// rooted paths analyzers use for primary fields (for example
+// "skill/demo/Body"). The kind prefix derives from the canonical primary path
+// so a support file can still live under another kind's root.
+func isPrimaryPseudoPath(file, primaryPath string) bool {
+	prefix := primaryPseudoPrefix(primaryPath)
+	return prefix != "" && strings.HasPrefix(file, prefix)
+}
+
+func primaryPseudoPrefix(primaryPath string) string {
+	switch primaryPath {
+	case inspection.PrimarySkillPath:
+		return "skill/"
+	case inspection.PrimaryCommandPath:
+		return "command/"
+	case inspection.PrimarySubagentPath:
+		return "subagent/"
+	case inspection.PrimaryHookPath:
+		return "hook/"
+	case inspection.PrimaryMCPServerPath:
+		return "mcpserver/"
+	case inspection.PrimaryCollectionPath:
+		return "collection/"
+	default:
+		return ""
+	}
 }
 
 func lineColumnBytes(content []byte, line, column int) (int, int) {

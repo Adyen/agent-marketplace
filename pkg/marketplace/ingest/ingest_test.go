@@ -1159,6 +1159,10 @@ func findResourceRevision(t *testing.T, revs []store.ResourceRevision, kind, nam
 // locations resolve by exact FileSet membership, so support paths colliding
 // with primary-resource pseudo-path substrings (/body, /prompt, /Description,
 // /command, /url, /name) keep their correct persisted path and byte offsets.
+// It also proves the primary pseudo-path namespace (the canonical primary
+// path and the <kind>/<name>[/<field>] root) wins over a colliding support
+// FileSet key, while explicit support/ references and non-colliding support
+// keys still resolve to support content.
 func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 	body := []byte("primary body\n")
 	support := analyze.FileSet{
@@ -1166,6 +1170,9 @@ func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 		"docs/prompt.md":       []byte("g\ngamma\n"),
 		"guide/Description.md": []byte("del\ndelta\n"),
 		"plain.md":             []byte("epsilon\nx\n"),
+		"prompt.txt":           []byte("kappa\nlambda\n"),
+		"skill/demo":           []byte("zeta\neta\n"),
+		"skill/demo/Body":      []byte("theta\niota\n"),
 	}
 	primaryPath := inspection.PrimaryPath("skill")
 
@@ -1179,6 +1186,12 @@ func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 		{"prompt substring collision", "docs/prompt.md", "support/docs/prompt.md", 2},
 		{"description substring collision", "guide/Description.md", "support/guide/Description.md", 4},
 		{"support-prefixed key", "support/plain.md", "support/plain.md", 8},
+		{"explicit support reference", "support/notes/body", "support/notes/body", 6},
+		{"hook prompt support key", "prompt.txt", "support/prompt.txt", 6},
+		{"explicit prompt support reference", "support/prompt.txt", "support/prompt.txt", 6},
+		{"canonical primary path", "SKILL.md", primaryPath, 0},
+		{"primary pseudo-root collision", "skill/demo", primaryPath, 0},
+		{"primary pseudo-prefix collision", "skill/demo/Body", primaryPath, 0},
 		{"primary pseudo-path", "skill/demo/body", primaryPath, 0},
 		{"unknown path", "missing.md", primaryPath, 0},
 	}
