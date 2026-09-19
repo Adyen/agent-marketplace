@@ -44,30 +44,27 @@ const revocationJoins = `
 // latestOccurrenceJoins gives historical/addressed reads one deterministic
 // occurrence per revision. Discovery reads use the registry head instead.
 const latestOccurrenceJoins = `
-	JOIN resource_occurrences ro
+	JOIN all_resource_occurrences ro
 	  ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
 	 AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest
-	JOIN registry_occurrences so
-	  ON so.registry_id=ro.registry_id AND so.revision_commit=ro.revision_commit
-	 AND ro.revision_commit = (
-		SELECT ro2.revision_commit
-		FROM resource_occurrences ro2
-		JOIN registry_occurrences so2
-		  ON so2.registry_id=ro2.registry_id AND so2.revision_commit=ro2.revision_commit
+	JOIN all_registry_occurrences so
+	  ON so.registry_id=ro.registry_id AND so.occurrence_key=ro.occurrence_key
+	 AND ro.occurrence_key = (
+		SELECT ro2.occurrence_key
+		FROM all_resource_occurrences ro2
+		JOIN all_registry_occurrences so2
+		  ON so2.registry_id=ro2.registry_id AND so2.occurrence_key=ro2.occurrence_key
 		WHERE ro2.marketplace_id=rr.marketplace_id AND ro2.registry_id=rr.registry_id
 		  AND ro2.kind=rr.kind AND ro2.name=rr.name AND ro2.content_digest=rr.content_digest
-		ORDER BY so2.occurred_at DESC, ro2.revision_commit DESC
+		ORDER BY so2.occurred_at DESC, ro2.occurrence_key DESC
 		LIMIT 1
 	)`
 
 const headOccurrenceJoins = `
-	JOIN registry_heads sh ON sh.registry_id=rr.registry_id
-	JOIN resource_occurrences ro
+	JOIN current_resource_occurrences ro
 	  ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
 	 AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest
-	 AND ro.revision_commit=sh.revision_commit
-	JOIN registry_occurrences so
-	  ON so.registry_id=sh.registry_id AND so.revision_commit=sh.revision_commit`
+`
 
 func (s *Store) GetResourceRevision(ctx context.Context, coord store.ResourceCoordinate, digest store.RevisionDigest) (store.AssessedResourceRevision, error) {
 	query := `SELECT ` + assessedResourceColumns + ` FROM resource_revisions rr ` + assessmentJoins + latestOccurrenceJoins + revocationJoins + `

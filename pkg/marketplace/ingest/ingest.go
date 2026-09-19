@@ -32,9 +32,12 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/licensepolicy"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/google/licensecheck"
 )
+
+var ErrNoValidResources = errors.New("catalog error: no valid resources remain after skipping malformed resources; previous publication is preserved")
 
 // Revision is the result of ingesting a single registry commit.
 type Revision struct {
@@ -55,6 +58,18 @@ type Revision struct {
 	// consumers. They are never published by the worker.
 	ResourceArchives      map[string][]byte
 	ResourceArchiveDigest map[string]string
+	// Diagnostics are the non-fatal catalog diagnostics observed per root.
+	// Fatal diagnostics abort the build and are returned as the error.
+	Diagnostics []RootDiagnostic
+}
+
+// RootDiagnostic is one catalog diagnostic attributed to the registry root
+// under which it was observed.
+type RootDiagnostic struct {
+	Root    string `json:"root"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Error   bool   `json:"error,omitempty"`
 }
 
 // BuildRegistryRevision discovers resources under dir for the given registry and
@@ -106,6 +121,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	var collectionEntries []catalog.Entry
 	collectionPaths := make(map[string]string)
 	seen := make(map[string]string)
+	skippedResources := false
 
 	for _, root := range registry.Roots {
 		rootDir := filepath.Join(dir, filepath.Clean(root.Path))
@@ -124,12 +140,19 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		if err != nil {
 			return rev, fmt.Errorf("load catalog at %q: %w", root.Path, err)
 		}
-		for _, d := range diagnostics {
-			if d.IsError() {
+		for i, d := range diagnostics {
+			if skippableResourceDiagnostic(d) {
+				skippedResources = true
+				d.Severity = diag.SeverityWarning
+				d.Message = "Skipped malformed resource: " + d.Message
+				diagnostics[i] = d
+			}
+			if d.Severity <= diag.SeverityWarning {
 				slog.Warn("catalog diagnostic", "path", root.Path, "code", d.Code, "message", d.Message)
 			} else {
 				slog.Info("catalog diagnostic", "path", root.Path, "code", d.Code, "message", d.Message)
 			}
+			rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: string(d.Code), Message: d.Message, Error: d.IsError()})
 		}
 		if diag.HasErrors(diagnostics) {
 			d := firstErrorDiagnostic(diagnostics)
@@ -531,6 +554,10 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 	}
 
+	if skippedResources && len(resources) == 0 {
+		return rev, ErrNoValidResources
+	}
+
 	return Revision{
 		Occurrence:            occ,
 		Resources:             resources,
@@ -544,6 +571,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		ManifestDigest:        store.RevisionDigest(digest),
 		ResourceArchives:      resourceArchives,
 		ResourceArchiveDigest: resourceArchiveDigests,
+		Diagnostics:           rev.Diagnostics,
 	}, nil
 }
 
@@ -590,6 +618,27 @@ func discoverRootEntries(rootDir, registryDir string, root store.RegistryRoot, r
 		entries = append(entries, colEntries...)
 	}
 	return entries, diagnostics, nil
+}
+
+func skippableResourceDiagnostic(d diag.Diagnostic) bool {
+	if !d.IsError() || d.Resource == "" {
+		return false
+	}
+	switch d.Code {
+	case diag.CodeIngestClaudeLoadSkillFailed, diag.CodeIngestFactoryLoadSkillFailed,
+		diag.CodeIngestCursorLoadSkillFailed, diag.CodeIngestGeminiLoadSkillFailed,
+		diag.CodeIngestDevinLoadSkillFailed, diag.CodeIngestCodexLoadResourceFailed,
+		diag.CodeIngestClaudeLoadCommandFailed, diag.CodeIngestClaudeLoadSubagentFailed,
+		diag.CodeIngestFactoryLoadCommandFailed, diag.CodeIngestFactoryLoadSubagentFailed,
+		diag.CodeIngestFactoryLoadMcpServersFailed, diag.CodeIngestFactoryLoadRuleFailed,
+		diag.CodeIngestCursorLoadCommandFailed, diag.CodeIngestCursorLoadSubagentFailed,
+		diag.CodeIngestCursorLoadRuleFailed, diag.CodeIngestGeminiLoadCommandFailed,
+		diag.CodeIngestGeminiLoadSubagentFailed, diag.CodeIngestGeminiLoadHookFailed,
+		diag.CodeIngestDevinLoadSubagentFailed, diag.CodeIngestDevinLoadHookFailed,
+		diag.CodeIngestDevinLoadMcpServersFailed:
+		return true
+	}
+	return false
 }
 
 func firstErrorDiagnostic(ds []diag.Diagnostic) diag.Diagnostic {
@@ -1151,8 +1200,9 @@ func applyLicensePolicy(r artifact.BuildResult, registryID store.RegistryID, lp 
 		return r, false
 	}
 
-	if strings.TrimSpace(r.License) == "" {
-		switch lp.undeclared {
+	decision := licensepolicy.Evaluate(r.License, lp.allowlist, lp.undeclared)
+	if decision.Code == analyze.PolicyLicenseUndeclared {
+		switch decision.Outcome {
 		case config.LicenseUndeclaredReject:
 			rejectOnLicense(&r, registryID, lp, analyze.PolicyLicenseUndeclared, fmt.Sprintf(
 				"resource declares no license, and policy.license_undeclared is %q: it is not installable while the license allowlist (%s) is configured",
@@ -1185,7 +1235,7 @@ func applyLicensePolicy(r artifact.BuildResult, registryID store.RegistryID, lp 
 	// Matched against the declared value exactly as authored, not a trimmed
 	// copy: trimming is only how "declares nothing" is recognised, and must not
 	// widen which declared strings the allowlist accepts.
-	if !slices.Contains(lp.allowlist, r.License) {
+	if decision.Outcome == analyze.OutcomeReject {
 		rejectOnLicense(&r, registryID, lp, analyze.PolicyLicenseNotAllowed, fmt.Sprintf(
 			"declared license %q is not in the configured license allowlist (%s)",
 			r.License, lp.allowlistText()))

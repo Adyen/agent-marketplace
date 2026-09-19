@@ -102,6 +102,7 @@ The database schema is migrated forward on startup and there is no automatic dow
 
 ## Related documentation
 
+- [How to enable and use the Marketplace admin panel](./enable-and-use-the-admin-panel.md)
 - [Marketplace operator configuration reference](../../reference/marketplace-operator-configuration.md)
 - [Marketplace architecture](../../explanation/marketplace-architecture.md)
 - [Marketplace trust model](../../explanation/marketplace-trust-model.md)

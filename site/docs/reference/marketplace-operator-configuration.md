@@ -62,6 +62,19 @@ revocations:
   registry_ids: []
   coordinates: []
   revisions: []
+management:
+  mode: file
+  allowed_origins:
+    - https://github.com
+  profiles: {}
+admin:
+  enabled: false
+  origin: https://marketplace.example.com
+  trusted_proxies: []
+  issuer: https://sso.example.com
+  subject_header: X-Marketplace-Subject
+  groups_header: X-Marketplace-Groups
+  admin_groups: []
 ```
 
 ## Top-level fields
@@ -79,6 +92,8 @@ revocations:
 | `policy` | mapping | no | conservative defaults | Global ingestion policy and resource limits. |
 | `registries` | list | no | empty | Approved registry repositories. IDs and slugs must each be unique. |
 | `revocations` | mapping | no | empty lists | Registry-, coordinate-, and exact-revision revocations. |
+| `management` | mapping | no | mode `file` | Authority mode, allowed Git origins, and credential profiles. |
+| `admin` | mapping | no | disabled | Trusted-proxy browser administration settings. |
 
 ## `instance`
 
@@ -209,7 +224,74 @@ policy_overrides:
 
 Supported resource kinds are `skill`, `command`, `subagent`, `hook`, `mcp`, and `collection`.
 
-## Server roles and endpoints
+## `management`
+
+Controls whether catalog settings (registries, lifecycle states, and license policies) are managed by operator YAML or dynamically through the metadata database.
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `mode` | string | no | `file` | Authority mode: `file` or `database`. In `database` mode, startup requires previous maintenance adoption. |
+| `allowed_origins` | list of URLs | for `database` mode | empty | Allowed Git origin authorities for admin-managed registries. Must contain protocol (`https` or `ssh`) and host/port only (no path or query). |
+| `profiles` | mapping | no | empty | Map of opaque credential and trust profile definitions referenced by registries. |
+
+### `management.profiles`
+
+Profiles bind credentials or custom CA bundles to allowed origin authorities. The admin panel references profiles by their key (e.g. `internal-git`) without exposing sensitive server paths or credentials to the browser.
+
+```yaml
+management:
+  mode: database
+  allowed_origins:
+    - https://github.com
+    - https://gitlab.example.com
+  profiles:
+    gitlab-ci:
+      allowed_origins:
+        - https://gitlab.example.com
+      credentials:
+        token:
+          file: /run/secrets/gitlab-token
+      ca_file: /etc/agent-marketplace/ca/internal.pem
+```
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `allowed_origins` | list of URLs | yes | none | Git origin authorities permitted to use this profile. |
+| `credentials` | mapping | no | empty | SSH key or token credential reference (`file` or `env`). |
+| `ca_file` | absolute path | no | none | Path to a PEM CA certificate bundle for registries using this profile. |
+
+## `admin`
+
+Configures the browser-based administration API and trusted-proxy identity verification.
+
+Identity header names must be distinct (case-insensitively) and match `[A-Za-z][A-Za-z0-9-]*`. `X-Forwarded-*` names and reserved HTTP headers such as `Authorization`, `Cookie`, and `Origin` are rejected at startup. Use dedicated headers that the trusted proxy overwrites with authenticated claims.
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `enabled` | boolean | no | `false` | Enables the `/api/v1/admin/**` API endpoints. |
+| `origin` | URL | if enabled | none | Expected HTTPS origin for admin requests (e.g. `https://marketplace.example.com`). Must contain protocol and host/port only. HTTP is permitted only by the localhost opt-in below. |
+| `allow_insecure_localhost` | boolean | no | `false` | Allows HTTP origins only for `localhost` or literal loopback IP addresses, for local development. Does not relax identity, proxy, or exact-origin checks. The operator must bind the public proxy to loopback; this flag does not change listener bindings. |
+| `trusted_proxies` | list of CIDRs | if enabled | empty | Immediate reverse proxy CIDRs allowed to assert identity headers. Forwarded client IPs do not bypass this check. |
+| `issuer` | string | if enabled | none | Identity provider or SSO issuer identifier. |
+| `subject_header` | string | if enabled | none | HTTP header containing the authenticated subject identity (e.g. `X-Marketplace-Subject`). |
+| `groups_header` | string | if enabled | none | HTTP header containing a JSON string array of group names (e.g. `X-Marketplace-Groups`). |
+| `admin_groups` | list of strings | if enabled | empty | Group names authorized to access administration endpoints. |
+
+```yaml
+admin:
+  enabled: true
+  origin: https://marketplace.example.com
+  trusted_proxies:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+  issuer: https://sso.example.com
+  subject_header: X-Marketplace-Subject
+  groups_header: X-Marketplace-Groups
+  admin_groups:
+    - marketplace-admins
+```
+
+## Server roles and commands
 
 `agent-marketplace serve --config <path> --role <role>` accepts:
 
@@ -221,4 +303,17 @@ Supported resource kinds are `skill`, `command`, `subagent`, `hook`, `mcp`, and 
 
 The public listener exposes the well-known document, capability and instance metadata, search, registry/resource metadata, manifests, assessments, inspection content, artifacts, and `/healthz`. The operations listener exposes `/readyz` and `/metrics`. Public requests to `/readyz` and `/metrics` return 404.
 
-`agent-marketplace serve reindex [registry-slug-or-id] --config <path>` processes one registry when an argument is present and every configured registry when omitted. It validates and applies revocations before acquisition and performs a readiness check after processing.
+### Maintenance adoption
+
+`agent-marketplace serve adopt --config <path> --actor <id> --reason <text> --idempotency-key <key> --confirm-maintenance`
+
+Transfers catalog configuration from the operator YAML file into the metadata database and establishes database authority.
+
+- All API and worker processes must be stopped before running adoption.
+- Full database and blob backups must be taken before adoption.
+- Requires `management.mode: database` in the configuration file.
+- See [How to enable and use the Marketplace admin panel](../how-to/operator/enable-and-use-the-admin-panel.md) for the complete procedure.
+
+### Reindexing
+
+`agent-marketplace serve reindex [registry-slug-or-id] --config <path>` processes one registry when an argument is present and every configured registry when omitted. In database management mode, it queries active managed registries from the database rather than the YAML file. It validates and applies revocations before acquisition and performs a readiness check after processing.

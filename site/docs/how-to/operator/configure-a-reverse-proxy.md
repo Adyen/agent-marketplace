@@ -31,6 +31,17 @@ Forward `/` to the VitePress static site.
 
 Preserve `Host`, `X-Real-IP`, `X-Forwarded-For`, and `X-Forwarded-Proto`. At the first trusted proxy, set `X-Forwarded-For $remote_addr` so untrusted incoming chains cannot spoof the client address.
 
+## 6. Protect the admin panel with SSO (optional)
+
+If the database-managed admin panel is enabled, protect `/marketplace/admin` and `/api/v1/admin/` with your SSO gateway or identity-aware proxy.
+
+The reverse proxy must:
+1. Strip incoming client-supplied identity headers (`X-Marketplace-Subject`, `X-Marketplace-Groups`).
+2. Authenticate the operator and inject trusted identity headers.
+3. Format the groups header as a JSON string array (for example `["marketplace-admins"]`).
+
+See [How to enable and use the Marketplace admin panel](./enable-and-use-the-admin-panel.md) for full configuration details and proxy examples.
+
 ## Example Nginx snippet
 
 ```nginx
@@ -89,5 +100,6 @@ Replace the upstream server addresses with your actual backend locations.
 
 ## Related documentation
 
+- [How to enable and use the Marketplace admin panel](./enable-and-use-the-admin-panel.md)
 - [Marketplace operator configuration reference](../../reference/marketplace-operator-configuration.md)
 - [Marketplace health and metrics reference](../../reference/marketplace-health-and-metrics.md)

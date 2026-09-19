@@ -464,6 +464,24 @@ agent-marketplace serve reindex [registry-slug-or-id] --config <path>
 
 With no registry argument, the command reindexes every configured registry. With one slug or ID, it reindexes only that registry. It applies revocations before acquisition and performs a store readiness check after processing.
 
+### `serve adopt`
+
+Adopts catalog settings during a controlled maintenance window, establishing database configuration authority.
+
+```text
+agent-marketplace serve adopt --config <path> --actor <id> --reason <text> --idempotency-key <key> --confirm-maintenance
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--actor` | string | yes | none | Operator identity recorded in the maintenance audit. |
+| `--config` | path | yes | none | Path to the Marketplace operator config file. |
+| `--confirm-maintenance` | boolean | no | `false` | Confirms all API and worker processes are stopped, backups exist, and shared caches are invalidated. |
+| `--idempotency-key` | string | yes | none | Stable key reused when retrying this adoption. |
+| `--reason` | string | yes | none | Reason recorded in the adoption audit. |
+
+All API and worker processes must be stopped, and database and blob storage backups must be created before running adoption. Requires `management.mode: database` in the configuration file.
+
 ## `deinit`
 
 Removes marketplace-managed artifacts for one scope. User scope also removes orphaned registry caches while preserving currently resolvable organization-owned machine artifacts. A present organization lock is inspected exactly and any invalid lock blocks teardown. When the organization lock is absent, normal deinit may refresh the mutable registry to preserve its output and cache; `--dry-run` is inspection-only, so an uncached unlocked organization registry produces a warning rather than a fetch. Configuration files remain unless `--purge-config` is set.

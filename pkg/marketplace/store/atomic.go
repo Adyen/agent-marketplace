@@ -28,6 +28,9 @@ type BlobUpload struct {
 // All blobs are uploaded before any metadata is written, so a failed publish
 // can only leave orphaned blobs that are safe to garbage-collect.
 type RegistryRevisionPublication struct {
+	PublicationID PublicationID
+	ManagedFence  *ManagedFence
+
 	// Occurrence is the registry commit occurrence to publish.
 	Occurrence RegistryOccurrence
 
@@ -85,6 +88,16 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 	}
 
 	return meta.WithTx(ctx, func(txCtx context.Context, tx MetadataStore) error {
+		if req.PublicationID != "" || req.ManagedFence != nil {
+			publisher, ok := tx.(PublicationStore)
+			if !ok {
+				return fmt.Errorf("%w: publication identities unsupported", ErrConflict)
+			}
+			if err := publisher.PublishRegistryPublication(txCtx, req); err != nil {
+				return err
+			}
+			return recordPublicationBlobOwners(txCtx, tx, req, uploads)
+		}
 		for _, rev := range req.Resources {
 			if err := tx.PutResourceRevision(txCtx, rev); err != nil {
 				return err
@@ -116,7 +129,10 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 				return err
 			}
 		}
-		return tx.SetRegistryHead(txCtx, req.Occurrence.RegistryID, req.Occurrence.Commit, req.ExpectedHeadCommit)
+		if err := tx.SetRegistryHead(txCtx, req.Occurrence.RegistryID, req.Occurrence.Commit, req.ExpectedHeadCommit); err != nil {
+			return err
+		}
+		return recordPublicationBlobOwners(txCtx, tx, req, uploads)
 	})
 }
 
@@ -205,6 +221,10 @@ type inspectionPublicationManifest struct {
 // store coordinates; publication additionally verifies every exposed body
 // before making the revision visible.
 func validateInspectionManifestBytes(data []byte, rev ResourceRevision, blobs map[ArchiveDigest][]byte) error {
+	return validateInspectionManifestOwnership(data, rev, blobs, true)
+}
+
+func validateInspectionManifestOwnership(data []byte, rev ResourceRevision, blobs map[ArchiveDigest][]byte, verifyBodies bool) error {
 	var manifest inspectionPublicationManifest
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -254,7 +274,7 @@ func validateInspectionManifestBytes(data []byte, rev ResourceRevision, blobs ma
 			return fmt.Errorf("non-canonical file path %q", file.Path)
 		}
 		bodyRequired := file.InspectionClass == "text" || file.InspectionClass == "image"
-		if bodyRequired {
+		if bodyRequired && verifyBodies {
 			body, ok := blobs[ArchiveDigest(file.ContentDigest)]
 			if !ok {
 				return fmt.Errorf("body for %q is missing", file.Path)

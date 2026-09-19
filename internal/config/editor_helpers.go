@@ -22,16 +22,21 @@ var configPathLocks sync.Map
 // withConfigPathLock serializes read-modify-write edits for one config path
 // within this process. It does not provide cross-process locking.
 func withConfigPathLock(configPath string, edit func() error) error {
-	resolved, err := filepath.EvalSymlinks(configPath)
-	if err != nil {
-		resolved = configPath
-	}
-	key, err := filepath.Abs(resolved)
+	abs, err := filepath.Abs(configPath)
 	if err != nil {
 		return fmt.Errorf("resolve config path %q: %w", configPath, err)
 	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		dir = filepath.Dir(abs)
+	}
+	base := filepath.Base(abs)
+	resolved, err := filepath.EvalSymlinks(filepath.Join(dir, base))
+	if err != nil {
+		resolved = filepath.Join(dir, base)
+	}
 	lock := &sync.Mutex{}
-	actual, _ := configPathLocks.LoadOrStore(filepath.Clean(key), lock)
+	actual, _ := configPathLocks.LoadOrStore(filepath.Clean(resolved), lock)
 	lock = actual.(*sync.Mutex)
 	lock.Lock()
 	defer lock.Unlock()

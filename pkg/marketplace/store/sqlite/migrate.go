@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 // This schema is intentionally a new migration epoch. The analyzer-independent
@@ -14,7 +16,7 @@ import (
 const migrationTable = "marketplace_metadata_v2_migrations"
 const legacyMigrationTable = "marketplace_schema_migrations"
 
-var migrations = []string{migration0, migration1, migration2}
+var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(false), store.ManagedRuntimeSchema, store.ManagedPreviewSchema}
 
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)

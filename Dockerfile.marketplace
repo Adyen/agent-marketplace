@@ -61,6 +61,7 @@ COPY --from=git-runtime /git-root /
 COPY --from=build --chown=1000:1000 /out/runtime/ /
 WORKDIR /app
 COPY --from=build --chown=1000:1000 /out/agent-marketplace /app/agent-marketplace
+COPY --from=build --chown=1000:1000 /out/marketplace-healthcheck /app/marketplace-healthcheck
 USER 1000:1000
 ENV GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt
 ENTRYPOINT ["/app/agent-marketplace"]
