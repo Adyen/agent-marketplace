@@ -106,12 +106,17 @@ func (f ownedCommandFixture) remove(inferred bool) (string, error) {
 	return executeCommand(args...)
 }
 
-func ownedCommandSnapshot(t *testing.T, root string) map[string]string {
+func ownedCommandSnapshot(t *testing.T, root string, excluded ...string) map[string]string {
 	t.Helper()
 	state := map[string]string{}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		for _, skip := range excluded {
+			if path == skip {
+				return nil
+			}
 		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
