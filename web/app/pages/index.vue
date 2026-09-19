@@ -77,7 +77,7 @@ watch(() => draft.kind, applyDraft)
 watch(loadMoreTrigger, (element, _previous, onCleanup) => {
   if (!import.meta.client || !element || !('IntersectionObserver' in window)) return
   const observer = new IntersectionObserver((entries) => {
-    if (entries.some(entry => entry.isIntersecting)) void loadMore()
+    if (entries.some(entry => entry.isIntersecting) && !loadMoreError.value) void loadMore()
   }, { rootMargin: '300px 0px' })
   observer.observe(element)
   onCleanup(() => observer.disconnect())

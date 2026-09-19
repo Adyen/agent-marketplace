@@ -105,14 +105,11 @@ test.describe('Marketplace browser discovery', () => {
   })
 
   test('retains loaded results and offers a manual retry when streaming fails', async ({ page }) => {
-    await page.addInitScript(() => {
-      Reflect.deleteProperty(window, 'IntersectionObserver')
-    })
     const offsets = await routeStreamingSearch(page, true)
     await page.goto('/')
     await page.getByLabel('Search', { exact: true }).fill('stream')
     await expect(page.locator('article')).toHaveCount(25)
-    await page.getByRole('button', { name: 'Load more resources' }).click()
+    await page.getByTestId('load-more-trigger').scrollIntoViewIfNeeded()
     await expect(page.locator('article')).toHaveCount(25)
     await expect(page.getByRole('alert')).toContainText('Additional resources could not be loaded.')
     await page.getByRole('button', { name: 'Retry loading resources' }).click()
