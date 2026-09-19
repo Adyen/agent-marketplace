@@ -133,13 +133,22 @@ func (r *Rulepack) Analyze(ctx context.Context, s Subject, _ AnalyzerConfig) (Au
 	start := time.Now()
 	kind := s.Resource.Kind()
 
+	maxFindings := s.Limits.MaxFindings
+	if maxFindings <= 0 {
+		maxFindings = DefaultLimits().MaxFindings
+	}
+
 	var findings []Finding
+samples:
 	for _, sample := range s.samples {
 		for _, rule := range r.rules {
+			if len(findings) >= maxFindings {
+				break samples
+			}
 			if rule.kinds != nil && !rule.kinds[kind] {
 				continue
 			}
-			for _, loc := range rule.re.FindAllStringIndex(sample.content, -1) {
+			for _, loc := range boundedMatchLocations(rule.re, sample.content, maxFindings-len(findings)) {
 				findings = append(findings, Finding{
 					Analyzer:        r.id,
 					AnalyzerVersion: r.version,
@@ -163,6 +172,35 @@ func (r *Rulepack) Analyze(ctx context.Context, s Subject, _ AnalyzerConfig) (Au
 		Findings:        findings,
 		Duration:        duration,
 	}, nil
+}
+
+// boundedMatchLocations enumerates match offsets with bounded offset-stepping
+// so a broad pattern cannot allocate an unbounded match slice before the
+// findings cap is applied. Empty matches advance by one byte to guarantee
+// progress.
+func boundedMatchLocations(re *regexp.Regexp, content string, max int) [][]int {
+	if max <= 0 {
+		return nil
+	}
+	// Match count cannot exceed len(content)+1, so never pre-allocate beyond it.
+	capacity := max
+	if len(content)+1 < capacity {
+		capacity = len(content) + 1
+	}
+	locs := make([][]int, 0, capacity)
+	for offset := 0; offset <= len(content) && len(locs) < max; {
+		loc := re.FindStringIndex(content[offset:])
+		if loc == nil {
+			break
+		}
+		locs = append(locs, []int{loc[0] + offset, loc[1] + offset})
+		if loc[1] == 0 {
+			offset += loc[0] + 1
+		} else {
+			offset += loc[1]
+		}
+	}
+	return locs
 }
 
 type compiledRule struct {

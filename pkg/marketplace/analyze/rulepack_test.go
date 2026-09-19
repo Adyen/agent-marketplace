@@ -226,6 +226,45 @@ rules:
 	}
 }
 
+func TestRulepackBoundedMatchEnumeration(t *testing.T) {
+	data := []byte(`
+apiVersion: agent-marketplace.analyzer/v1
+rules:
+  - code: marker
+    pattern: "MARK"
+    message: "found marker"
+`)
+	rp, err := NewRulepack("acme.rulepack", "1.0.0", data)
+	if err != nil {
+		t.Fatalf("NewRulepack: %v", err)
+	}
+	res := ir.NewSkill("x", "X", strings.Repeat("MARK ", 50), nil, nil, ir.SourceRef{})
+
+	t.Run("broad pattern stays within MaxFindings", func(t *testing.T) {
+		limits := DefaultLimits()
+		limits.MaxFindings = 3
+		audit, err := rp.Analyze(context.Background(), Subject{Resource: res, Limits: limits}, nil)
+		if err != nil {
+			t.Fatalf("Analyze: %v", err)
+		}
+		if len(audit.Findings) != 3 {
+			t.Fatalf("findings = %d, want capped at 3", len(audit.Findings))
+		}
+	})
+
+	t.Run("zero MaxFindings falls back to default bound", func(t *testing.T) {
+		limits := DefaultLimits()
+		limits.MaxFindings = 0
+		audit, err := rp.Analyze(context.Background(), Subject{Resource: res, Limits: limits}, nil)
+		if err != nil {
+			t.Fatalf("Analyze: %v", err)
+		}
+		if len(audit.Findings) != 50 {
+			t.Fatalf("findings = %d, want 50 under the default bound", len(audit.Findings))
+		}
+	})
+}
+
 func kindResource(k ir.ResourceKind) ir.Resource {
 	switch k {
 	case ir.KindSkill:

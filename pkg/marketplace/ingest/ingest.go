@@ -395,7 +395,7 @@ func BuildRegistryRevisionWithAuditStore(ctx context.Context, cfg config.Config,
 		} else {
 			report, err = analyze.NewEngineWith(resolvedSet.Registrations()).Analyze(ctx, subject)
 			if err == nil {
-				storeAudits, err = storeAuditsFromAnalyze(report.Audits, resolvedSet, coord, manifestDigest, nil, assessedAt, primaryPath, body, support)
+				storeAudits, err = storeAuditsFromAnalyze(report.Audits, resolvedSet, coord, manifestDigest, nil, subject.Limits, assessedAt, primaryPath, body, support)
 			}
 		}
 		if err != nil {
@@ -706,7 +706,7 @@ type auditRun struct {
 // analyzer. The returned report preserves the resolved analyzer order.
 func cacheAwareAnalyze(meta store.MetadataStore, coord store.ResourceCoordinate, resolvedSet resolvedAnalyzerSet, assessedAt time.Time, primaryPath string, body []byte, support analyze.FileSet, run *auditRun) analyze.AnalyzeFunc {
 	return func(ctx context.Context, subject analyze.Subject, contentDigest string) (analyze.Report, error) {
-		subjectDigest := artifact.SubjectDigest(contentDigest, subject.Files)
+		subjectDigest := auditSubjectDigest(contentDigest, subject.Files, subject.Limits)
 		configByAnalyzer := make(map[string]store.PolicyDigest, len(resolvedSet.Entries))
 		for _, e := range resolvedSet.Entries {
 			configByAnalyzer[e.Registration.Analyzer.ID()] = e.ConfigDigest
@@ -802,7 +802,22 @@ func validateCachedAudit(cached store.ResourceAudit, key store.ResourceAuditKey,
 	return nil
 }
 
-func storeAuditsFromAnalyze(audits []analyze.Audit, resolvedSet resolvedAnalyzerSet, coord store.ResourceCoordinate, contentDigest string, files analyze.FileSet, assessedAt time.Time, primaryPath string, body []byte, support analyze.FileSet) ([]store.ResourceAudit, error) {
+// auditSubjectDigest folds a canonical representation of the effective
+// analyzer limits into the audit cache subject identity. The artifact content
+// digest schema is unchanged; limits join the identity only at the audit cache
+// layer so audits produced under different limits never share a cached result.
+func auditSubjectDigest(contentDigest string, files analyze.FileSet, limits analyze.Limits) string {
+	payload, _ := json.Marshal(struct {
+		SubjectDigest string         `json:"subject_digest"`
+		Limits        analyze.Limits `json:"limits"`
+	}{
+		SubjectDigest: artifact.SubjectDigest(contentDigest, files),
+		Limits:        limits,
+	})
+	return artifact.RevisionDigest(payload)
+}
+
+func storeAuditsFromAnalyze(audits []analyze.Audit, resolvedSet resolvedAnalyzerSet, coord store.ResourceCoordinate, contentDigest string, files analyze.FileSet, limits analyze.Limits, assessedAt time.Time, primaryPath string, body []byte, support analyze.FileSet) ([]store.ResourceAudit, error) {
 	if len(audits) == 0 {
 		return nil, nil
 	}
@@ -810,7 +825,7 @@ func storeAuditsFromAnalyze(audits []analyze.Audit, resolvedSet resolvedAnalyzer
 	for _, e := range resolvedSet.Entries {
 		configByAnalyzer[e.Registration.Analyzer.ID()] = e.ConfigDigest
 	}
-	subjectDigest := artifact.SubjectDigest(contentDigest, files)
+	subjectDigest := auditSubjectDigest(contentDigest, files, limits)
 	out := make([]store.ResourceAudit, 0, len(audits))
 	for _, audit := range audits {
 		configDigest, ok := configByAnalyzer[audit.AnalyzerID]
@@ -916,7 +931,7 @@ func buildResource(ctx context.Context, mpID store.MarketplaceID, registry store
 				Registry:    registry.ID,
 				Kind:        kind,
 				Name:        entry.Name,
-			}, built.ContentDigest, files, assessedAt, primaryPath, body, support)
+			}, built.ContentDigest, files, opts.Limits, assessedAt, primaryPath, body, support)
 			if err != nil {
 				return artifact.BuildResult{}, nil, fmt.Errorf("finalize resource audits: %w", err)
 			}

@@ -45,7 +45,7 @@ func TestCacheAwareAnalyze(t *testing.T) {
 	primaryPath := "SKILL.md"
 	body := []byte("# review\n")
 	files := analyze.FileSet{}
-	subjectDigest := artifact.SubjectDigest(contentDigest, files)
+	subjectDigest := auditSubjectDigest(contentDigest, files, analyze.DefaultLimits())
 
 	makeSet := func(configDigest store.PolicyDigest) resolvedAnalyzerSet {
 		return resolvedAnalyzerSet{
@@ -272,6 +272,89 @@ func TestCacheAwareAnalyze(t *testing.T) {
 	})
 }
 
+func TestCacheAwareAnalyzeLimitsChangeMissesCache(t *testing.T) {
+	ctx := context.Background()
+	db := filepath.Join(t.TempDir(), "marketplace.db")
+	meta := sqlite.New(db)
+	if err := meta.Open(ctx); err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	primaryPath := "SKILL.md"
+	body := []byte("# review\n")
+	files := analyze.FileSet{}
+	configDigest := store.PolicyDigest("sha256:" + strings.Repeat("b", 64))
+
+	// Seed a hit produced under the default limits.
+	defaultLimits := analyze.DefaultLimits()
+	key := store.ResourceAuditKey{
+		Coordinate:      coord,
+		SubjectDigest:   store.RevisionDigest(auditSubjectDigest(contentDigest, files, defaultLimits)),
+		AnalyzerID:      "marketplace.test",
+		AnalyzerVersion: "1.0.0",
+		ConfigDigest:    configDigest,
+	}
+	audit, err := store.FinalizeResourceAudit(store.ResourceAudit{
+		ResourceAuditKey: key,
+		Role:             analyze.RoleGating,
+		Verdict:          analyze.VerdictPass,
+		Summary:          "cached",
+		Duration:         time.Millisecond,
+		AssessedAt:       time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("FinalizeResourceAudit: %v", err)
+	}
+	if err := meta.PutResourceAudit(ctx, audit); err != nil {
+		t.Fatalf("PutResourceAudit: %v", err)
+	}
+
+	analyzer := &countingAnalyzer{
+		id:      "marketplace.test",
+		version: "1.0.0",
+		kinds:   []ir.ResourceKind{ir.KindSkill},
+		audit:   analyze.Audit{Verdict: analyze.VerdictPass, Summary: "ok"},
+	}
+	set := resolvedAnalyzerSet{
+		Entries: []resolvedAnalyzer{{
+			Registration: analyze.Registration{Analyzer: analyzer, Role: analyze.RoleGating},
+			ConfigDigest: configDigest,
+		}},
+	}
+
+	// Identical content but a changed MaxFindings must miss the cache.
+	changedLimits := defaultLimits
+	changedLimits.MaxFindings = 5
+	var run auditRun
+	fn := cacheAwareAnalyze(meta, coord, set, time.Unix(2, 0).UTC(), primaryPath, body, files, &run)
+	subject := analyze.Subject{Resource: ir.NewSkill("review", "Review", "ok", nil, nil, ir.SourceRef{}), Files: files, Limits: changedLimits}
+	if _, err := fn(ctx, subject, contentDigest); err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if analyzer.called != 1 {
+		t.Fatalf("analyzer called %d times, want 1 for changed MaxFindings", analyzer.called)
+	}
+	if len(run.audits) != 1 || run.audits[0].ResourceAuditKey == key {
+		t.Fatalf("expected a distinct audit key under changed limits, got %v", run.audits)
+	}
+
+	// The same limits again hit the freshly stored shape.
+	if err := meta.PutResourceAudit(ctx, run.audits[0]); err != nil {
+		t.Fatalf("PutResourceAudit changed limits: %v", err)
+	}
+	var run2 auditRun
+	fn2 := cacheAwareAnalyze(meta, coord, set, time.Unix(3, 0).UTC(), primaryPath, body, files, &run2)
+	if _, err := fn2(ctx, subject, contentDigest); err != nil {
+		t.Fatalf("Analyze second run: %v", err)
+	}
+	if analyzer.called != 1 {
+		t.Fatalf("analyzer called %d times, want still 1 for unchanged limits", analyzer.called)
+	}
+}
+
 func TestCacheAwareAnalyzeMixedHitMiss(t *testing.T) {
 	ctx := context.Background()
 	db := filepath.Join(t.TempDir(), "marketplace.db")
@@ -286,7 +369,7 @@ func TestCacheAwareAnalyzeMixedHitMiss(t *testing.T) {
 	primaryPath := "SKILL.md"
 	body := []byte("# review\n")
 	files := analyze.FileSet{}
-	subjectDigest := artifact.SubjectDigest(contentDigest, files)
+	subjectDigest := auditSubjectDigest(contentDigest, files, analyze.DefaultLimits())
 
 	newAnalyzer := func(id, version string, audit analyze.Audit) *countingAnalyzer {
 		return &countingAnalyzer{
@@ -374,7 +457,7 @@ func TestCacheAwareAnalyzeErrorAudit(t *testing.T) {
 	primaryPath := "SKILL.md"
 	body := []byte("# review\n")
 	files := analyze.FileSet{}
-	subjectDigest := artifact.SubjectDigest(contentDigest, files)
+	subjectDigest := auditSubjectDigest(contentDigest, files, analyze.DefaultLimits())
 	configDigest := store.PolicyDigest("sha256:" + strings.Repeat("f", 64))
 
 	key := store.ResourceAuditKey{
