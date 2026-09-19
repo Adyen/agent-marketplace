@@ -105,6 +105,8 @@ These are suspected scope-boundary defects, not a blanket symlink ban.
   Reuse existing limits where applicable; new limits need an explicit policy.
   - [x] Make shared dependency-transaction reads reject FIFOs without blocking
     during open, including final config-read assertions and journal recovery.
+  - [x] Apply the same descriptor-first refusal to the separate lockfile reader,
+    including read-only `status` and `gc --dry-run` consumers.
   - [ ] Complete remaining aggregate/manifest and deinit read-boundary validation.
 
 ## Stack R3 — Credential and terminal-output handling
@@ -506,6 +508,34 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   deadline, hardlink-policy change, inode/mode
   pairing redesign, repository-containment fix, or completion of R2d. Aggregate,
   manifest and deinit validation and the remaining R1 cleanup paths stay open.
+- R2 lockfile read boundary on merged baseline `fed497c5`: the separate
+  `lockfile.ReadBytesInfo` still opened FIFOs in blocking mode before checking
+  descriptor type. Old-code controls for actual `status` and `gc --dry-run`
+  commands reached their readiness markers and timed out at 30 seconds; direct
+  `Read`, `ReadBytes`, and `ReadBytesInfo` controls timed out at 10 seconds.
+  Symlinks to FIFOs already refused under the existing no-follow policy.
+- The lockfile reader now opens nonblocking, checks regular-file type and the
+  existing size limit on that descriptor, then restores blocking mode on the
+  same descriptor. Existing 4 MiB byte/growth bounds, descriptor cleanup, and
+  symlink policy remain unchanged. No general I/O deadline is introduced.
+- Bounded unit and real-command regressions require `ErrUnsafeFile`, retain the
+  FIFO inode/type, and preserve fixture bytes, modes, mtimes, links, and cache
+  content under the existing snapshot helper's coordination-lock exclusions.
+  Each command has its own valid-lock control. Review corrected an initial
+  hardcoded `status` control in the GC test rather than weakening preservation
+  assertions. Built-binary E2E covers both commands with a 15-second bound and
+  checks FIFO identity plus config, saved-lock, and native-output fingerprints.
+- Six-sample local-disk 4 KiB reader benchmark (setup excluded, no network):
+  17.52 to 19.86 us/op (+13.37%, p=0.002); 10816 B/op and 14 allocations/op
+  unchanged. The after samples have substantial timing variability (benchstat
+  reports +/-28%); this is not a whole-command latency measurement.
+- Pre-push adversarial review of the lock-reader diff against `fed497c5` checked
+  descriptor identity/lifetime, error and size guards, actual read-only consumer
+  reachability, refusal side effects, and regression validity. No remaining
+  blocker was identified within the FIFO-open scope. Full `make test`, race-
+  enabled lockfile and CLI FIFO tests, focused FIFO/regular-lock lifecycle E2E,
+  `make build`, and `make ci-lint LINT_BASE=fed497c5` passed. Aggregate/manifest,
+  deinit, hardlink/containment policy, and the remaining R1 work stay open.
 - Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
   planning and first three implementation layers are published as PRs 210–213
   in stack 214. Native compatibility and real-terminal TUI checks remain CI
