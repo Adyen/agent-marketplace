@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -434,13 +435,88 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 			merged.APIVersion = cfg.APIVersion
 		}
 		if cfg.Materialization != nil {
-			merged.Materialization = &MaterializationConfig{Mode: cfg.Materialization.Mode}
+			merged.Materialization = mergeMaterializationConfig(merged.Materialization, cfg.Materialization)
 		}
 	}
 	return merged
 }
 
+// loadV4RuntimeConfig adapts a parsed v4 tree to the legacy runtime model.
+// Marketplace sources require the owning layer lock; Git/directory-only trees
+// never touch a lock. The returned ConfigRead covers the lock so callers can
+// add it to their read assertions.
+func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overlays map[string][]byte) (*Config, *ConfigRead, error) {
+	hasMarketplace := false
+	for _, src := range v4.Sources {
+		if src.Kind == V4SourceMarketplace {
+			hasMarketplace = true
+			break
+		}
+	}
+	if !hasMarketplace {
+		cfg, err := v4.ToLegacyConfig(kind)
+		return cfg, nil, err
+	}
+	canonical, err := canonicalConfigPath(configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	lockPath, err := lockfile.PathForConfig(canonical)
+	if err != nil {
+		return nil, nil, err
+	}
+	authored, err := filepath.Abs(configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	authoredLockPath, err := lockfile.PathForConfig(authored)
+	if err != nil {
+		return nil, nil, err
+	}
+	data, overlaid := overlays[lockPath]
+	if !overlaid {
+		data, overlaid = overlays[authoredLockPath]
+	}
+	if !overlaid {
+		data, err = lockfile.ReadBytes(lockPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, nil, v4err("v4.marketplace-lock-required", lockPath, 0, "Marketplace resources require acquisition lock %q: %v", lockPath, err)
+			}
+			return nil, nil, fmt.Errorf("read lock %q for config %q: %w", lockPath, configPath, err)
+		}
+	}
+	doc, err := lockfile.Decode(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode lock %q for config %q: %w", lockPath, configPath, err)
+	}
+	// Decode already returns a normalized document; skip the defensive second
+	// normalization that ToLegacyConfigWithLock performs for untrusted callers.
+	cfg, err := v4.toLegacyConfig(kind, &doc)
+	if err != nil {
+		return nil, nil, err
+	}
+	read := &ConfigRead{Path: lockPath, RequestedPath: authoredLockPath, Digest: fmt.Sprintf("%x", sha256.Sum256(data)), Overlay: overlaid}
+	return cfg, read, nil
+}
+
 func loadConfigTree(path string, kind layerKind) (*Config, error) {
+	data, err := readConfigFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if PeekAPIVersion(data) == APIVersionV4 {
+		organizationPath := ""
+		if kind == organizationLayer {
+			organizationPath = path
+		}
+		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, nil, data, organizationPath)
+		if err != nil {
+			return nil, err
+		}
+		cfg, _, err := loadV4RuntimeConfig(v4, path, kind, nil)
+		return cfg, err
+	}
 	return loadCollectedConfigTree(path, newConfigIncludeLoader(kind))
 }
 
@@ -452,6 +528,32 @@ func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKin
 }
 
 func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layerKind, overlays map[string][]byte) (*Config, []ConfigRead, error) {
+	if PeekAPIVersion(data) == APIVersionV4 {
+		organizationPath := ""
+		if kind == organizationLayer {
+			organizationPath = path
+		}
+		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, overlays, data, organizationPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		cfg, lockRead, err := loadV4RuntimeConfig(v4, path, kind, overlays)
+		if err != nil {
+			return nil, nil, err
+		}
+		reads := make([]ConfigRead, 0, len(v4.Files)+1)
+		for _, file := range v4.Files {
+			contents, overlaid, readErr := v4ConfigData(file, file, false, nil, overlays)
+			if readErr != nil {
+				return nil, nil, fmt.Errorf("read v4 config %q: %w", file, readErr)
+			}
+			reads = append(reads, ConfigRead{Path: file, RequestedPath: file, Digest: fmt.Sprintf("%x", sha256.Sum256(contents)), Overlay: overlaid})
+		}
+		if lockRead != nil {
+			reads = append(reads, *lockRead)
+		}
+		return cfg, reads, nil
+	}
 	loader := newConfigIncludeLoader(kind)
 	loader.rootPath = canonicalPath
 	loader.rootData = data
@@ -618,6 +720,14 @@ func LoadRootConfigFromPath(path string) (*Config, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read config %q: %w", path, err)
+	}
+	if PeekAPIVersion(data) == APIVersionV4 {
+		v4, err := ParseV4Config(data, path, true)
+		if err != nil {
+			return nil, err
+		}
+		cfg, _, err := loadV4RuntimeConfig(v4, path, kind, nil)
+		return cfg, err
 	}
 	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, requireAPIVersion)
 	if len(errs) > 0 {

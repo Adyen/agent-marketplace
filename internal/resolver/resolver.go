@@ -27,6 +27,7 @@ type ResolvedArtifact struct {
 	RegistryURL    string
 	RegistryPath   string // path from the registry entry; empty for root
 	Ref            string
+	V4Kind         config.V4SourceKind // explicit v4 source kind, when authored by v4
 	Source         config.Source
 	FilePrecedence int
 	Required       bool
@@ -1410,6 +1411,7 @@ func nestedCollectionArtifact(candidate collectionCandidate, parent ResolvedArti
 		RegistryURL:    parent.RegistryURL,
 		RegistryPath:   parent.RegistryPath,
 		Ref:            parent.Ref,
+		V4Kind:         parent.V4Kind,
 		Source:         parent.Source,
 		FilePrecedence: parent.FilePrecedence,
 		Required:       parent.Required,
@@ -1420,6 +1422,7 @@ func nestedCollectionArtifact(candidate collectionCandidate, parent ResolvedArti
 		artifact.RegistryURL = candidate.owner.URL
 		artifact.RegistryPath = normalizedEntryPath(candidate.owner.Path)
 		artifact.Ref = candidate.owner.Ref
+		artifact.V4Kind = candidate.owner.V4Kind
 		artifact.Source = candidate.owner.Source
 		artifact.FilePrecedence = candidate.owner.FilePrecedence
 		artifact.Required = candidate.owner.Required
@@ -1488,6 +1491,7 @@ func expandMembersRecursive(
 		memberRegistryURL := artifact.RegistryURL
 		memberRegistryPath := artifact.RegistryPath
 		memberRef := artifact.Ref
+		memberV4Kind := artifact.V4Kind
 		memberSource := artifact.Source
 		memberFilePrecedence := artifact.FilePrecedence
 		memberRequired := artifact.Required
@@ -1658,6 +1662,7 @@ func expandMembersRecursive(
 				memberRegistryPath = normalizedEntryPath(entry.Path)
 			}
 			memberRef = entry.Ref
+			memberV4Kind = entry.V4Kind
 			memberSource = entry.Source
 			memberFilePrecedence = entry.FilePrecedence
 			memberRequired = entry.Required
@@ -1673,6 +1678,7 @@ func expandMembersRecursive(
 				memberRegistryURL = entry.URL
 				memberRegistryPath = normalizedEntryPath(entry.Path)
 				memberRef = entry.Ref
+				memberV4Kind = entry.V4Kind
 				memberSource = entry.Source
 				memberFilePrecedence = entry.FilePrecedence
 				memberRequired = entry.Required
@@ -1683,6 +1689,8 @@ func expandMembersRecursive(
 			Entry:          catalog.Entry{Kind: member.Kind, Name: memberName},
 			RegistryURL:    memberRegistryURL,
 			RegistryPath:   memberRegistryPath,
+			Ref:            memberRef,
+			V4Kind:         memberV4Kind,
 			Source:         memberSource,
 			FilePrecedence: memberFilePrecedence,
 			Required:       memberRequired,
@@ -1753,6 +1761,7 @@ func expandMembersRecursive(
 			RegistryURL:    memberRegistryURL,
 			RegistryPath:   memberRegistryPath,
 			Ref:            memberRef,
+			V4Kind:         memberV4Kind,
 			Source:         memberSource,
 			FilePrecedence: memberFilePrecedence,
 			Required:       memberRequired,
@@ -2118,6 +2127,8 @@ func unresolvedSelectionArtifact(entry config.RegistryEntry, selected resourceSe
 		Entry:          catalog.Entry{Kind: selected.kind, Name: selected.name},
 		RegistryURL:    entry.URL,
 		RegistryPath:   normalizedEntryPath(entry.Path),
+		Ref:            entry.Ref,
+		V4Kind:         entry.V4Kind,
 		Source:         entry.Source,
 		FilePrecedence: entry.FilePrecedence,
 		Required:       entry.Required,
@@ -2131,6 +2142,7 @@ func newSkillOccurrence(entry config.RegistryEntry, entryIndex int, candidate ca
 			RegistryURL:    entry.URL,
 			RegistryPath:   normalizedEntryPath(entry.Path),
 			Ref:            entry.Ref,
+			V4Kind:         entry.V4Kind,
 			Source:         entry.Source,
 			FilePrecedence: entry.FilePrecedence,
 			Required:       entry.Required,
@@ -2620,6 +2632,7 @@ func localCandidateArtifact(candidate localOwnerCandidate) ResolvedArtifact {
 		RegistryURL:    candidate.entry.URL,
 		RegistryPath:   normalizedEntryPath(candidate.entry.Path),
 		Ref:            candidate.entry.Ref,
+		V4Kind:         candidate.entry.V4Kind,
 		Source:         candidate.entry.Source,
 		FilePrecedence: candidate.entry.FilePrecedence,
 		Required:       candidate.entry.Required,
@@ -2881,7 +2894,7 @@ func artifactShadowedByEntries(s ResolvedArtifact, entries []config.RegistryEntr
 			if ex.kind != s.Kind || strings.TrimSpace(ex.name) != s.Name {
 				continue
 			}
-			if entry.Source != s.Source && normalizedRegistryURL(entry.URL) != normalizedRegistryURL(s.RegistryURL) {
+			if entry.V4Decisions == nil && entry.Source != s.Source && normalizedRegistryURL(entry.URL) != normalizedRegistryURL(s.RegistryURL) {
 				return true
 			}
 			if registryIdentityMatches(entry.URL, entry.Path, entry.Ref, s.RegistryURL, s.RegistryPath, s.Ref) {
@@ -3046,8 +3059,10 @@ func ResourcesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []Se
 func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entry) resourceSelections {
 	selected := make(map[resourceSelection]struct{})
 
-	// required:true or default:true with no explicit selection → include everything.
-	autoSelectAll := (entry.Required || entry.Default) && !hasExplicitSelection(entry)
+	// v4 all:true is additive, including when the group also has explicit
+	// includes or tags. Legacy required/default selection retains its historical
+	// explicit-selection guard.
+	autoSelectAll := entry.V4All || ((entry.Required || entry.Default) && !hasExplicitSelection(entry))
 	if autoSelectAll {
 		for _, candidate := range catalog {
 			name := strings.TrimSpace(candidate.Name)
@@ -3058,28 +3073,53 @@ func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entr
 		}
 	}
 
-	selections := resourceSelections{}
-	for _, kind := range config.AllKinds {
-		selections = appendSelections(selections, kind, entry.SelectorForKind(kind).Include)
-	}
-	for _, s := range selections {
-		selected[s] = struct{}{}
-	}
-
+	// Tag selection participates in the ordered v4 stream: exclusions must be
+	// able to suppress tagged resources just as they suppress explicit includes.
 	for _, candidate := range catalog {
 		name := strings.TrimSpace(candidate.Name)
 		if name == "" {
 			continue
 		}
-
 		if config.HasMatchingTag(candidate.Tags, entry.Tags) {
 			selected[resourceSelection{kind: candidate.Kind, name: name}] = struct{}{}
 		}
 	}
 
+	// V4 carries an ordered decision stream. Apply it after dynamic tag/all
+	// selection so an exclusion can suppress inherited selections while a later
+	// include can explicitly re-enable the same resource.
+	if entry.V4Decisions != nil {
+		for _, decision := range entry.V4Decisions {
+			switch decision.Action {
+			case config.V4SelectionExplicit:
+				if decision.Request == nil {
+					continue
+				}
+				selected[resourceSelection{kind: v4DecisionKind(decision.Request.Kind), name: decision.Request.Name}] = struct{}{}
+			case config.V4SelectionExclude:
+				if entry.Required {
+					continue
+				}
+				for candidate := range selected {
+					if v4DecisionExclusionMatches(decision.Exclusion, candidate) {
+						delete(selected, candidate)
+					}
+				}
+			}
+		}
+	} else {
+		selections := resourceSelections{}
+		for _, kind := range config.AllKinds {
+			selections = appendSelections(selections, kind, entry.SelectorForKind(kind).Include)
+		}
+		for _, s := range selections {
+			selected[s] = struct{}{}
+		}
+	}
+
 	// required:true is immune to entry-level excludes; default:true and explicit
-	// selections respect them.
-	if !entry.Required {
+	// selections respect them. V4's ordered stream already applied its excludes.
+	if !entry.Required && entry.V4Decisions == nil {
 		excludeAllKinds := entryExcludeAllKinds(entry)
 		for _, excluded := range entryResourceExcludes(entry) {
 			for candidate := range selected {
@@ -3088,7 +3128,6 @@ func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entr
 				}
 			}
 		}
-		// Remove all resources of kinds with ExcludeAll=true.
 		for kind := range excludeAllKinds {
 			for candidate := range selected {
 				if candidate.kind == kind {
@@ -3154,7 +3193,56 @@ func appendSelections(out resourceSelections, kind ir.ResourceKind, names []stri
 	return out
 }
 
+func v4DecisionKind(kind string) ir.ResourceKind {
+	switch kind {
+	case "skill":
+		return ir.KindSkill
+	case "command":
+		return ir.KindCommand
+	case "subagent":
+		return ir.KindSubagent
+	case "hook":
+		return ir.KindHook
+	case "mcp":
+		return ir.KindMcpServer
+	case "collection":
+		return ir.KindCollection
+	default:
+		return ir.ResourceKind(-1)
+	}
+}
+
+func v4DecisionExclusionMatches(exclusion string, selected resourceSelection) bool {
+	if exclusion == "*" {
+		return true
+	}
+	parts := strings.Split(strings.TrimSuffix(exclusion, "/*"), "/")
+	if strings.HasSuffix(exclusion, "/*") {
+		if len(parts) == 1 {
+			return v4DecisionKind(parts[0]) == selected.kind
+		}
+		if len(parts) == 2 {
+			return v4DecisionKind(parts[1]) == selected.kind
+		}
+		return false
+	}
+	if len(parts) == 2 {
+		return v4DecisionKind(parts[0]) == selected.kind && parts[1] == selected.name
+	}
+	if len(parts) == 3 {
+		return parts[2] == selected.name && v4DecisionKind(parts[1]) == selected.kind
+	}
+	return false
+}
+
 func hasExplicitSelection(entry config.RegistryEntry) bool {
+	// A v4 decision stream is explicit only when it contains an include; an
+	// exclude-only group must not disable required/default dynamic selection.
+	for _, decision := range entry.V4Decisions {
+		if decision.Action == config.V4SelectionExplicit && decision.Request != nil {
+			return true
+		}
+	}
 	// A selector is explicit only when it has a non-empty Include list,
 	// not merely an Exclude. Exclude-only selectors should not disable autoSelectAll.
 	for _, kind := range config.AllKinds {
@@ -3473,7 +3561,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 
 // IsLocal reports whether the resolved artifact came from a local (non-git) registry.
 func (r ResolvedArtifact) IsLocal() bool {
-	return r.RegistryURL != "" && config.RegistryEntry{URL: r.RegistryURL, Ref: r.Ref}.IsLocal()
+	return r.RegistryURL != "" && config.RegistryEntry{URL: r.RegistryURL, Ref: r.Ref, V4Kind: r.V4Kind}.IsLocal()
 }
 
 // IsGlobal reports whether the artifact is installed into the machine-wide

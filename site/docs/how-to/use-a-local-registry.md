@@ -9,14 +9,17 @@ Use a directory on the local machine as a registry.
 
 ## 1. Add the local directory to a configuration layer
 
-Use `path` instead of `url` in `.agents/config.yaml`:
+Declare a `directory` source in `.agents/config.yaml`:
 
 ```yaml
-registries:
-  - path: ./agent-resources
-    skills:
-      include:
-        - local-review
+apiVersion: agent-marketplace/v4
+sources:
+  local:
+    directory: ./agent-resources
+resources:
+  local:
+    include:
+      - skill/local-review
 ```
 
 Relative paths resolve from the directory that contains `.agents/config.yaml` and cannot escape it.
@@ -40,8 +43,8 @@ Under **LOCAL REGISTRIES**, the local entry appears with its resolved path.
 ## Boundaries
 
 - User-wide configuration cannot contain repository-relative paths.
-- Plain local-directory registries are unlocked and unversioned.
-- Local paths are not checked against `allowed_registries`.
+- Directory sources are live, unlocked, and unversioned.
+- Directory sources are not checked against `allowed_registries`.
 
 ## Troubleshooting
 

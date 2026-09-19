@@ -37,7 +37,7 @@ REGISTRY_PATH=$PWD
 CONSUMER=$(mktemp -d)
 mkdir -p "$CONSUMER/.agents"
 cat > "$CONSUMER/.agents/config.yaml" << EOF
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - claude
   - factory
@@ -46,18 +46,19 @@ harnesses:
   - gemini
   - devin
   - codex
-registries:
-  - path: ${REGISTRY_PATH}
-    source_harness: claude
+sources:
+  checkout:
+    directory: ${REGISTRY_PATH}
+resources:
+  checkout:
+    all: true
     required: true
 EOF
 ```
 
 - List every harness your consumers target; a resource that compiles for Claude may emit a diagnostic for Codex or Windsurf.
-- Set `source_harness` explicitly so CI does not depend on layout autodetection.
+- A local-directory source is read live and produces no lock, which is what you want in CI.
 - `required: true` selects every resource of every kind, so nothing is silently skipped.
-
-A local-directory registry is read live and produces no lock, which is what you want in CI.
 
 ## 3. Sync strictly, then check
 

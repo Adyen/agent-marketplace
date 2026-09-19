@@ -68,25 +68,38 @@ skills    skill  frontend-design                   available
 
 The `--ref` option selects the `main` branch. The `--path` option limits discovery to the directory that contains this skill.
 
-## 3. Install the skill
+## 3. Select the skill in v4 configuration
 
-Install the skill in user scope:
+Edit the v4 user configuration so it declares the Git source and the resource request:
 
 ```bash
-agent-marketplace install frontend-design \
-  --from https://github.com/anthropics/skills.git \
-  --ref main \
-  --path skills/frontend-design \
-  --scope user
+cat > ~/.agents/config.yaml <<'EOF'
+apiVersion: agent-marketplace/v4
+harnesses:
+  - claude
+sources:
+  anthropic-skills:
+    git: https://github.com/anthropics/skills.git
+    ref: main
+    path: skills
+resources:
+  anthropic-skills:
+    include:
+      - skill/frontend-design
+EOF
 ```
 
-The command confirms the installation:
+Synchronize the generated Claude Code files:
+
+```bash
+agent-marketplace sync
+```
+
+Expected output:
 
 ```text
-Installed frontend-design user-wide
+Installed 1  Removed 0  Malformed 0  Errors 0
 ```
-
-User scope records the selection in `~/.agents/config.yaml` and synchronizes the generated Claude Code files. You do not need to run `agent-marketplace sync` separately.
 
 ## 4. Verify the installation
 

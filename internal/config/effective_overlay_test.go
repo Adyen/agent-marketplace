@@ -42,6 +42,38 @@ func TestLoadEffectiveFileOverlaysRetainRealPaths(t *testing.T) {
 	}
 }
 
+func TestLoadEffectiveV4RootUsesSuppliedOverlay(t *testing.T) {
+	dir := t.TempDir()
+	user := filepath.Join(dir, "user.yaml")
+	onDisk := []byte(`apiVersion: agent-marketplace/v4
+sources: {old: {git: https://example.test/old.git, ref: main}}
+resources: {old: [skill/old]}
+`)
+	overlay := []byte(`apiVersion: agent-marketplace/v4
+sources: {new: {git: https://example.test/new.git, ref: main}}
+resources: {new: [skill/new]}
+`)
+	if err := os.WriteFile(user, onDisk, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
+		GlobalPath:       user,
+		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
+		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
+		FileOverlays:     map[string][]byte{user: overlay},
+	})
+	if len(ec.Errors) != 0 {
+		t.Fatalf("errors = %v", ec.Errors)
+	}
+	if ec.User.Config == nil || len(ec.User.Config.Registries) != 1 || ec.User.Config.Registries[0].URL != "https://example.test/new.git" {
+		t.Fatalf("v4 overlay ignored: %#v", ec.User.Config)
+	}
+	if got, err := os.ReadFile(user); err != nil || string(got) != string(onDisk) {
+		t.Fatalf("overlay changed disk root: %q, %v", got, err)
+	}
+}
+
 func TestLoadEffectiveNeverOverlaysOrganization(t *testing.T) {
 	dir := t.TempDir()
 	org := filepath.Join(dir, "org.yaml")

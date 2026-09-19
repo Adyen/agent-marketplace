@@ -142,7 +142,7 @@ Devin is also a full conversion target: `convert --from devin`, `convert --to de
 
 ## Git dependency locks
 
-Remote Git registries resolve into generated locks owned by the organization, user, repository, or personal-local config layer. Commit `.agents/lock.yaml` with repository config and keep `.agents/lock.local.yaml` ignored. Normal sync retains compatible exact commits and reconciles writable stale locks; locked/check modes do not write. Plain directory registries remain live and unlocked. This Git foundation does not provide hosted Marketplace lock records or acquisition adapters.
+Remote Git registries resolve into generated locks owned by the organization, user, repository, or personal-local config layer. Commit `.agents/lock.yaml` with repository config and keep `.agents/lock.local.yaml` ignored. Normal sync retains compatible exact commits and reconciles writable stale locks; locked/check modes do not write. Plain directory registries remain live and unlocked. Lock v1 is Git-only; lock v2 additionally carries exact Marketplace endpoint/registry/resource/selection records written only by offline migration from verified cache evidence, backing a read-only adapter for explicit v4 Marketplace requests. Broader Marketplace lock acquisition, update, and edit flows remain unsupported.
 
 ## Daily Commands
 
@@ -166,7 +166,7 @@ agent-marketplace sync --check                 # Check lock and output drift wit
 agent-marketplace status                       # Show exact locks, HARNESS TARGETS, refs, cache, drift
 agent-marketplace update                       # Advance Git locks and synchronize
 agent-marketplace update --bump                # Rewrite eligible refs before advancing locks
-agent-marketplace migrate --harnesses factory  # Remediate structural config issues
+agent-marketplace migrate [--scope all|user|repo|local] [--dry-run]  # Migrate legacy configs to v4
 agent-marketplace convert --from claude --to factory --out ./out ./plugin
 agent-marketplace doctor                       # Harness/root diagnostics + Devin CLI detection
 agent-marketplace doctor --repair              # Preview Devin/Codex aggregate ownership recovery
@@ -328,12 +328,18 @@ warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not sel
 
 ## Config Remediation
 
-v1 configs (no `apiVersion`) are rejected by the loader. v2 is the canonical
-schema and v3 is accepted as a compatibility alias. `migrate` is reserved for
-structural remediation and does not rewrite valid v2 or v3 files:
+v1 configs (no `apiVersion`) are rejected by the loader. v4 is the canonical
+schema; v2 remains the legacy schema and v3 a compatibility alias. `migrate
+[--to v4] [--scope ...] [--dry-run]` upgrades representable writable v2/v3
+files to v4 transactionally. Exact legacy Marketplace pins migrate offline
+only when matching verified cache evidence exists, producing lock/v2 records;
+missing evidence refuses and leaves the v2/v3 config readable. Broader
+Marketplace lock acquisition, update, and editing remain unsupported.
+`--to v2 --harnesses` still selects the legacy structural-remediation flow:
 
 ```bash
-agent-marketplace migrate --harnesses factory,cursor
+agent-marketplace migrate --scope repo --dry-run
+agent-marketplace migrate --to v2 --harnesses factory,cursor
 agent-marketplace sync
 ```
 

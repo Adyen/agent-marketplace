@@ -324,6 +324,40 @@ func TestOrganizationIncludesRequireTrustedLexicalPaths(t *testing.T) {
 	}
 }
 
+func TestV4OrganizationIncludesRequireTrustedAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		mode os.FileMode
+		code string
+	}{
+		{name: "trusted", mode: 0o600},
+		{name: "writable", mode: 0o666, code: "organization.trust.include.writable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			root := filepath.Join(dir, "config.yaml")
+			fragment := filepath.Join(dir, "fragment.yaml")
+			writeIncludeConfig(t, fragment, "sources: {shared: {directory: /trusted-live-registry}}\nresources: {shared: {include: [skill/review]}}\n")
+			if err := os.Chmod(fragment, test.mode); err != nil {
+				t.Fatal(err)
+			}
+			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: fragment.yaml\n")
+
+			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(root))
+			if test.code != "" {
+				assertOrganizationTrustFailure(t, ec, test.code)
+				return
+			}
+			if len(ec.Errors) != 0 || !ec.Managed || ec.Organization.Config == nil {
+				t.Fatalf("trusted v4 include blocked: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
+			}
+			if got := ec.Organization.Config.Registries; len(got) != 1 || got[0].URL != "/trusted-live-registry" || len(got[0].Skills.Include) != 1 || got[0].Skills.Include[0] != "review" {
+				t.Fatalf("trusted v4 fragment policy not applied: %#v", got)
+			}
+		})
+	}
+}
+
 func TestOrganizationIncludeRetainsRootLexicalPath(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "authority", "config.yaml")

@@ -403,25 +403,7 @@ func appendGitSelector(selectors []lockfile.GitUpgradeSelector, incoming lockfil
 }
 
 func dependencyStateDir() (string, error) {
-	if root := os.Getenv("XDG_STATE_HOME"); root != "" {
-		if !filepath.IsAbs(root) {
-			return "", errors.New("XDG_STATE_HOME must be absolute")
-		}
-		canonical, err := canonicalizeFuturePath(root)
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(canonical, "agent-marketplace", "dependencies"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	canonical, err := filepath.EvalSymlinks(home)
-	if err == nil {
-		home = canonical
-	}
-	return filepath.Join(home, ".local", "state", "agent-marketplace", "dependencies"), nil
+	return dependencytxn.StateDir()
 }
 
 func (mode lockMode) readOnlyDependencies() bool {

@@ -13,29 +13,32 @@ Suppose the committed configuration is:
 
 ```yaml
 # .agents/config.yaml
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses: [claude]
-registries:
-  - url: https://github.com/example-org/agent-resources.git
+sources:
+  shared:
+    git: https://github.com/example-org/agent-resources.git
     ref: v1.4.0
-    skills:
-      include:
-        - code-review
-        - some-team-skill
+resources:
+  shared:
+    include:
+      - skill/my-team-skill
 ```
 
-Create `.agents/config.local.yaml` next to it. Repeat the registry `url` (and `ref`) so the CLI knows which provider your additions and exclusions apply to:
+Create `.agents/config.local.yaml` next to it. Repeat the source declaration so the CLI knows which provider your additions and exclusions apply to:
 
 ```yaml
 # .agents/config.local.yaml
-registries:
-  - url: https://github.com/example-org/agent-resources.git
+sources:
+  shared:
+    git: https://github.com/example-org/agent-resources.git
     ref: v1.4.0
-    skills:
-      include:
-        - my-personal-skill
-      exclude:
-        - some-team-skill
+resources:
+  shared:
+    include:
+      - skill/my-personal-skill
+    exclude:
+      - skill/some-team-skill
 ```
 
 The local layer merges above the committed one: `my-personal-skill` is added to the selection and `some-team-skill` is excluded for this checkout only. `harnesses` is not allowed in the local file (`apiVersion` is optional for normal loading, though required if you run `agent-marketplace migrate`). Only include resources that do not need to be shared.

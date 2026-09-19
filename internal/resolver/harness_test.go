@@ -13,6 +13,8 @@ package resolver
 //   - Local-enabled skills inherit harnesses from their source entry
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -189,6 +191,63 @@ func TestHarnessEmptySliceWhenPerEntryExplicitlyEmpty(t *testing.T) {
 
 	if len(got[0].Harnesses) != 0 {
 		t.Fatalf("expected per-entry empty harness override to disable harness targets, got %v", got[0].Harnesses)
+	}
+}
+
+func TestV4IncludedResourceExplicitEmptyHarnessesRemainOptedOut(t *testing.T) {
+	dir := t.TempDir()
+	fragment := filepath.Join(dir, "fragment.yaml")
+	if err := os.WriteFile(fragment, []byte(`sources:
+  shared: {git: https://example.test/agents.git, ref: main}
+resources:
+  shared: {include: [skill/skip-skill]}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(root, []byte(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
+include: fragment.yaml
+sources:
+  shared: {git: https://example.test/agents.git, ref: main}
+resources:
+  shared: {harnesses: []}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	v4, err := config.LoadV4ConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadRootConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedHarnesses := loaded.Registries[0].Harnesses
+	cfg := config.Merge(nil, loaded)
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ckHarness("https://example.test/agents.git", "main"): {
+			{Name: "skip-skill", Path: "/cache/skip-skill"},
+		},
+	}
+	got, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	group := v4.Groups["shared"]
+	if !group.HasHarnesses || group.Harnesses == nil {
+		t.Fatalf("explicit empty harnesses collapsed during include merge: %#v", group.Harnesses)
+	}
+	if len(group.Include) != 1 || group.Include[0].Name != "skip-skill" {
+		t.Fatalf("load did not retain selected control resource: %#v", group.Include)
+	}
+	if loadedHarnesses == nil || cfg.Registries[0].Harnesses == nil {
+		t.Fatalf("explicit empty harnesses collapsed while loading/merging runtime config: loaded=%#v merged=%#v", loadedHarnesses, cfg.Registries[0].Harnesses)
+	}
+	if len(got) != 0 {
+		t.Fatalf("opted-out resource inherited targets: %#v", got)
 	}
 }
 

@@ -176,7 +176,7 @@ func blockedCollectionForPin(pin config.MarketplaceResourcePin, blocked map[stri
 // resolving only their pins would otherwise bypass an exact revocation of a
 // nested collection revision.
 func (r *Resolver) enforceExpandedCollectionRevocations(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, rootPin config.MarketplaceResourcePin, rootRevision store.AssessedResourceRevision, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) error {
-	manifest, _, err := r.collectionManifest(ctx, client, cache, string(rootRevision.ContentDigest), mode)
+	manifest, _, err := r.collectionManifest(ctx, client, cache, string(rootRevision.ContentDigest), mode, rootPin)
 	if err != nil {
 		return fmt.Errorf("inspect collection manifest graph: %w", err)
 	}
@@ -197,7 +197,7 @@ func (r *Resolver) enforceExpandedCollectionRevocations(ctx context.Context, cli
 	return nil
 }
 
-func (r *Resolver) collectionManifest(ctx context.Context, client *Client, cache *Cache, digest string, mode resolver.MarketplaceResolveMode) (hccartifact.CollectionManifest, []byte, error) {
+func (r *Resolver) collectionManifest(ctx context.Context, client *Client, cache *Cache, digest string, mode resolver.MarketplaceResolveMode, pin config.MarketplaceResourcePin) (hccartifact.CollectionManifest, []byte, error) {
 	if err := ctx.Err(); err != nil {
 		return hccartifact.CollectionManifest{}, nil, err
 	}
@@ -215,6 +215,9 @@ func (r *Resolver) collectionManifest(ctx context.Context, client *Client, cache
 		}
 		if manifest.ContentDigest != digest {
 			return hccartifact.CollectionManifest{}, nil, fmt.Errorf("cached collection manifest digest mismatch: got %q, want %q", manifest.ContentDigest, digest)
+		}
+		if pin.LockCollectionManifestDigest != "" && manifest.ContentDigest != pin.LockCollectionManifestDigest {
+			return hccartifact.CollectionManifest{}, nil, fmt.Errorf("collection manifest digest mismatch: got %q, want %q", manifest.ContentDigest, pin.LockCollectionManifestDigest)
 		}
 		return manifest, payload, nil
 	}
@@ -259,7 +262,7 @@ func (r *Resolver) enforceNestedCollectionRevocations(ctx context.Context, clien
 		if err := enforceMarketplaceUse(nestedRevision, policy); err != nil {
 			return fmt.Errorf("nested collection %q revision: %w", member.Name, err)
 		}
-		nested, _, err := r.collectionManifest(ctx, client, cache, member.Revision, mode)
+		nested, _, err := r.collectionManifest(ctx, client, cache, member.Revision, mode, config.MarketplaceResourcePin{})
 		if err != nil {
 			return fmt.Errorf("nested collection %q manifest: %w", member.Name, err)
 		}
@@ -1046,6 +1049,12 @@ func validateResourceRevision(entry config.MarketplaceEntry, pin config.Marketpl
 	}
 	if rev.Revocation == nil && rev.ArchiveDigest == "" && pin.Kind != "collection" && acquisition != config.MarketplaceAcquisitionIndexOnly {
 		return fmt.Errorf("revision archive digest is required")
+	}
+	if pin.LockArchiveDigest != "" && string(rev.ArchiveDigest) != pin.LockArchiveDigest {
+		return fmt.Errorf("locked archive digest mismatch: metadata %q, lock %q", rev.ArchiveDigest, pin.LockArchiveDigest)
+	}
+	if pin.LockSourcePath != "" && rev.Occurrence.SourcePath != pin.LockSourcePath {
+		return fmt.Errorf("locked source path mismatch: metadata %q, lock %q", rev.Occurrence.SourcePath, pin.LockSourcePath)
 	}
 	return nil
 }

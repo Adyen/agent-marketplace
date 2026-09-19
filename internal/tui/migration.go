@@ -1,8 +1,8 @@
 package tui
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,11 +12,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 )
 
 type migrationConfig struct {
 	label string
 	path  string
+	scope config.V4MigrationScope
 }
 
 type migrationPrompt struct {
@@ -33,55 +35,37 @@ func (p migrationPrompt) hasConfigs() bool {
 }
 
 func pendingMigrationFor(repoRoot, homeDir string) migrationPrompt {
-	candidates := []migrationConfig{
-		{label: "Project", path: config.ProjectConfigPath(repoRoot)},
+	paths := config.MigratePaths{
+		Repo: config.ProjectConfigPath(repoRoot),
 	}
 	if homeDir != "" {
-		candidates = append(candidates, migrationConfig{
-			label: "Global",
-			path:  filepath.Join(homeDir, ".agents", "config.yaml"),
-		})
+		paths.User = filepath.Join(homeDir, ".agents", "config.yaml")
 	}
-	localDir := config.FindLocalConfigDir()
-	if localDir != "" && localDir != repoRoot {
-		candidates = append(candidates, migrationConfig{
-			label: "Local",
-			path:  config.LocalConfigPath(localDir),
-		})
+	paths.Local = config.LocalConfigPath(config.FindLocalConfigDir())
+	candidates, err := config.FindV4MigrationCandidates(paths)
+	if err != nil {
+		return migrationPrompt{}
 	}
-
-	var configs []migrationConfig
-	seen := make(map[string]struct{}, len(candidates))
+	labels := map[config.V4MigrationScope]string{
+		config.V4MigrationUser:  "Global",
+		config.V4MigrationRepo:  "Project",
+		config.V4MigrationLocal: "Local",
+	}
+	configs := make([]migrationConfig, 0, len(candidates))
 	for _, candidate := range candidates {
-		path := filepath.Clean(candidate.path)
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		if !configPathNeedsMigration(path) {
-			continue
-		}
 		configs = append(configs, migrationConfig{
-			label: candidate.label,
-			path:  path,
+			label: labels[candidate.Scope],
+			path:  candidate.Path,
+			scope: candidate.Scope,
 		})
 	}
 	return migrationPrompt{configs: configs}
 }
 
-// configPathNeedsMigration is retained for compatibility with the migration
-// helpers, but schema versions are no longer a reason for the TUI to prompt.
-// Structural remediation remains available through the explicit migrate
-// command.
-func configPathNeedsMigration(path string) bool {
-	_ = path
-	return false
-}
-
 func (m Model) runMigrationCmd() tea.Cmd {
 	return func() tea.Msg {
-		paths := migrationPathsForPrompt(m.migrationPrompt, m.repoRoot, m.homeDir)
-		result, err := config.MigrateConfigFiles(paths, config.DefaultHarnesses())
+		paths := migrationPathsForPrompt(m.migrationPrompt)
+		result, err := config.MigrateConfigFilesToV4WithEvidence(context.Background(), paths, config.V4MigrationAll, false, marketplace.DefaultCache())
 		count := 0
 		if result != nil {
 			if result.UserMigrated {
@@ -98,41 +82,19 @@ func (m Model) runMigrationCmd() tea.Cmd {
 	}
 }
 
-func migrationPathsForPrompt(prompt migrationPrompt, repoRoot, homeDir string) config.MigratePaths {
-	userPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	repoPath := config.ProjectConfigPath(repoRoot)
-	localPath := config.LocalConfigPath(config.FindLocalConfigDir())
-
+func migrationPathsForPrompt(prompt migrationPrompt) config.MigratePaths {
 	paths := config.MigratePaths{}
 	for _, cfg := range prompt.configs {
-		switch cfg.path {
-		case userPath:
+		switch cfg.scope {
+		case config.V4MigrationUser:
 			paths.User = cfg.path
-		case repoPath:
+		case config.V4MigrationRepo:
 			paths.Repo = cfg.path
-		case localPath:
+		case config.V4MigrationLocal:
 			paths.Local = cfg.path
 		}
 	}
-
-	// The migrate command may need to create a new user config (for example,
-	// when a repo v2 config supplies the target harness set). Only include the
-	// user path when it is missing, v2, or v3 so migration does not choke on a
-	// v1/empty/unknown file that was not shown in the modal.
-	if paths.User == "" && homeDir != "" && migrationUserPathSafe(userPath) {
-		paths.User = userPath
-	}
-
 	return paths
-}
-
-func migrationUserPathSafe(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return os.IsNotExist(err)
-	}
-	v := config.PeekAPIVersion(data)
-	return v == config.APIVersionV2 || v == config.APIVersionV3
 }
 
 var styleMigrationModal = lipgloss.NewStyle().
@@ -146,7 +108,7 @@ func renderMigrationModal(m Model) string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"}).
-		Render("Config remediation required")
+		Render("Configuration migration required")
 
 	keyStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -155,30 +117,22 @@ func renderMigrationModal(m Model) string {
 	dim := lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"})
 
-	defaultHarnesses := config.DefaultHarnesses()
-	harnessesFlag := strings.Join(defaultHarnesses, ",")
-	harnessesYAML := ""
-	for _, h := range defaultHarnesses {
-		harnessesYAML += fmt.Sprintf("  - %s\n", h)
-	}
-
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
-	b.WriteString("This config has structural issues that must be fixed.\n")
-	b.WriteString("Valid agent-marketplace/v3 files are accepted as a compatibility alias.\n\n")
+	b.WriteString("This configuration can be migrated to agent-marketplace/v4.\n")
+	b.WriteString("Existing v2 and v3 configurations remain readable if you decline.\n")
+	b.WriteString("The migrated root declares:\n```yaml\napiVersion: agent-marketplace/v4\n```\n\n")
 	b.WriteString("Runs the in-process equivalent of:\n")
-	fmt.Fprintf(&b, "```sh\nagent-marketplace migrate --harnesses %s\n```\n\n", harnessesFlag)
-	b.WriteString("Adds or updates these top-level lines before your existing config:\n")
-	fmt.Fprintf(&b, "```yaml\napiVersion: agent-marketplace/v2\nharnesses:\n%s```\n\n", harnessesYAML)
-	b.WriteString("Existing registries, selected skills, excludes, and comments are preserved.\n\n")
-	b.WriteString("Detected pending remediation in:\n")
+	b.WriteString("```sh\nagent-marketplace migrate\n```\n\n")
+	b.WriteString("The migration preserves source selections and layer policies, but regenerates canonical YAML.\n\n")
+	b.WriteString("Detected legacy configuration in:\n")
 	for _, cfg := range m.migrationPrompt.configs {
 		fmt.Fprintf(&b, "  • %s: %s\n", cfg.label, cfg.path)
 	}
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "%s", dim.Render(fmt.Sprintf("Running remediation uses the same default as `agent-marketplace migrate`: harnesses: %v.", defaultHarnesses)))
+	b.WriteString(dim.Render("Migration is transactional; unsupported or lossy inputs are left unchanged."))
 	b.WriteString("\n\n")
-	b.WriteString("  " + keyStyle.Render("[enter]") + " or " + keyStyle.Render("[m]") + "  run remediation\n")
+	b.WriteString("  " + keyStyle.Render("[enter]") + " or " + keyStyle.Render("[m]") + "  migrate to v4\n")
 	b.WriteString("  " + keyStyle.Render("[l]") + " or " + keyStyle.Render("[esc]") + "  leave config unchanged")
 
 	return styleMigrationModal.Render(b.String())

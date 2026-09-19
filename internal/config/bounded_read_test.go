@@ -77,6 +77,82 @@ func TestConfigLoadersRejectOversizedRootsAndIncludes(t *testing.T) {
 	}
 }
 
+func TestV4ConfigConsumersEnforceBoundedRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	valid := "apiVersion: agent-marketplace/v4\nsources: {}\nresources: {}\n"
+	root := filepath.Join(dir, "config.yaml")
+	writeBoundedConfigTestFile(t, root, valid)
+	rootLink := filepath.Join(dir, "config-link.yaml")
+	if err := os.Symlink(root, rootLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadV4ConfigFromPath(rootLink); err != nil {
+		t.Fatalf("regular root symlink: %v", err)
+	}
+
+	oversizedRoot := filepath.Join(dir, "oversized-root.yaml")
+	writeBoundedConfigTestFile(t, oversizedRoot, valid+strings.Repeat("#", int(MaxEffectiveConfigSize)))
+	for name, load := range map[string]func(string) error{
+		"v4 loader":      func(path string) error { _, err := LoadV4ConfigFromPath(path); return err },
+		"unified loader": func(path string) error { _, err := LoadConfigFromPath(path); return err },
+	} {
+		t.Run(name+" oversized root", func(t *testing.T) {
+			if err := load(oversizedRoot); !errors.Is(err, ErrConfigTooLarge) {
+				t.Fatalf("error = %v, want ErrConfigTooLarge", err)
+			}
+		})
+	}
+
+	include := filepath.Join(dir, "fragment.yaml")
+	writeBoundedConfigTestFile(t, root, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\n")
+	writeBoundedConfigTestFile(t, include, strings.Repeat("#", int(MaxEffectiveConfigSize)+1))
+	if _, err := LoadV4ConfigFromPath(root); !errors.Is(err, ErrConfigTooLarge) {
+		t.Fatalf("oversized include error = %v, want ErrConfigTooLarge", err)
+	}
+
+	directory := filepath.Join(dir, "directory")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{"root": directory, "include": root} {
+		t.Run("non-regular "+name, func(t *testing.T) {
+			if name == "include" {
+				writeBoundedConfigTestFile(t, root, "apiVersion: agent-marketplace/v4\ninclude: directory\n")
+			}
+			if _, err := LoadV4ConfigFromPath(path); !errors.Is(err, ErrConfigNotRegular) {
+				t.Fatalf("error = %v, want ErrConfigNotRegular", err)
+			}
+		})
+	}
+
+	legacy := filepath.Join(dir, "legacy.yaml")
+	writeBoundedConfigTestFile(t, legacy, "apiVersion: agent-marketplace/v2\n"+strings.Repeat("#", int(MaxEffectiveConfigSize)))
+	if _, err := FindV4MigrationCandidates(MigratePaths{User: legacy}); !errors.Is(err, ErrConfigTooLarge) {
+		t.Fatalf("migration candidate error = %v, want ErrConfigTooLarge", err)
+	}
+}
+
+func TestV4ConfigLoaderFIFOChild(t *testing.T) {
+	if path := os.Getenv("V4_CONFIG_FIFO_PATH"); path != "" {
+		_, err := LoadV4ConfigFromPath(path)
+		if !errors.Is(err, ErrConfigNotRegular) {
+			t.Fatalf("FIFO error = %v, want ErrConfigNotRegular", err)
+		}
+		return
+	}
+	fifo := filepath.Join(t.TempDir(), "config.fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestV4ConfigLoaderFIFOChild$", "-test.v")
+	cmd.Env = append(os.Environ(), "V4_CONFIG_FIFO_PATH="+fifo)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("v4 FIFO child: %v\n%s", err, output)
+	}
+}
+
 func TestConfigFileOverlaysRejectOversizedInclude(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "config.yaml")

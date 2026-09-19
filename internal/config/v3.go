@@ -269,6 +269,10 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 
 		key := keyNode.Value
 		if !allowed[key] {
+			if key == "sources" || key == "resources" {
+				errs = append(errs, fmt.Errorf("line %d: v4 installation field %q is not valid in %s configuration; add apiVersion: agent-marketplace/v4 and load it with the v4 reader", keyNode.Line, key, kind.name()))
+				continue
+			}
 			if key == "harnesses" && (kind == repoLayer || kind == localLayer) {
 				errs = append(errs, fmt.Errorf("line %d: %s configuration cannot declare top-level harnesses; the target harness set is machine-wide and must live in the user-personal config", keyNode.Line, kind.name()))
 			} else {

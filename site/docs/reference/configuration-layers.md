@@ -2,7 +2,7 @@
 
 ## Layer order
 
-Layers merge from lowest to highest precedence. A higher layer overrides a lower layer where the rules allow it.
+Layers merge from lowest to highest precedence. A higher layer overrides a lower layer where the rules allow it. Every root uses the v4 source/resource schema.
 
 | Order | Layer | Configuration file | Generated lock | Purpose |
 |---|---|---|---|---|
@@ -21,19 +21,21 @@ The effective target list is resolved in project-first order:
 2. User personal `harnesses`
 3. Organization `harnesses`
 
-A registry entry's own `harnesses` list intersects with the effective list; it cannot add a target that was not already selected.
+A resource group's `harnesses` list intersects with the effective list; it cannot add a target that was not already selected.
 
 ### Allowlists
 
-- `allowed_registries` can be declared by organization, user, or repository layers. `LocalConfig` cannot declare an allowlist.
-- `allowed_marketplaces` can be declared by organization, user, or repository layers. It stops at repository; `LocalConfig` cannot declare an allowlist.
+- `allowed_registries` can be declared by organization, user, or repository layers. The personal-local layer cannot declare an allowlist.
+- `allowed_marketplaces` can be declared by organization, user, or repository layers. The personal-local layer cannot declare an allowlist.
 - Lower layers cannot relax an allowlist selected by a higher layer.
 
-### Selectors
+### Source and resource groups
 
-- Top-level `skills`, `commands`, `subagents`, `hooks`, `mcp`, and `collections` provide defaults for registry entries.
-- A registry entry's own selector replaces the inherited default.
-- `exclude_all` remains true once set by any contributor.
+- A v4 root declares named `sources` and `resources` maps.
+- Every resource group key must identify a source in the same root or include tree.
+- A resource group's `include`, `exclude`, `tags`, `all`, `required`, and `harnesses` fields are composed in include order.
+- An explicit empty `tags: []` or `harnesses: []` is an override, not an omitted field.
+- `required: true` protects selected resources but does not select resources by itself.
 
 ### Telemetry
 
@@ -41,11 +43,12 @@ The `telemetry` block is eligible in the organization and user layers, including
 
 ### `include`
 
-Every layer supports local-file `include`. Included fragments merge below the file that includes them. The same file contributes only at its first position. Glob patterns and remote URLs are not supported.
+Every layer supports local-file `include`. Included fragments merge below the file that includes them. Shared fragments expand once per include branch; only an ancestor repeated on the current branch is a cycle. Glob patterns, remote URLs, YAML aliases, and YAML merge keys are not supported.
 
 ## Layer-specific notes
 
-- `apiVersion` is required for organization, user, and repository roots. It may be omitted in local roots and included fragments.
+- Every v4 root, including `config.local.yaml`, declares `apiVersion: agent-marketplace/v4`.
+- An included fragment may omit `apiVersion` and inherits v4 from its root.
 - Organization includes require root-owned, non-symlink files and directories with no group or other write permission.
 - The organization lock is intentionally absent in some managed setups; an absent lock leaves that layer mutable, while a present lock is exact and fail-closed.
 

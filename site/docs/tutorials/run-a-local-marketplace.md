@@ -76,7 +76,7 @@ Before installing from the Marketplace, create a throwaway `.agents/config.yaml`
 ```bash
 mkdir -p .agents
 cat > .agents/config.yaml <<'EOF'
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - claude
 EOF

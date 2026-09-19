@@ -49,6 +49,31 @@ func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
 	}
 }
 
+func TestInitConfigSupportsImmediateUserInstall(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	registryURL := env.CreateBareRepo("init-install", SkillsOnly(
+		Skill{Name: "review", Description: "Review changes"},
+	))
+
+	initResult := env.RunAM("init", "--harnesses", "factory")
+	if initResult.ExitCode != 0 {
+		t.Fatalf("init failed (exit %d): %s", initResult.ExitCode, initResult.Combined)
+	}
+
+	installResult := env.RunAM("install", "review", "--from", registryURL, "--scope", "user")
+	if installResult.ExitCode != 0 {
+		t.Fatalf("install after init failed (exit %d): %s", installResult.ExitCode, installResult.Combined)
+	}
+	if !env.CheckFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v2") ||
+		!env.CheckFileContains("/root/.agents/config.yaml", "review") {
+		t.Fatalf("install did not update initialized user config:\n%s", env.ReadFile("/root/.agents/config.yaml"))
+	}
+	if !env.CheckFileExists("/root/.factory/skills/review/SKILL.md") {
+		t.Fatal("install did not materialize the selected skill")
+	}
+}
+
 func TestInitRequiresHarnessesInNonInteractiveMode(t *testing.T) {
 	env := newEnv(t)
 

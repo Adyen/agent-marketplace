@@ -4,7 +4,11 @@ This document describes how `agent-marketplace` decides which resources are enab
 
 ## Schema requirement
 
-The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical for organization, user, and committed repository configs. `agent-marketplace/v3` remains accepted as a compatibility alias. Generated `config.local.yaml` roots use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. Included fragments may also omit `apiVersion`, but regular roots without it are rejected. `agent-marketplace migrate` performs structural remediation without rewriting otherwise-valid v2 or v3 files; new or remediated output uses canonical v2.
+Legacy configuration uses the **v2 schema** (`apiVersion: agent-marketplace/v2`); `agent-marketplace/v3` remains accepted as a compatibility alias. Generated legacy `config.local.yaml` roots may omit `apiVersion`; if present, it must be v2 or v3. Legacy included fragments may also omit `apiVersion`, but regular legacy roots without it are rejected.
+
+V4 is a separate, explicit source/resource schema. A v4 root must declare `apiVersion: agent-marketplace/v4`; v4 included fragments may omit the version, but an explicit v2/v3 version or legacy installation key is rejected. Normal CLI readers recognize v4 and adapt each layer into the runtime requirement model. V4 sources and resource groups are composed within their root/include tree before the normal layer order is applied; v4 does not make legacy `registries`, `skills`, or `marketplaces` keys valid.
+
+`agent-marketplace migrate` targets v4 by default; `--to v4` remains an accepted compatibility spelling. Proactive CLI and TUI migration is delayed until resource editors support v4, so startup leaves writable v2/v3 roots (and unversioned local legacy roots) unchanged and continues using the legacy reader. Use `agent-marketplace migrate --to v2` only for the legacy structural-remediation flow.
 
 ## Config includes
 
@@ -23,7 +27,7 @@ include:
   - profiles/payments-team.yaml
 ```
 
-Relative paths resolve from the directory containing the file that declares them; absolute paths are accepted. Includes are recursive. Files are identified by canonical path, so the same file reached more than once, including through a symlink or normalized relative path, contributes only at its first position. Glob patterns and remote URLs are not supported.
+Relative paths resolve from the directory containing the file that declares them; absolute paths are accepted. Includes are recursive. Legacy include trees are identified by canonical path, so the same file reached more than once, including through a symlink or normalized relative path, contributes only at its first position. V4 include trees retain branch-local ancestry instead: shared fragments expand once per include branch, and only an ancestor repeated on the current branch is a cycle. Glob patterns and remote URLs are not supported.
 
 Organization includes have an additional trust requirement, whether or not Git registries or an organization lock are present. External relative and absolute paths remain supported, but every included file must be a root-owned regular file with no group or other write permission. Every lexical ancestor directory through the filesystem root must also be root-owned, non-symlink, and not group- or other-writable. Validation precedes symlink resolution and deduplication; a symlink or writable directory before `..` is not bypassed by path normalization. Unsafe fragments fail the organization layer with an `organization.trust.*` diagnostic. System symlink aliases such as macOS `/etc`, `/var`, and `/tmp` are not exceptions for included paths; use trusted physical paths such as `/private/etc` instead. User, repository, and personal-local include behavior is unchanged.
 
@@ -35,7 +39,21 @@ The CLI reads included content when calculating effective configuration, but con
 
 When `url` is omitted, a registry entry uses `path` as its location alias (for example, `- path: /opt/agent-skills`). With `url` present, `path` names a subdirectory. Config editors and removals preserve this alias-versus-subdirectory interpretation; use the authored URL/path spelling when targeting an entry. Resolver matching is separate: equivalent registry-path spellings such as `./foo/`, `foo/.`, repeated or mixed separators, and the root aliases `.`/empty are canonicalized to the same path identity; this does not rewrite the authored config.
 
+## Explicit v4 migration safety
 
+`agent-marketplace migrate` (or `agent-marketplace migrate --to v4`) is a format-only conversion, not a selection upgrade. Without `--scope`, it validates the writable user, repository, and repository-personal roots as one transaction; `--scope user|repo|local` limits validation and publication to that layer. Organization configuration is never read or written by this conversion. Git/directory-only conversion leaves generated locks unchanged; exact Marketplace pin migration publishes each migrated config and its owning layer lock (created or upgraded to `agent-marketplace-lock/v2`) together in one journaled dependency transaction. `--dry-run` performs the same representability and v4-reader checks and writes neither config nor lock. Until resource editors support v4, new user configs created by `agent-marketplace init` use the editable v2 schema.
+
+Conversion is fail-closed. The migrator refuses a legacy include tree because flattening it or editing its fragments would change provenance, refuses legacy hosted Marketplace selections when their pin provenance cannot be proven from verified local cache evidence, refuses collection-derived aliases that cannot be represented without creating new direct intent, and refuses any source, selector, revision, or policy that cannot be represented without semantic loss. A refusal or validation failure publishes none of the selected files; the legacy configuration remains usable unchanged.
+
+V4 roots are read-compatible with normal CLI discovery, status, and synchronization for Git and directory sources. Source kinds are explicit: use `git`, `directory`, or `marketplace`; a live directory is not inferred from a `.git` suffix. Directory sources resolve relative to the declaring config file, remain live and unlocked, and do not accept Git-only `ref` or `path` fields. Marketplace sources are runtime-resolvable only for explicit requests backed by a matching normalized `agent-marketplace-lock/v2` record in the owning layer's lock; a missing lock, or any endpoint, scope, binding, revision, or selection mismatch, fails closed (`v4.marketplace-lock-required` / `v4.marketplace-lock-mismatch`). Dynamic selectors and v4 Marketplace editing remain unsupported. Legacy configuration writers return `v4.writer-opt-in` instead of rewriting v4 roots.
+
+When an effective configuration is reloaded during a staged edit, v4 roots and includes are read from supplied in-memory overlays while retaining their canonical paths and provenance. The overlay is not written to disk.
+
+## V4 selection decision order
+
+Within a v4 resource group, decisions retain include-tree order: included fragments contribute first and the containing file contributes last. The runtime considers dynamic `all`/tag candidates, then applies the ordered stream. An exclusion suppresses matching selections except required resources; a later explicit include can re-enable the same resource.
+
+`required: true` protects selections but is not itself a selection expression, so a required-only group selects zero catalog resources. Explicit `tags: []` disables inherited tags, and `harnesses: []` selects no targets; both remain distinct from omitted fields.
 
 ## Layer order
 
@@ -48,7 +66,7 @@ Effective merge order (low → high):
 
 Higher layers override lower layers where applicable.
 
-Each layer's remote Git requirements are resolved only against that layer's generated lock: organization `/etc/agent-marketplace/lock.yaml`, user `~/.agents/lock.yaml`, repository `.agents/lock.yaml`, and personal-local `.agents/lock.local.yaml`. Lock composition does not change selection precedence: exact layer catalogs are composed before the normal merge and selection rules below. Plain local-directory registries remain live and unlocked. Hosted Marketplace lock schema and adapters are outside this Git-only foundation.
+Each layer's remote Git requirements are resolved only against that layer's generated lock: organization `/etc/agent-marketplace/lock.yaml`, user `~/.agents/lock.yaml`, repository `.agents/lock.yaml`, and personal-local `.agents/lock.local.yaml`. Lock composition does not change selection precedence: exact layer catalogs are composed before the normal merge and selection rules below. Plain local-directory registries remain live and unlocked. Lock v2 additionally records exact Marketplace endpoint/registry/resource/selection state produced by explicit v4 migration and backs the read-only v4 Marketplace runtime adapter; hosted Marketplace lock acquisition, update, rebind, and dynamic-selector integration remain outside this foundation.
 
 Top-level target harnesses follow project-first precedence: `RepoCommitted`
 then `UserPersonal`, then `OrgMandatory`. A registry entry's `harnesses:`
