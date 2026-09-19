@@ -15,14 +15,13 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-type ManagedSkillLinkCleanupPlan struct {
-	actions []managedSkillLinkAction
+type ManagedLinkCleanupPlan struct {
+	actions []managedLinkCleanupAction
 }
 
-type managedSkillLinkAction struct {
+type managedLinkCleanupAction struct {
 	candidate  managedLinkCandidate
 	key        outputKey
 	repoRoot   string
@@ -31,7 +30,7 @@ type managedSkillLinkAction struct {
 	path       string
 }
 
-func PrepareManagedSkillLinkRemoval(ctx context.Context, repoRoot string, target resolver.ResolvedArtifact, remaining []resolver.ResolvedArtifact, modes config.MaterializationModes) (*ManagedSkillLinkCleanupPlan, error) {
+func PrepareManagedLinkRemoval(ctx context.Context, repoRoot string, target resolver.ResolvedArtifact, remaining []resolver.ResolvedArtifact, modes config.MaterializationModes) (*ManagedLinkCleanupPlan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -40,14 +39,14 @@ func PrepareManagedSkillLinkRemoval(ctx context.Context, repoRoot string, target
 	if err != nil {
 		return nil, err
 	}
-	if target.Kind != ir.KindSkill || target.Resource == nil || target.Resource.Kind() != ir.KindSkill || target.Required || target.Unresolved || target.IsMarketplace || len(target.Harnesses) == 0 {
-		return nil, fmt.Errorf("%w: cleanup requires a resolved non-required Git skill", ErrOwnedCleanupUnsupported)
+	if target.Resource == nil || target.Resource.Kind() != target.Kind || target.Required || target.Unresolved || target.IsMarketplace || len(target.Harnesses) == 0 {
+		return nil, fmt.Errorf("%w: cleanup requires a resolved non-required typed Git resource", ErrOwnedCleanupUnsupported)
 	}
 	targets := make(map[hcc.Target]bool)
 	machine := target.Source.IsMachineScope()
 	for _, name := range target.Harnesses {
 		if modes.For(string(name), machine) != config.MaterializationModeSymlink {
-			return nil, fmt.Errorf("%w: skill cleanup requires symlink mode", ErrOwnedCleanupUnsupported)
+			return nil, fmt.Errorf("%w: resource cleanup requires symlink mode", ErrOwnedCleanupUnsupported)
 		}
 		targets[name] = true
 	}
@@ -63,7 +62,7 @@ func PrepareManagedSkillLinkRemoval(ctx context.Context, repoRoot string, target
 	for key := range after.allOutputs {
 		for _, group := range orderedSkillLinkGroups(after.skillLinks[key]) {
 			for _, link := range group.links {
-				scope, rel, path, err := managedSkillLinkLocation(key, repoRoot, group.installDirRel, link.name)
+				scope, rel, path, err := managedResourceLinkLocation(key, repoRoot, group.installDirRel, link.name)
 				if err != nil {
 					return nil, err
 				}
@@ -106,23 +105,23 @@ func PrepareManagedSkillLinkRemoval(ctx context.Context, repoRoot string, target
 			}
 		}
 	}
-	byPath := make(map[string]managedSkillLinkAction)
+	byPath := make(map[string]managedLinkCleanupAction)
 	for name := range targets {
 		key := outputKey{target: name, machineScope: machine}
 		if work := selected.byTarget[key]; work != nil && len(work.artifacts) > 0 {
-			return nil, fmt.Errorf("%w: skill has shared or additional output for %s", ErrOwnedCleanupUnsupported, name)
+			return nil, fmt.Errorf("%w: resource has shared or additional output for %s", ErrOwnedCleanupUnsupported, name)
 		}
 		info, ok := harness.TargetInfoFor(name)
-		if !ok || info.UsesFileCopy(ir.KindSkill) {
-			return nil, fmt.Errorf("%w: target does not use skill symlinks", ErrOwnedCleanupUnsupported)
+		if !ok || info.UsesFileCopy(target.Kind) {
+			return nil, fmt.Errorf("%w: target does not use resource symlinks", ErrOwnedCleanupUnsupported)
 		}
 		covered := false
 		for _, group := range orderedSkillLinkGroups(selected.skillLinks[key]) {
 			for _, link := range group.links {
-				if link.kind != ir.KindSkill {
-					return nil, fmt.Errorf("%w: non-skill output in cleanup", ErrOwnedCleanupUnsupported)
+				if link.kind != target.Kind {
+					return nil, fmt.Errorf("%w: unexpected resource kind in cleanup", ErrOwnedCleanupUnsupported)
 				}
-				scope, rel, path, err := managedSkillLinkLocation(key, repoRoot, group.installDirRel, link.name)
+				scope, rel, path, err := managedResourceLinkLocation(key, repoRoot, group.installDirRel, link.name)
 				if err != nil {
 					return nil, err
 				}
@@ -137,26 +136,26 @@ func PrepareManagedSkillLinkRemoval(ctx context.Context, repoRoot string, target
 							return nil, err
 						}
 						if inside || contains {
-							return nil, cleanupLinkConflict("skill output is still selected", nil)
+							return nil, cleanupLinkConflict("resource output is still selected", nil)
 						}
 					}
 				}
 				if prior, exists := byPath[path]; exists && prior.candidate.target != link.target {
-					return nil, fmt.Errorf("%w: targets disagree on a shared skill link", ErrOwnedCleanupUnsupported)
+					return nil, fmt.Errorf("%w: targets disagree on a shared resource link", ErrOwnedCleanupUnsupported)
 				}
 				candidate, err := snapshotManagedLink(scope, rel, link.target)
 				if err != nil {
 					return nil, err
 				}
-				byPath[path] = managedSkillLinkAction{candidate: candidate, key: key, repoRoot: repoRoot, installRel: group.installDirRel, name: link.name, path: path}
+				byPath[path] = managedLinkCleanupAction{candidate: candidate, key: key, repoRoot: repoRoot, installRel: group.installDirRel, name: link.name, path: path}
 				covered = true
 			}
 		}
 		if !covered {
-			return nil, fmt.Errorf("%w: target %s has no complete skill-link output", ErrOwnedCleanupUnsupported, name)
+			return nil, fmt.Errorf("%w: target %s has no complete resource-link output", ErrOwnedCleanupUnsupported, name)
 		}
 	}
-	plan := &ManagedSkillLinkCleanupPlan{}
+	plan := &ManagedLinkCleanupPlan{}
 	for _, action := range byPath {
 		plan.actions = append(plan.actions, action)
 	}
@@ -214,9 +213,9 @@ func managedCleanupOutputRoot(key outputKey, repoRoot string) (string, error) {
 	return repoRoot, nil
 }
 
-func managedSkillLinkLocation(key outputKey, repoRoot, installRel, name string) (string, string, string, error) {
+func managedResourceLinkLocation(key outputKey, repoRoot, installRel, name string) (string, string, string, error) {
 	if name == "." || name == ".." || filepath.Base(name) != name {
-		return "", "", "", fmt.Errorf("%w: invalid skill link name", ErrOwnedCleanupUnsupported)
+		return "", "", "", fmt.Errorf("%w: invalid resource link name", ErrOwnedCleanupUnsupported)
 	}
 	destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
 	if err != nil {
@@ -239,12 +238,12 @@ func managedSkillLinkLocation(key outputKey, repoRoot, installRel, name string) 
 			continue
 		}
 		if root != "" {
-			return "", "", "", fmt.Errorf("%w: ambiguous skill destination", ErrOwnedCleanupUnsupported)
+			return "", "", "", fmt.Errorf("%w: ambiguous resource destination", ErrOwnedCleanupUnsupported)
 		}
 		root, routed = destination.Root, candidate
 	}
 	if root == "" {
-		return "", "", "", fmt.Errorf("%w: no skill destination", ErrOwnedCleanupUnsupported)
+		return "", "", "", fmt.Errorf("%w: no resource destination", ErrOwnedCleanupUnsupported)
 	}
 	return managedCleanupLocation(repoRoot, key.machineScope, root, routed)
 }
@@ -293,25 +292,25 @@ func managedCleanupLocation(repoRoot string, machine bool, root, rel string) (st
 	return base, rel, filepath.Join(canonical, filepath.FromSlash(rel)), nil
 }
 
-func (a managedSkillLinkAction) open() (*os.Root, error) {
-	_, _, path, err := managedSkillLinkLocation(a.key, a.repoRoot, a.installRel, a.name)
+func (a managedLinkCleanupAction) open() (*os.Root, error) {
+	_, _, path, err := managedResourceLinkLocation(a.key, a.repoRoot, a.installRel, a.name)
 	if err != nil {
 		return nil, err
 	}
 	if path != a.path {
-		return nil, cleanupLinkConflict("declared skill destination changed", nil)
+		return nil, cleanupLinkConflict("declared resource destination changed", nil)
 	}
 	return a.candidate.open()
 }
 
-func (p *ManagedSkillLinkCleanupPlan) Diagnostics() []diag.Diagnostic { return nil }
+func (p *ManagedLinkCleanupPlan) Diagnostics() []diag.Diagnostic { return nil }
 
-func (p *ManagedSkillLinkCleanupPlan) CommitScope(ctx context.Context, publish func() (dependencytxn.Result, error)) (result dependencytxn.Result, retErr error) {
+func (p *ManagedLinkCleanupPlan) CommitScope(ctx context.Context, publish func() (dependencytxn.Result, error)) (result dependencytxn.Result, retErr error) {
 	if p == nil || len(p.actions) == 0 || publish == nil {
-		return result, fmt.Errorf("%w: empty skill cleanup plan", ErrOwnedCleanupUnsupported)
+		return result, fmt.Errorf("%w: empty resource cleanup plan", ErrOwnedCleanupUnsupported)
 	}
-	slog.Debug("managed skill link cleanup started", "links", len(p.actions))
-	defer func() { slog.Debug("managed skill link cleanup finished", "links", len(p.actions), "error", retErr) }()
+	slog.Debug("managed resource link cleanup started", "links", len(p.actions))
+	defer func() { slog.Debug("managed resource link cleanup finished", "links", len(p.actions), "error", retErr) }()
 	for _, action := range p.actions {
 		if err := ctx.Err(); err != nil {
 			return result, err

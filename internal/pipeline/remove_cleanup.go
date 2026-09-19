@@ -25,8 +25,12 @@ type ownedRemovalPreparation struct {
 	option  catalog.LoadOption
 }
 
+func blockedOwnedRemovalKind(kind ir.ResourceKind) bool {
+	return kind == ir.KindMcpServer || kind == ir.KindSkill || kind == ir.KindCommand || kind == ir.KindSubagent
+}
+
 func prepareBlockedOwnedRemoval(ctx context.Context, opts RemoveOptions, ec config.EffectiveConfig, original resolver.ResolvedArtifact, name, url, path, ref string, kind ir.ResourceKind) (*ownedRemovalPreparation, error) {
-	if opts.configStaging == nil || opts.CleanupDependencies == nil || (kind != ir.KindMcpServer && kind != ir.KindSkill) {
+	if opts.configStaging == nil || opts.CleanupDependencies == nil || !blockedOwnedRemovalKind(kind) {
 		return nil, fmt.Errorf("%w: cleanup transaction is unavailable", materialize.ErrOwnedCleanupUnsupported)
 	}
 	if ec.Merged == nil {
@@ -111,10 +115,10 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 		return err
 	}
 	var plan ownedCleanupCommitPlan
-	if p.target.Kind == ir.KindSkill {
-		plan, err = materialize.PrepareManagedSkillLinkRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved), after.MaterializationModes)
-	} else {
+	if p.target.Kind == ir.KindMcpServer {
 		plan, err = materialize.PrepareOwnedMCPRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved))
+	} else {
+		plan, err = materialize.PrepareManagedLinkRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved), after.MaterializationModes)
 	}
 	if err != nil {
 		return err

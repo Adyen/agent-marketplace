@@ -146,6 +146,57 @@ func BenchmarkConfiguredInstallWarmExactLockLocalGitDiskNoNetwork(b *testing.B) 
 	}
 }
 
+func BenchmarkRemoveBlockedResourceLinkLocalGitDiskNoNetwork(b *testing.B) {
+	for _, kind := range []string{"command", "subagent"} {
+		b.Run(kind, func(b *testing.B) {
+			b.StopTimer()
+			repo := setupLocalGitSyncFixture(b, 0)
+			source := filepath.Join(filepath.Dir(repo), "resource-source")
+			origin := filepath.Join(filepath.Dir(repo), "resource-origin.git")
+			dir, native := "commands", filepath.Join(repo, ".devin", "skills", "remove")
+			if kind == "subagent" {
+				dir, native = "agents", filepath.Join(repo, ".devin", "agents", "remove.md")
+			}
+			runSyncBenchmarkGit(b, "", "init", "--initial-branch=main", source)
+			writeSyncBenchmarkFile(b, filepath.Join(source, dir, "remove.md"), "---\nname: remove\ndescription: Removal benchmark\n---\n\nReview changes.\n")
+			runSyncBenchmarkGit(b, source, "add", ".")
+			runSyncBenchmarkGit(b, source, "-c", "commit.gpgsign=false", "commit", "-m", "seed resource")
+			runSyncBenchmarkGit(b, "", "clone", "--bare", source, origin)
+			configPath := filepath.Join(repo, ".agents", "config.yaml")
+			body := "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: file://" + origin + "\n    ref: main\n    source_harness: claude\n    default: true\n"
+			writeSyncBenchmarkFile(b, configPath, body)
+			runSyncBenchmark(b)
+			linkTarget, err := os.Readlink(native)
+			if err != nil {
+				b.Fatal(err)
+			}
+			writeSyncBenchmarkFile(b, filepath.Join(os.Getenv("HOME"), ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				b.StopTimer()
+				if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+					b.Fatal(err)
+				}
+				if err := os.Remove(native); err != nil && !os.IsNotExist(err) {
+					b.Fatal(err)
+				}
+				if err := os.Symlink(linkTarget, native); err != nil {
+					b.Fatal(err)
+				}
+				config.ResetRepoRootCache()
+				b.StartTimer()
+				if out, err := executeCommand("remove", "remove", "--kind", kind, "--from", "file://"+origin, "--ref", "main"); err != nil {
+					b.Fatalf("blocked removal: %v\n%s", err, out)
+				}
+				if _, err := os.Lstat(native); !os.IsNotExist(err) {
+					b.Fatalf("removed link remains: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkRemoveBlockedSkillSymlinkLocalGitDiskNoNetwork(b *testing.B) {
 	repo, _ := setupWarmLockedGitSyncBenchmark(b)
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
