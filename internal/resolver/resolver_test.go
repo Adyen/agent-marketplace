@@ -94,6 +94,23 @@ func TestResolveBasicResolution(t *testing.T) {
 	}
 }
 
+func TestMergeTargetQualifiedArtifactsDoesNotAliasHarnessSlices(t *testing.T) {
+	inputHarnesses := make([]hcc.Target, 1, 2)
+	inputHarnesses[0] = hcc.TargetClaude
+	resolved := []ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, Harnesses: inputHarnesses},
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, Harnesses: []hcc.Target{hcc.TargetFactory}},
+	}
+
+	merged := mergeTargetQualifiedArtifacts(resolved)
+	if len(merged) != 1 || !slices.Equal(merged[0].Harnesses, []hcc.Target{hcc.TargetClaude, hcc.TargetFactory}) {
+		t.Fatalf("merged artifacts = %#v, want one artifact with both targets", merged)
+	}
+	if slices.Contains(inputHarnesses[:cap(inputHarnesses)], hcc.TargetFactory) {
+		t.Fatalf("merge mutated the input Harnesses backing array: %v", inputHarnesses[:cap(inputHarnesses)])
+	}
+}
+
 func TestResolveReportsUnmetRequirement(t *testing.T) {
 	type warningExpectation struct {
 		message     string

@@ -1207,6 +1207,11 @@ func mergeTargetQualifiedArtifacts(resolved []ResolvedArtifact) []ResolvedArtifa
 			continue
 		}
 		indices[identity] = len(merged)
+		if len(artifact.Harnesses) > 0 {
+			harnesses := make([]hcc.Target, len(artifact.Harnesses))
+			copy(harnesses, artifact.Harnesses)
+			artifact.Harnesses = harnesses
+		}
 		merged = append(merged, artifact)
 	}
 	return merged
@@ -1217,12 +1222,9 @@ func mergeTargetQualifiedArtifacts(resolved []ResolvedArtifact) []ResolvedArtifa
 // subtracted per target and scope; collection members must still contend with
 // one another instead of letting the first collection traversal win.
 func deduplicateCollectionArtifacts(resolved []ResolvedArtifact) ([]ResolvedArtifact, []error) {
-	out := make([]ResolvedArtifact, 0, len(resolved))
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
-	order := 0
-	for _, artifact := range resolved {
+	for order, artifact := range resolved {
 		if artifact.Via == "" {
-			out = append(out, artifact)
 			continue
 		}
 		selection := resourceSelection{kind: artifact.Kind, name: artifact.Name}
@@ -1232,15 +1234,25 @@ func deduplicateCollectionArtifacts(resolved []ResolvedArtifact) ([]ResolvedArti
 			url:      artifact.RegistryURL,
 			order:    order,
 		})
-		order++
 	}
 	if len(occurrencesByName) == 0 {
-		return out, nil
+		return append([]ResolvedArtifact(nil), resolved...), nil
 	}
 	partitioned := partitionOccurrencesByTarget(occurrencesByName)
 	winners, errs := pickWinners(partitioned)
+	winnerByOrder := make(map[int]ResolvedArtifact, len(winners))
 	for _, winner := range winners {
-		out = append(out, winner.resolved)
+		winnerByOrder[winner.order] = winner.resolved
+	}
+	out := make([]ResolvedArtifact, 0, len(resolved))
+	for order, artifact := range resolved {
+		if artifact.Via == "" {
+			out = append(out, artifact)
+			continue
+		}
+		if winner, ok := winnerByOrder[order]; ok {
+			out = append(out, winner)
+		}
 	}
 	return out, errs
 }
@@ -1937,16 +1949,18 @@ func expandMembersRecursive(
 		}
 
 		memberNameKey := ViaMapKey(member.Kind, memberName)
-		if len(memberHarnesses) == 0 {
-			if _, direct := directResolved[artifactPartitionKey(memberNameKey, memberHarnesses, memberSource)]; direct {
-				continue
+		if !HasAdditiveSources(member.Kind) {
+			if len(memberHarnesses) == 0 {
+				if _, direct := directResolved[artifactPartitionKey(memberNameKey, memberHarnesses, memberSource)]; direct {
+					continue
+				}
+			} else {
+				unresolved := unresolvedMemberTargets(memberNameKey, memberHarnesses, memberSource, directResolved)
+				if len(unresolved) == 0 {
+					continue
+				}
+				memberHarnesses = unresolved
 			}
-		} else {
-			unresolved := unresolvedMemberTargets(memberNameKey, memberHarnesses, memberSource, directResolved)
-			if len(unresolved) == 0 {
-				continue
-			}
-			memberHarnesses = unresolved
 		}
 		if ambiguity != nil {
 			*errs = append(*errs, ambiguity)
@@ -2449,6 +2463,15 @@ func retainMalformedPartitions(err error, resourceKey string, keep func(string) 
 // partitions (notably path-less members), so filtering is done before append.
 func appendCollectionDiagnostic(errs *[]error, err error, resourceKey string, directResolved map[string]struct{}) {
 	var snf *SelectedNotFoundError
+	if errors.As(err, &snf) && HasAdditiveSources(snf.Kind) {
+		*errs = append(*errs, err)
+		return
+	}
+	var sme *SelectedMalformedError
+	if errors.As(err, &sme) && HasAdditiveSources(sme.Kind) {
+		*errs = append(*errs, err)
+		return
+	}
 	if errors.As(err, &snf) && len(snf.partitionKeys) > 0 {
 		remaining := snf.partitionKeys[:0]
 		for _, key := range snf.partitionKeys {
@@ -2727,7 +2750,6 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 				remaining = append(remaining, partition)
 			}
 		}
-		deferred.partitionKeys = remaining
 		if len(remaining) == 0 {
 			continue
 		}
