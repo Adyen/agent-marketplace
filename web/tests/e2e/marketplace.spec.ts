@@ -106,7 +106,10 @@ test.describe('Marketplace browser discovery', () => {
 
   test('retains loaded results and offers a manual retry when streaming fails', async ({ page }) => {
     await page.addInitScript(() => {
-      Reflect.deleteProperty(window, 'IntersectionObserver')
+      window.IntersectionObserver = class {
+        observe() {}
+        disconnect() {}
+      } as unknown as typeof IntersectionObserver
     })
     const offsets = await routeStreamingSearch(page, true)
     await page.goto('/')
