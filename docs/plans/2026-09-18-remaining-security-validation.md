@@ -69,8 +69,11 @@ credential-bearing services, or build attack demonstrations during testing.
     JSON/TOML adapters, without replacing unrelated entries or their ownership.
   - [x] Integrate named blocked-registry MCP removal with exact inputs and
     owned Devin/Codex aggregates into the config/lock publication scope.
+  - [x] Extend named blocked-registry removal to complete managed-skill symlink
+    outputs, with exact-target and descriptor-bound deletion safeguards.
   - [ ] Extend targeted removal to the remaining command paths and artifact
-    types, including whole registries, collections, hooks, and ordinary files.
+    types, including whole registries, collections, hooks, regular files/trees,
+    and skill outputs that also require shared-metadata cleanup.
 - [ ] **R1e: Web URLs with slash-containing refs.** Check GitHub/GitLab URL
   interpretation and explicit `--ref`/`--path` behavior. Reject genuinely
   ambiguous input or use existing explicit selectors; do not introduce
@@ -371,6 +374,58 @@ checks remain CI gates; never bypass pinned tooling or repository policy.
   hook, ordinary-file, non-`--from`, and unblocked removal paths are unchanged
   by this slice and remain follow-up work. Existing adapter filesystem behavior
   remains a separate review surface; no general filesystem sandbox is claimed.
+- R1d managed-skill link extension on merged baseline `508b257e`: named blocked
+  `remove --from` now reuses the exact-backed publication scope for skills whose
+  complete compiled output consists of managed symlinks. Factory, Cursor,
+  Gemini, Windsurf, Devin, and Codex are covered; selection is shape-based, not
+  a new target allowlist. Claude's shared plugin fragment, file mode, missing
+  or changed links, and unsupported mixtures refuse before publication.
+- The CLI regression first reproduced an unrelated installed sibling's edited
+  cached `SKILL.md` being overwritten by broad sync. Targeted removal leaves
+  compiled caches, siblings, handwritten content, manifests, and aggregates
+  untouched. The original cache target survives; only the requested link is
+  removed. All selected targets are preflighted, and remaining physical output
+  paths protect fallbacks, cross-kind collisions, and aliased scopes.
+- The link primitive binds the scope root, each directory ancestor, the link
+  inode, and its exact compiled-cache target. Directory-descriptor operations
+  move the entry into a private quarantine, verify it, then unlink only the
+  matching symlink. A raced foreign replacement is restored without overwriting
+  a new original-path entry; a restore conflict retains both replacements and
+  reports the quarantine location. Cache targets are never traversed for deletion.
+- Pre-push adversarial review caught missing scope-root comparison, descriptor
+  cleanup, post-rename restoration, and tests that checked the wrong residue
+  directory in the draft. These were corrected, including empty-quarantine
+  cleanup guarded by its captured inode. Foreign or nonempty replacements are
+  preserved rather than recursively deleted. No remaining blocker was identified
+  within the declared named-skill symlink contract.
+- Compatibility boundary: unresolved/already-unselected names in blocked cleanup
+  now return `ErrOwnedCleanupUnsupported` instead of invoking broad sync. The
+  old named-removal test had no enabling selector and conditionally checked
+  installed output; its fixture now actually enables both skills and asserts
+  the intended removal/preservation unconditionally. A separate unselected-name
+  refusal verifies that edited siblings remain unchanged. Allowed-policy removal
+  retains its previous behavior.
+- Verification covers explicit/inferred kind, repo and user paths, supported
+  multi-target success, unsupported mixtures, file-mode controls, missing/drifted
+  links, root/parent/leaf substitutions, FIFOs, foreign descriptor refusal,
+  before/after-move faults, restoration conflicts, and retained-selector aliases.
+  Full-fixture CLI file/symlink snapshots include bytes, modes, mtimes, caches,
+  ownership, backup and staging files, excluding coordination locks; primitive
+  tests also inspect quarantine directories. Include/lock mutation and
+  post-publication original-selection restoration refuse deletion. Focused
+  built-binary E2E, race-enabled regressions, Go tests, build, and CI lint passed.
+- Warm last-selected-skill removal benchmark (local Git and disk I/O included,
+  no network; fixture setup and per-iteration config/link reset excluded):
+  171.2 to 238.9 ms/op (+39.53%), 2.375 to 3.335 MiB/op (+40.42%), and 15.71k
+  to 21.90k allocations/op (+39.40%), six samples per revision, p=0.002. This is
+  a removal-lifecycle measurement, not a general sync/install benchmark; repeated
+  exact validation remains an explicit optimization follow-up without relaxing
+  generation or ownership checks.
+- This link extension does not add a durable filesystem recovery journal or
+  multi-file rollback. Late failures may follow committed dependency changes;
+  process crashes may leave quarantine residue. It does not claim a general
+  filesystem sandbox. Regular-file/tree cleanup, shared skill metadata, other
+  kinds, whole registries, collections and non-`--from` paths remain open.
 - Combined checkpoint at `74e1564`: `make test` and `make build` passed. The
   planning and first three implementation layers are published as PRs 210–213
   in stack 214. Native compatibility and real-terminal TUI checks remain CI
