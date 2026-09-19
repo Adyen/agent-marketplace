@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -144,15 +145,17 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
-	var dryRunReport *materialize.Report
-	var dryRunErr error
-	if result.MarketplaceDriftUnknown() {
+	dryRunReport, dryRunErr := materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	if names := driftUnknownPinNames(result.MarketplaceInspection); len(names) > 0 && dryRunReport != nil {
 		// An unresolved pin without cached acquisition facts cannot prove its
-		// managed output absent or present; the dry-run would report installed
-		// files as orphaned removals.
-		slog.Warn("list drift check skipped: Marketplace drift is incomplete")
-	} else {
-		dryRunReport, dryRunErr = materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+		// managed output absent or present, so suppress only the removal
+		// candidates carrying its installed name and report the unknowns —
+		// unrelated drift stays visible.
+		var suppressed int
+		dryRunReport, suppressed = suppressIncompletePinRemovals(dryRunReport, names)
+		if _, err := fmt.Fprintf(errOut, "warning: Marketplace drift is unknown for pin(s) %s: %d removal candidate(s) suppressed because the cache cannot prove their managed output\n", strings.Join(slices.Sorted(maps.Keys(names)), ", "), suppressed); err != nil {
+			return err
+		}
 	}
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode

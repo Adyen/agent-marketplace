@@ -93,9 +93,26 @@ type Inspection struct {
 	// output persists on disk. Unlike ResolveErrors these stay soft: status
 	// must not hard-fail a pin it cannot disprove, but the materialization
 	// drift dry-run still cannot tell such a pin's output from orphans, so
-	// callers gate the dry-run on this signal instead of on result errors.
-	DriftIncomplete []error
+	// callers scope the dry-run's removal attribution on this signal instead
+	// of on result errors.
+	DriftIncomplete []DriftIncompletePin
 }
+
+// DriftIncompletePin identifies a pin whose drift is unknown together with
+// the installed name its managed output would carry. Callers use the name to
+// suppress only the removal candidates attributable to this pin, keeping
+// unrelated drift visible instead of gating the whole dry-run.
+type DriftIncompletePin struct {
+	Err  error
+	Kind string
+	// Name is the installed name (InstalledName when set, else Name): the
+	// identifier materialized output paths are attributed to.
+	Name string
+}
+
+func (e DriftIncompletePin) Error() string { return e.Err.Error() }
+
+func (e DriftIncompletePin) Unwrap() error { return e.Err }
 
 // pinHasAcquisitionFacts reports whether cached evidence proves the pin was
 // acquired — cached metadata or artifact, or a cache read error, which is
@@ -109,8 +126,9 @@ func pinHasAcquisitionFacts(status PinStatus) bool {
 // addResolveErr buckets a failed materialization proof: cached acquisition
 // facts (or a cache read error, itself a cached-fact failure) make it a hard
 // resolve error, while a genuinely never-acquired or fully wiped pin only
-// leaves drift unknown.
-func (i *Inspection) addResolveErr(err error, hard bool) {
+// leaves drift unknown. The pin is recorded so callers can scope drift
+// suppression to the outputs that installed name would own.
+func (i *Inspection) addResolveErr(err error, pin config.MarketplaceResourcePin, hard bool) {
 	if err == nil {
 		return
 	}
@@ -118,7 +136,36 @@ func (i *Inspection) addResolveErr(err error, hard bool) {
 		i.ResolveErrors = append(i.ResolveErrors, err)
 		return
 	}
-	i.DriftIncomplete = append(i.DriftIncomplete, err)
+	i.DriftIncomplete = append(i.DriftIncomplete, DriftIncompletePin{Err: err, Kind: pin.Kind, Name: pinInstalledName(pin)})
+}
+
+// pinInstalledName returns the name a pin's managed output is attributed to:
+// InstalledName when the pin renames the resource, else the source name.
+func pinInstalledName(pin config.MarketplaceResourcePin) string {
+	if pin.InstalledName != "" {
+		return pin.InstalledName
+	}
+	return pin.Name
+}
+
+// collectionPinHasAcquisitionFacts reads the collection root's cache facts so
+// a failed expanded-collection revision or graph proof is bucketed like a leaf
+// pin: cached facts (or a cache read error) keep it a hard resolve error,
+// while a never-acquired or fully wiped collection root only leaves drift
+// unknown — the cache cannot prove the graph was ever installed.
+func collectionPinHasAcquisitionFacts(cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target) bool {
+	status, _, ok := newPinStatus(entry, pin, targetSet)
+	if !ok {
+		return false
+	}
+	cached, metadataCached, cacheErr := readCachedPin(cache, entry, pin)
+	status.MetadataCached = metadataCached
+	if cacheErr != nil {
+		status.Cache = CacheStateError
+		return true
+	}
+	populateCacheFacts(&status, cache, entry, pin, cached)
+	return pinHasAcquisitionFacts(status)
 }
 
 // PinStatusError promotes an unhealthy required Marketplace pin to a pipeline
@@ -254,7 +301,10 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 				revErr = enforceMarketplaceUse(rev, nil)
 			}
 			if revErr != nil {
-				inspection.ResolveErrors = append(inspection.ResolveErrors, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, revErr))
+				// Bucket like a leaf pin: cached acquisition facts keep the
+				// failure hard, while a never-acquired or wiped collection
+				// root only leaves drift unknown.
+				inspection.addResolveErr(fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, revErr), pin, collectionPinHasAcquisitionFacts(cache, entry, pin, targetSet))
 				continue
 			}
 			// The graph walk stays cache-only: fetching a manifest would mark
@@ -262,7 +312,7 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 			// that cannot be proven from the cache fails closed and blocks its
 			// leaves.
 			if graphErr := r.enforceExpandedCollectionRevocations(ctx, client, cache, entry, pin, rev, resolver.MarketplaceResolveModeCached, nil); graphErr != nil {
-				inspection.ResolveErrors = append(inspection.ResolveErrors, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, graphErr))
+				inspection.addResolveErr(fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, graphErr), pin, collectionPinHasAcquisitionFacts(cache, entry, pin, targetSet))
 				blockedCollections[collectionSelectionKey(pin.RegistryID, pin.Name, pin.Revision)] = graphErr
 			}
 		}
@@ -300,7 +350,7 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 			if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch {
 				applyCachedState(&status, cached, metadataCached, cacheErr)
 				status, resolvedArtifact, resolveErr, hard := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
-				inspection.addResolveErr(resolveErr, hard)
+				inspection.addResolveErr(resolveErr, pin, hard)
 				inspection.Pins = append(inspection.Pins, status)
 				inspection.Artifacts = append(inspection.Artifacts, resolvedArtifact)
 				logPinDecision(status)
@@ -353,7 +403,7 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 				}
 			}
 			status, resolvedArtifact, resolveErr, hard := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
-			inspection.addResolveErr(resolveErr, hard)
+			inspection.addResolveErr(resolveErr, pin, hard)
 			inspection.Pins = append(inspection.Pins, status)
 			inspection.Artifacts = append(inspection.Artifacts, resolvedArtifact)
 			logPinDecision(status)
@@ -464,7 +514,7 @@ func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEnt
 			// Without cached facts the unreachable endpoint still cannot prove
 			// the pin was never installed, so drift is merely incomplete rather
 			// than a hard failure.
-			i.addResolveErr(fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err), pinHasAcquisitionFacts(status))
+			i.addResolveErr(fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err), pin, pinHasAcquisitionFacts(status))
 		}
 		i.Pins = append(i.Pins, status)
 		i.Artifacts = append(i.Artifacts, artifact)

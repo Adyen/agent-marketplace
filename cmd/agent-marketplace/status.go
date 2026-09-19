@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -145,19 +146,21 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	}
 	var dryRunReport *materialize.Report
 	if len(result.Errors) == 0 && err == nil {
-		if result.MarketplaceDriftUnknown() {
-			// An unresolved pin without cached acquisition facts cannot prove
-			// its managed output absent or present; running the dry-run would
-			// report its installed files as orphaned removals.
-			slog.Warn("status drift check skipped: Marketplace drift is incomplete")
-		} else {
-			var dryRunErr error
-			dryRunReport, dryRunErr = runStatusMaterialize(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
-			if dryRunErr != nil {
-				slog.Warn("status drift check failed", "error", dryRunErr)
-				materializeErrs = append(materializeErrs, dryRunErr)
-			}
+		var dryRunErr error
+		dryRunReport, dryRunErr = runStatusMaterialize(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+		if dryRunErr != nil {
+			slog.Warn("status drift check failed", "error", dryRunErr)
+			materializeErrs = append(materializeErrs, dryRunErr)
 		}
+	}
+	if names := driftUnknownPinNames(result.MarketplaceInspection); len(names) > 0 && dryRunReport != nil {
+		// An unresolved pin without cached acquisition facts cannot prove its
+		// managed output absent or present, so removal candidates carrying its
+		// installed name are unattributable. Suppress only those candidates —
+		// unrelated drift stays visible — and report the unknowns.
+		var suppressed int
+		dryRunReport, suppressed = suppressIncompletePinRemovals(dryRunReport, names)
+		result.Warnings = append(result.Warnings, fmt.Errorf("Marketplace drift is unknown for pin(s) %s: %d removal candidate(s) suppressed because the cache cannot prove their managed output", strings.Join(slices.Sorted(maps.Keys(names)), ", "), suppressed))
 	}
 
 	// Build orphaned rows from files that would be removed.
@@ -403,6 +406,69 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 	})
 
 	return rows
+}
+
+// driftUnknownPinNames indexes drift-incomplete Marketplace pins by the
+// installed name their managed output would carry, so the drift dry-run's
+// suppression stays scoped to unattributable removal candidates.
+func driftUnknownPinNames(inspection *marketplace.Inspection) map[string]bool {
+	if inspection == nil || len(inspection.DriftIncomplete) == 0 {
+		return nil
+	}
+	names := make(map[string]bool, len(inspection.DriftIncomplete))
+	for _, incomplete := range inspection.DriftIncomplete {
+		if incomplete.Name != "" {
+			names[incomplete.Name] = true
+		}
+	}
+	return names
+}
+
+// suppressIncompletePinRemovals returns a copy of the dry-run report with the
+// removal candidates attributable to drift-incomplete pins filtered out. A
+// candidate matches when its artifact name — or its file base name without
+// extension — equals an incomplete pin's installed name. The report itself is
+// not mutated, and unrelated removals stay visible. The second return value
+// counts the suppressed candidates.
+func suppressIncompletePinRemovals(report *materialize.Report, names map[string]bool) (*materialize.Report, int) {
+	if report == nil || len(names) == 0 {
+		return report, 0
+	}
+	suppressed := 0
+	matches := func(rel string) bool {
+		if names[artifactName(rel)] {
+			return true
+		}
+		base := filepath.Base(rel)
+		return names[strings.TrimSuffix(base, filepath.Ext(base))]
+	}
+	filterRemoved := func(removed []string) []string {
+		kept := make([]string, 0, len(removed))
+		for _, rel := range removed {
+			if matches(rel) {
+				suppressed++
+				continue
+			}
+			kept = append(kept, rel)
+		}
+		return kept
+	}
+	filtered := *report
+	if len(report.PerRoot) > 0 {
+		filtered.PerRoot = make([]materialize.TargetReport, len(report.PerRoot))
+		for i, tr := range report.PerRoot {
+			tr.Removed = filterRemoved(tr.Removed)
+			filtered.PerRoot[i] = tr
+		}
+	}
+	if len(report.PerTarget) > 0 {
+		filtered.PerTarget = make(map[hcc.Target]materialize.TargetReport, len(report.PerTarget))
+		for target, tr := range report.PerTarget {
+			tr.Removed = filterRemoved(tr.Removed)
+			filtered.PerTarget[target] = tr
+		}
+	}
+	return &filtered, suppressed
 }
 
 func buildOrphanedRows(report *materialize.Report) []orphanedSymlinkRow {

@@ -183,9 +183,10 @@ func (r SyncResult) CatalogTrusted() bool { return len(r.CatalogTrustErrors) == 
 // MarketplaceDriftUnknown reports whether the Marketplace inspection left at
 // least one pin whose materializable output could neither be proven nor tied
 // to cached acquisition facts. A materialization drift dry-run cannot tell
-// such a pin's managed output from orphans, so callers must skip the dry-run
-// rather than report false drift — while result.Errors stays soft for pins
-// that may simply never have been acquired.
+// such a pin's managed output from orphans, so callers must scope the
+// dry-run's removal attribution by the incomplete pin names rather than
+// report false drift — while result.Errors stays soft for pins that may
+// simply never have been acquired.
 func (r ResolveResult) MarketplaceDriftUnknown() bool {
 	return r.MarketplaceInspection != nil && len(r.MarketplaceInspection.DriftIncomplete) > 0
 }
