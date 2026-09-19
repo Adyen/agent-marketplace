@@ -105,6 +105,66 @@ func TestInspectResolvePreservesInstalledMarketplaceArtifact(t *testing.T) {
 	}
 }
 
+// TestInspectResolveSuppressesOrphanDriftForUnverifiableArtifact pins the
+// parity contract: a healthy-classified pin whose verified artifact is not in
+// the cache must surface a resolve error — suppressing the materialization
+// drift dry-run that would otherwise report its installed output as orphaned
+// while sync --check refreshes and reports in-sync.
+func TestInspectResolveSuppressesOrphanDriftForUnverifiableArtifact(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	repoRoot := t.TempDir()
+
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	archiveDigest := "sha256:" + strings.Repeat("b", 64)
+	revision := testAssessedResourceRevision(t, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}, store.AssessmentDecisionAllow, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://example.com"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(revision)
+	}))
+	defer server.Close()
+
+	// Revision metadata is cached from a prior acquisition, but the verified
+	// artifact itself is gone.
+	cache := marketplace.DefaultCache()
+	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "review", contentDigest, revision); err != nil {
+		t.Fatalf("write revision metadata: %v", err)
+	}
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+		RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest,
+	}}}
+
+	result := Resolve(context.Background(), ResolveOptions{
+		RepoRoot:    repoRoot,
+		CatalogMode: catalog.LoadModeInspect,
+		Loaders: Loaders{
+			Org: func() (*config.Config, error) { return &config.Config{}, nil },
+			Global: func() (*config.Config, error) {
+				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+			},
+			Repo: func() (*config.Config, error) {
+				return &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil
+			},
+			Local: func() (*config.LocalConfig, error) { return &config.LocalConfig{}, nil },
+		},
+	})
+	for _, artifact := range result.Resolved {
+		if artifact.IsMarketplace {
+			t.Fatalf("unverifiable pin materialized an artifact: %#v", artifact)
+		}
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("inspect resolve errors = %v, want one drift-suppressing error", result.Errors)
+	}
+}
+
 // TestInspectResolvePromotesUnhealthyRequiredPin keeps the required-pin
 // diagnostic at the same seam: an org-owned pin that cannot be verified must
 // remain a hard pipeline error, never a silently dropped artifact.

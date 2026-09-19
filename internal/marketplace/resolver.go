@@ -136,7 +136,7 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				slog.Warn("marketplace leaf materialization blocked by revoked collection graph", "url", entry.URL, "registry_id", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "error", blocked)
 				continue
 			}
-			resolved, err := r.resolvePinWithPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
+			resolved, err := r.resolvePinWithPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries, false)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err))
 				continue
@@ -355,8 +355,8 @@ func (r *Resolver) clientForEntry(entry config.MarketplaceEntry) (*Client, error
 	return NewClient(entry.URL, opts...)
 }
 
-func (r *Resolver) resolvePinWithPolicy(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (resolver.ResolvedArtifact, error) {
-	artifact, _, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
+func (r *Resolver) resolvePinWithPolicy(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string, readOnlyVerify bool) (resolver.ResolvedArtifact, error) {
+	artifact, _, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries, readOnlyVerify)
 	return artifact, err
 }
 
@@ -365,10 +365,14 @@ func (r *Resolver) resolvePinWithPolicy(ctx context.Context, client *Client, cac
 // Callers that need metadata for a prepared install must use this value rather
 // than rereading the cache, since the cache is intentionally disposable.
 func (r *Resolver) resolvePinWithArtifact(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode) (resolver.ResolvedArtifact, hccartifact.CanonicalArtifact, error) {
-	return r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, pin, targetSet, mode, nil, r.AllowedRegistries)
+	return r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, pin, targetSet, mode, nil, r.AllowedRegistries, false)
 }
 
-func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (resolver.ResolvedArtifact, hccartifact.CanonicalArtifact, error) {
+// resolvePinWithArtifactPolicy resolves one pin. readOnlyVerify forbids
+// verification-marker writes: read-only inspection resolves from the cache
+// without invalidating or marking artifacts, leaving trust decisions to the
+// next mutating sync while still failing closed on any verification error.
+func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string, readOnlyVerify bool) (resolver.ResolvedArtifact, hccartifact.CanonicalArtifact, error) {
 	if err := ctx.Err(); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
@@ -385,7 +389,7 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		acquisition = config.MarketplaceAcquisitionMirror
 	}
 	if acquisition == config.MarketplaceAcquisitionIndexOnly {
-		return r.resolveIndexOnlyPin(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
+		return r.resolveIndexOnlyPin(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries, readOnlyVerify)
 	}
 	if acquisition != config.MarketplaceAcquisitionMirror {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("acquisition mode %q is not supported", acquisition)
@@ -448,6 +452,11 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	}
 
 	archiveDigest := string(rev.ArchiveDigest)
+	invalidateVerified := func() {
+		if !readOnlyVerify {
+			cache.InvalidateArtifactVerified(archiveDigest)
+		}
+	}
 	raw, verified, err := cache.ReadArtifact(archiveDigest)
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("read cached artifact: %w", err)
@@ -481,19 +490,19 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	// before any metadata can reach install consent/preview or the cache can be
 	// marked verified; this includes schema, finding severity, and policy outcome.
 	if err := ca.ValidateArchive(nil); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		invalidateVerified()
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("validate artifact archive: %w", err)
 	}
 	if err := ca.VerifyArchiveDigest(caRaw); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		invalidateVerified()
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify archive digest: %w", err)
 	}
 	if err := ca.VerifyContentDigest(); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		invalidateVerified()
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify content digest: %w", err)
 	}
 	if err := validateArtifactManifest(entry, pin, rev, ca); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		invalidateVerified()
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 
@@ -521,13 +530,13 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	return artifact, ca, nil
 }
 
-func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (artifact resolver.ResolvedArtifact, canonical hccartifact.CanonicalArtifact, retErr error) {
+func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string, readOnlyVerify bool) (artifact resolver.ResolvedArtifact, canonical hccartifact.CanonicalArtifact, retErr error) {
 	if pin.Kind == "collection" {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("index-only collection resolution is not supported yet")
 	}
 	identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, RegistryID: pin.RegistryID, Commit: pin.RegistryCommit, ManifestDigest: pin.RegistryManifestDigest}
 	cacheDigest := pin.Digest
-	if mode != resolver.MarketplaceResolveModeInspect {
+	if mode != resolver.MarketplaceResolveModeInspect && !readOnlyVerify {
 		defer func() {
 			if retErr != nil {
 				// An occurrence marker is a trust decision for this exact registry

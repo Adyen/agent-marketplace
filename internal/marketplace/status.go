@@ -81,6 +81,12 @@ type Inspection struct {
 	Pins      []PinStatus
 	Artifacts []resolver.ResolvedArtifact
 	Err       error
+	// ResolveErrors reports pins the inspection could not prove materializable
+	// — an unverifiable cached artifact or a leaf blocked by its expanded
+	// collection graph. Surfacing them keeps status from concluding the pin's
+	// managed output is orphaned while sync --check refreshes and reports
+	// in-sync: the drift dry-run is skipped whenever resolution has errors.
+	ResolveErrors []error
 }
 
 // PinStatusError promotes an unhealthy required Marketplace pin to a pipeline
@@ -114,11 +120,13 @@ func (i Inspection) Resolve(ctx context.Context, _ *config.Config, _ []hcc.Targe
 			errs = append(errs, &PinStatusError{Pin: pin})
 		}
 	}
+	errs = append(errs, i.ResolveErrors...)
 
-	// Inspection artifacts are intentionally metadata-only. Do not let them
-	// enter winner selection, collision reporting, requirement validation, or
-	// materialization. Keep this filter defensive for callers that construct an
-	// Inspection with a mix of metadata and fully materializable artifacts.
+	// Pins the inspection could not fully resolve keep metadata-only stubs. Do
+	// not let them enter winner selection, collision reporting, requirement
+	// validation, or materialization. Keep this filter defensive for callers
+	// that construct an Inspection with a mix of stubs and materializable
+	// artifacts.
 	artifacts := make([]resolver.ResolvedArtifact, 0, len(i.Artifacts))
 	for _, artifact := range i.Artifacts {
 		if artifact.Unresolved || artifact.Revoked || artifact.Kind == ir.KindCollection || artifact.Resource == nil {
@@ -192,6 +200,41 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 			}
 		}
 
+		// Expanded collection roots are persisted next to their flattened leaf
+		// pins. Apply the same revocation propagation sync resolution uses so a
+		// blocked graph cannot leave cached leaves looking synced here.
+		revMode := mode
+		if revMode == resolver.MarketplaceResolveModeInspect {
+			// The online inspect query checks the endpoint like sync --check;
+			// cached modes remain cache-only.
+			revMode = resolver.MarketplaceResolveModeRefresh
+		}
+		blockedCollections := make(map[string]error)
+		for _, pin := range entry.Resources {
+			if pin.Kind != "collection" || !hasExpandedCollectionLeaves(entry, pin) {
+				continue
+			}
+			rev, revErr := r.getResourceRevision(ctx, client, cache, entry, pin, revMode)
+			if revErr == nil {
+				revErr = validateResourceRevision(entry, pin, rev)
+			}
+			if revErr == nil {
+				revErr = enforceMarketplaceUse(rev, nil)
+			}
+			if revErr != nil {
+				inspection.ResolveErrors = append(inspection.ResolveErrors, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, revErr))
+				continue
+			}
+			// The graph walk stays cache-only: fetching a manifest would mark
+			// it verified, which a read-only inspection must not do. A graph
+			// that cannot be proven from the cache fails closed and blocks its
+			// leaves.
+			if graphErr := r.enforceExpandedCollectionRevocations(ctx, client, cache, entry, pin, rev, resolver.MarketplaceResolveModeCached, nil); graphErr != nil {
+				inspection.ResolveErrors = append(inspection.ResolveErrors, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, graphErr))
+				blockedCollections[collectionSelectionKey(pin.RegistryID, pin.Name, pin.Revision)] = graphErr
+			}
+		}
+
 		for _, pin := range entry.Resources {
 			status, artifact, ok := newPinStatus(entry, pin, targetSet)
 			if !ok {
@@ -224,8 +267,12 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 
 			if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch {
 				applyCachedState(&status, cached, metadataCached, cacheErr)
+				status, resolvedArtifact, resolveErr := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
+				if resolveErr != nil {
+					inspection.ResolveErrors = append(inspection.ResolveErrors, resolveErr)
+				}
 				inspection.Pins = append(inspection.Pins, status)
-				inspection.Artifacts = append(inspection.Artifacts, artifact)
+				inspection.Artifacts = append(inspection.Artifacts, resolvedArtifact)
 				logPinDecision(status)
 				continue
 			}
@@ -275,8 +322,12 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 					}
 				}
 			}
+			status, resolvedArtifact, resolveErr := r.finishInspectedPin(ctx, cache, entry, pin, targetSet, status, artifact, blockedCollections, allowedRegistries)
+			if resolveErr != nil {
+				inspection.ResolveErrors = append(inspection.ResolveErrors, resolveErr)
+			}
 			inspection.Pins = append(inspection.Pins, status)
-			inspection.Artifacts = append(inspection.Artifacts, r.inspectResolvedArtifact(ctx, cache, entry, pin, targetSet, status, artifact, allowedRegistries))
+			inspection.Artifacts = append(inspection.Artifacts, resolvedArtifact)
 			logPinDecision(status)
 		}
 	}
@@ -296,6 +347,33 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 	return inspection
 }
 
+// finishInspectedPin resolves the materializable artifact for a pin the
+// inspection classified healthy, then applies the expanded-collection block
+// list sync resolution enforces. A pin that cannot be proven materializable
+// keeps its stub — filtered by Inspection.Resolve — and reports a degraded
+// detail plus a resolve error, so status cannot conclude its managed output
+// is orphaned while sync --check refreshes and reports in-sync.
+func (r *Resolver) finishInspectedPin(ctx context.Context, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, status PinStatus, artifact resolver.ResolvedArtifact, blockedCollections map[string]error, allowedRegistries []string) (PinStatus, resolver.ResolvedArtifact, error) {
+	var resolveErr error
+	resolvedArtifact := artifact
+	if blocked, ok := blockedCollectionForPin(pin, blockedCollections); ok {
+		resolveErr = fmt.Errorf("expanded collection graph is blocked: %w", blocked)
+	} else {
+		resolvedArtifact, resolveErr = r.inspectResolvedArtifact(ctx, cache, entry, pin, targetSet, status, artifact, allowedRegistries)
+	}
+	if resolveErr == nil {
+		return status, resolvedArtifact, nil
+	}
+	appendPinDetail(&status, resolveErr.Error())
+	if !status.MetadataCached && !status.ArtifactPresent {
+		// Nothing was ever acquired for this pin, so no managed output can be
+		// on disk to misreport as orphaned. Keep the degraded stub and detail
+		// without turning status into a hard failure.
+		return status, artifact, nil
+	}
+	return status, artifact, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, resolveErr)
+}
+
 // inspectResolvedArtifact returns the fully resolved artifact for a pin the
 // inspection proved healthy, so the inspection feeds generic resolution and
 // the materialization dry-run the same resolved resources that sync --check
@@ -303,17 +381,22 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 // verification writes: a pin whose verified artifact is not already in the
 // cache keeps its unresolved metadata stub, which Inspection.Resolve filters
 // out — matching the resolve error sync reports for that same pin.
-func (r *Resolver) inspectResolvedArtifact(ctx context.Context, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, status PinStatus, fallback resolver.ResolvedArtifact, allowedRegistries []string) resolver.ResolvedArtifact {
+func (r *Resolver) inspectResolvedArtifact(ctx context.Context, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, status PinStatus, fallback resolver.ResolvedArtifact, allowedRegistries []string) (resolver.ResolvedArtifact, error) {
+	// Collection roots are virtual pins; they never carry a materializable
+	// artifact, and their revocation is enforced through the block list.
+	if pin.Kind == "collection" {
+		return fallback, nil
+	}
 	switch status.State {
 	case PinStateCurrent, PinStateUpdateAvailable, PinStateCached, PinStateStale:
 	default:
-		return fallback
+		return fallback, nil
 	}
-	resolved, err := r.resolvePinWithPolicy(ctx, nil, cache, entry, pin, targetSet, resolver.MarketplaceResolveModeCached, nil, allowedRegistries)
+	resolved, err := r.resolvePinWithPolicy(ctx, nil, cache, entry, pin, targetSet, resolver.MarketplaceResolveModeCached, nil, allowedRegistries, true)
 	if err != nil {
-		return fallback
+		return fallback, err
 	}
-	return resolved
+	return resolved, nil
 }
 
 func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEntry, targetSet []hcc.Target, err error) {
@@ -496,10 +579,11 @@ func validateCachedIndexOnlyStagingFacts(cache *Cache, entry config.MarketplaceE
 	identity := indexOnlyIdentity(entry, pin)
 	resourcePath := cachedReconstructedResourcePath(cache, identity, pin.Kind, pin.Name)
 	if err := validateCachedReconstructedResource(cache, resourcePath); err != nil {
+		// Inspection is read-only: degrade the pin and let a mutating sync drop
+		// the verification marker after its own verification fails.
 		status.Cache = CacheStateError
 		status.State = PinStateUnavailable
 		status.Detail = fmt.Sprintf("cached reconstructed source: validate occurrence-scoped reconstructed source %q: %v", resourcePath, err)
-		cache.InvalidateIndexOnlyArtifactVerified(identity, pin.Digest)
 	}
 }
 

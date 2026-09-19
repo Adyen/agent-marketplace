@@ -171,16 +171,29 @@ func TestInspectKeepsUnresolvedStubForUnverifiablePin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// The endpoint reports the pin healthy, but nothing verified is cached:
-	// the inspection must not fabricate a materializable artifact.
+	// The endpoint reports the pin healthy and revision metadata is cached,
+	// but no verified artifact is: the inspection must not fabricate a
+	// materializable artifact, and it must not let status conclude the pin's
+	// managed output is orphaned while sync --check would refresh and report
+	// in-sync.
 	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
 		RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest,
 	}}}
+	cache := NewCache(t.TempDir())
+	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "review", contentDigest, revision); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
-	inspection := (&Resolver{Cache: NewCache(t.TempDir())}).Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if len(inspection.Pins) != 1 || inspection.Pins[0].Detail == "" {
+		t.Fatalf("unverifiable pin status = %#v, want a degraded detail", inspection.Pins)
+	}
 	resolved, errs := inspection.Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
-	if len(resolved) != 0 || len(errs) != 0 {
-		t.Fatalf("unverifiable pin resolver output = %#v, %v; want no artifacts and no fabricated errors", resolved, errs)
+	if len(resolved) != 0 {
+		t.Fatalf("unverifiable pin resolved = %#v, want no materializable artifacts", resolved)
+	}
+	if len(errs) != 1 {
+		t.Fatalf("unverifiable pin resolver errors = %v, want one drift-suppressing error", errs)
 	}
 }
 
@@ -231,8 +244,18 @@ func TestInspectCachedModeReportsVerifiedArtifact(t *testing.T) {
 }
 
 func TestInspectCachedNoFetchUsesOnlyCachedState(t *testing.T) {
-	contentDigest := "sha256:" + strings.Repeat("8", 64)
-	archiveDigest := "sha256:" + strings.Repeat("9", 64)
+	cachedResource := ir.NewSkill("cached", "Cached", "body", nil, nil, ir.SourceRef{})
+	cachedCanonical, err := hccartifact.FromIR(cachedResource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest := cachedCanonical.Manifest.ContentDigest
+	cachedCanonical.Manifest.RegistryID = "src"
+	cachedCanonical.Manifest.Revision = contentDigest
+	cachedRaw, archiveDigest, err := hccartifact.Encode(cachedCanonical)
+	if err != nil {
+		t.Fatal(err)
+	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -251,7 +274,7 @@ func TestInspectCachedNoFetchUsesOnlyCachedState(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("write metadata: %v", err)
 	}
-	if _, err := cache.WriteArtifact(archiveDigest, []byte("cached artifact")); err != nil {
+	if _, err := cache.WriteArtifact(archiveDigest, cachedRaw); err != nil {
 		t.Fatalf("write artifact: %v", err)
 	}
 	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
@@ -643,9 +666,179 @@ func TestInspectCachedIndexOnlyRequiresOccurrenceScopedStaging(t *testing.T) {
 				t.Fatalf("%s staging detail = %q, want occurrence-scoped validation detail", tc.name, got.Detail)
 			}
 			marker := filepath.Join(filepath.Dir(cache.IndexOnlyArtifactPath(identity, pin.Digest)), "verified.marker")
-			if _, err := os.Stat(marker); !os.IsNotExist(err) {
-				t.Fatalf("%s occurrence marker = %v, want invalidated", tc.name, err)
+			if _, err := os.Stat(marker); err != nil {
+				t.Fatalf("%s occurrence marker = %v, want preserved by read-only inspection", tc.name, err)
 			}
 		})
+	}
+}
+
+// TestInspectBlocksExpandedCollectionLeafForRevokedGraph covers the inspect
+// seam behind `agent-marketplace status`: an expanded-collection leaf must not
+// resolve to a materializable artifact while its collection graph is blocked,
+// matching the revocation propagation sync --check applies.
+func TestInspectBlocksExpandedCollectionLeafForRevokedGraph(t *testing.T) {
+	nestedDigest := "sha256:" + strings.Repeat("b", 64)
+	leafResource := ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{})
+	leafCanonical, err := hccartifact.FromIR(leafResource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafDigest := leafCanonical.Manifest.ContentDigest
+	leafCanonical.Manifest.RegistryID = "leaf-source"
+	leafCanonical.Manifest.Revision = leafDigest
+	leafRaw, leafArchiveDigest, err := hccartifact.Encode(leafCanonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootPayload, rootDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
+		SchemaVersion:    hccartifact.CollectionSchemaV1,
+		Name:             "bundle",
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "collection", Name: "inner", RegistryID: "nested-source", Revision: nestedDigest}},
+		Leaves:           []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "leaf-source", Revision: leafDigest, InclusionPaths: [][]string{{"bundle", "inner"}}}},
+		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafRevision := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "leaf-source", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(leafDigest), ArchiveDigest: store.ArchiveDigest(leafArchiveDigest),
+	})
+	rootRevision := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "root-source", Kind: "collection", Name: "bundle"},
+		ContentDigest: store.RevisionDigest(rootDigest),
+	})
+	nestedRevision := revokedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "nested-source", Kind: "collection", Name: "inner"},
+		ContentDigest: store.RevisionDigest(nestedDigest),
+	}, "mp/nested-source/collection/inner@"+nestedDigest)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			writeTestWellKnown(w, "mp")
+		case "/api/v1/resources/root-source/collection/bundle/revisions/" + rootDigest:
+			_ = json.NewEncoder(w).Encode(rootRevision)
+		case "/api/v1/resources/leaf-source/skill/review/revisions/" + leafDigest:
+			_ = json.NewEncoder(w).Encode(leafRevision)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cache := NewCache(t.TempDir())
+	if _, err := cache.WriteResourceRevision(server.URL, "root-source", "collection", "bundle", rootDigest, rootRevision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteResourceRevision(server.URL, "nested-source", "collection", "inner", nestedDigest, nestedRevision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteResourceRevision(server.URL, "leaf-source", "skill", "review", leafDigest, leafRevision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteCollectionManifest(rootDigest, rootPayload); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkCollectionVerified(rootDigest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteArtifact(leafArchiveDigest, leafRaw); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkArtifactVerified(leafArchiveDigest); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{
+		{RegistryID: "root-source", Kind: "collection", Name: "bundle", Revision: rootDigest, Digest: rootDigest},
+		{RegistryID: "leaf-source", Kind: "skill", Name: "review", Revision: leafDigest, Digest: leafDigest,
+			SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "root-source", Name: "bundle", Revision: rootDigest}})},
+	}}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
+
+	inspection := (&Resolver{HTTPClient: server.Client(), Cache: cache}).Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	var leaf PinStatus
+	found := false
+	for _, pin := range inspection.Pins {
+		if pin.Kind == "skill" && pin.Name == "review" {
+			leaf = pin
+			found = true
+		}
+	}
+	if !found || leaf.Detail == "" {
+		t.Fatalf("blocked leaf pin = %#v, want a degraded detail", leaf)
+	}
+	resolved, errs := inspection.Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	for _, artifact := range resolved {
+		if artifact.Kind == ir.KindSkill && artifact.Name == "review" {
+			t.Fatalf("blocked collection leaf materialized an artifact: %#v", artifact)
+		}
+	}
+	if len(errs) == 0 {
+		t.Fatal("inspection resolver reported no error for a blocked collection graph")
+	}
+}
+
+// TestInspectPreservesMirrorVerificationMarker covers the no-write inspect
+// contract: a cached artifact that fails verification during cache-only
+// resolution must degrade the pin and surface an error, but must not remove
+// the verification marker — only a mutating sync may do that.
+func TestInspectPreservesMirrorVerificationMarker(t *testing.T) {
+	// The cached bytes decode and self-verify, but their manifest identity does
+	// not match the pin, so resolution must reject them. A mutating sync would
+	// drop the marker; read-only inspection must leave it untouched while still
+	// failing closed.
+	canonical, err := hccartifact.FromIR(ir.NewSkill("other", "Other", "body", nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.Revision = contentDigest
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "cached"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "mp")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(revision)
+	}))
+	defer server.Close()
+
+	cache := NewCache(t.TempDir())
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+		RegistryID: "src", Kind: "skill", Name: "cached", Revision: "v1", Digest: contentDigest,
+	}}}
+	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "cached", contentDigest, revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(filepath.Dir(cache.ArtifactPath(archiveDigest)), "verified.marker")
+
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
+	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("verified marker = %v, want preserved by read-only inspection", err)
+	}
+	resolved, errs := inspection.Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(resolved) != 0 {
+		t.Fatalf("corrupt artifact resolved = %#v, want fail-closed filtering", resolved)
+	}
+	if len(errs) != 1 {
+		t.Fatalf("corrupt artifact resolver errors = %v, want one drift-suppressing error", errs)
 	}
 }
