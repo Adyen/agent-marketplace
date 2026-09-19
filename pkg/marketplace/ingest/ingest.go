@@ -1575,16 +1575,23 @@ func toStoreFindings(findings []analyze.Finding, primaryPath, resourceName strin
 			content := body
 			// A source range maps to a support file only by exact FileSet
 			// membership; substring heuristics misclassify support paths that
-			// collide with primary-resource pseudo-path segments. References
-			// inside the primary pseudo-path namespace (the canonical primary
-			// path itself or the exact resource pseudo-root <kind>/<name> plus
-			// its slash-prefixed fields) keep precedence over a colliding
-			// support key: that namespace is how analyzers address the primary
-			// document, so those ranges always resolve to the primary body.
-			if file != primaryPath && !isPrimaryPseudoPath(file, primaryPseudoRoot(primaryPath, resourceName)) {
-				name := strings.TrimPrefix(file, "support/")
-				if data, ok := support[name]; ok {
-					location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
+			// collide with primary-resource pseudo-path segments. Exact FileSet
+			// membership for the raw path wins first, so legal support keys
+			// that begin "support/" or live beneath the <kind>/<name>
+			// pseudo-subtree still resolve to support content. Only the
+			// ambiguous bare pseudo-root itself retains primary precedence over
+			// a colliding support key; non-member pseudo-paths stay primary,
+			// and the reserved "support/" prefix is stripped as a fallback for
+			// references that are not themselves FileSet keys.
+			if file != primaryPath {
+				pseudoRoot := primaryPseudoRoot(primaryPath, resourceName)
+				if data, ok := support[file]; ok && file != pseudoRoot {
+					location.Path, content = filepath.ToSlash(filepath.Join("support", file)), data
+				} else if !isPrimaryPseudoPath(file, pseudoRoot) {
+					name := strings.TrimPrefix(file, "support/")
+					if data, ok := support[name]; ok {
+						location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
+					}
 				}
 			}
 			if f.SourceRange.Line > 0 {
@@ -1650,13 +1657,15 @@ func lineColumnBytes(content []byte, line, column int) (int, int) {
 		start += n + 1
 	}
 	if column > 1 {
-		for i, current := start, 1; i < len(content) && current < column; current++ {
+		for i, current := start, 1; i < len(content) && current < column && content[i] != '\n'; current++ {
 			_, size := utf8.DecodeRune(content[i:])
 			i += size
 			start = i
 		}
 	}
-	if start >= len(content) {
+	if start >= len(content) || content[start] == '\n' {
+		// Columns past the end of the line clamp to EOL instead of walking
+		// into subsequent lines.
 		return start, start
 	}
 	_, size := utf8.DecodeRune(content[start:])

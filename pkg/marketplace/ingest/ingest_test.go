@@ -1159,10 +1159,11 @@ func findResourceRevision(t *testing.T, revs []store.ResourceRevision, kind, nam
 // locations resolve by exact FileSet membership, so support paths colliding
 // with primary-resource pseudo-path substrings (/body, /prompt, /Description,
 // /command, /url, /name) keep their correct persisted path and byte offsets.
-// It also proves the primary pseudo-path namespace (the canonical primary
-// path and the <kind>/<name>[/<field>] root) wins over a colliding support
-// FileSet key, while explicit support/ references and non-colliding support
-// keys still resolve to support content.
+// Exact FileSet membership wins for the raw path, so legal support keys that
+// begin "support/" or live beneath the <kind>/<name> pseudo-subtree still
+// resolve to support content; only the ambiguous bare pseudo-root retains
+// primary precedence, while non-member pseudo-paths and unknown files fall
+// back to the primary body.
 func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 	body := []byte("primary body\n")
 	support := analyze.FileSet{
@@ -1173,7 +1174,9 @@ func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 		"prompt.txt":           []byte("kappa\nlambda\n"),
 		"skill/demo":           []byte("zeta\neta\n"),
 		"skill/demo/Body":      []byte("theta\niota\n"),
+		"skill/demo/x.md":      []byte("tau\nupsilon\n"),
 		"skill/helper.md":      []byte("mu\nnu\n"),
+		"support/notes.md":     []byte("rho\nsigma\n"),
 	}
 	primaryPath := inspection.PrimaryPath("skill")
 
@@ -1188,11 +1191,13 @@ func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 		{"description substring collision", "guide/Description.md", "support/guide/Description.md", 4},
 		{"support-prefixed key", "support/plain.md", "support/plain.md", 8},
 		{"explicit support reference", "support/notes/body", "support/notes/body", 6},
+		{"reserved support-namespace key", "support/notes.md", "support/support/notes.md", 4},
 		{"hook prompt support key", "prompt.txt", "support/prompt.txt", 6},
 		{"explicit prompt support reference", "support/prompt.txt", "support/prompt.txt", 6},
 		{"canonical primary path", "SKILL.md", primaryPath, 0},
 		{"primary pseudo-root collision", "skill/demo", primaryPath, 0},
-		{"primary pseudo-prefix collision", "skill/demo/Body", primaryPath, 0},
+		{"primary pseudo-prefix member", "skill/demo/Body", "support/skill/demo/Body", 6},
+		{"pseudo-subtree support member", "skill/demo/x.md", "support/skill/demo/x.md", 4},
 		{"primary pseudo-path", "skill/demo/body", primaryPath, 0},
 		{"non-colliding kind-subtree support key", "skill/helper.md", "support/skill/helper.md", 3},
 		{"unknown path", "missing.md", primaryPath, 0},
@@ -1223,6 +1228,34 @@ func TestToStoreFindingsSupportLocationByMembership(t *testing.T) {
 			}
 			if loc.StartByte != tc.wantByte {
 				t.Fatalf("support start byte = %d, want %d", loc.StartByte, tc.wantByte)
+			}
+		})
+	}
+}
+
+// TestLineColumnBytesClampsAtEOL proves an over-EOL column stops at the
+// newline of the addressed line instead of walking into subsequent lines.
+func TestLineColumnBytesClampsAtEOL(t *testing.T) {
+	content := []byte("ab\ncdef\n")
+	cases := []struct {
+		name      string
+		line      int
+		column    int
+		wantStart int
+		wantEnd   int
+	}{
+		{"within line", 1, 2, 1, 2},
+		{"at newline column", 1, 3, 2, 2},
+		{"past end of line", 1, 9, 2, 2},
+		{"past end of later line", 2, 8, 7, 7},
+		{"past end of content", 5, 1, len(content), len(content)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			start, end := lineColumnBytes(content, tc.line, tc.column)
+			if start != tc.wantStart || end != tc.wantEnd {
+				t.Fatalf("lineColumnBytes(%d, %d) = (%d, %d), want (%d, %d)",
+					tc.line, tc.column, start, end, tc.wantStart, tc.wantEnd)
 			}
 		})
 	}
