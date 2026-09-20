@@ -53,6 +53,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/auth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** OIDC authorization-code callback (PKCE S256, state, and nonce verified) */
+        get: operations["adminAuthCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Start OIDC administration sign-in (redirects to the configured issuer) */
+        get: operations["adminAuthLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Idempotent local sign-out; expires both admin cookies under their mode-specific names and path scopes */
+        post: operations["adminAuthLogout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/changes": {
         parameters: {
             query?: never;
@@ -174,7 +225,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Trusted proxy authenticated admin session (never cache) */
+        /** Authenticated admin session (trusted-proxy or OIDC; never cache) */
         get: operations["getAdminSession"];
         put?: never;
         post?: never;
@@ -771,7 +822,14 @@ export interface components {
         };
         AdminSession: {
             actor: components["schemas"]["AdminActor"];
+            /**
+             * @description Resolved authentication mode; unauthenticated errors expose the same value in fields.authentication_mode.
+             * @enum {string}
+             */
+            authentication_mode: "oidc" | "trusted_proxy";
             capabilities: string[];
+            /** @description Optional display name from the identity provider; never an authorization identity. */
+            display?: string;
         };
         AdminSnapshot: {
             license_policy: components["schemas"]["AdminLicensePolicy"];
@@ -1165,6 +1223,156 @@ export interface operations {
                         attempts: components["schemas"]["AdminAttempt"][];
                         /** Format: int64 */
                         next_before: number;
+                    };
+                };
+            };
+            default: components["responses"]["AdminError"];
+        };
+    };
+    adminAuthCallback: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed provider response; code authentication_request_invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        message: string;
+                    };
+                };
+            };
+            /** @description Invalid state, token, signature, or claims; code authentication_rejected */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        message: string;
+                    };
+                };
+            };
+            /** @description Verified identity lacks configured authorization (code forbidden), or the request Origin header does not match the configured admin origin (code origin_rejected) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        message: string;
+                    };
+                };
+            };
+            /** @description Identity provider unavailable; code authentication_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    adminAuthLogin: {
+        parameters: {
+            query?: {
+                /** @description Post-sign-in destination. Only /marketplace/admin and descendant paths are accepted. */
+                next?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid sign-in destination; code authentication_request_invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        message: string;
+                    };
+                };
+            };
+            /** @description Request Origin header does not match the configured admin origin; code origin_rejected */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        message: string;
+                    };
+                };
+            };
+            /** @description Identity provider discovery unavailable or OIDC mode misconfigured; code authentication_unavailable or admin_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    adminAuthLogout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session expired; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        code: "signed_out";
                     };
                 };
             };

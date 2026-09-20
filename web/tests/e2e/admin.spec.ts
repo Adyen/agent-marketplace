@@ -24,7 +24,7 @@ async function mockAdmin(page: Page, status = 200, code = '') {
     const path = new URL(request.url()).pathname.replace('/api/v1/admin', '')
     let body: unknown
     if (request.method() === 'POST') mutations.push({ path, body: request.postDataJSON(), headers: request.headers() })
-    if (path === '/session') body = { actor: { issuer: 'test-sso', subject: 'operator' }, capabilities: ['manage'] }
+    if (path === '/session') body = { actor: { issuer: 'test-sso', subject: 'operator' }, authentication_mode: 'oidc', capabilities: ['manage'] }
     else if (path === '/configuration') body = { revision: 2, snapshot }
     else if (path === '/profiles') body = { profiles: [{ id: 'approved-profile', allowed_origins: ['https://git.example'] }], source_harnesses: ['claude', 'codex'] }
     else if (path === '/validate' || path === '/changes') {
@@ -189,6 +189,96 @@ test.describe('Private administration', () => {
     await page.getByRole('link', { name: 'Policies', exact: true }).click()
     await expect(page).toHaveURL(`${base}/admin/registries/stable-team/configuration`)
     await expect(page.getByLabel('Root 1 path')).toHaveValue('.claude')
+  })
+
+  test('offers explicit sign-in on unauthenticated with the current validated route as next', async ({ page }) => {
+    await page.route('**/api/v1/admin/**', route => route.fulfill({ status: 401, json: { code: 'unauthenticated', message: 'Sign in.', fields: { authentication_mode: 'oidc' } } }))
+    await page.goto(`${base}/admin/registries/stable-team/configuration`)
+    const signIn = page.getByRole('link', { name: 'Sign in with Okta' })
+    await expect(signIn).toBeVisible()
+    await expect(signIn).toHaveAttribute('href', `/api/v1/admin/auth/login?next=${encodeURIComponent('/marketplace/admin/registries/stable-team/configuration')}`)
+    await expect(page.getByRole('button', { name: /Apply|Save|Edit/ })).toHaveCount(0)
+  })
+
+  test('directs trusted-proxy users to their deployment without an OIDC dead end', async ({ page }) => {
+    await page.route('**/api/v1/admin/**', route => route.fulfill({ status: 401, json: { code: 'unauthenticated', message: 'Sign in.', fields: { authentication_mode: 'trusted_proxy' } } }))
+    await page.goto(`${base}/admin`)
+    await expect(page.getByRole('alert')).toContainText('deployment identity proxy')
+    await expect(page.getByRole('link', { name: 'Sign in with Okta' })).toHaveCount(0)
+  })
+
+  test('does not offer local sign-out for a trusted-proxy session', async ({ page }) => {
+    await page.route('**/api/v1/admin/**', (route) => {
+      const path = new URL(route.request().url()).pathname.replace('/api/v1/admin', '')
+      if (path === '/session') return route.fulfill({ json: { actor: { issuer: 'proxy-sso', subject: 'operator' }, authentication_mode: 'trusted_proxy', capabilities: [] } })
+      if (path === '/configuration') return route.fulfill({ json: { revision: 2, snapshot } })
+      if (path === '/profiles') return route.fulfill({ json: { profiles: [], source_harnesses: [] } })
+      return route.fulfill({ status: 404, json: { code: 'not_found', message: 'Not found' } })
+    })
+    await page.goto(`${base}/admin`)
+    await expect(page.getByText('operator', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0)
+  })
+
+  test('states forbidden without offering mutation controls', async ({ page }) => {
+    await page.route('**/api/v1/admin/**', route => route.fulfill({ status: 403, json: { code: 'forbidden', message: 'Denied.' } }))
+    await page.goto(`${base}/admin`)
+    await expect(page.getByRole('alert')).toContainText('not authorized')
+    await expect(page.getByRole('link', { name: 'Sign in with Okta' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Apply|Save|Edit|Add/ })).toHaveCount(0)
+  })
+
+  test('logs out through the protected endpoint and returns to the signed-out view', async ({ page }) => {
+    let authenticated = true
+    const logouts: Record<string, string>[] = []
+    await page.route('**/api/v1/admin/**', async (route) => {
+      const request = route.request()
+      const path = new URL(request.url()).pathname.replace('/api/v1/admin', '')
+      if (path === '/auth/logout' && request.method() === 'POST') {
+        logouts.push(request.headers())
+        authenticated = false
+        return route.fulfill({ json: { code: 'signed_out' } })
+      }
+      if (!authenticated) return route.fulfill({ status: 401, json: { code: 'unauthenticated', message: 'Sign in.', fields: { authentication_mode: 'oidc' } } })
+      let body: unknown
+      if (path === '/session') body = { actor: { issuer: 'test-sso', subject: 'operator' }, display: 'Operator One', authentication_mode: 'oidc', capabilities: [] }
+      else if (path === '/configuration') body = { revision: 2, snapshot }
+      else if (path === '/profiles') body = { profiles: [], source_harnesses: [] }
+      else return route.fulfill({ status: 404, json: { code: 'not_found', message: 'Not found' } })
+      return route.fulfill({ json: body })
+    })
+    await page.goto(`${base}/admin`)
+    await expect(page.getByText('Operator One')).toBeVisible()
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await expect(page.getByRole('alert')).toContainText('Sign in required')
+    await expect(page.getByRole('link', { name: 'Sign in with Okta' })).toBeVisible()
+    expect(logouts).toHaveLength(1)
+    expect(logouts[0]?.['x-marketplace-admin']).toBe('1')
+    expect(logouts[0]?.['content-type']).toContain('application/json')
+  })
+
+  test('keeps the authenticated state when sign-out cannot be confirmed', async ({ page }) => {
+    let logoutCalls = 0
+    await page.route('**/api/v1/admin/**', async (route) => {
+      const request = route.request()
+      const path = new URL(request.url()).pathname.replace('/api/v1/admin', '')
+      if (path === '/auth/logout' && request.method() === 'POST') {
+        logoutCalls++
+        return route.fulfill({ status: 503, json: { code: 'authentication_unavailable', message: 'Unavailable.' } })
+      }
+      let body: unknown
+      if (path === '/session') body = { actor: { issuer: 'test-sso', subject: 'operator' }, display: 'Operator One', authentication_mode: 'oidc', capabilities: [] }
+      else if (path === '/configuration') body = { revision: 2, snapshot }
+      else if (path === '/profiles') body = { profiles: [], source_harnesses: [] }
+      else return route.fulfill({ status: 404, json: { code: 'not_found', message: 'Not found' } })
+      return route.fulfill({ json: body })
+    })
+    await page.goto(`${base}/admin`)
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await expect(page.getByRole('alert')).toContainText('Sign-out could not be confirmed')
+    await expect(page.getByText('Operator One')).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Sign in with Okta' })).toHaveCount(0)
+    expect(logoutCalls).toBe(1)
   })
 
   test('shows all requested read surfaces without fabricated status', async ({ page }) => {

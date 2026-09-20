@@ -20,6 +20,15 @@ export type AdminPreviewRoot = AdminPreviewResult['roots'][number]
 // field ordering and defaults added by the server never mask a real edit.
 export type AdminPreviewState = { preview: AdminPreview, registry: string }
 
+// The only sign-in destinations the server accepts are /marketplace/admin and
+// descendants. Anything else falls back to the admin root rather than being
+// reflected into the login redirect.
+export function adminLoginHref(next: string, baseURL = '/marketplace/'): string {
+  const root = `${baseURL.replace(/\/+$/, '')}/admin`
+  const target = next === root || next.startsWith(`${root}/`) && !/[\s\\?#%]|\.\./.test(next) ? next : root
+  return `/api/v1/admin/auth/login?next=${encodeURIComponent(target)}`
+}
+
 export class AdminError extends Error {
   constructor(public code: string, message: string, public fields: Record<string, string> = {}) {
     super(message)
@@ -29,22 +38,25 @@ export class AdminError extends Error {
 // Deliberately separate from the public SSR fetcher. Never forward identity
 // headers, follow SSO redirects, retry mutations, or use a cross-origin base.
 export function createAdminApi(fetcher: typeof fetch = fetch) {
-  async function request<T>(path: string, proposal?: AdminProposal, revision?: number): Promise<T> {
+  async function request<T>(path: string, proposal?: AdminProposal, revision?: number, emptyMutation = false): Promise<T> {
     if (typeof window === 'undefined') throw new AdminError('client_only', 'Administration is only available in the browser.')
     if (proposal?.action === 'upsert_registry' && proposal.registry) proposal = { ...proposal, registry_id: proposal.registry.id }
+    const mutation = proposal !== undefined || emptyMutation
     const headers: Record<string, string> = { Accept: 'application/json' }
-    if (proposal) {
+    if (mutation) {
       headers['Content-Type'] = 'application/json'
       headers['X-Marketplace-Admin'] = '1'
+    }
+    if (proposal) {
       headers['If-Match'] = `"${revision}"`
       headers['Idempotency-Key'] = crypto.randomUUID()
     }
     let response: Response
     try {
       response = await fetcher(`/api/v1/admin${path}`, {
-        method: proposal ? 'POST' : 'GET', credentials: 'same-origin',
+        method: mutation ? 'POST' : 'GET', credentials: 'same-origin',
         cache: 'no-store', redirect: 'error', headers,
-        ...(proposal ? { body: JSON.stringify(proposal) } : {}),
+        ...(mutation ? { body: JSON.stringify(proposal ?? {}) } : {}),
       })
     }
     catch {
@@ -73,6 +85,9 @@ export function createAdminApi(fetcher: typeof fetch = fetch) {
     preview: (proposal: AdminProposal, revision: number) => request<AdminPreview>('/previews', proposal, revision),
     previewStatus: (id: string) => request<AdminPreview>(`/previews/${encodeURIComponent(id)}`),
     apply: (proposal: AdminProposal, revision: number) => request<AdminChange>('/changes', proposal, revision),
+    // Idempotent local sign-out under the same mutation protections; never
+    // retried and never redirected by the client.
+    logout: () => request<{ code: string }>('/auth/logout', undefined, undefined, true),
   }
 }
 

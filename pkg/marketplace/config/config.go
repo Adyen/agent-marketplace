@@ -326,7 +326,7 @@ func LoadConfig(path string) (Config, error) {
 		return cfg, fmt.Errorf("parse config %q: %w", path, err)
 	}
 	applyDefaults(&cfg)
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.validateWithoutAdministration(); err != nil {
 		return cfg, err
 	}
 	return cfg, nil
@@ -389,10 +389,11 @@ func applyDefaults(cfg *Config) {
 
 // Validate returns a combined error for invalid configuration.
 func (cfg Config) Validate() error {
+	return errors.Join(cfg.Admin.Validate(), cfg.validateWithoutAdministration())
+}
+
+func (cfg Config) validateWithoutAdministration() error {
 	var errs []error
-	if err := cfg.Admin.Validate(); err != nil {
-		errs = append(errs, err)
-	}
 	if err := cfg.Management.Validate(); err != nil {
 		errs = append(errs, err)
 	}

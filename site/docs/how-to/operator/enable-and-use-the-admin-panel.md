@@ -82,17 +82,59 @@ admin:
 - `management.allowed_origins`: allowed Git remote authorities for admin-created registries. Must contain protocol and host/port only (no URL paths or trailing slashes).
 - `management.profiles`: optional credential and trust profiles for private registries. The browser selects profiles by opaque ID (`internal-git`); secret paths and tokens are never sent to or edited from the browser.
 - `admin.enabled`: enables the administration API routes (`/api/v1/admin/**`).
-- `admin.origin`: the exact HTTPS origin of the frontend. Cross-origin mutations are strictly rejected.
+- `admin.origin`: the exact HTTPS origin of the frontend in canonical serialized form — lowercase scheme, a strictly lowercase ASCII DNS host (use the Punycode A-label) or a canonical literal IP host (IPv6 in brackets; IPv4-mapped IPv6 forms such as `[::ffff:192.0.2.1]` are rejected — use the canonical IPv4 literal), no default or leading-zero port, and no path (explicit non-default ports such as a loopback `http://localhost:8080` are valid). Cross-origin mutations are strictly rejected.
 - `admin.trusted_proxies`: CIDR blocks of immediate reverse proxies allowed to assert identity headers. Forwarded client IPs (`X-Forwarded-For`) do not bypass this check.
 - `admin.subject_header`: header containing the authenticated user identity (e.g. username or email).
 - `admin.groups_header`: header containing a JSON string array of group memberships, such as `["marketplace-admins", "developers"]`. Comma-separated strings are rejected.
 - `admin.admin_groups`: list of group names authorized to access the admin panel.
+- `admin.admin_users`: list of immutable provider subjects authorized to access the admin panel. At least one of `admin_groups` or `admin_users` must be configured.
+
+### Authentication modes
+
+Administration selects exactly one authentication mode through `admin.authentication.mode`:
+
+| Mode | Identity source | When to use |
+|---|---|---|
+| `oidc` | Native Okta Authorization Code sign-in with S256 PKCE and a signed host-only session cookie (`__Host-` prefixed on HTTPS). | Recommended for production. |
+| `trusted_proxy` | Identity headers asserted by an authenticated reverse proxy or SSO gateway. | Existing deployments; inferred automatically when the complete proxy field set is configured without an explicit mode. |
+
+The modes are mutually exclusive: OIDC mode rejects `trusted_proxies`, `issuer`, `subject_header`, and `groups_header`; trusted-proxy mode rejects `authentication.oidc` fields.
+
+### OIDC mode configuration
+
+```yaml
+admin:
+  enabled: true
+  origin: https://marketplace.example.com
+  authentication:
+    mode: oidc
+    oidc:
+      issuer: https://idp.example.com/oauth2/default
+      client_id: marketplace-admin-client-id
+      session_secret_env: MARKETPLACE_ADMIN_SESSION_SECRET
+  admin_groups:
+    - marketplace-admins
+  admin_users:
+    - 00u123exampleOktaSubject
+```
+
+The dedicated Okta application contract:
+
+- Public Authorization Code client; client authentication disabled; S256 PKCE required.
+- Sign-in redirect URI exactly `<origin>/api/v1/admin/auth/callback`, for example `https://marketplace.example.com/api/v1/admin/auth/callback`. No sign-out redirect is required; logout is a local, idempotent `POST /api/v1/admin/auth/logout` that expires the session cookie and never performs global Okta logout.
+- Grant scopes `openid profile email groups`; RS256 ID-token signing; a `groups` ID-token claim as an array of strings (override with `groups_claim` only when the issuer uses a different single claim name).
+- `session_secret_env` or `session_secret_file` names an environment or file reference resolving to 32 through 4096 bytes of secret key material; surrounding whitespace is trimmed before the bound is applied. The secret is never stored in YAML and signs two `HttpOnly`, `SameSite=Lax` cookies. With an HTTPS `admin.origin` — which production requires — the cookies are named `__Host-marketplace_admin_session` and `__Host-marketplace_admin_login` and carry `Secure`, `Path=/`, and no `Domain`; the `__Host-` prefix lets the browser itself enforce host-only isolation, so a sibling-domain cookie with the same logical name can never be confused with them. This deliberately replaces the narrower per-path confinement used on loopback HTTP. The explicit `allow_insecure_localhost` loopback HTTP development exception instead keeps the unprefixed names without `Secure` so browsers accept the cookie over plain HTTP: the transient login transaction cookie is confined to `/api/v1/admin/auth`, and the session cookie is confined to `/api/v1/admin` (default lifetime 12h, maximum 24h, no `Domain` attribute). Both signed cookie values are bounded to 3900 bytes so the complete `Set-Cookie` line stays below the 4096-byte browser limit; a verified, authorized identity whose claims exceed that bound is rejected with `401 authentication_rejected` and receives no session cookie.
+- A verified identity is authorized when one of its groups matches `admin_groups` or its immutable `sub` matches `admin_users`. Every admin request re-evaluates authorization; a session that no longer matches receives `403 forbidden`, and a missing or expired session receives `401 unauthenticated` and is never refreshed implicitly.
+
+With OIDC mode the reverse proxy only routes `/api/v1/admin/` and `/marketplace/admin` to the application; it must not inject identity headers. Public Marketplace routes remain anonymous and available when the identity provider is unavailable or the OIDC configuration is invalid.
+
+Stable sign-in outcomes: `400 authentication_request_invalid` (bad destination or callback shape), `401 authentication_rejected` (state, token, signature, or claims), `503 authentication_unavailable` (discovery, JWKS, or token endpoint unavailable), `503 admin_unavailable` (unsafe configuration), `401 unauthenticated` (missing/expired session), `403 forbidden` (verified but unauthorized identity).
 
 ---
 
 ## 2. Configure the reverse proxy
 
-The Marketplace API does not handle user login, passwords, or session cookies directly. Instead, it trusts identity headers asserted by your authenticated reverse proxy or SSO gateway.
+With `authentication.mode: oidc` the application authenticates administrators itself; the proxy only routes traffic. The steps below apply to `trusted_proxy` mode, where the API trusts identity headers asserted by your authenticated reverse proxy or SSO gateway.
 
 Your reverse proxy must:
 
