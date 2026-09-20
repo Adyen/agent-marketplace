@@ -139,13 +139,14 @@ func translateCommand(command *ir.Command) ([]artifact.Artifact, []diag.Diagnost
 	if command.Description != "" {
 		fm.Set("description", command.Description)
 	}
-	if sidecar := command.Ext.Windsurf; sidecar != nil && sidecar.AutoExecutionMode != "" {
+	if sidecar := command.Ext.Windsurf; sidecar != nil && (sidecar.AutoExecutionModeSet || sidecar.AutoExecutionMode != "") {
 		fm.Set("auto_execution_mode", sidecar.AutoExecutionMode)
 	}
 	present := make(map[string]bool, len(fm.Keys()))
 	for _, k := range fm.Keys() {
 		present[k] = true
 	}
+	present["auto_execution_mode"] = true
 	extraKeys, diags := compilepkg.ExtraKeys(command.Extra, compilepkg.PresentFields(present), compilepkg.TargetWindsurf, command.Name(), diag.SourceRef(command.Source))
 	for _, key := range extraKeys {
 		fm.Set(key, command.Extra[key])

@@ -180,6 +180,18 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/native_metadata_authority",
+		Desc: "Given foreign execution metadata and native workflow controls, When converting harnesses, Then only typed native controls remain active and ordinary metadata is preserved",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/agent-source/droids/guard.md", Body: "---\nname: guard\ndescription: Guard\nx-note: preserved\nmcpServers:\n  hidden:\n    command: must-not-activate\n---\nBody\n"},
+			{Args: []string{"convert", "--from", "factory", "--to", "gemini", "--out", "./gemini-output", "./agent-source"}, MustPass: true, FileContains: map[string]string{"/workspace/gemini-output/.gemini/agents/guard.md": "x-note: preserved"}, FileNotContains: map[string]string{"/workspace/gemini-output/.gemini/agents/guard.md": "mcpServers:"}},
+			{Action: ActionWriteFile, Path: "/workspace/command-source/commands/guard.md", Body: "---\nname: guard\ndescription: Guard\nx-note: preserved\nauto_execution_mode: always\n---\nBody\n"},
+			{Args: []string{"convert", "--from", "factory", "--to", "windsurf", "--out", "./windsurf-output", "./command-source"}, MustPass: true, FileContains: map[string]string{"/workspace/windsurf-output/.windsurf/workflows/guard.md": "x-note: preserved"}, FileNotContains: map[string]string{"/workspace/windsurf-output/.windsurf/workflows/guard.md": "auto_execution_mode:"}},
+			{Action: ActionWriteFile, Path: "/workspace/native/.windsurf/workflows/guard.md", Body: "---\ndescription: Guard\nauto_execution_mode: always\n---\nBody\n"},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "windsurf", "--out", "./native-output", "./native"}, MustPass: true, FileContains: map[string]string{"/workspace/native-output/.windsurf/workflows/guard.md": "auto_execution_mode: always"}},
+		},
+	},
+	{
 		Name: "security/codex_command_restriction",
 		Desc: "Given a restricted command and an unrestricted sibling, When syncing to Codex, Then the unsupported restriction suppresses only that command",
 		Registries: []RegistryDef{{Name: "codex-restrictions", Files: map[string]string{

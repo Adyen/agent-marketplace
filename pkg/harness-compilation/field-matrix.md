@@ -28,6 +28,14 @@ This matrix records all seven targets. The main table includes Devin; Codex mapp
 
 Every Devin hook/MCP case marked error above skips that aggregate entry and makes `sync` exit non-zero; warning cases emit their entry and only drop an inert sub-field or leave a plugin-root token unexpanded.
 
+Windsurf workflow `auto_execution_mode` and Gemini subagent `mcpServers` are
+reserved even when no typed value is present. Opaque extras cannot activate
+these target-native controls; they are omitted with
+`compile.canonical-field-overrides-extra`. Native Windsurf workflow modes are
+loaded into the typed sidecar, preserving explicit empty strings; non-string
+modes are rejected rather than coerced. Native Gemini inline servers continue
+through typed token normalization and credential diagnostics.
+
 ## Codex target
 
 The Codex cells were verified on 2026-08-19 against the official documentation
