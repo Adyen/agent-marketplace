@@ -218,7 +218,7 @@ func translateHook(hook *ir.Hook, opts compilepkg.Options) ([]artifact.Artifact,
 				Target:   string(compilepkg.TargetWindsurf),
 				Resource: hook.Name(),
 				Message:  fmt.Sprintf("Claude hook event %q has no Windsurf equivalent; hook dropped", hook.Event),
-				Hint:     "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, Stop, or SubagentStop)",
+				Hint:     "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop)",
 				Source:   compilepkg.DiagSource(hook.Source),
 			})
 			return nil, diags, nil

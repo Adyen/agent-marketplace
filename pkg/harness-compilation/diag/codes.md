@@ -60,7 +60,7 @@ comparison in non-test code.
 | `hook.factory.non-command-type-dropped` | Factory only supports command-type hooks; non-command type dropped | Convert the hook to a command type or remove it |
 | `hook.cursor.unsupported-type` | Cursor only supports command-type hooks; non-command type dropped | Convert the hook to a command type or remove it |
 | `hook.windsurf.env-token-expanded` | Windsurf expanded env token to a literal path | Verify the expanded path is correct for the target environment |
-| `hook.windsurf.event-unmappable` | Claude hook event has no Windsurf equivalent; hook dropped | Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, Stop, or SubagentStop) |
+| `hook.windsurf.event-unmappable` | Claude hook event has no Windsurf equivalent; hook dropped | Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop) |
 | `ingest.gemini.hook-event-partial-mapping` | Gemini hook event has no exact Claude equivalent; original event preserved | Use BeforeTool, AfterTool, or PreCompress for lossless cross-harness mapping |
 | `ingest.windsurf.hook-event-unmappable` | Windsurf hook event has no Claude equivalent; original event preserved | Use a mappable Windsurf event or preserve the native event through the Windsurf sidecar |
 | `mcp.interpolation-unsupported` | One MCP value uses an interpolation style the target cannot represent; that value was omitted and the entry was still emitted | Replace the interpolated value with a literal value, or use an interpolation style the target documents |

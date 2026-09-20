@@ -180,6 +180,17 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/windsurf_hook_scope_conversion",
+		Desc: "Given scoped hooks, When converting between Windsurf and Claude, Then Write and Edit coverage survives and subagent hooks do not become global response hooks",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/hooks.json", Body: `{"hooks":{"pre_write_code":[{"command":"guard-write-and-edit"}]}}`},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "claude", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/hooks/hooks.json": "Write|Edit"}},
+			{Args: []string{"convert", "--from", "claude", "--to", "windsurf", "--out", "./roundtrip", "./converted"}, MustPass: true, FileContains: map[string]string{"/workspace/roundtrip/.windsurf/hooks.json": "pre_write_code"}},
+			{Action: ActionWriteFile, Path: "/workspace/scoped/hooks/hooks.json", Body: `{"Stop":[{"hooks":[{"type":"command","command":"global-stop"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"subagent-only"}]}]}`},
+			{Args: []string{"convert", "--from", "claude", "--to", "windsurf", "--out", "./scope-output", "./scoped"}, MustPass: true, OutContains: []string{"Diagnostics 1"}, FileContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "global-stop"}, FileNotContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "subagent-only"}},
+		},
+	},
+	{
 		Name: "security/nested_bundle_lock_inventory",
 		Desc: "Given an empty parent plugin with nested hook and MCP resources, When lock and locked sync run, Then both resources are inventoried before materialization",
 		Registries: []RegistryDef{{Name: "nested-inventory", Files: map[string]string{

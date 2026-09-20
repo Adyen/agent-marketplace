@@ -452,13 +452,8 @@ func TestTranslateHook_SubagentStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Translate(hook): %v", err)
 	}
-	if len(diags) != 0 {
-		t.Fatalf("Translate(hook) diags = %d, want 0", len(diags))
-	}
-
-	artifact := singleArtifact(t, artifacts)
-	if artifact.Path != ".windsurf/hooks.json" {
-		t.Fatalf("artifact path = %q, want %q", artifact.Path, ".windsurf/hooks.json")
+	if len(artifacts) != 0 || len(diags) != 1 || diags[0].Code != diag.CodeHookWindsurfEventUnmappable || diags[0].Severity != diag.SeverityWarning {
+		t.Fatalf("SubagentStop must be suppressed with an unmappable warning: artifacts=%v diagnostics=%v", artifacts, diags)
 	}
 }
 

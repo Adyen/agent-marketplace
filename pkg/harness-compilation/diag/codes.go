@@ -486,7 +486,7 @@ var codeCatalog = []CodeDoc{
 	{CodeHookFactoryNonCommandTypeDropped, SeverityWarning, "Factory only supports command-type hooks; non-command type dropped", "Convert the hook to a command type or remove it"},
 	{CodeHookCursorUnsupportedType, SeverityWarning, "Cursor only supports command-type hooks; non-command type dropped", "Convert the hook to a command type or remove it"},
 	{CodeHookWindsurfEnvTokenExpanded, SeverityWarning, "Windsurf expanded env token to a literal path", "Verify the expanded path is correct for the target environment"},
-	{CodeHookWindsurfEventUnmappable, SeverityWarning, "Claude hook event has no Windsurf equivalent; hook dropped", "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, Stop, or SubagentStop)"},
+	{CodeHookWindsurfEventUnmappable, SeverityWarning, "Claude hook event has no Windsurf equivalent; hook dropped", "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop)"},
 	{CodeIngestGeminiHookEventPartialMapping, SeverityWarning, "Gemini hook event only partially maps to Claude vocabulary", "The Gemini event was preserved but cannot be fully represented in canonical IR"},
 	{CodeIngestWindsurfHookEventUnmappable, SeverityWarning, "Windsurf hook event has no Claude equivalent; hook skipped", "Use a mappable Windsurf event or accept that the hook cannot round-trip through Claude IR"},
 	{CodeMcpInterpolationUnsupported, SeverityWarning, "One MCP value uses an interpolation style the target cannot represent; that value was omitted and the entry was still emitted", "Replace the interpolated value with a literal value, or use an interpolation style the target documents"},
