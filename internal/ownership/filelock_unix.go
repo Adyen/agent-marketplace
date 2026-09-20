@@ -123,19 +123,22 @@ func ReadAggregateFile(path string) ([]byte, error) {
 		}
 		return nil, &os.PathError{Op: "open aggregate", Path: path, Err: err}
 	}
-	file := os.NewFile(uintptr(fd), path)
-	defer func() { _ = file.Close() }()
 	var stat syscall.Stat_t
 	if err := syscall.Fstat(fd, &stat); err != nil {
+		_ = syscall.Close(fd)
 		return nil, fmt.Errorf("ownership: inspect aggregate %q: %w", path, err)
 	}
 	if stat.Mode&syscall.S_IFMT != syscall.S_IFREG || stat.Nlink > 1 {
 		slog.Warn("refused unsafe aggregate file", "path", path, "mode", stat.Mode, "links", stat.Nlink)
+		_ = syscall.Close(fd)
 		return nil, fmt.Errorf("%w: %q must be a regular file without multiple links", ErrUnsafeAggregateFile, path)
 	}
 	if err := syscall.SetNonblock(fd, false); err != nil {
+		_ = syscall.Close(fd)
 		return nil, fmt.Errorf("ownership: restore blocking aggregate reads %q: %w", path, err)
 	}
+	file := os.NewFile(uintptr(fd), path)
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(file)
 	if err != nil {
 		return nil, fmt.Errorf("ownership: read aggregate %q: %w", path, err)
