@@ -914,7 +914,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.bundle == nil || m.detailSelectedPath == "" {
 				return m, nil
 			}
-			return m, loadBundleDetailContent(r, m.bundle.root, m.detailSelectedPath, generation, m.previewWidth(), false)
+			return m, loadBundleDetailContent(m.bundle, m.detailSelectedPath, generation, m.previewWidth(), false)
 		}
 		return m, nil
 
@@ -1102,6 +1102,13 @@ func (m *Model) rebuildOpenBundle() {
 	if !found {
 		return
 	}
+	if isMarketplaceDetailOnly(current) {
+		m.bundle = nil
+		m.detailSelectedPath = ""
+		m.cancelRequest(requestDetail)
+		m.detailViewport.SetContent(renderMarketplaceDetailContent(current))
+		return
+	}
 	tree, err := bundleTreeForRow(current)
 	if err != nil {
 		m.bundle = nil
@@ -1227,7 +1234,7 @@ func (m Model) queueBundlePreview(keepScroll bool) (tea.Model, tea.Cmd) {
 		if rowKey(r) == m.detailKey {
 			generation := m.beginRequest(requestDetail)
 			m.detailViewport.SetContent("Loading…")
-			return m, loadBundleDetailContent(r, m.bundle.root, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
+			return m, loadBundleDetailContent(m.bundle, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
 		}
 	}
 	return m, nil
@@ -1256,8 +1263,10 @@ func (m *Model) enterDetailPane() {
 	m.detailSelectedPath = ""
 	if r, ok := m.selectedRow(); ok {
 		m.detailKey = rowKey(r)
-		bundle, err := bundleTreeForRow(r)
-		if err != nil {
+		if isMarketplaceDetailOnly(r) {
+			m.bundle = nil
+			m.detailViewport.SetContent(renderMarketplaceDetailContent(r))
+		} else if bundle, err := bundleTreeForRow(r); err != nil {
 			m.bundle = nil
 			m.detailViewport.SetContent("Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine))
 		} else {
@@ -1298,7 +1307,7 @@ func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
 		if m.detailLegacyRender || m.bundle == nil || m.detailSelectedPath == "" {
 			return loadDetailContent(r, generation, width, true)
 		}
-		return loadBundleDetailContent(r, m.bundle.root, m.detailSelectedPath, generation, previewWidthFor(width), true)
+		return loadBundleDetailContent(m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
 	}
 	return nil
 }
