@@ -28,3 +28,5 @@ func unlockFile(*os.File) error { return ErrLockUnsupported }
 
 // isENOLCK is always false on platforms where flock(2) does not exist.
 func isENOLCK(error) bool { return false }
+
+func ReadAggregateFile(string) ([]byte, error) { return nil, ErrUnsafeAggregateFile }

@@ -265,7 +265,7 @@ func (s *codexMCPRepairState) replace(id ownership.EntryID, replacement []byte) 
 
 func readCodexMCPRepairState(store *ownership.Store, key outputKey, root string) (*codexMCPRepairState, []diag.Diagnostic) {
 	rel := codexMCPFile
-	raw, err := os.ReadFile(filepath.Join(root, rel))
+	raw, err := ownership.ReadAggregateFile(filepath.Join(root, rel))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

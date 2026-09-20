@@ -151,7 +151,7 @@ func (s *Store) backupOnlyLocked(rel, absFile string, reason Reason) (string, er
 // this path, so a malformed or comment-laden file is preserved exactly, which is
 // the only version of a backup worth having for a file a user hand-wrote.
 func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason Reason, entries []Entry) (backupPath, priorDigest string, priorAbsent bool, err error) {
-	raw, readErr := os.ReadFile(absFile)
+	raw, readErr := ReadAggregateFile(absFile)
 	if readErr != nil {
 		if !os.IsNotExist(readErr) {
 			return "", "", false, fmt.Errorf("ownership: read %s for safety backup: %w", absFile, readErr)

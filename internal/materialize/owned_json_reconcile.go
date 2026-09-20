@@ -174,7 +174,7 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 	rel := file.rel
 	abs := filepath.Join(outDir, rel)
 
-	raw, readErr := os.ReadFile(abs)
+	raw, readErr := ownership.ReadAggregateFile(abs)
 	switch {
 	case readErr == nil:
 	case os.IsNotExist(readErr):

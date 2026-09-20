@@ -5,6 +5,8 @@ package ownership
 import (
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"syscall"
 )
@@ -110,4 +112,33 @@ func classifyFlockError(err error) error {
 		// backup failed.
 		return err
 	}
+}
+
+func ReadAggregateFile(path string) ([]byte, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			slog.Warn("refused unsafe aggregate file", "path", path, "reason", "symlink")
+			return nil, fmt.Errorf("%w: open %q: %w", ErrUnsafeAggregateFile, path, err)
+		}
+		return nil, &os.PathError{Op: "open aggregate", Path: path, Err: err}
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer func() { _ = file.Close() }()
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(fd, &stat); err != nil {
+		return nil, fmt.Errorf("ownership: inspect aggregate %q: %w", path, err)
+	}
+	if stat.Mode&syscall.S_IFMT != syscall.S_IFREG || stat.Nlink > 1 {
+		slog.Warn("refused unsafe aggregate file", "path", path, "mode", stat.Mode, "links", stat.Nlink)
+		return nil, fmt.Errorf("%w: %q must be a regular file without multiple links", ErrUnsafeAggregateFile, path)
+	}
+	if err := syscall.SetNonblock(fd, false); err != nil {
+		return nil, fmt.Errorf("ownership: restore blocking aggregate reads %q: %w", path, err)
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("ownership: read aggregate %q: %w", path, err)
+	}
+	return data, nil
 }
