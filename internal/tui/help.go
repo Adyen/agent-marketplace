@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/cellbuf"
 
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
@@ -69,16 +70,26 @@ func renderErrors(m Model) string {
 
 	var b strings.Builder
 
+	// Diagnostics render inside the bounded scrollable viewport: wrap each
+	// message to the overlay width so complete text stays readable through
+	// scrolling instead of being hard-cut by the terminal fit.
+	writeDiagnostic := func(style lipgloss.Style, prefix, text string) {
+		line := prefix + sanitizeTerminalData(text, terminalSingleLine)
+		if m.width > 1 {
+			line = cellbuf.Wrap(line, m.width, "")
+		}
+		b.WriteString(style.Render(line))
+		b.WriteString("\n")
+	}
+
 	if len(m.errs) > 0 {
 		b.WriteString(styleErrorTitle.Render(fmt.Sprintf("Errors (%d)", len(m.errs))))
 		b.WriteString("\n\n")
 		for _, err := range m.errs {
-			b.WriteString(styleErrorMsg.Render("• " + sanitizeTerminalData(err.Error(), terminalSingleLine)))
-			b.WriteString("\n")
+			writeDiagnostic(styleErrorMsg, "• ", err.Error())
 			var r resolver.Remediable
 			if errors.As(err, &r) {
-				b.WriteString(styleErrorMsg.Render("  → " + sanitizeTerminalData(r.Remediation(), terminalSingleLine)))
-				b.WriteString("\n")
+				writeDiagnostic(styleErrorMsg, "  → ", r.Remediation())
 			}
 		}
 	}
@@ -90,8 +101,7 @@ func renderErrors(m Model) string {
 		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Marketplace discovery (%d)", len(m.discoveryErrs))))
 		b.WriteString("\n\n")
 		for _, discoveryErr := range m.discoveryErrs {
-			b.WriteString(styleWarningMsg.Render("• " + sanitizeTerminalData(discoveryErr.Error(), terminalSingleLine)))
-			b.WriteString("\n")
+			writeDiagnostic(styleWarningMsg, "• ", discoveryErr.Error())
 		}
 	}
 
@@ -102,13 +112,11 @@ func renderErrors(m Model) string {
 		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Warnings (%d)", len(m.warnings))))
 		b.WriteString("\n\n")
 		for _, w := range m.warnings {
-			b.WriteString(styleWarningMsg.Render("• " + sanitizeTerminalData(w.Error(), terminalSingleLine)))
-			b.WriteString("\n")
+			writeDiagnostic(styleWarningMsg, "• ", w.Error())
 			// Print remediation hint for remediable warnings
 			var r resolver.Remediable
 			if errors.As(w, &r) {
-				b.WriteString(styleWarningMsg.Render("  → " + sanitizeTerminalData(r.Remediation(), terminalSingleLine)))
-				b.WriteString("\n")
+				writeDiagnostic(styleWarningMsg, "  → ", r.Remediation())
 			}
 		}
 	}
