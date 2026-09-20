@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -307,6 +308,21 @@ func attachDetailSources(rows []row, byPath map[string]*detailSourceSnapshot) {
 // wrapped in a markdown code block before being rendered through glamour,
 // so it displays with syntax highlighting instead of a raw minified blob.
 func renderDetailFullContent(r row, width int) string {
+	if r.Artifact.IsMarketplace {
+		// Marketplace rows never read a registry-relative source path.
+		// Discovery-only rows render bounded index metadata; installed rows
+		// render their verified canonical artifact archive.
+		if isMarketplaceDetailOnly(r) {
+			return renderMarketplaceDetailContent(r)
+		}
+		if isMarketplaceArtifactPath(r.Artifact.Path) {
+			tree, err := newMarketplaceArtifactTree(r.Artifact.Path)
+			if err != nil {
+				return "Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
+			}
+			return renderBundleEntry(tree, tree.selectedPath(), width)
+		}
+	}
 	if r.Artifact.Kind == ir.KindSkill && r.Artifact.Path != "" && r.DetailSource == nil {
 		sources, err := detailSourcePaths(r)
 		if err != nil {
@@ -576,6 +592,70 @@ func isJSONPath(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".json")
 }
 
+// renderMarketplaceDetailContent renders the bounded metadata view for
+// Marketplace rows that have no browsable local content: discovery-only
+// results and installed pins whose verified content is unavailable. It shows
+// index metadata only — never fabricated source content and no network or
+// filesystem lookup — and ends with an actionable next step.
+func renderMarketplaceDetailContent(r row) string {
+	safe := func(value string) string { return sanitizeTerminalData(value, terminalSingleLine) }
+	label := styleDetailLabel.Render
+	value := styleDetailValue.Render
+	var b strings.Builder
+	writeField := func(l, v string) {
+		b.WriteString(label(l) + value(v) + "\n")
+	}
+	writeField("Kind:     ", skill.KindLabel(r.Artifact.Kind))
+	writeField("Name:     ", safe(r.Artifact.Name))
+	writeField("Status:   ", safe(r.StatusText()))
+	if r.Artifact.RegistryURL != "" {
+		writeField("Registry: ", safe(r.Artifact.RegistryURL))
+	}
+	if r.Artifact.Ref != "" {
+		writeField("Ref:      ", safe(r.Artifact.Ref))
+	}
+	if d := r.MarketplaceDiscovery; d != nil {
+		writeField("Marketplace: ", safe(marketplaceEndpointDisplay(d.Endpoint)))
+		writeField("Registry:    ", safe(d.Item.RegistrySlug+" ("+d.Item.RegistryID+")"))
+		if d.Item.Revision != "" {
+			writeField("Revision:    ", safe(d.Item.Revision))
+		}
+		if d.Item.ContentDigest != "" {
+			writeField("Digest:      ", safe(d.Item.ContentDigest))
+		}
+	}
+	if r.Artifact.Description != "" {
+		b.WriteString("\n" + value(safe(r.Artifact.Description)) + "\n")
+	}
+	b.WriteString("\n")
+	switch {
+	case r.MarketplaceDiscovery == nil:
+		b.WriteString(value("Verified content is not available locally; run sync to restore it."))
+	case r.MarketplaceDiscovery.Item.Availability == mpapi.AvailabilityAvailable:
+		b.WriteString(value("Discovery metadata only — content is verified during install.\nPress space to install this exact revision."))
+	default:
+		b.WriteString(value("This Marketplace resource is not currently installable."))
+	}
+	return b.String()
+}
+
+// renderBundleEntry renders one selected bundle member. Archive-backed trees
+// serve bounded verified in-memory content; filesystem trees keep the
+// descriptor-based no-follow preview path.
+func renderBundleEntry(t *bundleTree, relative string, width int) string {
+	if t == nil {
+		return "Error reading file: no bundle content available"
+	}
+	if t.files != nil {
+		data, ok := t.files[relative]
+		if !ok {
+			return "Error reading file: archive member is not available"
+		}
+		return renderBundleContent(relative, data, len(data) > maxDetailSourceBytes, width)
+	}
+	return renderBundleFile(t.root, relative, width)
+}
+
 // renderBundleFile reads exactly one selected bundle file. The relative path
 // is validated before joining and the final descriptor is opened without
 // following symlinks, keeping an enumeration/read race inside the resource
@@ -601,7 +681,12 @@ func renderBundleFile(root, relative string, width int) string {
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
-	truncated := len(data) > maxDetailSourceBytes
+	return renderBundleContent(relative, data, len(data) > maxDetailSourceBytes, width)
+}
+
+// renderBundleContent applies the shared sanitization, per-file truncation
+// marker, and bounded glamour rendering for one bundle member's bytes.
+func renderBundleContent(relative string, data []byte, truncated bool, width int) string {
 	if truncated {
 		data = data[:maxDetailSourceBytes]
 	}
@@ -653,11 +738,11 @@ func safeBundlePath(root, relative string) (string, error) {
 }
 
 // loadBundleDetailContent is the asynchronous selected-file preview path.
-func loadBundleDetailContent(r row, root, relative string, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
+func loadBundleDetailContent(bundle *bundleTree, relative string, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
 	return func() tea.Msg {
 		return detailContentMsg{
 			generation: generation,
-			content:    renderBundleFile(root, relative, width),
+			content:    renderBundleEntry(bundle, relative, width),
 			width:      width,
 			keepScroll: keepScroll,
 			path:       relative,
