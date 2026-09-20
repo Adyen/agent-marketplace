@@ -784,7 +784,9 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 		{"repo", paths.Repo, repoLayer},
 		{"local", paths.Local, localLayer},
 	}
+	type inputPath struct{ name, path string }
 	inputs := make([]v4MigrationInput, 0, len(selected))
+	canonicalInputs := make(map[string]inputPath, len(selected))
 	for _, item := range selected {
 		if scope != V4MigrationAll && string(scope) != item.name {
 			continue
@@ -822,6 +824,10 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 			// An already-v4 file is valid input and needs no rewrite.
 			continue
 		}
+		if previous, exists := canonicalInputs[canonical]; exists {
+			return nil, v4err("v4.migration-input", item.path, 0, "%s config %q and %s config %q resolve to the same legacy file", previous.name, previous.path, item.name, item.path)
+		}
+		canonicalInputs[canonical] = inputPath{name: item.name, path: item.path}
 		cfg, errs := loadV3ConfigWithAPIVersion(data, item.kind, false, item.kind != localLayer)
 		if len(errs) > 0 {
 			return nil, v4err("v4.migration-input", item.path, 0, "%v", errors.Join(errs...))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -148,6 +149,43 @@ registries:
 	}
 	if loaded.APIVersion != APIVersionV4 || len(loaded.Registries) != 1 || loaded.Registries[0].Skills.Include[0] != "review" {
 		t.Fatalf("adapted config = %#v", loaded)
+	}
+}
+
+func TestMigrateConfigFilesToV4PreservesEveryLegacyResourceKind(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeV2Config(t, path, `apiVersion: agent-marketplace/v2
+skills: {include: [skill-new], exclude: [skill-old]}
+commands: {include: [command-new], exclude: [command-old]}
+subagents: {include: [subagent-new], exclude: [subagent-old]}
+hooks: {include: [hook-new], exclude: [hook-old]}
+mcp: {include: [mcp-new], exclude: [mcp-old]}
+collections: {include: [collection-new], exclude: [collection-old]}
+registries:
+  - url: https://example.test/agents.git
+    ref: main
+`)
+	if _, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	group := cfg.Groups["agents"]
+	wantIncludes := []string{"skill/skill-new", "command/command-new", "subagent/subagent-new", "hook/hook-new", "mcp/mcp-new", "collection/collection-new"}
+	if len(group.Include) != len(wantIncludes) {
+		t.Fatalf("includes = %#v, want %v", group.Include, wantIncludes)
+	}
+	for i, want := range wantIncludes {
+		if group.Include[i].Locator != want {
+			t.Fatalf("include[%d] = %q, want %q", i, group.Include[i].Locator, want)
+		}
+	}
+	wantExcludes := []string{"skill/skill-old", "command/command-old", "subagent/subagent-old", "hook/hook-old", "mcp/mcp-old", "collection/collection-old"}
+	if !slices.Equal(group.Exclude, wantExcludes) {
+		t.Fatalf("excludes = %v, want %v", group.Exclude, wantExcludes)
 	}
 }
 
@@ -505,6 +543,58 @@ registries:
 	}
 	if len(targetMatches) != 0 {
 		t.Fatalf("backup was placed beside symlink target: %v", targetMatches)
+	}
+}
+
+func TestMigrateConfigFilesToV4RejectsLayersAliasingSameConfig(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	dir := t.TempDir()
+	target := filepath.Join(dir, "config-target.yaml")
+	userPath := filepath.Join(dir, "user.yaml")
+	repoPath := filepath.Join(dir, "repo.yaml")
+	before := "apiVersion: agent-marketplace/v2\nregistries: []\n"
+	writeV2Config(t, target, before)
+	for _, path := range []string{userPath, repoPath} {
+		if err := os.Symlink(filepath.Base(target), path); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := MigrateConfigFilesToV4(MigratePaths{User: userPath, Repo: repoPath}, V4MigrationAll, false)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.migration-input" {
+		t.Fatalf("error = %v, want v4.migration-input", err)
+	}
+	if got := readConfigString(t, target); got != before {
+		t.Fatalf("aliased config changed after refusal: %q", got)
+	}
+	for _, path := range []string{userPath, repoPath} {
+		matches, globErr := filepath.Glob(path + ".pre-v4.*.bak")
+		if globErr != nil || len(matches) != 0 {
+			t.Fatalf("%s backups after refusal = %v, %v", path, matches, globErr)
+		}
+	}
+}
+
+func TestMigrateConfigFilesToV4AllowsLayersAliasingAlreadyV4Config(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "config-target.yaml")
+	userPath := filepath.Join(dir, "user.yaml")
+	repoPath := filepath.Join(dir, "repo.yaml")
+	before := "apiVersion: agent-marketplace/v4\nsources: {}\n"
+	writeV2Config(t, target, before)
+	for _, path := range []string{userPath, repoPath} {
+		if err := os.Symlink(filepath.Base(target), path); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := MigrateConfigFilesToV4(MigratePaths{User: userPath, Repo: repoPath}, V4MigrationAll, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.UserMigrated || result.RepoMigrated || readConfigString(t, target) != before {
+		t.Fatalf("already-v4 alias result = %#v, config = %q", result, readConfigString(t, target))
 	}
 }
 
