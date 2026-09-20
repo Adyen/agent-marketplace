@@ -180,6 +180,18 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/mcp_parse_error_not_absence",
+		Desc: "Given an MCP duplicate key whose text resembles a missing-file error, When converting, Then malformed input is refused without changing output and a repaired file converts normally",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/mcp_config.json", Body: `{"mcpServers":{"fixture":{"command":"fixture","file does not exist":1,"file does not exist":2}}}`},
+			{Action: ActionWriteFile, Path: "/workspace/output/keep.txt", Body: "HANDWRITTEN OUTPUT\n"},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "factory", "--out", "./output", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"json.duplicate-key"}, PathsUnchanged: []string{"/workspace/output"}},
+			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/mcp_config.json", Body: `{"mcpServers":{"fixture":{"command":"fixture"}}}`},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "factory", "--out", "./output", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/output/mcp.json": "fixture", "/workspace/output/skills/control/SKILL.md": "CONTROL BODY"}, PathsUnchanged: []string{"/workspace/output/keep.txt"}},
+		},
+	},
+	{
 		Name: "security/windsurf_direct_root_layout",
 		Desc: "Given direct-root Windsurf resources with root agent notes and MCP configuration, When converting, Then resource output is not hidden by a nonexistent workspace layout",
 		Steps: []Step{

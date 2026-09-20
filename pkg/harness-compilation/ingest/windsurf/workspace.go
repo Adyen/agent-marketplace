@@ -257,12 +257,7 @@ func dirHasEntries(src fs.FS, name string) bool {
 }
 
 func isNotExist(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "file does not exist") ||
-		strings.Contains(err.Error(), "directory does not exist") ||
-		strings.Contains(err.Error(), "no such file or directory")
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 func listSubdirs(src fs.FS, root string) ([]string, error) {
