@@ -56,9 +56,9 @@ registries:
 	env.WriteFile("/etc/agent-marketplace/devin-alpha/config.yaml", fmt.Sprintf(baseOrg, alphaURL, "alpha"))
 	env.WriteFile("/etc/agent-marketplace/devin-beta/config.yaml", fmt.Sprintf(baseOrg, betaURL, "beta"))
 
-	// Given: A FIFO makes the first sync block while reading the aggregate, which is
-	// inside the ownership critical section. Once its writer opens, replace the
-	// pathname with a regular file so the later backup and CAS reads do not block.
+	// Given: A FIFO makes the first sync block while reading ownership proof, which is
+	// inside the ownership critical section. Once its writer opens, restore the
+	// regular state file so the later backup and CAS reads do not block.
 	// This constructs contention instead of hoping two process startups happen to
 	// reach a millisecond-long section together.
 	const seed = "{\n  \"mcpServers\": {\n    \"handwritten\": { \"command\": \"user-owned-binary\" }\n  }\n}\n"
@@ -69,7 +69,7 @@ registries:
 	if err := os.MkdirAll(filepath.Dir(mcpPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mkfifo(mcpPath, 0o600); err != nil {
+	if err := os.WriteFile(mcpPath, []byte(seed), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,21 +87,17 @@ registries:
 	for _, org := range orgs {
 		env.MustLockOrganizationConfig(org)
 	}
+	proofPath, proofBytes := prepareOwnershipProofFIFO(t, env, orgs[0])
 	alphaDone := make(chan struct{})
 	go func() {
 		defer close(alphaDone)
 		results[0] = env.RunAMWithEnv(map[string]string{
 			"AGENT_MARKETPLACE_V3_ORG_CONFIG": orgs[0],
-		}, "sync")
+		}, "sync", "--no-backup")
 	}()
 
-	fifoWriter := openFIFOWriter(t, mcpPath, alphaDone, &results[0])
-	seedPath := mcpPath + ".seed"
-	if err := os.WriteFile(seedPath, []byte(seed), 0o600); err != nil {
-		_ = fifoWriter.Close()
-		t.Fatal(err)
-	}
-	if err := os.Rename(seedPath, mcpPath); err != nil {
+	fifoWriter := openFIFOWriter(t, proofPath, alphaDone, &results[0])
+	if err := os.Rename(proofPath+".seed", proofPath); err != nil {
 		_ = fifoWriter.Close()
 		t.Fatal(err)
 	}
@@ -111,13 +107,13 @@ registries:
 	contended := env.RunAMWithEnv(map[string]string{
 		"AGENT_MARKETPLACE_V3_ORG_CONFIG":          orgs[1],
 		"AGENT_MARKETPLACE_OWNERSHIP_LOCK_TIMEOUT": "0",
-	}, "sync")
+	}, "sync", "--no-backup")
 	if contended.ExitCode == 0 || !strings.Contains(contended.Combined, codeOwnershipLockTimeout) {
 		_ = fifoWriter.Close()
 		t.Fatalf("overlapping sync was not refused with %s (exit=%d):\n%s",
 			codeOwnershipLockTimeout, contended.ExitCode, contended.Combined)
 	}
-	if _, err := fifoWriter.Write([]byte(seed)); err != nil {
+	if _, err := fifoWriter.Write(proofBytes); err != nil {
 		_ = fifoWriter.Close()
 		t.Fatal(err)
 	}
@@ -201,6 +197,30 @@ registries:
 	if found := findAnyFile(t, stateRoot, "journal.json"); found != "" {
 		t.Fatalf("completed sync left a journal: %s", found)
 	}
+}
+
+func prepareOwnershipProofFIFO(t *testing.T, env *Env, org string) (string, []byte) {
+	t.Helper()
+	result := env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": org}, "sync", "--no-backup")
+	if result.ExitCode != 0 {
+		t.Fatalf("seed ownership proof: %s", result.Combined)
+	}
+	stateRoot := filepath.Join(env.home, ".local", "state", "agent-marketplace", "ownership")
+	path := findAnyFile(t, stateRoot, "state.json")
+	if path == "" {
+		t.Fatal("sync did not create ownership proof")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path, path+".seed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path, raw
 }
 
 func sha256OfFile(t *testing.T, path string) string {

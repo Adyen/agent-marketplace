@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -172,24 +171,20 @@ registries:
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mkfifo(configPath, 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte(seed), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	proofPath, proofBytes := prepareOwnershipProofFIFO(t, env, alphaOrg)
 
 	var alpha, beta ExecResult
 	alphaDone := make(chan struct{})
 	go func() {
 		defer close(alphaDone)
-		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg}, "sync")
+		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg}, "sync", "--no-backup")
 	}()
 
-	fifoWriter := openFIFOWriter(t, configPath, alphaDone, &alpha)
-	seedPath := configPath + ".seed"
-	if err := os.WriteFile(seedPath, []byte(seed), 0o600); err != nil {
-		_ = fifoWriter.Close()
-		t.Fatal(err)
-	}
-	if err := os.Rename(seedPath, configPath); err != nil {
+	fifoWriter := openFIFOWriter(t, proofPath, alphaDone, &alpha)
+	if err := os.Rename(proofPath+".seed", proofPath); err != nil {
 		_ = fifoWriter.Close()
 		t.Fatal(err)
 	}
@@ -202,13 +197,13 @@ registries:
 			"AGENT_MARKETPLACE_V3_ORG_CONFIG": betaOrg,
 			"AGENT_MARKETPLACE_LOG_FILE":      betaLog,
 			"AGENT_MARKETPLACE_LOG_LEVEL":     "debug",
-		}, "sync")
+		}, "sync", "--no-backup")
 	}()
 	waitForFileContains(t, betaLog, "Codex MCP reconciliation start")
 	// Hold the first writer long enough for the default-wait path to report
 	// contention after the second writer reaches the same root.
 	time.Sleep(1100 * time.Millisecond)
-	if _, err := fifoWriter.Write([]byte(seed)); err != nil {
+	if _, err := fifoWriter.Write(proofBytes); err != nil {
 		_ = fifoWriter.Close()
 		t.Fatal(err)
 	}
