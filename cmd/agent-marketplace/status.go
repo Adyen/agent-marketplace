@@ -652,8 +652,16 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	orphaned := view.orphaned
 	collisions := view.collisions
 	requirements := view.requirements
-	errorRows := view.errorRows
+	errorRows := slices.Clone(view.errorRows)
 	dryRunReport := view.dryRunReport
+	if dryRunReport != nil {
+		for _, diagnostic := range dryRunReport.Diags {
+			if diagnostic.IsError() {
+				errorRows = append(errorRows, errorRow{Message: pipeline.PromoteDiagnostic(diagnostic).Error()})
+			}
+		}
+		slices.SortFunc(errorRows, func(a, b errorRow) int { return cmp.Compare(a.Message, b.Message) })
+	}
 	targetHarnesses := view.targetHarnesses
 	targetSource := view.targetSource
 	harnessTargets := view.harnessTargets
@@ -816,12 +824,12 @@ func writeStatusWarnings(out io.Writer, warnings []error) error {
 		}
 		seen[key] = struct{}{}
 
-		if _, err := fmt.Fprintf(out, "warning: %v\n", w); err != nil {
+		if _, err := fmt.Fprintf(out, "warning: %s\n", terminalSafeText(w.Error())); err != nil {
 			return err
 		}
 		var r resolver.Remediable
 		if errors.As(w, &r) {
-			if _, err := fmt.Fprintf(out, "  -> %s\n", r.Remediation()); err != nil {
+			if _, err := fmt.Fprintf(out, "  -> %s\n", terminalSafeText(r.Remediation())); err != nil {
 				return err
 			}
 		}
@@ -841,7 +849,11 @@ func writeStatusTable(out io.Writer, title string, header []string, rows [][]str
 	}
 
 	for _, row := range rows {
-		if _, err := fmt.Fprintln(writer, strings.Join(row, "\t")); err != nil {
+		cells := make([]string, len(row))
+		for i, cell := range row {
+			cells[i] = terminalSafeText(cell)
+		}
+		if _, err := fmt.Fprintln(writer, strings.Join(cells, "\t")); err != nil {
 			return err
 		}
 	}

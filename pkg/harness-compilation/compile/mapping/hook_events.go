@@ -75,7 +75,7 @@ var hookEventTable = []hookEventEntry{
 		TargetClaude:   "SubagentStop",
 		TargetFactory:  "SubagentStop",
 		TargetCursor:   "SubagentStop",
-		TargetWindsurf: "post_cascade_response",
+		TargetWindsurf: "",
 		TargetGemini:   "", // unmappable: no Gemini equivalent in v0
 		TargetDevin:    "", // unmappable: Devin documents no subagent-stop event
 		TargetCodex:    "", // same name, but no direct Claude-to-Codex lifecycle equivalent
@@ -143,21 +143,21 @@ var hookEventTable = []hookEventEntry{
 	}},
 
 	{Claude: "SessionStart", Targets: map[Target]string{
-		TargetClaude:   "", // unmappable: no in-repo Claude Code evidence
-		TargetFactory:  "", // unmappable: no in-repo Factory Droid evidence
-		TargetCursor:   "", // unmappable: no in-repo Cursor evidence
-		TargetWindsurf: "", // unmappable: no Windsurf equivalent
-		TargetGemini:   "", // unmappable: no Gemini equivalent
+		TargetClaude:   "",             // unmappable: no in-repo Claude Code evidence
+		TargetFactory:  "SessionStart", // Factory documents session-start lifecycle hooks
+		TargetCursor:   "",             // unmappable: no in-repo Cursor evidence
+		TargetWindsurf: "",             // unmappable: no Windsurf equivalent
+		TargetGemini:   "",             // unmappable: no Gemini equivalent
 		TargetDevin:    "SessionStart",
 		TargetCodex:    "SessionStart",
 	}},
 
 	{Claude: "SessionEnd", Targets: map[Target]string{
-		TargetClaude:   "", // unmappable: no in-repo Claude Code evidence
-		TargetFactory:  "", // unmappable: no in-repo Factory Droid evidence
-		TargetCursor:   "", // unmappable: no in-repo Cursor evidence
-		TargetWindsurf: "", // unmappable: no Windsurf equivalent
-		TargetGemini:   "", // unmappable: no Gemini equivalent
+		TargetClaude:   "",           // unmappable: no in-repo Claude Code evidence
+		TargetFactory:  "SessionEnd", // Factory documents session-end lifecycle hooks
+		TargetCursor:   "",           // unmappable: no in-repo Cursor evidence
+		TargetWindsurf: "",           // unmappable: no Windsurf equivalent
+		TargetGemini:   "",           // unmappable: no Gemini equivalent
 		TargetDevin:    "SessionEnd",
 		TargetCodex:    "", // same name, but no direct Devin-to-Codex lifecycle equivalent
 	}},
@@ -181,15 +181,16 @@ var hookEventTable = []hookEventEntry{
 // which Windsurf event it maps to.
 var windsurfToolMatcher = map[string]string{
 	// Last verified: 2026-04-24 against Windsurf Cascade docs
-	"Read":      "pre_read_code",
-	"Write":     "pre_write_code",
-	"Edit":      "pre_write_code",
-	"MultiEdit": "pre_write_code",
-	"Bash":      "pre_run_command",
-	"Glob":      "pre_read_code",
-	"Grep":      "pre_read_code",
-	"WebFetch":  "pre_read_code",
-	"WebSearch": "pre_read_code",
+	"Read":       "pre_read_code",
+	"Write":      "pre_write_code",
+	"Edit":       "pre_write_code",
+	"Write|Edit": "pre_write_code",
+	"MultiEdit":  "pre_write_code",
+	"Bash":       "pre_run_command",
+	"Glob":       "pre_read_code",
+	"Grep":       "pre_read_code",
+	"WebFetch":   "pre_read_code",
+	"WebSearch":  "pre_read_code",
 }
 
 // windsurfPreToolEvent resolves a PreToolUse + matcher to a Windsurf event.

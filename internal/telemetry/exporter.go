@@ -210,6 +210,8 @@ func (t *endpointValidationTransport) RoundTrip(req *http.Request) (*http.Respon
 	return t.inner.RoundTrip(req)
 }
 
+func rejectTelemetryRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
 // buildRouteClients builds the HTTP clients used for live exports and for
 // draining queued payloads to endpoint. The live client queues failed payloads.
 func buildRouteClients(endpoint string, headers map[string]string, caFile string, allowInsecure bool, route, signal string, onFailure func(error), q *Queue) (*http.Client, *http.Client, error) {
@@ -252,6 +254,7 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 		allowInsecure: allowInsecure,
 	}
 	live := &http.Client{
+		CheckRedirect: rejectTelemetryRedirect,
 		Transport: &queueTransport{
 			inner:     validatedTransport,
 			queue:     q,
@@ -261,8 +264,9 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 		},
 	}
 	send := &http.Client{
-		Transport: validatedTransport,
-		Timeout:   30 * time.Second,
+		CheckRedirect: rejectTelemetryRedirect,
+		Transport:     validatedTransport,
+		Timeout:       30 * time.Second,
 	}
 
 	slog.Info("route clients built", "route", route, "signal", signal)

@@ -203,41 +203,35 @@ func TestFactorySubagent_FrontmatterExtraFieldsAreDeterministic(t *testing.T) {
 	}
 }
 
-// --- Factory Subagent: unknown tool is a warning that omits the tools key ---
-func TestFactorySubagent_UnknownToolOmitsToolsKey(t *testing.T) {
+// --- Factory Subagent: unknown tools suppress the restricted artifact ---
+func TestFactorySubagent_UnknownToolSuppressesArtifact(t *testing.T) {
 	sub := ir.NewSubagent("unknown-tool", "Agent", "Work", "sonnet", []string{"MysteryTool"}, "", nil, "", nil, ir.SourceRef{})
 	arts, diags, err := (&factoryCompiler{}).Translate(sub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(arts) != 1 {
-		t.Fatalf("artifacts = %d, want one droid artifact", len(arts))
+	if len(arts) != 0 {
+		t.Fatalf("artifacts = %d, want none for an unrepresentable restriction", len(arts))
 	}
-	if len(diags) != 1 || diags[0].Code != diag.CodeSubagentFactoryToolUnknown || diags[0].Severity != diag.SeverityWarning {
-		t.Fatalf("diagnostics = %#v, want factory unknown-tool warning", diags)
+	if len(diags) != 1 || diags[0].Code != diag.CodeSubagentFactoryToolUnknown || diags[0].Severity != diag.SeverityError {
+		t.Fatalf("diagnostics = %#v, want factory unknown-tool error", diags)
 	}
-	body := string(arts[0].Bytes)
-	if strings.Contains(body, "tools:") {
-		t.Fatalf("droid frontmatter should not contain a tools key, got:\n%s", body)
-	}
+
 }
 
-func TestFactorySubagent_MixedToolOmitsToolsKey(t *testing.T) {
+func TestFactorySubagent_MixedToolSuppressesArtifact(t *testing.T) {
 	sub := ir.NewSubagent("mixed-tool", "Agent", "Work", "sonnet", []string{"Read", "MysteryTool"}, "", nil, "", nil, ir.SourceRef{})
 	arts, diags, err := (&factoryCompiler{}).Translate(sub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(arts) != 1 {
-		t.Fatalf("artifacts = %d, want one droid artifact", len(arts))
+	if len(arts) != 0 {
+		t.Fatalf("artifacts = %d, want none for an unrepresentable restriction", len(arts))
 	}
-	if len(diags) != 1 || diags[0].Code != diag.CodeSubagentFactoryToolUnknown || diags[0].Severity != diag.SeverityWarning {
-		t.Fatalf("diagnostics = %#v, want factory unknown-tool warning", diags)
+	if len(diags) != 1 || diags[0].Code != diag.CodeSubagentFactoryToolUnknown || diags[0].Severity != diag.SeverityError {
+		t.Fatalf("diagnostics = %#v, want factory unknown-tool error", diags)
 	}
-	body := string(arts[0].Bytes)
-	if strings.Contains(body, "tools:") {
-		t.Fatalf("droid frontmatter should not contain a tools key when any tool is unmapped, got:\n%s", body)
-	}
+
 }
 
 func TestFactorySubagent_NoLossyFields(t *testing.T) {
@@ -260,7 +254,7 @@ func TestFactorySubagent_NoLossyFields(t *testing.T) {
 // --- Factory Hook test (~ translated) ---
 func TestFactoryHook_CommandType(t *testing.T) {
 	c := &factoryCompiler{}
-	hook := ir.NewHook("pre-commit-command", "pre-commit", "${CLAUDE_PLUGIN_ROOT}/run.sh", "command", map[string]any{}, ir.SourceRef{File: "hooks/hooks.json", Line: 0})
+	hook := ir.NewHook("pre-tool-command", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/run.sh", "command", map[string]any{}, ir.SourceRef{File: "hooks/hooks.json", Line: 0})
 
 	arts, diags, err := c.Translate(hook)
 	if err != nil {
@@ -284,7 +278,7 @@ func TestFactoryHook_CommandType(t *testing.T) {
 	if err := json.Unmarshal(hookArt.Bytes, &hookData); err != nil {
 		t.Fatalf("hooks.json is not valid JSON: %v", err)
 	}
-	rules := hookData["pre-commit"].([]any)
+	rules := hookData["PreToolUse"].([]any)
 	ruleGroup := rules[0].(map[string]any)
 	hooksArr := ruleGroup["hooks"].([]any)
 	hookEntry := hooksArr[0].(map[string]any)

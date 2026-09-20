@@ -4,6 +4,7 @@
 package claude
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -476,12 +477,7 @@ func listSkillSubdirs(src fs.FS) ([]string, error) {
 
 // isNotExist reports whether an error is a "file does not exist" error.
 func isNotExist(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "file does not exist") ||
-		strings.Contains(err.Error(), "directory does not exist") ||
-		strings.Contains(err.Error(), "no such file or directory")
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // listSubdirs returns the immediate subdirectories of root within src.

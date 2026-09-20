@@ -67,7 +67,7 @@ func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination h
 				diagnostics = append(diagnostics, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File, "recovered an incomplete Gemini native aggregate generation"))
 			}
 		}
-		raw, readErr := os.ReadFile(file)
+		raw, readErr := ownership.ReadAggregateFile(file)
 		if readErr != nil && !os.IsNotExist(readErr) {
 			return readErr
 		}

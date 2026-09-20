@@ -73,18 +73,18 @@ func (i *syncResolverIssue) Remediation() string       { return i.remediation }
 
 func writeGroupedWarnings(out io.Writer, warnings []error, verbose bool) error {
 	for _, group := range groupWarnings(warnings) {
-		if _, err := fmt.Fprintf(out, "warning: %v\n", group.warning); err != nil {
+		if _, err := fmt.Fprintf(out, "warning: %s\n", terminalSafeText(group.warning.Error())); err != nil {
 			return err
 		}
 		if len(group.resources) > 1 {
 			resources, suffix := warningResources(group, verbose)
-			if _, err := fmt.Fprintf(out, "  → %d resources: %s%s\n", len(group.resources), strings.Join(resources, ", "), suffix); err != nil {
+			if _, err := fmt.Fprintf(out, "  → %d resources: %s%s\n", len(group.resources), terminalSafeText(strings.Join(resources, ", ")), suffix); err != nil {
 				return err
 			}
 		}
 
 		if remediable := warningRemediation(group.warning); remediable != nil {
-			if _, err := fmt.Fprintf(out, "  → %s\n", remediable.Remediation()); err != nil {
+			if _, err := fmt.Fprintf(out, "  → %s\n", terminalSafeText(remediable.Remediation())); err != nil {
 				return err
 			}
 		}
@@ -172,17 +172,17 @@ func writeSyncIssues(out io.Writer, issues []error, verbose bool, prefix string)
 			text = group.presentation
 		}
 		text += warningGroupSuffix(group)
-		if _, err := fmt.Fprintf(out, "%s %s\n", prefix, text); err != nil {
+		if _, err := fmt.Fprintf(out, "%s %s\n", prefix, terminalSafeText(text)); err != nil {
 			return err
 		}
 		if len(group.resources) > 0 && (group.presentation != "" || len(group.resources) > 1) {
 			resources, suffix := warningResources(group, verbose)
-			if _, err := fmt.Fprintf(out, "  %s%s\n", strings.Join(resources, ", "), suffix); err != nil {
+			if _, err := fmt.Fprintf(out, "  %s%s\n", terminalSafeText(strings.Join(resources, ", ")), suffix); err != nil {
 				return err
 			}
 		}
 		if remediable := warningRemediation(group.warning); remediable != nil {
-			_, err := fmt.Fprintf(out, "  → %s\n", remediable.Remediation())
+			_, err := fmt.Fprintf(out, "  → %s\n", terminalSafeText(remediable.Remediation()))
 			return err
 		}
 		return nil
@@ -199,7 +199,7 @@ func writeSyncIssues(out io.Writer, issues []error, verbose bool, prefix string)
 		if resources > 0 {
 			suffix = fmt.Sprintf(" (%d problems, %d resources)", len(group.problems), resources)
 		}
-		if _, err := fmt.Fprintf(out, "%s %s%s\n", prefix, group.code, suffix); err != nil {
+		if _, err := fmt.Fprintf(out, "%s %s%s\n", prefix, terminalSafeText(group.code), suffix); err != nil {
 			return err
 		}
 		for _, problem := range group.problems {
@@ -224,21 +224,21 @@ func writeSyncIssue(out io.Writer, group *warningGroup, verbose bool, prefix, in
 	}
 	text += warningGroupSuffix(group)
 	if indent == "" {
-		if _, err := fmt.Fprintf(out, "%s %s\n", prefix, text); err != nil {
+		if _, err := fmt.Fprintf(out, "%s %s\n", prefix, terminalSafeText(text)); err != nil {
 			return err
 		}
-	} else if _, err := fmt.Fprintf(out, "%s%s\n", indent, text); err != nil {
+	} else if _, err := fmt.Fprintf(out, "%s%s\n", indent, terminalSafeText(text)); err != nil {
 		return err
 	}
 	if len(group.resources) > 0 && (group.presentation != "" || len(group.resources) > 1) {
 		resources, suffix := warningResources(group, verbose)
-		if _, err := fmt.Fprintf(out, "%s  %s%s\n", indent, strings.Join(resources, ", "), suffix); err != nil {
+		if _, err := fmt.Fprintf(out, "%s  %s%s\n", indent, terminalSafeText(strings.Join(resources, ", ")), suffix); err != nil {
 			return err
 		}
 	}
 	if remediation {
 		if remediable := warningRemediation(group.warning); remediable != nil {
-			if _, err := fmt.Fprintf(out, "%s  → %s\n", indent, remediable.Remediation()); err != nil {
+			if _, err := fmt.Fprintf(out, "%s  → %s\n", indent, terminalSafeText(remediable.Remediation())); err != nil {
 				return err
 			}
 		}
@@ -261,7 +261,7 @@ func writeSyncIssueRemediations(out io.Writer, group *syncIssueGroup) error {
 			continue
 		}
 		seen[hint] = struct{}{}
-		if _, err := fmt.Fprintf(out, "  → %s\n", hint); err != nil {
+		if _, err := fmt.Fprintf(out, "  → %s\n", terminalSafeText(hint)); err != nil {
 			return err
 		}
 	}

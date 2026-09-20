@@ -50,6 +50,7 @@ const (
 	CodeHookWindsurfEventUnmappable         = "hook.windsurf.event-unmappable"           // Claude hook event has no Windsurf equivalent
 	CodeIngestGeminiHookEventPartialMapping = "ingest.gemini.hook-event-partial-mapping" // Gemini hook event only partially maps to Claude vocabulary
 	CodeIngestWindsurfHookEventUnmappable   = "ingest.windsurf.hook-event-unmappable"    // Windsurf hook event has no canonical equivalent
+	CodeIngestFactoryResourceShadowed       = "ingest.factory.resource-shadowed"
 	// CodeMcpInterpolationUnsupported is the shared, VALUE-LEVEL interpolation
 	// loss: one env value, one header value, one argument, or one OAuth member
 	// used an interpolation style the target cannot represent, so that value
@@ -138,7 +139,7 @@ const (
 	// localize the loss.
 	CodeSkillDevinToolUnknown      = "skill.devin.tool-unknown"      // Devin skill/command allowed tool not representable; allowed-tools key omitted
 	CodeSubagentDevinToolUnknown   = "subagent.devin.tool-unknown"   // Devin subagent tool not representable; allowed-tools key omitted
-	CodeSubagentFactoryToolUnknown = "subagent.factory.tool-unknown" // Factory subagent tool not representable; tools key omitted
+	CodeSubagentFactoryToolUnknown = "subagent.factory.tool-unknown" // Factory subagent tool not representable; artifact suppressed
 
 	// Devin hook and MCP codes that still EMIT the entry.
 	//
@@ -481,12 +482,13 @@ var codeCatalog = []CodeDoc{
 	{CodeOwnershipLockContended, SeverityInfo, "Another agent-marketplace process held this target root's ownership lock, so this run waited for it", "No action needed; ownership mutations are serialized per canonical target root so two writers cannot publish an aggregate file and its ownership record at different instants"},
 
 	// Warning
+	{CodeIngestFactoryResourceShadowed, SeverityWarning, "Factory resource was shadowed by an earlier resource of the same kind and name", "Use distinct resource names or remove the lower-priority definition"},
 	{CodeSubagentWindsurfNoPrimitive, SeverityWarning, "Windsurf has no subagent primitive; resource dropped", "Consider expressing the subagent as a Windsurf workflow instead"},
 	{CodeHookClaudeUnsupportedType, SeverityWarning, "Unsupported hook type in Claude format; only command-type is universally supported in v0", "Convert the hook to a command type or remove it"},
 	{CodeHookFactoryNonCommandTypeDropped, SeverityWarning, "Factory only supports command-type hooks; non-command type dropped", "Convert the hook to a command type or remove it"},
 	{CodeHookCursorUnsupportedType, SeverityWarning, "Cursor only supports command-type hooks; non-command type dropped", "Convert the hook to a command type or remove it"},
 	{CodeHookWindsurfEnvTokenExpanded, SeverityWarning, "Windsurf expanded env token to a literal path", "Verify the expanded path is correct for the target environment"},
-	{CodeHookWindsurfEventUnmappable, SeverityWarning, "Claude hook event has no Windsurf equivalent; hook dropped", "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, Stop, or SubagentStop)"},
+	{CodeHookWindsurfEventUnmappable, SeverityWarning, "Claude hook event has no Windsurf equivalent; hook dropped", "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop)"},
 	{CodeIngestGeminiHookEventPartialMapping, SeverityWarning, "Gemini hook event only partially maps to Claude vocabulary", "The Gemini event was preserved but cannot be fully represented in canonical IR"},
 	{CodeIngestWindsurfHookEventUnmappable, SeverityWarning, "Windsurf hook event has no Claude equivalent; hook skipped", "Use a mappable Windsurf event or accept that the hook cannot round-trip through Claude IR"},
 	{CodeMcpInterpolationUnsupported, SeverityWarning, "One MCP value uses an interpolation style the target cannot represent; that value was omitted and the entry was still emitted", "Replace the interpolated value with a literal value, or use an interpolation style the target documents"},
@@ -527,7 +529,6 @@ var codeCatalog = []CodeDoc{
 	// rationale on the constants above and the dedicated section in codes.md.
 	{CodeSkillDevinToolUnknown, SeverityWarning, "An explicitly allowed skill or command tool has no Devin equivalent; the allowed-tools key was omitted and the resource was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource"},
 	{CodeSubagentDevinToolUnknown, SeverityWarning, "An explicitly allowed subagent tool has no Devin equivalent; the allowed-tools key was omitted and the profile was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent"},
-	{CodeSubagentFactoryToolUnknown, SeverityWarning, "An explicitly allowed subagent tool has no Factory equivalent; the tools key was omitted and the droid was still emitted", "Use a tool the Factory mapping table knows, or accept Factory's default tool set for this subagent"},
 	{CodeHookDevinPayloadDropped, SeverityWarning, "The hook carries the payload its type does not select; that payload was dropped", "Split the hook into one command hook and one prompt hook if both payloads are required"},
 	{CodeHookDevinPluginRootUnresolved, SeverityWarning, "The hook command references the plugin root but no plugin root was configured; the token was left unexpanded", "Compile with a plugin root so the command resolves, or use an absolute command path"},
 	{CodeMcpDevinFieldDropped, SeverityWarning, "A modeled MCP field belongs to the documented server form this server did not select and was dropped", "Move the field to a server of the form that documents it"},
@@ -552,6 +553,7 @@ var codeCatalog = []CodeDoc{
 	{CodeDoctorRepairConflictReplaceable, SeverityWarning, "An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan", "Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it"},
 
 	// Error
+	{CodeSubagentFactoryToolUnknown, SeverityError, "Factory cannot map an explicit subagent tool; subagent artifact suppressed", "Use a supported tool mapping or remove the restriction explicitly"},
 	{CodeSkillCodexSecurityRestrictionUnsupported, SeverityError, "Codex skills cannot enforce an explicit security restriction; artifact suppressed", "Remove the restriction explicitly or use a target that represents it"},
 	{CodeHookEventUnmappable, SeverityError, "Target cannot preserve this hook event; hook suppressed", "Use a hook event documented by the target"},
 	{CodeHookNativeLiteralUnsupported, SeverityError, "Target would reinterpret a native Codex hook literal; hook suppressed", "Remove the target-specific interpolation token or keep the hook in Codex format"},

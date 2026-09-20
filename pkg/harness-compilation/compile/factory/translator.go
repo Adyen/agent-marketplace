@@ -195,7 +195,7 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 
 	// Map tools. Factory's droid frontmatter rejects unknown tool identifiers,
 	// and omitting the tools key allows Factory's default tool set. An unmapped
-	// tool therefore omits the whole tools key but still publishes the droid.
+	// tool therefore suppresses the droid instead of broadening its permissions.
 	var mappedTools []string
 	if s.Tools != nil {
 		mappedTools = make([]string, 0, len(s.Tools))
@@ -209,18 +209,17 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 			toolsUnknown = true
 			diags = append(diags, diag.Diagnostic{
 				Code:     diag.CodeSubagentFactoryToolUnknown,
-				Severity: diag.SeverityWarning,
+				Severity: diag.SeverityError,
 				Target:   string(mapping.TargetFactory),
 				Resource: s.Name(),
-				Message:  "Factory cannot map an explicit subagent tool; the tools key was omitted and Factory's default tool set applies",
-				Hint:     "Add the tool to the mapping table or remove the explicit tool to keep the restriction, or accept Factory's default tool set for this subagent",
+				Message:  "Factory cannot map an explicit subagent tool; subagent artifact suppressed",
+				Hint:     "Use a supported tool mapping or remove the restriction explicitly",
 				Source:   compile.DiagSource(s.Source),
 			})
 		}
 	}
 	if toolsUnknown {
-		slog.Warn("factory subagent tool unrepresentable", "target", mapping.TargetFactory, "resource", s.Name(), "outcome", "tools key omitted")
-		mappedTools = nil
+		slog.Warn("factory subagent tool unrepresentable", "target", mapping.TargetFactory, "resource", s.Name(), "outcome", "artifact suppressed")
 	}
 
 	// Factory cannot represent these security restrictions. Fail closed rather
@@ -313,6 +312,11 @@ func (f *factoryCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]art
 		return nil, diags, nil
 	}
 
+	event, supported := mapping.HookEvent(h.Event, h.Matcher, mapping.TargetFactory)
+	if !supported {
+		return nil, []diag.Diagnostic{{Code: diag.CodeHookEventUnmappable, Severity: diag.SeverityError, Target: string(mapping.TargetFactory), Resource: h.Name(), Message: "Factory cannot preserve this hook event; hook artifact suppressed", Hint: "Use a hook event documented for Factory", Source: compile.DiagSource(h.Source)}}, nil
+	}
+
 	// Swap ${CLAUDE_PLUGIN_ROOT} → ${DROID_PLUGIN_ROOT} in the command
 	mappedCommand := swapEnvTokens(h.Command)
 
@@ -340,7 +344,7 @@ func (f *factoryCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]art
 	// Factory hooks.json: top-level keys are event names, each mapping to
 	// an array of rule groups (matcher + hooks).
 	fragment := map[string]any{
-		h.Event: []any{ruleGroup},
+		event: []any{ruleGroup},
 	}
 	fragBytes, err := json.Marshal(fragment)
 	if err != nil {

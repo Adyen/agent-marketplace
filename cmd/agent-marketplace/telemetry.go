@@ -241,21 +241,21 @@ func runTelemetryStatus(out io.Writer) error {
 	}
 
 	_, _ = fmt.Fprintf(out, "Telemetry status\n")
-	_, _ = fmt.Fprintf(out, "  Effective level:       %s (%s)\n", state.EffectiveLevel, strings.ToLower(state.EffectiveLevelSource))
-	_, _ = fmt.Fprintf(out, "  Primary endpoint:      %s\n", primary)
-	_, _ = fmt.Fprintf(out, "  Primary headers:       %s\n", formatPrimaryHeaders(state.PrimaryHeaders))
-	_, _ = fmt.Fprintf(out, "  Retention policy:      %s\n", emptyOr(state.RetentionPolicyURL, "none"))
-	_, _ = fmt.Fprintf(out, "  Community reporting:   %s\n", community)
+	_, _ = fmt.Fprintf(out, "  Effective level:       %s (%s)\n", terminalSafeText(state.EffectiveLevel), terminalSafeText(strings.ToLower(state.EffectiveLevelSource)))
+	_, _ = fmt.Fprintf(out, "  Primary endpoint:      %s\n", terminalSafeText(primary))
+	_, _ = fmt.Fprintf(out, "  Primary headers:       %s\n", terminalSafeText(formatPrimaryHeaders(state.PrimaryHeaders)))
+	_, _ = fmt.Fprintf(out, "  Retention policy:      %s\n", terminalSafeText(emptyOr(state.RetentionPolicyURL, "none")))
+	_, _ = fmt.Fprintf(out, "  Community reporting:   %s\n", terminalSafeText(community))
 	_, _ = fmt.Fprintf(out, "  Managed installation:  %v\n", state.Managed)
-	_, _ = fmt.Fprintf(out, "  Installation ID:       %s\n", installID)
+	_, _ = fmt.Fprintf(out, "  Installation ID:       %s\n", terminalSafeText(installID))
 	_, _ = fmt.Fprintf(out, "  Pending records:       %d (oldest %s, %s)\n", info.QueueCount, oldest, formatBytes(info.QueueSize))
 	_, _ = fmt.Fprintf(out, "  Diagnostic payloads:   %d\n", info.DiagnosticCount)
-	_, _ = fmt.Fprintf(out, "  Last delivery failure: %s\n", lastFailure)
+	_, _ = fmt.Fprintf(out, "  Last delivery failure: %s\n", terminalSafeText(lastFailure))
 
 	if state.Managed {
 		locked := lockedFields(state)
 		if len(locked) > 0 {
-			_, _ = fmt.Fprintf(out, "  Locked by organization: %s\n", strings.Join(locked, ", "))
+			_, _ = fmt.Fprintf(out, "  Locked by organization: %s\n", terminalSafeText(strings.Join(locked, ", ")))
 		}
 	}
 

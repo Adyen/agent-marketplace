@@ -60,11 +60,12 @@ type Cursor struct {
 
 // Windsurf preserves workflow and hook fields that are specific to Windsurf.
 type Windsurf struct {
-	AutoExecutionMode string `json:"autoExecutionMode,omitempty"`
-	OriginalHookEvent string `json:"originalHookEvent,omitempty"`
-	HookPowerShell    string `json:"hookPowerShell,omitempty"`
-	HookShowOutput    *bool  `json:"hookShowOutput,omitempty"`
-	HookWorkingDir    string `json:"hookWorkingDir,omitempty"`
+	AutoExecutionMode    string `json:"autoExecutionMode,omitempty"`
+	AutoExecutionModeSet bool   `json:"autoExecutionModeSet,omitempty"`
+	OriginalHookEvent    string `json:"originalHookEvent,omitempty"`
+	HookPowerShell       string `json:"hookPowerShell,omitempty"`
+	HookShowOutput       *bool  `json:"hookShowOutput,omitempty"`
+	HookWorkingDir       string `json:"hookWorkingDir,omitempty"`
 }
 
 // Gemini preserves Gemini CLI-specific fields for commands, hooks, and

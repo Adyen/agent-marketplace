@@ -35,7 +35,8 @@ func TestHookEvent_ClaudeToWindsurf(t *testing.T) {
 		// Direct event mappings (no matcher needed)
 		{"UserPromptSubmit", "", "pre_user_prompt", true},
 		{"Stop", "", "post_cascade_response", true},
-		{"SubagentStop", "", "post_cascade_response", true},
+		{"SubagentStop", "", "", false},
+		{"PreToolUse", "Write|Edit", "pre_write_code", true},
 		{"Notification", "", "", false}, // no Windsurf equivalent
 		{"PreCompact", "", "", false},   // no Windsurf equivalent
 		{"PostToolUse", "", "", false},  // no Windsurf equivalent

@@ -152,7 +152,7 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 		"temperature":     temperature != nil,
 		"max_turns":       maxTurns != nil,
 		"timeout_mins":    timeoutMinutes != nil,
-		"mcpServers":      len(inlineMCPServers) > 0,
+		"mcpServers":      true,
 	}), mapping.TargetGemini, sub.Name(), diag.SourceRef(sub.Source))
 	for _, key := range extraKeys {
 		fm.Set(key, sub.Extra[key])

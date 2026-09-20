@@ -31,6 +31,10 @@ type toolEntry struct {
 // every source tool is explicitly unsupported. A nil cell is intentional and
 // prevents translation from silently widening a source restriction.
 var toolTable = []toolEntry{
+	{Claude: "Create", Targets: map[Target][]string{
+		TargetClaude: nil, TargetFactory: {"Create"}, TargetCursor: nil,
+		TargetWindsurf: nil, TargetGemini: nil, TargetDevin: nil, TargetCodex: nil,
+	}},
 	// Last verified: 2026-04-23 against Claude Code v1.0
 	{Claude: "Read", Targets: map[Target][]string{
 		TargetClaude:   {"Read"},

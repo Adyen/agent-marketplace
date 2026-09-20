@@ -273,8 +273,6 @@ func canonicalizeHook(file string, rule hookFile) (*ir.Hook, []diag.Diagnostic) 
 
 func normalizeMatcher(event, matcher string) string {
 	switch event {
-	case "pre_write_code":
-		return "Write"
 	case "pre_mcp_tool_use":
 		return "mcp__*"
 	default:

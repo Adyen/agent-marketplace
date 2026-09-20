@@ -180,6 +180,169 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:      "security/cli_warning_controls",
+		Desc:      "Given a selected missing resource with a control-bearing local registry ref, When syncing and listing, Then warning display is escaped and selection remains unchanged",
+		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
+		RepoCfg:   "harnesses: [factory]\nregistries:\n  - url: ~/.agents/warning-fixture\n    ref: \"REF\\u001b[31m\\u202e\"\n    skills: [missing]\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/root/.agents/warning-fixture/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"warning:", `REF\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"list"}, MustPass: true, OutContains: []string{`REF\x1b[31m\u202e`, "control"}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+		},
+	},
+	{
+		Name:      "security/telemetry_failure_controls",
+		Desc:      "Given a persisted delivery failure containing terminal controls, When displaying telemetry status, Then output is escaped without rewriting the stored record",
+		GlobalCfg: "harnesses: [factory]\nregistries: []\ntelemetry:\n  level: off\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/root/.local/state/agent-marketplace/telemetry/last-delivery-failure", Body: `{"time":"2026-09-01T00:00:00Z","error":"SERVER\u001b[31m\r\n\u202e"}`},
+			{Args: []string{"telemetry", "status"}, MustPass: true, OutContains: []string{`SERVER\x1b[31m\r\n\u202e`}, OutNotContains: []string{"\x1b", "\r", "\u202e"}, PathsUnchanged: []string{"/root/.local/state/agent-marketplace/telemetry/last-delivery-failure"}},
+		},
+	},
+	{
+		Name:      "security/cli_table_collection_controls",
+		Desc:      "Given local registry and collection metadata containing terminal controls, When listing checking status and installing a collection, Then display is escaped while selection and installation remain intact",
+		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
+		RepoCfg:   "harnesses: [factory]\nregistries:\n  - url: ~/.agents/terminal-fixture\n    ref: \"REF\\u001b[31m\\u202e\"\n    skills: [control]\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/root/.agents/terminal-fixture/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
+			{Action: ActionWriteFile, Path: "/root/.agents/terminal-fixture/collections/bundle/COLLECTION.yaml", Body: "name: bundle\nversion: \"VERSION\\u001b[31m\\u202e\"\nresources:\n  - name: control\n"},
+			{Action: ActionWriteFile, Path: "/root/.agents/terminal-fixture/collections/display/COLLECTION.yaml", Body: "name: \"DISPLAY\\u001b[31m\\u202e\"\nresources:\n  - name: control\n"},
+			{Args: []string{"list", "--kind", "collection"}, MustPass: true, OutContains: []string{`DISPLAY\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{`REF\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"install", "bundle", "--kind", "collection", "--scope", "repo"}, MustPass: true, OutContains: []string{`Installed collection bundle@VERSION\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, FilesExist: []string{"/workspace/.factory/skills/control/SKILL.md"}},
+		},
+	},
+	{
+		Name: "security/mcp_parse_error_not_absence",
+		Desc: "Given an MCP duplicate key whose text resembles a missing-file error, When converting, Then malformed input is refused without changing output and a repaired file converts normally",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/mcp_config.json", Body: `{"mcpServers":{"fixture":{"command":"fixture","file does not exist":1,"file does not exist":2}}}`},
+			{Action: ActionWriteFile, Path: "/workspace/output/keep.txt", Body: "HANDWRITTEN OUTPUT\n"},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "factory", "--out", "./output", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"json.duplicate-key"}, PathsUnchanged: []string{"/workspace/output"}},
+			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/mcp_config.json", Body: `{"mcpServers":{"fixture":{"command":"fixture"}}}`},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "factory", "--out", "./output", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/output/mcp.json": "fixture", "/workspace/output/skills/control/SKILL.md": "CONTROL BODY"}, PathsUnchanged: []string{"/workspace/output/keep.txt"}},
+		},
+	},
+	{
+		Name: "security/windsurf_direct_root_layout",
+		Desc: "Given direct-root Windsurf resources with root agent notes and MCP configuration, When converting, Then resource output is not hidden by a nonexistent workspace layout",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/AGENTS.md", Body: "# Notes\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/workflows/deploy.md", Body: "---\ndescription: Deploy\n---\nWORKFLOW BODY\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/hooks.json", Body: `{"hooks":{"pre_run_command":[{"command":"guard-command"}]}}`},
+			{Action: ActionWriteFile, Path: "/workspace/source/mcp_config.json", Body: `{"mcpServers":{"native-server":{"command":"fixture-server"}}}`},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "windsurf", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/.windsurf/workflows/deploy.md": "WORKFLOW BODY", "/workspace/converted/.windsurf/hooks.json": "guard-command", "/workspace/converted/.windsurf/mcp_config.json": "fixture-server"}},
+		},
+	},
+	{
+		Name: "security/factory_declared_identity",
+		Desc: "Given mixed Factory layouts with colliding declared names and a distinct filename collision, When converting, Then the first resource survives and the distinct resource is retained",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/commands/source.md", Body: "---\nname: review\ndescription: First\n---\nFIRST RESOURCE\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/.factory/commands/alias.md", Body: "---\nname: review\ndescription: Shadow\n---\nSHADOW RESOURCE\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/.factory/commands/review.md", Body: "---\nname: other\ndescription: Unique\n---\nUNIQUE RESOURCE\n"},
+			{Args: []string{"convert", "--from", "factory", "--to", "factory", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/commands/review.md": "FIRST RESOURCE", "/workspace/converted/commands/other.md": "UNIQUE RESOURCE"}, FileNotContains: map[string]string{"/workspace/converted/commands/review.md": "SHADOW RESOURCE"}},
+		},
+	},
+	{
+		Name: "security/command_marker_body_lifecycle",
+		Desc: "Given a Factory command with marker text in its body and a handwritten sibling, When installing removing and reinstalling, Then real frontmatter ownership enables cleanup without adopting the handwritten file",
+		Registries: []RegistryDef{{Name: "marker-body", Files: map[string]string{
+			"commands/marker-command.md": "---\nname: marker-command\ndescription: Marker command\n---\n```yaml\n_managed_by: agent-marketplace\n```\n",
+			"commands/keep.md":           "---\nname: keep\ndescription: Keep\n---\nKeep body\n",
+		}}},
+		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
+		RepoCfg:   "harnesses: [factory]\nregistries:\n  - url: {{REG:marker-body}}\n    ref: main\n    commands: [marker-command, keep]\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/.factory/commands/manual.md", Body: "---\ndescription: Personal\n---\nExample: _managed_by: agent-marketplace\n"},
+			{Args: []string{"sync"}, MustPass: true, RegularFiles: []string{"/workspace/.factory/commands/marker-command.md"}, FileContains: map[string]string{"/workspace/.factory/commands/marker-command.md": "```yaml\n_managed_by: agent-marketplace\n```"}, PathsUnchanged: []string{"/workspace/.factory/commands/manual.md"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/commands/marker-command.md", "/workspace/.factory/commands/keep.md", "/workspace/.factory/commands/manual.md"}},
+			{Args: []string{"remove", "marker-command", "--kind", "command", "--scope", "repo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/commands/marker-command.md"}, PathsUnchanged: []string{"/workspace/.factory/commands/keep.md", "/workspace/.factory/commands/manual.md"}},
+			{Args: []string{"install", "marker-command", "--kind", "command", "--scope", "repo"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/commands/marker-command.md": "---\n_managed_by: agent-marketplace\n"}, PathsUnchanged: []string{"/workspace/.factory/commands/keep.md", "/workspace/.factory/commands/manual.md"}},
+		},
+	},
+	{
+		Name:       "security/hook_merge_opaque_members",
+		Desc:       "Given handwritten hook-container metadata and managed hooks, When sync updates hooks, Then unrelated members survive byte-for-byte while stale managed hooks are removed",
+		Registries: []RegistryDef{{Name: "opaque-hooks", Files: map[string]string{"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo generated"}]}]}}`}}},
+		GlobalCfg:  "harnesses: [claude]\nregistries: []\n",
+		RepoCfg:    "harnesses: [claude]\nregistries:\n  - url: {{REG:opaque-hooks}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/.claude/hooks/hooks.json", Body: "{\n  \"hooks\": {\n    // handwritten metadata\n    \"notes\" : \"keep\",\n    \"options\" : {\"enabled\":false},\n    \"disabled\" : false,\n    \"value\" : 1.2300,\n    \"nothing\" : null,\n    \"empty\" : [],\n    \"PostToolUse\": [{\"type\":\"command\",\"command\":\"manual-hook\"}],\n    \"Stop\": [{\"type\":\"command\",\"command\":\"stale-owned\",\"_managed_by\":\"agent-marketplace\"}]\n  }\n}\n"},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "echo generated"}, FileNotContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "stale-owned"}},
+			{FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "// handwritten metadata\n    \"notes\" : \"keep\",\n    \"options\" : {\"enabled\":false},\n    \"disabled\" : false,\n    \"value\" : 1.2300,\n    \"nothing\" : null,\n    \"empty\" : [],"}},
+			{FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "manual-hook"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.claude/hooks/hooks.json"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{"/workspace/.claude/hooks/hooks.json"}},
+		},
+	},
+	{
+		Name: "security/codex_literal_header",
+		Desc: "Given a Codex literal that resembles a bare environment reference and a safe sibling, When converting to Windsurf, Then the unsafe reinterpretation is refused while literal-preserving conversion remains available",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/.codex/config.toml", Body: "[mcp_servers.literal]\nurl = 'https://example.invalid/mcp'\n[mcp_servers.literal.http_headers]\nX-Literal = '$SYNTHETIC_KEY'\n[mcp_servers.safe]\nurl = 'https://example.invalid/mcp'\n[mcp_servers.safe.http_headers]\nX-Literal = 'ordinary'\n"},
+			{Args: []string{"convert", "--from", "codex", "--to", "windsurf", "--out", "./converted", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"mcp.security-restriction-unsupported"}, FileContains: map[string]string{"/workspace/converted/.windsurf/mcp_config.json": "ordinary"}, FileNotContains: map[string]string{"/workspace/converted/.windsurf/mcp_config.json": "SYNTHETIC_KEY"}},
+			{Args: []string{"convert", "--from", "codex", "--to", "codex", "--out", "./native", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/native/.codex/config.toml": "$SYNTHETIC_KEY"}},
+		},
+	},
+	{
+		Name: "security/native_metadata_authority",
+		Desc: "Given foreign execution metadata and native workflow controls, When converting harnesses, Then only typed native controls remain active and ordinary metadata is preserved",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/agent-source/droids/guard.md", Body: "---\nname: guard\ndescription: Guard\nx-note: preserved\nmcpServers:\n  hidden:\n    command: must-not-activate\n---\nBody\n"},
+			{Args: []string{"convert", "--from", "factory", "--to", "gemini", "--out", "./gemini-output", "./agent-source"}, MustPass: true, FileContains: map[string]string{"/workspace/gemini-output/.gemini/agents/guard.md": "x-note: preserved"}, FileNotContains: map[string]string{"/workspace/gemini-output/.gemini/agents/guard.md": "mcpServers:"}},
+			{Action: ActionWriteFile, Path: "/workspace/command-source/commands/guard.md", Body: "---\nname: guard\ndescription: Guard\nx-note: preserved\nauto_execution_mode: always\n---\nBody\n"},
+			{Args: []string{"convert", "--from", "factory", "--to", "windsurf", "--out", "./windsurf-output", "./command-source"}, MustPass: true, FileContains: map[string]string{"/workspace/windsurf-output/.windsurf/workflows/guard.md": "x-note: preserved"}, FileNotContains: map[string]string{"/workspace/windsurf-output/.windsurf/workflows/guard.md": "auto_execution_mode:"}},
+			{Action: ActionWriteFile, Path: "/workspace/native/.windsurf/workflows/guard.md", Body: "---\ndescription: Guard\nauto_execution_mode: always\n---\nBody\n"},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "windsurf", "--out", "./native-output", "./native"}, MustPass: true, FileContains: map[string]string{"/workspace/native-output/.windsurf/workflows/guard.md": "auto_execution_mode: always"}},
+		},
+	},
+	{
+		Name: "security/codex_command_restriction",
+		Desc: "Given a restricted command and an unrestricted sibling, When syncing to Codex, Then the unsupported restriction suppresses only that command",
+		Registries: []RegistryDef{{Name: "codex-restrictions", Files: map[string]string{
+			"commands/restricted.md": "---\nname: restricted\ndescription: Restricted\nallowed-tools: []\n---\nBody\n",
+			"commands/plain.md":      "---\nname: plain\ndescription: Plain\n---\nBody\n",
+		}}},
+		GlobalCfg: "harnesses: [codex]\nregistries:\n  - url: {{REG:codex-restrictions}}\n    ref: main\n    commands: [restricted, plain]\n",
+		Steps:     []Step{{Args: []string{"sync"}, AssertExitCode: intPtr(1), OutContains: []string{"skill.codex.security-restriction-unsupported"}, FilesAbsent: []string{"/root/.agents/skills/restricted"}, FileContains: map[string]string{"/root/.agents/skills/plain/SKILL.md": "x-agent-marketplace-kind: command"}}},
+	},
+	{
+		Name: "security/factory_hook_event",
+		Desc: "Given a Devin permission hook and a valid tool hook, When converting to Factory, Then unsupported authorization behavior is reported and omitted without suppressing the valid sibling",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/.devin/hooks.v1.json", Body: `{"PermissionRequest":[{"hooks":[{"type":"command","command":"permission-check"}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"valid-check"}]}]}`},
+			{Args: []string{"convert", "--from", "devin", "--to", "factory", "--out", "./converted", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"hook.event-unmappable"}, FileContains: map[string]string{"/workspace/converted/hooks/hooks.json": "valid-check"}, FileNotContains: map[string]string{"/workspace/converted/hooks/hooks.json": "PermissionRequest"}},
+		},
+	},
+	{
+		Name: "security/windsurf_hook_scope_conversion",
+		Desc: "Given scoped hooks, When converting between Windsurf and Claude, Then Write and Edit coverage survives and subagent hooks do not become global response hooks",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/hooks.json", Body: `{"hooks":{"pre_write_code":[{"command":"guard-write-and-edit"}]}}`},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "claude", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/hooks/hooks.json": "Write|Edit"}},
+			{Args: []string{"convert", "--from", "claude", "--to", "windsurf", "--out", "./roundtrip", "./converted"}, MustPass: true, FileContains: map[string]string{"/workspace/roundtrip/.windsurf/hooks.json": "pre_write_code"}},
+			{Action: ActionWriteFile, Path: "/workspace/scoped/hooks/hooks.json", Body: `{"Stop":[{"hooks":[{"type":"command","command":"global-stop"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"subagent-only"}]}]}`},
+			{Args: []string{"convert", "--from", "claude", "--to", "windsurf", "--out", "./scope-output", "./scoped"}, MustPass: true, OutContains: []string{"Diagnostics 1"}, FileContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "global-stop"}, FileNotContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "subagent-only"}},
+		},
+	},
+	{
+		Name: "security/nested_bundle_lock_inventory",
+		Desc: "Given an empty parent plugin with nested hook and MCP resources, When lock and locked sync run, Then both resources are inventoried before materialization",
+		Registries: []RegistryDef{{Name: "nested-inventory", Files: map[string]string{
+			".claude-plugin/plugin.json":     `{"name":"container","version":"1.0.0"}`,
+			"plugins/audit/.mcp.json":        `{"mcpServers":{"nested-server":{"command":"fixture-server"}}}`,
+			"plugins/audit/hooks/hooks.json": `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo audit"}]}]}}`,
+		}}},
+		RepoCfg: "harnesses: [factory]\nregistries:\n  - url: {{REG:nested-inventory}}\n    ref: main\n    source_harness: claude\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/lock.yaml": "kind: hook"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/lock.yaml": "name: nested-server", "/workspace/.factory/mcp.json": "fixture-server"}},
+		},
+	},
+	{
 		Name:      "security/blocked_registry_credentials_redacted",
 		Desc:      "Given a denied credential-bearing registry, When sync loads effective config, Then error output and the persisted log redact credentials without changing the configured identity",
 		GlobalCfg: "harnesses: [factory]\nallowed_registries: []\n",
@@ -1699,11 +1862,12 @@ registries:
 		},
 	},
 	{
-		Name: "subagent/unknown_tool_warns_and_emits",
-		Desc: "Given a registry with a subagent using a tool absent from the Factory mapping table, When sync is run for factory, Then the droid is emitted with the tools key omitted and a warning is reported; sync exits 0",
+		Name: "subagent/unknown_tool_refuses_output",
+		Desc: "Given an unrepresentable Factory tool restriction and a valid sibling, When sync runs, Then the restricted droid is suppressed with an error while the valid sibling is installed",
 		Registries: []RegistryDef{
 			{Name: "sub-tool-pt", Subagents: []Subagent{
 				{Name: "unk-tool-agent", Tools: []string{"Read", "CustomTool"}},
+				{Name: "known-tool-agent", Tools: []string{"Read"}},
 			}},
 		},
 		GlobalCfg: `
@@ -1712,14 +1876,14 @@ registries:
     ref: main
     subagents:
       - unk-tool-agent
+      - known-tool-agent
 `,
 		Steps: []Step{
-			{Args: []string{"sync"}, MustPass: true,
-				OutContains: []string{"subagent.factory.tool-unknown"},
-				FilesExist:  []string{"/root/.factory/droids/unk-tool-agent.md"},
-				FileNotContains: map[string]string{
-					"/root/.factory/droids/unk-tool-agent.md": "tools:",
-				},
+			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
+				OutContains:  []string{"subagent.factory.tool-unknown"},
+				FilesAbsent:  []string{"/root/.factory/droids/unk-tool-agent.md"},
+				FilesExist:   []string{"/root/.factory/droids/known-tool-agent.md"},
+				FileContains: map[string]string{"/root/.factory/droids/known-tool-agent.md": "- Read"},
 			},
 		},
 	},

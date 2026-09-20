@@ -96,16 +96,19 @@ func Build(input Input) (Result, error) {
 	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks}
 	cat, err := catalog.LoadWithOptions(root, input.SourceHarness, options)
 	loaded := cat
-	if err != nil {
+	if err != nil || len(cat.Entries) == 0 {
 		discovered, discoverErr := catalog.DiscoverWithOptions(root, input.SourceHarness, options)
 		if discoverErr != nil {
-			return Result{}, fmt.Errorf("%w: load root %q: %w", ErrCatalog, input.RootPath, err)
+			return Result{}, fmt.Errorf("%w: load root %q: %w", ErrCatalog, input.RootPath, errors.Join(err, discoverErr))
 		}
-		sourceHarness := input.SourceHarness
-		if sourceHarness == "" {
-			sourceHarness = "auto"
+		if err != nil || len(discovered.Entries) > 0 {
+			sourceHarness := input.SourceHarness
+			if sourceHarness == "" {
+				sourceHarness = "auto"
+			}
+			cat = &catalog.Catalog{Entries: discovered.Entries, Diagnostics: discovered.Diagnostics, SourceHarness: sourceHarness}
+			loaded = nil
 		}
-		cat = &catalog.Catalog{Entries: discovered.Entries, SourceHarness: sourceHarness}
 	}
 	diagnosticErrors := 0
 	for _, diagnostic := range cat.Diagnostics {

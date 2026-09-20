@@ -21,7 +21,6 @@ const claudePluginRootToken = "${CLAUDE_PLUGIN_ROOT}"
 var (
 	envInterpolationPattern  = regexp.MustCompile(`^\$\{([A-Z0-9_]+)\}$`)
 	embeddedEnvPattern       = regexp.MustCompile(`\$\{([A-Z0-9_]+)\}`)
-	shellEnvPattern          = regexp.MustCompile(`^\$([A-Z0-9_]+)$`)
 	fileInterpolationPattern = regexp.MustCompile(`^\$\{file:(.+)\}$`)
 )
 
@@ -139,13 +138,14 @@ func translateCommand(command *ir.Command) ([]artifact.Artifact, []diag.Diagnost
 	if command.Description != "" {
 		fm.Set("description", command.Description)
 	}
-	if sidecar := command.Ext.Windsurf; sidecar != nil && sidecar.AutoExecutionMode != "" {
+	if sidecar := command.Ext.Windsurf; sidecar != nil && (sidecar.AutoExecutionModeSet || sidecar.AutoExecutionMode != "") {
 		fm.Set("auto_execution_mode", sidecar.AutoExecutionMode)
 	}
 	present := make(map[string]bool, len(fm.Keys()))
 	for _, k := range fm.Keys() {
 		present[k] = true
 	}
+	present["auto_execution_mode"] = true
 	extraKeys, diags := compilepkg.ExtraKeys(command.Extra, compilepkg.PresentFields(present), compilepkg.TargetWindsurf, command.Name(), diag.SourceRef(command.Source))
 	for _, key := range extraKeys {
 		fm.Set(key, command.Extra[key])
@@ -218,7 +218,7 @@ func translateHook(hook *ir.Hook, opts compilepkg.Options) ([]artifact.Artifact,
 				Target:   string(compilepkg.TargetWindsurf),
 				Resource: hook.Name(),
 				Message:  fmt.Sprintf("Claude hook event %q has no Windsurf equivalent; hook dropped", hook.Event),
-				Hint:     "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, Stop, or SubagentStop)",
+				Hint:     "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop)",
 				Source:   compilepkg.DiagSource(hook.Source),
 			})
 			return nil, diags, nil
@@ -395,6 +395,7 @@ func translateMcpServer(server *ir.McpServer, opts compilepkg.Options) ([]artifa
 }
 
 func translateMcpEnvValue(value string) string {
+	name, shellReference := mapping.WindsurfShellEnvName(value)
 	switch {
 	case strings.HasPrefix(value, "${env:") && strings.HasSuffix(value, "}"):
 		return replaceInterpolation(mapping.McpInterpolation("${env:VAR}", compilepkg.TargetWindsurf), "VAR", strings.TrimSuffix(strings.TrimPrefix(value, "${env:"), "}"))
@@ -403,9 +404,8 @@ func translateMcpEnvValue(value string) string {
 	case envInterpolationPattern.MatchString(value):
 		match := envInterpolationPattern.FindStringSubmatch(value)
 		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", match[1])
-	case shellEnvPattern.MatchString(value):
-		match := shellEnvPattern.FindStringSubmatch(value)
-		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", match[1])
+	case shellReference:
+		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", name)
 	case fileInterpolationPattern.MatchString(value):
 		match := fileInterpolationPattern.FindStringSubmatch(value)
 		return replaceInterpolation(mapping.McpInterpolation("${file:PATH}", compilepkg.TargetWindsurf), "PATH", match[1])

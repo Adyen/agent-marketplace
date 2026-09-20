@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 func LoadWorkflow(src fs.FS, file string) (*ir.Command, []diag.Diagnostic, error) {
@@ -28,9 +29,18 @@ func LoadWorkflow(src fs.FS, file string) (*ir.Command, []diag.Diagnostic, error
 		name = strings.TrimSuffix(path.Base(file), path.Ext(file))
 	}
 	description, _ := fm["description"].(string)
+	modeValue, hasMode := fm["auto_execution_mode"]
+	mode := ""
+	if hasMode {
+		var valid bool
+		mode, valid = modeValue.(string)
+		if !valid {
+			return nil, nil, fmt.Errorf("ingest/windsurf: cannot preserve non-string auto_execution_mode in %s", file)
+		}
+	}
 	extra := map[string]any{}
 	for key, value := range fm {
-		if key != "name" && key != "description" {
+		if key != "name" && key != "description" && key != "auto_execution_mode" {
 			extra[key] = value
 		}
 	}
@@ -39,6 +49,9 @@ func LoadWorkflow(src fs.FS, file string) (*ir.Command, []diag.Diagnostic, error
 	}
 
 	command := ir.NewCommand(name, description, body, extra, ir.SourceRef{File: file, Line: 1})
+	if hasMode {
+		command.Ext.Windsurf = &extpkg.Windsurf{AutoExecutionMode: mode, AutoExecutionModeSet: true}
+	}
 	diags := []diag.Diagnostic{{
 		Code:     diag.CodeIngestWindsurfWorkflowAssumedCommand,
 		Severity: diag.SeverityInfo,

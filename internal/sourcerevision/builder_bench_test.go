@@ -7,6 +7,7 @@ import (
 )
 
 func BenchmarkBuild(b *testing.B) {
+	quietRevisionBenchmark(b)
 	snapshot := b.TempDir()
 	for i := 0; i < 50; i++ {
 		name := fmt.Sprintf("skill-%02d", i)
