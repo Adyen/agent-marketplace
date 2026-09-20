@@ -180,6 +180,21 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:       "security/hook_merge_opaque_members",
+		Desc:       "Given handwritten hook-container metadata and managed hooks, When sync updates hooks, Then unrelated members survive byte-for-byte while stale managed hooks are removed",
+		Registries: []RegistryDef{{Name: "opaque-hooks", Files: map[string]string{"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo generated"}]}]}}`}}},
+		GlobalCfg:  "harnesses: [claude]\nregistries: []\n",
+		RepoCfg:    "harnesses: [claude]\nregistries:\n  - url: {{REG:opaque-hooks}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/.claude/hooks/hooks.json", Body: "{\n  \"hooks\": {\n    // handwritten metadata\n    \"notes\" : \"keep\",\n    \"options\" : {\"enabled\":false},\n    \"disabled\" : false,\n    \"value\" : 1.2300,\n    \"nothing\" : null,\n    \"empty\" : [],\n    \"PostToolUse\": [{\"type\":\"command\",\"command\":\"manual-hook\"}],\n    \"Stop\": [{\"type\":\"command\",\"command\":\"stale-owned\",\"_managed_by\":\"agent-marketplace\"}]\n  }\n}\n"},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "echo generated"}, FileNotContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "stale-owned"}},
+			{FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "// handwritten metadata\n    \"notes\" : \"keep\",\n    \"options\" : {\"enabled\":false},\n    \"disabled\" : false,\n    \"value\" : 1.2300,\n    \"nothing\" : null,\n    \"empty\" : [],"}},
+			{FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "manual-hook"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.claude/hooks/hooks.json"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{"/workspace/.claude/hooks/hooks.json"}},
+		},
+	},
+	{
 		Name: "security/codex_literal_header",
 		Desc: "Given a Codex literal that resembles a bare environment reference and a safe sibling, When converting to Windsurf, Then the unsafe reinterpretation is refused while literal-preserving conversion remains available",
 		Steps: []Step{

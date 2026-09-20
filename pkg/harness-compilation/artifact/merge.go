@@ -577,7 +577,8 @@ func mergeMapOfObjectArrays(existingValue any, desired map[string][]map[string]a
 		if !inDesired {
 			// Event only in existing: strip managed entries, keep user entries.
 			existingArr, ok := existingMap[key].([]any)
-			if !ok {
+			if !ok || len(existingArr) == 0 {
+				result[key] = existingMap[key]
 				continue
 			}
 			var userEntries []any

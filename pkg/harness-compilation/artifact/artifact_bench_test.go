@@ -371,3 +371,18 @@ func BenchmarkMergeWithExistingJSONHooks(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkMergeWithExistingJSONOpaqueHooks(b *testing.B) {
+	for _, sample := range []struct{ name, extra string }{{"plain", ""}, {"opaque", `"notes":"keep","options":{"enabled":false},"empty":[],`}} {
+		b.Run(sample.name, func(b *testing.B) {
+			existing := []byte(`{"hooks":{` + sample.extra + `"PreToolUse":[{"command":"old","_managed_by":"agent-marketplace"}],"PostToolUse":[{"command":"manual"}]}}`)
+			desired := []byte(`{"hooks":{"PreToolUse":[{"command":"new"}]}}`)
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, _, err := MergeWithExistingJSON(existing, desired, "_managed_by", "agent-marketplace"); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

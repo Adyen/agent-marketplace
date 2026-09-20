@@ -922,3 +922,34 @@ func TestMergeWithExistingJSON_HookEventArraysKeepManagedOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeWithExistingJSONPreservesUnselectedHookMembers(t *testing.T) {
+	for _, value := range []string{`"keep"`, `false`, `1.2300`, `null`, `{"owner" : "me"}`, `[]`} {
+		t.Run(value, func(t *testing.T) {
+			member := `"opaque" : ` + value
+			existing := "{\n  \"hooks\": {\n    // handwritten metadata\n    " + member + ",\n" + `"PreToolUse":[{"command":"old","_managed_by":"agent-marketplace"}],` + `"PostToolUse":[{"command":"manual"}],` + `"Stop":[{"command":"stale","_managed_by":"agent-marketplace"}]` + "\n  }\n}\n"
+			desired := `{"hooks":{"PreToolUse":[{"command":"new"}]}}`
+			got, report := mergeOnce(t, existing, desired)
+			if !bytes.Contains(got, []byte(member)) || !bytes.Contains(got, []byte("// handwritten metadata")) {
+				t.Errorf("unselected user member or concrete syntax lost: %s", got)
+			}
+			for _, want := range []string{`"new"`, `"manual"`} {
+				if !bytes.Contains(got, []byte(want)) {
+					t.Errorf("required content %s missing: %s", want, got)
+				}
+			}
+			for _, removed := range []string{`"old"`, `"stale"`} {
+				if bytes.Contains(got, []byte(removed)) {
+					t.Errorf("managed update/prune did not occur: %s", got)
+				}
+			}
+			if strings.Join(report.Removed, ",") != "Stop" {
+				t.Errorf("wrong removal report: %+v", report)
+			}
+			again, second := mergeOnce(t, string(got), desired)
+			if !bytes.Equal(got, again) || len(second.Added) != 0 || len(second.Removed) != 0 {
+				t.Fatalf("second merge was not byte-idempotent: %+v\n%s", second, again)
+			}
+		})
+	}
+}
