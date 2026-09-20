@@ -128,8 +128,8 @@ func TestInitModalTogglesAndSavesHarnesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "apiVersion: agent-marketplace/v2") {
-		t.Fatalf("expected v2 config, got:\n%s", content)
+	if !strings.Contains(content, "apiVersion: agent-marketplace/v4") {
+		t.Fatalf("expected v4 config, got:\n%s", content)
 	}
 	if !strings.Contains(content, "factory") || !strings.Contains(content, "claude") {
 		t.Fatalf("expected factory and claude harnesses, got:\n%s", content)

@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
+func TestInitCreatesV4UserPersonalConfig(t *testing.T) {
 	env := newEnv(t)
 
 	// Ensure no user personal config exists; newEnv does not write one.
@@ -32,8 +32,8 @@ func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
 	if !env.CheckFileExists("/root/.agents/config.yaml") {
 		t.Fatal("user personal config was not created")
 	}
-	if !env.CheckFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v2") {
-		t.Fatalf("config does not declare v2 apiVersion:\n%s", env.ReadFile("/root/.agents/config.yaml"))
+	if !env.CheckFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v4") {
+		t.Fatalf("config does not declare v4 apiVersion:\n%s", env.ReadFile("/root/.agents/config.yaml"))
 	}
 	if !env.CheckFileContains("/root/.agents/config.yaml", "harnesses:") {
 		t.Fatalf("config does not contain harnesses:\n%s", env.ReadFile("/root/.agents/config.yaml"))
@@ -49,7 +49,7 @@ func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
 	}
 }
 
-func TestInitConfigSupportsImmediateUserInstall(t *testing.T) {
+func TestInitV4ConfigRejectsLegacyUserInstall(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
 	registryURL := env.CreateBareRepo("init-install", SkillsOnly(
@@ -60,18 +60,16 @@ func TestInitConfigSupportsImmediateUserInstall(t *testing.T) {
 	if initResult.ExitCode != 0 {
 		t.Fatalf("init failed (exit %d): %s", initResult.ExitCode, initResult.Combined)
 	}
+	before := env.ReadFile("/root/.agents/config.yaml")
 
 	installResult := env.RunAM("install", "review", "--from", registryURL, "--scope", "user")
-	if installResult.ExitCode != 0 {
-		t.Fatalf("install after init failed (exit %d): %s", installResult.ExitCode, installResult.Combined)
+	if installResult.ExitCode == 0 || !strings.Contains(installResult.Combined, "v4.writer-opt-in") {
+		t.Fatalf("install after v4 init = exit %d, want v4 writer guard: %s", installResult.ExitCode, installResult.Combined)
 	}
-	if !env.CheckFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v2") ||
-		!env.CheckFileContains("/root/.agents/config.yaml", "review") {
-		t.Fatalf("install did not update initialized user config:\n%s", env.ReadFile("/root/.agents/config.yaml"))
+	if after := env.ReadFile("/root/.agents/config.yaml"); after != before {
+		t.Fatalf("rejected install changed initialized user config:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
-	if !env.CheckFileExists("/root/.factory/skills/review/SKILL.md") {
-		t.Fatal("install did not materialize the selected skill")
-	}
+	env.AssertFileAbsent("/root/.factory/skills/review")
 }
 
 func TestInitRequiresHarnessesInNonInteractiveMode(t *testing.T) {

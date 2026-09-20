@@ -13,7 +13,7 @@ import (
 	mptestutil "github.com/Adyen/agent-marketplace/internal/testutil/marketplace"
 )
 
-func TestSnapshotV2ConfigRemainsOnEditableCompatibilityPath(t *testing.T) {
+func TestSnapshotV2ConfigOpensMigrationModal(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	writeV2Config(t, filepath.Join(repoRoot, ".agents", "config.yaml"))
@@ -44,8 +44,11 @@ func TestSnapshotV2ConfigRemainsOnEditableCompatibilityPath(t *testing.T) {
 	mi, _ := m.Update(snapshot)
 	m = mi.(Model)
 
-	if m.pane == paneMigrationModal || m.migrationPrompt.hasConfigs() {
-		t.Fatalf("v2 config was offered proactive migration: pane=%v prompt=%#v", m.pane, m.migrationPrompt)
+	if m.pane != paneMigrationModal {
+		t.Fatalf("expected migration modal for v2 config, got pane=%v", m.pane)
+	}
+	if !m.migrationPrompt.hasConfigs() {
+		t.Fatal("expected pending v2 migration")
 	}
 }
 

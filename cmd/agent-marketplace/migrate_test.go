@@ -149,55 +149,54 @@ tags:
 	}
 }
 
-func TestReadOnlySyncCommandsPreserveLegacyConfigBytesAtRootBoundary(t *testing.T) {
+func TestInteractiveStartupPromptMigratesLegacyConfig(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, ".local", "state"))
+	repoRoot := t.TempDir()
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
 
-	for _, args := range [][]string{{"sync", "--check"}, {"sync", "--locked"}} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			homeDir := t.TempDir()
-			t.Setenv("HOME", homeDir)
-			t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
-			t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, ".local", "state"))
-			repoRoot := t.TempDir()
-			configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			before := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n")
-			if err := os.WriteFile(configPath, before, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			withWorkingDir(t, repoRoot)
+	oldIsTerminal := isTerminal
+	isTerminal = func(uintptr) bool { return true }
+	t.Cleanup(func() { isTerminal = oldIsTerminal })
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.WriteString("y\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	t.Cleanup(func() { _ = reader.Close() })
 
-			oldIsTerminal := isTerminal
-			isTerminal = func(uintptr) bool { return true }
-			t.Cleanup(func() { isTerminal = oldIsTerminal })
-			reader, writer, err := os.Pipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := writer.WriteString("y\n"); err != nil {
-				t.Fatal(err)
-			}
-			_ = writer.Close()
-			t.Cleanup(func() { _ = reader.Close() })
-
-			cmd := newRootCmd()
-			cmd.SetArgs(args)
-			cmd.SetIn(reader)
-			if err := cmd.Execute(); err != nil {
-				t.Fatalf("%v failed: %v", args, err)
-			}
-			after, err := os.ReadFile(configPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(after) != string(before) {
-				t.Fatalf("%v changed legacy config bytes:\nbefore:\n%s\nafter:\n%s", args, before, after)
-			}
-		})
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"list"})
+	cmd.SetIn(reader)
+	var out strings.Builder
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	migrated, err := config.LoadV4ConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("startup prompt did not migrate config: %v", err)
+	}
+	if migrated.APIVersion != config.APIVersionV4 {
+		t.Fatalf("apiVersion = %q, want %q", migrated.APIVersion, config.APIVersionV4)
+	}
+	if !strings.Contains(out.String(), "Migrate these configuration files") {
+		t.Fatalf("prompt output = %q", out.String())
 	}
 }
 
