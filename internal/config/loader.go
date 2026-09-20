@@ -33,30 +33,53 @@ func fileExists(path string) bool {
 // countable stand-in instead of depending on a real git binary.
 var gitRootProbe = probeGitRoot
 
+func nearestGitMarker(dir string) (string, error) {
+	for current := filepath.Clean(dir); ; current = filepath.Dir(current) {
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return current, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		if filepath.Dir(current) == current {
+			return "", nil
+		}
+	}
+}
+
 func probeGitRoot(dir string) (string, bool) {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return "", true
 	}
-
+	markerRoot, markerErr := nearestGitMarker(dir)
+	if markerErr != nil {
+		slog.Warn("git root probe failed", "dir", dir, "reason", "git_marker", "error", markerErr)
+		return "", false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
 	// Run in the directory we are keying the cache on rather than relying on
 	// the process working directory, so the memo key is the actual input.
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
-		if ctx.Err() == nil && errors.As(err, &exitErr) {
-			// git ran and reported "not a repository": a real, cacheable answer.
-			return "", true
+		if ctx.Err() == nil && errors.As(err, &exitErr) && exitErr.ExitCode() == 128 && markerRoot == "" {
+			message := strings.TrimSpace(string(exitErr.Stderr))
+			noRepository := message == "fatal: not a git repository (or any of the parent directories): .git" || strings.HasPrefix(message, "fatal: not a git repository (or any parent up to mount point ") && strings.HasSuffix(message, "\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).")
+			if noRepository {
+				// git ran and reported "not a repository": a real, cacheable answer.
+				return "", true
+			}
 		}
 		slog.Warn("git root probe failed", "dir", dir, "error", err)
 		return "", false
 	}
 	r := strings.TrimSpace(string(out))
-	if r == "" {
-		return "", true
+	if !filepath.IsAbs(r) || !isWithinRoot(dir, r) || markerRoot != "" && !isWithinRoot(r, markerRoot) {
+		slog.Warn("git root probe failed", "dir", dir, "reason", "invalid_boundary")
+		return "", false
 	}
 	return filepath.Clean(r), true
 }
@@ -116,6 +139,10 @@ func gitRootFor(dir string) string {
 		"in_git_repo", root != "",
 		"cached", cacheable,
 	)
+	if !cacheable {
+		slog.Warn("git boundary unavailable; limiting repository discovery to current directory", "dir", dir)
+		return dir
+	}
 	return root
 }
 
@@ -152,7 +179,7 @@ func FindRepoRoot() string {
 		if !IsHomeDir(dir) {
 			if fileExists(filepath.Join(dir, ".agents", "config.yaml")) {
 				// Only accept this directory if it is within the current git
-				// repo's boundary (or if git is not available). This prevents
+				// repo's boundary (or if the probe confirmed no Git repository). This prevents
 				// a nested repo from adopting a parent repo's config.
 				if gitRoot == "" || isWithinRoot(dir, gitRoot) {
 					return dir
