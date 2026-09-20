@@ -296,11 +296,11 @@ func loadDroidsFromRoot(src fs.FS, root string, seen map[string]bool) ([]ir.Reso
 			diags = append(diags, ingest.LoadFailure(diag.CodeIngestFactoryLoadSubagentFailed, "subagent", path, path, err))
 			continue
 		}
-		diags = append(diags, subagentDiags...)
 		if seen[subagent.Name()] {
 			diags = append(diags, shadowedResourceDiagnostic(subagent, subagent.Source))
 			continue
 		}
+		diags = append(diags, subagentDiags...)
 		seen[subagent.Name()] = true
 		resources = append(resources, subagent)
 	}

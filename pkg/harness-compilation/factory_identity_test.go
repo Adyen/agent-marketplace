@@ -66,3 +66,20 @@ func TestFactoryIdentityRemainsKindScoped(t *testing.T) {
 		t.Fatalf("different kinds were collapsed: %v %+v", err, bundle)
 	}
 }
+
+func TestFactoryShadowedDroidOmitsInternalDiagnostics(t *testing.T) {
+	src := fstest.MapFS{
+		"droids/review.md":         {Data: []byte("---\nname: review\ndescription: Winner\n---\nWinner\n")},
+		".factory/droids/alias.md": {Data: []byte("---\nname: review\ndescription: Shadow\nmodel: claude-sonnet-4-5-20250929\nreasoningEffort: high\n---\nShadow\n")},
+	}
+	bundle, err := factoryingest.New().LoadBundle(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Resources) != 1 || !diag.HasCode(bundle.Diagnostics, diag.CodeIngestFactoryResourceShadowed) {
+		t.Fatalf("wrong shadow outcome: %+v", bundle)
+	}
+	if diag.HasCode(bundle.Diagnostics, diag.CodeIngestFactoryReasoningEffortMappedToModel) {
+		t.Fatalf("ignored droid reported applied model mapping: %+v", bundle.Diagnostics)
+	}
+}
