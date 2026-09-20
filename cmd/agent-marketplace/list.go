@@ -96,12 +96,12 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	}
 
 	for _, w := range result.Warnings {
-		if _, werr := fmt.Fprintf(errOut, "warning: %v\n", w); werr != nil {
+		if _, werr := fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(w.Error())); werr != nil {
 			return werr
 		}
 		var r resolver.Remediable
 		if errors.As(w, &r) {
-			if _, werr := fmt.Fprintf(errOut, "  -> %s\n", r.Remediation()); werr != nil {
+			if _, werr := fmt.Fprintf(errOut, "  -> %s\n", terminalSafeText(r.Remediation())); werr != nil {
 				return werr
 			}
 		}
@@ -109,11 +109,11 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 
 	for _, err := range result.ResolveErrors {
 		if resolver.IsWarning(err) || resolver.IsSoftSelectedNotFound(err) || resolver.IsSoftSelectedMalformed(err) {
-			if _, werr := fmt.Fprintf(errOut, "warning: %v\n", err); werr != nil {
+			if _, werr := fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(err.Error())); werr != nil {
 				return werr
 			}
 			if r := warningRemediation(err); r != nil {
-				if _, werr := fmt.Fprintf(errOut, "  → %s\n", r.Remediation()); werr != nil {
+				if _, werr := fmt.Fprintf(errOut, "  → %s\n", terminalSafeText(r.Remediation())); werr != nil {
 					return werr
 				}
 			}
@@ -121,7 +121,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	}
 	for _, err := range result.CatalogErrors {
 		if catalog.IsOverlapWarning(err) {
-			if _, werr := fmt.Fprintf(errOut, "warning: %v\n", err); werr != nil {
+			if _, werr := fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(err.Error())); werr != nil {
 				return werr
 			}
 		}
@@ -150,7 +150,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 		// returns manifest and containment problems as hard errors that would
 		// otherwise vanish here.
 		slog.Warn("list drift check failed", "error", dryRunErr)
-		if _, err := fmt.Fprintf(errOut, "warning: could not check sync state: %v\n", dryRunErr); err != nil {
+		if _, err := fmt.Fprintf(errOut, "warning: could not check sync state: %s\n", terminalSafeText(dryRunErr.Error())); err != nil {
 			return err
 		}
 	}
@@ -187,7 +187,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{})
 	config.LogManagedDiagnostics(ec.Diagnostics)
 	for _, w := range ec.Warnings {
-		fmt.Fprintf(errOut, "warning: %v\n", w) //nolint:errcheck // best-effort warning on stderr
+		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(w.Error())) //nolint:errcheck // best-effort warning on stderr
 	}
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil {
@@ -206,7 +206,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	var hardCatalogErrs []error
 	for _, err := range result.Errors {
 		if catalog.IsOverlapWarning(err) {
-			fmt.Fprintf(errOut, "warning: %v\n", err) //nolint:errcheck // best-effort warning on stderr
+			fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(err.Error())) //nolint:errcheck // best-effort warning on stderr
 			continue
 		}
 		hardCatalogErrs = append(hardCatalogErrs, err)

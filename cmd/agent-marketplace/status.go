@@ -816,12 +816,12 @@ func writeStatusWarnings(out io.Writer, warnings []error) error {
 		}
 		seen[key] = struct{}{}
 
-		if _, err := fmt.Fprintf(out, "warning: %v\n", w); err != nil {
+		if _, err := fmt.Fprintf(out, "warning: %s\n", terminalSafeText(w.Error())); err != nil {
 			return err
 		}
 		var r resolver.Remediable
 		if errors.As(w, &r) {
-			if _, err := fmt.Fprintf(out, "  -> %s\n", r.Remediation()); err != nil {
+			if _, err := fmt.Fprintf(out, "  -> %s\n", terminalSafeText(r.Remediation())); err != nil {
 				return err
 			}
 		}

@@ -180,6 +180,26 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:      "security/cli_warning_controls",
+		Desc:      "Given a selected missing resource with a control-bearing local registry ref, When syncing and listing, Then warning display is escaped and selection remains unchanged",
+		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
+		RepoCfg:   "harnesses: [factory]\nregistries:\n  - url: ~/.agents/warning-fixture\n    ref: \"REF\\u001b[31m\\u202e\"\n    skills: [missing]\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/root/.agents/warning-fixture/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"warning:", `REF\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"list"}, MustPass: true, OutContains: []string{`REF\x1b[31m\u202e`, "control"}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+		},
+	},
+	{
+		Name:      "security/telemetry_failure_controls",
+		Desc:      "Given a persisted delivery failure containing terminal controls, When displaying telemetry status, Then output is escaped without rewriting the stored record",
+		GlobalCfg: "harnesses: [factory]\nregistries: []\ntelemetry:\n  level: off\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/root/.local/state/agent-marketplace/telemetry/last-delivery-failure", Body: `{"time":"2026-09-01T00:00:00Z","error":"SERVER\u001b[31m\r\n\u202e"}`},
+			{Args: []string{"telemetry", "status"}, MustPass: true, OutContains: []string{`SERVER\x1b[31m\r\n\u202e`}, OutNotContains: []string{"\x1b", "\r", "\u202e"}, PathsUnchanged: []string{"/root/.local/state/agent-marketplace/telemetry/last-delivery-failure"}},
+		},
+	},
+	{
 		Name:      "security/cli_table_collection_controls",
 		Desc:      "Given local registry and collection metadata containing terminal controls, When listing checking status and installing a collection, Then display is escaped while selection and installation remain intact",
 		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
