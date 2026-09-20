@@ -38,6 +38,76 @@ const (
 
 var adminOIDCScopes = []string{"openid", "profile", "email", "groups"}
 
+const maxAdminOIDCResponse = 1 << 20
+
+type adminOIDCUnavailableError struct {
+	err error
+}
+
+func (e *adminOIDCUnavailableError) Error() string {
+	return "OIDC provider unavailable: " + e.err.Error()
+}
+func (e *adminOIDCUnavailableError) Unwrap() error { return e.err }
+
+type adminOIDCTransport struct {
+	base http.RoundTripper
+}
+
+func (t adminOIDCTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.base.RoundTrip(request)
+	if err != nil {
+		return nil, &adminOIDCUnavailableError{err: err}
+	}
+	if response.StatusCode >= http.StatusMultipleChoices && response.StatusCode < http.StatusBadRequest {
+		return response, nil
+	}
+	unavailableStatus := response.StatusCode >= http.StatusBadRequest &&
+		(request.Method != http.MethodPost || response.StatusCode != http.StatusBadRequest && response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden)
+	if unavailableStatus {
+		_ = response.Body.Close()
+		return nil, &adminOIDCUnavailableError{err: errors.New("provider returned an unavailable status")}
+	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, maxAdminOIDCResponse+1))
+	_ = response.Body.Close()
+	if readErr != nil {
+		return nil, &adminOIDCUnavailableError{err: readErr}
+	}
+	if len(body) > maxAdminOIDCResponse {
+		return nil, &adminOIDCUnavailableError{err: errors.New("provider response exceeds maximum size")}
+	}
+	if !json.Valid(body) {
+		return nil, &adminOIDCUnavailableError{err: errors.New("provider response is malformed")}
+	}
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	response.ContentLength = int64(len(body))
+	return response, nil
+}
+
+func adminOIDCUnavailable(err error) bool {
+	var unavailable *adminOIDCUnavailableError
+	return errors.As(err, &unavailable)
+}
+
+type adminOIDCVerificationKey struct{}
+
+type adminOIDCVerification struct {
+	unavailable bool
+}
+
+type adminOIDCKeySet struct {
+	remote oidc.KeySet
+}
+
+func (k adminOIDCKeySet) VerifySignature(ctx context.Context, rawIDToken string) ([]byte, error) {
+	payload, err := k.remote.VerifySignature(ctx, rawIDToken)
+	if err != nil && adminOIDCUnavailable(err) {
+		if verification, ok := ctx.Value(adminOIDCVerificationKey{}).(*adminOIDCVerification); ok {
+			verification.unavailable = true
+		}
+	}
+	return payload, err
+}
+
 // adminLoginTransaction is the signed transient cookie payload carrying the
 // login attempt. It never leaves the browser and expires after 10 minutes.
 type adminLoginTransaction struct {
@@ -97,6 +167,8 @@ type adminOIDCAuthenticator struct {
 	redirectURL string
 	discovery   *lazyOIDCDiscovery
 	client      *http.Client
+	verifierMu  sync.Mutex
+	idVerifier  *oidc.IDTokenVerifier
 }
 
 func newAdminOIDCAuthenticator(options config.Administration) (*adminOIDCAuthenticator, error) {
@@ -115,7 +187,7 @@ func newAdminOIDCAuthenticator(options config.Administration) (*adminOIDCAuthent
 	}
 	// The default transport honors HTTPS_PROXY; the timeout bounds every
 	// discovery, JWKS, and token-endpoint call.
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Transport: adminOIDCTransport{base: http.DefaultTransport}, Timeout: 10 * time.Second}
 	return &adminOIDCAuthenticator{
 		options:     options,
 		oidc:        resolved,
@@ -136,11 +208,25 @@ func (a *adminOIDCAuthenticator) oauthConfig(provider *oidc.Provider) *oauth2.Co
 	}
 }
 
-func (a *adminOIDCAuthenticator) verifier(provider *oidc.Provider) *oidc.IDTokenVerifier {
-	return provider.Verifier(&oidc.Config{
+func (a *adminOIDCAuthenticator) verifier(provider *oidc.Provider) (*oidc.IDTokenVerifier, error) {
+	a.verifierMu.Lock()
+	defer a.verifierMu.Unlock()
+	if a.idVerifier != nil {
+		return a.idVerifier, nil
+	}
+	var metadata struct {
+		JWKSURL string `json:"jwks_uri"`
+	}
+	if err := provider.Claims(&metadata); err != nil || metadata.JWKSURL == "" {
+		return nil, errors.New("OIDC discovery metadata has no JWKS endpoint")
+	}
+	keys := oidc.NewRemoteKeySet(a.providerContext(context.Background()), metadata.JWKSURL)
+	a.idVerifier = oidc.NewVerifier(a.oidc.Issuer, adminOIDCKeySet{remote: keys}, &oidc.Config{
 		ClientID:             a.oidc.ClientID,
 		SupportedSigningAlgs: []string{oidc.RS256},
+		SkipExpiryCheck:      true,
 	})
+	return a.idVerifier, nil
 }
 
 func (a *adminOIDCAuthenticator) providerContext(ctx context.Context) context.Context {
@@ -243,6 +329,13 @@ func (a *adminOIDCAuthenticator) open(value string, out any) error {
 func validAdminTransactionWindow(issuedAt, expiry, now int64) bool {
 	return issuedAt > 0 && issuedAt <= now && expiry > now && expiry > issuedAt &&
 		expiry-issuedAt <= int64(adminLoginTTL.Seconds())
+}
+
+func validAdminIDTokenWindow(issuedAt, expiry, now time.Time) bool {
+	return !issuedAt.IsZero() && !expiry.IsZero() &&
+		!issuedAt.Before(now.Add(-adminLoginTTL-adminClockSkew)) &&
+		!issuedAt.After(now.Add(adminClockSkew)) && expiry.After(issuedAt) &&
+		!now.After(expiry.Add(adminClockSkew))
 }
 
 // validAdminNext accepts only /marketplace/admin and descendant paths.
@@ -372,7 +465,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 	token, err := a.oauthConfig(provider).Exchange(ctx, codes[0], oauth2.VerifierOption(transaction.Verifier))
 	if err != nil {
 		var retrieve *oauth2.RetrieveError
-		if errors.As(err, &retrieve) {
+		if errors.As(err, &retrieve) && !adminOIDCUnavailable(err) {
 			reject()
 			return
 		}
@@ -390,17 +483,28 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 	// typed unknown-kid error, so a further retry here would re-run discovery
 	// and JWKS for unrelated failures. Verification is therefore single-shot
 	// and fails closed.
-	idToken, err := a.verifier(provider).Verify(ctx, rawIDToken)
+	verifier, err := a.verifier(provider)
+	if err != nil {
+		writeAdminError(w, http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
+		return
+	}
+	verification := &adminOIDCVerification{}
+	idToken, err := verifier.Verify(context.WithValue(ctx, adminOIDCVerificationKey{}, verification), rawIDToken)
+	if err != nil && verification.unavailable {
+		slog.Warn("admin OIDC JWKS unavailable", "outcome", "authentication_unavailable")
+		writeAdminError(w, http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
+		return
+	}
 	if err != nil || idToken == nil {
 		slog.Warn("admin OIDC token rejected", "outcome", "authentication_rejected")
 		reject()
 		return
 	}
+	now := time.Now()
 	if idToken.Nonce != transaction.Nonce || idToken.Issuer != a.oidc.Issuer ||
 		!slices.Contains(idToken.Audience, a.oidc.ClientID) ||
 		!validIdentityValue(idToken.Subject) ||
-		idToken.IssuedAt.After(time.Now().Add(adminClockSkew)) ||
-		time.Now().After(idToken.Expiry.Add(adminClockSkew)) {
+		!validAdminIDTokenWindow(idToken.IssuedAt, idToken.Expiry, now) {
 		reject()
 		return
 	}
@@ -429,7 +533,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 		writeAdminError(w, http.StatusForbidden, "forbidden", "Marketplace administration permission is required.")
 		return
 	}
-	now := time.Now()
+	now = time.Now()
 	sealed, err := a.seal(adminSessionPayload{
 		Version: 1, Issuer: idToken.Issuer, Subject: idToken.Subject, Groups: groups,
 		Display: display, IssuedAt: now.Unix(), Expiry: now.Add(a.options.SessionLifetime()).Unix(),

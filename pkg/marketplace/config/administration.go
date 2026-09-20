@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"net/url"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -23,10 +25,11 @@ const (
 )
 
 const (
-	defaultAdminSessionTTL = 12 * time.Hour
-	maxAdminSessionTTL     = 24 * time.Hour
-	minAdminSessionSecret  = 32
-	maxAdminSessionSecret  = 4096
+	defaultAdminSessionTTL    = 12 * time.Hour
+	maxAdminSessionTTL        = 24 * time.Hour
+	minAdminSessionSecret     = 32
+	maxAdminSessionSecret     = 4096
+	maxAdminSessionSecretFile = maxAdminSessionSecret + 2
 )
 
 type Administration struct {
@@ -307,7 +310,7 @@ func (a Administration) ResolveSessionSecret() ([]byte, error) {
 		}
 		secret = []byte(value)
 	case strings.TrimSpace(o.SessionSecretFile) != "":
-		value, err := os.ReadFile(strings.TrimSpace(o.SessionSecretFile))
+		value, err := readSessionSecretFile(strings.TrimSpace(o.SessionSecretFile))
 		if err != nil {
 			return nil, fmt.Errorf("read admin OIDC session secret: %w", err)
 		}
@@ -320,6 +323,32 @@ func (a Administration) ResolveSessionSecret() ([]byte, error) {
 		return nil, invalid
 	}
 	return secret, nil
+}
+
+func readSessionSecretFile(path string) ([]byte, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxAdminSessionSecretFile {
+		return nil, errors.New("session secret file is not a bounded regular file")
+	}
+	if err := syscall.SetNonblock(int(file.Fd()), false); err != nil {
+		return nil, err
+	}
+	value, err := io.ReadAll(io.LimitReader(file, maxAdminSessionSecretFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(value) > maxAdminSessionSecretFile {
+		return nil, errors.New("session secret file exceeds maximum size")
+	}
+	return value, nil
 }
 
 var identityHeaderPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`)

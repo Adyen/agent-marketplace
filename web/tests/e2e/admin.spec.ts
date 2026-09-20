@@ -257,6 +257,30 @@ test.describe('Private administration', () => {
     expect(logouts[0]?.['content-type']).toContain('application/json')
   })
 
+  test('keeps the authenticated state when sign-out cannot be confirmed', async ({ page }) => {
+    let logoutCalls = 0
+    await page.route('**/api/v1/admin/**', async (route) => {
+      const request = route.request()
+      const path = new URL(request.url()).pathname.replace('/api/v1/admin', '')
+      if (path === '/auth/logout' && request.method() === 'POST') {
+        logoutCalls++
+        return route.fulfill({ status: 503, json: { code: 'authentication_unavailable', message: 'Unavailable.' } })
+      }
+      let body: unknown
+      if (path === '/session') body = { actor: { issuer: 'test-sso', subject: 'operator' }, display: 'Operator One', authentication_mode: 'oidc', capabilities: [] }
+      else if (path === '/configuration') body = { revision: 2, snapshot }
+      else if (path === '/profiles') body = { profiles: [], source_harnesses: [] }
+      else return route.fulfill({ status: 404, json: { code: 'not_found', message: 'Not found' } })
+      return route.fulfill({ json: body })
+    })
+    await page.goto(`${base}/admin`)
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await expect(page.getByRole('alert')).toContainText('Sign-out could not be confirmed')
+    await expect(page.getByText('Operator One')).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Sign in with Okta' })).toHaveCount(0)
+    expect(logoutCalls).toBe(1)
+  })
+
   test('shows all requested read surfaces without fabricated status', async ({ page }) => {
     await mockAdmin(page)
     await page.goto(`${base}/admin/registries/stable-team/findings`)

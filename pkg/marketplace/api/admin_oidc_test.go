@@ -40,10 +40,17 @@ type testOIDCIssuer struct {
 	kid    string
 	// claims applied to the next issued ID token; nonce must be set from the
 	// decoded login transaction before the callback runs.
-	claims map[string]any
+	claims     map[string]any
+	omitClaims map[string]bool
 	// verifierSeen records that token exchange presented PKCE material.
-	verifierSeen bool
-	tokenCalls   int
+	verifierSeen  bool
+	tokenCalls    int
+	discoveryBody []byte
+	discoveryCode int
+	jwksBody      []byte
+	jwksCode      int
+	tokenBody     []byte
+	tokenCode     int
 }
 
 func newTestOIDCIssuer(t *testing.T) *testOIDCIssuer {
@@ -56,6 +63,17 @@ func newTestOIDCIssuer(t *testing.T) *testOIDCIssuer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if issuer.discoveryCode != 0 {
+			w.WriteHeader(issuer.discoveryCode)
+		}
+		if issuer.discoveryBody != nil {
+			_, _ = w.Write(issuer.discoveryBody)
+			return
+		}
+		if issuer.discoveryCode != 0 {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"issuer": issuer.server.URL, "authorization_endpoint": issuer.server.URL + "/authorize",
 			"token_endpoint": issuer.server.URL + "/token", "jwks_uri": issuer.server.URL + "/jwks",
@@ -63,6 +81,17 @@ func newTestOIDCIssuer(t *testing.T) *testOIDCIssuer {
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if issuer.jwksCode != 0 {
+			w.WriteHeader(issuer.jwksCode)
+		}
+		if issuer.jwksBody != nil {
+			_, _ = w.Write(issuer.jwksBody)
+			return
+		}
+		if issuer.jwksCode != 0 {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{
 			"kty": "RSA", "kid": issuer.kid, "alg": "RS256", "use": "sig",
 			"n": base64.RawURLEncoding.EncodeToString(issuer.key.N.Bytes()),
@@ -71,6 +100,18 @@ func newTestOIDCIssuer(t *testing.T) *testOIDCIssuer {
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		issuer.tokenCalls++
+		w.Header().Set("Content-Type", "application/json")
+		if issuer.tokenCode != 0 {
+			w.WriteHeader(issuer.tokenCode)
+		}
+		if issuer.tokenBody != nil {
+			_, _ = w.Write(issuer.tokenBody)
+			return
+		}
+		if issuer.tokenCode != 0 {
+			_, _ = w.Write([]byte(`{"error":"temporarily_unavailable"}`))
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -81,7 +122,6 @@ func newTestOIDCIssuer(t *testing.T) *testOIDCIssuer {
 			return
 		}
 		issuer.verifierSeen = true
-		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "test-access", "token_type": "Bearer", "expires_in": 300,
 			"id_token": issuer.signIDToken(t, "marketplace-admin"),
@@ -90,6 +130,31 @@ func newTestOIDCIssuer(t *testing.T) *testOIDCIssuer {
 	issuer.server = httptest.NewServer(mux)
 	t.Cleanup(issuer.server.Close)
 	return issuer
+}
+
+func (i *testOIDCIssuer) discoveryDocument(t *testing.T) []byte {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"issuer": i.server.URL, "authorization_endpoint": i.server.URL + "/authorize",
+		"token_endpoint": i.server.URL + "/token", "jwks_uri": i.server.URL + "/jwks",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func (i *testOIDCIssuer) jwksDocument(t *testing.T) []byte {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"keys": []map[string]any{{
+		"kty": "RSA", "kid": i.kid, "alg": "RS256", "use": "sig",
+		"n": base64.RawURLEncoding.EncodeToString(i.key.N.Bytes()),
+		"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(i.key.E)).Bytes()),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
 }
 
 func (i *testOIDCIssuer) signIDToken(t *testing.T, audience string) string {
@@ -101,6 +166,9 @@ func (i *testOIDCIssuer) signIDToken(t *testing.T, audience string) string {
 	}
 	for key, value := range i.claims {
 		claims[key] = value
+	}
+	for key := range i.omitClaims {
+		delete(claims, key)
 	}
 	header, _ := json.Marshal(map[string]any{"alg": "RS256", "kid": i.kid, "typ": "JWT"})
 	payload, _ := json.Marshal(claims)
@@ -183,6 +251,34 @@ func adminRequest(method, target string, cookie string) *http.Request {
 	return r
 }
 
+func startOIDCLogin(t *testing.T, handler http.Handler) (*httptest.ResponseRecorder, adminLoginTransaction) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, adminRequest(http.MethodGet, "/api/v1/admin/auth/login", ""))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("login: %d %s", w.Code, w.Body.String())
+	}
+	return w, decodeLoginTransaction(t, cookieValue(t, w, testSecureLoginCookie))
+}
+
+func completeOIDCCallback(t *testing.T, handler http.Handler, login *httptest.ResponseRecorder, transaction adminLoginTransaction) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, adminRequest(http.MethodGet, "/api/v1/admin/auth/callback?state="+transaction.State+"&code=c", testSecureLoginCookie+"="+cookieValue(t, login, testSecureLoginCookie)))
+	return w
+}
+
+func adminErrorCode(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode admin error: %v: %s", err, w.Body.String())
+	}
+	return body.Code
+}
+
 func cookieValue(t *testing.T, w *httptest.ResponseRecorder, name string) string {
 	t.Helper()
 	for _, cookie := range w.Result().Cookies() {
@@ -251,6 +347,66 @@ func TestAdminOIDCLoginRedirect(t *testing.T) {
 				t.Fatalf("transaction incomplete: %+v", txn)
 			}
 		}
+	}
+}
+
+func TestAdminOIDCResponseBounds(t *testing.T) {
+	t.Run("discovery", func(t *testing.T) {
+		issuer := newTestOIDCIssuer(t)
+		issuer.discoveryBody = append(issuer.discoveryDocument(t), []byte(strings.Repeat(" ", (1<<20)+1))...)
+		_, handler := adminOIDCFixture(t, issuer, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, adminRequest(http.MethodGet, "/api/v1/admin/auth/login", ""))
+		if w.Code != http.StatusServiceUnavailable || adminErrorCode(t, w) != "authentication_unavailable" {
+			t.Fatalf("oversized discovery response: %d %s", w.Code, w.Body.String())
+		}
+	})
+	t.Run("JWKS", func(t *testing.T) {
+		issuer := newTestOIDCIssuer(t)
+		_, handler := adminOIDCFixture(t, issuer, nil)
+		login, transaction := startOIDCLogin(t, handler)
+		issuer.claims = map[string]any{"nonce": transaction.Nonce, "groups": []string{"marketplace-admins"}}
+		issuer.jwksBody = append(issuer.jwksDocument(t), []byte(strings.Repeat(" ", (1<<20)+1))...)
+		w := completeOIDCCallback(t, handler, login, transaction)
+		if w.Code != http.StatusServiceUnavailable || adminErrorCode(t, w) != "authentication_unavailable" {
+			t.Fatalf("oversized JWKS response: %d %s", w.Code, w.Body.String())
+		}
+	})
+}
+
+func TestAdminOIDCProviderFailureClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tokenCode int
+		jwksCode  int
+		jwksBody  []byte
+		close     bool
+		want      int
+		wantCode  string
+	}{
+		{name: "token network failure", close: true, want: http.StatusServiceUnavailable, wantCode: "authentication_unavailable"},
+		{name: "token unavailable", tokenCode: http.StatusServiceUnavailable, want: http.StatusServiceUnavailable, wantCode: "authentication_unavailable"},
+		{name: "token rate limited", tokenCode: http.StatusTooManyRequests, want: http.StatusServiceUnavailable, wantCode: "authentication_unavailable"},
+		{name: "invalid grant", tokenCode: http.StatusBadRequest, want: http.StatusUnauthorized, wantCode: "authentication_rejected"},
+		{name: "JWKS unavailable", jwksCode: http.StatusServiceUnavailable, want: http.StatusServiceUnavailable, wantCode: "authentication_unavailable"},
+		{name: "JWKS malformed", jwksBody: []byte(`{"keys":`), want: http.StatusServiceUnavailable, wantCode: "authentication_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer := newTestOIDCIssuer(t)
+			_, handler := adminOIDCFixture(t, issuer, nil)
+			login, transaction := startOIDCLogin(t, handler)
+			issuer.claims = map[string]any{"nonce": transaction.Nonce, "groups": []string{"marketplace-admins"}}
+			issuer.tokenCode = tc.tokenCode
+			issuer.jwksCode = tc.jwksCode
+			issuer.jwksBody = tc.jwksBody
+			if tc.close {
+				issuer.server.Close()
+			}
+			w := completeOIDCCallback(t, handler, login, transaction)
+			if w.Code != tc.want || adminErrorCode(t, w) != tc.wantCode {
+				t.Fatalf("callback: %d %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }
 
@@ -706,6 +862,44 @@ func TestAdminOIDCAuthorizedParty(t *testing.T) {
 	}
 }
 
+func TestAdminOIDCIssuedAtValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testOIDCIssuer)
+		want   int
+	}{
+		{name: "current", want: http.StatusSeeOther},
+		{name: "missing", mutate: func(issuer *testOIDCIssuer) { issuer.omitClaims = map[string]bool{"iat": true} }, want: http.StatusUnauthorized},
+		{name: "null", mutate: func(issuer *testOIDCIssuer) { issuer.claims["iat"] = nil }, want: http.StatusUnauthorized},
+		{name: "arbitrarily old", mutate: func(issuer *testOIDCIssuer) { issuer.claims["iat"] = time.Now().Add(-time.Hour).Unix() }, want: http.StatusUnauthorized},
+		{name: "beyond clock skew", mutate: func(issuer *testOIDCIssuer) {
+			issuer.claims["iat"] = time.Now().Add(adminClockSkew + time.Minute).Unix()
+		}, want: http.StatusUnauthorized},
+		{name: "expiry within clock skew", mutate: func(issuer *testOIDCIssuer) {
+			issuer.claims["iat"] = time.Now().Add(-2 * time.Minute).Unix()
+			issuer.claims["exp"] = time.Now().Add(-time.Minute).Unix()
+		}, want: http.StatusSeeOther},
+		{name: "expiry beyond clock skew", mutate: func(issuer *testOIDCIssuer) {
+			issuer.claims["iat"] = time.Now().Add(-10 * time.Minute).Unix()
+			issuer.claims["exp"] = time.Now().Add(-adminClockSkew - time.Minute).Unix()
+		}, want: http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer := newTestOIDCIssuer(t)
+			_, handler := adminOIDCFixture(t, issuer, nil)
+			login, transaction := startOIDCLogin(t, handler)
+			issuer.claims = map[string]any{"nonce": transaction.Nonce, "groups": []string{"marketplace-admins"}}
+			if tc.mutate != nil {
+				tc.mutate(issuer)
+			}
+			w := completeOIDCCallback(t, handler, login, transaction)
+			if w.Code != tc.want {
+				t.Fatalf("callback: %d %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestAdminOIDCNonDefaultGroupsClaim(t *testing.T) {
 	issuer := newTestOIDCIssuer(t)
 	_, handler := adminOIDCFixture(t, issuer, func(a *config.Administration) {
@@ -747,10 +941,16 @@ func TestAdminOIDCFailsClosedOnMisconfiguration(t *testing.T) {
 	cfg := config.Config{Instance: config.Instance{ID: "admin-test", Name: "Test", CanonicalURL: "https://marketplace.test"},
 		Admin: config.Administration{Enabled: true, Origin: "https://marketplace.test", AdminGroups: []string{"admins"},
 			Authentication: config.AdminAuthentication{Mode: "oidc", OIDC: config.AdminOIDC{Issuer: issuer.server.URL, ClientID: "c"}}}}
+	handler := NewServer(cfg, meta, nil).PublicHandler()
 	w := httptest.NewRecorder()
-	NewServer(cfg, meta, nil).PublicHandler().ServeHTTP(w, adminRequest(http.MethodGet, "/api/v1/admin/session", ""))
+	handler.ServeHTTP(w, adminRequest(http.MethodGet, "/api/v1/admin/session", ""))
 	if w.Code != 503 {
 		t.Fatalf("invalid auth config must fail closed: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, adminRequest(http.MethodGet, "/healthz", ""))
+	if w.Code != http.StatusOK {
+		t.Fatalf("invalid admin auth config affected public health route: %d %s", w.Code, w.Body.String())
 	}
 }
 

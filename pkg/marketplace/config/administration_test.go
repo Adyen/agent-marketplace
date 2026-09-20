@@ -1,10 +1,14 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -285,7 +289,7 @@ func TestAdministrationOIDCSecretResolution(t *testing.T) {
 	if secret, err := admin.ResolveSessionSecret(); err != nil || len(secret) != 40 {
 		t.Fatalf("env secret: %v %d", err, len(secret))
 	}
-	file := fmt.Sprintf("%s/secret", t.TempDir())
+	file := filepath.Join(t.TempDir(), "secret")
 	if err := os.WriteFile(file, []byte(strings.Repeat("k", 40)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -296,5 +300,51 @@ func TestAdministrationOIDCSecretResolution(t *testing.T) {
 	}
 	if secret, err := admin.ResolveSessionSecret(); err != nil || len(secret) != 40 {
 		t.Fatalf("file secret: %v %d", err, len(secret))
+	}
+	link := filepath.Join(t.TempDir(), "secret-link")
+	if err := os.Symlink(file, link); err != nil {
+		t.Fatal(err)
+	}
+	admin.Authentication.OIDC.SessionSecretFile = link
+	if secret, err := admin.ResolveSessionSecret(); err != nil || len(secret) != 40 {
+		t.Fatalf("symlinked file secret: %v %d", err, len(secret))
+	}
+	oversized := filepath.Join(t.TempDir(), "oversized")
+	if err := os.WriteFile(oversized, []byte(strings.Repeat("k", maxAdminSessionSecret+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	admin.Authentication.OIDC.SessionSecretFile = oversized
+	if _, err := admin.ResolveSessionSecret(); err == nil {
+		t.Fatal("oversized secret file accepted")
+	}
+}
+
+func TestAdministrationOIDCSecretFIFOChild(t *testing.T) {
+	path := os.Getenv("MARKETPLACE_ADMIN_SECRET_FIFO")
+	if path == "" {
+		return
+	}
+	admin := oidcAdmin()
+	admin.Authentication.OIDC.SessionSecretEnv = ""
+	admin.Authentication.OIDC.SessionSecretFile = path
+	if _, err := admin.ResolveSessionSecret(); err == nil {
+		t.Fatal("FIFO secret accepted")
+	}
+}
+
+func TestAdministrationOIDCSecretFIFORejectedWithoutBlocking(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "secret")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestAdministrationOIDCSecretFIFOChild$", "-test.v")
+	cmd.Env = append(os.Environ(), "MARKETPLACE_ADMIN_SECRET_FIFO="+fifo)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			t.Fatalf("secret FIFO resolution blocked: %v\n%s", ctx.Err(), output)
+		}
+		t.Fatalf("secret FIFO child: %v\n%s", err, output)
 	}
 }

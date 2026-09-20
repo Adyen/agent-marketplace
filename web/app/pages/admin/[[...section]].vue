@@ -62,7 +62,11 @@ async function logout() {
   try {
     await api.logout()
   }
-  catch { /* local sign-out proceeds regardless of the response */ }
+  catch {
+    error.value = 'Sign-out could not be confirmed. Your administration session may still be active.'
+    errorCode.value = 'logout_failed'
+    return
+  }
   session.value = undefined
   configuration.value = undefined
   draft.value = undefined
@@ -140,7 +144,7 @@ watch(() => route.fullPath, () => { draft.value = undefined; changes.value = [];
     </header>
 
     <div v-if="pending" role="status" aria-busy="true" class="flex items-center gap-2 text-sm text-muted"><UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" aria-hidden="true" />Loading administration…</div>
-    <div v-else-if="error" role="alert" class="space-y-3 rounded-xl border border-error bg-[var(--am-color-bg-surface)] p-5"><p class="font-medium text-error">{{ errorCode === 'unauthenticated' ? 'Sign in required' : errorCode === 'forbidden' ? 'Not authorized' : 'Administration is unavailable' }}</p><p class="text-sm text-toned">{{ error }}</p><div class="flex flex-wrap gap-2"><UButton v-if="errorCode === 'unauthenticated' && authenticationMode === 'oidc'" :to="loginHref" icon="i-lucide-log-in" external>Sign in with Okta</UButton><UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" @click="load">Try again</UButton></div></div>
+    <div v-else-if="error" role="alert" class="space-y-3 rounded-xl border border-error bg-[var(--am-color-bg-surface)] p-5"><p class="font-medium text-error">{{ errorCode === 'unauthenticated' ? 'Sign in required' : errorCode === 'forbidden' ? 'Not authorized' : errorCode === 'logout_failed' ? 'Sign-out not confirmed' : 'Administration is unavailable' }}</p><p class="text-sm text-toned">{{ error }}</p><div class="flex flex-wrap gap-2"><UButton v-if="errorCode === 'unauthenticated' && authenticationMode === 'oidc'" :to="loginHref" icon="i-lucide-log-in" external>Sign in with Okta</UButton><UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" @click="load">Try again</UButton></div></div>
 
     <template v-else-if="session && configuration">
       <AdminChangeEditor v-if="draft" :key="editorKey" :initial="draft" :configuration="configuration" :profiles="profiles" @accepted="accepted" @cancel="draft = undefined" />
