@@ -48,7 +48,7 @@ func fitTerminalWithFooter(content, footer string, width, height int) string {
 	if width < 1 || height < 1 {
 		return ""
 	}
-	footer = ansi.Truncate(footer, width, "")
+	footer = fitFooterGroups(footer, " · ", width)
 	if height == 1 {
 		return footer
 	}
