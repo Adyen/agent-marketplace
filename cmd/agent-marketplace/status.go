@@ -652,8 +652,15 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	orphaned := view.orphaned
 	collisions := view.collisions
 	requirements := view.requirements
-	errorRows := view.errorRows
+	errorRows := slices.Clone(view.errorRows)
 	dryRunReport := view.dryRunReport
+	if dryRunReport != nil {
+		for _, diagnostic := range dryRunReport.Diags {
+			if diagnostic.IsError() {
+				errorRows = append(errorRows, errorRow{Message: pipeline.PromoteDiagnostic(diagnostic).Error()})
+			}
+		}
+	}
 	targetHarnesses := view.targetHarnesses
 	targetSource := view.targetSource
 	harnessTargets := view.harnessTargets
