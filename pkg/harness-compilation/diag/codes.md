@@ -55,6 +55,7 @@ comparison in non-test code.
 
 | Code | Summary | Hint |
 |------|---------|------|
+| `ingest.factory.resource-shadowed` | Factory resource was shadowed by an earlier resource of the same kind and name | Use distinct resource names or remove the lower-priority definition |
 | `subagent.windsurf.no-primitive` | Windsurf has no subagent primitive; resource dropped | Consider expressing the subagent as a Windsurf workflow instead |
 | `hook.claude.unsupported-type` | Unsupported hook type in Claude format; only command-type is universally supported in v0 | Convert the hook to a command type or remove it |
 | `hook.factory.non-command-type-dropped` | Factory only supports command-type hooks; non-command type dropped | Convert the hook to a command type or remove it |

@@ -50,6 +50,7 @@ const (
 	CodeHookWindsurfEventUnmappable         = "hook.windsurf.event-unmappable"           // Claude hook event has no Windsurf equivalent
 	CodeIngestGeminiHookEventPartialMapping = "ingest.gemini.hook-event-partial-mapping" // Gemini hook event only partially maps to Claude vocabulary
 	CodeIngestWindsurfHookEventUnmappable   = "ingest.windsurf.hook-event-unmappable"    // Windsurf hook event has no canonical equivalent
+	CodeIngestFactoryResourceShadowed       = "ingest.factory.resource-shadowed"
 	// CodeMcpInterpolationUnsupported is the shared, VALUE-LEVEL interpolation
 	// loss: one env value, one header value, one argument, or one OAuth member
 	// used an interpolation style the target cannot represent, so that value
@@ -481,6 +482,7 @@ var codeCatalog = []CodeDoc{
 	{CodeOwnershipLockContended, SeverityInfo, "Another agent-marketplace process held this target root's ownership lock, so this run waited for it", "No action needed; ownership mutations are serialized per canonical target root so two writers cannot publish an aggregate file and its ownership record at different instants"},
 
 	// Warning
+	{CodeIngestFactoryResourceShadowed, SeverityWarning, "Factory resource was shadowed by an earlier resource of the same kind and name", "Use distinct resource names or remove the lower-priority definition"},
 	{CodeSubagentWindsurfNoPrimitive, SeverityWarning, "Windsurf has no subagent primitive; resource dropped", "Consider expressing the subagent as a Windsurf workflow instead"},
 	{CodeHookClaudeUnsupportedType, SeverityWarning, "Unsupported hook type in Claude format; only command-type is universally supported in v0", "Convert the hook to a command type or remove it"},
 	{CodeHookFactoryNonCommandTypeDropped, SeverityWarning, "Factory only supports command-type hooks; non-command type dropped", "Convert the hook to a command type or remove it"},

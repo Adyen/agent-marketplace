@@ -3,6 +3,7 @@ package factory
 import (
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -227,14 +228,13 @@ func loadSkillsFromRoot(src fs.FS, root string, metadata map[string]skillMetadat
 	var resources []ir.Resource
 	var diags []diag.Diagnostic
 	for _, dir := range dirs {
-		name := dirName(dir)
-		if seen[name] {
-			continue
-		}
-
 		skill, err := LoadSkill(src, dir)
 		if err != nil {
 			diags = append(diags, ingest.LoadFailure(diag.CodeIngestFactoryLoadSkillFailed, "skill", dir, dir, err))
+			continue
+		}
+		if seen[skill.Name()] {
+			diags = append(diags, shadowedResourceDiagnostic(skill, skill.Source))
 			continue
 		}
 		if meta, ok := metadata[skill.Name()]; ok {
@@ -264,13 +264,13 @@ func loadCommandsFromRoot(src fs.FS, root string, seen map[string]bool) ([]ir.Re
 	var resources []ir.Resource
 	var diags []diag.Diagnostic
 	for _, path := range files {
-		name := baseNameWithoutExt(path)
-		if seen[name] {
-			continue
-		}
 		command, err := LoadCommand(src, path)
 		if err != nil {
 			diags = append(diags, ingest.LoadFailure(diag.CodeIngestFactoryLoadCommandFailed, "command", path, path, err))
+			continue
+		}
+		if seen[command.Name()] {
+			diags = append(diags, shadowedResourceDiagnostic(command, command.Source))
 			continue
 		}
 		seen[command.Name()] = true
@@ -291,16 +291,16 @@ func loadDroidsFromRoot(src fs.FS, root string, seen map[string]bool) ([]ir.Reso
 	var resources []ir.Resource
 	var diags []diag.Diagnostic
 	for _, path := range files {
-		name := baseNameWithoutExt(path)
-		if seen[name] {
-			continue
-		}
 		subagent, subagentDiags, err := LoadSubagent(src, path)
 		if err != nil {
 			diags = append(diags, ingest.LoadFailure(diag.CodeIngestFactoryLoadSubagentFailed, "subagent", path, path, err))
 			continue
 		}
 		diags = append(diags, subagentDiags...)
+		if seen[subagent.Name()] {
+			diags = append(diags, shadowedResourceDiagnostic(subagent, subagent.Source))
+			continue
+		}
 		seen[subagent.Name()] = true
 		resources = append(resources, subagent)
 	}
@@ -325,6 +325,7 @@ func loadRulesFromRoot(src fs.FS, root string, seen map[string]bool) ([]ir.Resou
 			continue
 		}
 		if seen[rule.Name()] {
+			diags = append(diags, shadowedResourceDiagnostic(rule, rule.Source))
 			continue
 		}
 		seen[rule.Name()] = true
@@ -439,4 +440,9 @@ func listRuleFiles(src fs.FS, root string) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
+}
+
+func shadowedResourceDiagnostic(resource ir.Resource, source ir.SourceRef) diag.Diagnostic {
+	slog.Warn("Factory resource shadowed", "kind", resource.Kind(), "resource", resource.Name(), "code", diag.CodeIngestFactoryResourceShadowed)
+	return diag.Diagnostic{Code: diag.CodeIngestFactoryResourceShadowed, Severity: diag.SeverityWarning, Target: "factory", Resource: resource.Name(), Message: "Factory resource was shadowed by an earlier resource of the same kind and name", Hint: "Use distinct resource names or remove the lower-priority definition", Source: diag.SourceRef(source)}
 }

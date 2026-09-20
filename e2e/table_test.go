@@ -180,6 +180,16 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/factory_declared_identity",
+		Desc: "Given mixed Factory layouts with colliding declared names and a distinct filename collision, When converting, Then the first resource survives and the distinct resource is retained",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/commands/source.md", Body: "---\nname: review\ndescription: First\n---\nFIRST RESOURCE\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/.factory/commands/alias.md", Body: "---\nname: review\ndescription: Shadow\n---\nSHADOW RESOURCE\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/.factory/commands/review.md", Body: "---\nname: other\ndescription: Unique\n---\nUNIQUE RESOURCE\n"},
+			{Args: []string{"convert", "--from", "factory", "--to", "factory", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/commands/review.md": "FIRST RESOURCE", "/workspace/converted/commands/other.md": "UNIQUE RESOURCE"}, FileNotContains: map[string]string{"/workspace/converted/commands/review.md": "SHADOW RESOURCE"}},
+		},
+	},
+	{
 		Name: "security/command_marker_body_lifecycle",
 		Desc: "Given a Factory command with marker text in its body and a handwritten sibling, When installing removing and reinstalling, Then real frontmatter ownership enables cleanup without adopting the handwritten file",
 		Registries: []RegistryDef{{Name: "marker-body", Files: map[string]string{
