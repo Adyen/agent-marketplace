@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { AdminError, cloneAdmin, createAdminApi, lifecycleActions, newAdminRegistry, restoreRegistrySettings } from '~/lib/admin'
+import { AdminError, adminLoginHref, cloneAdmin, createAdminApi, lifecycleActions, newAdminRegistry, restoreRegistrySettings } from '~/lib/admin'
 import type { AdminChange, AdminConfiguration, AdminInstance, AdminProfiles, AdminProposal, AdminRegistry, AdminSession } from '~/lib/admin'
 import { applicableLifecycleActions, destructiveLifecycleActions, lifecycleBadge, operationLabel } from '~/lib/admin-presentation'
 import type { Crumb } from '~/components/AdminBreadcrumb.vue'
@@ -15,6 +15,8 @@ const changes = ref<AdminChange[]>([])
 const hasOlder = ref(false)
 const pending = ref(true)
 const error = ref('')
+const errorCode = ref('')
+const authenticationMode = ref('')
 const draft = ref<AdminProposal>()
 const editorKey = ref(0)
 const search = ref('')
@@ -44,18 +46,37 @@ const registryActions = computed(() => registry.value ? applicableLifecycleActio
 useHead(() => ({ title: `${title.value} · Administration · Agent Marketplace`, meta: [{ name: 'robots', content: 'noindex, nofollow, noarchive' }] }))
 
 function describeError(value: unknown) {
+  errorCode.value = value instanceof AdminError ? value.code : ''
   if (value instanceof AdminError) {
-    if (value.code === 'unauthenticated') return 'Your SSO session is missing or expired. Sign in again through your deployment, then reload. Nothing is replayed automatically.'
+    const mode = value.fields.authentication_mode
+    if (mode === 'oidc' || mode === 'trusted_proxy') authenticationMode.value = mode
+    if (value.code === 'unauthenticated') return authenticationMode.value === 'oidc' ? 'Your administration session is missing or expired. Sign in again; nothing is replayed automatically.' : 'Authenticate through your deployment identity proxy, then try again; nothing is replayed automatically.'
     if (value.code === 'forbidden') return 'Your identity is not authorized to administer this Marketplace.'
     return `${value.code}: ${value.message}`
   }
   return 'Administration could not be loaded.'
 }
+const appBase = useRuntimeConfig().app.baseURL.replace(/\/+$/, '')
+const loginHref = computed(() => adminLoginHref(`${appBase}${route.fullPath}`, `${appBase}/`))
+async function logout() {
+  try {
+    await api.logout()
+  }
+  catch { /* local sign-out proceeds regardless of the response */ }
+  session.value = undefined
+  configuration.value = undefined
+  draft.value = undefined
+  error.value = 'You have been signed out of Marketplace administration.'
+  errorCode.value = 'unauthenticated'
+}
 async function load() {
   pending.value = true
   error.value = ''
+  errorCode.value = ''
+  authenticationMode.value = ''
   try {
     session.value = await api.session()
+    authenticationMode.value = session.value.authentication_mode
     configuration.value = await api.configuration()
     profiles.value = await api.profiles()
     if (section.value === 'instance') instance.value = await api.instance()
@@ -99,10 +120,13 @@ watch(() => route.fullPath, () => { draft.value = undefined; changes.value = [];
     <header class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <AdminBreadcrumb :items="crumbs" />
-        <p v-if="session" class="flex items-center gap-1.5 text-xs text-muted">
-          <UIcon name="i-lucide-user-round" class="size-3.5" aria-hidden="true" /><span class="font-medium text-toned">{{ session.actor.subject }}</span>
-          <template v-if="configuration"><span aria-hidden="true">·</span><span>Revision {{ configuration.revision }}</span><AdminHint text="Every accepted change creates a new configuration revision. Drafts you prepare here stay in this browser tab until you apply them." /></template>
-        </p>
+        <div v-if="session" class="flex items-center gap-2">
+          <p class="flex items-center gap-1.5 text-xs text-muted">
+            <UIcon name="i-lucide-user-round" class="size-3.5" aria-hidden="true" /><span class="font-medium text-toned">{{ session.display || session.actor.subject }}</span>
+            <template v-if="configuration"><span aria-hidden="true">·</span><span>Revision {{ configuration.revision }}</span><AdminHint text="Every accepted change creates a new configuration revision. Drafts you prepare here stay in this browser tab until you apply them." /></template>
+          </p>
+          <UButton v-if="session.authentication_mode === 'oidc'" size="xs" color="neutral" variant="outline" icon="i-lucide-log-out" @click="logout">Sign out</UButton>
+        </div>
       </div>
       <div class="flex flex-wrap items-end justify-between gap-4 border-b border-default pb-4">
         <div class="flex min-w-0 flex-wrap items-center gap-3">
@@ -116,7 +140,7 @@ watch(() => route.fullPath, () => { draft.value = undefined; changes.value = [];
     </header>
 
     <div v-if="pending" role="status" aria-busy="true" class="flex items-center gap-2 text-sm text-muted"><UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" aria-hidden="true" />Loading administration…</div>
-    <div v-else-if="error" role="alert" class="space-y-3 rounded-xl border border-error bg-[var(--am-color-bg-surface)] p-5"><p class="font-medium text-error">Administration is unavailable</p><p class="text-sm text-toned">{{ error }}</p><UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" @click="load">Try again</UButton></div>
+    <div v-else-if="error" role="alert" class="space-y-3 rounded-xl border border-error bg-[var(--am-color-bg-surface)] p-5"><p class="font-medium text-error">{{ errorCode === 'unauthenticated' ? 'Sign in required' : errorCode === 'forbidden' ? 'Not authorized' : 'Administration is unavailable' }}</p><p class="text-sm text-toned">{{ error }}</p><div class="flex flex-wrap gap-2"><UButton v-if="errorCode === 'unauthenticated' && authenticationMode === 'oidc'" :to="loginHref" icon="i-lucide-log-in" external>Sign in with Okta</UButton><UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" @click="load">Try again</UButton></div></div>
 
     <template v-else-if="session && configuration">
       <AdminChangeEditor v-if="draft" :key="editorKey" :initial="draft" :configuration="configuration" :profiles="profiles" @accepted="accepted" @cancel="draft = undefined" />

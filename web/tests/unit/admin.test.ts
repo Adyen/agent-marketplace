@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AdminError, adminDiff, createAdminApi, newAdminRegistry, restoreRegistrySettings } from '../../app/lib/admin'
+import { AdminError, adminDiff, adminLoginHref, createAdminApi, newAdminRegistry, restoreRegistrySettings } from '../../app/lib/admin'
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -74,5 +74,32 @@ describe('review and historical restoration', () => {
       { field: 'ref', before: '"main"', after: '"v2"' },
       { field: 'removed', before: '"old"', after: 'Not set' },
     ])
+  })
+})
+
+describe('admin sign-in and sign-out', () => {
+  it('builds a login href only for validated admin paths', () => {
+    expect(adminLoginHref('/marketplace/admin')).toBe(`/api/v1/admin/auth/login?next=${encodeURIComponent('/marketplace/admin')}`)
+    expect(adminLoginHref('/marketplace/admin/registries/team/configuration')).toBe(`/api/v1/admin/auth/login?next=${encodeURIComponent('/marketplace/admin/registries/team/configuration')}`)
+    for (const next of ['https://evil.test', '//evil.test', '/other', '/marketplace/adminx', '/marketplace/admin/../x', '/marketplace/admin/%2e%2e', '/marketplace/admin?x=1', '/marketplace/admin#x', '/marketplace/admin\\x']) {
+      expect(adminLoginHref(next)).toBe(`/api/v1/admin/auth/login?next=${encodeURIComponent('/marketplace/admin')}`)
+    }
+  })
+
+  it('sends logout as a protected same-origin POST without If-Match or idempotency key', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({ code: 'signed_out' }))
+    await createAdminApi(fetcher).logout()
+    const [url, options] = fetcher.mock.calls[0]!
+    expect(url).toBe('/api/v1/admin/auth/logout')
+    expect(options).toMatchObject({ method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', body: '{}' })
+    expect(options?.headers).toMatchObject({ 'X-Marketplace-Admin': '1', 'Content-Type': 'application/json' })
+    expect(Object.keys(options?.headers || {})).not.toContain('If-Match')
+    expect(Object.keys(options?.headers || {})).not.toContain('Idempotency-Key')
+  })
+
+  it('never retries logout', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({ code: 'unauthenticated', message: 'x' }, 401))
+    await expect(createAdminApi(fetcher).logout()).rejects.toMatchObject({ code: 'unauthenticated' })
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 })

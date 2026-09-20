@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,6 +103,31 @@ func TestAdminHandlerLocalHTTP(t *testing.T) {
 	s.adminHandler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var session struct {
+		AuthenticationMode string `json:"authentication_mode"`
+	}
+	if json.Unmarshal(w.Body.Bytes(), &session) != nil || session.AuthenticationMode != "trusted_proxy" {
+		t.Fatalf("session auth mode = %q, want trusted_proxy: %s", session.AuthenticationMode, w.Body.String())
+	}
+}
+
+func TestTrustedProxyUnauthenticatedIncludesAuthMode(t *testing.T) {
+	handler, err := newAdminGuard(testAdminAuth(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("unauthenticated request reached handler")
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := adminAuthRequest(http.MethodGet)
+	r.Header.Del("X-Test-Subject")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	var response struct {
+		Fields map[string]string `json:"fields"`
+	}
+	if w.Code != http.StatusUnauthorized || json.Unmarshal(w.Body.Bytes(), &response) != nil || response.Fields["authentication_mode"] != "trusted_proxy" {
+		t.Fatalf("unauthenticated response = %d %s", w.Code, w.Body.String())
 	}
 }
 

@@ -14,10 +14,125 @@ servers:
     description: Marketplace public origin
 
 paths:
+  /api/v1/admin/auth/login:
+    get:
+      operationId: adminAuthLogin
+      summary: Start OIDC administration sign-in (redirects to the configured issuer)
+      parameters:
+        - name: next
+          in: query
+          required: false
+          description: Post-sign-in destination. Only /marketplace/admin and descendant paths are accepted.
+          schema: { type: string }
+      responses:
+        '303':
+          description: Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth.
+        '400':
+          description: Invalid sign-in destination; code authentication_request_invalid
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+        '403':
+          description: Request Origin header does not match the configured admin origin; code origin_rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+        '503':
+          description: Identity provider discovery unavailable or OIDC mode misconfigured; code authentication_unavailable or admin_unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+  /api/v1/admin/auth/callback:
+    get:
+      operationId: adminAuthCallback
+      summary: OIDC authorization-code callback (PKCE S256, state, and nonce verified)
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '303':
+          description: Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin.
+        '400':
+          description: Malformed provider response; code authentication_request_invalid
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+        '401':
+          description: Invalid state, token, signature, or claims; code authentication_rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+        '403':
+          description: Verified identity lacks configured authorization (code forbidden), or the request Origin header does not match the configured admin origin (code origin_rejected)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+        '503':
+          description: Identity provider unavailable; code authentication_unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+  /api/v1/admin/auth/logout:
+    post:
+      operationId: adminAuthLogout
+      summary: Idempotent local sign-out; expires both admin cookies under their mode-specific names and path scopes
+      responses:
+        '200':
+          description: Session expired; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code]
+                properties:
+                  code: { type: string, enum: [signed_out] }
+        default:
+          $ref: '#/components/responses/AdminError'
   /api/v1/admin/session:
     get:
       operationId: getAdminSession
-      summary: Trusted proxy authenticated admin session (never cache)
+      summary: Authenticated admin session (trusted-proxy or OIDC; never cache)
       responses:
         '200':
           description: Authenticated session; Cache-Control no-store
@@ -874,9 +989,11 @@ components:
         subject: { type: string }
     AdminSession:
       type: object
-      required: [actor, capabilities]
+      required: [actor, authentication_mode, capabilities]
       properties:
         actor: { $ref: '#/components/schemas/AdminActor' }
+        display: { type: string, description: 'Optional display name from the identity provider; never an authorization identity.' }
+        authentication_mode: { type: string, enum: [oidc, trusted_proxy], description: 'Resolved authentication mode; unauthenticated errors expose the same value in fields.authentication_mode.' }
         capabilities:
           type: array
           items: { type: string }

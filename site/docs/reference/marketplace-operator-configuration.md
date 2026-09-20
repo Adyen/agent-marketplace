@@ -70,11 +70,16 @@ management:
 admin:
   enabled: false
   origin: https://marketplace.example.com
-  trusted_proxies: []
-  issuer: https://sso.example.com
-  subject_header: X-Marketplace-Subject
-  groups_header: X-Marketplace-Groups
+  authentication:
+    mode: oidc
+    oidc:
+      issuer: https://idp.example.com/oauth2/default
+      client_id: marketplace-admin-client-id
+      session_secret_env: MARKETPLACE_ADMIN_SESSION_SECRET
+      groups_claim: groups
+      session_ttl: 12h
   admin_groups: []
+  admin_users: []
 ```
 
 ## Top-level fields
@@ -93,7 +98,7 @@ admin:
 | `registries` | list | no | empty | Approved registry repositories. IDs and slugs must each be unique. |
 | `revocations` | mapping | no | empty lists | Registry-, coordinate-, and exact-revision revocations. |
 | `management` | mapping | no | mode `file` | Authority mode, allowed Git origins, and credential profiles. |
-| `admin` | mapping | no | disabled | Trusted-proxy browser administration settings. |
+| `admin` | mapping | no | disabled | Browser administration settings (native OIDC or trusted-proxy identity). |
 
 ## `instance`
 
@@ -262,20 +267,22 @@ management:
 
 ## `admin`
 
-Configures the browser-based administration API and trusted-proxy identity verification.
-
-Identity header names must be distinct (case-insensitively) and match `[A-Za-z][A-Za-z0-9-]*`. `X-Forwarded-*` names and reserved HTTP headers such as `Authorization`, `Cookie`, and `Origin` are rejected at startup. Use dedicated headers that the trusted proxy overwrites with authenticated claims.
+Configures the browser-based administration API and its authentication mode. Exactly one mode is selected through `authentication.mode`; an enabled configuration with no explicit mode and a complete trusted-proxy field set infers `trusted_proxy` for backward compatibility. The modes are mutually exclusive: OIDC mode rejects trusted-proxy identity fields and trusted-proxy mode rejects `authentication.oidc` fields.
 
 | Field | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `enabled` | boolean | no | `false` | Enables the `/api/v1/admin/**` API endpoints. |
-| `origin` | URL | if enabled | none | Expected HTTPS origin for admin requests (e.g. `https://marketplace.example.com`). Must contain protocol and host/port only. HTTP is permitted only by the localhost opt-in below. |
+| `origin` | URL | if enabled | none | Expected HTTPS origin for admin requests (e.g. `https://marketplace.example.com`). Must equal the exact browser origin serialization: lowercase scheme, ASCII DNS host (use the Punycode A-label), or literal IP host; no explicit default port (`:443` for HTTPS or `:80` for HTTP), no leading-zero port, no trailing-dot DNS host, no non-canonical IPv4 spelling (decimal, hex, dotted octal/hex/leading-zero forms, or IPv4-mapped IPv6 such as `[::ffff:192.0.2.1]`), and no path, query, or fragment. Non-default ports are valid. HTTP is permitted only by the localhost opt-in below. |
 | `allow_insecure_localhost` | boolean | no | `false` | Allows HTTP origins only for `localhost` or literal loopback IP addresses, for local development. Does not relax identity, proxy, or exact-origin checks. The operator must bind the public proxy to loopback; this flag does not change listener bindings. |
-| `trusted_proxies` | list of CIDRs | if enabled | empty | Immediate reverse proxy CIDRs allowed to assert identity headers. Forwarded client IPs do not bypass this check. |
-| `issuer` | string | if enabled | none | Identity provider or SSO issuer identifier. |
-| `subject_header` | string | if enabled | none | HTTP header containing the authenticated subject identity (e.g. `X-Marketplace-Subject`). |
-| `groups_header` | string | if enabled | none | HTTP header containing a JSON string array of group names (e.g. `X-Marketplace-Groups`). |
-| `admin_groups` | list of strings | if enabled | empty | Group names authorized to access administration endpoints. |
+| `admin_groups` | list of strings | one of `admin_groups`/`admin_users` required | empty | Group names authorized to access administration endpoints. |
+| `admin_users` | list of strings | one of `admin_groups`/`admin_users` required | empty | Immutable provider subjects authorized to access administration endpoints. Never an email or display name. |
+| `authentication.mode` | string | yes for new configurations | inferred | `oidc` for native sign-in or `trusted_proxy` for identity asserted by a reverse proxy. |
+| `trusted_proxies` | list of CIDRs | trusted-proxy mode | empty | Immediate reverse proxy CIDRs allowed to assert identity headers. Forwarded client IPs do not bypass this check. |
+| `issuer` | string | trusted-proxy mode | none | Identity provider or SSO issuer identifier recorded as the audit issuer. |
+| `subject_header` | string | trusted-proxy mode | none | HTTP header containing the authenticated subject identity (e.g. `X-Marketplace-Subject`). |
+| `groups_header` | string | trusted-proxy mode | none | HTTP header containing a JSON string array of group names (e.g. `X-Marketplace-Groups`). |
+
+Identity header names must be distinct (case-insensitively) and match `[A-Za-z][A-Za-z0-9-]*`. `X-Forwarded-*` names and reserved HTTP headers such as `Authorization`, `Cookie`, and `Origin` are rejected at startup. Use dedicated headers that the trusted proxy overwrites with authenticated claims.
 
 ```yaml
 admin:
@@ -289,6 +296,37 @@ admin:
   groups_header: X-Marketplace-Groups
   admin_groups:
     - marketplace-admins
+```
+
+### `admin.authentication.oidc`
+
+Native OIDC sign-in uses a dedicated public Authorization Code client with required S256 PKCE. The API performs lazy issuer discovery, validates RS256 ID tokens against the issuer JWKS with exact issuer and audience checks, requires a present `azp` claim to equal `client_id` and requires it whenever the token carries multiple audiences, and issues a signed `HttpOnly` `SameSite=Lax` session cookie. For HTTPS origins both cookies use the browser-enforced `__Host-` names `__Host-marketplace_admin_session` and `__Host-marketplace_admin_login` with `Secure`, `Path=/`, and no `Domain`, so a same-named sibling-domain cookie can never collide with them; this deliberately trades per-path confinement for host isolation. Only the explicit `allow_insecure_localhost` loopback HTTP mode keeps the unprefixed names `marketplace_admin_session` and `marketplace_admin_login` confined to `/api/v1/admin` and `/api/v1/admin/auth` respectively without `Secure`. Request lookup and expiration always use the effective mode-specific name and path. The callback URI is fixed to `<origin>/api/v1/admin/auth/callback` and is not separately configurable.
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `issuer` | HTTPS URL | yes | none | Exact OIDC issuer (e.g. `https://idp.example.com/oauth2/default`). No query, fragment, or trailing slash. HTTP is permitted only for a loopback issuer with `allow_insecure_localhost`. |
+| `client_id` | string | yes | none | Public OIDC client ID. Not a secret; may be committed to deployment configuration. |
+| `session_secret_env` | environment variable name | exactly one secret source | none | Environment variable holding the session signing secret. The resolved value is trimmed of surrounding whitespace and must be 32 through 4096 bytes. Inline secrets are not supported. |
+| `session_secret_file` | path | exactly one secret source | none | File holding the session signing secret. The resolved value is trimmed of surrounding whitespace and must be 32 through 4096 bytes. |
+| `groups_claim` | string | no | `groups` | ID-token claim carrying group membership. Must be a single safe claim name. |
+| `session_ttl` | duration | no | `12h` | Session lifetime; must be non-negative and no greater than `24h`. A zero or omitted value applies the `12h` default. The transient login transaction lasts 10 minutes and is not configurable. |
+
+Requested scopes are fixed to `openid profile email groups`; arbitrary scopes and offline access are not configurable. Provider tokens, authorization codes, and PKCE material are never stored in sessions, logs, or error responses. Invalid authentication configuration fails the admin routes closed without affecting public Marketplace routes.
+
+```yaml
+admin:
+  enabled: true
+  origin: https://marketplace.example.com
+  authentication:
+    mode: oidc
+    oidc:
+      issuer: https://idp.example.com/oauth2/default
+      client_id: marketplace-admin-client-id
+      session_secret_env: MARKETPLACE_ADMIN_SESSION_SECRET
+  admin_groups:
+    - marketplace-admins
+  admin_users:
+    - 00u123exampleOktaSubject
 ```
 
 ## Server roles and commands
