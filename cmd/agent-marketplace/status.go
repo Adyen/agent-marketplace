@@ -660,6 +660,7 @@ func writeStatusSections(out io.Writer, view statusView) error {
 				errorRows = append(errorRows, errorRow{Message: pipeline.PromoteDiagnostic(diagnostic).Error()})
 			}
 		}
+		slices.SortFunc(errorRows, func(a, b errorRow) int { return cmp.Compare(a.Message, b.Message) })
 	}
 	targetHarnesses := view.targetHarnesses
 	targetSource := view.targetSource

@@ -47,3 +47,29 @@ func TestStatusDisplaysMaterializationDiagnostics(t *testing.T) {
 		t.Fatalf("clean status wrong: %q", clean.String())
 	}
 }
+
+func TestStatusSortsMaterializationDiagnostics(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	var previous string
+	for _, codes := range [][]string{{"zzz.fixture", "aaa.fixture"}, {"aaa.fixture", "zzz.fixture"}} {
+		view := statusView{errorRows: []errorRow{{Message: "middle existing failure"}}, dryRunReport: &materialize.Report{}}
+		for _, code := range codes {
+			view.dryRunReport.Diags = append(view.dryRunReport.Diags, diag.Diagnostic{Code: code, Severity: diag.SeverityError, Message: "fixture failure"})
+		}
+		var out bytes.Buffer
+		if err := writeStatusSections(&out, view); err != nil {
+			t.Fatal(err)
+		}
+		text := out.String()
+		a, m, z := strings.Index(text, "aaa.fixture:"), strings.Index(text, "middle existing failure"), strings.Index(text, "zzz.fixture:")
+		if a < 0 || m < a || z < m {
+			t.Fatalf("errors not alphabetically sorted: %s", text)
+		}
+		if previous != "" && previous != text {
+			t.Fatal("diagnostic order changed rendered status")
+		}
+		previous = text
+	}
+}
