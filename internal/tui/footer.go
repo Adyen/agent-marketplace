@@ -109,8 +109,11 @@ func fitFooterGroups(s, separator string, width int) string {
 		if used+need > width {
 			continue
 		}
-		kept = append([]string{groups[i]}, kept...)
+		kept = append(kept, groups[i])
 		used += need
+	}
+	for i, j := 0, len(kept)-1; i < j; i, j = i+1, j-1 {
+		kept[i], kept[j] = kept[j], kept[i]
 	}
 	if len(kept) == 0 {
 		return ansi.Truncate(groups[len(groups)-1], width, "…")
