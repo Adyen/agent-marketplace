@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -208,6 +209,28 @@ func resolveSingleRootAdapterDestinations(adapter InstallationAdapter, machineSc
 	canonical, err := canonicalRoot(root)
 	if err != nil {
 		return nil, err
+	}
+	if !machineScope {
+		canonicalRepo, err := ownership.CanonicalRoot(repoRoot)
+		if err != nil {
+			return nil, err
+		}
+		resolvedRoot, err := ownership.CanonicalRoot(canonical)
+		if err != nil {
+			return nil, err
+		}
+		if !isStrictlyWithin(canonicalRepo, resolvedRoot) {
+			return nil, fmt.Errorf("%s repository destination escapes the repository root: %w", adapter.target, os.ErrPermission)
+		}
+		info, statErr := os.Lstat(canonical)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return nil, fmt.Errorf("inspect %s repository destination: %w", adapter.target, statErr)
+		}
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			if _, err := filepath.EvalSymlinks(canonical); err != nil {
+				return nil, fmt.Errorf("%s repository destination symlink cannot be verified: %w", adapter.target, os.ErrPermission)
+			}
+		}
 	}
 	return nativeAggregateDestinations(adapter.target, machineScope, repoRoot, homeDir,
 		Destination{ID: "default", Root: canonical, InstallationEvidence: true, Info: adapter.info})
