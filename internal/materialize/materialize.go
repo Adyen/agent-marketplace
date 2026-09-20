@@ -3956,7 +3956,7 @@ func userOwnedCommandDiag(filePath, name string, meta skillLink) diag.Diagnostic
 // operation is idempotent.
 func injectManagedByFrontmatter(content []byte) []byte {
 	marker := managedByField + ": " + managedByValue
-	if bytes.Contains(content, []byte(marker)) {
+	if isManagedCommandContent(content) {
 		return content
 	}
 	if !hasFrontmatter(content) {
@@ -3981,10 +3981,11 @@ func isManagedCommandFile(path string) bool {
 	if err != nil {
 		return false
 	}
-	if !bytes.Contains(data, []byte(managedByField)) {
-		return false
-	}
-	if !hasFrontmatter(data) {
+	return isManagedCommandContent(data)
+}
+
+func isManagedCommandContent(data []byte) bool {
+	if !bytes.Contains(data, []byte(managedByField)) || !hasFrontmatter(data) {
 		return false
 	}
 	trimmed := strings.TrimLeft(string(data), "\ufeff\n\r\t ")

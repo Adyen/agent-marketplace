@@ -4675,3 +4675,31 @@ func TestRunMaterializationModesAreScopeSpecific(t *testing.T) {
 		t.Fatalf("machine file mode should use local user manifest: %v", err)
 	}
 }
+
+func TestCommandMarkerInjectionIgnoresBodyText(t *testing.T) {
+	const marker = "_managed_by: agent-marketplace"
+	for _, tc := range []struct{ name, input, want string }{
+		{"body only", marker + "\n", "---\n" + marker + "\n---\n\n" + marker + "\n"},
+		{"fenced body", "---\ndescription: sample\n---\n```yaml\n" + marker + "\n```\n", "---\n" + marker + "\ndescription: sample\n---\n```yaml\n" + marker + "\n```\n"},
+		{"description text", "---\ndescription: 'example _managed_by: agent-marketplace'\n---\nBody\n", "---\n" + marker + "\ndescription: 'example _managed_by: agent-marketplace'\n---\nBody\n"},
+		{"already managed", "---\n" + marker + "\ndescription: sample\n---\nBody\n", "---\n" + marker + "\ndescription: sample\n---\nBody\n"},
+		{"leading whitespace", "\ufeff \n---\ndescription: sample\n---\n" + marker + "\n", "\ufeff \n---\n" + marker + "\ndescription: sample\n---\n" + marker + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := injectManagedByFrontmatter([]byte(tc.input))
+			if string(got) != tc.want {
+				t.Fatalf("marker was not injected into frontmatter: got %q want %q", got, tc.want)
+			}
+			if twice := injectManagedByFrontmatter(got); !bytes.Equal(got, twice) {
+				t.Fatalf("injection is not idempotent: %q", twice)
+			}
+			path := filepath.Join(t.TempDir(), "command.md")
+			if err := os.WriteFile(path, got, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if !isManagedCommandFile(path) {
+				t.Fatal("injection and cleanup disagree on ownership")
+			}
+		})
+	}
+}

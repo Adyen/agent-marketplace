@@ -180,6 +180,23 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/command_marker_body_lifecycle",
+		Desc: "Given a Factory command with marker text in its body and a handwritten sibling, When installing removing and reinstalling, Then real frontmatter ownership enables cleanup without adopting the handwritten file",
+		Registries: []RegistryDef{{Name: "marker-body", Files: map[string]string{
+			"commands/marker-command.md": "---\nname: marker-command\ndescription: Marker command\n---\n```yaml\n_managed_by: agent-marketplace\n```\n",
+			"commands/keep.md":           "---\nname: keep\ndescription: Keep\n---\nKeep body\n",
+		}}},
+		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
+		RepoCfg:   "harnesses: [factory]\nregistries:\n  - url: {{REG:marker-body}}\n    ref: main\n    commands: [marker-command, keep]\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/.factory/commands/manual.md", Body: "---\ndescription: Personal\n---\nExample: _managed_by: agent-marketplace\n"},
+			{Args: []string{"sync"}, MustPass: true, RegularFiles: []string{"/workspace/.factory/commands/marker-command.md"}, FileContains: map[string]string{"/workspace/.factory/commands/marker-command.md": "```yaml\n_managed_by: agent-marketplace\n```"}, PathsUnchanged: []string{"/workspace/.factory/commands/manual.md"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/commands/marker-command.md", "/workspace/.factory/commands/keep.md", "/workspace/.factory/commands/manual.md"}},
+			{Args: []string{"remove", "marker-command", "--kind", "command", "--scope", "repo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/commands/marker-command.md"}, PathsUnchanged: []string{"/workspace/.factory/commands/keep.md", "/workspace/.factory/commands/manual.md"}},
+			{Args: []string{"install", "marker-command", "--kind", "command", "--scope", "repo"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/commands/marker-command.md": "---\n_managed_by: agent-marketplace\n"}, PathsUnchanged: []string{"/workspace/.factory/commands/keep.md", "/workspace/.factory/commands/manual.md"}},
+		},
+	},
+	{
 		Name:       "security/hook_merge_opaque_members",
 		Desc:       "Given handwritten hook-container metadata and managed hooks, When sync updates hooks, Then unrelated members survive byte-for-byte while stale managed hooks are removed",
 		Registries: []RegistryDef{{Name: "opaque-hooks", Files: map[string]string{"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo generated"}]}]}}`}}},
