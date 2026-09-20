@@ -79,7 +79,7 @@ async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
     offsets.push(offset)
     if (offset > 0 && shouldFail) {
       shouldFail = false
-      return route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
+      return route.fulfill({ status: 400, contentType: 'application/json', body: '{}' })
     }
     return route.fulfill({
       status: 200,
