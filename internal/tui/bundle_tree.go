@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -511,7 +512,15 @@ func newMarketplaceArtifactTree(artifactPath string) (*bundleTree, error) {
 	}
 	if len(ca.Payload) > 0 {
 		payload = hccartifact.PayloadPath(ca.Manifest.Kind)
-		files[payload] = ca.Payload
+		payloadContent := ca.Payload
+		if ca.Manifest.Kind == ir.KindSkill.String() {
+			payload = "SKILL.md"
+			payloadContent, err = marketplaceSkillMarkdown(ca.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("render marketplace skill: %w", err)
+			}
+		}
+		files[payload] = payloadContent
 	}
 
 	t := &bundleTree{files: files}
@@ -527,6 +536,23 @@ func newMarketplaceArtifactTree(artifactPath string) (*bundleTree, error) {
 	}
 	t.rebuild()
 	return t, nil
+}
+
+func marketplaceSkillMarkdown(payload []byte) ([]byte, error) {
+	resource, err := hccartifact.DecodeResource(ir.KindSkill.String(), payload)
+	if err != nil {
+		return nil, err
+	}
+	result, err := hcc.Compile(resource, hcc.TargetFactory)
+	if err != nil {
+		return nil, err
+	}
+	for _, compiled := range result.Artifacts {
+		if filepath.Base(compiled.Path) == "SKILL.md" {
+			return compiled.Bytes, nil
+		}
+	}
+	return nil, fmt.Errorf("skill compilation produced no Markdown artifact")
 }
 
 // insertArchivePath materializes one slash-separated archive member path into

@@ -147,14 +147,14 @@ func TestInstalledMarketplaceArchiveOpensVerifiedBundle(t *testing.T) {
 	if m.bundle == nil {
 		t.Fatalf("installed archive did not open a bundle; viewport:\n%s", ansi.Strip(m.detailViewport.View()))
 	}
-	if m.detailSelectedPath != "resource/skill.json" {
+	if m.detailSelectedPath != "SKILL.md" {
 		t.Fatalf("initial archive selection = %q", m.detailSelectedPath)
 	}
 	var names []string
 	for _, entry := range m.bundle.entries() {
 		names = append(names, entry.RelPath)
 	}
-	for _, want := range []string{"manifest.json", "resource/skill.json", "assets/notes.md"} {
+	for _, want := range []string{"manifest.json", "SKILL.md", "assets/notes.md"} {
 		found := false
 		for _, got := range names {
 			if got == want {
@@ -178,6 +178,35 @@ func TestInstalledMarketplaceArchiveOpensVerifiedBundle(t *testing.T) {
 	// The cache container itself must never be browsable.
 	if contains(out, "verified.marker") || contains(out, "artifact.tar.gz") {
 		t.Fatalf("archive preview leaked cache container details:\n%s", out)
+	}
+}
+
+func TestInstalledMarketplaceSkillRendersAsMarkdownWithFrontmatter(t *testing.T) {
+	payload := []byte(`{"Agent":"","AllowedTools":["Read"],"ArgumentHint":"","Body":"\n# K8s App Onboarding\n\nUse this skill when onboarding an application.\n","Description":"Onboard applications onto Kubernetes","Model":"","Permissions":{},"PermissionsSet":false,"Subagent":"","SupportFiles":null,"Triggers":null,"name":"k8s-app-onboarding"}`)
+	artifactPath := writeVerifiedArtifact(t, "skill", "k8s-app-onboarding", payload, nil)
+	m := modelWithSelectedRow(t, installedMarketplaceRow(ir.KindSkill, "k8s-app-onboarding", artifactPath))
+	m.width = 100
+	m.height = 30
+
+	m, cmd := enterDetail(t, m)
+	if m.detailSelectedPath != "SKILL.md" {
+		t.Fatalf("initial skill selection = %q, want SKILL.md", m.detailSelectedPath)
+	}
+	if cmd == nil {
+		t.Fatal("enter did not schedule a skill preview")
+	}
+	msg := cmd().(detailContentMsg)
+	updated, _ := m.Update(msg)
+	out := ansi.Strip(updated.(Model).detailViewport.View())
+	for _, want := range []string{"k8s-app-onboarding", "Onboard", "applications onto Kubernetes", "K8s App Onboarding", "Use this skill when onboarding an application."} {
+		if !contains(out, want) {
+			t.Fatalf("skill preview missing %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{`"Agent"`, `"AllowedTools"`, `"Body"`} {
+		if contains(out, unwanted) {
+			t.Fatalf("skill preview contains canonical JSON field %q:\n%s", unwanted, out)
+		}
 	}
 }
 
