@@ -43,14 +43,18 @@ type testOIDCIssuer struct {
 	claims     map[string]any
 	omitClaims map[string]bool
 	// verifierSeen records that token exchange presented PKCE material.
-	verifierSeen  bool
-	tokenCalls    int
-	discoveryBody []byte
-	discoveryCode int
-	jwksBody      []byte
-	jwksCode      int
-	tokenBody     []byte
-	tokenCode     int
+	verifierSeen          bool
+	tokenCalls            int
+	discoveryBody         []byte
+	discoveryCode         int
+	jwksBody              []byte
+	jwksCode              int
+	tokenBody             []byte
+	tokenCode             int
+	tokenAuthorization    string
+	tokenClientID         string
+	discoveryRedirectSize int
+	discoveryWritten      chan int
 }
 
 func newTestOIDCIssuer(t *testing.T) *testOIDCIssuer {
@@ -65,6 +69,23 @@ func newTestOIDCIssuer(t *testing.T) *testOIDCIssuer {
 		w.Header().Set("Content-Type", "application/json")
 		if issuer.discoveryCode != 0 {
 			w.WriteHeader(issuer.discoveryCode)
+		}
+		if issuer.discoveryRedirectSize > 0 {
+			chunk := []byte(strings.Repeat("x", 64<<10))
+			written := 0
+			for written < issuer.discoveryRedirectSize {
+				remaining := issuer.discoveryRedirectSize - written
+				if remaining < len(chunk) {
+					chunk = chunk[:remaining]
+				}
+				n, err := w.Write(chunk)
+				written += n
+				if err != nil {
+					break
+				}
+			}
+			issuer.discoveryWritten <- written
+			return
 		}
 		if issuer.discoveryBody != nil {
 			_, _ = w.Write(issuer.discoveryBody)
@@ -116,6 +137,8 @@ func newTestOIDCIssuer(t *testing.T) *testOIDCIssuer {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		issuer.tokenAuthorization = r.Header.Get("Authorization")
+		issuer.tokenClientID = r.Form.Get("client_id")
 		if r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") == "" ||
 			r.Form.Get("redirect_uri") == "" || len(r.Form.Get("code_verifier")) < 43 {
 			w.WriteHeader(http.StatusBadRequest)
@@ -372,6 +395,26 @@ func TestAdminOIDCResponseBounds(t *testing.T) {
 			t.Fatalf("oversized JWKS response: %d %s", w.Code, w.Body.String())
 		}
 	})
+	t.Run("terminal redirect", func(t *testing.T) {
+		issuer := newTestOIDCIssuer(t)
+		issuer.discoveryCode = http.StatusFound
+		issuer.discoveryRedirectSize = 32 << 20
+		issuer.discoveryWritten = make(chan int, 1)
+		_, handler := adminOIDCFixture(t, issuer, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, adminRequest(http.MethodGet, "/api/v1/admin/auth/login", ""))
+		if w.Code != http.StatusServiceUnavailable || adminErrorCode(t, w) != "authentication_unavailable" {
+			t.Fatalf("oversized discovery redirect: %d %s", w.Code, w.Body.String())
+		}
+		select {
+		case written := <-issuer.discoveryWritten:
+			if written >= issuer.discoveryRedirectSize {
+				t.Fatalf("read complete oversized redirect body: %d bytes", written)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("provider did not observe the bounded response close")
+		}
+	})
 }
 
 func TestAdminOIDCProviderFailureClassification(t *testing.T) {
@@ -486,6 +529,9 @@ func TestAdminOIDCCallbackAndSession(t *testing.T) {
 		}
 		if !issuer.verifierSeen {
 			t.Fatal("token exchange did not present a PKCE verifier")
+		}
+		if issuer.tokenCalls != 1 || issuer.tokenAuthorization != "" || issuer.tokenClientID != "marketplace-admin" {
+			t.Fatalf("public client exchange: calls=%d authorization=%q client_id=%q", issuer.tokenCalls, issuer.tokenAuthorization, issuer.tokenClientID)
 		}
 		sessionRaw := cookieValue(t, resp, testSecureSessionCookie)
 		for _, cookie := range resp.Result().Cookies() {

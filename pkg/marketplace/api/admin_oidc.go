@@ -58,9 +58,7 @@ func (t adminOIDCTransport) RoundTrip(request *http.Request) (*http.Response, er
 	if err != nil {
 		return nil, &adminOIDCUnavailableError{err: err}
 	}
-	if response.StatusCode >= http.StatusMultipleChoices && response.StatusCode < http.StatusBadRequest {
-		return response, nil
-	}
+	redirectStatus := response.StatusCode >= http.StatusMultipleChoices && response.StatusCode < http.StatusBadRequest
 	unavailableStatus := response.StatusCode >= http.StatusBadRequest &&
 		(request.Method != http.MethodPost || response.StatusCode != http.StatusBadRequest && response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden)
 	if unavailableStatus {
@@ -75,7 +73,7 @@ func (t adminOIDCTransport) RoundTrip(request *http.Request) (*http.Response, er
 	if len(body) > maxAdminOIDCResponse {
 		return nil, &adminOIDCUnavailableError{err: errors.New("provider response exceeds maximum size")}
 	}
-	if !json.Valid(body) {
+	if !redirectStatus && !json.Valid(body) {
 		return nil, &adminOIDCUnavailableError{err: errors.New("provider response is malformed")}
 	}
 	response.Body = io.NopCloser(bytes.NewReader(body))
@@ -200,9 +198,11 @@ func newAdminOIDCAuthenticator(options config.Administration) (*adminOIDCAuthent
 }
 
 func (a *adminOIDCAuthenticator) oauthConfig(provider *oidc.Provider) *oauth2.Config {
+	endpoint := provider.Endpoint()
+	endpoint.AuthStyle = oauth2.AuthStyleInParams
 	return &oauth2.Config{
 		ClientID:    a.oidc.ClientID,
-		Endpoint:    provider.Endpoint(),
+		Endpoint:    endpoint,
 		RedirectURL: a.redirectURL,
 		Scopes:      adminOIDCScopes,
 	}
