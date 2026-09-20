@@ -90,7 +90,6 @@ comparison in non-test code.
 | `subagent.devin.effort-dropped` | Devin does not represent subagent effort | Remove effort or use a target that supports it |
 | `skill.devin.tool-unknown` | An explicitly allowed skill or command tool has no Devin equivalent; the `allowed-tools` key was omitted and the resource was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource |
 | `subagent.devin.tool-unknown` | An explicitly allowed subagent tool has no Devin equivalent; the `allowed-tools` key was omitted and the profile was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent |
-| `subagent.factory.tool-unknown` | An explicitly allowed subagent tool has no Factory equivalent; the `tools` key was omitted and the droid was still emitted | Use a tool the Factory mapping table knows, or accept Factory's default tool set for this subagent |
 | `hook.devin.payload-dropped` | The hook carries the payload its type does not select; that payload was dropped | Split the hook into one command hook and one prompt hook if both payloads are required |
 | `hook.devin.plugin-root-unresolved` | The hook command references the plugin root but no plugin root was configured; the token was left unexpanded | Compile with a plugin root so the command resolves, or use an absolute command path |
 | `mcp.devin.field-dropped` | A modeled MCP field belongs to the documented server form this server did not select and was dropped | Move the field to a server of the form that documents it |
@@ -281,12 +280,11 @@ skill usable, whereas `allowed-tools: []` means the resource may use **no** tool
 at all, and `openspec-apply-change` needs `exec` to run `openspec`. That trades a
 loud absence for a silent, inert install, which is worse.
 
-**Factory now follows the same reversal for `subagent.factory.tool-unknown`,
-and only Gemini and Cursor still fail closed.** Factory's droid frontmatter
-rejects unknown tool identifiers, while omitting the `tools` key has a documented
-meaning: Factory's default tool set applies. The droid is therefore emitted with
-the key omitted and sync exits zero. `disallowedTools` and `isolation` remain
-fail-closed errors because they have no safe omission semantics.
+**Factory fails closed for `subagent.factory.tool-unknown`.** An unmappable
+explicit tool suppresses the droid with an error instead of inheriting Factory's
+default tool set. Valid native `Create` restrictions and explicit empty lists
+remain representable. `disallowedTools` and `isolation` also remain fail-closed.
+The Devin-specific omission policy above is unchanged.
 
 **The ingest direction is deliberately not reversed.**
 `ingest.devin.tool-unreversible` stays an error that skips the resource, because
@@ -538,6 +536,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `materialize.codex.aggregate-malformed` | A Codex aggregate could not be parsed or safely reconciled, so that file was left exactly as found | Fix the reported hooks.json or config.toml error by hand; the malformed file is preserved |
 | `materialize.codex.aggregate-unpatchable` | An existing Codex MCP server uses an alternate TOML form that cannot be safely patched, so that entry was preserved | Rewrite the server as a standard [mcp_servers.&lt;name&gt;] table or edit it by hand before syncing |
 | `materialize.destination.overlap` | Resolved Codex destinations overlap in a way that cannot be safely coalesced, so materialization was refused | Use compatible repository and machine modes, resolve conflicting resources, or separate the repository and CODEX_HOME roots |
+| `subagent.factory.tool-unknown` | Factory cannot map an explicit subagent tool; subagent artifact suppressed | Use a supported tool mapping or remove the restriction explicitly |
 | `skill.codex.security-restriction-unsupported` | Codex skills cannot enforce an explicit security restriction; artifact suppressed | Remove the restriction explicitly or use a target that represents it |
 | `hook.event-unmappable` | Target cannot preserve this hook event; hook suppressed | Use a hook event documented by the target |
 | `hook.native-literal-unsupported` | Target would reinterpret a native Codex hook literal; hook suppressed | Remove the target-specific interpolation token or keep the hook in Codex format |
@@ -663,13 +662,11 @@ Suppression is **per resource**, never bundle-wide. A resource that emits any er
 
 `bundle.conflict.duplicate-artifact-path` and `bundle.conflict.cross-kind-artifact-path` are the only error codes not attributable to a single resource: neither producer is wrong on its own. They suppress **both** named producers as whole resources, for the same fragment reason — a manifest must never advertise an entry whose file was not written. Load/ingest failures (`ingest.*.load-*-failed`) describe a resource that never reached the compiler, so they suppress nothing beyond the resource they already lost. Any future bundle-level error code must state its own suppression rule explicitly.
 
-**`skill.devin.tool-unknown`, `subagent.devin.tool-unknown`, and
-`subagent.factory.tool-unknown` are no longer in this set.** They are warnings
-that omit the target-specific tools key and publish the artifact, so an
-unrepresentable tool restriction costs one frontmatter key rather than the
-resource, and `sync` exits zero. Gemini and Cursor unknown-tool diagnostics still
-suppress their artifacts. Nothing else about suppression changed: it is still per
-resource, and every remaining error code still contributes no artifacts at all.
+**`skill.devin.tool-unknown` and `subagent.devin.tool-unknown` remain warnings.**
+They omit the target-specific tools key and publish the artifact under the
+Devin-specific policy above. Factory, Gemini and Cursor unknown-tool errors
+suppress the affected artifact. Suppression remains per resource: independent
+valid resources still compile.
 
 ## Examples
 

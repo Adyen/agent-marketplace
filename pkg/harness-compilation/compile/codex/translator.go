@@ -111,6 +111,11 @@ func skill(s *ir.Skill, command bool) ([]artifact.Artifact, []diag.Diagnostic, e
 }
 
 func command(c *ir.Command) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	for key := range c.Extra {
+		if strings.EqualFold(key, "allowed-tools") || strings.EqualFold(key, "permissions") {
+			return nil, []diag.Diagnostic{diagnostic(diag.CodeSkillCodexSecurityRestrictionUnsupported, diag.SeverityError, c.Name(), c.Source, "Codex cannot enforce the command's explicit tool or permission restriction; artifact suppressed")}, nil
+		}
+	}
 	s := ir.NewSkill(c.Name(), c.Description, c.Body, nil, c.Extra, c.Source)
 	return skill(s, true)
 }

@@ -143,21 +143,21 @@ var hookEventTable = []hookEventEntry{
 	}},
 
 	{Claude: "SessionStart", Targets: map[Target]string{
-		TargetClaude:   "", // unmappable: no in-repo Claude Code evidence
-		TargetFactory:  "", // unmappable: no in-repo Factory Droid evidence
-		TargetCursor:   "", // unmappable: no in-repo Cursor evidence
-		TargetWindsurf: "", // unmappable: no Windsurf equivalent
-		TargetGemini:   "", // unmappable: no Gemini equivalent
+		TargetClaude:   "",             // unmappable: no in-repo Claude Code evidence
+		TargetFactory:  "SessionStart", // Factory documents session-start lifecycle hooks
+		TargetCursor:   "",             // unmappable: no in-repo Cursor evidence
+		TargetWindsurf: "",             // unmappable: no Windsurf equivalent
+		TargetGemini:   "",             // unmappable: no Gemini equivalent
 		TargetDevin:    "SessionStart",
 		TargetCodex:    "SessionStart",
 	}},
 
 	{Claude: "SessionEnd", Targets: map[Target]string{
-		TargetClaude:   "", // unmappable: no in-repo Claude Code evidence
-		TargetFactory:  "", // unmappable: no in-repo Factory Droid evidence
-		TargetCursor:   "", // unmappable: no in-repo Cursor evidence
-		TargetWindsurf: "", // unmappable: no Windsurf equivalent
-		TargetGemini:   "", // unmappable: no Gemini equivalent
+		TargetClaude:   "",           // unmappable: no in-repo Claude Code evidence
+		TargetFactory:  "SessionEnd", // Factory documents session-end lifecycle hooks
+		TargetCursor:   "",           // unmappable: no in-repo Cursor evidence
+		TargetWindsurf: "",           // unmappable: no Windsurf equivalent
+		TargetGemini:   "",           // unmappable: no Gemini equivalent
 		TargetDevin:    "SessionEnd",
 		TargetCodex:    "", // same name, but no direct Devin-to-Codex lifecycle equivalent
 	}},

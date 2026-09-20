@@ -42,4 +42,13 @@ Implementation: [protocol transport](../../e2e/harness_compatibility_protocol_te
 
 Keep stable fixture identities across materialization modes. Do not accept truncated names or replace a failing native probe with a file-only check.
 
+The [Factory hook event reference](https://docs.factory.ai/harness/hooks) documents
+`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`,
+`SubagentStop`, `PreCompact`, `SessionStart`, and `SessionEnd`. Conversion retains
+these events. `PermissionRequest` is not a separate documented Factory event;
+permission prompts are notifications, and permission decisions belong to
+`PreToolUse` output. Conversion must not substitute either lifecycle for a
+`PermissionRequest` hook. Unknown events are suppressed with
+`hook.event-unmappable`.
+
 Reference: [Factory Python SDK's native protocol and resource methods](https://github.com/Factory-AI/droid-sdk-python).

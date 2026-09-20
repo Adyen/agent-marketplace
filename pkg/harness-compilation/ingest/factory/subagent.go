@@ -98,7 +98,10 @@ func reverseFactoryModel(model string) string {
 }
 
 func normalizeFactoryTools(tools []string) []string {
-	var result []string
+	if tools == nil {
+		return nil
+	}
+	result := make([]string, 0, len(tools))
 	for i := 0; i < len(tools); i++ {
 		if i+1 < len(tools) && isEditCreatePair(tools[i], tools[i+1]) {
 			result = append(result, "Write")

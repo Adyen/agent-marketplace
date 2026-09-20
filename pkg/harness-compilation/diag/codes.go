@@ -138,7 +138,7 @@ const (
 	// localize the loss.
 	CodeSkillDevinToolUnknown      = "skill.devin.tool-unknown"      // Devin skill/command allowed tool not representable; allowed-tools key omitted
 	CodeSubagentDevinToolUnknown   = "subagent.devin.tool-unknown"   // Devin subagent tool not representable; allowed-tools key omitted
-	CodeSubagentFactoryToolUnknown = "subagent.factory.tool-unknown" // Factory subagent tool not representable; tools key omitted
+	CodeSubagentFactoryToolUnknown = "subagent.factory.tool-unknown" // Factory subagent tool not representable; artifact suppressed
 
 	// Devin hook and MCP codes that still EMIT the entry.
 	//
@@ -527,7 +527,6 @@ var codeCatalog = []CodeDoc{
 	// rationale on the constants above and the dedicated section in codes.md.
 	{CodeSkillDevinToolUnknown, SeverityWarning, "An explicitly allowed skill or command tool has no Devin equivalent; the allowed-tools key was omitted and the resource was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource"},
 	{CodeSubagentDevinToolUnknown, SeverityWarning, "An explicitly allowed subagent tool has no Devin equivalent; the allowed-tools key was omitted and the profile was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent"},
-	{CodeSubagentFactoryToolUnknown, SeverityWarning, "An explicitly allowed subagent tool has no Factory equivalent; the tools key was omitted and the droid was still emitted", "Use a tool the Factory mapping table knows, or accept Factory's default tool set for this subagent"},
 	{CodeHookDevinPayloadDropped, SeverityWarning, "The hook carries the payload its type does not select; that payload was dropped", "Split the hook into one command hook and one prompt hook if both payloads are required"},
 	{CodeHookDevinPluginRootUnresolved, SeverityWarning, "The hook command references the plugin root but no plugin root was configured; the token was left unexpanded", "Compile with a plugin root so the command resolves, or use an absolute command path"},
 	{CodeMcpDevinFieldDropped, SeverityWarning, "A modeled MCP field belongs to the documented server form this server did not select and was dropped", "Move the field to a server of the form that documents it"},
@@ -552,6 +551,7 @@ var codeCatalog = []CodeDoc{
 	{CodeDoctorRepairConflictReplaceable, SeverityWarning, "An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan", "Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it"},
 
 	// Error
+	{CodeSubagentFactoryToolUnknown, SeverityError, "Factory cannot map an explicit subagent tool; subagent artifact suppressed", "Use a supported tool mapping or remove the restriction explicitly"},
 	{CodeSkillCodexSecurityRestrictionUnsupported, SeverityError, "Codex skills cannot enforce an explicit security restriction; artifact suppressed", "Remove the restriction explicitly or use a target that represents it"},
 	{CodeHookEventUnmappable, SeverityError, "Target cannot preserve this hook event; hook suppressed", "Use a hook event documented by the target"},
 	{CodeHookNativeLiteralUnsupported, SeverityError, "Target would reinterpret a native Codex hook literal; hook suppressed", "Remove the target-specific interpolation token or keep the hook in Codex format"},

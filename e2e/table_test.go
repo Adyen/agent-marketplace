@@ -180,6 +180,24 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/codex_command_restriction",
+		Desc: "Given a restricted command and an unrestricted sibling, When syncing to Codex, Then the unsupported restriction suppresses only that command",
+		Registries: []RegistryDef{{Name: "codex-restrictions", Files: map[string]string{
+			"commands/restricted.md": "---\nname: restricted\ndescription: Restricted\nallowed-tools: []\n---\nBody\n",
+			"commands/plain.md":      "---\nname: plain\ndescription: Plain\n---\nBody\n",
+		}}},
+		GlobalCfg: "harnesses: [codex]\nregistries:\n  - url: {{REG:codex-restrictions}}\n    ref: main\n    commands: [restricted, plain]\n",
+		Steps:     []Step{{Args: []string{"sync"}, AssertExitCode: intPtr(1), OutContains: []string{"skill.codex.security-restriction-unsupported"}, FilesAbsent: []string{"/root/.agents/skills/restricted"}, FileContains: map[string]string{"/root/.agents/skills/plain/SKILL.md": "x-agent-marketplace-kind: command"}}},
+	},
+	{
+		Name: "security/factory_hook_event",
+		Desc: "Given a Devin permission hook and a valid tool hook, When converting to Factory, Then unsupported authorization behavior is reported and omitted without suppressing the valid sibling",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/.devin/hooks.v1.json", Body: `{"PermissionRequest":[{"hooks":[{"type":"command","command":"permission-check"}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"valid-check"}]}]}`},
+			{Args: []string{"convert", "--from", "devin", "--to", "factory", "--out", "./converted", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"hook.event-unmappable"}, FileContains: map[string]string{"/workspace/converted/hooks/hooks.json": "valid-check"}, FileNotContains: map[string]string{"/workspace/converted/hooks/hooks.json": "PermissionRequest"}},
+		},
+	},
+	{
 		Name: "security/windsurf_hook_scope_conversion",
 		Desc: "Given scoped hooks, When converting between Windsurf and Claude, Then Write and Edit coverage survives and subagent hooks do not become global response hooks",
 		Steps: []Step{
@@ -1724,11 +1742,12 @@ registries:
 		},
 	},
 	{
-		Name: "subagent/unknown_tool_warns_and_emits",
-		Desc: "Given a registry with a subagent using a tool absent from the Factory mapping table, When sync is run for factory, Then the droid is emitted with the tools key omitted and a warning is reported; sync exits 0",
+		Name: "subagent/unknown_tool_refuses_output",
+		Desc: "Given an unrepresentable Factory tool restriction and a valid sibling, When sync runs, Then the restricted droid is suppressed with an error while the valid sibling is installed",
 		Registries: []RegistryDef{
 			{Name: "sub-tool-pt", Subagents: []Subagent{
 				{Name: "unk-tool-agent", Tools: []string{"Read", "CustomTool"}},
+				{Name: "known-tool-agent", Tools: []string{"Read"}},
 			}},
 		},
 		GlobalCfg: `
@@ -1737,14 +1756,14 @@ registries:
     ref: main
     subagents:
       - unk-tool-agent
+      - known-tool-agent
 `,
 		Steps: []Step{
-			{Args: []string{"sync"}, MustPass: true,
-				OutContains: []string{"subagent.factory.tool-unknown"},
-				FilesExist:  []string{"/root/.factory/droids/unk-tool-agent.md"},
-				FileNotContains: map[string]string{
-					"/root/.factory/droids/unk-tool-agent.md": "tools:",
-				},
+			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
+				OutContains:  []string{"subagent.factory.tool-unknown"},
+				FilesAbsent:  []string{"/root/.factory/droids/unk-tool-agent.md"},
+				FilesExist:   []string{"/root/.factory/droids/known-tool-agent.md"},
+				FileContains: map[string]string{"/root/.factory/droids/known-tool-agent.md": "- Read"},
 			},
 		},
 	},
