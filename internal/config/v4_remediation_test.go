@@ -188,6 +188,47 @@ func TestV4MigrationPublishesAllFilesInOneTransaction(t *testing.T) {
 		if readErr != nil || string(got) != want {
 			t.Fatalf("%s after failed transaction = %q, %v", path, got, readErr)
 		}
+		matches, globErr := filepath.Glob(path + ".pre-v4.*.bak")
+		if globErr != nil || len(matches) != 0 {
+			t.Fatalf("%s backups after failed transaction = %v, %v", path, matches, globErr)
+		}
+	}
+}
+
+func TestV4MigrationDoesNotOverwriteConcurrentBackup(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	before := []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	original := commitV4Migration
+	sentinel := []byte("existing backup\n")
+	var backupPath string
+	commitV4Migration = func(ctx context.Context, stateDir string, files []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+		for _, file := range files {
+			if strings.Contains(file.Path, ".pre-v4.") {
+				backupPath = file.Path
+				if err := os.WriteFile(backupPath, sentinel, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				break
+			}
+		}
+		return original(ctx, stateDir, files, opts...)
+	}
+	t.Cleanup(func() { commitV4Migration = original })
+
+	_, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false)
+	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("error = %v, want generation conflict", err)
+	}
+	if backupPath == "" || readConfigString(t, backupPath) != string(sentinel) {
+		t.Fatalf("backup %q was overwritten", backupPath)
+	}
+	if got := readConfigString(t, path); got != string(before) {
+		t.Fatalf("config changed after backup collision: %q", got)
 	}
 }
 

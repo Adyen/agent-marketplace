@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -39,6 +40,63 @@ func TestV4VersionBoundaryRejectsExplicitNonV4Include(t *testing.T) {
 	_, err := parseV4Document([]byte("apiVersion: agent-marketplace/v3\n"), "fragment.yaml", false)
 	if err == nil || !strings.Contains(err.Error(), "agent-marketplace/v4") {
 		t.Fatalf("error = %v, want v4 version boundary", err)
+	}
+}
+
+func TestMigrateConfigFilesToV4CreatesAdjacentBackup(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	before := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n")
+	if err := os.WriteFile(path, before, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := MigrateConfigFilesToV4(MigratePaths{User: path}, V4MigrationUser, false); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(path + ".pre-v4.*.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("backup matches = %v, want one adjacent timestamped backup", matches)
+	}
+	backup, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(backup, before) {
+		t.Fatalf("backup bytes = %q, want %q", backup, before)
+	}
+	info, err := os.Stat(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("backup mode = %o, want %o", got, want)
+	}
+}
+
+func TestMigrateConfigFilesToV4DryRunDoesNotCreateBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	before := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"
+	writeV2Config(t, path, before)
+
+	result, err := MigrateConfigFilesToV4(MigratePaths{User: path}, V4MigrationUser, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UserMigrated || readConfigString(t, path) != before {
+		t.Fatalf("dry-run result = %#v, config = %q", result, readConfigString(t, path))
+	}
+	matches, err := filepath.Glob(path + ".pre-v4.*.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("dry-run created backups: %v", matches)
 	}
 }
 
@@ -93,7 +151,7 @@ registries:
 	}
 }
 
-func TestMigrateConfigFilesToV4UsesRegistryBasenames(t *testing.T) {
+func TestMigrateConfigFilesToV4UsesRegistryBasenamesAndFoldsLocalPaths(t *testing.T) {
 	dir := t.TempDir()
 	agentsDir := filepath.Join(dir, ".agents")
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
@@ -115,6 +173,7 @@ registries:
     ref: main
     skills: {include: [security-skill]}
   - url: ./local-resources
+    path: nested/skills
     skills: {include: [local-skill]}
 `)
 	if _, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false); err != nil {
@@ -133,7 +192,7 @@ registries:
 		{name: "agents", git: "https://example.test/team/agents.git", includes: []string{"skill/https-skill"}},
 		{name: "agents-2", git: "git@example.test:other/agents.git", includes: []string{"skill/scp-skill"}},
 		{name: "security-skills", git: "git@example.test:team/security-skills.git", includes: []string{"skill/security-skill"}},
-		{name: "local-resources", dir: filepath.Join(dir, "local-resources"), includes: []string{"skill/local-skill"}},
+		{name: "local-resources", dir: filepath.Join(dir, "local-resources", "nested", "skills"), includes: []string{"skill/local-skill"}},
 	}
 	if len(cfg.Sources) != len(expected) {
 		t.Fatalf("sources = %#v", cfg.Sources)
@@ -404,12 +463,13 @@ func TestMigrateConfigFilesToV4PreservesConfigSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "config-target.yaml")
 	link := filepath.Join(dir, "config.yaml")
-	writeV2Config(t, target, `apiVersion: agent-marketplace/v2
+	before := `apiVersion: agent-marketplace/v2
 registries:
   - url: https://example.test/agents.git
     ref: main
     skills: {include: [review]}
-`)
+`
+	writeV2Config(t, target, before)
 	if err := os.Symlink(filepath.Base(target), link); err != nil {
 		t.Fatal(err)
 	}
@@ -431,6 +491,20 @@ registries:
 	data := readConfigString(t, target)
 	if !strings.Contains(data, "apiVersion: agent-marketplace/v4") || !strings.Contains(data, "skill/review") {
 		t.Fatalf("symlink target did not receive migrated v4 content: %s", data)
+	}
+	matches, err := filepath.Glob(link + ".pre-v4.*.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || readConfigString(t, matches[0]) != before {
+		t.Fatalf("logical-path backups = %v", matches)
+	}
+	targetMatches, err := filepath.Glob(target + ".pre-v4.*.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targetMatches) != 0 {
+		t.Fatalf("backup was placed beside symlink target: %v", targetMatches)
 	}
 }
 

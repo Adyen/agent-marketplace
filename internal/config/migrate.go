@@ -744,9 +744,11 @@ type v4MigrationDocument struct {
 type v4MigrationInput struct {
 	name          string
 	path          string
+	logicalPath   string
 	kind          layerKind
 	mode          os.FileMode
 	cfg           *Config
+	originalData  []byte
 	canonicalPath string
 	generation    dependencytxn.Generation
 	expectedMode  fs.FileMode
@@ -790,7 +792,12 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 		if item.path == "" {
 			continue
 		}
-		canonical, err := canonicalConfigPath(item.path)
+		logicalPath, err := filepath.Abs(item.path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s config path %q: %w", item.name, item.path, err)
+		}
+		logicalPath = filepath.Clean(logicalPath)
+		canonical, err := canonicalConfigPath(logicalPath)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -825,17 +832,22 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 		if len(cfg.Marketplaces) > 0 && evidence == nil {
 			return nil, v4err("v4.migration-marketplace-evidence", item.path, 0, "Marketplace entries require verified cache evidence for exact lock migration")
 		}
-		inputs = append(inputs, v4MigrationInput{name: item.name, path: item.path, kind: item.kind, mode: mode, cfg: cfg, canonicalPath: canonical, generation: generation, expectedMode: mode})
+		inputs = append(inputs, v4MigrationInput{name: item.name, path: item.path, logicalPath: logicalPath, kind: item.kind, mode: mode, cfg: cfg, originalData: data, canonicalPath: canonical, generation: generation, expectedMode: mode})
 	}
 
 	result := &V4MigrationResult{Scope: scope, DryRun: dryRun, UserPath: paths.User, RepoPath: paths.Repo, LocalPath: paths.Local}
+	backupTimestamp := time.Now().UTC().Format("20060102T150405.000000000Z")
 	plans := make([]v4MigrationPlan, 0, len(inputs))
 	for _, input := range inputs {
 		encoding, err := encodeV4MigrationWithEvidence(input.cfg, input.path, input.kind, evidence)
 		if err != nil {
 			return nil, err
 		}
-		plan := v4MigrationPlan{input: input, data: encoding.ConfigBytes}
+		plan := v4MigrationPlan{
+			input:      input,
+			data:       encoding.ConfigBytes,
+			backupPath: input.logicalPath + ".pre-v4." + backupTimestamp + ".bak",
+		}
 		if len(encoding.Marketplaces) > 0 {
 			lockPath, lockDoc, lockData, lockGeneration, lockMode, err := mergeV4MigrationLock(input, encoding.Marketplaces)
 			if err != nil {
@@ -895,6 +907,7 @@ func markV4MigrationResult(result *V4MigrationResult, name string) {
 type v4MigrationPlan struct {
 	input            v4MigrationInput
 	data             []byte
+	backupPath       string
 	lockPath         string
 	lockDoc          *lockfile.Document
 	lockData         []byte
@@ -957,15 +970,18 @@ func mergeV4MigrationLock(input v4MigrationInput, desired []lockfile.Marketplace
 // in one dependency transaction so a failure leaves all originals intact.
 func publishV4MigrationTransaction(ctx context.Context, plans []v4MigrationPlan) error {
 	started := time.Now()
-	desired := make([]dependencytxn.DesiredFile, 0, len(plans)*2)
+	desired := make([]dependencytxn.DesiredFile, 0, len(plans)*3)
 	for _, plan := range plans {
 		// Generations and modes were captured with the original bytes during
 		// planning, so a concurrent writer between then and commit trips the
 		// compare-and-swap precondition instead of being overwritten.
-		desired = append(desired, dependencytxn.DesiredFile{
-			Path: plan.input.canonicalPath, Expected: plan.input.generation, ExpectedMode: plan.input.expectedMode,
-			Bytes: plan.data, Mode: plan.input.mode,
-		})
+		desired = append(desired,
+			dependencytxn.DesiredFile{Path: plan.backupPath, Bytes: plan.input.originalData, Mode: 0o600},
+			dependencytxn.DesiredFile{
+				Path: plan.input.canonicalPath, Expected: plan.input.generation, ExpectedMode: plan.input.expectedMode,
+				Bytes: plan.data, Mode: plan.input.mode,
+			},
+		)
 		if plan.lockDoc == nil {
 			continue
 		}
@@ -1015,7 +1031,7 @@ func encodeV4MigrationWithEvidence(cfg *Config, configPath string, kind layerKin
 			if err != nil {
 				return encoding, v4err("v4.migration-unsupported", configPath, 0, "local source %q cannot be represented: %v", entry.URL, err)
 			}
-			source.Directory = localPath
+			source.Directory = entry.BundlePath(localPath)
 			source.Ref, source.Path = "", ""
 		} else {
 			source.Git = entry.URL
