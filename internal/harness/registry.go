@@ -228,7 +228,7 @@ func resolveSingleRootAdapterDestinations(adapter InstallationAdapter, machineSc
 		}
 		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 			if _, err := filepath.EvalSymlinks(canonical); err != nil {
-				return nil, fmt.Errorf("%s repository destination symlink cannot be verified: %w", adapter.target, os.ErrPermission)
+				return nil, fmt.Errorf("%s repository destination symlink cannot be verified: %w: %w", adapter.target, os.ErrPermission, err)
 			}
 		}
 	}

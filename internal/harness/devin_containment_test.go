@@ -44,6 +44,15 @@ func TestDevinRepoDestinationContainment(t *testing.T) {
 				if !errors.Is(err, os.ErrPermission) {
 					t.Fatalf("escape not refused with permission identity: %v %+v", err, got)
 				}
+				if name == "dangling-outside" {
+					var cause *os.PathError
+					if !errors.Is(err, os.ErrNotExist) || !errors.As(err, &cause) {
+						t.Fatalf("dangling-link cause was lost: %v", err)
+					}
+					if cause.Op == "" || cause.Path == "" {
+						t.Fatalf("dangling-link operation context was lost: %+v", cause)
+					}
+				}
 				return
 			}
 			want := filepath.Join(input, ".devin")
