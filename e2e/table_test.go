@@ -180,6 +180,17 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/windsurf_direct_root_layout",
+		Desc: "Given direct-root Windsurf resources with root agent notes and MCP configuration, When converting, Then resource output is not hidden by a nonexistent workspace layout",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/AGENTS.md", Body: "# Notes\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/workflows/deploy.md", Body: "---\ndescription: Deploy\n---\nWORKFLOW BODY\n"},
+			{Action: ActionWriteFile, Path: "/workspace/source/hooks.json", Body: `{"hooks":{"pre_run_command":[{"command":"guard-command"}]}}`},
+			{Action: ActionWriteFile, Path: "/workspace/source/mcp_config.json", Body: `{"mcpServers":{"native-server":{"command":"fixture-server"}}}`},
+			{Args: []string{"convert", "--from", "windsurf", "--to", "windsurf", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/.windsurf/workflows/deploy.md": "WORKFLOW BODY", "/workspace/converted/.windsurf/hooks.json": "guard-command", "/workspace/converted/.windsurf/mcp_config.json": "fixture-server"}},
+		},
+	},
+	{
 		Name: "security/factory_declared_identity",
 		Desc: "Given mixed Factory layouts with colliding declared names and a distinct filename collision, When converting, Then the first resource survives and the distinct resource is retained",
 		Steps: []Step{

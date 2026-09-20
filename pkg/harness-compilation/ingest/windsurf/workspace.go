@@ -234,10 +234,9 @@ func hasWorkspaceLayout(src fs.FS, base string) bool {
 		path.Join(base, "hooks"),
 		path.Join(base, "hooks.json"),
 		path.Join(base, "mcp_config.json"),
-		"AGENTS.md",
 	}
-	if base != "." {
-		checks = append(checks, "mcp_config.json")
+	if base == "." {
+		checks = append(checks, "AGENTS.md")
 	}
 	for _, check := range checks {
 		if fileExists(src, check) || dirHasEntries(src, check) {
