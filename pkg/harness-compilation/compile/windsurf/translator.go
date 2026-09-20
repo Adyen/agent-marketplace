@@ -21,7 +21,6 @@ const claudePluginRootToken = "${CLAUDE_PLUGIN_ROOT}"
 var (
 	envInterpolationPattern  = regexp.MustCompile(`^\$\{([A-Z0-9_]+)\}$`)
 	embeddedEnvPattern       = regexp.MustCompile(`\$\{([A-Z0-9_]+)\}`)
-	shellEnvPattern          = regexp.MustCompile(`^\$([A-Z0-9_]+)$`)
 	fileInterpolationPattern = regexp.MustCompile(`^\$\{file:(.+)\}$`)
 )
 
@@ -396,6 +395,7 @@ func translateMcpServer(server *ir.McpServer, opts compilepkg.Options) ([]artifa
 }
 
 func translateMcpEnvValue(value string) string {
+	name, shellReference := mapping.WindsurfShellEnvName(value)
 	switch {
 	case strings.HasPrefix(value, "${env:") && strings.HasSuffix(value, "}"):
 		return replaceInterpolation(mapping.McpInterpolation("${env:VAR}", compilepkg.TargetWindsurf), "VAR", strings.TrimSuffix(strings.TrimPrefix(value, "${env:"), "}"))
@@ -404,9 +404,8 @@ func translateMcpEnvValue(value string) string {
 	case envInterpolationPattern.MatchString(value):
 		match := envInterpolationPattern.FindStringSubmatch(value)
 		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", match[1])
-	case shellEnvPattern.MatchString(value):
-		match := shellEnvPattern.FindStringSubmatch(value)
-		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", match[1])
+	case shellReference:
+		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", name)
 	case fileInterpolationPattern.MatchString(value):
 		match := fileInterpolationPattern.FindStringSubmatch(value)
 		return replaceInterpolation(mapping.McpInterpolation("${file:PATH}", compilepkg.TargetWindsurf), "PATH", match[1])

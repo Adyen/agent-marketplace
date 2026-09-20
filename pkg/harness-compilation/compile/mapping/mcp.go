@@ -101,3 +101,16 @@ func McpInterpolation(source string, target Target) string {
 	pattern, _ := McpInterpolationSupported(source, target)
 	return pattern
 }
+
+func WindsurfShellEnvName(value string) (string, bool) {
+	if len(value) < 2 || value[0] != '$' {
+		return "", false
+	}
+	for i := 1; i < len(value); i++ {
+		c := value[i]
+		if c != '_' && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+			return "", false
+		}
+	}
+	return value[1:], true
+}

@@ -180,6 +180,15 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name: "security/codex_literal_header",
+		Desc: "Given a Codex literal that resembles a bare environment reference and a safe sibling, When converting to Windsurf, Then the unsafe reinterpretation is refused while literal-preserving conversion remains available",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/source/.codex/config.toml", Body: "[mcp_servers.literal]\nurl = 'https://example.invalid/mcp'\n[mcp_servers.literal.http_headers]\nX-Literal = '$SYNTHETIC_KEY'\n[mcp_servers.safe]\nurl = 'https://example.invalid/mcp'\n[mcp_servers.safe.http_headers]\nX-Literal = 'ordinary'\n"},
+			{Args: []string{"convert", "--from", "codex", "--to", "windsurf", "--out", "./converted", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"mcp.security-restriction-unsupported"}, FileContains: map[string]string{"/workspace/converted/.windsurf/mcp_config.json": "ordinary"}, FileNotContains: map[string]string{"/workspace/converted/.windsurf/mcp_config.json": "SYNTHETIC_KEY"}},
+			{Args: []string{"convert", "--from", "codex", "--to", "codex", "--out", "./native", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/native/.codex/config.toml": "$SYNTHETIC_KEY"}},
+		},
+	},
+	{
 		Name: "security/native_metadata_authority",
 		Desc: "Given foreign execution metadata and native workflow controls, When converting harnesses, Then only typed native controls remain active and ordinary metadata is preserved",
 		Steps: []Step{
