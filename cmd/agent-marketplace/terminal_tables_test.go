@@ -71,3 +71,18 @@ func TestCLIDisplayLeavesSourceRowsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalSafeTextPreservesPrintableSyntax(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct{ input, want string }{
+		{`agent-marketplace install "fixture" --path "a\b"`, `agent-marketplace install "fixture" --path "a\b"`},
+		{"\"quoted\"\\literal\x1b[31m\r\n\u202e", `"quoted"\literal\x1b[31m\r\n\u202e`},
+		{"bad\xff\x85\u0085", `bad\xff\x85\u0085`},
+	} {
+		if got := terminalSafeText(tc.input); got != tc.want {
+			t.Fatalf("terminalSafeText(%q)=%q want %q", tc.input, got, tc.want)
+		}
+	}
+}

@@ -378,8 +378,11 @@ func pluralLabel(singular string) string {
 	return singular + "s"
 }
 
+var terminalPrintableSyntax = strings.NewReplacer(`\\`, `\`, `\"`, `"`)
+
 func terminalSafeText(value string) string {
-	return strings.TrimSuffix(strings.TrimPrefix(marketplace.QuoteTerminal(value), `"`), `"`)
+	escaped := strings.TrimSuffix(strings.TrimPrefix(marketplace.QuoteTerminal(value), `"`), `"`)
+	return terminalPrintableSyntax.Replace(escaped)
 }
 
 // looksLikeRegistryURL reports whether the argument looks like a Git hosting

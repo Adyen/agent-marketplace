@@ -218,7 +218,7 @@ registries:
 	_, rows := parseTable(t, output)
 	sort.Strings(rows)
 	wantRows := []string{
-		"awesome-ai|skill|broken-skill|malformed: ingest.claude.load-skill-failed: failed to load skill \\\"skills/broken-skill\\\": bundle: parse frontmatter skills/broken-skill/SKILL.md: yamlfm: yaml parse: yaml: line 1: did not find expected ',' or ']'",
+		"awesome-ai|skill|broken-skill|malformed: ingest.claude.load-skill-failed: failed to load skill \"skills/broken-skill\": bundle: parse frontmatter skills/broken-skill/SKILL.md: yamlfm: yaml parse: yaml: line 1: did not find expected ',' or ']'",
 		"awesome-ai|skill|valid-skill|tested|enabled",
 	}
 	sort.Strings(wantRows)
