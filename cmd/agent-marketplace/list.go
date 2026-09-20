@@ -327,7 +327,7 @@ func writeListTable(out io.Writer, rows []listRow) error {
 	}
 
 	for _, row := range rows {
-		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", row.Registry, row.Kind, row.Name, row.Tags, row.Status); err != nil {
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", terminalSafeText(row.Registry), terminalSafeText(row.Kind), terminalSafeText(row.Name), terminalSafeText(row.Tags), terminalSafeText(row.Status)); err != nil {
 			return err
 		}
 	}

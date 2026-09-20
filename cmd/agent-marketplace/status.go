@@ -841,7 +841,11 @@ func writeStatusTable(out io.Writer, title string, header []string, rows [][]str
 	}
 
 	for _, row := range rows {
-		if _, err := fmt.Fprintln(writer, strings.Join(row, "\t")); err != nil {
+		cells := make([]string, len(row))
+		for i, cell := range row {
+			cells[i] = terminalSafeText(cell)
+		}
+		if _, err := fmt.Fprintln(writer, strings.Join(cells, "\t")); err != nil {
 			return err
 		}
 	}

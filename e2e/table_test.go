@@ -180,6 +180,20 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:      "security/cli_table_collection_controls",
+		Desc:      "Given local registry and collection metadata containing terminal controls, When listing checking status and installing a collection, Then display is escaped while selection and installation remain intact",
+		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
+		RepoCfg:   "harnesses: [factory]\nregistries:\n  - url: ~/.agents/terminal-fixture\n    ref: \"REF\\u001b[31m\\u202e\"\n    skills: [control]\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/root/.agents/terminal-fixture/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
+			{Action: ActionWriteFile, Path: "/root/.agents/terminal-fixture/collections/bundle/COLLECTION.yaml", Body: "name: bundle\nversion: \"VERSION\\u001b[31m\\u202e\"\nresources:\n  - name: control\n"},
+			{Action: ActionWriteFile, Path: "/root/.agents/terminal-fixture/collections/display/COLLECTION.yaml", Body: "name: \"DISPLAY\\u001b[31m\\u202e\"\nresources:\n  - name: control\n"},
+			{Args: []string{"list", "--kind", "collection"}, MustPass: true, OutContains: []string{`DISPLAY\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{`REF\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"install", "bundle", "--kind", "collection", "--scope", "repo"}, MustPass: true, OutContains: []string{`Installed collection bundle@VERSION\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, FilesExist: []string{"/workspace/.factory/skills/control/SKILL.md"}},
+		},
+	},
+	{
 		Name: "security/mcp_parse_error_not_absence",
 		Desc: "Given an MCP duplicate key whose text resembles a missing-file error, When converting, Then malformed input is refused without changing output and a repaired file converts normally",
 		Steps: []Step{

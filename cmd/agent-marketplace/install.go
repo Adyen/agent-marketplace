@@ -332,10 +332,10 @@ func writeInstallResult(out io.Writer, result *pipeline.InstallResult, scope pip
 		return writeInstallStatus(out, syncGreen, fmt.Sprintf("✓ Installed %s", terminalSafeText(name)))
 	}
 	if result.IsCollection {
-		_, err := fmt.Fprintf(out, "Installed collection %s %s\n", result.CollectionLabel, pipeline.InstallScopeLabel(scope))
+		_, err := fmt.Fprintf(out, "Installed collection %s %s\n", terminalSafeText(result.CollectionLabel), pipeline.InstallScopeLabel(scope))
 		return err
 	}
-	_, err := fmt.Fprintf(out, "Installed %s %s\n", strings.Join(result.Installed, ", "), pipeline.InstallScopeLabel(scope))
+	_, err := fmt.Fprintf(out, "Installed %s %s\n", terminalSafeText(strings.Join(result.Installed, ", ")), pipeline.InstallScopeLabel(scope))
 	return err
 }
 
