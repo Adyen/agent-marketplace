@@ -96,7 +96,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	}
 
 	for _, w := range result.Warnings {
-		if _, werr := fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(w.Error())); werr != nil {
+		if _, werr := fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))); werr != nil {
 			return werr
 		}
 		var r resolver.Remediable
@@ -187,7 +187,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{})
 	config.LogManagedDiagnostics(ec.Diagnostics)
 	for _, w := range ec.Warnings {
-		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(w.Error())) //nolint:errcheck // best-effort warning on stderr
+		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))) //nolint:errcheck // best-effort warning on stderr
 	}
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil {
