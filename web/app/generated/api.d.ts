@@ -1129,7 +1129,7 @@ export interface components {
         };
     };
     responses: {
-        /** @description Stable error; no-store. 401 unauthenticated, 403 forbidden, 428 precondition_required, 409 revision_conflict or idempotency_conflict, 422 invalid_configuration. */
+        /** @description Stable error; no-store. 401 unauthenticated, 403 forbidden, 428 precondition_required, 409 revision_conflict or idempotency_conflict, 422 invalid_configuration. For invalid_configuration, message describes the rejection and fields keys registry draft paths (id, slug, origin, ref, acquisition, profile_id, license_override, roots[N].path, roots[N].source_harness, publisher.url, license) or license_policy to the problem with that value. */
         AdminError: {
             headers: {
                 [name: string]: unknown;
@@ -1137,9 +1137,11 @@ export interface components {
             content: {
                 "application/json": {
                     code: string;
+                    /** @description Per-field problems keyed by draft path, e.g. {"slug": "\"a/b\" must use only lowercase letters, digits and hyphens"}. */
                     fields?: {
                         [key: string]: string;
                     };
+                    /** @description Human-readable rejection. For invalid_configuration this names the offending value rather than a generic notice. */
                     message: string;
                 };
             };

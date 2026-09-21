@@ -274,7 +274,14 @@ func writeAdminServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrManagedIdempotencyConflict):
 		writeAdminError(w, http.StatusConflict, "idempotency_conflict", "This idempotency key was used for a different change.")
 	case errors.Is(err, admin.ErrInvalidConfiguration), errors.Is(err, store.ErrManagedChangeInvalid):
-		writeAdminError(w, http.StatusUnprocessableEntity, "invalid_configuration", "The proposed configuration or operation is invalid.")
+		// The validation detail names draft fields and operator-visible
+		// deployment settings only, so it is safe to hand to the editor.
+		message, fields := "The proposed configuration or operation is invalid.", map[string]string(nil)
+		var invalid *admin.ValidationError
+		if errors.As(err, &invalid) {
+			message, fields = invalid.Message, invalid.Fields
+		}
+		writeAdminErrorFields(w, http.StatusUnprocessableEntity, "invalid_configuration", message, fields)
 	case errors.Is(err, errAdminJSON):
 		writeAdminError(w, http.StatusBadRequest, "invalid_json", "A single bounded JSON proposal with supported fields is required.")
 	case errors.Is(err, store.ErrNotFound):

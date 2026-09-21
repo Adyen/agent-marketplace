@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import AdminPreviewPanel from '../../app/components/AdminPreviewPanel.vue'
-import { newAdminRegistry, previewIsStale, registryDraftKey } from '../../app/lib/admin'
+import { AdminError, newAdminRegistry, previewIsStale, registryDraftKey } from '../../app/lib/admin'
 import type { AdminPreview, AdminPreviewState, AdminRegistry } from '../../app/lib/admin'
 import { adminStubs } from './admin-stubs'
 
@@ -117,5 +117,31 @@ describe('admin discovery preview panel', () => {
     await previewButton(wrapper).trigger('click')
     await flushPromises()
     expect(wrapper.find('[role="alert"]').text()).toContain('Preview limit reached')
+  })
+
+  it('shows the validation detail and hands field problems to the editor', async () => {
+    const message = 'slug "mattpocock/skills" must use only lowercase letters, digits and hyphens'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response({ code: 'invalid_configuration', message, fields: { slug: message } }, 422)))
+    const wrapper = render()
+    await previewButton(wrapper).trigger('click')
+    await flushPromises()
+    const alert = wrapper.find('[role="alert"]').text()
+    expect(alert).toContain(message)
+    expect(alert).toContain('highlighted field')
+    const rejected = wrapper.emitted('rejected')
+    expect(rejected).toHaveLength(1)
+    expect(rejected![0]![0]).toBeInstanceOf(AdminError)
+    expect((rejected![0]![0] as AdminError).fields).toEqual({ slug: message })
+    expect(wrapper.find('[aria-busy="true"]').exists()).toBe(false)
+  })
+
+  it('does not promise highlights when the rejection has no field detail', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response({ code: 'invalid_configuration', message: 'Only a registry draft can be previewed.' }, 422)))
+    const wrapper = render()
+    await previewButton(wrapper).trigger('click')
+    await flushPromises()
+    const alert = wrapper.find('[role="alert"]').text()
+    expect(alert).toContain('Only a registry draft can be previewed.')
+    expect(alert).not.toContain('highlighted')
   })
 })

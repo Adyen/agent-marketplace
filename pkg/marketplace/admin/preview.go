@@ -28,7 +28,7 @@ type PreviewJobPayload struct {
 // from live deployment configuration at execution time.
 func (s Service) Preview(ctx context.Context, id store.MarketplaceID, m Mutation) (store.ManagedPreview, error) {
 	if m.Action != "upsert_registry" || m.Registry == nil || m.LicensePolicy != nil {
-		return store.ManagedPreview{}, ErrInvalidConfiguration
+		return store.ManagedPreview{}, invalid("", "Only a registry draft can be previewed; lifecycle and license policy changes have nothing to discover.")
 	}
 	if strings.TrimSpace(m.Actor.Issuer) == "" || strings.TrimSpace(m.Actor.Subject) == "" {
 		return store.ManagedPreview{}, store.ErrManagedChangeInvalid

@@ -165,8 +165,13 @@ func (s Service) Apply(ctx context.Context, id store.MarketplaceID, m Mutation) 
 
 func (s Service) mutate(snapshot *Snapshot, m Mutation) (bool, error) {
 	if m.Action == "set_policy" {
-		if m.RegistryID != "" || m.Registry != nil || m.LicensePolicy == nil || !validPolicy(*m.LicensePolicy, false) || len(m.LicensePolicy.Allowlist) == 0 && !m.ConfirmUnrestricted {
-			return false, ErrInvalidConfiguration
+		switch {
+		case m.RegistryID != "" || m.Registry != nil || m.LicensePolicy == nil:
+			return false, invalid("", "A license policy change carries only a license policy, not a registry.")
+		case !validPolicy(*m.LicensePolicy, false):
+			return false, invalid("license_policy", "The license policy needs a valid undeclared outcome and nonempty SPDX identifiers.")
+		case len(m.LicensePolicy.Allowlist) == 0 && !m.ConfirmUnrestricted:
+			return false, invalid("license_policy", "An empty allowlist disables license enforcement; confirm the unrestricted policy first.")
 		}
 		if !reflect.DeepEqual(snapshot.LicensePolicy, *m.LicensePolicy) {
 			snapshot.PolicyRevision++
@@ -174,28 +179,34 @@ func (s Service) mutate(snapshot *Snapshot, m Mutation) (bool, error) {
 		}
 		return slices.ContainsFunc(snapshot.Registries, func(r Registry) bool { return r.Active() }), nil
 	}
-	if m.RegistryID == "" || m.LicensePolicy != nil {
-		return false, ErrInvalidConfiguration
+	if m.RegistryID == "" {
+		return false, invalid("id", "A registry ID is required.")
+	}
+	if m.LicensePolicy != nil {
+		return false, invalid("", "A registry operation cannot change the global license policy.")
 	}
 	index := slices.IndexFunc(snapshot.Registries, func(r Registry) bool { return r.ID == m.RegistryID })
 	if m.Action == "upsert_registry" {
 		if m.Registry == nil || m.Registry.ID != m.RegistryID {
-			return false, ErrInvalidConfiguration
+			return false, invalid("id", "The registry draft must carry the same ID as the operation.")
 		}
 		r := *m.Registry
 		if index < 0 {
-			if len(snapshot.Registries) >= 10000 || r.Generation != 0 || r.Paused || r.Withdrawn || r.Retired || (r.Lifecycle != "" && r.Lifecycle != "active") || len(r.Aliases) != 0 || len(r.HistoricalOrigins) != 0 || len(r.NonLicenseOverrides) != 0 {
-				return false, ErrInvalidConfiguration
+			if len(snapshot.Registries) >= 10000 {
+				return false, invalid("", "This Marketplace already holds the maximum number of registries.")
+			}
+			if r.Generation != 0 || r.Paused || r.Withdrawn || r.Retired || (r.Lifecycle != "" && r.Lifecycle != "active") || len(r.Aliases) != 0 || len(r.HistoricalOrigins) != 0 || len(r.NonLicenseOverrides) != 0 {
+				return false, invalid("", "A new registry starts active at generation 0 without aliases, historical origins or non-license overrides.")
 			}
 			r.Generation = 1
 			r.Lifecycle = "active"
 		} else {
 			old := snapshot.Registries[index]
 			if r.Generation != old.Generation || r.Paused != old.Paused || r.Withdrawn != old.Withdrawn || r.Retired != old.Retired || r.Lifecycle != old.Lifecycle || !reflect.DeepEqual(r.NonLicenseOverrides, old.NonLicenseOverrides) || !reflect.DeepEqual(r.Aliases, old.Aliases) || !reflect.DeepEqual(r.HistoricalOrigins, old.HistoricalOrigins) {
-				return false, ErrInvalidConfiguration
+				return false, invalid("", "Generation, lifecycle, aliases, historical origins and non-license overrides are read-only here; reload the registry and reapply your edits.")
 			}
 			if r.Origin != old.Origin && !m.ConfirmOriginMove {
-				return false, ErrInvalidConfiguration
+				return false, invalidf("origin", "Moving the origin from %s requires confirming the origin move.", old.Origin)
 			}
 			if r.Slug != old.Slug {
 				r.Aliases = uniqueNames(append(slices.Clone(old.Aliases), old.Slug), "")
@@ -216,7 +227,7 @@ func (s Service) mutate(snapshot *Snapshot, m Mutation) (bool, error) {
 			}
 			for _, name := range append(slices.Clone(r.Aliases), r.Slug) {
 				if name == other.Slug || slices.Contains(other.Aliases, name) {
-					return false, ErrInvalidConfiguration
+					return false, invalidf("slug", "%q is already used as a slug or alias by registry %s.", name, other.ID)
 				}
 			}
 		}
@@ -229,54 +240,60 @@ func (s Service) mutate(snapshot *Snapshot, m Mutation) (bool, error) {
 		return r.Active(), nil
 	}
 	if m.Registry != nil {
-		return false, ErrInvalidConfiguration
+		return false, invalidf("", "The %s action does not accept a registry draft.", m.Action)
 	}
 	if index < 0 {
 		return false, store.ErrNotFound
 	}
 	r := &snapshot.Registries[index]
+	transition := func(allowed bool) error {
+		if allowed {
+			return nil
+		}
+		return invalidf("", "Cannot %s registry %s while it is %s.", m.Action, r.ID, r.Lifecycle)
+	}
 	switch m.Action {
 	case "pause":
-		if !r.Active() {
-			return false, ErrInvalidConfiguration
+		if err := transition(r.Active()); err != nil {
+			return false, err
 		}
 		r.Paused = true
 	case "resume":
-		if !r.Paused || r.Withdrawn || r.Retired {
-			return false, ErrInvalidConfiguration
+		if err := transition(r.Paused && !r.Withdrawn && !r.Retired); err != nil {
+			return false, err
 		}
 		r.Paused = false
 	case "withdraw":
-		if r.Withdrawn || r.Retired {
-			return false, ErrInvalidConfiguration
+		if err := transition(!r.Withdrawn && !r.Retired); err != nil {
+			return false, err
 		}
 		r.Withdrawn = true
 		r.Paused = true
 	case "restore":
-		if !r.Withdrawn || r.Retired {
-			return false, ErrInvalidConfiguration
+		if err := transition(r.Withdrawn && !r.Retired); err != nil {
+			return false, err
 		}
 		r.Withdrawn = false
 		r.Paused = true
 	case "retire":
-		if !r.Withdrawn || r.Retired {
-			return false, ErrInvalidConfiguration
+		if err := transition(r.Withdrawn && !r.Retired); err != nil {
+			return false, err
 		}
 		r.Retired = true
 	case "restore_retired":
-		if !r.Retired {
-			return false, ErrInvalidConfiguration
+		if err := transition(r.Retired); err != nil {
+			return false, err
 		}
 		r.Retired = false
 		r.Withdrawn = true
 		r.Paused = true
 	case "reindex":
-		if !r.Active() {
-			return false, ErrInvalidConfiguration
+		if err := transition(r.Active()); err != nil {
+			return false, err
 		}
 		return true, s.validateRegistry(*r)
 	default:
-		return false, ErrInvalidConfiguration
+		return false, invalidf("", "Unknown administration action %q.", m.Action)
 	}
 	r.Generation++
 	r.Lifecycle = "active"
@@ -312,27 +329,36 @@ func validPolicy(p LicensePolicy, override bool) bool {
 	return !override || p.Allowlist != nil || p.Undeclared != ""
 }
 func (s Service) validateRegistry(r Registry) error {
-	if !originAllowed(r.Origin, s.Deployment.AllowedOrigins) || strings.ContainsAny(string(r.ID), "/\\@\r\n\x00 ") || len(r.ID) > 256 || r.Acquisition == "" {
-		return ErrInvalidConfiguration
+	if strings.ContainsAny(string(r.ID), "/\\@\r\n\x00 ") || len(r.ID) > 256 {
+		return invalid("id", "The registry ID must not contain spaces, slashes, '@' or control characters, and must be at most 256 characters.")
+	}
+	if !originAllowed(r.Origin, s.Deployment.AllowedOrigins) {
+		return invalidf("origin", "The origin must be an HTTPS or SSH URL on one of the allowed authorities: %s.", strings.Join(s.Deployment.AllowedOrigins, ", "))
+	}
+	if r.Acquisition == "" {
+		return invalid("acquisition", "Choose mirror or index-only acquisition.")
 	}
 	if r.ProfileID != "" {
 		p, ok := s.Deployment.Profiles[r.ProfileID]
-		if !ok || !originAllowed(r.Origin, p.AllowedOrigins) || strings.ContainsAny(r.ProfileID, "/\\\r\n\x00 ") {
-			return ErrInvalidConfiguration
+		if !ok || strings.ContainsAny(r.ProfileID, "/\\\r\n\x00 ") {
+			return invalidf("profile_id", "Credential profile %q is missing from the deployment configuration.", r.ProfileID)
+		}
+		if !originAllowed(r.Origin, p.AllowedOrigins) {
+			return invalidf("profile_id", "Profile %q only allows origins on %s.", r.ProfileID, strings.Join(p.AllowedOrigins, ", "))
 		}
 	}
 	if r.LicenseOverride != nil && !validPolicy(*r.LicenseOverride, true) {
-		return ErrInvalidConfiguration
+		return invalid("license_override", "A license override needs a nonempty allowlist of SPDX identifiers or a valid undeclared outcome.")
 	}
 	source := config.Registry{ID: string(r.ID), Slug: r.Slug, Origin: r.Origin, Ref: r.Ref, Acquisition: string(r.Acquisition), Publisher: config.Publisher{Name: r.Publisher.Name, URL: r.Publisher.URL}, License: r.License}
-	for _, root := range r.Roots {
+	for i, root := range r.Roots {
 		if strings.ContainsAny(root.Path, "\\\x00\r\n") {
-			return ErrInvalidConfiguration
+			return invalid(fmt.Sprintf("roots[%d].path", i), "Use forward slashes; backslashes and control characters are not allowed.")
 		}
 		source.Roots = append(source.Roots, config.RegistryRoot{Path: root.Path, SourceHarness: root.SourceHarness})
 	}
 	if err := source.Validate(config.Policy{}); err != nil {
-		return ErrInvalidConfiguration
+		return registryValidationError(err)
 	}
 	return nil
 }

@@ -10,6 +10,10 @@ import type { ResourceKind } from '~/types/marketplace'
 // would find, before anything is applied. Nothing here publishes; the result
 // is bound to the exact draft it was requested for.
 const props = defineProps<{ registry: AdminRegistry, revision: number, disabled?: boolean }>()
+// A preview request runs the same static validation as "Continue to review".
+// Field-level rejections are handed to the editor so it can highlight the
+// offending inputs; this panel only keeps the summary next to the button.
+const emit = defineEmits<{ rejected: [error: AdminError] }>()
 const state = defineModel<AdminPreviewState>()
 const api = createAdminApi()
 const busy = ref(false)
@@ -66,7 +70,12 @@ async function request() {
 function describe(value: unknown, fallback: string) {
   if (!(value instanceof AdminError)) return fallback
   if (value.code === 'rate_limited') return 'Preview limit reached for now. Wait a minute before requesting another one.'
-  if (value.code === 'invalid_configuration') return 'Fix the highlighted configuration problems first; the preview runs the same static validation as Continue to review.'
+  if (value.code === 'invalid_configuration') {
+    emit('rejected', value)
+    const problems = Object.keys(value.fields)
+    const where = problems.length ? ` Check ${problems.length === 1 ? 'the highlighted field' : `the ${problems.length} highlighted fields`} above.` : ''
+    return `The draft cannot be previewed yet: ${value.message}${where}`
+  }
   if (value.code === 'revision_conflict') return 'The configuration changed since this draft was opened. Continue to review to load the latest revision.'
   return `${value.code}: ${value.message}`
 }

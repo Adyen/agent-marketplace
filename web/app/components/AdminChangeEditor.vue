@@ -132,6 +132,7 @@ onBeforeRouteUpdate(canLeave)
         <p class="font-semibold text-error">{{ errorTitle }}</p>
         <p class="text-toned">{{ error.message }}</p>
         <ul v-if="Object.keys(error.fields).length" class="list-inside list-disc text-toned"><li v-for="(message, field) in error.fields" :key="field"><span class="font-mono text-xs">{{ field }}</span>: {{ message }}</li></ul>
+        <p v-if="error.code === 'invalid_configuration' && Object.keys(error.fields).length" class="text-xs text-muted">The affected fields are outlined below. This is the same static validation that runs before review; nothing has been applied.</p>
         <p v-if="error.code === 'unauthenticated'" class="text-muted">Sign in again through your deployment, then reload this page. The draft stays in this tab and is never replayed.</p>
         <p v-if="error.code === 'network_error'" class="text-muted">Do not assume the change failed. Check Activity in another tab before starting a new request.</p>
         <div v-if="error.code === 'revision_conflict'" class="space-y-2"><p class="text-muted">Someone else changed the configuration. Load the latest revision and inspect the new diff before continuing.</p><UButton size="sm" :disabled="busy" icon="i-lucide-refresh-cw" @click="reloadBaseline">Load latest revision and keep my draft</UButton></div>
@@ -142,9 +143,9 @@ onBeforeRouteUpdate(canLeave)
         <div v-if="lifecycle" class="flex gap-3 rounded-lg border p-4 text-sm" :class="destructive ? 'border-error/40 bg-error/5' : 'border-default bg-[var(--am-color-bg-subtle)]'"><UIcon name="i-lucide-info" class="mt-0.5 size-4 shrink-0" :class="destructive ? 'text-error' : 'text-muted'" aria-hidden="true" /><p class="text-toned">{{ lifecycle.description }}</p></div>
         <form class="space-y-6" @submit.prevent="validate">
           <fieldset :disabled="busy || !!blocked" class="space-y-6">
-            <AdminRegistryFields v-if="draft.registry" v-model="draft.registry" :profiles="profiles" :existing="!!originalRegistry" />
-            <AdminPreviewPanel v-if="draft.registry" v-model="previewState" :registry="draft.registry" :revision="baseline.revision" :disabled="busy || !!blocked" />
-            <AdminPolicyFields v-if="draft.license_policy" v-model="draft.license_policy" prefix="global" />
+            <AdminRegistryFields v-if="draft.registry" v-model="draft.registry" :profiles="profiles" :existing="!!originalRegistry" :errors="error?.fields" />
+            <AdminPreviewPanel v-if="draft.registry" v-model="previewState" :registry="draft.registry" :revision="baseline.revision" :disabled="busy || !!blocked" @rejected="captureError" />
+            <AdminPolicyFields v-if="draft.license_policy" v-model="draft.license_policy" prefix="global" :error="error?.fields.license_policy" />
             <div v-if="originMove || unrestricted" class="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4 text-sm">
               <label v-if="originMove" class="flex items-start gap-2"><input v-model="draft.confirm_origin_move" type="checkbox" required class="mt-1 size-4 accent-[var(--ui-primary)]"><span>I confirm the origin move for the same immutable registry identity.</span></label>
               <label v-if="unrestricted" class="flex items-start gap-2"><input v-model="draft.confirm_unrestricted" type="checkbox" required class="mt-1 size-4 accent-[var(--ui-primary)]"><span>I understand that an empty global allowlist disables license enforcement.</span></label>
