@@ -4,7 +4,8 @@ import path from "node:path";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, runNonTTY, step, waitForExit } from "./helpers.js";
+import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { runNonTTY } from "./process-helpers.js";
 
 const journey = defineFixture("local-toggle-and-sync", ["tui"]);
 test.use(journey.options);

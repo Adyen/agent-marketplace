@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createProcessFixture, runNonTTY } from "./helpers.js";
+import { createProcessFixture, runNonTTY } from "./process-helpers.js";
 
 test("non-TTY entrypoints print help or fail promptly", (t) => {
   const fixture = createProcessFixture("non-tty");

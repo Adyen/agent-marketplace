@@ -1,27 +1,17 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import { expect, test } from "@microsoft/tui-test";
+
+import { binary, isolatedEnvironment, write } from "./process-helpers.js";
 
 type TestBody = Parameters<typeof test>[1];
 type TestOptions = Parameters<typeof test.use>[0];
 type StepPart = () => void | Promise<void>;
 export type TestTerminal = Parameters<TestBody>[0]["terminal"];
-
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-const packageRoot = [
-  process.cwd(),
-  path.resolve(moduleDirectory, ".."),
-  path.resolve(moduleDirectory, "..", ".."),
-  path.resolve(moduleDirectory, "..", "..", "..")
-].find((candidate) => fs.existsSync(path.join(candidate, "package.json")));
-if (!packageRoot) throw new Error("cannot locate the TUI QA package root");
-const repositoryRoot = path.resolve(process.env.AM_TUI_QA_REPO_ROOT ?? path.join(packageRoot, "..", ".."));
-export const binary = path.resolve(process.env.AM_TUI_QA_BINARY ?? path.join(repositoryRoot, ".local", "agent-marketplace", "bin", "agent-marketplace-tui-qa"));
 
 const alphaSkillContent = "---\nname: alpha-skill\ndescription: Available alpha fixture skill\n---\n\n# Alpha Skill\n\nAlpha fixture body.\n";
 const betaSkillContent = "---\nname: beta-skill\ndescription: Synced beta fixture skill\n---\n\n# Beta Skill\n\nBeta fixture body.\n";
@@ -39,14 +29,6 @@ export interface Fixture {
   cleanup(): void;
 }
 
-export interface ProcessFixture {
-  root: string;
-  home: string;
-  repo: string;
-  env: Record<string, string>;
-  cleanup(): void;
-}
-
 interface FixtureLifecycle {
   options: TestOptions;
   setup(): void;
@@ -58,46 +40,7 @@ const git = (cwd: string, env: Record<string, string>, args: string[]): void => 
   execFileSync("git", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 });
 };
 
-const write = (file: string, content: string, mode = 0o600): void => {
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, content, { encoding: "utf8", mode });
-};
-
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
-
-const isolatedEnvironment = (root: string, home: string, tmp: string, xdg: string): Record<string, string> => ({
-  PATH: "/usr/local/bin:/usr/bin:/bin",
-  HOME: home,
-  USER: "tui-qa",
-  LOGNAME: "tui-qa",
-  XDG_CONFIG_HOME: path.join(xdg, "config"),
-  XDG_CACHE_HOME: path.join(xdg, "cache"),
-  XDG_DATA_HOME: path.join(xdg, "data"),
-  XDG_STATE_HOME: path.join(xdg, "state"),
-  TMPDIR: tmp,
-  TMP: tmp,
-  TEMP: tmp,
-  CODEX_HOME: path.join(home, ".codex"),
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_COUNT: "3",
-  GIT_CONFIG_KEY_0: "core.hooksPath",
-  GIT_CONFIG_VALUE_0: "/dev/null",
-  GIT_CONFIG_KEY_1: "credential.helper",
-  GIT_CONFIG_VALUE_1: "",
-  GIT_CONFIG_KEY_2: "protocol.file.allow",
-  GIT_CONFIG_VALUE_2: "always",
-  GIT_ASKPASS: "/bin/false",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_SSH_COMMAND: "/bin/false",
-  SSH_ASKPASS: "/bin/false",
-  SSH_ASKPASS_REQUIRE: "never",
-  AGENT_MARKETPLACE_LOG_ENABLED: "false",
-  AGENT_MARKETPLACE_V3_ORG_CONFIG: path.join(root, "missing-organization-config.yaml"),
-  TERM: "xterm-256color",
-  LANG: "C.UTF-8"
-});
 
 const createFixture = (name: string): Fixture => {
   if (!/^[a-z0-9-]+$/.test(name)) throw new Error(`unsafe fixture name ${JSON.stringify(name)}`);
@@ -187,29 +130,6 @@ export const defineFixture = (
   };
 };
 
-export const createProcessFixture = (name: string): ProcessFixture => {
-  if (!/^[a-z0-9-]+$/.test(name)) throw new Error(`unsafe fixture name ${JSON.stringify(name)}`);
-  if (!fs.existsSync(binary)) throw new Error(`TUI QA binary not found: ${binary}`);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), `agent-marketplace-process-${name}-`));
-  try {
-    const home = path.join(root, "home");
-    const repo = path.join(root, "workspace");
-    const tmp = path.join(root, "tmp");
-    const xdg = path.join(root, "xdg");
-    for (const directory of [home, repo, tmp, xdg]) fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-    return {
-      root,
-      home,
-      repo,
-      env: isolatedEnvironment(root, home, tmp, xdg),
-      cleanup: () => fs.rmSync(root, { recursive: true, force: true })
-    };
-  } catch (error) {
-    fs.rmSync(root, { recursive: true, force: true });
-    throw error;
-  }
-};
-
 export const declineLegacyMigration = async (terminal: TestTerminal): Promise<void> => {
   await expect(terminal.getByText("Configuration migration required", { strict: false })).toBeVisible();
   await terminal.write("l");
@@ -243,24 +163,3 @@ export const waitForExit = (terminal: TestTerminal, timeoutMs = 5_000): Promise<
     });
   });
 };
-
-export const targetPID = async (fixture: Fixture, timeoutMs = 5_000): Promise<number> => {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const pid = Number(fs.readFileSync(fixture.pidFile, "utf8").trim());
-      if (Number.isSafeInteger(pid) && pid > 1) return pid;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("real TUI process did not publish its PID within the bounded wait");
-};
-
-export const runNonTTY = (fixture: Pick<ProcessFixture, "repo" | "env">, args: string[], timeout = 5_000) => spawnSync(binary, args, {
-  cwd: fixture.repo,
-  env: fixture.env,
-  encoding: "utf8",
-  timeout
-});

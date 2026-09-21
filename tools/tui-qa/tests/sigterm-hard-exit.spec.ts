@@ -3,7 +3,8 @@ import process from "node:process";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, targetPID, waitForExit } from "./helpers.js";
+import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { targetPID } from "./process-helpers.js";
 
 const journey = defineFixture("sigterm-hard-exit", ["tui"]);
 test.use(journey.options);
