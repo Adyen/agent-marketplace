@@ -792,13 +792,13 @@ func TestMarketplaceInstallDoesNotRefreshWarmRegistries(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(opts.RepoRoot, ".factory")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing-lock preflight created harness output: %v", err)
 	}
-	if _, err := syncAfterInstall(context.Background(), opts.RepoRoot, nil, silentSyncOptsForInstall(opts)...); err != nil {
+	if _, err := syncAfterInstall(context.Background(), opts, nil, silentSyncOptsForInstall(opts)...); err != nil {
 		t.Fatal(err)
 	}
 	if got := fetches.Load(); got != 0 {
 		t.Fatalf("warm registry refreshes = %d, want 0", got)
 	}
-	result := Sync(context.Background(), ResolveOptions{RepoRoot: opts.RepoRoot, CatalogOption: opts.CatalogOption})
+	result := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, opts.RepoRoot), CatalogOption: opts.CatalogOption})
 	if err := errors.Join(result.Errors...); err != nil {
 		t.Fatal(err)
 	}
@@ -818,7 +818,7 @@ func BenchmarkMarketplaceInstallWarmRegistries(b *testing.B) {
 		if err := checkMarketplaceInstallCollision(context.Background(), opts, ec, plan); err != nil {
 			b.Fatal(err)
 		}
-		if _, err := syncAfterInstall(context.Background(), opts.RepoRoot, nil, silentSyncOptsForInstall(opts)...); err != nil {
+		if _, err := syncAfterInstall(context.Background(), opts, nil, silentSyncOptsForInstall(opts)...); err != nil {
 			b.Fatal(err)
 		}
 	}

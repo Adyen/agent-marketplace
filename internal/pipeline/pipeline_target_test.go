@@ -37,8 +37,8 @@ harnesses:
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,

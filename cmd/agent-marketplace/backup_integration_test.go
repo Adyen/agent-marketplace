@@ -461,7 +461,7 @@ registries:
 		t.Fatalf("first install failed: %v\n%s", err, output)
 	}
 
-	mutable := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{RepoRoot: repoRoot})
+	mutable := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{Workspace: mustWorkspace(t, repoRoot)})
 	if err := errors.Join(mutable.Errors...); err != nil {
 		t.Fatalf("resolve mutable catalog: %v", err)
 	}
@@ -469,7 +469,7 @@ registries:
 	if err != nil {
 		t.Fatalf("prepare exact lock: %v", err)
 	}
-	exact := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{RepoRoot: repoRoot, CatalogOption: []catalog.LoadOption{exactOption}})
+	exact := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{Workspace: mustWorkspace(t, repoRoot), CatalogOption: []catalog.LoadOption{exactOption}})
 	if err := errors.Join(exact.Errors...); err != nil {
 		t.Fatalf("resolve exact catalog: %v", err)
 	}

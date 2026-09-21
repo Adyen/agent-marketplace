@@ -82,8 +82,12 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	}
 
 	repoRoot := config.FindRepoRoot()
+	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return err
+	}
 	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		RepoRoot:           repoRoot,
+		Workspace:          ws,
 		CatalogMode:        catalog.LoadModeInspect,
 		ReadOnlyExactLocks: true,
 	})

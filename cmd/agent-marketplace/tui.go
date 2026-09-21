@@ -69,11 +69,11 @@ func runTUIDependencyLifecycle(ctx context.Context, repoRoot string, upgrade boo
 	if err != nil {
 		return err
 	}
-	options := pipeline.ResolveOptions{RepoRoot: repoRoot, ReadOnlyExactLocks: true, ExactLockLease: exactLease}
-	if localDir != "" && localDir != repoRoot {
-		options.LocalConfigDir = localDir
-		options.MaterializeRoot = localDir
+	ws, err := pipeline.NewWorkspace(repoRoot, localDir)
+	if err != nil {
+		return err
 	}
+	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease}
 	result := runTUIExactSync(ctx, options)
 	return errors.Join(result.Errors...)
 }

@@ -18,7 +18,7 @@ func TestSilentSyncCollectPreservesDependencyWarnings(t *testing.T) {
 		t.Fatal(err)
 	}
 	warning := errors.New("dependency warning")
-	warnings, err := silentSyncCollect(context.Background(), dir,
+	warnings, err := silentSyncCollect(context.Background(), mustWorkspace(t, dir),
 		withDependencyReconciler(func(context.Context, string, string, bool, []StagedConfigEdit) (DependencyLockView, error) {
 			return DependencyLockView{Warnings: []error{warning}}, nil
 		}),
@@ -101,7 +101,7 @@ func TestDependencyReconcilerReceivesCoalescedStagedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	stop := errors.New("stop after reconcile")
-	_, err = silentSyncCollect(context.Background(), dir,
+	_, err = silentSyncCollect(context.Background(), mustWorkspace(t, dir),
 		withConfigStaging(staging),
 		withDependencyReconciler(func(_ context.Context, _, _ string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
 			real, readErr := os.ReadFile(destination)

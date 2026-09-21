@@ -77,7 +77,7 @@ func BenchmarkResolveInventoryWithLocalDiskAndHTTPExport(b *testing.B) {
 	b.Cleanup(func() { _ = tel.Shutdown(context.Background()) })
 	ctx := telemetry.NewContext(context.Background(), tel, "sync", time.Now(), "", false, telemetry.Span{}, false)
 	opts := ResolveOptions{
-		RepoRoot:    repoRoot,
+		Workspace:   mustWorkspace(b, repoRoot),
 		CatalogMode: catalog.LoadModeInspect,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return nil, nil },
@@ -155,7 +155,7 @@ func BenchmarkResolveMaterialize(b *testing.B) {
 			benchWriteUserConfig(b, homeDir, targets)
 			ctx := context.Background()
 			resolveOpts := ResolveOptions{
-				RepoRoot:    repoRoot,
+				Workspace:   mustWorkspace(b, repoRoot),
 				CatalogMode: catalog.LoadModeInspect,
 				EffectiveOpts: config.LoadEffectiveOptions{
 					RepoRoot: repoRoot,

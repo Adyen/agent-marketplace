@@ -80,7 +80,11 @@ func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyn
 	if opts.DependencyReconcile != nil {
 		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
 	}
-	warnings, err := silentSyncCollect(ctx, opts.RepoRoot, extra...)
+	ws, err := NewWorkspace(opts.RepoRoot, "")
+	if err != nil {
+		return err
+	}
+	warnings, err := silentSyncCollect(ctx, ws, extra...)
 	if opts.warningSink != nil {
 		*opts.warningSink = append(*opts.warningSink, warnings...)
 	}
@@ -149,7 +153,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
 			return m.RemoveCollection(entry, collection)
 		}, func() ([]error, error) {
-			return nil, silentSync(ctx, opts.RepoRoot)
+			return nil, syncAfterRemove(ctx, opts)
 		}); err != nil {
 			return nil, err
 		}
@@ -179,7 +183,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
 			return m.RemoveDirectPin(entry, pin)
 		}, func() ([]error, error) {
-			return nil, silentSync(ctx, opts.RepoRoot)
+			return nil, syncAfterRemove(ctx, opts)
 		}); err != nil {
 			return nil, err
 		}
@@ -260,7 +264,11 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		}
 	}
 
-	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, SkipInventory: true, ReadOnlyExactLocks: true})
+	ws, err := NewWorkspace(opts.RepoRoot, "")
+	if err != nil {
+		return nil, err
+	}
+	resolvedResult := Resolve(ctx, ResolveOptions{Workspace: ws, SkipInventory: true, ReadOnlyExactLocks: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
@@ -1451,7 +1459,11 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// resource like a skill enabled at both user and repo scope would be
 	// reported as spuriously "ambiguous" even though --from already names the
 	// entry to operate on).
-	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: true, SkipInventory: true, ReadOnlyExactLocks: true})
+	ws, err := NewWorkspace(repoRoot, "")
+	if err != nil {
+		return nil, err
+	}
+	resolvedResult := Resolve(ctx, ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: true, SkipInventory: true, ReadOnlyExactLocks: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
