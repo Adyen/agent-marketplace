@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	tea "github.com/charmbracelet/bubbletea"
@@ -63,6 +64,29 @@ func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	}
 	if errs := diagnosticErrors(snapshot.diagnostics); len(errs) != 1 || !errors.Is(errs[0], induced) {
 		t.Fatalf("dry-run failure not propagated: %v", errs)
+	}
+}
+
+func TestReadSnapshotReturnsBeforeMaterializeOnResolveFailure(t *testing.T) {
+	materializeRan := false
+	previousMaterialize := runMaterialize
+	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+		materializeRan = true
+		return nil, nil
+	}
+	t.Cleanup(func() { runMaterialize = previousMaterialize })
+
+	// An empty repository root yields the zero Workspace, so Resolve fails
+	// with a generic ErrInvalidWorkspace before any loader runs.
+	snapshot := readSnapshot(context.Background(), "", t.TempDir(), catalogLoadCached)
+	if materializeRan {
+		t.Fatal("runMaterialize ran after Resolve returned a generic error")
+	}
+	if errs := diagnosticErrors(snapshot.diagnostics); !errors.Is(errors.Join(errs...), pipeline.ErrInvalidWorkspace) {
+		t.Fatalf("resolve failure not exposed as diagnostics: %v", errs)
+	}
+	if len(snapshot.errs) == 0 {
+		t.Fatal("resolve failure did not populate snapshot errs")
 	}
 }
 
