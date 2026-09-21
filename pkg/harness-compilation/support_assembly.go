@@ -14,10 +14,16 @@ import (
 
 // supportFileCandidate pairs the slash-separated source path (relative to the
 // source fs root) with the slash-separated artifact path under the compiled
-// target output root.
+// target output root. strict marks a clean single-file reference: a value
+// that consists of exactly the root token followed by one path, whose
+// failure stays a hard error. Composite values (env assignments, PATH-style
+// colon lists, multi-token commands) contribute best-effort candidates
+// instead: only candidates that resolve to regular bundle files are
+// assembled, and unresolvable ones are skipped without a diagnostic.
 type supportFileCandidate struct {
 	sourcePath string
 	targetPath string
+	strict     bool
 }
 
 // assembleResourceSupportArtifacts resolves the support-file declarations and
@@ -59,6 +65,7 @@ func assembleResourceSupportArtifacts(srcFS fs.FS, resource ir.Resource, compile
 			candidates = append(candidates, supportFileCandidate{
 				sourcePath: path.Join(sourceDir, rel),
 				targetPath: root + "/" + rel,
+				strict:     true,
 			})
 		}
 	case ir.KindHook:
@@ -66,22 +73,25 @@ func assembleResourceSupportArtifacts(srcFS fs.FS, resource ir.Resource, compile
 		if !ok {
 			return nil, nil
 		}
-		for _, rel := range referencedAssetPaths(hook.Command) {
-			candidates = append(candidates, supportFileCandidate{sourcePath: rel, targetPath: rel})
+		for _, ref := range referencedAssetPaths(hook.Command) {
+			candidates = append(candidates, supportFileCandidate{sourcePath: ref.rel, targetPath: ref.rel, strict: ref.strict})
 		}
 	case ir.KindMcpServer:
 		server, ok := resource.(*ir.McpServer)
 		if !ok {
 			return nil, nil
 		}
-		values := make([]string, 0, len(server.Args)+len(server.Env)+1)
+		values := make([]string, 0, len(server.Args)+len(server.Env)+len(server.Headers)+1)
 		values = append(values, server.Command)
 		values = append(values, server.Args...)
 		for _, v := range server.Env {
 			values = append(values, v)
 		}
-		for _, rel := range referencedAssetPaths(values...) {
-			candidates = append(candidates, supportFileCandidate{sourcePath: rel, targetPath: rel})
+		for _, v := range server.Headers {
+			values = append(values, v)
+		}
+		for _, ref := range referencedAssetPaths(values...) {
+			candidates = append(candidates, supportFileCandidate{sourcePath: ref.rel, targetPath: ref.rel, strict: ref.strict})
 		}
 	default:
 		return nil, nil
@@ -99,11 +109,17 @@ func assembleResourceSupportArtifacts(srcFS fs.FS, resource ir.Resource, compile
 		}
 		seen[candidate.targetPath] = true
 		if !isCleanRelativePath(candidate.targetPath) {
+			if !candidate.strict {
+				continue
+			}
 			diagnostics = append(diagnostics, supportFileDiagnostic(diag.CodeBundleSupportFileUnsafe, t, name, kind, candidate.sourcePath, "does not map to a clean target-relative path", resource))
 			continue
 		}
 		data, mode, code, detail := readSupportFile(srcFS, candidate.sourcePath)
 		if code != "" {
+			if !candidate.strict {
+				continue
+			}
 			diagnostics = append(diagnostics, supportFileDiagnostic(code, t, name, kind, candidate.sourcePath, detail, resource))
 			continue
 		}
@@ -164,36 +180,74 @@ func skillSupportTargetRoot(compiled []Artifact) (string, bool) {
 	return "", false
 }
 
+// referencedAsset is one bundle-root-relative path discovered behind the
+// canonical root token. strict marks a value that consists of exactly the
+// token followed by one path — a deliberate single-file reference whose
+// failure stays a hard error.
+type referencedAsset struct {
+	rel    string
+	strict bool
+}
+
+// rootTokenPrefix is the canonical root token followed by the path separator
+// that introduces a bundle-relative reference.
+const rootTokenPrefix = bundle.CanonicalRootToken + "/"
+
+// assetTerminators ends a referenced path inside a composite value. Colon is
+// included so PATH-style tails such as "${CLAUDE_PLUGIN_ROOT}/bin:$PATH" do
+// not fabricate a single missing path.
+const assetTerminators = " \t\r\n'\"`);&|<>:"
+
 // referencedAssetPaths extracts bundle-root-relative paths that follow the
 // canonical root token in the given values, e.g. the hooks/check.sh of
-// "${CLAUDE_PLUGIN_ROOT}/hooks/check.sh".
-func referencedAssetPaths(values ...string) []string {
-	var refs []string
-	seen := make(map[string]bool)
+// "${CLAUDE_PLUGIN_ROOT}/hooks/check.sh". A value that is exactly one token
+// reference yields a strict reference; composite values yield best-effort
+// candidates, and tokens embedded inside a URL (scheme://…${TOKEN}/x) name
+// remote URLs and are skipped entirely.
+func referencedAssetPaths(values ...string) []referencedAsset {
+	var refs []referencedAsset
+	index := make(map[string]int)
+	add := func(rel string, strict bool) {
+		if rel == "" {
+			return
+		}
+		if i, ok := index[rel]; ok {
+			refs[i].strict = refs[i].strict || strict
+			return
+		}
+		index[rel] = len(refs)
+		refs = append(refs, referencedAsset{rel: rel, strict: strict})
+	}
 	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); strings.HasPrefix(trimmed, rootTokenPrefix) {
+			if rel := trimmed[len(rootTokenPrefix):]; !strings.ContainsAny(rel, assetTerminators) {
+				add(rel, true)
+				continue
+			}
+		}
 		rest := value
 		for {
-			idx := strings.Index(rest, bundle.CanonicalRootToken+"/")
+			idx := strings.Index(rest, rootTokenPrefix)
 			if idx < 0 {
 				break
 			}
-			rest = rest[idx+len(bundle.CanonicalRootToken)+1:]
-			end := strings.IndexAny(rest, " \t\r\n'\"`);&|<>")
+			if strings.Contains(rest[:idx], "://") {
+				// The token sits inside a URL: a remote reference, not a
+				// bundle asset.
+				break
+			}
+			rest = rest[idx+len(rootTokenPrefix):]
+			end := strings.IndexAny(rest, assetTerminators)
 			var rel string
 			if end < 0 {
-				rel = rest
-				rest = ""
+				rel, rest = rest, ""
 			} else {
-				rel = rest[:end]
-				rest = rest[end:]
+				rel, rest = rest[:end], rest[end:]
 			}
-			if rel != "" && !seen[rel] {
-				seen[rel] = true
-				refs = append(refs, rel)
-			}
+			add(rel, false)
 		}
 	}
-	sort.Strings(refs)
+	sort.Slice(refs, func(i, j int) bool { return refs[i].rel < refs[j].rel })
 	return refs
 }
 

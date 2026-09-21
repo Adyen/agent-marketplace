@@ -259,6 +259,7 @@ func TestConvertNormalizesNativeMcpRootTokens(t *testing.T) {
 				tc.mcpPath:    &fstest.MapFile{Data: []byte(entry)},
 				"bin/run.sh":  &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n"), Mode: 0o755},
 				"config/.env": &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+				"tok":         &fstest.MapFile{Data: []byte("t")},
 			}
 
 			result, err := Convert(src, tc.source, HarnessClaude)
@@ -281,6 +282,139 @@ func TestConvertNormalizesNativeMcpRootTokens(t *testing.T) {
 				t.Errorf("native token %s leaked into converted output: %s", tc.token, mcpJSON.Bytes)
 			}
 		})
+	}
+}
+
+// Composite root-token values (env assignments, PATH-style colon lists, and
+// multi-token commands) must not be fabricated into single missing paths.
+// Valid file candidates inside them are assembled, directory and expansion
+// tails are ignored, and the owning resource keeps its output.
+func TestConvertCompositeRootReferenceAssemblesValidCandidates(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh || true"}]}}`),
+		},
+		"hooks/check.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\nexit 0\n"),
+			Mode: 0o755,
+		},
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"${CLAUDE_PLUGIN_ROOT}/bin/run.sh",` +
+				`"env":{` +
+				`"PATH":"${CLAUDE_PLUGIN_ROOT}/bin:${CLAUDE_PLUGIN_ROOT}/tools:$PATH",` +
+				`"CFG":"prefix=${CLAUDE_PLUGIN_ROOT}/config/.env"` +
+				`}}}}`),
+		},
+		"bin/run.sh":  &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n"), Mode: 0o755},
+		"bin/helper":  &fstest.MapFile{Data: []byte("x")},
+		"tools/t.sh":  &fstest.MapFile{Data: []byte("x")},
+		"config/.env": &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("composite references produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{"hooks/check.sh", "bin/run.sh", "config/.env"} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing referenced asset %s; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	for _, a := range result.Artifacts {
+		if strings.Contains(a.Path, "$PATH") || strings.Contains(a.Path, ":") {
+			t.Errorf("composite tail fabricated artifact %q", a.Path)
+		}
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Errorf("MCP resource was suppressed by composite env references")
+	}
+}
+
+// A missing or non-file candidate inside a composite value is not a clean
+// single-file reference: it must not fail closed or suppress the resource,
+// because the value cannot be proven to name a bundle file.
+func TestConvertCompositeRootReferenceSkipsNonFileCandidates(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"run",` +
+				`"env":{"PATH":"${CLAUDE_PLUGIN_ROOT}/sbin:$PATH","DIR":"dir=${CLAUDE_PLUGIN_ROOT}/docs"}` +
+				`}}}`),
+		},
+		"docs/guide.md": &fstest.MapFile{Data: []byte("guide")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("composite non-file candidates produced errors: %v", result.Diagnostics)
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Fatalf("MCP resource was suppressed; artifacts: %v", result.Artifacts)
+	}
+}
+
+// MCP header values carry the canonical root token after ingestion; a header
+// that is exactly one root reference is a clear local-bundle contract and
+// its asset must be assembled, while token-embedded URL header values name
+// remote URLs and are never treated as bundle files.
+func TestConvertAssemblesMcpHeaderAsset(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"headers":{` +
+				`"X-Cert":"${CLAUDE_PLUGIN_ROOT}/certs/ca.pem",` +
+				`"X-Remote":"https://example.com/${CLAUDE_PLUGIN_ROOT}/tok"` +
+				`}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("PEM")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("header references produced errors: %v", result.Diagnostics)
+	}
+	cert := artifactByPath(result.Artifacts, "certs/ca.pem")
+	if cert == nil {
+		t.Fatalf("missing header-referenced asset certs/ca.pem; artifacts: %v", result.Artifacts)
+	}
+	if !bytes.Equal(cert.Bytes, []byte("PEM")) {
+		t.Errorf("header asset bytes mismatch: %q", cert.Bytes)
+	}
+	if artifactByPath(result.Artifacts, "tok") != nil {
+		t.Errorf("remote URL header value was materialized as a bundle asset")
+	}
+}
+
+// A clean single-path header reference that is missing still fails closed:
+// the header deliberately names one bundle file.
+func TestConvertMissingMcpHeaderAssetFailsClosed(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"headers":{"X-Cert":"${CLAUDE_PLUGIN_ROOT}/certs/absent.pem"}` +
+				`}}}`),
+		},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileMissing) {
+		t.Errorf("missing %q diagnostic for absent header asset; codes: %v",
+			diag.CodeBundleSupportFileMissing, diagnosticCodes(result))
 	}
 }
 
