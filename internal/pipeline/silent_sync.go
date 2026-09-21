@@ -36,6 +36,12 @@ func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt)
 		opt(&o)
 	}
 	var dependencyWarnings []error
+	// A zero Workspace must fail before staged edits are collected or the
+	// dependency reconciler runs: both would otherwise operate on the ambient
+	// working directory ahead of the ErrInvalidWorkspace Sync already returns.
+	if err := ws.validate(); err != nil {
+		return nil, err
+	}
 	if o.DependencyReconciler != nil {
 		if o.ConfigStaging != nil {
 			var err error
