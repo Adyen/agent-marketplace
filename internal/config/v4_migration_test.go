@@ -190,7 +190,7 @@ registries:
 }
 
 func TestMigrateConfigFilesToV4UsesRegistryBasenamesAndFoldsLocalPaths(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalDirectoryTestRoot(t)
 	agentsDir := filepath.Join(dir, ".agents")
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatal(err)

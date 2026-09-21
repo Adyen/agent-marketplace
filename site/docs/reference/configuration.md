@@ -46,7 +46,7 @@ The `sources` map contains named source declarations. The `resources` map binds 
 A source declares exactly one acquisition kind:
 
 - `git` is a remote Git repository and requires `ref`.
-- `directory` is a live local directory and is resolved relative to the file that declares it.
+- `directory` is a live local directory. In repository `.agents/config.yaml` and `.agents/config.local.yaml` roots it resolves relative to the repository root; in user/organization configs and included fragments it resolves relative to the declaring file.
 - `marketplace` is a hosted Marketplace endpoint.
 
 A directory source is explicit; it is not inferred from a `.git` suffix. A v4 parser rejects unsupported installation keys, unknown fields, YAML aliases, merge keys, duplicate keys, and multiple YAML documents.
@@ -145,10 +145,12 @@ A source declaration must contain exactly one of `git`, `directory`, or `marketp
 | `ref` | string | Git | yes | Branch, tag, or commit to fetch. |
 | `path` | string | Git | no | Relative subdirectory within the Git source. |
 | `source_harness` | string | Git, directory | no | Layout used by the source content. Omit to autodetect. |
-| `directory` | string | Directory | yes | Live local directory, resolved relative to the declaring file. |
+| `directory` | string | Directory | yes | Live local directory; repository/local roots use repository-relative paths, other files use declaring-file-relative paths. |
 | `marketplace` | string | Marketplace | yes | Hosted Marketplace endpoint URL. |
 
 Fields belonging to another source kind are rejected. Marketplace sources do not accept Git-only fields. Directory sources do not acquire a Git lock.
+
+For repository `.agents/config.yaml` and `.agents/config.local.yaml` roots, `directory: .` selects the repository root and `directory: ./resources/skills` selects `<repo>/resources/skills`. User/organization configs, included fragments, and standalone files outside this layout use their declaring directory instead. Relative paths and symlinks must remain within that base; absolute paths are unchanged. Earlier v4 versions resolved repository-root declarations from `.agents/`; a source stored there now needs an explicit `./.agents/` prefix.
 
 Two source names may refer to equivalent declarations. They remain separate configuration bindings while compatible Git acquisition can be shared internally.
 

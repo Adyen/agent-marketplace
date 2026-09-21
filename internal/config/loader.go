@@ -537,7 +537,7 @@ func loadConfigTree(path string, kind layerKind) (*Config, error) {
 		if kind == organizationLayer {
 			organizationPath = path
 		}
-		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, nil, data, organizationPath)
+		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, nil, data, organizationPath, kind)
 		if err != nil {
 			return nil, err
 		}
@@ -560,7 +560,7 @@ func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layer
 		if kind == organizationLayer {
 			organizationPath = path
 		}
-		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, overlays, data, organizationPath)
+		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, overlays, data, organizationPath, kind)
 		if err != nil {
 			return nil, nil, err
 		}

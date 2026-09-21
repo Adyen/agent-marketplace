@@ -180,6 +180,20 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:      "local_registry/v4_portable_directory",
+		Desc:      "Given a repository-local registry, When migrating and syncing v4 dot and nested directory sources, Then live skills materialize without absolute config paths or Git locks",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: .\n    ref: main\n    path: resources/skills\n    default: true\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/local-skill/SKILL.md", Body: (Skill{Name: "local-skill", Description: "Live local skill"}).SkillFile()},
+			{Args: []string{"migrate", "--scope", "repo"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "directory: ./resources/skills"}},
+			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/workspace/.factory/skills/local-skill"}, FilesAbsent: []string{"/workspace/.agents/lock.yaml"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{Action: ActionWriteFile, Path: "/workspace/skills/root-skill/SKILL.md", Body: (Skill{Name: "root-skill", Description: "Repository root skill"}).SkillFile()},
+			{Action: ActionWriteRepoConfig, Body: "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: ., source_harness: claude}}\nresources: {registry: {include: [skill/root-skill]}}\n", Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/workspace/.factory/skills/root-skill"}},
+		},
+	},
+	{
 		Name:      "security/cli_warning_controls",
 		Desc:      "Given a selected missing resource with a control-bearing local registry ref, When syncing and listing, Then warning display is escaped and selection remains unchanged",
 		GlobalCfg: "harnesses: [factory]\nregistries: []\n",

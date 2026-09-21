@@ -22,7 +22,9 @@ resources:
       - skill/local-review
 ```
 
-Relative paths resolve from the directory that contains `.agents/config.yaml` and cannot escape it.
+In repository `.agents/config.yaml` and `.agents/config.local.yaml` roots, relative paths resolve from the repository root. Use `directory: .` for the repository itself, `directory: ./skills` for its `skills/` directory, or `directory: ./resources/skills` for a nested registry. These paths stay portable when another developer clones the repository.
+
+In user/organization configs and included fragments, relative paths resolve from the directory containing the declaring file. Relative paths and symlinks cannot escape the applicable base directory; absolute directory paths retain their existing meaning.
 
 ## 2. Sync
 
