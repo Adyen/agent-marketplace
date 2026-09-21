@@ -1,9 +1,13 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 func canonicalWorkspacePath(t *testing.T, path string) string {
@@ -61,5 +65,38 @@ func TestTUIWorkspaceFallsBackToRepositoryRootWhenDiscoveryIsOutside(t *testing.
 	}
 	if got, want := canonicalWorkspacePath(t, ws.LocalConfigDir()), canonicalWorkspacePath(t, repoRoot); got != want {
 		t.Fatalf("workspace local-config root = %q; want repository root %q", got, want)
+	}
+}
+
+// TestReadSnapshotDryRunUsesWorkspaceMaterializeRoot pins the TUI drift probe
+// to the nested materialization root selected for TUI sync.
+func TestReadSnapshotDryRunUsesWorkspaceMaterializeRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	nested := filepath.Join(repoRoot, "sub")
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(nested, ".agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, ".agents", "config.local.yaml"), []byte("registries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(nested)
+
+	var gotRoot string
+	previous := runMaterialize
+	runMaterialize = func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error) {
+		gotRoot = root
+		return &materialize.Report{}, nil
+	}
+	t.Cleanup(func() { runMaterialize = previous })
+
+	_ = readSnapshot(context.Background(), repoRoot, t.TempDir(), catalogLoadCached)
+	if got, want := canonicalWorkspacePath(t, gotRoot), canonicalWorkspacePath(t, nested); got != want {
+		t.Fatalf("TUI dry-run root = %q; want workspace materialization root %q (repository root %q)", got, want, repoRoot)
 	}
 }

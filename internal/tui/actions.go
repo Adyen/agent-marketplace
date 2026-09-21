@@ -247,7 +247,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	for _, resolved := range resolvedResult.Resolved {
 		resolvedNames = append(resolvedNames, skill.ResourceKey(resolved.Kind, resolved.Name))
 	}
-	dryRunReport, dryRunErr := runMaterialize(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
+	dryRunReport, dryRunErr := runMaterialize(ctx, ws.MaterializeRoot(), resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
 	driftState := driftReady
 	if hardCatalogFailure || dryRunReport == nil || dryRunErr != nil {
