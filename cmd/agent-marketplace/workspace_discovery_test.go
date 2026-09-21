@@ -7,8 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 // stubSyncWorkspaceDiscovery replaces CLI workspace discovery for one test so
@@ -18,6 +21,15 @@ func stubSyncWorkspaceDiscovery(t *testing.T, fn func() (pipeline.Workspace, err
 	prev := discoverSyncWorkspace
 	discoverSyncWorkspace = fn
 	t.Cleanup(func() { discoverSyncWorkspace = prev })
+}
+
+func canonicalTestPath(t *testing.T, path string) string {
+	t.Helper()
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("canonicalize %q: %v", path, err)
+	}
+	return filepath.Clean(canonical)
 }
 
 // TestSyncFailsBeforeLockPreparationWhenWorkspaceDiscoveryFails pins the
@@ -232,5 +244,59 @@ func TestInstallUserScopeFromNestedLocalPreservesTheLocalLayer(t *testing.T) {
 	assertFileExists(t, filepath.Join(homeDir, ".factory", "skills", "extra-skill", "SKILL.md"))
 	if _, err := os.Stat(filepath.Join(repoRoot, ".factory")); !os.IsNotExist(err) {
 		t.Fatalf("post-install sync materialized at the repository root; the nested local root was dropped; stat err = %v", err)
+	}
+}
+
+// TestStatusFromNestedLocalDryRunsTheWorkspaceMaterializeRoot pins status's
+// drift probe to the same nested materialization root used by workspace sync.
+func TestStatusFromNestedLocalDryRunsTheWorkspaceMaterializeRoot(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("HOME", t.TempDir())
+
+	repoRoot, nested := writeNestedLocalFixture(t)
+	withWorkingDir(t, nested)
+
+	var gotRoot string
+	previous := runStatusMaterialize
+	runStatusMaterialize = func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error) {
+		gotRoot = root
+		return &materialize.Report{}, nil
+	}
+	t.Cleanup(func() { runStatusMaterialize = previous })
+
+	if err := runStatus(context.Background(), io.Discard, time.Now()); err != nil {
+		t.Fatalf("status from nested local dir: %v", err)
+	}
+	if got, want := canonicalTestPath(t, gotRoot), canonicalTestPath(t, nested); got != want {
+		t.Fatalf("status dry-run root = %q; want workspace materialization root %q (repository root %q)", got, want, repoRoot)
+	}
+}
+
+// TestListFromNestedLocalDryRunsTheWorkspaceMaterializeRoot pins list's drift
+// probe to the same nested materialization root used by workspace sync.
+func TestListFromNestedLocalDryRunsTheWorkspaceMaterializeRoot(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("HOME", t.TempDir())
+
+	repoRoot, nested := writeNestedLocalFixture(t)
+	withWorkingDir(t, nested)
+
+	var gotRoot string
+	previous := runListMaterialize
+	runListMaterialize = func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error) {
+		gotRoot = root
+		return &materialize.Report{}, nil
+	}
+	t.Cleanup(func() { runListMaterialize = previous })
+
+	if err := runList(context.Background(), io.Discard, io.Discard, ""); err != nil {
+		t.Fatalf("list from nested local dir: %v", err)
+	}
+	if got, want := canonicalTestPath(t, gotRoot), canonicalTestPath(t, nested); got != want {
+		t.Fatalf("list dry-run root = %q; want workspace materialization root %q (repository root %q)", got, want, repoRoot)
 	}
 }
