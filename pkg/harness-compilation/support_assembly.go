@@ -7,16 +7,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
-
-// canonicalRootToken is the canonical IR spelling of a source-harness root
-// reference. Ingesters normalize their native token to this spelling at the
-// IR boundary (Cursor ${CURSOR_PLUGIN_ROOT}, Factory ${DROID_PLUGIN_ROOT},
-// Gemini ${GEMINI_PROJECT_DIR} and friends); target translators then render
-// the target-native token or a caller-supplied literal root.
-const canonicalRootToken = "${CLAUDE_PLUGIN_ROOT}"
 
 // supportFileCandidate pairs the slash-separated source path (relative to the
 // source fs root) with the slash-separated artifact path under the compiled
@@ -179,11 +173,11 @@ func referencedAssetPaths(values ...string) []string {
 	for _, value := range values {
 		rest := value
 		for {
-			idx := strings.Index(rest, canonicalRootToken+"/")
+			idx := strings.Index(rest, bundle.CanonicalRootToken+"/")
 			if idx < 0 {
 				break
 			}
-			rest = rest[idx+len(canonicalRootToken)+1:]
+			rest = rest[idx+len(bundle.CanonicalRootToken)+1:]
 			end := strings.IndexAny(rest, " \t\r\n'\"`);&|<>")
 			var rel string
 			if end < 0 {
