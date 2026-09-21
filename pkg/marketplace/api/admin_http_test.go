@@ -92,6 +92,26 @@ func TestAdminIdentityConflictIsNotPersistenceFailure(t *testing.T) {
 	}
 }
 
+func TestAdminInvalidConfigurationCarriesFieldDetail(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeAdminServiceError(w, &admin.ValidationError{Message: `slug "a/b" is invalid`, Fields: map[string]string{"slug": `"a/b" is invalid`}})
+	var body struct {
+		Code, Message string
+		Fields        map[string]string
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("decode %d %s: %v", w.Code, w.Body.String(), err)
+	}
+	if body.Code != "invalid_configuration" || body.Message != `slug "a/b" is invalid` || body.Fields["slug"] != `"a/b" is invalid` {
+		t.Fatalf("detail lost: %+v", body)
+	}
+	w = httptest.NewRecorder()
+	writeAdminServiceError(w, admin.ErrInvalidConfiguration)
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), `"code":"invalid_configuration"`) || strings.Contains(w.Body.String(), `"fields"`) {
+		t.Fatalf("bare sentinel must keep the generic envelope: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAdminHTTPRegistrationStaysDisabledByDefault(t *testing.T) {
 	meta := sqlite.New(":memory:")
 	if err := meta.Open(context.Background()); err != nil {

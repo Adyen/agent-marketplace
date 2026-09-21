@@ -658,7 +658,7 @@ func validateRegistry(idx int, src Registry, policy Policy) []error {
 	if strings.TrimSpace(src.Slug) == "" {
 		errs = append(errs, fmt.Errorf("registries[%d].slug is required", idx))
 	} else if !slugRE.MatchString(src.Slug) {
-		errs = append(errs, fmt.Errorf("registries[%d].slug %q contains invalid characters", idx, src.Slug))
+		errs = append(errs, fmt.Errorf("registries[%d].slug %q must use only lowercase letters, digits and hyphens, starting and ending with a letter or digit", idx, src.Slug))
 	}
 	if strings.TrimSpace(src.Origin) == "" {
 		errs = append(errs, fmt.Errorf("registries[%d].origin is required", idx))
