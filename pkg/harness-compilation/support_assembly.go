@@ -109,9 +109,11 @@ func assembleResourceSupportArtifacts(srcFS fs.FS, resource ir.Resource, compile
 		}
 		seen[candidate.targetPath] = true
 		if !isCleanRelativePath(candidate.targetPath) {
-			if !candidate.strict {
-				continue
-			}
+			// An unclean candidate is unsafe regardless of strictness: it
+			// proves the published value can escape the bundle root at
+			// runtime, so it fails closed before any read. Only
+			// clean-but-missing or non-file best-effort candidates are
+			// skipped silently below.
 			diagnostics = append(diagnostics, supportFileDiagnostic(diag.CodeBundleSupportFileUnsafe, t, name, kind, candidate.sourcePath, "does not map to a clean target-relative path", resource))
 			continue
 		}
@@ -225,24 +227,36 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 				continue
 			}
 		}
-		rest := value
+		// Composite scan: find each token occurrence by cursor so the URL
+		// check can inspect the whitespace-delimited word that contains it.
+		// A :// inside that word marks the occurrence as part of a remote
+		// URL and only that occurrence is skipped; occurrences in later
+		// words are still genuine bundle candidates.
+		start := 0
 		for {
-			idx := strings.Index(rest, rootTokenPrefix)
+			idx := strings.Index(value[start:], rootTokenPrefix)
 			if idx < 0 {
 				break
 			}
-			if strings.Contains(rest[:idx], "://") {
-				// The token sits inside a URL: a remote reference, not a
-				// bundle asset.
-				break
+			idx += start
+			wordStart := strings.LastIndexAny(value[:idx], " \t\r\n") + 1
+			wordEnd := len(value)
+			if end := strings.IndexAny(value[idx:], " \t\r\n"); end >= 0 {
+				wordEnd = idx + end
 			}
-			rest = rest[idx+len(rootTokenPrefix):]
+			if strings.Contains(value[wordStart:wordEnd], "://") {
+				// The token sits inside a URL word: a remote reference,
+				// not a bundle asset. Skip only this occurrence.
+				start = idx + len(rootTokenPrefix)
+				continue
+			}
+			rest := value[idx+len(rootTokenPrefix):]
 			end := strings.IndexAny(rest, assetTerminators)
 			var rel string
 			if end < 0 {
-				rel, rest = rest, ""
+				rel, start = rest, len(value)
 			} else {
-				rel, rest = rest[:end], rest[end:]
+				rel, start = rest[:end], idx+len(rootTokenPrefix)+end
 			}
 			add(rel, false)
 		}

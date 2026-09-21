@@ -3,6 +3,7 @@ package harnesscompile
 import (
 	"bytes"
 	"io/fs"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -415,6 +416,74 @@ func TestConvertMissingMcpHeaderAssetFailsClosed(t *testing.T) {
 	if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileMissing) {
 		t.Errorf("missing %q diagnostic for absent header asset; codes: %v",
 			diag.CodeBundleSupportFileMissing, diagnosticCodes(result))
+	}
+}
+
+// A composite value whose earlier whitespace-delimited word contains :// must
+// not abort the scan: only token occurrences inside the URL word itself are
+// remote, and later genuine bundle references in the same value are still
+// assembled.
+func TestConvertCompositeURLWordDoesNotDropLaterReferences(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"env":{` +
+				`"DOCS":"see https://example.com/docs ${CLAUDE_PLUGIN_ROOT}/certs/ca.pem",` +
+				`"MIXED":"https://example.com/${CLAUDE_PLUGIN_ROOT}/tok ${CLAUDE_PLUGIN_ROOT}/config/.env"` +
+				`}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("PEM")},
+		"config/.env":  &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("url-then-real references produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{"certs/ca.pem", "config/.env"} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing referenced asset %s after URL word; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	if artifactByPath(result.Artifacts, "tok") != nil {
+		t.Errorf("URL-contained token occurrence was materialized as a bundle asset")
+	}
+}
+
+// An unclean composite candidate (traversal, absolute, or backslash path) is
+// not a merely-missing best-effort guess: it proves the published value can
+// escape the bundle root at runtime, so it must fail closed with
+// bundle.support-file.unsafe before any read.
+func TestConvertCompositeUnsafeCandidateFailsClosed(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+	}{
+		{"traversal", "${CLAUDE_PLUGIN_ROOT}/../escape.sh || true"},
+		{"absolute", "${CLAUDE_PLUGIN_ROOT}//etc/passwd || true"},
+		{"backslash", `${CLAUDE_PLUGIN_ROOT}/dir\evil.sh || true`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := fstest.MapFS{
+				"hooks/hooks.json": &fstest.MapFile{
+					Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` + strconv.Quote(tc.command) + `}]}}`),
+				},
+				"hooks/ok.sh": &fstest.MapFile{Data: []byte("x")},
+			}
+			result, err := Convert(src, HarnessClaude, HarnessClaude)
+			if err != nil {
+				t.Fatalf("Convert: %v", err)
+			}
+			if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileUnsafe) {
+				t.Errorf("composite unclean candidate %q did not emit %q; codes: %v",
+					tc.command, diag.CodeBundleSupportFileUnsafe, diagnosticCodes(result))
+			}
+		})
 	}
 }
 
