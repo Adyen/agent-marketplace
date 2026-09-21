@@ -104,8 +104,8 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = mi.(Model)
-	if cmd != nil {
-		t.Fatalf("leave should not emit a migration command")
+	if cmd == nil {
+		t.Fatalf("leave should schedule toast expiry")
 	}
 	if m.pane != paneList {
 		t.Fatalf("leave should close modal, got pane=%v", m.pane)
@@ -117,6 +117,16 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatalf("leave changed config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+
+	mi, _ = m.Update(snapshotLoadedMsg{
+		generation:       m.requests.active(requestSnapshot),
+		mergedCfg:        &config.Config{},
+		pendingMigration: m.migrationPrompt,
+	})
+	m = mi.(Model)
+	if m.pane == paneMigrationModal {
+		t.Fatal("migration modal reopened after the user left it")
 	}
 }
 

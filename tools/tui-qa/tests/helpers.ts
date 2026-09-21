@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { test } from "@microsoft/tui-test";
+import { expect, test } from "@microsoft/tui-test";
 
 type TestBody = Parameters<typeof test>[1];
 type TestOptions = Parameters<typeof test.use>[0];
@@ -208,6 +208,12 @@ export const createProcessFixture = (name: string): ProcessFixture => {
     fs.rmSync(root, { recursive: true, force: true });
     throw error;
   }
+};
+
+export const declineLegacyMigration = async (terminal: TestTerminal): Promise<void> => {
+  await expect(terminal.getByText("Configuration migration required", { strict: false })).toBeVisible();
+  await terminal.write("l");
+  await expect(terminal.getByText("Config left unchanged")).toBeVisible();
 };
 
 export const step = async (name: string, action: StepPart, assertion: StepPart): Promise<void> => {

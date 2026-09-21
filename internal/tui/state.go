@@ -269,6 +269,7 @@ type Model struct {
 	harnessModal                harnessModalState
 	initModal                   initModalState
 	migrationPrompt             migrationPrompt
+	migrationDismissed          bool
 	operations                  operationState
 
 	// pendingExcludeAction holds a toggleAction that needs to emit

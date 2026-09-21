@@ -270,7 +270,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading = false
 		m.applySnapshotStatus(msg)
-		if msg.pendingMigration.hasConfigs() {
+		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(msg)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
@@ -300,7 +300,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshing = false
 		m.applySnapshotStatus(msg.snapshotLoadedMsg)
-		if msg.pendingMigration.hasConfigs() {
+		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(msg.snapshotLoadedMsg)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
@@ -328,7 +328,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncing = false
 		m.refreshing = false
 		m.applySnapshotStatus(snapshot)
-		if snapshot.pendingMigration.hasConfigs() {
+		if snapshot.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(snapshot)
 			m.migrationPrompt = snapshot.pendingMigration
 			m.pane = paneMigrationModal
@@ -534,7 +534,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.snapshot.generation != 0 {
 			m.applySnapshotStatus(msg.snapshot)
 			m.applySnapshotData(msg.snapshot)
-			if msg.snapshot.pendingMigration.hasConfigs() {
+			if msg.snapshot.pendingMigration.hasConfigs() && !m.migrationDismissed {
 				m.migrationPrompt = msg.snapshot.pendingMigration
 				m.pane = paneMigrationModal
 				m.clearMarketplaceDiscovery(true)

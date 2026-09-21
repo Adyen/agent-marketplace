@@ -41,6 +41,19 @@ func waitForMarketplaceTUI(t *testing.T, output *synchronizedBuffer, condition f
 	t.Fatalf("timed out waiting for Marketplace TUI:\n%s", output.String())
 }
 
+func declineLegacyMigrationPrompt(t *testing.T, terminal io.Writer, output *synchronizedBuffer) {
+	t.Helper()
+	waitForMarketplaceTUI(t, output, func(value string) bool {
+		return strings.Contains(value, "Configuration migration required")
+	})
+	if _, err := terminal.Write([]byte("l")); err != nil {
+		t.Fatal(err)
+	}
+	waitForMarketplaceTUI(t, output, func(value string) bool {
+		return strings.Contains(value, "Config left unchanged")
+	})
+}
+
 func TestMarketplaceTUIDiscoversAndInstallsExactPin(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("TUI discovery install", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
@@ -58,6 +71,7 @@ func TestMarketplaceTUIDiscoversAndInstallsExactPin(t *testing.T) {
 	if _, err := terminal.Write([]byte("\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R")); err != nil {
 		t.Fatal(err)
 	}
+	declineLegacyMigrationPrompt(t, terminal, &output)
 	waitForMarketplaceTUI(t, &output, func(value string) bool {
 		return strings.Contains(value, "skill-one") && strings.Contains(value, "Available")
 	})
@@ -124,6 +138,7 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 	if _, err := terminal.Write([]byte("\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R")); err != nil {
 		t.Fatal(err)
 	}
+	declineLegacyMigrationPrompt(t, terminal, &output)
 	waitForMarketplaceTUI(t, &output, func(value string) bool { return strings.Contains(value, "skill-one") })
 	for _, key := range []byte("jjj ") {
 		if _, err := terminal.Write([]byte{key}); err != nil {
