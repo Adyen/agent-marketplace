@@ -39,7 +39,7 @@ registries:
 `)
 
 	result := Resolve(context.Background(), ResolveOptions{
-		RepoRoot:    dir,
+		Workspace:   mustWorkspace(t, dir),
 		CatalogMode: catalog.LoadModeInspect,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
@@ -80,7 +80,7 @@ registries:
 	writeFile(t, filepath.Join(dir, "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: organization\n")
 
 	result := Resolve(context.Background(), ResolveOptions{
-		RepoRoot:    dir,
+		Workspace:   mustWorkspace(t, dir),
 		CatalogMode: catalog.LoadModeInspect,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
@@ -123,8 +123,8 @@ registries: []
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: dir,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, dir),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
@@ -156,8 +156,8 @@ registries: []
 	concurrent := errors.New("exact lock changed concurrently")
 	called := false
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: dir,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, dir),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
@@ -202,8 +202,8 @@ registries:
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: filepath.Join(t.TempDir(), "missing-org.yaml"),
 			GlobalPath:       globalPath,
@@ -256,8 +256,8 @@ registries:
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),
@@ -311,8 +311,8 @@ registries:
 
 		repoRoot := t.TempDir()
 		result := Sync(context.Background(), ResolveOptions{
-			RepoRoot: repoRoot,
-			NoBackup: true,
+			Workspace: mustWorkspace(t, repoRoot),
+			NoBackup:  true,
 			EffectiveOpts: config.LoadEffectiveOptions{
 				OrganizationPath: orgPath,
 				GlobalPath:       userPath,
@@ -343,8 +343,8 @@ registries:
 `)
 
 		result := Sync(context.Background(), ResolveOptions{
-			RepoRoot: repoRoot,
-			NoBackup: true,
+			Workspace: mustWorkspace(t, repoRoot),
+			NoBackup:  true,
 			EffectiveOpts: config.LoadEffectiveOptions{
 				OrganizationPath: orgPath,
 				GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),

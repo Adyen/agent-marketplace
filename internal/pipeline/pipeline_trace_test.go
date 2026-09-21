@@ -142,7 +142,7 @@ func TestResolveEmitsLifecycleSpans(t *testing.T) {
 
 	repoRoot := t.TempDir()
 	_ = Resolve(ctx, ResolveOptions{
-		RepoRoot: repoRoot,
+		Workspace: mustWorkspace(t, repoRoot),
 		Loaders: Loaders{
 			Org:    func() (*amconfig.Config, error) { return nil, nil },
 			Global: func() (*amconfig.Config, error) { return nil, nil },

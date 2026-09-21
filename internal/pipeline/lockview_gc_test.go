@@ -53,7 +53,7 @@ func TestSyncExactLeaseBlocksGCThroughDiscoveryAndMaterialization(t *testing.T) 
 			})
 			repoCfg := &config.Config{Registries: []config.RegistryEntry{{URL: canonical, Ref: "HEAD", SourceHarness: "factory", Skills: config.KindSelector{Include: []string{"keeper"}}}}}
 			opts := ResolveOptions{
-				RepoRoot:      repoRoot,
+				Workspace:     mustWorkspace(t, repoRoot),
 				NoBackup:      true,
 				CatalogOption: []catalog.LoadOption{exactOption},
 				Loaders: Loaders{

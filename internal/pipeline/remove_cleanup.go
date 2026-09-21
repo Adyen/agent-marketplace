@@ -63,7 +63,12 @@ func prepareBlockedOwnedRemoval(ctx context.Context, opts RemoveOptions, ec conf
 			return nil, fmt.Errorf("blocked resource cleanup requires exact registry input: %w", err)
 		}
 	}
-	result := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, CatalogMode: catalog.LoadModeInspect, Offline: true, IgnoreBlockedRegistries: true, SkipInventory: true, CatalogOption: []catalog.LoadOption{view.catalogOption}})
+	ws, err := NewWorkspace(opts.RepoRoot, "")
+	if err != nil {
+		view.release()
+		return nil, err
+	}
+	result := Resolve(ctx, ResolveOptions{Workspace: ws, CatalogMode: catalog.LoadModeInspect, Offline: true, IgnoreBlockedRegistries: true, SkipInventory: true, CatalogOption: []catalog.LoadOption{view.catalogOption}})
 	if len(result.Errors) > 0 {
 		view.release()
 		return nil, errors.Join(result.Errors...)
@@ -107,7 +112,11 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	if err != nil {
 		return err
 	}
-	after := Resolve(p.ctx, ResolveOptions{RepoRoot: opts.RepoRoot, CatalogMode: catalog.LoadModeInspect, Offline: true, IgnoreBlockedRegistries: true, SkipInventory: true, CatalogOption: []catalog.LoadOption{p.option}, EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, FileOverlays: overlays}})
+	ws, err := NewWorkspace(opts.RepoRoot, "")
+	if err != nil {
+		return err
+	}
+	after := Resolve(p.ctx, ResolveOptions{Workspace: ws, CatalogMode: catalog.LoadModeInspect, Offline: true, IgnoreBlockedRegistries: true, SkipInventory: true, CatalogOption: []catalog.LoadOption{p.option}, EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, FileOverlays: overlays}})
 	if len(after.Errors) > 0 {
 		return errors.Join(after.Errors...)
 	}

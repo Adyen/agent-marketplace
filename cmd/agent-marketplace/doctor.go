@@ -112,7 +112,10 @@ func runDoctor(opts doctorOptions) error {
 	}
 	if opts.resolve == nil {
 		opts.resolve = func(ctx context.Context, repoRoot string) []resolver.ResolvedArtifact {
-			return pipeline.Resolve(ctx, pipeline.ResolveOptions{RepoRoot: repoRoot}).Resolved
+			// A failed construction yields the zero Workspace, which Resolve
+			// rejects through ResolveResult.Errors like any other load failure.
+			ws, _ := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+			return pipeline.Resolve(ctx, pipeline.ResolveOptions{Workspace: ws}).Resolved
 		}
 	}
 	out := opts.out
@@ -299,8 +302,12 @@ func writeDoctorDevinSection(out io.Writer, opts doctorOptions, ec config.Effect
 
 func writeDoctorRequirementWarnings(out io.Writer, ctx context.Context, repoRoot string) error {
 	slog.Debug("doctor prerequisite resolve start")
+	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return err
+	}
 	resolved, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		RepoRoot:           repoRoot,
+		Workspace:          ws,
 		CatalogMode:        catalog.LoadModeInspect,
 		ReadOnlyExactLocks: true,
 	})

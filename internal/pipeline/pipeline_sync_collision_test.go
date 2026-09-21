@@ -37,8 +37,8 @@ func TestSync_DemotesResolverNameCollisionToWarning(t *testing.T) {
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"factory"}}, nil },

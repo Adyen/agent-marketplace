@@ -110,8 +110,12 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	}
 	repoRoot := config.FindRepoRoot()
 
+	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return err
+	}
 	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		RepoRoot:           repoRoot,
+		Workspace:          ws,
 		CatalogMode:        catalog.LoadModeInspect,
 		ReadOnlyExactLocks: true,
 	})

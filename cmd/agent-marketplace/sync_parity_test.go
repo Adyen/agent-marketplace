@@ -55,7 +55,7 @@ func TestSyncCLIAndTUIParity(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				result, release := pipeline.ResolveWithExactLockLease(context.Background(), pipeline.ResolveOptions{RepoRoot: repo, ReadOnlyExactLocks: true})
+				result, release := pipeline.ResolveWithExactLockLease(context.Background(), pipeline.ResolveOptions{Workspace: mustWorkspace(t, repo), ReadOnlyExactLocks: true})
 				report, err := materialize.Run(context.Background(), repo, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(result.MaterializationModes))
 				release()
 				if err != nil || len(result.Errors) != 0 {
