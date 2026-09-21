@@ -63,7 +63,7 @@ func prepareBlockedOwnedRemoval(ctx context.Context, opts RemoveOptions, ec conf
 			return nil, fmt.Errorf("blocked resource cleanup requires exact registry input: %w", err)
 		}
 	}
-	ws, err := NewWorkspace(opts.RepoRoot, "")
+	ws, err := workspaceForRoots(opts.RepoRoot, "")
 	if err != nil {
 		view.release()
 		return nil, err
@@ -112,7 +112,7 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	if err != nil {
 		return err
 	}
-	ws, err := NewWorkspace(opts.RepoRoot, "")
+	ws, err := workspaceForRoots(opts.RepoRoot, "")
 	if err != nil {
 		return err
 	}

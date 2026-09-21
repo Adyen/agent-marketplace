@@ -738,7 +738,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 	if overlays != nil {
 		marketplaceMode = marketplaceInstallResolveMode(plan, ec.Merged)
 	}
-	ws, err := NewWorkspace(opts.RepoRoot, opts.LocalConfigDir)
+	ws, err := workspaceForRoots(opts.RepoRoot, opts.LocalConfigDir)
 	if err != nil {
 		return err
 	}
