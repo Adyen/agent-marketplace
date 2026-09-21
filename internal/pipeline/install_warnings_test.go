@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -11,7 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func TestFilterRequirementWarnings(t *testing.T) {
+func TestFilterInstallWarnings(t *testing.T) {
 	t.Parallel()
 
 	warnings := []error{
@@ -33,17 +35,17 @@ func TestFilterRequirementWarnings(t *testing.T) {
 		errors.New("unrelated warning"),
 	}
 
-	filtered := filterRequirementWarnings(warnings, []resourceIdentity{{kind: ir.KindSkill, name: "installed-skill"}})
+	filtered := filterInstallWarnings(warnings, []resourceIdentity{{kind: ir.KindSkill, name: "installed-skill"}})
 	if len(filtered) != 1 {
-		t.Fatalf("filterRequirementWarnings() returned %d warnings, want 1", len(filtered))
+		t.Fatalf("filterInstallWarnings() returned %d warnings, want 1", len(filtered))
 	}
 	if !errors.Is(filtered[0], warnings[0]) {
-		t.Fatalf("filterRequirementWarnings() returned %v, want %v", filtered[0], warnings[0])
+		t.Fatalf("filterInstallWarnings() returned %v, want %v", filtered[0], warnings[0])
 	}
 
-	all := filterRequirementWarnings(warnings, nil)
+	all := filterInstallWarnings(warnings, nil)
 	if len(all) != 3 {
-		t.Fatalf("filterRequirementWarnings(nil installed) returned %d warnings, want 3", len(all))
+		t.Fatalf("filterInstallWarnings(nil installed) returned %d warnings, want 3", len(all))
 	}
 }
 
@@ -73,6 +75,8 @@ func TestExpandInstalledCollectionResourcesKeepsMemberWarnings(t *testing.T) {
 			ResourceName: "member-command",
 			Requirement:  catalog.Requirement{Kind: ir.KindSkill, Name: "required-skill"},
 		},
+		&resolver.NameCollisionWarning{Kind: ir.KindSkill, Name: "member-skill", Winner: "winner", RunnersUp: []string{"other"}},
+		&resolver.NameCollisionWarning{Kind: ir.KindCommand, Name: "member-command", Winner: "winner", RunnersUp: []string{"other"}},
 	}
 
 	tests := []struct {
@@ -122,9 +126,44 @@ func TestExpandInstalledCollectionResourcesKeepsMemberWarnings(t *testing.T) {
 				}
 			}
 
-			filtered := filterRequirementWarnings(warnings, expanded)
+			filtered := filterInstallWarnings(warnings, expanded)
 			if len(filtered) != len(warnings) {
-				t.Fatalf("filterRequirementWarnings() returned %d member warnings, want %d", len(filtered), len(warnings))
+				t.Fatalf("filterInstallWarnings() returned %d member warnings, want %d", len(filtered), len(warnings))
+			}
+		})
+	}
+}
+
+func TestFilterInstallCollisionWarnings(t *testing.T) {
+	t.Parallel()
+	requirement := &resolver.UnmetRequirementWarning{ResourceKind: ir.KindSkill, ResourceName: "review", Requirement: catalog.Requirement{Kind: ir.KindMcpServer, Name: "dependency"}}
+	collision := &resolver.NameCollisionWarning{Kind: ir.KindSkill, Name: " review ", Winner: "winner", RunnersUp: []string{"other"}}
+	var nilCollision *resolver.NameCollisionWarning
+	var nilRequirement *resolver.UnmetRequirementWarning
+	warnings := []error{requirement, fmt.Errorf("wrapped: %w", collision), &resolver.NameCollisionWarning{Kind: ir.KindCommand, Name: "review"}, &resolver.NameCollisionWarning{Kind: ir.KindSkill, Name: "elsewhere"}, errors.New("unrelated"), nil, nilCollision, nilRequirement}
+	original := append([]error(nil), warnings...)
+	for _, tc := range []struct {
+		name      string
+		installed []resourceIdentity
+		want      []int
+	}{
+		{"skill", []resourceIdentity{{kind: ir.KindSkill, name: " review "}}, []int{0, 1}},
+		{"command", []resourceIdentity{{kind: ir.KindCommand, name: "review"}}, []int{2}},
+		{"nil scope", nil, []int{0, 1, 2, 3}},
+		{"empty scope", []resourceIdentity{}, []int{0, 1, 2, 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterInstallWarnings(warnings, tc.installed)
+			if len(got) != len(tc.want) {
+				t.Fatalf("kept %d warnings want %d", len(got), len(tc.want))
+			}
+			for i, index := range tc.want {
+				if got[i] != warnings[index] {
+					t.Fatalf("warning %d identity/order changed", i)
+				}
+			}
+			if !reflect.DeepEqual(warnings, original) {
+				t.Fatal("filter mutated warning input")
 			}
 		})
 	}
