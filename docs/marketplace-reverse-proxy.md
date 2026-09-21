@@ -1,6 +1,6 @@
 # Marketplace reverse proxy
 
-The Go API and Nuxt application are separate HTTP services. Keep them on a private container network and publish only the reverse proxy. The proxy must terminate TLS and enforce the deployment's authentication and authorization policy; the application itself has no auth layer.
+The Go API and Nuxt application are separate HTTP services. Keep them on a private container network and publish only the reverse proxy. The proxy must terminate TLS and enforce the deployment's authentication and authorization policy. The application itself has no auth layer except for the optional admin surface, which supports native OIDC sign-in (`admin.authentication.mode: oidc`) or trusted-proxy identity assertion.
 
 ## Routing contract
 

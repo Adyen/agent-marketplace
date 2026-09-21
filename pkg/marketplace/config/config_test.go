@@ -38,6 +38,22 @@ func TestLoadConfigValid(t *testing.T) {
 	}
 }
 
+func TestLoadConfigIsolatesInvalidAdministration(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, validConfigYAML()+`admin:
+  enabled: true
+  origin: https://marketplace.test
+  admin_groups: [marketplace-admins]
+  authentication:
+    mode: oidc
+`))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Admin.Validate() == nil || cfg.Validate() == nil {
+		t.Fatal("invalid administration configuration became valid")
+	}
+}
+
 func TestLoadConfigDefaults(t *testing.T) {
 	path := writeConfig(t, minimalConfigYAML())
 	cfg, err := LoadConfig(path)

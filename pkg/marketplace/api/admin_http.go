@@ -27,13 +27,34 @@ func (s *Server) adminHandler() http.Handler {
 			writeAdminError(w, http.StatusNotFound, "not_found", "Administration is not enabled.")
 		})
 	}
-	guard, err := newAdminGuard(s.cfg.Admin, http.HandlerFunc(s.handleAdmin))
-	if err != nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			writeAdminError(w, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.")
-		})
+	unavailable := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeAdminError(w, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.")
+	})
+	var oidc *adminOIDCAuthenticator
+	if s.cfg.Admin.AuthMode() == config.AdminAuthOIDC {
+		var err error
+		if oidc, err = newAdminOIDCAuthenticator(s.cfg.Admin); err != nil {
+			return unavailable
+		}
 	}
-	return guard
+	mux := http.NewServeMux()
+	if oidc != nil {
+		mux.Handle("GET "+adminAuthBase+"/login", http.HandlerFunc(oidc.handleLogin))
+		mux.Handle("GET "+adminAuthBase+"/callback", http.HandlerFunc(oidc.handleCallback))
+		mux.Handle("POST "+adminAuthBase+"/logout", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			adminAuthHeaders(w)
+			if !adminRequestProtections(w, r, s.cfg.Admin) {
+				return
+			}
+			oidc.handleLogout(w, r)
+		}))
+	}
+	guard, err := newAdminGuardMode(s.cfg.Admin, oidc, http.HandlerFunc(s.handleAdmin))
+	if err != nil {
+		return unavailable
+	}
+	mux.Handle("/api/v1/admin/", guard)
+	return mux
 }
 
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
@@ -105,9 +126,11 @@ func (s *Server) handleAdminRead(w http.ResponseWriter, r *http.Request, service
 	case "session":
 		actor, _ := adminActor(r.Context())
 		writeAdminJSON(w, r, http.StatusOK, struct {
-			Actor        store.ManagedActor `json:"actor"`
-			Capabilities []string           `json:"capabilities"`
-		}{actor, []string{"configuration", "lifecycle", "activity"}})
+			Actor              store.ManagedActor `json:"actor"`
+			Display            string             `json:"display,omitempty"`
+			AuthenticationMode string             `json:"authentication_mode"`
+			Capabilities       []string           `json:"capabilities"`
+		}{actor, adminDisplay(r.Context()), s.cfg.Admin.AuthMode(), []string{"configuration", "lifecycle", "activity"}})
 	case "configuration":
 		w.Header().Set("ETag", fmt.Sprintf(`"%d"`, view.Revision))
 		writeAdminJSON(w, r, http.StatusOK, view)
