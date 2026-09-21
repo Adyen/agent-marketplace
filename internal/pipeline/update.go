@@ -206,7 +206,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 	}
 
-	ws, err := NewWorkspace(repoRoot, opts.LocalConfigDir)
+	ws, err := workspaceForRoots(repoRoot, opts.LocalConfigDir)
 	if err != nil {
 		return nil, err
 	}

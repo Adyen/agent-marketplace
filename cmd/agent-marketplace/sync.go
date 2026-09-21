@@ -85,6 +85,14 @@ type lockRunOptions struct {
 
 var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as warnings; select the prerequisite resources or run without --strict")
 
+// discoverSyncWorkspace is the single Workspace discovery point for sync and
+// sync-check. It runs before lock preparation so one validated value carries
+// the repository, local-config, and materialization roots through locks,
+// effective config, stale-selection inspection, dry-run materialization, and
+// real materialization. It is a package var so tests can observe ordering and
+// reuse.
+var discoverSyncWorkspace = pipeline.DiscoverWorkspace
+
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
@@ -97,8 +105,12 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 	}
 
-	repoRoot := config.FindRepoRoot()
-	localDir := config.FindLocalConfigDir()
+	ws, err := discoverSyncWorkspace()
+	if err != nil {
+		return err
+	}
+	repoRoot := ws.RepoRoot()
+	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
 	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: locked || offline, offline: offline, warningSink: &lockWarnings, marketplacePolicy: marketplacePolicy})
 	if err != nil {
@@ -116,10 +128,6 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 				return errors.Join(err, outputErr)
 			}
 		}
-		return err
-	}
-	ws, err := pipeline.NewWorkspace(repoRoot, localDir)
-	if err != nil {
 		return err
 	}
 	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
@@ -414,9 +422,13 @@ func printRemediations(out io.Writer, issues []error) error {
 }
 
 func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bool) error {
-	repoRoot := config.FindRepoRoot()
 	isOffline := len(offline) > 0 && offline[0]
-	localDir := config.FindLocalConfigDir()
+	ws, err := discoverSyncWorkspace()
+	if err != nil {
+		return err
+	}
+	repoRoot := ws.RepoRoot()
+	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
 	configLoadMode := pipeline.ConfigLoadStrict
 	if !isOffline {
@@ -440,10 +452,6 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	defer releaseExactLocks()
 	ctx = cache.ContextWithExactGitNamespaceLease(ctx)
 
-	ws, err := pipeline.NewWorkspace(repoRoot, localDir)
-	if err != nil {
-		return err
-	}
 	resolveOpts := pipeline.ResolveOptions{
 		Workspace: ws, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
