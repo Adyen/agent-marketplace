@@ -91,7 +91,7 @@ const CanonicalRootToken = "${CLAUDE_PLUGIN_ROOT}"
 
 // NormalizeMcpServerRootToken rewrites a harness-native plugin-root token to
 // the canonical IR spelling across the server's command, args, env values,
-// URL, and header values — the same root-reference normalization that hook
+// URL, and header values, the same root-reference normalization that hook
 // ingestion already applies to hook commands.
 func NormalizeMcpServerRootToken(server *ir.McpServer, nativeToken string) {
 	replacer := strings.NewReplacer(nativeToken, CanonicalRootToken)

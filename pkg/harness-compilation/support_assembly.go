@@ -47,7 +47,7 @@ func assembleResourceSupportArtifacts(srcFS fs.FS, resource ir.Resource, compile
 		if !ok || len(skill.SupportFiles) == 0 {
 			return nil, nil
 		}
-		root, found := skillSupportTargetRoot(skill, compiled)
+		root, found := skillSupportTargetRoot(compiled)
 		if !found {
 			// No compiled skill root to anchor support files under; the
 			// deferred-bytes diagnostic already reported for this resource
@@ -152,7 +152,7 @@ func skillSourceDir(skill *ir.Skill) string {
 // skillSupportTargetRoot locates the compiled resource root for a skill by
 // finding the SKILL.md artifact the target emitted. Returning false means the
 // target emitted no skill file to anchor support files under.
-func skillSupportTargetRoot(skill *ir.Skill, compiled []Artifact) (string, bool) {
+func skillSupportTargetRoot(compiled []Artifact) (string, bool) {
 	for _, a := range compiled {
 		if a.Fragment {
 			continue
