@@ -187,7 +187,7 @@ func TestServerRoutes(t *testing.T) {
 		}
 	}
 
-	server := NewServer(cfg, meta, blobs)
+	server := NewServer(cfg, meta, blobs, WithVersion("v4.0.0-test"))
 	public := httptest.NewServer(server.PublicHandler())
 	defer public.Close()
 	ops := httptest.NewServer(server.OpsHandler())
@@ -201,6 +201,9 @@ func TestServerRoutes(t *testing.T) {
 	}
 	if !strings.Contains(body, `"instance_id":"mp-test"`) {
 		t.Fatalf("well-known missing instance_id: %s", body)
+	}
+	if !strings.Contains(body, `"version":"v4.0.0-test"`) {
+		t.Fatalf("well-known missing running version: %s", body)
 	}
 
 	// /api/v1/capabilities
@@ -221,6 +224,9 @@ func TestServerRoutes(t *testing.T) {
 	}
 	if !strings.Contains(body, `"canonical_url":"https://example.com"`) {
 		t.Fatalf("instance missing canonical_url: %s", body)
+	}
+	if !strings.Contains(body, `"version":"v4.0.0-test"`) {
+		t.Fatalf("instance missing running version: %s", body)
 	}
 
 	// /api/v1/search

@@ -388,7 +388,7 @@ useHead({
     <footer class="marketplace-footer">
       <div>
         <a :href="DOCS_PATH">Docs</a>
-        <p>built at Adyen</p>
+        <p><span v-if="metadata">Version {{ metadata.version }} · </span>built at Adyen</p>
       </div>
     </footer>
   </div>

@@ -91,6 +91,16 @@ async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
 }
 
 test.describe('Marketplace browser discovery', () => {
+  test('shows the running Marketplace version in the footer', async ({ page }) => {
+    const instanceRequests: string[] = []
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/v1/instance') instanceRequests.push(request.url())
+    })
+    await page.goto('/')
+    await expect(page.locator('footer')).toContainText('Version v4.0.0-e2e')
+    expect(instanceRequests).toEqual([])
+  })
+
   test('streams additional search results while scrolling', async ({ page }) => {
     const offsets = await routeStreamingSearch(page)
     await page.goto('/')
