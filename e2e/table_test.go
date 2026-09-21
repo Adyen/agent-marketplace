@@ -593,6 +593,25 @@ registries:
 
 	// ===== collision =====
 	{
+		Name: "install/collision_warning_scoped",
+		Desc: "Given two selected registries with skill and command collisions, When installing one skill, Then its collision is reported without unrelated warnings and the existing winner is installed",
+		Registries: []RegistryDef{
+			{Name: "registry-a", Skills: []Skill{{Name: "deploy", Description: "Deploy from registry A"}, {Name: "other", Description: "Other from registry A"}}, Commands: []Command{{Name: "deploy", Description: "Command from registry A", Command: "echo COMMAND A"}}},
+			{Name: "registry-b", Skills: []Skill{{Name: "deploy", Description: "Deploy from registry B"}, {Name: "other", Description: "Other from registry B"}}, Commands: []Command{{Name: "deploy", Description: "Command from registry B", Command: "echo COMMAND B"}}},
+		},
+		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
+		RepoCfg:   "registries:\n  - url: {{REG:registry-a}}\n    ref: main\n    default: true\n  - url: {{REG:registry-b}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"install", "deploy", "--kind", "skill", "--from", "{{REG:registry-a}}", "--ref", "main", "--scope", "repo"}, MustPass: true,
+				OutContains:    []string{`skill "deploy" is provided by multiple registries`, "registry-a", "registry-b", "agent-marketplace remove", "--from"},
+				OutNotContains: []string{`skill "other" is provided by multiple registries`, `command "deploy" is provided by multiple registries`},
+				FileContains:   map[string]string{"/workspace/.factory/skills/deploy/SKILL.md": "Deploy from registry A"}},
+			{Args: []string{"sync"}, MustPass: true,
+				OutContains:  []string{`skill "deploy"`, `skill "other"`, `command "deploy"`, "multiple registries"},
+				FileContains: map[string]string{"/workspace/.factory/skills/deploy/SKILL.md": "Deploy from registry A"}},
+		},
+	},
+	{
 		Name: "collision/same_name_different_registries",
 		Desc: "Given two registries each providing a skill named 'deploy', When sync is run, Then a collision warning is emitted but sync succeeds with the skill materialized from the first registry",
 		Registries: []RegistryDef{

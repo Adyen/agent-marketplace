@@ -102,6 +102,9 @@ func TestMarketplaceInstallChecksReconciledCollision(t *testing.T) {
 				if result.ExitCode != 0 {
 					t.Fatalf("locked noncollision refused: %s", result.Combined)
 				}
+				if tc.safeUser && !strings.Contains(result.Combined, `skill "skill-one" is provided by multiple registries`) {
+					t.Fatalf("successful Marketplace install hid its collision warning: %s", result.Combined)
+				}
 				consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "APPROVED MARKETPLACE BODY")
 				if tc.retainLock {
 					if got, err := os.ReadFile(lockPath); err != nil || string(got) != string(lockBytes) {
