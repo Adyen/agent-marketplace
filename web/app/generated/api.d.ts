@@ -987,6 +987,8 @@ export interface components {
                 [key: string]: unknown;
             };
             name: string;
+            /** @description Resolved version of the running Marketplace server binary. */
+            version: string;
         };
         /** @description Public publisher metadata; unsafe legacy URLs are omitted. */
         Publisher: {

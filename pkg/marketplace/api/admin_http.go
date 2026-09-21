@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -176,17 +175,13 @@ func (s *Server) handleAdminRead(w http.ResponseWriter, r *http.Request, service
 			SourceHarnesses []string  `json:"source_harnesses"`
 		}{profiles, config.SourceHarnesses()})
 	case "instance":
-		version := "unknown"
-		if info, ok := debug.ReadBuildInfo(); ok {
-			version = info.Main.Version
-		}
 		writeAdminJSON(w, r, http.StatusOK, struct {
 			Name           string `json:"name"`
 			Version        string `json:"version"`
 			ManagementMode string `json:"management_mode"`
 			Revision       int64  `json:"revision"`
 			WorkerStatus   string `json:"worker_status"`
-		}{s.cfg.Instance.Name, version, s.cfg.Management.Mode, view.Revision, "Worker heartbeat is not available; inspect job activity."})
+		}{s.cfg.Instance.Name, s.version, s.cfg.Management.Mode, view.Revision, "Worker heartbeat is not available; inspect job activity."})
 	default:
 		if id, ok := strings.CutPrefix(route, "previews/"); ok && !strings.Contains(id, "/") {
 			preview, err := service.GetPreview(r.Context(), s.mpID, id)

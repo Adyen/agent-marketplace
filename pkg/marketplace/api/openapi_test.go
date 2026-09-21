@@ -88,6 +88,17 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	}
 }
 
+func TestOpenAPIMarketplaceRequiresRunningVersion(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	marketplace := schemas["Marketplace"].(map[string]any)
+	assertSchemaRequiredFields(t, "Marketplace", marketplace, []string{"id", "name", "canonical_url", "version"})
+	version := marketplace["properties"].(map[string]any)["version"].(map[string]any)
+	if version["type"] != "string" || version["description"] == nil {
+		t.Fatalf("Marketplace.version = %#v, want documented string", version)
+	}
+}
+
 func TestOpenAPICatalogProjectionContract(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths := doc["paths"].(map[string]any)

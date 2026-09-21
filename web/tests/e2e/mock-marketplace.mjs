@@ -136,7 +136,7 @@ const server = createServer((request, response) => {
   const parts = url.pathname.split('/').filter(Boolean).map(decodeSegment)
   if (url.pathname === '/.well-known/agent-marketplace.json') return sendJson(response, 200, wellKnown)
   if (parts.join('/') === 'api/v1/search') return sendJson(response, 200, search(url))
-  if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: appOrigin })
+  if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: appOrigin, version: 'v4.0.0-e2e' })
   if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, [
     { id: registry.id, slug: registry.slug },
     { id: 'community-tools', slug: 'community-tools' },

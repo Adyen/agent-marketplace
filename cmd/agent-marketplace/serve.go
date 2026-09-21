@@ -26,7 +26,7 @@ func newServeCmd() *cobra.Command {
 metadata and blob stores, and runs the requested server role(s). Supported roles
 are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			slog.Info("serve starting", "role", role, "config", cfgPath)
+			slog.Info("serve starting", "role", role, "config", cfgPath, "version", version)
 			if cfgPath == "" {
 				slog.Error("serve failed", "reason", "--config is required")
 				return fmt.Errorf("--config is required")
@@ -87,7 +87,7 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					server := mpapi.NewServer(cfg, meta, blobs)
+					server := mpapi.NewServer(cfg, meta, blobs, mpapi.WithVersion(version))
 					if err := server.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 						slog.Error("api server stopped", "error", err)
 						errCh <- fmt.Errorf("api server: %w", err)

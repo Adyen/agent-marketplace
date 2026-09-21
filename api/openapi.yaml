@@ -1306,11 +1306,15 @@ components:
         - id
         - name
         - canonical_url
+        - version
       properties:
         id:
           type: string
         name:
           type: string
+        version:
+          type: string
+          description: Resolved version of the running Marketplace server binary.
         canonical_url:
           type: string
           format: uri

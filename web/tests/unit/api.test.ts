@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { apiPath, createMarketplaceApi, devApiProxyTargets, isRasterMediaType, isResourceKind, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, selectMarketplacePublicApiBase, serializeSearchQuery, registryHistoryPath, registryPath, wellKnownPath } from '../../app/lib/api'
 import { RESOURCE_KINDS } from '../../app/types/marketplace'
-import { ApiValidationError, MAX_ASSESSMENT_FINDINGS, MAX_RESOURCE_REVISION_ENTRIES, MAX_REGISTRY_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '../../app/lib/validation'
+import { ApiValidationError, MAX_ASSESSMENT_FINDINGS, MAX_RESOURCE_REVISION_ENTRIES, MAX_REGISTRY_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
 function revisionPayload(contentDigest: string, overrides: Record<string, unknown> = {}) {
@@ -27,6 +27,11 @@ const params: SearchParams = {
 }
 
 describe('Marketplace API URL handling', () => {
+  it('requires the running version in Marketplace instance metadata', () => {
+    expect(normalizeMarketplace({ id: 'market', name: 'Marketplace', canonical_url: 'https://market.example', version: 'v4.0.0' })).toMatchObject({ version: 'v4.0.0' })
+    expect(() => normalizeMarketplace({ id: 'market', name: 'Marketplace', canonical_url: 'https://market.example' })).toThrow(/version/)
+  })
+
   it('validates the canonical resource kinds', () => {
     for (const kind of RESOURCE_KINDS) expect(isResourceKind(kind)).toBe(true)
     expect(isResourceKind('mcp')).toBe(false)

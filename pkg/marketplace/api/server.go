@@ -35,10 +35,22 @@ import (
 const MaxRegistryHistoryEntries = store.MaxRegistryHistoryEntries
 const maxRegistrySummaries = 1000
 const blobProbeTimeout = 2 * time.Second
+const defaultServerVersion = "dev"
+
+type ServerOption func(*Server)
+
+func WithVersion(version string) ServerOption {
+	return func(server *Server) {
+		if version = strings.TrimSpace(version); version != "" {
+			server.version = version
+		}
+	}
+}
 
 // Server serves the Marketplace HTTP API and operations endpoints.
 type Server struct {
 	cfg           config.Config
+	version       string
 	meta          store.MetadataStore
 	blobs         store.BlobStore
 	mpID          store.MarketplaceID
@@ -58,15 +70,19 @@ func (s *Server) OpsHandler() http.Handler { return s.ops.Handler }
 
 // NewServer creates an API server for the given Marketplace configuration and
 // stores. It does not start listeners; call Start.
-func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStore) *Server {
+func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStore, options ...ServerOption) *Server {
 	evaluator, evaluatorErr := revocation.New(cfg)
 	s := &Server{
 		cfg:           cfg,
+		version:       defaultServerVersion,
 		meta:          meta,
 		blobs:         blobs,
 		mpID:          store.MarketplaceID(cfg.Instance.ID),
 		revocations:   evaluator,
 		revocationErr: evaluatorErr,
+	}
+	for _, option := range options {
+		option(s)
 	}
 
 	s.metrics = newServerMetrics()
@@ -627,7 +643,10 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load marketplace")
 		return
 	}
-	writeJSON(w, http.StatusOK, mp)
+	writeJSON(w, http.StatusOK, struct {
+		store.Marketplace
+		Version string `json:"version"`
+	}{Marketplace: mp, Version: s.version})
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {

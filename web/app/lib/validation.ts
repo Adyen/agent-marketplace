@@ -66,6 +66,7 @@ export function normalizeMarketplace(input: unknown): Marketplace {
   return {
     id: requiredString(object.id, 'id'),
     name: requiredString(object.name, 'name'),
+    version: requiredString(object.version, 'version'),
     canonical_url: requiredString(object.canonical_url, 'canonical_url'),
     ...(object.instance_metadata === undefined ? {} : { instance_metadata: boundedUnknownRecord(object.instance_metadata, 'instance_metadata') }),
   }
