@@ -51,6 +51,8 @@ type MarketplaceInstallSummary struct {
 	Capabilities []string
 }
 
+var ErrMarketplaceInstallCollision = errors.New("marketplace.install-collision")
+
 type PreparedMarketplaceInstall struct {
 	options             InstallOptions
 	configPath          string
@@ -361,7 +363,8 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	pins := marketplaceInstallPins(prepared.plan)
 	identities := marketplaceInstallIdentities(prepared.plan)
 	requirementWarnings, err := ensureMarketplacePinsAndSync(prepared.configPath, commitEntry, pins, func() ([]error, error) {
-		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, silentSyncOptsForInstall(prepared.options)...)
+		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan))
+		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
 	})
 	if err != nil {
 		return nil, err
@@ -602,7 +605,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 			key := kind + "\x00" + marketplaceInstalledName(member.Pin)
 			if previous, ok := seen[key]; ok {
 				if !sameMarketplacePlanIdentity(previous, member) {
-					return fmt.Errorf("collection leaves collide on %s installed name %q", kind, marketplaceInstalledName(member.Pin))
+					return fmt.Errorf("%w: collection leaves collide on %s installed name %q", ErrMarketplaceInstallCollision, kind, marketplaceInstalledName(member.Pin))
 				}
 				continue
 			}
@@ -623,7 +626,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 				if sameMarketplacePinIdentity(entry.URL, entry.InstanceID, pin, plan) {
 					continue
 				}
-				return fmt.Errorf("marketplace %s %q collides with installed name %q", pin.Kind, pin.Name, installed)
+				return fmt.Errorf("%w: marketplace %s %q collides with installed name %q", ErrMarketplaceInstallCollision, pin.Kind, pin.Name, installed)
 			}
 		}
 	}
@@ -642,6 +645,14 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 }
 
 func checkResolvedMarketplaceInstallCollision(resolved []resolver.ResolvedArtifact, plan *marketplace.PreparedInstall) error {
+	if len(plan.CollectionMembers) > 0 {
+		for _, member := range plan.CollectionMembers {
+			if err := checkResolvedMarketplaceInstallCollision(resolved, member); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	installed := marketplaceInstalledName(plan.Pin)
 	for _, existing := range resolved {
 		if existing.Kind != plan.Resolved.Kind || marketplaceResolvedInstalledName(existing) != installed {
@@ -650,7 +661,7 @@ func checkResolvedMarketplaceInstallCollision(resolved []resolver.ResolvedArtifa
 		if sameResolvedMarketplaceIdentity(existing, plan) {
 			continue
 		}
-		return fmt.Errorf("%s %q collides with installed name %q", existing.Kind, existing.Name, installed)
+		return fmt.Errorf("%w: %s %q collides with installed name %q", ErrMarketplaceInstallCollision, existing.Kind, existing.Name, installed)
 	}
 	return nil
 }
