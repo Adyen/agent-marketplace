@@ -688,10 +688,18 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		}
 	}()
 
-	// A zero Workspace is rejected before locks, config loaders, catalog
-	// access, backup, or materialization; it is a pre-materialization trust
-	// failure, so it lands in Errors and CatalogTrustErrors together.
+	// A zero Workspace or a conflicting EffectiveOpts root override is
+	// rejected before locks, config loaders, catalog access, backup, or
+	// materialization; both are pre-materialization trust failures, so they
+	// land in Errors and CatalogTrustErrors together. Checking the override
+	// here — not only inside resolve — keeps the rejection ahead of either
+	// exact-lock path, whose acquisition can write reconciled lockfiles.
 	if err := opts.Workspace.validate(); err != nil {
+		result.Errors = []error{err}
+		result.CatalogTrustErrors = []error{err}
+		return result
+	}
+	if err := checkEffectiveOptsRoots(opts.EffectiveOpts, opts.Workspace); err != nil {
 		result.Errors = []error{err}
 		result.CatalogTrustErrors = []error{err}
 		return result
