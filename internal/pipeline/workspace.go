@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 )
 
 // ErrInvalidWorkspace marks every Workspace validation failure: an empty
@@ -54,6 +55,26 @@ func NewWorkspace(repoRoot, localConfigDir string) (Workspace, error) {
 	}
 	if !workspacePathWithin(absRepo, absLocal) {
 		return Workspace{}, fmt.Errorf("%w: local-config root %q is outside repository root %q", ErrInvalidWorkspace, absLocal, absRepo)
+	}
+	// Lexical containment alone is not enough: when the local-config root
+	// does not exist yet beneath an in-repo symlink that points outside the
+	// repository, the missing leaf keeps the unresolved path looking
+	// contained while its physical parent escapes. Canonicalize both roots
+	// through their deepest existing ancestors — the same policy
+	// ownership.CanonicalRoot applies to not-yet-created target roots — and
+	// require the physical paths to be contained too. The Workspace still
+	// stores the logical absolute roots so valid not-yet-created nested
+	// roots keep their user-visible spelling.
+	canonicalLocal, err := ownership.CanonicalRoot(absLocal)
+	if err != nil {
+		return Workspace{}, fmt.Errorf("%w: local-config root: %w", ErrInvalidWorkspace, err)
+	}
+	canonicalRepo, err := ownership.CanonicalRoot(absRepo)
+	if err != nil {
+		return Workspace{}, fmt.Errorf("%w: repository root: %w", ErrInvalidWorkspace, err)
+	}
+	if !workspacePathWithin(canonicalRepo, canonicalLocal) {
+		return Workspace{}, fmt.Errorf("%w: local-config root %q resolves outside repository root %q", ErrInvalidWorkspace, absLocal, absRepo)
 	}
 	return Workspace{repoRoot: absRepo, localConfigDir: absLocal}, nil
 }

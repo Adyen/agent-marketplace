@@ -240,6 +240,18 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		}
 	}
 
+	// Any generic resolve failure — a zero Workspace, context cancellation,
+	// an exact-lock acquisition error — must surface diagnostics and return
+	// here, before detail capture or dry-run materialization can act on an
+	// invalid root and mask the original error.
+	if len(resolvedResult.Errors) > 0 {
+		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticResolution, resolvedResult.Errors...)
+		base.diagnostics = deduplicateDiagnostics(diagnostics)
+		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
+		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
+		return base
+	}
+
 	var resolvedNames []string
 	// Copy detail bytes before any downstream work can yield long enough for a
 	// waiting GC to run immediately after the resolution lease is released.

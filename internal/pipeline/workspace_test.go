@@ -88,6 +88,99 @@ func TestNewWorkspaceRejectsLocalConfigDirOutsideRepository(t *testing.T) {
 	}
 }
 
+func TestNewWorkspaceRejectsMissingLeafBeneathEscapingSymlink(t *testing.T) {
+	// Canonical roots keep the unresolved lexical candidate beneath the
+	// repository root so only physical containment can reject it.
+	repoRoot := canonicalTempDir(t)
+	outside := canonicalTempDir(t)
+	link := filepath.Join(repoRoot, "local")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink in-repo dir to outside dir: %v", err)
+	}
+	// The leaf does not exist yet: the candidate is lexically beneath the
+	// repository root, but its deepest existing ancestor resolves outside it.
+	candidate := filepath.Join(link, "missing")
+
+	if _, err := NewWorkspace(repoRoot, candidate); !errors.Is(err, ErrInvalidWorkspace) {
+		t.Fatalf("NewWorkspace missing leaf beneath escaping symlink error = %v; want ErrInvalidWorkspace", err)
+	}
+}
+
+func TestNewWorkspaceAcceptsMissingNestedDirWithinRepository(t *testing.T) {
+	repoRoot := canonicalTempDir(t)
+	// Positive control: a not-yet-created nested local root under a real
+	// in-repo ancestor stays accepted and keeps its logical spelling.
+	localDir := filepath.Join(repoRoot, "new", "nested")
+
+	ws, err := NewWorkspace(repoRoot, localDir)
+	if err != nil {
+		t.Fatalf("NewWorkspace missing nested dir under real ancestor: %v", err)
+	}
+	if ws.LocalConfigDir() != localDir {
+		t.Fatalf("LocalConfigDir() = %q; want logical %q", ws.LocalConfigDir(), localDir)
+	}
+	if ws.MaterializeRoot() != localDir {
+		t.Fatalf("MaterializeRoot() = %q; want logical %q", ws.MaterializeRoot(), localDir)
+	}
+}
+
+func TestSilentSyncCollectRejectsZeroWorkspaceBeforeReconcile(t *testing.T) {
+	reconcilerRan := false
+	_, err := silentSyncCollect(context.Background(), Workspace{},
+		withDependencyReconciler(func(context.Context, string, string, bool, []StagedConfigEdit) (DependencyLockView, error) {
+			reconcilerRan = true
+			return DependencyLockView{}, nil
+		}),
+	)
+	if reconcilerRan {
+		t.Fatal("zero Workspace must be rejected before the dependency reconciler runs")
+	}
+	if !errors.Is(err, ErrInvalidWorkspace) {
+		t.Fatalf("silentSyncCollect zero Workspace error = %v; want ErrInvalidWorkspace", err)
+	}
+}
+
+func TestSilentSyncCollectRejectsZeroWorkspaceBeforeConfigStaging(t *testing.T) {
+	dir := t.TempDir()
+	destination := filepath.Join(dir, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	staging, err := newConfigStagingManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := staging.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	shadow, err := staging.Path(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shadow, []byte("apiVersion: agent-marketplace/v2\nskills: [staged]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reconcilerRan := false
+	_, err = silentSyncCollect(context.Background(), Workspace{},
+		withConfigStaging(staging),
+		withDependencyReconciler(func(_ context.Context, _, _ string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
+			reconcilerRan = true
+			return DependencyLockView{}, nil
+		}),
+	)
+	if reconcilerRan {
+		t.Fatal("zero Workspace must be rejected before staged edits reach the reconciler")
+	}
+	if !errors.Is(err, ErrInvalidWorkspace) {
+		t.Fatalf("silentSyncCollect zero Workspace error = %v; want ErrInvalidWorkspace", err)
+	}
+}
+
 func TestResolveRejectsZeroWorkspaceBeforeLoaders(t *testing.T) {
 	loaderRan := false
 	result := Resolve(context.Background(), ResolveOptions{
