@@ -9,9 +9,9 @@ func TestV4GitAndDirectorySourcesRunThroughNormalCLI(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
 	gitURL := env.CreateBareRepo("v4-git", RegistryFiles([]Skill{{Name: "git-review"}}, nil, nil))
-	// Keep the directory source below the declaring config and deliberately give
+	// Keep the directory source below the repository root and deliberately give
 	// it a .git suffix: v4 source kind, not the path spelling, controls locality.
-	env.WriteFile("/workspace/.agents/registry.git/skills/local-review/SKILL.md", (Skill{Name: "local-review"}).SkillFile())
+	env.WriteFile("/workspace/registry.git/skills/local-review/SKILL.md", (Skill{Name: "local-review"}).SkillFile())
 	env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
 harnesses: [factory]
 materialization:

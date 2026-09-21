@@ -115,6 +115,24 @@ func TestV4RepositoryDirectoryContainment(t *testing.T) {
 	}
 }
 
+func TestV4MigrationWithRelativeConfigPathKeepsRepositoryDirectoriesPortable(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	root := canonicalDirectoryTestRoot(t)
+	repo := filepath.Join(root, "repo")
+	file := filepath.Join(repo, ".agents", "config.yaml")
+	writeV2Config(t, file, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: ./resources/skills\n    default: true\n")
+	withWorkingDir(t, root)
+
+	relativeFile := filepath.Join("repo", ".agents", "config.yaml")
+	if _, err := MigrateConfigFilesToV4(MigratePaths{Repo: relativeFile}, V4MigrationRepo, false); err != nil {
+		t.Fatal(err)
+	}
+	data := readConfigString(t, file)
+	if strings.Contains(data, repo) || !strings.Contains(data, "directory: ./resources/skills") {
+		t.Fatalf("migration did not preserve a portable directory: %s", data)
+	}
+}
+
 func TestV4MigrationKeepsRepositoryDirectoriesPortable(t *testing.T) {
 	for _, directory := range []string{".", "./resources/skills"} {
 		for _, subpath := range []string{"", "skills"} {
