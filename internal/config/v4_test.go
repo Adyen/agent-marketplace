@@ -53,7 +53,7 @@ resources:
 	if cfg.Sources["cloud"].CanonicalURL != "https://market.example/api" {
 		t.Fatalf("canonical marketplace URL = %q", cfg.Sources["cloud"].CanonicalURL)
 	}
-	if cfg.Sources["local"].URL != "/repo/.agents/resources" {
+	if cfg.Sources["local"].URL != "/repo/resources" {
 		t.Fatalf("relative directory URL = %q", cfg.Sources["local"].URL)
 	}
 	if got := cfg.Groups["cloud"].Include[0].Options.Revision; got == "" {

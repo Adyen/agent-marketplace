@@ -306,7 +306,7 @@ The CLI reads v4 roots and adapts their `sources` and `resources` model for disc
 Source kinds are explicit:
 
 - `git` sources require `ref` and use the owning layer's exact Git lock.
-- `directory` sources are live, relative to the declaring file, and never acquire a Git lock.
+- `directory` sources are live and never acquire a Git lock. Relative paths in repository `.agents/config.yaml` and `.agents/config.local.yaml` roots use the repository root; user/organization configs and included fragments use the declaring directory.
 - `marketplace` sources require a matching verified layer lock for explicit requests.
 
 Use the [v4 configuration reference](configuration.md) to write source declarations and resource groups directly. Legacy resource-selection editors cannot edit v4 roots. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Explicit hosted requests need matching verified records in the layer's lockfile; general hosted v4 acquisition, update, and snapshots for dynamic selectors are not implemented.

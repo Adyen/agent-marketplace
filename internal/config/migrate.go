@@ -1038,6 +1038,19 @@ func encodeV4MigrationWithEvidence(cfg *Config, configPath string, kind layerKin
 				return encoding, v4err("v4.migration-unsupported", configPath, 0, "local source %q cannot be represented: %v", entry.URL, err)
 			}
 			source.Directory = entry.BundlePath(localPath)
+			if entry.IsRepoRelativeLocal() {
+				directoryBase := v4DirectoryBase(configPath, true, kind)
+				if v4PathWithin(directoryBase, source.Directory) {
+					relative, err := filepath.Rel(directoryBase, source.Directory)
+					if err != nil {
+						return encoding, fmt.Errorf("relativize migrated directory source: %w", err)
+					}
+					source.Directory = filepath.ToSlash(relative)
+					if source.Directory != "." {
+						source.Directory = "./" + source.Directory
+					}
+				}
+			}
 			source.Ref, source.Path = "", ""
 		} else {
 			source.Git = entry.URL

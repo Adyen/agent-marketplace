@@ -112,7 +112,7 @@ sources:
     directory: ./local-resources
 ```
 
-Git sources require `ref`. Directory sources are resolved relative to the file that declares them and never use a Git lock. Bind resource policy to the source name:
+Git sources require `ref`. Directory sources in repository `.agents/config.yaml` and `.agents/config.local.yaml` roots resolve relative to the repository root; user/organization configs and included fragments retain declaring-file-relative paths. Directory sources never use a Git lock. Migration preserves repository-relative local paths and folds a legacy `path` into `directory`: `url: .` with `path: skills` becomes `directory: ./skills`, without embedding the checkout's absolute path. Bind resource policy to the source name:
 
 ```yaml
 resources:

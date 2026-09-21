@@ -272,7 +272,7 @@ type v4Document struct {
 	telemetryFields     v4TelemetryFields
 }
 
-func parseV4Document(data []byte, file string, root bool) (*v4Document, error) {
+func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (*v4Document, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var node yaml.Node
 	if err := dec.Decode(&node); err != nil {
@@ -325,7 +325,7 @@ func parseV4Document(data []byte, file string, root bool) (*v4Document, error) {
 		}
 	}
 	if sources := mappingValue(raw, "sources"); sources != nil {
-		parsed, err := parseV4Sources(sources, file)
+		parsed, err := parseV4Sources(sources, file, v4DirectoryBase(file, root, kinds...))
 		if err != nil {
 			return nil, err
 		}
@@ -562,7 +562,7 @@ func validateV4Includes(n *yaml.Node, file string) error {
 	return nil
 }
 
-func parseV4Sources(n *yaml.Node, file string) (map[string]V4Source, error) {
+func parseV4Sources(n *yaml.Node, file, directoryBase string) (map[string]V4Source, error) {
 	if n.Kind != yaml.MappingNode {
 		return nil, v4err("v4.type", "sources", n.Line, "must be a mapping")
 	}
@@ -576,7 +576,7 @@ func parseV4Sources(n *yaml.Node, file string) (map[string]V4Source, error) {
 		if value.Kind != yaml.MappingNode {
 			return nil, v4err("v4.source-type", "sources."+name, value.Line, "must be a mapping")
 		}
-		src, err := parseV4Source(name, value, file)
+		src, err := parseV4Source(name, value, file, directoryBase)
 		if err != nil {
 			return nil, err
 		}
@@ -585,7 +585,7 @@ func parseV4Sources(n *yaml.Node, file string) (map[string]V4Source, error) {
 	return out, nil
 }
 
-func parseV4Source(name string, n *yaml.Node, file string) (V4Source, error) {
+func parseV4Source(name string, n *yaml.Node, file, directoryBase string) (V4Source, error) {
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		if _, ok := v4SourceKeys[n.Content[i].Value]; !ok {
 			return V4Source{}, v4err("v4.unknown-field", "sources."+name+"."+n.Content[i].Value, n.Content[i].Line, "unknown source field")
@@ -661,7 +661,7 @@ func parseV4Source(name string, n *yaml.Node, file string) (V4Source, error) {
 		if mappingValue(n, "path") != nil {
 			return V4Source{}, v4err("v4.source-field", "sources."+name+".path", n.Line, "path is only valid for git sources")
 		}
-		resolved, err := resolveV4DirectorySource(file, s.URL)
+		resolved, err := resolveV4DirectorySource(directoryBase, s.URL)
 		if err != nil {
 			return V4Source{}, v4err("v4.directory-path", "sources."+name+".directory", n.Line, "%v", err)
 		}
@@ -683,8 +683,23 @@ func parseV4Source(name string, n *yaml.Node, file string) (V4Source, error) {
 	return s, nil
 }
 
-func resolveV4DirectorySource(file, raw string) (string, error) {
-	base, err := filepath.Abs(filepath.Dir(file))
+func v4DirectoryBase(file string, root bool, kinds ...layerKind) string {
+	base := filepath.Dir(file)
+	if !root || filepath.Base(base) != ".agents" || (filepath.Base(file) != "config.yaml" && filepath.Base(file) != "config.local.yaml") {
+		return base
+	}
+	if len(kinds) > 0 {
+		if kinds[0] != repoLayer && kinds[0] != localLayer {
+			return base
+		}
+	} else if isGlobalConfigPath(file) {
+		return base
+	}
+	return filepath.Dir(base)
+}
+
+func resolveV4DirectorySource(directoryBase, raw string) (string, error) {
+	base, err := filepath.Abs(directoryBase)
 	if err != nil {
 		return "", fmt.Errorf("resolve declaring directory: %w", err)
 	}
@@ -699,7 +714,7 @@ func resolveV4DirectorySource(file, raw string) (string, error) {
 	}
 	resolved = filepath.Clean(resolved)
 	if relative && !v4PathWithin(base, resolved) {
-		return "", errors.New("relative directory source must remain within its declaring config directory")
+		return "", errors.New("relative directory source must remain within its source base directory")
 	}
 	if !relative {
 		return resolved, nil
@@ -741,7 +756,7 @@ func resolveV4DirectorySource(file, raw string) (string, error) {
 		candidate = filepath.Join(candidate, missing[i])
 	}
 	if !v4PathWithin(realBase, candidate) {
-		return "", errors.New("directory source symlink escapes its declaring config directory")
+		return "", errors.New("directory source symlink escapes its source base directory")
 	}
 	return resolved, nil
 }
@@ -1157,7 +1172,7 @@ func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, er
 	return loadV4TreeWithOverlays(file, root, visiting, nil, nil, "")
 }
 
-func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, overlays map[string][]byte, rootData []byte, organizationPath string) (*V4Config, error) {
+func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, overlays map[string][]byte, rootData []byte, organizationPath string, kinds ...layerKind) (*V4Config, error) {
 	if organizationPath != "" {
 		if root && !filepath.IsAbs(organizationPath) {
 			wd, err := os.Getwd()
@@ -1184,7 +1199,10 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 	if err != nil {
 		return nil, fmt.Errorf("read v4 config %q: %w", canonical, err)
 	}
-	doc, err := parseV4Document(data, canonical, root)
+	if len(kinds) == 0 && isGlobalConfigPath(file) {
+		kinds = []layerKind{userLayer}
+	}
+	doc, err := parseV4Document(data, canonical, root, kinds...)
 	if err != nil {
 		return nil, err
 	}
@@ -1210,7 +1228,7 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 					childPath = filepath.Join(filepath.Dir(canonical), childPath)
 				}
 			}
-			child, e := loadV4TreeWithOverlays(childPath, false, visiting, overlays, nil, organizationPath)
+			child, e := loadV4TreeWithOverlays(childPath, false, visiting, overlays, nil, organizationPath, kinds...)
 			if e != nil {
 				return nil, fmt.Errorf("load v4 include %q from %q: %w", childPath, canonical, e)
 			}
