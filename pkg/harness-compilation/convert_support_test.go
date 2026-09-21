@@ -113,13 +113,6 @@ func TestConvertAssemblesReferencedHookAsset(t *testing.T) {
 	}
 	hooksJSON := artifactByPath(factory.Artifacts, "hooks/hooks.json")
 	if hooksJSON == nil {
-		for _, a := range factory.Artifacts {
-			if strings.Contains(a.Path, "hook") {
-				hooksJSON = &a
-			}
-		}
-	}
-	if hooksJSON == nil {
 		t.Fatalf("factory conversion emitted no hook artifact")
 	}
 	if !strings.Contains(string(hooksJSON.Bytes), "${DROID_PLUGIN_ROOT}/hooks/check.sh") {
