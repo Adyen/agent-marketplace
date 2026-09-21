@@ -9,6 +9,9 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// droidPluginRootToken is the Factory-native plugin-root reference spelling.
+const droidPluginRootToken = "${DROID_PLUGIN_ROOT}"
+
 // LoadHooks reads a Factory hooks.json file and canonicalizes Factory env
 // tokens back to the Claude IR token vocabulary.
 func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
@@ -18,7 +21,7 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 	}
 
 	for _, hook := range hooks {
-		hook.Command = strings.ReplaceAll(hook.Command, "${DROID_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_ROOT}")
+		hook.Command = strings.ReplaceAll(hook.Command, droidPluginRootToken, bundle.CanonicalRootToken)
 	}
 
 	diags := make([]diag.Diagnostic, 0, len(hookDiags))

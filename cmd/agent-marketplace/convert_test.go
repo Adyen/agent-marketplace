@@ -1311,3 +1311,87 @@ func assertFileContents(t *testing.T, path, want string) {
 		t.Fatalf("%s = %q, want %q", path, got, want)
 	}
 }
+
+// Support files declared by a skill and assets explicitly referenced through
+// the canonical root token must survive a direct CLI conversion with exact
+// bytes and executable mode.
+func TestConvertCommandMaterializesSupportFilesAndReferencedAssets(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	srcDir := t.TempDir()
+	writeClaudePluginSkill(t, srcDir, "demo-skill")
+
+	scriptPath := filepath.Join(srcDir, "skills", "demo-skill", "scripts", "run.sh")
+	writeFile(t, scriptPath, "#!/bin/sh\necho hi\n")
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatalf("chmod support script: %v", err)
+	}
+	writeFile(t, filepath.Join(srcDir, "hooks", "hooks.json"),
+		`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}}`)
+	hookAsset := filepath.Join(srcDir, "hooks", "check.sh")
+	writeFile(t, hookAsset, "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(hookAsset, 0o755); err != nil {
+		t.Fatalf("chmod hook asset: %v", err)
+	}
+
+	outDir := filepath.Join(t.TempDir(), "claude-out")
+	output, err := executeCommand("convert", "--from", "claude", "--to", "claude", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected convert command to succeed: %v\n%s", err, output)
+	}
+
+	assertFileContents(t, filepath.Join(outDir, "skills", "demo-skill", "scripts", "run.sh"), "#!/bin/sh\necho hi\n")
+	assertFileContents(t, filepath.Join(outDir, "hooks", "check.sh"), "#!/bin/sh\nexit 0\n")
+	for _, path := range []string{
+		filepath.Join(outDir, "skills", "demo-skill", "scripts", "run.sh"),
+		filepath.Join(outDir, "hooks", "check.sh"),
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Errorf("%s mode = %o, want 0755", path, info.Mode().Perm())
+		}
+	}
+}
+
+// A literal-only destination must emit a stable diagnostic and must never
+// substitute the author-machine source path for a root reference.
+func TestConvertCommandLiteralTargetDoesNotEmbedSourcePath(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	srcDir := t.TempDir()
+	writeClaudePluginSkill(t, srcDir, "demo-skill")
+	writeFile(t, filepath.Join(srcDir, "hooks", "hooks.json"),
+		`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh"}]}}`)
+	writeFile(t, filepath.Join(srcDir, "hooks", "run.sh"), "#!/bin/sh\nexit 0\n")
+
+	outDir := filepath.Join(t.TempDir(), "windsurf-out")
+	output, err := executeCommand("convert", "--from", "claude", "--to", "windsurf", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected convert command to succeed: %v\n%s", err, output)
+	}
+	canonicalSource, err := canonicalConversionPath(srcDir)
+	if err != nil {
+		t.Fatalf("canonicalize source: %v", err)
+	}
+	walkErr := filepath.Walk(outDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(data), canonicalSource) || strings.Contains(string(data), srcDir) {
+			t.Errorf("output %s embeds the author-machine source path", path)
+		}
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatalf("walk output: %v", walkErr)
+	}
+}

@@ -334,6 +334,8 @@ const (
 	CodeBundleConflictDuplicateArtifactPath      = "bundle.conflict.duplicate-artifact-path"   // Two resources produce the same artifact path
 	CodeBundleConflictCrossKindArtifactPath      = "bundle.conflict.cross-kind-artifact-path"  // Two resources of different kinds produce the same artifact path
 	CodeBundleCompileResourceFailed              = "bundle.compile.resource-failed"            // A resource compiler returned an error
+	CodeBundleSupportFileMissing                 = "bundle.support-file.missing"               // A declared or referenced support file is absent from the source
+	CodeBundleSupportFileUnsafe                  = "bundle.support-file.unsafe"                // A support-file path is unsafe (traversal, symlink, or non-regular)
 	CodeIngestClaudeLoadSkillFailed              = "ingest.claude.load-skill-failed"           // Failed to load a skill from the source layout
 	CodeIngestClaudeLoadCommandFailed            = "ingest.claude.load-command-failed"         // Failed to load a command from the source layout
 	CodeIngestClaudeLoadSubagentFailed           = "ingest.claude.load-subagent-failed"        // Failed to load a subagent from the source layout
@@ -590,6 +592,8 @@ var codeCatalog = []CodeDoc{
 	{CodeBundleConflictDuplicateArtifactPath, SeverityError, "Two resources produce the same artifact output path", "Rename one of the conflicting resources or adjust the output path"},
 	{CodeBundleConflictCrossKindArtifactPath, SeverityError, "Resources of different kinds produce the same artifact output path; neither artifact is emitted", "Rename one of the conflicting resources: on targets that compile commands as skills, a skill and a command cannot share a name"},
 	{CodeBundleCompileResourceFailed, SeverityError, "A resource compiler failed", "Fix the resource compiler error before materializing the bundle"},
+	{CodeBundleSupportFileMissing, SeverityError, "A declared skill support file or an explicitly referenced hook/MCP asset is absent from the source bundle; the owning resource was not emitted", "Restore the missing file or remove the reference to it"},
+	{CodeBundleSupportFileUnsafe, SeverityError, "A support-file path is unsafe (escapes the bundle root, traverses a symlink, or is not a regular file); the owning resource was not emitted", "Keep support files inside the resource or bundle root as regular files and remove the unsafe path"},
 	{CodeIngestClaudeLoadSkillFailed, SeverityError, "Failed to load a skill from the Claude source layout", "Check the skill directory structure and SKILL.md frontmatter"},
 	{CodeIngestClaudeLoadCommandFailed, SeverityError, "Failed to load a command from the Claude source layout", "Check the command .md file structure and frontmatter"},
 	{CodeIngestClaudeLoadSubagentFailed, SeverityError, "Failed to load a subagent from the Claude source layout", "Check the agent .md file structure and frontmatter"},

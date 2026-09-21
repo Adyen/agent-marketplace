@@ -133,7 +133,11 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	}
 	srcFS := os.DirFS(canonicalSource)
 
-	result, err := hcc.Convert(srcFS, srcHarness, hcc.Harness(to), hcc.WithPluginRoot(canonicalSource))
+	// No compile-time plugin root is supplied: the source path is an
+	// author-machine location, never a runtime root. Token-capable targets
+	// render their native root reference and literal-only targets report a
+	// stable plugin-root-unresolved diagnostic instead of embedding it.
+	result, err := hcc.Convert(srcFS, srcHarness, hcc.Harness(to))
 	if err != nil {
 		return fmt.Errorf("convert: %w", err)
 	}

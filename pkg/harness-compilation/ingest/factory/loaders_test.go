@@ -153,3 +153,48 @@ func TestLoadMcpServers(t *testing.T) {
 		t.Fatalf("Name() = %q, want %q", servers[0].Name(), "docs")
 	}
 }
+
+// The Factory-native ${DROID_PLUGIN_ROOT} token must normalize to the
+// canonical IR spelling across command, args, env, URL, and headers, the same
+// root-reference normalization hook ingestion already performs.
+func TestLoadMcpServers_NormalizesDroidRootToken(t *testing.T) {
+	src := fstest.MapFS{
+		"mcp.json": {
+			Data: []byte(`{"mcpServers":{"docs":{` +
+				`"command":"${DROID_PLUGIN_ROOT}/bin/run.sh",` +
+				`"args":["--env","${DROID_PLUGIN_ROOT}/config/.env"],` +
+				`"env":{"CFG":"${DROID_PLUGIN_ROOT}/config/.env"},` +
+				`"url":"https://example.com/${DROID_PLUGIN_ROOT}/sse",` +
+				`"headers":{"X-Root":"${DROID_PLUGIN_ROOT}/tok"}` +
+				`}}}`),
+		},
+	}
+
+	servers, err := LoadMcpServers(src, "mcp.json")
+	if err != nil {
+		t.Fatalf("LoadMcpServers: %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("len(servers) = %d, want 1", len(servers))
+	}
+	server := servers[0]
+	want := map[string]string{
+		"command":        "${CLAUDE_PLUGIN_ROOT}/bin/run.sh",
+		"arg[1]":         "${CLAUDE_PLUGIN_ROOT}/config/.env",
+		"env.CFG":        "${CLAUDE_PLUGIN_ROOT}/config/.env",
+		"url":            "https://example.com/${CLAUDE_PLUGIN_ROOT}/sse",
+		"headers.X-Root": "${CLAUDE_PLUGIN_ROOT}/tok",
+	}
+	got := map[string]string{
+		"command":        server.Command,
+		"arg[1]":         server.Args[1],
+		"env.CFG":        server.Env["CFG"],
+		"url":            server.URL,
+		"headers.X-Root": server.Headers["X-Root"],
+	}
+	for field, expected := range want {
+		if got[field] != expected {
+			t.Errorf("%s = %q, want %q", field, got[field], expected)
+		}
+	}
+}

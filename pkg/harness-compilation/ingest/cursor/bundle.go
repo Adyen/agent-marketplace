@@ -18,6 +18,8 @@ import (
 const (
 	cursorPluginManifest = ".cursor-plugin/plugin.json"
 	cursorWorkspaceRoot  = ".cursor/"
+	// cursorPluginRootToken is the Cursor-native plugin-root reference spelling.
+	cursorPluginRootToken = "${CURSOR_PLUGIN_ROOT}"
 )
 
 func init() {
@@ -136,7 +138,7 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
 	}
 	for _, h := range hooks {
 		h.Source.File = normalizeSourcePath(h.Source.File)
-		h.Command = strings.ReplaceAll(h.Command, "${CURSOR_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_ROOT}")
+		h.Command = strings.ReplaceAll(h.Command, cursorPluginRootToken, bundle.CanonicalRootToken)
 	}
 	for _, d := range diags {
 		d.Source.File = normalizeSourcePath(d.Source.File)
@@ -144,6 +146,9 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
 	return hooks, diags, nil
 }
 
+// LoadMcpServers reads a Cursor mcp.json file and normalizes the
+// Cursor-native plugin-root token into the canonical IR spelling across
+// command, args, env, URL, and headers, matching hook ingestion.
 func LoadMcpServers(src fs.FS, path string) ([]*ir.McpServer, error) {
 	servers, err := bundle.LoadMcpServers(src, path)
 	if err != nil {
@@ -151,6 +156,7 @@ func LoadMcpServers(src fs.FS, path string) ([]*ir.McpServer, error) {
 	}
 	for _, server := range servers {
 		server.Source.File = normalizeSourcePath(server.Source.File)
+		bundle.NormalizeMcpServerRootToken(server, cursorPluginRootToken)
 	}
 	return servers, nil
 }
