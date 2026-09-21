@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/devincli"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -87,8 +88,44 @@ func staticProbe(probe devincli.Probe) func(context.Context) devincli.Probe {
 // staticResolve pins the selection a repair measures "exact current desired
 // matches" against, so the contract is tested against a known desired set
 // rather than against whatever a cloned registry happens to provide.
-func staticResolve(selection []resolver.ResolvedArtifact) func(context.Context, string) []resolver.ResolvedArtifact {
-	return func(context.Context, string) []resolver.ResolvedArtifact { return selection }
+func staticResolve(selection []resolver.ResolvedArtifact) func(context.Context, string) ([]resolver.ResolvedArtifact, error) {
+	return func(context.Context, string) ([]resolver.ResolvedArtifact, error) { return selection, nil }
+}
+
+// A Workspace construction failure must reach runDoctor with its wrapped
+// cause: substituting the zero Workspace would surface only the generic
+// zero-Workspace rejection (or an empty selection) and lose the real reason,
+// such as a local-config root outside the repository.
+func TestDoctorRepairPropagatesWorkspaceConstructionError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, _ = devinDoctorEnv(t)
+	outsideLocal := t.TempDir()
+
+	var out bytes.Buffer
+	err := runDoctor(doctorOptions{
+		out:    &out,
+		in:     strings.NewReader(""),
+		repair: true,
+		probe:  staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+		resolve: func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
+			// The real constructor fails: this local-config root escapes the
+			// repository, so its wrapped ErrInvalidWorkspace cause is what
+			// doctor must surface.
+			ws, wsErr := pipeline.NewWorkspace(repoRoot, outsideLocal)
+			if wsErr != nil {
+				return nil, wsErr
+			}
+			return pipeline.Resolve(ctx, pipeline.ResolveOptions{Workspace: ws}).Resolved, nil
+		},
+	})
+	if !errors.Is(err, pipeline.ErrInvalidWorkspace) {
+		t.Fatalf("runDoctor error = %v, want wrapped ErrInvalidWorkspace", err)
+	}
+	if !strings.Contains(err.Error(), "outside repository root") {
+		t.Fatalf("runDoctor error = %v, want the local-config containment cause", err)
+	}
 }
 
 // TestDoctorDevinVersionAndRecommendationLines pins the plan's detection

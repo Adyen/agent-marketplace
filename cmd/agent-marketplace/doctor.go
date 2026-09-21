@@ -51,8 +51,10 @@ type doctorOptions struct {
 	// resolve produces the currently selected resources, which are what
 	// "exact current desired matches" is measured against. It is a seam so a
 	// test can pin the repair contract against a known selection instead of a
-	// cloned registry.
-	resolve func(ctx context.Context, repoRoot string) []resolver.ResolvedArtifact
+	// cloned registry. Its error reaches the caller, so a Workspace
+	// construction failure keeps its wrapped cause instead of degrading to a
+	// silently empty selection.
+	resolve func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error)
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -111,11 +113,12 @@ func runDoctor(opts doctorOptions) error {
 		opts.probe = func(ctx context.Context) devincli.Probe { return devincli.Detect(ctx) }
 	}
 	if opts.resolve == nil {
-		opts.resolve = func(ctx context.Context, repoRoot string) []resolver.ResolvedArtifact {
-			// A failed construction yields the zero Workspace, which Resolve
-			// rejects through ResolveResult.Errors like any other load failure.
-			ws, _ := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
-			return pipeline.Resolve(ctx, pipeline.ResolveOptions{Workspace: ws}).Resolved
+		opts.resolve = func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
+			ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+			if err != nil {
+				return nil, err
+			}
+			return pipeline.Resolve(ctx, pipeline.ResolveOptions{Workspace: ws}).Resolved, nil
 		}
 	}
 	out := opts.out
@@ -383,7 +386,11 @@ func devinHarnessSelection(ec config.EffectiveConfig) (bool, []string) {
 func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string) error {
 	ctx := opts.ctx
 	slog.Info("doctor repair preview start", "repo_root", repoRoot)
-	previews, err := materialize.RepairPreviews(ctx, repoRoot, opts.resolve(ctx, repoRoot))
+	selection, err := opts.resolve(ctx, repoRoot)
+	if err != nil {
+		return err
+	}
+	previews, err := materialize.RepairPreviews(ctx, repoRoot, selection)
 	if err != nil {
 		slog.Error("doctor repair preview failed", "repo_root", repoRoot, "status", "error", "code", diag.CodeDoctorRepairFailed)
 		return fmt.Errorf("repair preview: %w", err)

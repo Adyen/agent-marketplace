@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -148,14 +149,21 @@ func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation r
 // tuiWorkspace preserves the previous empty-LocalConfigDir fallback: the
 // cwd-discovered local-config root applies when it lives inside repoRoot;
 // otherwise the repository-root workspace keeps explicit construction intact.
-// A failed construction yields the zero Workspace, which Resolve and Sync
-// reject with ErrInvalidWorkspace and report through their result Errors.
+// When even the repository root cannot construct a Workspace, the zero value
+// is returned deliberately so Resolve and Sync reject it with
+// ErrInvalidWorkspace rather than acting on unvalidated roots.
 func tuiWorkspace(repoRoot string) pipeline.Workspace {
 	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
-	if err != nil {
-		ws, _ = pipeline.NewWorkspace(repoRoot, "")
+	if err == nil {
+		return ws
 	}
-	return ws
+	slog.Debug("workspace construction with the discovered local-config root failed; falling back to the repository root", "error", err)
+	fallback, err := pipeline.NewWorkspace(repoRoot, "")
+	if err != nil {
+		slog.Debug("workspace construction failed; returning the zero Workspace for downstream rejection", "error", err)
+		return pipeline.Workspace{}
+	}
+	return fallback
 }
 
 func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
