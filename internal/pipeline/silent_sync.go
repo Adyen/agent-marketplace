@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
@@ -67,7 +68,7 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 		dependencyWarnings = view.Warnings
 		o.DependencyCommitted = true
 	}
-	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, MarketplaceMode: o.MarketplaceMode}
+	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall}
 	if o.MaterializeRoot != "" && o.MaterializeRoot != repoRoot {
 		resolveOpts.MaterializeRoot = o.MaterializeRoot
 	}
@@ -95,9 +96,14 @@ type silentSyncOptions struct {
 	ConfigStaging           *configStagingManager
 	DependencyCommitted     bool
 	MarketplaceMode         *resolver.MarketplaceResolveMode
+	marketplaceInstall      *marketplace.PreparedInstall
 }
 
 type silentSyncOpt func(*silentSyncOptions)
+
+func withMarketplaceInstall(plan *marketplace.PreparedInstall) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.marketplaceInstall = plan }
+}
 
 // withMaterializeRoot sets a different root for materialization (where
 // harness files are written), while keeping RepoRoot for config loading

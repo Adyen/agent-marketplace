@@ -594,10 +594,10 @@ func syncAfterInstall(ctx context.Context, repoRoot string, installed []resource
 	if err != nil {
 		return nil, err
 	}
-	return filterRequirementWarnings(warnings, installed), nil
+	return filterInstallWarnings(warnings, installed), nil
 }
 
-func filterRequirementWarnings(warnings []error, installed []resourceIdentity) []error {
+func filterInstallWarnings(warnings []error, installed []resourceIdentity) []error {
 	var installedResources map[resourceIdentity]struct{}
 	if len(installed) > 0 {
 		installedResources = make(map[resourceIdentity]struct{}, len(installed))
@@ -607,26 +607,28 @@ func filterRequirementWarnings(warnings []error, installed []resourceIdentity) [
 		}
 	}
 
-	requirementWarnings := make([]error, 0)
+	installWarnings := make([]error, 0)
 	for _, warning := range warnings {
 		var requirement *resolver.UnmetRequirementWarning
-		if !errors.As(warning, &requirement) {
-			continue
+		var resource resourceIdentity
+		if errors.As(warning, &requirement) && requirement != nil {
+			resource = resourceIdentity{kind: requirement.ResourceKind, name: strings.TrimSpace(requirement.ResourceName)}
+		} else {
+			var collision *resolver.NameCollisionWarning
+			if !errors.As(warning, &collision) || collision == nil {
+				continue
+			}
+			resource = resourceIdentity{kind: collision.Kind, name: strings.TrimSpace(collision.Name)}
 		}
 		if installedResources != nil {
-			resource := resourceIdentity{kind: requirement.ResourceKind, name: strings.TrimSpace(requirement.ResourceName)}
 			if _, ok := installedResources[resource]; !ok {
 				continue
 			}
 		}
-		requirementWarnings = append(requirementWarnings, warning)
+		installWarnings = append(installWarnings, warning)
 	}
-	slog.Debug("install requirement warnings filtered",
-		"warnings", len(warnings),
-		"installed_resources", len(installed),
-		"kept", len(requirementWarnings),
-	)
-	return requirementWarnings
+	slog.Debug("install warnings filtered", "warnings", len(warnings), "installed_resources", len(installed), "kept", len(installWarnings))
+	return installWarnings
 }
 
 func prepareInstallDiscovery(ctx context.Context, opts *InstallOptions) (PreparedInstallDependencies, error) {

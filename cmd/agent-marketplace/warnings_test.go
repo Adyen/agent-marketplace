@@ -271,3 +271,20 @@ func TestWriteGroupedWarningsIncludesRequirementRemediation(t *testing.T) {
 		t.Fatalf("requirement remediation missing:\n%s", got)
 	}
 }
+
+func TestCollisionWarningDisplayIsTerminalSafe(t *testing.T) {
+	var out bytes.Buffer
+	warning := &resolver.NameCollisionWarning{Kind: ir.KindSkill, Name: "review", Winner: "WIN\x1b[31m", RunnersUp: []string{"OTHER\x1b[31m"}, WinnerURL: "https://fixture:FAKE_SECRET@example.invalid/repo?token=FAKE_TOKEN"}
+	if err := writeGroupedWarnings(&out, []error{warning}, false); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	for _, want := range []string{"multiple registries", `\x1b[31m`, "agent-marketplace remove", "--from"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q: %s", want, text)
+		}
+	}
+	if strings.ContainsAny(text, "\x1b") || strings.Contains(text, "FAKE_SECRET") || strings.Contains(text, "FAKE_TOKEN") {
+		t.Fatalf("unsafe collision warning: %q", text)
+	}
+}

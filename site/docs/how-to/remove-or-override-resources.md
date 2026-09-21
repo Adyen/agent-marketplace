@@ -7,15 +7,17 @@ Remove a selected resource, exclude an auto-selected one, or override a resource
 - A configured `.agents/config.yaml` or `~/.agents/config.yaml`.
 - `agent-marketplace` on your `PATH`.
 
+These commands need an editable v2/v3 config. For v4 Git/directory sources, change the selection or exclusion in `resources` and run `sync`, since CLI `remove` cannot edit v4 files. Hosted v4 requests also have lock requirements; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+
 ## 1. Remove an explicit selection
 
 Remove a skill that was installed directly:
 
 ```bash
-agent-marketplace remove code-review
+agent-marketplace remove code-review --scope repo
 ```
 
-This deletes the entry from the selected config scope. The default scope is `repo`.
+This deletes the entry from repository config. Without `--scope`, the command chooses a scope from the selection it finds. Specify the scope to avoid removing the resource from the wrong one.
 
 ## 2. Exclude an auto-selected resource
 
@@ -65,9 +67,9 @@ This removes or shadows the registry entry in the selected scope.
 agent-marketplace status
 ```
 
-Confirm the resource no longer appears under **SYNCED RESOURCES**.
+Under **SYNCED RESOURCES**, check that the resource is gone from the scope you chose. It may still appear in another scope or because a hosted collection selects it. Removing a direct Marketplace selection leaves the collection's selection in place.
 
 ## Troubleshooting
 
-- **`remove` reports an ambiguous scope**: The same name is enabled in both `user` and `repo` scopes. Add `--scope user` or `--scope repo`.
-- **`remove` refuses a required resource**: `required: true` resources are immune to removal and exclusion. Change the configuration that declares them.
+- If `remove` reports an ambiguous scope, the same name is enabled in both `user` and `repo` scopes. Add `--scope user` or `--scope repo`.
+- If `remove` refuses a required resource, change the config that declares it. Removal and exclusion cannot override `required: true`.
