@@ -65,6 +65,23 @@ func DiscoverWorkspace() (Workspace, error) {
 	return NewWorkspace(config.FindRepoRoot(), config.FindLocalConfigDir())
 }
 
+// workspaceForRoots builds the production Workspace for call sites whose
+// options carry an explicit repository root and an optional local-config
+// root. An empty localConfigDir preserves the previous LoadEffective
+// fallback: the cwd-discovered local-config root applies when it lives
+// inside the repository; otherwise the repository root derives every root,
+// matching explicit test construction.
+func workspaceForRoots(repoRoot, localConfigDir string) (Workspace, error) {
+	if localConfigDir == "" {
+		if discovered, err := absoluteRoot(config.FindLocalConfigDir()); err == nil {
+			if repo, err := absoluteRoot(repoRoot); err == nil && workspacePathWithin(repo, discovered) {
+				localConfigDir = discovered
+			}
+		}
+	}
+	return NewWorkspace(repoRoot, localConfigDir)
+}
+
 // RepoRoot returns the repository root: the committed config layer's base and
 // the root used for catalog path resolution of repo-layer entries.
 func (w Workspace) RepoRoot() string { return w.repoRoot }

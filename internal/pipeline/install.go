@@ -617,7 +617,7 @@ func partitionInstalledNames(names []string, resources []resourceIdentity, resol
 }
 
 func syncAfterInstall(ctx context.Context, iopts InstallOptions, installed []resourceIdentity, opts ...silentSyncOpt) ([]error, error) {
-	ws, err := NewWorkspace(iopts.RepoRoot, iopts.LocalConfigDir)
+	ws, err := workspaceForRoots(iopts.RepoRoot, iopts.LocalConfigDir)
 	if err != nil {
 		return nil, err
 	}

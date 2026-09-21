@@ -80,7 +80,7 @@ func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyn
 	if opts.DependencyReconcile != nil {
 		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
 	}
-	ws, err := NewWorkspace(opts.RepoRoot, "")
+	ws, err := workspaceForRoots(opts.RepoRoot, "")
 	if err != nil {
 		return err
 	}
@@ -264,7 +264,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		}
 	}
 
-	ws, err := NewWorkspace(opts.RepoRoot, "")
+	ws, err := workspaceForRoots(opts.RepoRoot, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1459,7 +1459,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// resource like a skill enabled at both user and repo scope would be
 	// reported as spuriously "ambiguous" even though --from already names the
 	// entry to operate on).
-	ws, err := NewWorkspace(repoRoot, "")
+	ws, err := workspaceForRoots(repoRoot, "")
 	if err != nil {
 		return nil, err
 	}
