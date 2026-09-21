@@ -13,7 +13,7 @@ import (
 	mptestutil "github.com/Adyen/agent-marketplace/internal/testutil/marketplace"
 )
 
-func TestSnapshotV2ConfigRemainsOnEditableCompatibilityPath(t *testing.T) {
+func TestSnapshotV2ConfigOpensMigrationModal(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	writeV2Config(t, filepath.Join(repoRoot, ".agents", "config.yaml"))
@@ -44,8 +44,11 @@ func TestSnapshotV2ConfigRemainsOnEditableCompatibilityPath(t *testing.T) {
 	mi, _ := m.Update(snapshot)
 	m = mi.(Model)
 
-	if m.pane == paneMigrationModal || m.migrationPrompt.hasConfigs() {
-		t.Fatalf("v2 config was offered proactive migration: pane=%v prompt=%#v", m.pane, m.migrationPrompt)
+	if m.pane != paneMigrationModal {
+		t.Fatalf("expected migration modal for v2 config, got pane=%v", m.pane)
+	}
+	if !m.migrationPrompt.hasConfigs() {
+		t.Fatal("expected pending v2 migration")
 	}
 }
 
@@ -101,8 +104,8 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = mi.(Model)
-	if cmd != nil {
-		t.Fatalf("leave should not emit a migration command")
+	if cmd == nil {
+		t.Fatalf("leave should schedule toast expiry")
 	}
 	if m.pane != paneList {
 		t.Fatalf("leave should close modal, got pane=%v", m.pane)
@@ -114,6 +117,16 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatalf("leave changed config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+
+	mi, _ = m.Update(snapshotLoadedMsg{
+		generation:       m.requests.active(requestSnapshot),
+		mergedCfg:        &config.Config{},
+		pendingMigration: m.migrationPrompt,
+	})
+	m = mi.(Model)
+	if m.pane == paneMigrationModal {
+		t.Fatal("migration modal reopened after the user left it")
 	}
 }
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("resize-and-recover", ["tui"]);
 test.use(journey.options);
@@ -10,6 +10,7 @@ test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
 test("minimum-size gate preserves selection and blocks toggles", async ({ terminal }) => {
+  await declineLegacyMigration(terminal);
   await step("settled fixture baseline", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();

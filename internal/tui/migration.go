@@ -145,9 +145,10 @@ func (m Model) handleMigrationModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.runMigrationCmd()
 	case key.Matches(msg, m.keys.MigrationLeave):
 		m.pane = paneList
+		m.migrationDismissed = true
 		m.toast = "Config left unchanged"
 		m.toastExp = time.Now().Add(2 * time.Second)
-		return m, nil
+		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), toastExpiryCmd(2*time.Second))
 	}
 	return m, nil
 }

@@ -129,6 +129,25 @@ func currentMigratePaths() (config.MigratePaths, error) {
 	}, nil
 }
 
+func pendingV4MigrationPaths(paths config.MigratePaths) (config.MigratePaths, error) {
+	candidates, err := config.FindV4MigrationCandidates(paths)
+	if err != nil {
+		return config.MigratePaths{}, err
+	}
+	pending := config.MigratePaths{}
+	for _, candidate := range candidates {
+		switch candidate.Scope {
+		case config.V4MigrationUser:
+			pending.User = candidate.Path
+		case config.V4MigrationRepo:
+			pending.Repo = candidate.Path
+		case config.V4MigrationLocal:
+			pending.Local = candidate.Path
+		}
+	}
+	return pending, nil
+}
+
 func runMigrateV4(ctx context.Context, out io.Writer, scope config.V4MigrationScope, dryRun bool) error {
 	paths, err := currentMigratePaths()
 	if err != nil {

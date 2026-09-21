@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("search-and-select", ["tui"]);
 test.use(journey.options);
@@ -10,6 +10,7 @@ test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
 test("search keeps only alpha-skill selected", async ({ terminal }) => {
+  await declineLegacyMigration(terminal);
   await step("settled fixture baseline", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();

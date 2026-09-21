@@ -625,8 +625,8 @@ func TestMigrateConfigFilesToV4MarketplaceAllScopeSingleCommit(t *testing.T) {
 	commits := 0
 	commitV4Migration = func(ctx context.Context, stateDir string, files []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 		commits++
-		if len(files) != 4 {
-			return dependencytxn.Result{}, fmt.Errorf("expected 4 desired files, got %d", len(files))
+		if len(files) != 6 {
+			return dependencytxn.Result{}, fmt.Errorf("expected 6 desired files, got %d", len(files))
 		}
 		return original(ctx, stateDir, files, opts...)
 	}

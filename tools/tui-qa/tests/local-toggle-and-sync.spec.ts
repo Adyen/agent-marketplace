@@ -4,7 +4,8 @@ import path from "node:path";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { defineFixture, runNonTTY, step, waitForExit } from "./helpers.js";
+import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { runNonTTY } from "./process-helpers.js";
 
 const journey = defineFixture("local-toggle-and-sync", ["tui"]);
 test.use(journey.options);
@@ -13,6 +14,7 @@ test.afterAll(journey.cleanup);
 
 test("local toggle reaches pending state before sync", async ({ terminal }) => {
   const fixture = journey.current();
+  await declineLegacyMigration(terminal);
   const generatedSkill = path.join(fixture.repo, ".factory", "skills", "alpha-skill");
   const generatedContent = path.join(generatedSkill, "SKILL.md");
   const localConfig = path.join(fixture.repo, ".agents", "config.local.yaml");

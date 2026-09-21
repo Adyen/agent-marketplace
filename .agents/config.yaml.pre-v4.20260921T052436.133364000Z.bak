@@ -1,0 +1,6 @@
+apiVersion: agent-marketplace/v2
+registries:
+  - url: .
+    ref: main
+    path: skills
+    default: true

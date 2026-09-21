@@ -34,6 +34,18 @@ registries:
 	if !strings.Contains(v4, "apiVersion: agent-marketplace/v4") || !strings.Contains(v4, "sources:") || !strings.Contains(v4, "resources:") {
 		t.Fatalf("migration did not publish v4 config: %s", v4)
 	}
+	backups, err := filepath.Glob(env.mustResolvePath("/workspace/.agents/config.yaml") + ".pre-v4.*.bak")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("migration backups = %v, %v; want one", backups, err)
+	}
+	backup, err := os.ReadFile(backups[0])
+	if err != nil || string(backup) != before {
+		t.Fatalf("migration backup = %q, %v; want exact legacy bytes", backup, err)
+	}
+	info, err := os.Stat(backups[0])
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("migration backup mode = %v, %v; want 0600", info, err)
+	}
 
 	unsupported := "apiVersion: agent-marketplace/v2\ninclude: child.yaml"
 	env.WriteRepoConfig(unsupported)
