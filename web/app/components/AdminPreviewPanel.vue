@@ -72,7 +72,7 @@ function describe(value: unknown, fallback: string) {
   if (value.code === 'rate_limited') return 'Preview limit reached for now. Wait a minute before requesting another one.'
   if (value.code === 'invalid_configuration') {
     emit('rejected', value)
-    const problems = Object.keys(value.fields)
+    const problems = Object.keys(value.fields || {})
     const where = problems.length ? ` Check ${problems.length === 1 ? 'the highlighted field' : `the ${problems.length} highlighted fields`} above.` : ''
     return `The draft cannot be previewed yet: ${value.message}${where}`
   }

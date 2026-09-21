@@ -13,7 +13,7 @@ function render(errors?: Record<string, string>) {
 
 describe('admin registry fields', () => {
   it('outlines and describes exactly the fields the API rejected', () => {
-    const wrapper = render({ 'slug': '"mattpocock/skills" must use only lowercase letters, digits and hyphens', 'roots[1].path': '"../x" must be relative and not contain \'..\'' })
+    const wrapper = render({ 'slug': '"mattpocock/skills" must use only lowercase letters, digits and hyphens', 'roots[1].path': '"../x" must be relative and not contain \'..\'', 'publisher.name': 'Publisher name is too long' })
     const slug = wrapper.find('#registry-slug')
     expect(slug.attributes('aria-invalid')).toBe('true')
     expect(slug.attributes('aria-describedby')).toBe('registry-slug-help')
@@ -21,9 +21,12 @@ describe('admin registry fields', () => {
     expect(wrapper.find('#root-1').attributes('aria-invalid')).toBe('true')
     expect(wrapper.find('#root-1-help').text()).toContain('must be relative')
     expect(wrapper.find('#root-0').attributes('aria-invalid')).toBeUndefined()
+    expect(wrapper.find('#publisher-name').attributes('aria-invalid')).toBe('true')
+    expect(wrapper.find('#publisher-name').attributes('aria-describedby')).toBe('publisher-name-help')
+    expect(wrapper.find('#publisher-name-help').text()).toContain('Publisher name is too long')
     expect(wrapper.find('#registry-origin').attributes('aria-invalid')).toBeUndefined()
     expect(wrapper.find('#registry-origin-help').text()).toContain('Approved HTTPS or SSH origin')
-    expect(wrapper.findAll('[data-invalid="true"]')).toHaveLength(2)
+    expect(wrapper.findAll('[data-invalid="true"]')).toHaveLength(3)
   })
 
   it('renders plain help text when nothing is rejected', () => {

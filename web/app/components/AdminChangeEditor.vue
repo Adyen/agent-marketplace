@@ -145,7 +145,7 @@ onBeforeRouteUpdate(canLeave)
           <fieldset :disabled="busy || !!blocked" class="space-y-6">
             <AdminRegistryFields v-if="draft.registry" v-model="draft.registry" :profiles="profiles" :existing="!!originalRegistry" :errors="error?.fields" />
             <AdminPreviewPanel v-if="draft.registry" v-model="previewState" :registry="draft.registry" :revision="baseline.revision" :disabled="busy || !!blocked" @rejected="captureError" />
-            <AdminPolicyFields v-if="draft.license_policy" v-model="draft.license_policy" prefix="global" :error="error?.fields.license_policy" />
+            <AdminPolicyFields v-if="draft.license_policy" v-model="draft.license_policy" prefix="global" :error="error?.fields?.license_policy" />
             <div v-if="originMove || unrestricted" class="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4 text-sm">
               <label v-if="originMove" class="flex items-start gap-2"><input v-model="draft.confirm_origin_move" type="checkbox" required class="mt-1 size-4 accent-[var(--ui-primary)]"><span>I confirm the origin move for the same immutable registry identity.</span></label>
               <label v-if="unrestricted" class="flex items-start gap-2"><input v-model="draft.confirm_unrestricted" type="checkbox" required class="mt-1 size-4 accent-[var(--ui-primary)]"><span>I understand that an empty global allowlist disables license enforcement.</span></label>
