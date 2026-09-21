@@ -220,7 +220,7 @@ An ingested native concrete model must not be collapsed into a family before can
 
 ### Git source revisions
 
-`internal/sourcerevision` normally hashes original source-file bytes. When those bytes are unavailable it falls back to IR JSON, where changing model normalization or adding provenance can invalidate old locks. Source-revision v4 captures provenance in that fallback; v1/v2/v3 retain frozen legacy projection without changing original-file hashing. This source-revision version is independent of config API version and lockfile schema version.
+`internal/sourcerevision` normally hashes original source-file bytes. When those bytes are unavailable it falls back to IR JSON, where changing model normalization or adding provenance can invalidate old locks. Source-revision v4 captures model provenance in that fallback and includes bare-bundle MCP resources; v1/v2/v3 retain frozen legacy projection without changing original-file hashing. This source-revision version is independent of config API version and lockfile schema version.
 
 The legacy verification adapter must reproduce the historical model/effort projection for every supported old revision, using frozen legacy model data rather than the evolving catalog. Normal runtime compilation consumes current source-aware resources after existing exact-source verification. Existing locks are not refreshed solely because the compiler gained a catalog; explicit lock upgrades can adopt the new generator. Compatibility fixtures must include known Factory/Cursor exact models, Devin aliases, Codex sidecars, and model-less agents, not only fixtures with empty model fields.
 
