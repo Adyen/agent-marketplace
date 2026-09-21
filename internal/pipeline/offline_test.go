@@ -58,9 +58,9 @@ func TestOfflineSyncUsesWarmMarketplaceMirror(t *testing.T) {
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
@@ -161,9 +161,9 @@ func TestOfflineSyncUsesCollectionPreparationMetadataCache(t *testing.T) {
 	server.Close()
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
@@ -199,9 +199,9 @@ func TestOfflineSyncFailsBeforeMaterializationWhenGitCacheMissing(t *testing.T) 
 		t.Fatal(err)
 	}
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
@@ -250,9 +250,9 @@ func TestOfflineSyncRejectsSymlinkedLocalRegistry(t *testing.T) {
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
@@ -297,9 +297,9 @@ func TestOfflineSyncFailsBeforeMaterializationForIncompleteSnapshot(t *testing.T
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
@@ -360,9 +360,9 @@ func TestOfflineSyncMarketplaceCacheFailurePreservesOutput(t *testing.T) {
 		RegistryID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest,
 	}}}
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
@@ -401,9 +401,9 @@ func TestOfflineSyncPreservesExactMarketplaceSelectorsOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
@@ -586,7 +586,7 @@ func TestOfflineOverridesExplicitMarketplaceRefresh(t *testing.T) {
 
 	explicitMode := resolver.MarketplaceResolveModeRefresh
 	result := Resolve(context.Background(), ResolveOptions{
-		RepoRoot:        t.TempDir(),
+		Workspace:       mustWorkspace(t, t.TempDir()),
 		Offline:         true,
 		MarketplaceMode: &explicitMode,
 		Loaders: Loaders{

@@ -234,13 +234,14 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 				// Report the effective post-purge configuration from cache only. This
 				// lookup is telemetry best effort: resolution errors neither add output
 				// nor change the successful teardown's exit status.
-				finalResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-					RepoRoot:       repoRoot,
-					LocalConfigDir: config.FindLocalConfigDir(),
-					CatalogMode:    catalog.LoadModeCachedNoFetch,
-					SkipInventory:  true,
-				})
-				pipeline.RecordResolvedInventory(ctx, finalResult)
+				if ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir()); err == nil {
+					finalResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
+						Workspace:     ws,
+						CatalogMode:   catalog.LoadModeCachedNoFetch,
+						SkipInventory: true,
+					})
+					pipeline.RecordResolvedInventory(ctx, finalResult)
+				}
 			}
 		}
 	}
@@ -350,9 +351,12 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 
 func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode catalog.LoadMode) ([]resolver.ResolvedArtifact, func(), error) {
 	marketplaceMode := resolver.MarketplaceResolveModeCachedNoFetch
+	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return nil, nil, err
+	}
 	resolveOpts := pipeline.ResolveOptions{
-		RepoRoot:           repoRoot,
-		LocalConfigDir:     config.FindLocalConfigDir(),
+		Workspace:          ws,
 		CatalogMode:        mode,
 		RequireTargetSet:   true,
 		SkipInventory:      true,

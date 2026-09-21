@@ -52,8 +52,8 @@ func devinScopedToolSyncResult(t *testing.T, names ...string) SyncResult {
 	}
 
 	return Sync(context.Background(), ResolveOptions{
-		RepoRoot: t.TempDir(),
-		NoBackup: true,
+		Workspace: mustWorkspace(t, t.TempDir()),
+		NoBackup:  true,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"devin"}}, nil },
@@ -146,8 +146,8 @@ func TestSyncPromotedMaterializeErrorsCollapsePerResource(t *testing.T) {
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: t.TempDir(),
-		NoBackup: true,
+		Workspace: mustWorkspace(t, t.TempDir()),
+		NoBackup:  true,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"devin"}}, nil },

@@ -23,7 +23,7 @@ func TestResolveBlockedRegistryRemovalDoesNotAcquire(t *testing.T) {
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 			blocked := []string{}
 			cfg := &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}, AllowedRegistries: &blocked, Registries: []config.RegistryEntry{{URL: "https://example.invalid/registry.git", Ref: "main", Skills: config.KindSelector{Include: []string{"keeper"}}}}}
-			opts := ResolveOptions{RepoRoot: repo, CatalogMode: catalog.LoadModeRefresh, IgnoreBlockedRegistries: true}
+			opts := ResolveOptions{Workspace: mustWorkspace(t, repo), CatalogMode: catalog.LoadModeRefresh, IgnoreBlockedRegistries: true}
 			if custom {
 				opts.Loaders = Loaders{Repo: func() (*config.Config, error) { return cfg, nil }}
 				opts.EffectiveOpts.RepoPath = filepath.Join(repo, ".agents", "config.yaml")
@@ -62,7 +62,7 @@ func TestResolveBlockedRegistryAllowedPolicyStillAcquires(t *testing.T) {
 	allowed := []string{`example\.invalid`}
 	cfg := &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}, AllowedRegistries: &allowed, Registries: []config.RegistryEntry{{URL: "https://example.invalid/registry.git", Ref: "main", Skills: config.KindSelector{Include: []string{"keeper"}}}}}
 	var clones atomic.Int32
-	result := Resolve(context.Background(), ResolveOptions{RepoRoot: repo, CatalogMode: catalog.LoadModeRefresh, IgnoreBlockedRegistries: true, Loaders: Loaders{Repo: func() (*config.Config, error) { return cfg, nil }}, EffectiveOpts: config.LoadEffectiveOptions{RepoPath: filepath.Join(repo, ".agents", "config.yaml")}, CatalogOption: []catalog.LoadOption{catalog.WithCloneOrPull(func(string, string) (string, error) {
+	result := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repo), CatalogMode: catalog.LoadModeRefresh, IgnoreBlockedRegistries: true, Loaders: Loaders{Repo: func() (*config.Config, error) { return cfg, nil }}, EffectiveOpts: config.LoadEffectiveOptions{RepoPath: filepath.Join(repo, ".agents", "config.yaml")}, CatalogOption: []catalog.LoadOption{catalog.WithCloneOrPull(func(string, string) (string, error) {
 		clones.Add(1)
 		return "", errors.New("expected fixture acquisition")
 	})}})
@@ -85,7 +85,7 @@ func TestResolveBlockedRegistryDoesNotFilterMalformedConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte("apiVersion: ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result := Resolve(context.Background(), ResolveOptions{RepoRoot: repo, CatalogMode: catalog.LoadModeRefresh, IgnoreBlockedRegistries: true})
+	result := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repo), CatalogMode: catalog.LoadModeRefresh, IgnoreBlockedRegistries: true})
 	if len(result.Errors) == 0 {
 		t.Fatal("malformed config error was filtered")
 	}

@@ -118,12 +118,11 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
-
-	if localDir != "" && localDir != repoRoot {
-		resolveOpts.MaterializeRoot = localDir
-		resolveOpts.LocalConfigDir = localDir
+	ws, err := pipeline.NewWorkspace(repoRoot, localDir)
+	if err != nil {
+		return err
 	}
+	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors
@@ -441,24 +440,21 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	defer releaseExactLocks()
 	ctx = cache.ContextWithExactGitNamespaceLease(ctx)
 
+	ws, err := pipeline.NewWorkspace(repoRoot, localDir)
+	if err != nil {
+		return err
+	}
 	resolveOpts := pipeline.ResolveOptions{
-		RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
+		Workspace: ws, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
 		ConfigLoadMode: configLoadMode,
 	}
 	resolveOpts.RequireTargetSet = true
-	if localDir != "" && localDir != repoRoot {
-		resolveOpts.MaterializeRoot = localDir
-		resolveOpts.LocalConfigDir = localDir
-	}
 	resolvedResult := pipeline.Resolve(ctx, resolveOpts)
 
-	// Use materialize in dry-run mode to check for drift.
-	matRoot := localDir
-	if matRoot == "" {
-		matRoot = repoRoot
-	}
-	report, matErr := materialize.Run(ctx, matRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
+	// Use materialize in dry-run mode to check for drift; the Workspace derives
+	// the same materialization root the real sync would write beneath.
+	report, matErr := materialize.Run(ctx, ws.MaterializeRoot(), resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
 	if matErr != nil {
 		return matErr
 	}

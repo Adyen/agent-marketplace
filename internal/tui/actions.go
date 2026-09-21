@@ -146,8 +146,11 @@ func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation r
 }
 
 func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+	// A failed construction yields the zero Workspace, which Resolve rejects
+	// with ErrInvalidWorkspace and reports through resolvedResult.Errors.
+	ws, _ := pipeline.NewWorkspace(repoRoot, "")
 	resolvedResult, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		RepoRoot:      repoRoot,
+		Workspace:     ws,
 		CatalogMode:   tuiCatalogLoadMode(mode),
 		SkipInventory: true,
 		EffectiveOpts: config.LoadEffectiveOptions{
@@ -1114,8 +1117,11 @@ func loadDetailContent(r row, generation requestGeneration, width int, keepScrol
 }
 
 func tuiPipelineOptions(repoRoot string) pipeline.ResolveOptions {
+	// A failed construction yields the zero Workspace, which Sync rejects with
+	// ErrInvalidWorkspace and reports through SyncResult.Errors.
+	ws, _ := pipeline.NewWorkspace(repoRoot, "")
 	return pipeline.ResolveOptions{
-		RepoRoot: repoRoot,
+		Workspace: ws,
 		Loaders: pipeline.Loaders{
 			Org:    loadOrgConfig,
 			Global: loadGlobalConfig,
