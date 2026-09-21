@@ -1,6 +1,7 @@
-apiVersion: agent-marketplace/v2
-registries:
-  - url: .
-    ref: main
-    path: skills
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+    registry:
+        directory: ./skills
+resources:
+    registry:
+        all: true
