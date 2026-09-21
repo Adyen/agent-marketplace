@@ -135,8 +135,10 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 
 	// No compile-time plugin root is supplied: the source path is an
 	// author-machine location, never a runtime root. Token-capable targets
-	// render their native root reference and literal-only targets report a
-	// stable plugin-root-unresolved diagnostic instead of embedding it.
+	// render their native root reference; Codex and Devin report stable
+	// hook/mcp.*plugin-root-unresolved diagnostics; and Windsurf warns with
+	// hook.windsurf.env-token-expanded while its MCP env interpolation renders
+	// ${env:CLAUDE_PLUGIN_ROOT}; none embed an author-machine path.
 	result, err := hcc.Convert(srcFS, srcHarness, hcc.Harness(to))
 	if err != nil {
 		return fmt.Errorf("convert: %w", err)

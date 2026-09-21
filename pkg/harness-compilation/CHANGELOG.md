@@ -26,8 +26,10 @@ Factory and Cursor MCP ingestion normalize their native root tokens
 spelling across command, args, env, URL, and headers, matching the hook
 path. `agent-marketplace convert` no longer substitutes the source path as an
 implicit plugin root: token-capable targets render their native root
-reference and literal-only targets report a stable unresolved-token
-diagnostic instead of embedding an author-machine path.
+reference; Codex and Devin report stable `hook.*`/`mcp.*`
+`plugin-root-unresolved` diagnostics; and Windsurf warns with
+`hook.windsurf.env-token-expanded` while its MCP env interpolation renders
+`${env:CLAUDE_PLUGIN_ROOT}`; none embed an author-machine path.
 
 ### Validated native-layout descriptors now cover Codex, Devin, and Claude
 
