@@ -7,15 +7,17 @@ Remove a selected resource, exclude an auto-selected one, or override a resource
 - A configured `.agents/config.yaml` or `~/.agents/config.yaml`.
 - `agent-marketplace` on your `PATH`.
 
+The command examples below require an editable v2/v3 destination. For v4 Git/directory sources, edit the `resources` selection or exclusion directly and run `sync`; CLI `remove` cannot edit a v4 root. Hosted v4 requests have additional lock constraints: see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+
 ## 1. Remove an explicit selection
 
 Remove a skill that was installed directly:
 
 ```bash
-agent-marketplace remove code-review
+agent-marketplace remove code-review --scope repo
 ```
 
-This deletes the entry from the selected config scope. The default scope is `repo`.
+This deletes the entry from repository config. Without `--scope`, named removal infers the scope from the resolved selection; pass a scope explicitly to avoid removing a different occurrence.
 
 ## 2. Exclude an auto-selected resource
 
@@ -65,7 +67,7 @@ This removes or shadows the registry entry in the selected scope.
 agent-marketplace status
 ```
 
-Confirm the resource no longer appears under **SYNCED RESOURCES**.
+Confirm the targeted occurrence no longer appears under **SYNCED RESOURCES**. Another scope or a hosted collection may still select the same resource; removing a direct Marketplace selection preserves any collection ownership.
 
 ## Troubleshooting
 

@@ -2,6 +2,12 @@
 
 Keep a v4 configuration readable, reproducible, and safe to change across its layered files and generated locks. Representable legacy roots can be converted to v4 while v2/v3 reads remain available; use `agent-marketplace migrate --to v2` when only legacy structural remediation is needed.
 
+::: warning Migration changes the editing workflow
+V4 is readable by discovery, status, and sync, but CLI resource installation/removal, endpoint registration, and TUI resource toggles still use legacy editors and reject v4 destination files with `v4.writer-opt-in`. Keep v2/v3 if you need those editors; `init` deliberately creates editable v2 user configuration. Migration is explicit, not an automatic startup step.
+
+For v4 Git/directory selections, edit `sources` and `resources` directly, then sync. Exact hosted requests need matching verified layer locks; general hosted acquisition, update, and dynamic-selector snapshots are not implemented. Do not migrate merely to follow an install command.
+:::
+
 ## Prerequisites
 
 - `agent-marketplace` on your `PATH`.
@@ -43,7 +49,7 @@ agent-marketplace migrate --dry-run
 
 V4 migration targets user, repository, and repository-personal config layers; use `--scope user`, `--scope repo`, or `--scope local` to limit the transaction. It refuses include trees, hosted Marketplace selections without proven pin provenance, collection-derived aliases that cannot be represented, and other lossy inputs without changing bytes. It never edits organization configuration. Git- and directory-only conversion leaves locks unchanged; a proven Marketplace conversion creates or upgrades the owning layer lock to `agent-marketplace-lock/v2` atomically with the config in one journaled transaction.
 
-Interactive CLI startup and the TUI ask before migrating detected legacy roots. A declined or non-interactive prompt leaves the original files unchanged and continues with v2/v3 reads. Run the command below explicitly to publish a conversion; `--to v4` is an accepted alias:
+Proactive CLI/TUI migration is disabled until resource editors support v4. Legacy roots continue through the v2/v3 reader unchanged. Run the command below explicitly to publish a conversion; `--to v4` is an accepted alias:
 
 ```bash
 agent-marketplace migrate
@@ -167,7 +173,7 @@ Included fragments may omit `apiVersion`; they inherit v4 from the root. They ar
 - **`v4.runtime-option`**: Remove unsupported options such as a non-default `as` alias for a Git or directory resource.
 - **`lock.snapshot-unavailable`**: Restore the exact Git snapshot or run a writing lock operation before retrying the check.
 - **`v4.migration-marketplace-evidence`**: A Marketplace pin's verified cache evidence is missing or inconsistent. Run a normal legacy `sync` so the CLI fetches and verifies the endpoint's metadata/artifacts, then rerun `migrate` — do not hand-author lock or trust data.
-- **The prompt is skipped**: Run `agent-marketplace migrate` explicitly on a terminal. Non-interactive commands keep using v2/v3 and never rewrite without consent.
+- **No startup migration prompt appears**: This is intentional while resource editors require v2/v3. Run `agent-marketplace migrate --dry-run` explicitly to inspect a conversion before choosing to migrate.
 - **A local config still contains `harnesses`**: The v2 structural-remediation flow removes it, because the target set is machine-wide and lives in the user or repository config.
 
 See the [repository configuration reference](../reference/configuration.md) for the complete field and precedence rules.

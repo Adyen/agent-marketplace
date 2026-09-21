@@ -51,6 +51,7 @@ export default defineConfig({
         { text: 'Overview', link: DOCS_PATH },
         { text: 'Install', link: `${DOCS_PATH}install` },
         { text: 'Quick start', link: `${DOCS_PATH}quick-start` },
+        { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
         {
           text: 'Tutorials',
           items: [
@@ -81,6 +82,7 @@ export default defineConfig({
             {
               text: 'Consumers',
               items: [
+                { text: 'Browse and inspect Marketplace resources', link: `${DOCS_PATH}how-to/browse-marketplace-resources` },
                 { text: 'Adopt in a repository', link: `${DOCS_PATH}how-to/adopt-agent-marketplace-in-a-repository` },
                 { text: 'Keep resources reproducible', link: `${DOCS_PATH}how-to/keep-resources-reproducible` },
                 { text: 'Troubleshoot sync drift', link: `${DOCS_PATH}how-to/troubleshoot-sync-drift` },

@@ -7,60 +7,44 @@ Register a hosted Marketplace, find a resource, inspect its verified installatio
 Before starting, ensure:
 
 - `agent-marketplace` is on your `PATH`;
-- your effective configuration selects at least one target harness; and
-- you have the Marketplace endpoint URL.
+- your effective configuration selects at least one target harness;
+- you have the Marketplace endpoint URL; and
+- the destination config is editable v2/v3, or does not exist yet. Resource-install editors cannot write v4 roots; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
-Replace `https://marketplace.example.com`, `team`, `shared-agents`, and `review` in the examples with values from your Marketplace.
+Replace `https://marketplace.example.com`, `shared-agents`, and `review` in the examples with values from your Marketplace.
 
-## 1. Declare the Marketplace source
+## 1. Register the Marketplace endpoint
 
-Add a named source to the v4 configuration layer that should own it:
+Register the endpoint for this repository:
 
-```yaml
-apiVersion: agent-marketplace/v4
-sources:
-  team:
-    marketplace: https://marketplace.example.com
+```bash
+agent-marketplace install https://marketplace.example.com --scope repo
 ```
 
-The CLI verifies the endpoint's well-known document, canonical URL, and instance identity when it searches or resolves a resource. Source names must be unique within the configuration layer.
+The CLI verifies the endpoint's well-known document, canonical URL, and instance identity before recording it. Registration installs no resources. Without `--scope repo`, endpoint registration defaults to user scope; an identity already registered in the same or a broader scope is left unchanged.
+
+If you already have a resource URL from the [browser](./browse-marketplace-resources.md), you can skip registration and install that URL directly in step 3.
 
 ## 2. Search for a resource
 
 Search the configured Marketplaces:
 
 ```bash
-agent-marketplace search review --kind skill
+agent-marketplace search review --kind skill --marketplace https://marketplace.example.com
 ```
 
-A matching result has this form:
+Results include `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION`. `SOURCE` is the registry slug used in the install locator. Omit `--marketplace` to search all configured endpoints, or use an existing configured alias instead of the URL. To preserve partial endpoint failures in machine-readable output, add `--output json`.
 
-```text
-MARKETPLACE  SOURCE          KIND   NAME    DESCRIPTION
-team         shared-agents   skill  review  Review code changes
-```
+## 3. Install the resource
 
-`SOURCE` is the registry slug used in the install locator. To search one endpoint, add `--marketplace team`. To preserve partial endpoint failures in machine-readable output, add `--output json`.
-
-## 3. Record the exact resource request
-
-Use the Marketplace result's source, kind, name, and exact revision to add a request to the v4 resource group:
-
-```yaml
-resources:
-  team:
-    include:
-      - shared-agents/skill/review:
-          revision: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-```
-
-You can also install the resource in repository scope:
+Use the result's source, kind, and name to install in repository scope:
 
 ```bash
-agent-marketplace install team:shared-agents/skill/review
+agent-marketplace install shared-agents/skill/review \
+  --marketplace https://marketplace.example.com --scope repo
 ```
 
-Before changing configuration, the CLI fetches and verifies the immutable revision. Review its license, findings, capabilities, provenance, and acquisition mode. A resource without findings or active capabilities produces compact output:
+Before changing configuration, the CLI fetches and verifies the immutable revision. Use `--verbose` to review its license, findings, capabilities, provenance, and acquisition mode. A resource without findings or active capabilities produces compact output:
 
 ```text
 Installing review · skill
@@ -105,7 +89,8 @@ If the resource name conflicts with an existing generated path, choose a safe lo
 
 ```bash
 agent-marketplace install \
-  team:shared-agents/skill/review \
+  shared-agents/skill/review \
+  --marketplace https://marketplace.example.com \
   --as team-review
 ```
 
@@ -121,7 +106,7 @@ agent-marketplace status
 
 Under **MARKETPLACE PINS**, confirm that the row reports:
 
-- alias `team`;
+- the intended Marketplace endpoint (or its configured alias);
 - source `shared-agents`;
 - kind `skill` and name `review`;
 - state `current`;
@@ -138,7 +123,8 @@ An in-sync check returns exit status 0 without a drift verdict. Drift returns ex
 
 ## Troubleshooting
 
-- **`no Marketplace source configured`**: Add a `marketplace` source to the v4 configuration, or search an unconfigured endpoint with `--marketplace <endpoint-url>`.
+- **`no Marketplace source configured`**: Register the endpoint as in step 1, or search an unconfigured endpoint with `--marketplace <endpoint-url>`.
+- **`v4.writer-opt-in`**: The selected destination is v4 and cannot be edited by resource-install commands. Do not change only its `apiVersion` or hand-author lock evidence. Keep CLI-managed selections in an appropriate editable layer, or follow the [v4 migration and maintenance guide](./migrate-configuration.md). General acquisition of new hosted v4 requests is not implemented.
 - **`marketplace "..." not found`**: Check the configured alias, or pass the endpoint URL to `--marketplace`.
 - **Instance ID mismatch**: The endpoint identity changed or the URL points to a different deployment. Do not edit `instance_id` to bypass the check; confirm the endpoint with its operator.
 - **Marketplace URL blocked**: The effective `allowed_marketplaces` policy does not permit the endpoint. Use an approved endpoint or ask the policy owner to update the controlling layer.

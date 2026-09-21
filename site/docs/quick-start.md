@@ -83,7 +83,7 @@ The relevant sections look like this:
 ```text
 TARGET HARNESS SET
 TARGET HARNESSES  SOURCE
-claude            USER
+claude            REPO
 
 EXACT REGISTRY LOCKS
 SOURCE  REGISTRY                              REF   COMMIT                                         SNAPSHOT
@@ -125,13 +125,14 @@ A teammate who clones the project runs one command to get the identical skill at
 agent-marketplace sync
 ```
 
-In CI, `agent-marketplace sync --check` exits non-zero if the configuration, lock, and generated output disagree.
+On a fresh CI runner, first run `agent-marketplace sync --locked` to acquire exact snapshots and generate output without rewriting config or locks, then run `agent-marketplace sync --check` as the drift gate. See [keeping resources reproducible](./how-to/keep-resources-reproducible.md).
 
 ## Where next
 
 - [Configure multiple harnesses](./how-to/configure-multiple-harnesses.md): add Cursor, Codex, Devin, or others alongside Claude Code.
 - [Install your first skill for Claude Code](./tutorials/install-your-first-skill.md): the same flow, CLI only, installed user-wide instead of per project.
-- [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md): use a named v4 Marketplace source and an exact resource revision.
+- [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md): register an endpoint or install a browser URL into an editable configuration layer.
+- [User journeys](./explanation/user-journeys.md): find the next step for sharing, updating, removing, or recovering resources.
 - [TUI reference](./reference/tui.md): every key binding and modal action.
 - [Command-line reference](./reference/cli.md): `list`, `install`, `remove`, `sync`, `update`, `status`, and every flag.
 - [Repository configuration reference](./reference/configuration.md): every v4 source, resource-group, harness, and materialization field.
