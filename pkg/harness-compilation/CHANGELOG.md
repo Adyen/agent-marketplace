@@ -8,6 +8,27 @@
 
 The consumer-side materializer walkers (`copySupportFilesExcluding` and the `--check` virtual digest in `internal/materialize`) now skip `.git` directories the same way. Previously a root skill's compiled cache copy contained the registry's entire `.git` object database, exposed to every workspace through the harness symlink and copied again by file-mode materialization; stale copies are pruned on the next sync's existing reconcile pass.
 
+### Conversion assembles complete resource bundles from the source harness
+
+`Convert` (and `CompileBundle`, which delegates to it) now performs
+source-aware support-file assembly. Declared skill `SupportFiles` and
+hook/MCP assets explicitly referenced through the canonical root token are
+resolved against the source `fs.FS` and emitted as additional artifacts under
+the compiled resource root with exact bytes and modes; per-resource `Compile`
+stays filesystem-free and still defers the names with
+`skill.support-files-deferred`. A missing or unsafe (traversal, symlink,
+non-regular) support path fails closed with `bundle.support-file.missing` or
+`bundle.support-file.unsafe` and suppresses the owning resource's complete
+output, fragments included.
+
+Factory and Cursor MCP ingestion normalize their native root tokens
+(`${DROID_PLUGIN_ROOT}`, `${CURSOR_PLUGIN_ROOT}`) to the canonical IR
+spelling across command, args, env, URL, and headers, matching the hook
+path. `agent-marketplace convert` no longer substitutes the source path as an
+implicit plugin root: token-capable targets render their native root
+reference and literal-only targets report a stable unresolved-token
+diagnostic instead of embedding an author-machine path.
+
 ### Validated native-layout descriptors now cover Codex, Devin, and Claude
 
 `target/native_layout.go` now carries a complete `NativeLayout` descriptor for

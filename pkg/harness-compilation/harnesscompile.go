@@ -206,6 +206,17 @@ func Compile(r Resource, t Target, opts ...Option) (*Result, error) {
 // registry to load the source bundle and then compiles each resource to the
 // target format.
 //
+// Because Convert holds the source fs.FS, it also performs source-aware
+// support-file assembly that pure per-resource Compile cannot: declared skill
+// support files and hook/MCP assets explicitly referenced through the
+// canonical root token are resolved against srcFS and emitted as additional
+// artifacts with their exact bytes and modes. A missing, unsafe (traversal,
+// symlink, non-regular), or unreadable support path fails closed with a
+// bundle.support-file.missing or bundle.support-file.unsafe error diagnostic
+// and suppresses the owning resource's complete output — its own artifacts
+// and its fragments of a shared aggregate — through the same per-resource
+// rule that handles compiler errors.
+//
 // Convert(srcFS, HarnessClaude, target, opts...) is equivalent to
 // CompileBundle(srcFS, target, opts...).
 func Convert(srcFS fs.FS, from, to Harness, opts ...Option) (*Result, error) {
