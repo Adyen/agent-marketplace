@@ -202,6 +202,9 @@ func (s Service) mutate(snapshot *Snapshot, m Mutation) (bool, error) {
 			r.Lifecycle = "active"
 		} else {
 			old := snapshot.Registries[index]
+			if r.Generation == 0 {
+				return false, invalidf("id", "A registry with ID %q already exists (slug %s); edit that registry instead or choose another ID.", r.ID, old.Slug)
+			}
 			if r.Generation != old.Generation || r.Paused != old.Paused || r.Withdrawn != old.Withdrawn || r.Retired != old.Retired || r.Lifecycle != old.Lifecycle || !reflect.DeepEqual(r.NonLicenseOverrides, old.NonLicenseOverrides) || !reflect.DeepEqual(r.Aliases, old.Aliases) || !reflect.DeepEqual(r.HistoricalOrigins, old.HistoricalOrigins) {
 				return false, invalid("", "Generation, lifecycle, aliases, historical origins and non-license overrides are read-only here; reload the registry and reapply your edits.")
 			}

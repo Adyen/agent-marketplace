@@ -29,6 +29,7 @@ func TestPreviewReportsFieldLevelProblems(t *testing.T) {
 		"several at once":    {func(r *Registry) { r.Slug, r.Ref = "Bad Slug", "" }, map[string]string{"slug": "lowercase", "ref": "required"}},
 		"slug taken":         {func(r *Registry) { r.Slug = existing.Slug }, map[string]string{"slug": string(existing.ID)}},
 		"invalid ID chars":   {func(r *Registry) { r.ID = "a/b" }, map[string]string{"id": "must not"}},
+		"ID taken":           {func(r *Registry) { r.ID = existing.ID }, map[string]string{"id": "already exists"}},
 		"new but paused":     {func(r *Registry) { r.Paused = true }, map[string]string{}},
 		"empty override":     {func(r *Registry) { r.LicenseOverride = &LicensePolicy{} }, map[string]string{"license_override": "allowlist"}},
 		"existing gen drift": {func(r *Registry) { *r = existing; r.Generation++ }, map[string]string{}},
