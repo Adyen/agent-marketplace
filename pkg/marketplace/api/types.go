@@ -49,6 +49,7 @@ type Capabilities struct {
 // WellKnown is the response payload for `/.well-known/agent-marketplace.json`.
 type WellKnown struct {
 	InstanceID         string `json:"instance_id"`
+	Version            string `json:"version"`
 	CanonicalURL       string `json:"canonical_url"`
 	APIBase            string `json:"api_base"`
 	BrowserBase        string `json:"browser_base,omitempty"`

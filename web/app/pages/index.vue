@@ -10,7 +10,6 @@ const router = useRouter()
 const api = useMarketplaceApi()
 
 const { data: metadata, error: metadataError } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
-const { data: instance } = await useAsyncData('marketplace-instance', () => api.getInstance())
 const { data: registries } = await useAsyncData('marketplace-registries', () => api.listRegistries())
 const searchParams = computed(() => parseSearchQuery(route.query))
 const draft = reactive<SearchParams>({ ...searchParams.value })
@@ -389,7 +388,7 @@ useHead({
     <footer class="marketplace-footer">
       <div>
         <a :href="DOCS_PATH">Docs</a>
-        <p><span v-if="instance">Version {{ instance.version }} · </span>built at Adyen</p>
+        <p><span v-if="metadata">Version {{ metadata.version }} · </span>built at Adyen</p>
       </div>
     </footer>
   </div>

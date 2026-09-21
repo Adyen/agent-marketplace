@@ -88,12 +88,19 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	}
 }
 
-func TestOpenAPIMarketplaceRequiresRunningVersion(t *testing.T) {
+func TestOpenAPIDiscoveryRequiresRunningVersion(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	wellKnown := schemas["WellKnown"].(map[string]any)["allOf"].([]any)[1].(map[string]any)
+	assertSchemaRequiredFields(t, "WellKnown", wellKnown, []string{"instance_id", "version", "canonical_url", "api_base"})
+	version := wellKnown["properties"].(map[string]any)["version"].(map[string]any)
+	if version["type"] != "string" || version["description"] == nil {
+		t.Fatalf("WellKnown.version = %#v, want documented string", version)
+	}
+
 	marketplace := schemas["Marketplace"].(map[string]any)
 	assertSchemaRequiredFields(t, "Marketplace", marketplace, []string{"id", "name", "canonical_url", "version"})
-	version := marketplace["properties"].(map[string]any)["version"].(map[string]any)
+	version = marketplace["properties"].(map[string]any)["version"].(map[string]any)
 	if version["type"] != "string" || version["description"] == nil {
 		t.Fatalf("Marketplace.version = %#v, want documented string", version)
 	}

@@ -202,6 +202,9 @@ func TestServerRoutes(t *testing.T) {
 	if !strings.Contains(body, `"instance_id":"mp-test"`) {
 		t.Fatalf("well-known missing instance_id: %s", body)
 	}
+	if !strings.Contains(body, `"version":"v4.0.0-test"`) {
+		t.Fatalf("well-known missing running version: %s", body)
+	}
 
 	// /api/v1/capabilities
 	resp = mustGet(t, public.URL+"/api/v1/capabilities")

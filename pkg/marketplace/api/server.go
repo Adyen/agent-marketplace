@@ -197,6 +197,7 @@ func (s *Server) methodGet(h http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
 	wk := DefaultWellKnown(s.cfg.Instance.ID, s.cfg.Instance.CanonicalURL, s.cfg.Instance.BrowserBase)
+	wk.Version = s.version
 	wk.Capabilities = s.capabilities()
 	writeJSON(w, http.StatusOK, wk)
 }

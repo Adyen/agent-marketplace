@@ -54,6 +54,7 @@ export function normalizeWellKnown(input: unknown): WellKnown {
   }
   return {
     instance_id: requiredString(object.instance_id, 'instance_id'),
+    version: requiredString(object.version, 'version'),
     canonical_url: requiredString(object.canonical_url, 'canonical_url'),
     api_base: requiredString(object.api_base, 'api_base'),
     ...(browserBase === undefined ? {} : { browser_base: browserBase, browser_latest_route_template: browserLatestRoute, browser_exact_route_template: browserExactRoute }),

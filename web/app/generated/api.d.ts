@@ -1124,6 +1124,8 @@ export interface components {
              */
             canonical_url: string;
             instance_id: string;
+            /** @description Resolved version of the running Marketplace server binary. */
+            version: string;
         };
     };
     responses: {

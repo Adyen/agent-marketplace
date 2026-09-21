@@ -51,6 +51,7 @@ const registry = {
 
 const wellKnown = {
   instance_id: 'e2e-marketplace',
+  version: 'v4.0.0-e2e',
   canonical_url: appOrigin,
   api_base: `http://127.0.0.1:${port}/api/v1`,
   browser_base: browserBase,

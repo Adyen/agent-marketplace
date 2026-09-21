@@ -1278,11 +1278,15 @@ components:
         - type: object
           required:
             - instance_id
+            - version
             - canonical_url
             - api_base
           properties:
             instance_id:
               type: string
+            version:
+              type: string
+              description: Resolved version of the running Marketplace server binary.
             canonical_url:
               type: string
               format: uri
