@@ -5,31 +5,31 @@
 - `agent-marketplace` starts the TUI when stdin is a terminal and `AGENT_MARKETPLACE_NO_TUI` is not set.
 - `agent-marketplace tui` always launches it.
 
-On first launch, choose target harnesses and save with `enter`. This creates editable v2 user configuration. Existing configuration is not automatically migrated to v4. V4 sources can be browsed and synchronized, but resource toggles cannot edit a v4 destination; edit its `sources` and `resources` maps directly. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+On first launch, choose your target harnesses and press `enter` to save an editable v2 user config. The TUI leaves existing configs at their current version. You can browse and sync v4 sources, but resource toggles cannot edit v4 files. Edit their `sources` and `resources` maps directly; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ## Browse, inspect, select, sync
 
 1. Open **Registry** (`2`) to browse sources, or **Scope** (`1`) to see where resources are selected. Use `/` to search and `esc` to clear it.
-2. Press `enter` on a resource to inspect it. Local resources open a file browser. A discovery-only Marketplace row shows metadata without downloading the artifact; an installed Marketplace resource can show files from its trusted cached bundle. If those bytes are missing, sync can restore them.
-3. Press `space` to choose a selection scope. Review the modal's current state before toggling user, project, or local selection. Required resources cannot be excluded.
-4. For a new Marketplace resource, review the verified revision preview and confirm the explicit installation scope. Search results alone do not authorize installation; blocked and revoked rows remain inspectable but cannot be installed.
-5. Press `s` to synchronize pending changes, then check **Status** (`3`) and diagnostics (`e`). Resolve errors before relying on generated output.
+2. Press `enter` on a resource to inspect it. Local resources open a file browser. For a Marketplace resource you haven't installed, the TUI shows metadata without downloading the artifact. Installed Marketplace resources can show files from their trusted cached bundles. If the cached files are missing, sync can restore them.
+3. Press `space` to choose a scope. Check the current selection before toggling it for user, project, or local scope. Required resources cannot be excluded.
+4. For a new Marketplace resource, review the verified revision preview and confirm the installation scope. Installation requires this check even if the resource appears in search. You can inspect blocked and revoked rows but cannot install them.
+5. Press `s` to sync pending changes, then check **Status** (`3`) and diagnostics (`e`). Fix any errors before relying on the generated output.
 
-Selection edits are written to configuration when accepted, before a later sync. “Pending” does not mean an unsaved draft: quitting without syncing does **not** undo configuration edits. Marketplace installation has its own verified preparation and confirmation flow.
+The TUI saves selection changes to config as soon as you accept them. They remain saved if you quit without syncing; "pending" means the output still needs a sync. Marketplace installation has a separate verification and confirmation step.
 
 ## Hosted Marketplace discovery
 
-Configured resources appear first; remote results arrive separately in **Available**, labeled with their Marketplace and registry. Search filters loaded rows immediately and starts remote search after about 250 milliseconds without input.
+Configured resources appear first. Remote results arrive in **Available**, labeled with their Marketplace and registry. Search filters the rows already loaded as you type, then searches remote endpoints after about 250 milliseconds without input.
 
-Each endpoint contributes at most 50 results per query, with no pagination. Narrow the query or use [`agent-marketplace search`](./cli.md#search) for more results. Discovery cache entries are fresh for five minutes and may be shown as stale fallback for up to 24 hours. An endpoint error does not by itself mean local files are out of sync; review discovery and sync diagnostics separately.
+The TUI shows at most 50 results per endpoint and query, with no pagination. Narrow the query or use [`agent-marketplace search`](./cli.md#search) for more results. Cached results stay fresh for five minutes. If discovery fails, the TUI may show stale results for up to 24 hours. Check discovery and sync diagnostics separately: an endpoint error alone does not mean your local files are out of sync.
 
 ## Reload versus update
 
-- `r` reloads configuration and local state from disk. Present valid locks keep discovery on their exact snapshots.
-- `s` reconciles dependencies and generated output with the current selection. It does not advance a healthy Git lock merely because its branch moved.
-- `u` deliberately upgrades Git locks in all writable scopes and synchronizes output. Despite the short “update caches” help label, this can change lockfiles and installed resources. Use CLI `update --scope repo` when you need a scope-limited update.
+- `r` reloads config and local state from disk. When a valid lock exists, discovery uses its exact snapshot.
+- `s` syncs dependencies and generated output with your selections. A healthy Git lock stays at its recorded revision even if its branch has moved.
+- `u` upgrades Git locks in all writable scopes and syncs output. The help label says "update caches", but this action can also change lockfiles and installed resources. Use CLI `update --scope repo` to limit an update to the repository.
 
-A missing layer lock can allow mutable browsing with a warning; an invalid existing lock does not silently fall back to mutable content. A failed authoritative state load allows inspection but blocks selection changes until resolved.
+If a layer has no lock, the TUI may browse its current source content and show a warning. An invalid existing lock blocks that fallback. If the TUI cannot load the current local state, you can still inspect resources, but must fix the load error before changing selections.
 
 ## Navigation
 
@@ -55,9 +55,9 @@ A missing layer lock can allow mutable browsing with a warning; an invalid exist
 
 ## Modals
 
-- `space` on a resource opens the scope modal: `g` toggles user/global selection, `p` project selection, `l` local selection, and `e` a local exclusion. `esc` cancels the modal. A local exclusion does not suppress a machine-wide or required resource.
-- `H` opens the harness selection modal. Choose user/global with `g` or project with `p`, toggle harnesses with `space`, and save with `enter`. A project harness list takes precedence over the user list; there is no local-scope harness list.
-- `E` opens the config picker: `g` for user/global, `p` for project, or `l` for local. These letters are modal actions; in the resource list, `g` jumps to the top and `e` opens diagnostics.
+- `space` opens the resource's scope modal. Use `g` for user/global selection, `p` for project, `l` for local, or `e` for a local exclusion. Press `esc` to cancel. A local exclusion cannot suppress a machine-wide or required resource.
+- `H` opens harness selection. Choose user/global with `g` or project with `p`, toggle harnesses with `space`, then save with `enter`. The project list overrides the user list. Local scope has no harness list.
+- `E` opens the config picker: `g` for user/global, `p` for project, or `l` for local. These keys have different meanings outside the modals: in the resource list, `g` jumps to the top and `e` opens diagnostics.
 
 ## Minimum terminal size
 
@@ -69,7 +69,7 @@ Mouse tracking is not enabled. Drag selection remains terminal-owned so rendered
 
 ## Exit
 
-- `q` prompts when changes need synchronization: `y` syncs and quits, `n` quits without syncing, and `esc` cancels quitting. Existing config writes are retained in every case.
+- `q` prompts if changes need a sync. Choose `y` to sync and quit, `n` to quit without syncing, or `esc` to stay in the TUI. None of these choices undo saved config edits.
 - `Ctrl+C` and `SIGTERM` are hard exits. Filesystem work already completed is not rolled back.
 
 ## Related documentation

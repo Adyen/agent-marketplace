@@ -7,7 +7,7 @@
 New to the tool? Do these two in order, about ten minutes total:
 
 1. [Install](./install.md) the binary.
-2. Follow the [quick start](./quick-start.md): point a project at a public skill registry, select a skill in configuration, inspect it in the terminal UI, and commit a config your teammates can reproduce.
+2. Follow the [quick start](./quick-start.md) to select a skill from a public registry and inspect it in the terminal UI. You'll also commit the config so teammates can reproduce the setup.
 
 Then pick the section below that matches what you are trying to do.
 
@@ -15,13 +15,13 @@ Then pick the section below that matches what you are trying to do.
 
 You want skills and other resources in your editor, kept consistent across a team.
 
-Start with the [user-journey map](./explanation/user-journeys.md) to follow discovery, inspection, installation, sharing, updates, removal, and recovery across the browser, CLI, and TUI.
+The [user-journey map](./explanation/user-journeys.md) follows a resource from discovery and inspection through installation and team sharing. It also covers updates, removal, and recovery, with steps for the browser, CLI, and TUI.
 
 | Goal | Read |
 |---|---|
 | Install one skill from Git, end to end, on Claude Code | [Tutorial: install your first skill](./tutorials/install-your-first-skill.md) |
 | Find and install your first skill from an online Marketplace | [Tutorial: install your first Marketplace skill](./tutorials/install-your-first-marketplace-skill.md) |
-| Inspect content, security findings, and historical revisions in the browser | [Browse and inspect Marketplace resources](./how-to/browse-marketplace-resources.md) |
+| Read a resource's content and security findings, or inspect an older revision | [Browse and inspect Marketplace resources](./how-to/browse-marketplace-resources.md) |
 | Add agent-marketplace to a repository the team shares | [Adopt in a repository](./how-to/adopt-agent-marketplace-in-a-repository.md) |
 | Make CI prove every clone gets the same files | [Keep resources reproducible](./how-to/keep-resources-reproducible.md) |
 | Figure out why `sync --check` is failing | [Troubleshoot sync drift](./how-to/troubleshoot-sync-drift.md) |

@@ -50,11 +50,11 @@ When `install` or `remove` receives a name shared by multiple resource kinds, `-
 | `user` | `~/.agents/config.yaml` | Machine |
 | `local` | `<repo>/.agents/config.local.yaml` | Repository, personal to the checkout |
 
-Resource installation defaults to `repo`; endpoint registration defaults to `user`. Named removal infers the scope from the resolved selection when `--scope` is omitted; `remove --from` defaults to `repo`. `user` is the default for `deinit`.
+Resource installation defaults to `repo`, and endpoint registration defaults to `user`. When you remove a named resource without `--scope`, the command chooses a scope from the selection it finds. `remove --from` defaults to `repo`; `deinit` defaults to `user`.
 
 ## `init`
 
-Creates a minimal user configuration with the editable v2 schema and an explicit harness list. V4 is the canonical source/resource schema, but resource-selection editors are not yet v4-aware. Initialization does not add registries or install resources. An existing user configuration is left unchanged.
+Creates a minimal user config with the editable v2 schema and an explicit harness list. V4 is the canonical source/resource schema, but the editors that change resource selections do not support it yet. Initialization adds no registries or resources and leaves an existing user config unchanged.
 
 ```text
 agent-marketplace init [flags]
@@ -115,7 +115,7 @@ Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` colu
 
 ## `install`
 
-Adds selections to one writable configuration layer and synchronizes materialized output. Configuration-writing install operations, including endpoint registration, reject v4 destinations with `v4.writer-opt-in`; they do not translate the edit automatically. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+Adds selections to one writable config layer and syncs harness output. Install operations that write config, including endpoint registration, return `v4.writer-opt-in` if the destination is v4. They cannot translate the edit to v4 automatically. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace install <resource-name> [flags]
@@ -152,7 +152,7 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 
 A Marketplace endpoint lookup verifies its well-known identity and canonical URL. To use the endpoint from a v4 root, declare a named `marketplace` source and add an exact request to its `resources` group; keep the matching verified layer lock next to the configuration.
 
-A Marketplace resource install resolves and verifies the exact artifact before configuration mutation. Default output summarizes the source, findings, capabilities, and up to ten collection members; `--verbose` also shows the complete collection inventory, digest, license, provenance, and acquisition mode. Rejected or revoked resources cannot be installed. Non-interactive acceptance of warning findings and active capabilities requires `--accept-risk` or `--yes`; consent applies only to that verified invocation.
+A Marketplace install resolves and verifies the exact artifact before changing config. The default output shows a summary of its source, findings, capabilities, and up to ten collection members. Add `--verbose` to see all collection members, the digest, license, provenance, and acquisition mode. You cannot install rejected or revoked resources. In non-interactive use, pass `--accept-risk` or `--yes` to accept warning findings and active capabilities for that verified invocation only.
 
 In an interactive terminal, warning findings and active capabilities produce an `Install despite these risks? [y/N]:` prompt. Accepting commits the exact prepared revision and prints only the result. Non-interactive execution still requires `--accept-risk` or `--yes` and returns a nonzero exit code without consent.
 
@@ -171,7 +171,7 @@ For configured Git registries, discovery stays on the exact inventory of every l
 
 Removes an explicit selection or records an exclusion, then synchronizes materialized output. For hosted Marketplace pins, removing a direct resource clears its direct selection while preserving any collection ownership; removing a collection clears that collection selector and prunes leaves no longer retained. Required organization resources cannot be removed or excluded.
 
-Resource-removal editors reject v4 destination files. For v4 Git/directory sources, edit the resource group directly and synchronize; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey) for hosted constraints.
+Resource-removal editors cannot edit v4 files. For v4 Git/directory sources, edit the resource group directly, then sync. Hosted sources have further restrictions; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace remove <resource-name> [flags]
@@ -180,7 +180,7 @@ agent-marketplace remove --from <registry> [<resource-name>] [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--scope` | string | no | inferred for a name; `repo` with `--from` | Configuration layer: `repo`, `user`, or `local`. Explicit scope preserves occurrences in other scopes. |
+| `--scope` | string | no | inferred for a name; `repo` with `--from` | Configuration layer: `repo`, `user`, or `local`. Specifying a scope leaves selections in other scopes unchanged. |
 | `--kind` | string | no | inferred | Selects `skill`, `command`, `subagent`, `hook`, or `mcp` when a name is ambiguous. |
 | `--from` | string | no | configured registries | Targets an ad hoc registry entry. Without a resource name, removes or excludes the entire entry for the selected scope. |
 | `--ref` | string | no | none | Refines the registry entry selected by `--from`. Requires `--from`. |
@@ -309,7 +309,7 @@ Source kinds are explicit:
 - `directory` sources are live, relative to the declaring file, and never acquire a Git lock.
 - `marketplace` sources require a matching verified layer lock for explicit requests.
 
-Use the [v4 configuration reference](configuration.md) to author source declarations and resource groups directly. Legacy resource-selection editors do not edit v4 roots. Unknown fields, mixed source kinds, invalid locators, and mismatched Marketplace lock evidence fail closed. General hosted v4 acquisition, update, and dynamic-selector snapshots are not implemented; explicit hosted requests currently rely on matching verified layer locks.
+Use the [v4 configuration reference](configuration.md) to write source declarations and resource groups directly. Legacy resource-selection editors cannot edit v4 roots. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Explicit hosted requests need matching verified records in the layer's lockfile; general hosted v4 acquisition, update, and snapshots for dynamic selectors are not implemented.
 
 ## `migrate`
 

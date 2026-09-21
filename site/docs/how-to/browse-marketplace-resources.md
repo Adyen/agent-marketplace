@@ -1,12 +1,12 @@
 # Browse and inspect Marketplace resources
 
-Find a resource in the hosted browser, inspect the exact revision, and hand off to the CLI for installation. Browsing does not change your local configuration or install anything.
+Use the hosted browser to find a resource and read the revision you want to install. Installation happens in your terminal; browsing leaves your local configuration unchanged.
 
 ## 1. Find a candidate
 
-Open your Marketplace's resource browser. Search by text, choose a resource kind, and filter by one or more registries. Remove a filter chip or clear filters to broaden the results. Search and filters are reflected in the URL, so you can bookmark or share that view.
+Open your Marketplace's resource browser and search by text. You can narrow the results to a resource kind or one or more registries. To broaden the search, remove a filter chip or clear the filters. The URL includes your search and filters, so you can bookmark or share it.
 
-Scroll to load additional results. If a request fails, use the retry action; already loaded results remain visible. A resource's name alone is not its identity: check its registry and kind before opening it.
+Scroll to load more results. If a request fails, retry it; the results already on the page stay visible. Check the registry and kind as well as the name, since names can repeat across kinds and sources.
 
 ## 2. Inspect before installing
 
@@ -14,34 +14,34 @@ Open a result and use the detail tabs:
 
 | Tab | What to check |
 |---|---|
-| Content | Read the main instructions. Choose another **Inspection file** when available; switch **Preview** / **Raw** for rendered content or source text. Collections expose their included resources. |
-| Security | Review the automated assessment and findings. Follow highlighted finding ranges where available. No detected issues is not a safety endorsement. |
-| Revisions | Open a specific historical revision, or follow **Newer revision available** to the current one. Recheck content and findings after switching. |
-| Registry | Check the source and publisher details; browse other resources from that registry or its history. |
-| Technical details | Inspect the full content digest, acquisition evidence, and declared license when you need to verify provenance or report a problem. |
+| Content | Read the main instructions. Use **Inspection file** to choose another available file, and **Preview** / **Raw** to switch between rendered content and source text. Collections list their included resources. |
+| Security | Read the automated assessment and findings. Some findings link to highlighted text. A scan with no detected issues does not guarantee safety. |
+| Revisions | Open a historical revision, or follow **Newer revision available** to the current one. Check its content and findings after switching. |
+| Registry | Check who published the resource and where it came from. You can also browse the registry's other resources and history. |
+| Technical details | Check the full content digest, acquisition evidence, and declared license to verify where the resource came from or report a problem. |
 
-Only files made available for safe inspection can be previewed. Unavailable content is not evidence that the file is empty or harmless.
+The browser can preview only files made available for safe inspection. If it cannot show a file, don't assume the file is empty or harmless.
 
-Revoked and policy-rejected revisions remain inspectable, but their install action is disabled. A revision can also lack an installable artifact; read the availability notice rather than assuming that a visible result can be installed.
+You can still inspect revoked or policy-rejected revisions, but their install action is disabled. A revision may also be missing the artifact needed for installation. The availability notice explains why you cannot install it.
 
 ## 3. Choose a revision and copy its command
 
-The **Install with the CLI** panel targets the exact revision currently displayed. Copy its command, or share the revision-specific page URL so another person can inspect the same content. Copying only the resource's unversioned URL allows the CLI to resolve a newer usable revision later.
+The command in **Install with the CLI** pins the revision you're viewing. Copy it to install that revision, or share the revision-specific page URL so someone else can inspect the same content. An unversioned resource URL allows the CLI to choose a newer usable revision later.
 
-You do not need to register the endpoint before installing from a browser URL. You do need the [CLI installed](../install.md), a configured target harness set, and an editable destination layer. See the [configuration compatibility note](../explanation/user-journeys.md#before-following-a-journey).
+Before running the command, [install the CLI](../install.md), select your target harnesses, and check that it can edit the destination config. You can install from a browser URL without registering the endpoint first. See the [configuration compatibility note](../explanation/user-journeys.md#before-following-a-journey).
 
-Run the copied command inside the intended repository. Add an explicit scope if you do not want the default repository installation:
+Run the copied command inside the repository where you want the resource. To change the default repository scope, add a scope to the command:
 
 ```text
 agent-marketplace install <copied-revision-url> --scope user
 agent-marketplace install <copied-revision-url> --scope local
 ```
 
-Choose **one** command: `user` installs machine-wide; `local` is personal to the current checkout. For shared repository selection, use `--scope repo`.
+Choose one command: `user` installs machine-wide, while `local` keeps the selection personal to this checkout. To share the selection through repository config, use `--scope repo`.
 
 ## 4. Review the verified CLI result
 
-The CLI verifies the artifact before writing configuration. Browser metadata is not a substitute for this check. Review any warning findings and active capabilities before answering the confirmation prompt. Declining leaves that prepared installation unapplied; a blocked or revoked revision cannot be approved through the prompt.
+The CLI verifies the artifact before writing configuration, even if you already inspected it in the browser. Read any warning findings and active capabilities before answering the confirmation prompt. If you decline, the CLI does not apply the prepared installation. The prompt cannot approve a blocked or revoked revision.
 
 After installation:
 
@@ -50,7 +50,7 @@ agent-marketplace status
 agent-marketplace sync --check
 ```
 
-Confirm the intended revision, source layer, and harness targets, then open or reload your coding harness. If installation is rejected or a name conflicts, follow [hosted installation troubleshooting](./install-from-a-marketplace.md#troubleshooting).
+Check that the revision, config layer, and harness targets match what you chose, then open or reload your coding harness. If installation fails or a name conflicts, see [hosted installation troubleshooting](./install-from-a-marketplace.md#troubleshooting).
 
 ## Continue the journey
 
