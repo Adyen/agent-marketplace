@@ -403,6 +403,39 @@ func TestConvertCompositeRootReferenceAssemblesValidCandidates(t *testing.T) {
 	}
 }
 
+// A whitespace-free remainder that contains a second root token (a
+// comma-joined list of two token-prefixed paths, for example) is not one
+// legal filename: every terminator-separated segment must be offered as a
+// candidate, and the first segment must not be suppressed by a
+// full-remainder candidate.
+func TestConvertCompositeRootReferenceAssemblesEveryTokenSegment(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"env",` +
+				`"env":{"CA_BUNDLE":"${CLAUDE_PLUGIN_ROOT}/certs/ca.pem,${CLAUDE_PLUGIN_ROOT}/config/.env"}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("ca\n")},
+		"config/.env":  &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("composite token list produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{"certs/ca.pem", "config/.env"} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing referenced asset %s; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Errorf("MCP resource was suppressed by composite env references")
+	}
+}
+
 // A missing or non-file candidate inside a composite value is not a clean
 // single-file reference: it must not fail closed or suppress the resource,
 // because the value cannot be proven to name a bundle file.

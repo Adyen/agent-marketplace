@@ -247,14 +247,19 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 			if !strings.ContainsAny(rel, assetTerminators) {
 				add(rel, true)
 				continue
-			} else if !strings.ContainsAny(rel, " \t\r\n") {
+			} else if !strings.ContainsAny(rel, " \t\r\n") && !strings.Contains(rel, bundle.CanonicalRootToken) {
 				// A whitespace-free remainder that contains declared
 				// terminators may itself be a legal filename (for
 				// example a comma-named file). Offer the full
 				// remainder as a best-effort candidate so it can
 				// resolve, while the composite scan below keeps
 				// unresolvable expansions such as a $PATH tail
-				// non-error.
+				// non-error. A remainder that itself contains another
+				// root token cannot be one legal filename — the token
+				// only expands at a value start — and offering it
+				// would suppress the first terminator-separated segment
+				// in the composite scan below, so such a remainder
+				// falls through to the composite scan.
 				add(rel, false)
 				offeredRemainder = rel
 			}
