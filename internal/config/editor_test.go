@@ -1103,6 +1103,68 @@ func TestSetHarnessesInConfigCanonicalizesAndValidatesTargets(t *testing.T) {
 	})
 }
 
+// TestSetHarnessesInConfigEditsV4Roots pins the TUI harness-modal save path
+// against the v4.writer-opt-in regression: init writes the user-personal
+// root as v4 directly and the TUI startup offers migration, so harness
+// editing must be an explicit v4-aware operation rather than a rejected
+// legacy write. Sources and resources must survive the edit byte-neutrally.
+func TestSetHarnessesInConfigEditsV4Roots(t *testing.T) {
+	const v4Body = `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  agents:
+    git: https://example.test/agents.git
+    ref: main
+resources:
+  agents:
+    include: [skill/review]
+`
+
+	assertHarnessesAndSource := func(t *testing.T, path string, want []string) {
+		t.Helper()
+		cfg, err := LoadConfigFromPath(path)
+		if err != nil {
+			t.Fatalf("reload edited v4 config: %v", err)
+		}
+		if cfg.APIVersion != APIVersionV4 {
+			t.Fatalf("apiVersion = %q, want %q", cfg.APIVersion, APIVersionV4)
+		}
+		if !equalStrings(cfg.Harnesses, want) {
+			t.Fatalf("harnesses = %v, want %v", cfg.Harnesses, want)
+		}
+		if len(cfg.Registries) != 1 || cfg.Registries[0].Skills.Include[0] != "review" {
+			t.Fatalf("expected v4 source group preserved after harness edit, got %#v", cfg.Registries)
+		}
+	}
+
+	t.Run("user config", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		configPath, err := GlobalConfigPath()
+		if err != nil {
+			t.Fatalf("GlobalConfigPath: %v", err)
+		}
+		mustMkdirAll(t, filepath.Dir(configPath))
+		mustWriteFile(t, configPath, []byte(v4Body))
+
+		if err := SetHarnessesInConfig(configPath, []string{"cursor", "factory"}); err != nil {
+			t.Fatalf("SetHarnessesInConfig on v4 user config: %v", err)
+		}
+		assertHarnessesAndSource(t, configPath, []string{"cursor", "factory"})
+	})
+
+	t.Run("project config", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		repoPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		mustMkdirAll(t, filepath.Dir(repoPath))
+		mustWriteFile(t, repoPath, []byte(v4Body))
+
+		if err := SetHarnessesInConfig(repoPath, []string{"factory"}); err != nil {
+			t.Fatalf("SetHarnessesInConfig on v4 project config: %v", err)
+		}
+		assertHarnessesAndSource(t, repoPath, []string{"factory"})
+	})
+}
+
 func TestReEnableAfterExcludeCleansUpExclude(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))

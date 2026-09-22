@@ -268,3 +268,62 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 		t.Fatalf("expected global factory+claude harnesses, got %#v", cfg.Harnesses)
 	}
 }
+
+// TestHarnessModalSavesGlobalHarnessesToV4Config pins the v4.writer-opt-in
+// regression in the TUI harness modal: after init or the startup migration
+// prompt converts ~/.agents/config.yaml to v4, saving from the harness
+// modal must edit the v4 root instead of failing with "legacy config
+// writers do not edit v4 files".
+func TestHarnessModalSavesGlobalHarnessesToV4Config(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	configPath := filepath.Join(tmpHome, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  agents:\n    git: https://example.test/agents.git\n    ref: main\nresources:\n  agents:\n    include:\n      - skill/review\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	m := NewModel("/repo", tmpHome)
+	m.globalHarnesses = []string{"factory"}
+	m.openHarnessModal()
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = mi.(Model)
+	if cmd != nil {
+		t.Fatalf("moving cursor should not emit command")
+	}
+	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = mi.(Model)
+	if cmd != nil {
+		t.Fatalf("toggling harness should not emit command")
+	}
+	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mi.(Model)
+	if cmd == nil {
+		t.Fatalf("saving harnesses should emit command")
+	}
+	msg := cmd()
+	hw, ok := msg.(harnessWrittenMsg)
+	if !ok {
+		t.Fatalf("expected harnessWrittenMsg, got %T", msg)
+	}
+	if hw.err != nil {
+		t.Fatalf("v4 harness save failed: %v", hw.err)
+	}
+
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("load v4 config after save: %v", err)
+	}
+	if cfg.APIVersion != config.APIVersionV4 {
+		t.Fatalf("apiVersion = %q, want %q", cfg.APIVersion, config.APIVersionV4)
+	}
+	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory", "claude"}) {
+		t.Fatalf("expected global factory+claude harnesses, got %#v", cfg.Harnesses)
+	}
+	if len(cfg.Registries) != 1 || cfg.Registries[0].Skills.Include[0] != "review" {
+		t.Fatalf("expected v4 sources preserved after harness save, got %#v", cfg.Registries)
+	}
+}

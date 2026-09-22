@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -619,7 +620,13 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 		return err
 	}
 
-	doc, mode, err := readOrInitConfig(configPath)
+	// The top-level harnesses field is schema-identical in v2/v3 and v4, and
+	// the user-personal root is routinely v4 (init writes v4 directly and the
+	// TUI offers startup migration), so harness editing is an explicit
+	// v4-aware operation: edit the sequence in place in the parsed document
+	// and fail closed when the written file no longer loads. Selection edits
+	// (install/remove) remain legacy and keep rejecting v4 roots.
+	doc, mode, err := readOrInitConfigWithV4(configPath, true)
 	if err != nil {
 		return err
 	}
@@ -635,7 +642,21 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	}
 
 	setSequenceValues(sequence, harnesses)
-	return writeConfigDocument(configPath, mode, doc)
+	if err := writeConfigDocument(configPath, mode, doc); err != nil {
+		return err
+	}
+
+	// LoadConfigFromPath applies the full schema and layer validation for
+	// the destination (v4 adds unknown-field, target-name, and layer-field
+	// rules), so a failed reload proves the edit corrupted the document. The
+	// struct-level cfg.Validate() is deliberately not re-run here: it
+	// hardcodes the user-personal layer flavor, which would mis-validate
+	// project-scope destinations that LoadConfigFromPath accepts.
+	if _, err := LoadConfigFromPath(configPath); err != nil {
+		return fmt.Errorf("config written to %q is not valid: %w", configPath, err)
+	}
+	slog.Debug("harnesses updated in config", "config_path", configPath, "harnesses", len(harnesses))
+	return nil
 }
 
 // AddResourceToExactRegistryEntry adds a per-kind include to one registry entry.
