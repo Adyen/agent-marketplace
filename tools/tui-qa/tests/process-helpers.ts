@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,7 +29,16 @@ export const write = (file: string, content: string, mode = 0o600): void => {
   fs.writeFileSync(file, content, { encoding: "utf8", mode });
 };
 
-export const isolatedEnvironment = (root: string, home: string, tmp: string, xdg: string): Record<string, string> => ({
+// organizationConfig optionally redirects the fixed organization config path
+// (under the e2e build tag) at a fixture-owned file. When omitted the layer
+// reads as absent, which is what the default journeys expect.
+export const isolatedEnvironment = (
+  root: string,
+  home: string,
+  tmp: string,
+  xdg: string,
+  organizationConfig?: string
+): Record<string, string> => ({
   PATH: "/usr/local/bin:/usr/bin:/bin",
   HOME: home,
   USER: "tui-qa",
@@ -58,7 +67,7 @@ export const isolatedEnvironment = (root: string, home: string, tmp: string, xdg
   SSH_ASKPASS: "/bin/false",
   SSH_ASKPASS_REQUIRE: "never",
   AGENT_MARKETPLACE_LOG_ENABLED: "false",
-  AGENT_MARKETPLACE_V3_ORG_CONFIG: path.join(root, "missing-organization-config.yaml"),
+  AGENT_MARKETPLACE_V3_ORG_CONFIG: organizationConfig ?? path.join(root, "missing-organization-config.yaml"),
   TERM: "xterm-256color",
   LANG: "C.UTF-8"
 });
@@ -92,6 +101,41 @@ export const runNonTTY = (fixture: Pick<ProcessFixture, "repo" | "env">, args: s
   encoding: "utf8",
   timeout
 });
+
+export interface AMResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+// runAM runs the binary without blocking the Node event loop. The synchronous
+// runner above freezes the loop for the whole child lifetime, which starves any
+// fixture HTTP server (the organization marketplace stub) of requests; use this
+// runner whenever the invoked command may talk to a fixture server.
+export const runAM = async (fixture: Pick<ProcessFixture, "repo" | "env">, args: string[], timeoutMs = 30_000): Promise<AMResult> => {
+  const child = spawn(binary, args, { cwd: fixture.repo, env: fixture.env, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += String(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  const timer = setTimeout(() => {
+    child.kill("SIGKILL");
+  }, timeoutMs);
+  let status: number | null;
+  try {
+    status = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code) => resolve(code));
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+  return { status, stdout, stderr };
+};
 
 export const targetPID = async (fixture: { pidFile: string }, timeoutMs = 5_000): Promise<number> => {
   const deadline = Date.now() + timeoutMs;

@@ -18,6 +18,18 @@ registries:
     required: true
 `
 
+const v4MarketplaceOrganizationFixture = `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: https://marketplace.example}
+`
+
+const v4MarketplaceOrganizationLock = `apiVersion: agent-marketplace-lock/v2
+scope: organization
+marketplaces:
+  - url: https://marketplace.example
+    instance_id: marketplace
+`
+
 func TestOrganizationConfigLockTrustUnit(t *testing.T) {
 	tests := []struct {
 		name string
@@ -72,6 +84,37 @@ func TestOrganizationConfigLockTrustUnit(t *testing.T) {
 			}
 			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
 			assertOrganizationTrustFailure(t, ec, test.code)
+		})
+	}
+}
+
+func TestOrganizationV4MarketplaceLockTrustUnit(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		mode os.FileMode
+		code string
+	}{
+		{name: "trusted", mode: 0o644},
+		{name: "writable", mode: 0o666, code: "organization.trust.lock.writable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			lockPath := filepath.Join(dir, "lock.yaml")
+			writeFile(t, configPath, v4MarketplaceOrganizationFixture)
+			writeFile(t, lockPath, v4MarketplaceOrganizationLock)
+			if err := os.Chmod(lockPath, test.mode); err != nil {
+				t.Fatal(err)
+			}
+
+			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+			if test.code != "" {
+				assertOrganizationTrustFailure(t, ec, test.code)
+				return
+			}
+			if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
+				t.Fatalf("trusted v4 Marketplace organization lock was blocked: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
+			}
 		})
 	}
 }
