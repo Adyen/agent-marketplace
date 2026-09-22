@@ -15,7 +15,7 @@ Find → Inspect → Choose scope and harnesses → Install → Use
 [Install the CLI](../install.md), then choose your coding harnesses with `agent-marketplace init` or the TUI's first-run prompt. You can browse with `list` before choosing harnesses, but installation and sync need that choice.
 
 ::: warning Check your configuration version
-V4 is the canonical configuration schema. However, the commands and TUI actions that change resource selections still require v2/v3 files, so `init` creates an editable v2 user config. The CLI's `install` and `remove` operations, endpoint registration, and TUI resource toggles fail with `v4.writer-opt-in` if they need to edit a v4 file.
+V4 is the canonical configuration schema, and `init` creates a v4 user config directly; interactive CLI startup and the TUI also offer to migrate a legacy user config (the user-personal root only). However, the commands and TUI actions that change resource selections still require v2/v3 files: the CLI's `install` and `remove` operations, endpoint registration, and TUI resource toggles fail with `v4.writer-opt-in` if they need to edit a v4 file. The TUI's harness modal (`H`) can still edit the target harness list of a v4 config.
 
 For v2/v3, follow the command and TUI steps below. For v4 Git and directory sources, edit `sources` and `resources` directly, then run `sync`. Hosted v4 requests also need matching verified records in the layer's lockfile. Adding a source and digest by hand is not enough to install one. Read [maintaining and migrating configuration](../how-to/migrate-configuration.md) before switching to v4.
 :::

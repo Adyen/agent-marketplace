@@ -1704,24 +1704,34 @@ func (c *V4Config) ToLegacyConfigWithLock(kind layerKind, doc *lockfile.Document
 	return c.toLegacyConfig(kind, doc)
 }
 
+// validateLayerFields enforces which fields each layer kind may carry. It is
+// the lock-free, adaptation-free half of toLegacyConfig's document checks, so
+// editors can refuse a layer-invalid document before writing any bytes.
+func (c *V4Config) validateLayerFields(kind layerKind) error {
+	if kind == localLayer && c.HasHarnesses {
+		return v4err("v4.layer-field", "harnesses", 0, "harnesses are not valid in repository personal configuration")
+	}
+	if kind == localLayer && (c.AllowedRegistries != nil || c.AllowedMarketplaces != nil) {
+		return v4err("v4.layer-field", "allowed_registries", 0, "allowlists are not valid in repository personal configuration")
+	}
+	if kind == localLayer && (c.Backup != nil || c.Logging != nil || c.Telemetry != nil) {
+		return v4err("v4.layer-field", "auxiliary", 0, "backup, logging, and telemetry are not valid in repository personal configuration")
+	}
+	if kind == repoLayer && (c.Backup != nil || c.Logging != nil || c.Telemetry != nil) {
+		return v4err("v4.layer-field", "auxiliary", 0, "backup, logging, and telemetry are not valid in repository configuration")
+	}
+	if kind == organizationLayer && c.Materialization != nil {
+		return v4err("v4.layer-field", "materialization", 0, "materialization is not valid in organization configuration")
+	}
+	return nil
+}
+
 func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*Config, error) {
 	if c == nil {
 		return nil, v4err("v4.runtime", "", 0, "nil configuration")
 	}
-	if kind == localLayer && c.HasHarnesses {
-		return nil, v4err("v4.layer-field", "harnesses", 0, "harnesses are not valid in repository personal configuration")
-	}
-	if kind == localLayer && (c.AllowedRegistries != nil || c.AllowedMarketplaces != nil) {
-		return nil, v4err("v4.layer-field", "allowed_registries", 0, "allowlists are not valid in repository personal configuration")
-	}
-	if kind == localLayer && (c.Backup != nil || c.Logging != nil || c.Telemetry != nil) {
-		return nil, v4err("v4.layer-field", "auxiliary", 0, "backup, logging, and telemetry are not valid in repository personal configuration")
-	}
-	if kind == repoLayer && (c.Backup != nil || c.Logging != nil || c.Telemetry != nil) {
-		return nil, v4err("v4.layer-field", "auxiliary", 0, "backup, logging, and telemetry are not valid in repository configuration")
-	}
-	if kind == organizationLayer && c.Materialization != nil {
-		return nil, v4err("v4.layer-field", "materialization", 0, "materialization is not valid in organization configuration")
+	if err := c.validateLayerFields(kind); err != nil {
+		return nil, err
 	}
 	out := &Config{APIVersion: APIVersionV4, Harnesses: cloneV4StringList(c.Harnesses), Backup: c.Backup, Logging: c.Logging, Telemetry: c.Telemetry, Materialization: c.Materialization}
 	if c.AllowedRegistries != nil {

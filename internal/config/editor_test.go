@@ -1103,6 +1103,162 @@ func TestSetHarnessesInConfigCanonicalizesAndValidatesTargets(t *testing.T) {
 	})
 }
 
+// TestSetHarnessesInConfigEditsV4Roots pins the TUI harness-modal save path
+// against the v4.writer-opt-in regression: init writes the user-personal
+// root as v4 directly and the TUI startup offers migration, so harness
+// editing must be an explicit v4-aware operation rather than a rejected
+// legacy write. Sources and resources must survive the edit.
+func TestSetHarnessesInConfigEditsV4Roots(t *testing.T) {
+	const v4Body = `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  agents:
+    git: https://example.test/agents.git
+    ref: main
+resources:
+  agents:
+    include: [skill/review]
+`
+
+	assertHarnessesAndSource := func(t *testing.T, path string, want []string) {
+		t.Helper()
+		cfg, err := LoadConfigFromPath(path)
+		if err != nil {
+			t.Fatalf("reload edited v4 config: %v", err)
+		}
+		if cfg.APIVersion != APIVersionV4 {
+			t.Fatalf("apiVersion = %q, want %q", cfg.APIVersion, APIVersionV4)
+		}
+		if !equalStrings(cfg.Harnesses, want) {
+			t.Fatalf("harnesses = %v, want %v", cfg.Harnesses, want)
+		}
+		if len(cfg.Registries) != 1 || len(cfg.Registries[0].Skills.Include) == 0 || cfg.Registries[0].Skills.Include[0] != "review" {
+			t.Fatalf("expected v4 source group preserved after harness edit, got %#v", cfg.Registries)
+		}
+	}
+
+	t.Run("user config", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		configPath, err := GlobalConfigPath()
+		if err != nil {
+			t.Fatalf("GlobalConfigPath: %v", err)
+		}
+		mustMkdirAll(t, filepath.Dir(configPath))
+		mustWriteFile(t, configPath, []byte(v4Body))
+
+		if err := SetHarnessesInConfig(configPath, []string{"cursor", "factory"}); err != nil {
+			t.Fatalf("SetHarnessesInConfig on v4 user config: %v", err)
+		}
+		assertHarnessesAndSource(t, configPath, []string{"cursor", "factory"})
+	})
+
+	t.Run("project config", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		repoPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		mustMkdirAll(t, filepath.Dir(repoPath))
+		mustWriteFile(t, repoPath, []byte(v4Body))
+
+		if err := SetHarnessesInConfig(repoPath, []string{"factory"}); err != nil {
+			t.Fatalf("SetHarnessesInConfig on v4 project config: %v", err)
+		}
+		assertHarnessesAndSource(t, repoPath, []string{"factory"})
+	})
+}
+
+// TestSetHarnessesInConfigEditsV4MarketplaceRootWithoutLock pins the
+// separation between document validity and Marketplace lock policy: the
+// harness edit is a document-level operation and must not consult
+// acquisition locks. A marketplace-source v4 root whose lock is absent
+// still accepts a harness save, and the save must not create a lock.
+func TestSetHarnessesInConfigEditsV4MarketplaceRootWithoutLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configPath, err := GlobalConfigPath()
+	if err != nil {
+		t.Fatalf("GlobalConfigPath: %v", err)
+	}
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, []byte(v4MarketplaceConfigYAML))
+
+	if err := SetHarnessesInConfig(configPath, []string{"factory", "claude"}); err != nil {
+		t.Fatalf("harness edit must not consult Marketplace lock policy: %v", err)
+	}
+
+	// The document is edited and still parses as v4 with the source intact.
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v4, err := ParseV4(data)
+	if err != nil {
+		t.Fatalf("parse edited config: %v", err)
+	}
+	if !equalStrings(v4.Harnesses, []string{"factory", "claude"}) {
+		t.Fatalf("harnesses = %v, want [factory claude]", v4.Harnesses)
+	}
+	if _, ok := v4.Sources["m"]; !ok {
+		t.Fatalf("marketplace source was not preserved: %#v", v4.Sources)
+	}
+
+	// Non-vacuity control: the root stays in the exact lock-required state
+	// a full load rejects, and the save neither created nor touched a lock.
+	var v4Err *V4ValidationError
+	if _, err := LoadConfigFromPath(configPath); !errors.As(err, &v4Err) || v4Err.Code != "v4.marketplace-lock-required" {
+		t.Fatalf("full load error = %v, want v4.marketplace-lock-required", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, ".agents", "lock.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("harness save must not create an acquisition lock")
+	}
+	entries, err := os.ReadDir(filepath.Dir(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "config.yaml" {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("config directory must contain only config.yaml, got %v", names)
+	}
+}
+
+// TestSetHarnessesInConfigRejectsInvalidV4DocumentWithoutWriting pins the
+// fail-closed ordering: the harness edit validates the encoded candidate
+// before writing, so a schema-invalid destination is refused with its
+// stable diagnostic identity and no byte changes. (The earlier
+// write-then-reload design left the written file behind the error.)
+func TestSetHarnessesInConfigRejectsInvalidV4DocumentWithoutWriting(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configPath, err := GlobalConfigPath()
+	if err != nil {
+		t.Fatalf("GlobalConfigPath: %v", err)
+	}
+	mustMkdirAll(t, filepath.Dir(configPath))
+	original := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nbogus: {}\n"
+	mustWriteFile(t, configPath, []byte(original))
+
+	err = SetHarnessesInConfig(configPath, []string{"claude"})
+	var v4Err *V4ValidationError
+	if !errors.As(err, &v4Err) || v4Err.Code != "v4.unknown-field" {
+		t.Fatalf("error = %v, want v4.unknown-field", err)
+	}
+
+	after, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != original {
+		t.Fatalf("refused edit must not change bytes, got:\n%s", after)
+	}
+	entries, dirErr := os.ReadDir(filepath.Dir(configPath))
+	if dirErr != nil {
+		t.Fatal(dirErr)
+	}
+	if len(entries) != 1 || entries[0].Name() != "config.yaml" {
+		t.Fatalf("refused edit must leave no staging residue, got %d entries", len(entries))
+	}
+}
+
 func TestReEnableAfterExcludeCleansUpExclude(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
