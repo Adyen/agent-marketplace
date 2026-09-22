@@ -103,7 +103,7 @@ test("organization marketplace source without its lock fails closed and names th
   assert.equal(recoveredSync.status, 0, recoveredOutput);
   assert.match(recoveredOutput, /Errors\s+0/);
   const betaSkill = path.join(fixture.repo, ".factory", "skills", "beta-skill");
-  assert.equal(fs.lstatSync(betaSkill).isSymbolicLink(), true, "recovered sync must materialize beta-skill");
+  assert.equal(fs.lstatSync(betaSkill, { throwIfNoEntry: false })?.isSymbolicLink(), true, "recovered sync must materialize beta-skill");
   assert.equal(fs.readFileSync(path.join(betaSkill, "SKILL.md"), "utf8"), fixture.expectedBetaSkillContent);
   assert.equal(
     fs.lstatSync(path.join(fixture.repo, ".factory", "skills", "alpha-skill"), { throwIfNoEntry: false }),

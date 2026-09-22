@@ -120,7 +120,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       }
 
       const betaSkill = path.join(repo, ".factory", "skills", "beta-skill");
-      if (!fs.lstatSync(betaSkill).isSymbolicLink()) throw new Error("fixture beta-skill is not a symlink");
+      if (!fs.lstatSync(betaSkill, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error("fixture beta-skill is not a symlink");
       if (fs.lstatSync(path.join(repo, ".factory", "skills", "alpha-skill"), { throwIfNoEntry: false })) throw new Error("fixture alpha-skill was unexpectedly materialized");
     }
 

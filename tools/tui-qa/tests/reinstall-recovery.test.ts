@@ -21,7 +21,7 @@ test("deleting every personal layer then re-initializing recovers the workspace"
   const repoConfigPath = path.join(fixture.repo, ".agents", "config.yaml");
   const repoLockPath = path.join(fixture.repo, ".agents", "lock.yaml");
   const userConfigPath = path.join(fixture.home, ".agents", "config.yaml");
-  assert.equal(fs.lstatSync(betaSkill).isSymbolicLink(), true, "fixture baseline must be materialized");
+  assert.equal(fs.lstatSync(betaSkill, { throwIfNoEntry: false })?.isSymbolicLink(), true, "fixture baseline must be materialized");
   assert.ok(fs.existsSync(fixture.cacheDir), "fixture baseline must have warmed the catalog cache");
 
   // Wipe everything a reinstall touches: user config and lock, registry and
@@ -49,7 +49,7 @@ test("deleting every personal layer then re-initializing recovers the workspace"
   const recoveredSync = runNonTTY(fixture, ["sync"], 30_000);
   const recoveredOutput = `${recoveredSync.stdout}\n${recoveredSync.stderr}`;
   assert.equal(recoveredSync.status, 0, recoveredOutput);
-  assert.equal(fs.lstatSync(betaSkill).isSymbolicLink(), true, "recovered sync must materialize beta-skill");
+  assert.equal(fs.lstatSync(betaSkill, { throwIfNoEntry: false })?.isSymbolicLink(), true, "recovered sync must materialize beta-skill");
   assert.equal(fs.readFileSync(path.join(betaSkill, "SKILL.md"), "utf8"), fixture.expectedBetaSkillContent);
   assert.equal(
     fs.lstatSync(path.join(fixture.repo, ".factory", "skills", "alpha-skill"), { throwIfNoEntry: false }),
@@ -69,7 +69,7 @@ test("deleting every personal layer then re-initializing recovers the workspace"
   const locklessSync = runNonTTY(fixture, ["sync"], 30_000);
   assert.equal(locklessSync.status, 0, `${locklessSync.stdout}\n${locklessSync.stderr}`);
   assert.ok(fs.existsSync(repoLockPath), "sync must recreate the missing repository lock");
-  assert.equal(fs.lstatSync(betaSkill).isSymbolicLink(), true, "beta-skill must survive lock reconciliation");
+  assert.equal(fs.lstatSync(betaSkill, { throwIfNoEntry: false })?.isSymbolicLink(), true, "beta-skill must survive lock reconciliation");
   const locklessCheck = runNonTTY(fixture, ["sync", "--check"], 30_000);
   assert.equal(locklessCheck.status, 0, `${locklessCheck.stdout}\n${locklessCheck.stderr}`);
 });
