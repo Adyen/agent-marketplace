@@ -188,6 +188,74 @@ func TestConvertUnsafeReferencedAssetFailsClosed(t *testing.T) {
 	}
 }
 
+// Referenced hook and MCP assets must apply the same VCS/OS metadata policy
+// as declared skill support enumeration. An existing metadata component is
+// still unsafe when named explicitly, and the owning resource is suppressed
+// rather than publishing repository internals or OS droppings.
+func TestConvertReferencedAssetsRejectMetadataComponents(t *testing.T) {
+	cases := []struct {
+		name            string
+		files           fstest.MapFS
+		forbiddenOutput string
+	}{
+		{
+			name: "hook git metadata",
+			files: fstest.MapFS{
+				"hooks/hooks.json":  &fstest.MapFile{Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/.git/config"}]}}`)},
+				"hooks/.git/config": &fstest.MapFile{Data: []byte("[core]")},
+			},
+			forbiddenOutput: "hooks/hooks.json",
+		},
+		{
+			name: "hook svn metadata",
+			files: fstest.MapFS{
+				"hooks/hooks.json":       &fstest.MapFile{Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/sub/.svn/entries"}]}}`)},
+				"hooks/sub/.svn/entries": &fstest.MapFile{Data: []byte("12")},
+			},
+			forbiddenOutput: "hooks/hooks.json",
+		},
+		{
+			name: "mcp hg metadata",
+			files: fstest.MapFS{
+				".mcp.json":        &fstest.MapFile{Data: []byte(`{"mcpServers":{"demo":{"command":"server","env":{"CFG":"${CLAUDE_PLUGIN_ROOT}/config/.hg/store"}}}}`)},
+				"config/.hg/store": &fstest.MapFile{Data: []byte("hg")},
+			},
+			forbiddenOutput: ".mcp.json",
+		},
+		{
+			name: "mcp ds store metadata",
+			files: fstest.MapFS{
+				".mcp.json":       &fstest.MapFile{Data: []byte(`{"mcpServers":{"demo":{"command":"server","headers":{"X-Cert":"${CLAUDE_PLUGIN_ROOT}/certs/.DS_Store"}}}}`)},
+				"certs/.DS_Store": &fstest.MapFile{Data: []byte("ds")},
+			},
+			forbiddenOutput: ".mcp.json",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := Convert(tc.files, HarnessClaude, HarnessClaude)
+			if err != nil {
+				t.Fatalf("Convert: %v", err)
+			}
+			if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileUnsafe) {
+				t.Errorf("metadata reference did not emit %q; codes: %v", diag.CodeBundleSupportFileUnsafe, diagnosticCodes(result))
+			}
+			if artifactByPath(result.Artifacts, tc.forbiddenOutput) != nil {
+				t.Errorf("owning resource was not suppressed; artifacts: %v", result.Artifacts)
+			}
+			for _, a := range result.Artifacts {
+				for _, component := range strings.Split(a.Path, "/") {
+					switch component {
+					case ".git", ".svn", ".hg", ".DS_Store":
+						t.Errorf("metadata component %q reached artifact %q", component, a.Path)
+					}
+				}
+			}
+		})
+	}
+}
+
 // An IR skill that declares an unclean support-file name must fail closed
 // rather than producing a target path outside the compiled resource root.
 func TestAssembleSkillSupportRejectsUncleanRel(t *testing.T) {
@@ -563,6 +631,63 @@ func TestConvertQuotedRootReferenceKeepsStrictSemantics(t *testing.T) {
 	}
 	if !sliceContains(diagnosticCodes(missingResult), diag.CodeBundleSupportFileMissing) {
 		t.Errorf("quoted missing reference lost strict semantics; codes: %v", diagnosticCodes(missingResult))
+	}
+}
+
+// A quoted root reference whose bundle path itself contains whitespace is
+// still one deliberate path. The quoted remainder must be preserved as the
+// candidate: an existing space-containing asset is assembled, an absent one
+// remains strict, and an existing whitespace-truncated prefix is never
+// published as a separate asset.
+func TestConvertQuotedRootReferenceWithWhitespaceStaysWhole(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` +
+				strconv.Quote(`"${CLAUDE_PLUGIN_ROOT}/hooks/check script.sh"`) + `}]}}`),
+		},
+		"hooks/check script.sh": &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n"), Mode: 0o755},
+		// Present on disk so a mistaken whitespace-truncated publish is
+		// observable as an extra artifact.
+		"hooks/check": &fstest.MapFile{Data: []byte("prefix")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("quoted whitespace reference produced errors: %v", result.Diagnostics)
+	}
+	asset := artifactByPath(result.Artifacts, "hooks/check script.sh")
+	if asset == nil {
+		t.Fatalf("missing quoted whitespace referenced asset; artifacts: %v", result.Artifacts)
+	}
+	if asset.Mode.Perm() != 0o755 {
+		t.Errorf("quoted whitespace asset mode = %o, want 0755", asset.Mode.Perm())
+	}
+	if artifactByPath(result.Artifacts, "hooks/check") != nil {
+		t.Errorf("whitespace-truncated prefix was published alongside the quoted whole path")
+	}
+
+	missingSrc := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` +
+				strconv.Quote(`'${CLAUDE_PLUGIN_ROOT}/hooks/absent script.sh'`) + `}]}}`),
+		},
+		"hooks/absent": &fstest.MapFile{Data: []byte("prefix")},
+	}
+	missingResult, err := Convert(missingSrc, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert missing: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(missingResult), diag.CodeBundleSupportFileMissing) {
+		t.Errorf("quoted whitespace missing reference lost strict semantics; codes: %v", diagnosticCodes(missingResult))
+	}
+	if artifactByPath(missingResult.Artifacts, "hooks/absent") != nil {
+		t.Errorf("whitespace-truncated prefix was published for a missing quoted path")
+	}
+	if artifactByPath(missingResult.Artifacts, "hooks/hooks.json") != nil {
+		t.Errorf("owning hook was not suppressed for missing quoted path")
 	}
 }
 

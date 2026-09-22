@@ -233,9 +233,18 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 		var offeredRemainder string
 		// Strict single-token detection normalizes one matching
 		// surrounding quote pair first: a quoted lone reference is still
-		// one deliberate file contract, not a composite command.
-		if normalized := stripOneQuotePair(strings.TrimSpace(value)); strings.HasPrefix(normalized, rootTokenPrefix) {
-			if rel := normalized[len(rootTokenPrefix):]; !strings.ContainsAny(rel, assetTerminators) {
+		// one deliberate file contract, not a composite command. Quotes
+		// also delimit the whole path, so whitespace inside them remains
+		// part of the strict candidate rather than truncating it to a
+		// prefix the author did not name.
+		normalized, quoted := stripOneQuotePair(strings.TrimSpace(value))
+		if strings.HasPrefix(normalized, rootTokenPrefix) {
+			rel := normalized[len(rootTokenPrefix):]
+			if quoted {
+				add(rel, true)
+				continue
+			}
+			if !strings.ContainsAny(rel, assetTerminators) {
 				add(rel, true)
 				continue
 			} else if !strings.ContainsAny(rel, " \t\r\n") {
@@ -293,13 +302,14 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 }
 
 // stripOneQuotePair removes exactly one matching surrounding quote pair
-// (single, double, or backtick) from s. Anything else is returned unchanged.
-func stripOneQuotePair(s string) string {
+// (single, double, or backtick) from s and reports whether it did so.
+// Anything else is returned unchanged.
+func stripOneQuotePair(s string) (string, bool) {
 	if len(s) >= 2 && s[0] == s[len(s)-1] &&
 		(s[0] == '\'' || s[0] == '"' || s[0] == '`') {
-		return s[1 : len(s)-1]
+		return s[1 : len(s)-1], true
 	}
-	return s
+	return s, false
 }
 
 // urlEmbeddedToken reports whether the root-token occurrence at idx is glued
@@ -367,8 +377,8 @@ func readSupportFile(srcFS fs.FS, rel string) (data []byte, mode fs.FileMode, co
 }
 
 // isCleanRelativePath reports whether rel is a slash-separated path that stays
-// inside the bundle root: relative, non-empty, no backslashes, and identical
-// to its own clean form.
+// inside the bundle root: relative, non-empty, no backslashes, identical to its
+// own clean form, and free of VCS/OS metadata components.
 func isCleanRelativePath(rel string) bool {
 	if rel == "" || strings.HasPrefix(rel, "/") || strings.Contains(rel, "\\") {
 		return false
@@ -377,7 +387,7 @@ func isCleanRelativePath(rel string) bool {
 		return false
 	}
 	for _, component := range strings.Split(rel, "/") {
-		if component == ".." || component == "." {
+		if component == ".." || component == "." || bundle.IsSkillSupportMetadataName(component) {
 			return false
 		}
 	}
