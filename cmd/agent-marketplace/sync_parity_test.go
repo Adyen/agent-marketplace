@@ -64,7 +64,7 @@ func TestSyncCLIAndTUIParity(t *testing.T) {
 				if !report.InSync() {
 					t.Errorf("TUI reports drift after CLI sync: writes=%d, removals=%d", report.TotalWritten(), report.TotalRemoved())
 				}
-				if err := runTUIDependencyLifecycle(context.Background(), repo, false); err != nil {
+				if err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
 					t.Fatal(err)
 				}
 				assertLink := func() {

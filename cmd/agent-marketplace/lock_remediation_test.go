@@ -48,7 +48,7 @@ func TestTUIDependencyLifecyclePropagatesExactLockLeaseIntoSync(t *testing.T) {
 		return pipeline.SyncResult{}
 	}
 
-	if err := runTUIDependencyLifecycle(context.Background(), repoRoot, false); err != nil {
+	if err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), false); err != nil {
 		t.Fatal(err)
 	}
 	if !leaseAcquired || !leaseReleased {

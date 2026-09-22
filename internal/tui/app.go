@@ -26,8 +26,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-type DependencyLifecycleFunc func(context.Context, string) error
-type DependencyMutationFunc func(context.Context, string, func(pipeline.ConfigPathMapper) error) error
+type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) error
+type DependencyMutationFunc func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error
 
 type DependencyLifecycle struct {
 	Sync   DependencyLifecycleFunc
@@ -39,6 +39,17 @@ type Option func(*Model)
 
 func WithDependencyLifecycle(lifecycle DependencyLifecycle) Option {
 	return func(model *Model) { model.dependencyLifecycle = lifecycle }
+}
+
+// WithWorkspace supplies the already validated roots shared by every TUI
+// pipeline and dependency operation.
+func WithWorkspace(workspace pipeline.Workspace) Option {
+	return func(model *Model) {
+		model.workspace = workspace
+		if workspace.RepoRoot() != "" {
+			model.repoRoot = workspace.RepoRoot()
+		}
+	}
 }
 
 func NewModel(repoRoot, homeDir string, options ...Option) Model {
@@ -54,8 +65,13 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 	si.Cursor.Style = lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
 
+	workspace := defaultTUIWorkspace(repoRoot)
+	if workspace.RepoRoot() != "" {
+		repoRoot = workspace.RepoRoot()
+	}
 	m := Model{
 		repoRoot:                   repoRoot,
+		workspace:                  workspace,
 		homeDir:                    homeDir,
 		width:                      80,
 		height:                     24,
@@ -156,7 +172,7 @@ func (m *Model) switchTab(t tab) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick)
+	return tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick)
 }
 
 func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
@@ -350,7 +366,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.refreshAfterLoad {
 			m.refreshing = true
 			generation := m.beginRequest(requestSnapshot)
-			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), discoveryCmd, installCmd, m.spinner.Tick)
+			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), discoveryCmd, installCmd, m.spinner.Tick)
 		}
 		m.refreshing = false
 		return m, tea.Batch(discoveryCmd, installCmd)
@@ -383,7 +399,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// rather than leaving either result as authoritative.
 			m.syncing = false
 			generation := m.beginRequest(requestSnapshot)
-			return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+			return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 		}
 		m.loading = false
 		m.syncing = false
@@ -475,7 +491,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		generation := m.beginRequest(requestSnapshot)
 		m.marketplaceInstallReload = generation
-		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 
 	case toastMsg:
 		m.toast = msg.text
@@ -535,7 +551,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		generation := m.beginRequest(requestSnapshot)
 		m.pendingToggleOperation = msg.operation
 		m.pendingToggleReload = generation
-		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case harnessWrittenMsg:
 		if !m.acceptsOperation(msg.operation) {
@@ -555,7 +571,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
 		generation := m.beginRequest(requestSnapshot)
-		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case syncDoneMsg:
 		m.syncing = false
@@ -583,7 +599,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Re-load to pick up on-disk changes.
 		generation := m.beginRequest(requestSnapshot)
-		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(5*time.Second))
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), toastExpiryCmd(5*time.Second))
 
 	case updateDoneMsg:
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
@@ -591,7 +607,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// them under a new generation without applying this stale outcome.
 			m.syncing = false
 			generation := m.beginRequest(requestSnapshot)
-			return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+			return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 		}
 		m.syncing = false
 		var installCmd tea.Cmd
@@ -645,7 +661,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.migrationPrompt = migrationPrompt{}
 		generation := m.beginRequest(requestSnapshot)
-		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case editConfigPathMsg:
 		if !m.acceptsOperation(msg.operation) {
@@ -663,7 +679,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.recordOperationSuccess(operationEditor)
 		slog.Debug("config editor result handled", "path", msg.path, "reload", true)
 		generation := m.beginRequest(requestSnapshot)
-		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 
 	case detailContentMsg:
 		if m.pane != paneDetail || (msg.path != "" && msg.path != m.detailSelectedPath) || !m.acceptsRequest(requestDetail, msg.generation) {
@@ -1009,7 +1025,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Reload):
 		m.refreshing = false
 		generation := m.beginRequest(requestSnapshot)
-		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 
 	case key.Matches(msg, m.keys.Tab1):
 		m.switchTab(tabScope)
