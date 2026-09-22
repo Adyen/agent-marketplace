@@ -4801,7 +4801,11 @@ func TestResolveCollectionExpansionRetainsDisjointTargets(t *testing.T) {
 	}
 }
 
-func TestResolvePartitionsCollisionsByTargetAndScope(t *testing.T) {
+// Two different registries offering one name are a single selection decision
+// even when their occurrences live in different scopes: collapsing them keeps
+// the duplicate reportable instead of quietly materializing it into both the
+// machine and the repository output.
+func TestResolveCollapsesCrossScopeMultiRegistryCollision(t *testing.T) {
 	machine := config.RegistryEntry{
 		URL: "git@example.com:machine.git", Ref: "main", Source: config.UserPersonal,
 		Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
@@ -4817,16 +4821,52 @@ func TestResolvePartitionsCollisionsByTargetAndScope(t *testing.T) {
 		ck(repo.URL, repo.Ref):       {{Name: "shared", Resource: ir.NewSkill("shared", "repo", "", nil, nil, ir.SourceRef{})}},
 	}
 	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 1 || !IsNameCollision(errs[0]) {
+		t.Fatalf("cross-scope multi-registry diagnostics = %v, want one collision warning", errs)
+	}
+	if len(resolved) != 1 || resolved[0].RegistryURL != repo.URL {
+		t.Fatalf("resolved %#v, want only the repository-scope winner %q", resolved, repo.URL)
+	}
+	if !harnessesEqual(resolved[0].Harnesses, []hcc.Target{hcc.TargetClaude}) {
+		t.Fatalf("artifact lost target qualification: %#v", resolved[0])
+	}
+}
+
+// Scope does separate partitions for two locations of the same registry: the
+// machine copy keeps the resource globally available while the repository copy
+// populates the project output, so neither is a runner-up of the other.
+func TestResolveRetainsScopeSeparatedPartitionsOfOneRegistry(t *testing.T) {
+	const url = "git@example.com:shared.git"
+	machine := config.RegistryEntry{
+		URL: url, Ref: "main", Path: "machine", Source: config.UserPersonal,
+		Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	repo := config.RegistryEntry{
+		URL: url, Ref: "main", Path: "repo", Source: config.RepoCommitted,
+		Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{machine, repo}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(url, "main", "machine"): {{Name: "shared", Resource: ir.NewSkill("shared", "machine", "", nil, nil, ir.SourceRef{})}},
+		ck(url, "main", "repo"):    {{Name: "shared", Resource: ir.NewSkill("shared", "repo", "", nil, nil, ir.SourceRef{})}},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
 	if len(errs) != 0 {
-		t.Fatalf("target+scope-disjoint resources emitted collision diagnostics: %v", errs)
+		t.Fatalf("scope-separated partitions emitted collision diagnostics: %v", errs)
 	}
 	if len(resolved) != 2 {
 		t.Fatalf("resolved %d artifacts, want one per scope, got %#v", len(resolved), resolved)
 	}
+	seen := map[config.Source]bool{}
 	for _, artifact := range resolved {
 		if !harnessesEqual(artifact.Harnesses, []hcc.Target{hcc.TargetClaude}) {
 			t.Fatalf("artifact lost target qualification: %#v", artifact)
 		}
+		seen[artifact.Source] = true
+	}
+	if !seen[config.UserPersonal] || !seen[config.RepoCommitted] {
+		t.Fatalf("scope-separated partition was dropped: %v", seen)
 	}
 }
 
@@ -4883,7 +4923,7 @@ func TestResolveCollectionDirectOverlapSubtractsOnlyOverlappingTarget(t *testing
 	}
 }
 
-func TestResolveSameTargetScopesAndCollisionsAreOrderIndependent(t *testing.T) {
+func TestResolveSameTargetCollisionWinnerIsOrderIndependent(t *testing.T) {
 	type artifactView struct {
 		Name        string
 		Description string
@@ -4934,8 +4974,8 @@ func TestResolveSameTargetScopesAndCollisionsAreOrderIndependent(t *testing.T) {
 
 	view := func(t *testing.T, resolved []ResolvedArtifact) map[config.Source]artifactView {
 		t.Helper()
-		if len(resolved) != 2 {
-			t.Fatalf("resolved %d artifacts, want machine and repository occurrences: %#v", len(resolved), resolved)
+		if len(resolved) != 1 {
+			t.Fatalf("resolved %d artifacts, want the single collision winner: %#v", len(resolved), resolved)
 		}
 		got := make(map[config.Source]artifactView, len(resolved))
 		for _, artifact := range resolved {
@@ -4957,10 +4997,6 @@ func TestResolveSameTargetScopesAndCollisionsAreOrderIndependent(t *testing.T) {
 	}
 
 	want := map[config.Source]artifactView{
-		config.UserPersonal: {
-			Name: "shared", Description: "git@example.com:machine-a.git", URL: "git@example.com:machine-a.git", Path: "/cache/machine-a/shared",
-			Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetClaude},
-		},
 		config.RepoCommitted: {
 			Name: "shared", Description: "git@example.com:repo.git", URL: "git@example.com:repo.git", Path: "/cache/repo/shared",
 			Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude},
@@ -4982,22 +5018,22 @@ func TestResolveSameTargetScopesAndCollisionsAreOrderIndependent(t *testing.T) {
 			cfg, catalogs := build(tc.reverseRegistries, tc.reverseCatalogs)
 			resolved, errs := Resolve(cfg, catalogs, nil)
 			if len(errs) != 1 {
-				t.Fatalf("Resolve() errors = %v, want one same-scope collision warning", errs)
+				t.Fatalf("Resolve() errors = %v, want one collision warning", errs)
 			}
 			var warning *NameCollisionWarning
 			if !errors.As(errs[0], &warning) {
 				t.Fatalf("Resolve() error = %T, want NameCollisionWarning: %v", errs[0], errs[0])
 			}
-			if warning.Name != "shared" || warning.Winner != "git@example.com:machine-a" {
-				t.Fatalf("same-scope collision winner = %#v, want machine-a", warning)
+			if warning.Name != "shared" || warning.Winner != "git@example.com:repo" {
+				t.Fatalf("collision winner = %#v, want repo", warning)
 			}
-			if !slices.Equal(warning.RunnersUp, []string{"git@example.com:machine-z"}) {
-				t.Fatalf("same-scope collision runners-up = %v, want machine-z", warning.RunnersUp)
+			if !slices.Equal(warning.RunnersUp, []string{"git@example.com:machine-a", "git@example.com:machine-z"}) {
+				t.Fatalf("collision runners-up = %v, want machine-a and machine-z", warning.RunnersUp)
 			}
 
 			got := view(t, resolved)
 			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("resolved machine/repository artifacts = %#v, want %#v", got, want)
+				t.Fatalf("resolved collision winner = %#v, want %#v", got, want)
 			}
 			if first == nil {
 				first = got

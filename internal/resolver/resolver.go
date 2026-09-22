@@ -1037,21 +1037,24 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	return occurrencesByName, errs
 }
 
+// partitionOccurrencesByTarget splits winner contention by output target only.
+// Machine and repo scope deliberately share a partition: a name provided by two
+// different registries is one selection decision no matter which scope each
+// occurrence came from, and collapsing it to a single winner is what keeps a
+// scope-crossing duplicate reportable instead of silently materializing twice.
+// Scope separation for occurrences of the same registry is applied afterwards by
+// pickWinnersReporting.
 func partitionOccurrencesByTarget(input map[resourceSelection][]skillOccurrence) map[resourceSelection][]skillOccurrence {
 	partitioned := make(map[resourceSelection][]skillOccurrence, len(input))
 	for selection, occurrences := range input {
 		for _, occurrence := range occurrences {
-			machineScope := occurrence.resolved.Source.IsMachineScope()
 			if occurrence.resolved.Harnesses == nil {
-				key := selection
-				key.machineScope = machineScope
-				partitioned[key] = append(partitioned[key], occurrence)
+				partitioned[selection] = append(partitioned[selection], occurrence)
 				continue
 			}
 			if len(occurrence.resolved.Harnesses) == 0 {
 				key := selection
 				key.empty = true
-				key.machineScope = machineScope
 				partitioned[key] = append(partitioned[key], occurrence)
 				continue
 			}
@@ -1059,7 +1062,7 @@ func partitionOccurrencesByTarget(input map[resourceSelection][]skillOccurrence)
 				clone := occurrence
 				clone.partitionOrder = targetIndex
 				clone.resolved.Harnesses = []hcc.Target{target}
-				key := resourceSelection{kind: selection.kind, name: selection.name, target: target, machineScope: machineScope}
+				key := resourceSelection{kind: selection.kind, name: selection.name, target: target}
 				partitioned[key] = append(partitioned[key], clone)
 			}
 		}
@@ -2838,16 +2841,7 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 			}
 			return 1
 		}
-		if a.target != b.target {
-			return strings.Compare(string(a.target), string(b.target))
-		}
-		if a.machineScope != b.machineScope {
-			if a.machineScope {
-				return 1
-			}
-			return -1
-		}
-		return 0
+		return strings.Compare(string(a.target), string(b.target))
 	})
 
 	for _, key := range keys {
@@ -3066,11 +3060,10 @@ func attachResource(e catalog.Entry, resources map[string]map[string]ir.Resource
 }
 
 type resourceSelection struct {
-	kind         ir.ResourceKind
-	name         string
-	target       hcc.Target // non-empty when this selection belongs to one output partition
-	machineScope bool       // true for machine-wide output; false for repo output
-	empty        bool       // true for an explicit empty target intent
+	kind   ir.ResourceKind
+	name   string
+	target hcc.Target // non-empty when this selection belongs to one output partition
+	empty  bool       // true for an explicit empty target intent
 }
 
 type missingResource struct {
