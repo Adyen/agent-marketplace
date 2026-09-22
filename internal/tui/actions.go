@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -122,52 +121,64 @@ var (
 	loadOrgConfig         = config.LoadOrganizationConfig
 	loadGlobalConfig      = config.LoadGlobalConfig
 	loadRepoConfig        = config.LoadRepoConfig
-	loadLocalConfig       = config.LoadLocalConfig
+	loadLocalConfig       = loadLocalConfigAt
 	cloneOrPull           = cache.CloneOrPull
 	discoverCatalog       = catalog.Discover
 	runMaterialize        = materialize.Run
 	runPipelineSync       = pipeline.Sync
-	readSnapshotForUpdate = readSnapshot
+	readSnapshotForUpdate = readSnapshotForWorkspace
 )
 
-func loadSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
+func loadSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		snapshot := readSnapshot(ctx, repoRoot, homeDir, catalogLoadCached)
+		snapshot := readSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadCached)
 		snapshot.generation = generation
 		return snapshot
 	}
 }
 
-func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
+func refreshSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		snapshot := readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh)
+		snapshot := readSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadRefresh)
 		snapshot.generation = generation
 		return refreshLoadedMsg{snapshotLoadedMsg: snapshot}
 	}
 }
 
-// tuiWorkspace preserves the previous empty-LocalConfigDir fallback: the
-// cwd-discovered local-config root applies when it lives inside repoRoot;
-// otherwise the repository-root workspace keeps explicit construction intact.
-// When even the repository root cannot construct a Workspace, the zero value
-// is returned deliberately so Resolve and Sync reject it with
-// ErrInvalidWorkspace rather than acting on unvalidated roots.
-func tuiWorkspace(repoRoot string) pipeline.Workspace {
-	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
-	if err == nil {
-		return ws
+func loadLocalConfigAt(localDir string) (*config.LocalConfig, error) {
+	if config.IsHomeDir(localDir) {
+		return nil, nil
 	}
-	slog.Debug("workspace construction with the discovered local-config root failed; falling back to the repository root", "error", err)
-	fallback, err := pipeline.NewWorkspace(repoRoot, "")
-	if err != nil {
-		slog.Debug("workspace construction failed; returning the zero Workspace for downstream rejection", "error", err)
-		return pipeline.Workspace{}
-	}
-	return fallback
+	return config.LoadLocalConfigFromPath(config.LocalConfigPath(localDir))
 }
 
-func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
-	ws := tuiWorkspace(repoRoot)
+func validatedTUIWorkspace(ws pipeline.Workspace) (pipeline.Workspace, error) {
+	return pipeline.NewWorkspace(ws.RepoRoot(), ws.LocalConfigDir())
+}
+
+func defaultTUIWorkspace(repoRoot string) pipeline.Workspace {
+	ws, err := pipeline.NewWorkspace(repoRoot, "")
+	if err != nil {
+		return pipeline.Workspace{}
+	}
+	return ws
+}
+
+func invalidWorkspaceSnapshot(err error) snapshotLoadedMsg {
+	diagnostics := appendSnapshotDiagnostics(nil, diagnosticError, diagnosticResolution, err)
+	return snapshotLoadedMsg{
+		driftAssessment: driftFailed,
+		diagnostics:     diagnostics,
+		errs:            diagnosticValues(diagnostics, diagnosticError),
+	}
+}
+
+func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+	ws, err := validatedTUIWorkspace(ws)
+	if err != nil {
+		return invalidWorkspaceSnapshot(err)
+	}
+	repoRoot := ws.RepoRoot()
 	resolvedResult, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
 		Workspace:     ws,
 		CatalogMode:   tuiCatalogLoadMode(mode),
@@ -176,13 +187,15 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 			OrganizationPath: config.OrganizationConfigPath(),
 			GlobalPath:       filepath.Join(homeDir, ".agents", "config.yaml"),
 			RepoPath:         config.ProjectConfigPath(repoRoot),
-			LocalPath:        config.LocalConfigPath(repoRoot),
+			LocalPath:        config.LocalConfigPath(ws.LocalConfigDir()),
 		},
 		Loaders: pipeline.Loaders{
 			Org:    loadOrgConfig,
 			Global: loadGlobalConfig,
 			Repo:   loadRepoConfig,
-			Local:  loadLocalConfig,
+			Local: func() (*config.LocalConfig, error) {
+				return loadLocalConfig(ws.LocalConfigDir())
+			},
 		},
 		CatalogOption: []catalog.LoadOption{
 			catalog.WithCloneOrPull(cloneOrPull),
@@ -204,7 +217,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
 		targetHarnesses:      resolvedResult.TargetHarnesses,
 		targetHarnessSource:  resolvedResult.TargetHarnessSource,
-		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
+		pendingMigration:     pendingMigrationFor(repoRoot, ws.LocalConfigDir(), homeDir),
 		driftAssessment:      driftFailed,
 		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
 	}
@@ -1147,15 +1160,16 @@ func loadDetailContent(r row, generation requestGeneration, width int, keepScrol
 	}
 }
 
-func tuiPipelineOptions(repoRoot string) pipeline.ResolveOptions {
-	ws := tuiWorkspace(repoRoot)
+func tuiPipelineOptionsForWorkspace(ws pipeline.Workspace) pipeline.ResolveOptions {
 	return pipeline.ResolveOptions{
 		Workspace: ws,
 		Loaders: pipeline.Loaders{
 			Org:    loadOrgConfig,
 			Global: loadGlobalConfig,
 			Repo:   loadRepoConfig,
-			Local:  loadLocalConfig,
+			Local: func() (*config.LocalConfig, error) {
+				return loadLocalConfig(ws.LocalConfigDir())
+			},
 		},
 		CatalogOption: []catalog.LoadOption{
 			catalog.WithCloneOrPull(cloneOrPull),
@@ -1167,21 +1181,35 @@ func tuiPipelineOptions(repoRoot string) pipeline.ResolveOptions {
 // runSyncCmd runs the authoritative sync pipeline as a tea.Cmd.
 // It is a package-level var so tests can override it with a no-op to
 // avoid real I/O when inspecting command composition in assertions.
-var runSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
+var runSyncCmd = func(ctx context.Context, workspace pipeline.Workspace) tea.Cmd {
 	return func() tea.Msg {
-		result := runPipelineSync(ctx, tuiPipelineOptions(repoRoot))
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
+			return syncDoneMsg{err: err}
+		}
+		result := runPipelineSync(ctx, tuiPipelineOptionsForWorkspace(ws))
 		return syncDoneMsg{err: errors.Join(result.Errors...)}
 	}
 }
 
-func runDependencySyncCmd(ctx context.Context, repoRoot string, sync DependencyLifecycleFunc) tea.Cmd {
-	return func() tea.Msg { return syncDoneMsg{err: sync(ctx, repoRoot)} }
+func runDependencySyncCmd(ctx context.Context, workspace pipeline.Workspace, sync DependencyLifecycleFunc) tea.Cmd {
+	return func() tea.Msg {
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
+			return syncDoneMsg{err: err}
+		}
+		return syncDoneMsg{err: sync(ctx, ws)}
+	}
 }
 
-func runDependencyUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration, update DependencyLifecycleFunc) tea.Cmd {
+func runDependencyUpdateCmd(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration, update DependencyLifecycleFunc) tea.Cmd {
 	return func() tea.Msg {
-		lifecycleErr := update(ctx, repoRoot)
-		current := readSnapshotForUpdate(ctx, repoRoot, homeDir, catalogLoadCached)
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
+			return updateDoneMsg{generation: generation, stage: updateStageRefresh, err: err}
+		}
+		lifecycleErr := update(ctx, ws)
+		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh}
 		if lifecycleErr != nil {
@@ -1196,22 +1224,26 @@ func runDependencyUpdateCmd(ctx context.Context, repoRoot, homeDir string, gener
 
 func (m Model) dependencySyncCmd() tea.Cmd {
 	if m.dependencyLifecycle.Sync != nil {
-		return runDependencySyncCmd(ctxOrBackground(m.ctx), m.repoRoot, m.dependencyLifecycle.Sync)
+		return runDependencySyncCmd(ctxOrBackground(m.ctx), m.workspace, m.dependencyLifecycle.Sync)
 	}
-	return runSyncCmd(ctxOrBackground(m.ctx), m.repoRoot)
+	return runSyncCmd(ctxOrBackground(m.ctx), m.workspace)
 }
 
 func (m Model) dependencyUpdateCmd(generation requestGeneration) tea.Cmd {
 	if m.dependencyLifecycle.Update != nil {
-		return runDependencyUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation, m.dependencyLifecycle.Update)
+		return runDependencyUpdateCmd(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation, m.dependencyLifecycle.Update)
 	}
-	return runUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+	return runUpdateCmdForWorkspace(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 }
 
-func runUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
+func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		syncResult := runPipelineSync(ctx, tuiPipelineOptions(repoRoot))
-		current := readSnapshotForUpdate(ctx, repoRoot, homeDir, catalogLoadCached)
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
+			return updateDoneMsg{generation: generation, stage: updateStageMaterialization, err: err}
+		}
+		syncResult := runPipelineSync(ctx, tuiPipelineOptionsForWorkspace(ws))
+		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		for _, warning := range syncResult.Warnings {
 			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
