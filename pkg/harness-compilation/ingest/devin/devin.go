@@ -241,6 +241,7 @@ func (*devinIngester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 	diags = append(diags, mcpDiags...)
 	resources = append(resources, servers...)
 
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestDevinUnconsumedConfig, "devin "+r.String(), r.join(projectHooksFile), r.join(configFile), r.join(mcpConfigFile))...)
 	slog.Info("devin ingest end", "source", ingest.HarnessDevin, "root_form", r.String(),
 		"resources", len(resources), "diagnostics", len(diags))
 	return &ingest.Bundle{Resources: resources, Diagnostics: diags}, nil

@@ -163,14 +163,22 @@ func hasBareSkillsDirForm(src fs.FS) bool {
 // them as an IR Bundle. It tries plugin form first, then workspace form,
 // then bare skills directory form.
 func (c *claudeIngester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
+	return LoadBundleWithOptions(src, LoadOptions{})
+}
+
+type LoadOptions struct {
+	LegacyBareMCP bool
+}
+
+func LoadBundleWithOptions(src fs.FS, opts LoadOptions) (*ingest.Bundle, error) {
 	// Try plugin form first (.claude-plugin/plugin.json or bare form).
 	// The explicit plugin manifest is Detect's highest-priority marker, so
 	// honor it here too to keep Detect and LoadBundle in agreement.
 	if _, err := fs.ReadFile(src, claudePluginManifest); err == nil {
-		return loadPluginForm(src)
+		return loadPluginForm(src, false)
 	}
 	if hasBarePluginForm(src) && !hasClaudeWorkspaceForm(src) {
-		return loadPluginForm(src)
+		return loadPluginForm(src, !opts.LegacyBareMCP)
 	}
 	// Try workspace form
 	if hasClaudeWorkspaceForm(src) {
@@ -191,7 +199,7 @@ func (c *claudeIngester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 //   - .mcp.json → LoadMcpServers
 //
 // This is the same layout used by harnesscompile.CompileBundle.
-func loadPluginForm(src fs.FS) (*ingest.Bundle, error) {
+func loadPluginForm(src fs.FS, bareMCP bool) (*ingest.Bundle, error) {
 	var resources []ir.Resource
 	var diags []diag.Diagnostic
 
@@ -273,9 +281,15 @@ func loadPluginForm(src fs.FS) (*ingest.Bundle, error) {
 	}
 
 	// 5. MCP servers
-	servers, err := bundle.LoadMcpServers(src, ".mcp.json")
+	mcpPath := ".mcp.json"
+	if bareMCP {
+		if _, err := fs.Stat(src, mcpPath); errors.Is(err, fs.ErrNotExist) {
+			mcpPath = "mcp.json"
+		}
+	}
+	servers, err := bundle.LoadMcpServers(src, mcpPath)
 	if err != nil && !isNotExist(err) {
-		return nil, fmt.Errorf("ingest/claude: load mcp servers: %w", err)
+		return nil, fmt.Errorf("ingest/claude: load %s: %w", mcpPath, err)
 	}
 	if err == nil {
 		for _, s := range servers {
@@ -283,6 +297,11 @@ func loadPluginForm(src fs.FS) (*ingest.Bundle, error) {
 		}
 	}
 
+	layout := "claude bare-plugin"
+	if _, err := fs.Stat(src, claudePluginManifest); err == nil {
+		layout = "claude plugin"
+	}
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestClaudeUnconsumedConfig, layout, "hooks/hooks.json", mcpPath)...)
 	return &ingest.Bundle{
 		Manifest:    manifest,
 		Resources:   resources,
@@ -390,6 +409,7 @@ func loadWorkspaceForm(src fs.FS) (*ingest.Bundle, error) {
 		})
 	}
 
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestClaudeUnconsumedConfig, "claude workspace", ".claude/hooks/hooks.json", mcpPath)...)
 	return &ingest.Bundle{
 		Manifest:    manifest,
 		Resources:   resources,
@@ -418,15 +438,12 @@ func loadBareSkillsDirForm(src fs.FS) (*ingest.Bundle, error) {
 	if _, err := fs.ReadFile(src, "SKILL.md"); err == nil {
 		skill, err := bundle.LoadRootSkill(src)
 		if err != nil {
-			return &ingest.Bundle{
-				Manifest:    manifest,
-				Diagnostics: append(diags, ingest.LoadFailure(diag.CodeIngestClaudeLoadSkillFailed, "root skill", ".", ".", err)),
-			}, nil
+			diags = append(diags, ingest.LoadFailure(diag.CodeIngestClaudeLoadSkillFailed, "root skill", ".", ".", err))
+			diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestClaudeUnconsumedConfig, "claude bare-skills")...)
+			return &ingest.Bundle{Manifest: manifest, Diagnostics: diags}, nil
 		}
-		return &ingest.Bundle{
-			Manifest:  manifest,
-			Resources: []ir.Resource{skill},
-		}, nil
+		diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestClaudeUnconsumedConfig, "claude bare-skills")...)
+		return &ingest.Bundle{Manifest: manifest, Resources: []ir.Resource{skill}, Diagnostics: diags}, nil
 	}
 
 	// No root SKILL.md: scan for skill subdirectories at root level.
@@ -447,6 +464,7 @@ func loadBareSkillsDirForm(src fs.FS) (*ingest.Bundle, error) {
 		return nil, fmt.Errorf("ingest/claude: bare skills dir has no loadable skills")
 	}
 
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestClaudeUnconsumedConfig, "claude bare-skills")...)
 	return &ingest.Bundle{
 		Manifest:    manifest,
 		Resources:   resources,

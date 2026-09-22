@@ -69,6 +69,14 @@ func load(src fs.FS) (*ingest.Bundle, error) {
 	resources, duplicateDiagnostics := suppressDuplicates(resources)
 	diagnostics = append(diagnostics, duplicateDiagnostics...)
 	logCodexIngestDiagnostics(duplicateDiagnostics)
+	consumed := make([]string, 0, 2)
+	if file, err := codexAggregateFile(ir.KindHook); err == nil {
+		consumed = append(consumed, file)
+	}
+	if file, err := codexAggregateFile(ir.KindMcpServer); err == nil {
+		consumed = append(consumed, file)
+	}
+	diagnostics = append(diagnostics, ingest.UnconsumedConfigs(src, diag.CodeIngestCodexUnconsumedConfig, "codex workspace", consumed...)...)
 	slog.Info("codex ingest complete", "source", ingest.HarnessCodex, "resources", len(resources), "diagnostics", len(diagnostics))
 	return &ingest.Bundle{Manifest: ir.Manifest{Name: "codex-workspace"}, Resources: resources, Diagnostics: diagnostics}, nil
 }
