@@ -199,8 +199,9 @@ const rootTokenPrefix = bundle.CanonicalRootToken + "/"
 
 // assetTerminators ends a referenced path inside a composite value. Colon is
 // included so PATH-style tails such as "${CLAUDE_PLUGIN_ROOT}/bin:$PATH" do
-// not fabricate a single missing path.
-const assetTerminators = " \t\r\n'\"`);&|<>:"
+// not fabricate a single missing path, and comma is included so
+// comma-joined lists of URLs or references stay separable.
+const assetTerminators = " \t\r\n'\"`);&|<>:,"
 
 // referencedAssetPaths extracts bundle-root-relative paths that follow the
 // canonical root token in the given values, e.g. the hooks/check.sh of
@@ -230,10 +231,12 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 			}
 		}
 		// Composite scan: find each token occurrence by cursor so the URL
-		// check can inspect the whitespace-delimited word that contains it.
-		// A :// inside that word marks the occurrence as part of a remote
-		// URL and only that occurrence is skipped; occurrences in later
-		// words are still genuine bundle candidates.
+		// check can inspect the scheme text that precedes it. A token glued
+		// inside a URL word (scheme://…${TOKEN}/x) names a remote URL and is
+		// skipped, while a token joined to the URL word by a declared asset
+		// terminator such as ':' or ',' starts a separate genuine bundle
+		// reference. Occurrences in later words are still scanned either
+		// way.
 		start := 0
 		for {
 			idx := strings.Index(value[start:], rootTokenPrefix)
@@ -241,12 +244,7 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 				break
 			}
 			idx += start
-			wordStart := strings.LastIndexAny(value[:idx], " \t\r\n") + 1
-			wordEnd := len(value)
-			if end := strings.IndexAny(value[idx:], " \t\r\n"); end >= 0 {
-				wordEnd = idx + end
-			}
-			if strings.Contains(value[wordStart:wordEnd], "://") {
+			if urlEmbeddedToken(value, idx) {
 				// The token sits inside a URL word: a remote reference,
 				// not a bundle asset. Skip only this occurrence.
 				start = idx + len(rootTokenPrefix)
@@ -265,6 +263,20 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 	}
 	sort.Slice(refs, func(i, j int) bool { return refs[i].rel < refs[j].rel })
 	return refs
+}
+
+// urlEmbeddedToken reports whether the root-token occurrence at idx is glued
+// inside a remote URL: the whitespace-delimited word shows a scheme
+// separator ("://") before the token and the token is not separated from
+// that URL text by a declared asset terminator. The second reference in
+// "https://h/a,${TOKEN}/b" or "https://h:${TOKEN}/c" is therefore a genuine
+// bundle candidate, while "https://h/${TOKEN}/d" stays remote.
+func urlEmbeddedToken(value string, idx int) bool {
+	wordStart := strings.LastIndexAny(value[:idx], " \t\r\n") + 1
+	if !strings.Contains(value[wordStart:idx], "://") {
+		return false
+	}
+	return !strings.ContainsRune(assetTerminators, rune(value[idx-1]))
 }
 
 // readSupportFile validates rel against the source filesystem and reads its

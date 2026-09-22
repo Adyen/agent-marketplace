@@ -454,6 +454,42 @@ func TestConvertCompositeURLWordDoesNotDropLaterReferences(t *testing.T) {
 	}
 }
 
+// A root-token occurrence joined to a remote URL word by a declared asset
+// terminator (colon or comma) is a separate bundle reference, not part of the
+// URL: it must still be assembled, while token occurrences glued inside the
+// URL itself remain skipped and later genuine tokens keep scanning.
+func TestConvertURLSeparatorJoinedReferenceIsNotSwallowed(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"env":{` +
+				`"LIST":"https://example.com/a,${CLAUDE_PLUGIN_ROOT}/certs/ca.pem",` +
+				`"PAIR":"https://example.com:${CLAUDE_PLUGIN_ROOT}/config/.env",` +
+				`"EMBED":"https://example.com/${CLAUDE_PLUGIN_ROOT}/tok"` +
+				`}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("PEM")},
+		"config/.env":  &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("separator-joined references produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{"certs/ca.pem", "config/.env"} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing separator-joined referenced asset %s; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	if artifactByPath(result.Artifacts, "tok") != nil {
+		t.Errorf("URL-embedded token occurrence was materialized as a bundle asset")
+	}
+}
+
 // An unclean composite candidate (traversal, absolute, or backslash path) is
 // not a merely-missing best-effort guess: it proves the published value can
 // escape the bundle root at runtime, so it must fail closed with
