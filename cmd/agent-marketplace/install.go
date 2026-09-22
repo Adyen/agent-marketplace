@@ -384,7 +384,7 @@ func pluralLabel(singular string) string {
 var terminalPrintableSyntax = strings.NewReplacer(`\\`, `\`, `\"`, `"`)
 
 func terminalSafeText(value string) string {
-	escaped := strings.TrimSuffix(strings.TrimPrefix(marketplace.QuoteTerminal(value), `"`), `"`)
+	escaped := strings.TrimSuffix(strings.TrimPrefix(marketplacepkg.QuoteTerminal(value), `"`), `"`)
 	return terminalPrintableSyntax.Replace(escaped)
 }
 

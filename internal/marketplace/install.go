@@ -387,7 +387,7 @@ func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceE
 		slog.Info("marketplace collection install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "registry_id", registry.ID, "name", locator.Name, "manifest_digest", revision.ContentDigest, "members", len(members))
 		return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, CollectionManifest: manifest, CollectionMembers: members, PreparationWork: budget.used}, nil
 	}
-	resolved, artifact, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, canonical, pin, targets, resolver.MarketplaceResolveModeRefresh, policy, r.AllowedRegistries)
+	resolved, artifact, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, canonical, pin, targets, resolver.MarketplaceResolveModeRefresh, policy, r.AllowedRegistries, false)
 	if err != nil {
 		return nil, fmt.Errorf("verify Marketplace artifact: %w", err)
 	}
@@ -512,7 +512,7 @@ func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, ca
 		leafPin.RegistryCommit = occurrence.Commit
 		leafPin.RegistryManifestDigest = string(occurrence.RegistryRevisionManifestDigest)
 	}
-	resolved, decoded, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, leafPin, targets, resolver.MarketplaceResolveModeRefresh, policy, r.AllowedRegistries)
+	resolved, decoded, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, leafPin, targets, resolver.MarketplaceResolveModeRefresh, policy, r.AllowedRegistries, false)
 	if err != nil {
 		return nil, fmt.Errorf("verify collection member %s/%q: %w", member.Kind, member.Name, err)
 	}
