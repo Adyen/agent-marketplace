@@ -21,13 +21,13 @@ spec:
             absent(up{namespace="{{ .Release.Namespace }}",service="{{ $service }}",endpoint="operations"})
           for: {{ .Values.prometheusRule.apiTargetMissing.for }}
           labels:
-            severity: {{ .Values.prometheusRule.apiTargetMissing.severity | quote }}
+            severity: {{ .Values.prometheusRule.apiTargetMissing.severity }}
         - alert: AgentMarketplaceAPITargetDown
           expr: >-
             up{namespace="{{ .Release.Namespace }}",service="{{ $service }}",endpoint="operations"} == 0
           for: {{ .Values.prometheusRule.apiTargetDown.for }}
           labels:
-            severity: {{ .Values.prometheusRule.apiTargetDown.severity | quote }}
+            severity: {{ .Values.prometheusRule.apiTargetDown.severity }}
         - alert: AgentMarketplaceHTTP5xxHigh
           expr: >-
             (
@@ -39,7 +39,7 @@ spec:
             sum by (namespace, service) (rate(agent_marketplace_requests_total{namespace="{{ .Release.Namespace }}",service="{{ $service }}",listener="public"}[5m])) >= {{ .Values.prometheusRule.http5xx.minRequestRate }}
           for: {{ .Values.prometheusRule.http5xx.for }}
           labels:
-            severity: {{ .Values.prometheusRule.http5xx.severity | quote }}
+            severity: {{ .Values.prometheusRule.http5xx.severity }}
         - alert: AgentMarketplaceLatencyHigh
           expr: >-
             histogram_quantile(
@@ -50,5 +50,5 @@ spec:
             sum by (namespace, service) (rate(agent_marketplace_requests_total{namespace="{{ .Release.Namespace }}",service="{{ $service }}",listener="public"}[5m])) >= {{ .Values.prometheusRule.latency.minRequestRate }}
           for: {{ .Values.prometheusRule.latency.for }}
           labels:
-            severity: {{ .Values.prometheusRule.latency.severity | quote }}
+            severity: {{ .Values.prometheusRule.latency.severity }}
 {{- end }}
