@@ -225,7 +225,24 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 		}
 		doc.Marketplaces = append(doc.Marketplaces, locked)
 	}
+	if documentRecordsArtifactSelection(doc) {
+		doc.APIVersion = lockfile.APIVersionV3
+	}
 	return lockfile.Normalize(doc)
+}
+
+// documentRecordsArtifactSelection reports whether any locked resource pins an
+// artifact selection. Such locks must be v3 documents, matching the per-record
+// probe in lock_evidence; artifact-free locks stay v2 for existing readers.
+func documentRecordsArtifactSelection(doc lockfile.Document) bool {
+	for _, marketplace := range doc.Marketplaces {
+		for _, resource := range marketplace.Resources {
+			if resource.Artifact != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func sortedMarketplaceSources(v4 *config.V4Config) []string {

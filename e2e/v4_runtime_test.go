@@ -66,7 +66,7 @@ resources:
 			if got := env.ReadFile("/workspace/.agents/config.yaml"); got != before {
 				t.Fatalf("%s changed authored v4 config: %q", command, got)
 			}
-			for _, want := range []string{"agent-marketplace-lock/v2", "behavior-marketplace", "behavior-source-id", "skill-one"} {
+			for _, want := range []string{"agent-marketplace-lock/v3", "behavior-marketplace", "behavior-source-id", "skill-one"} {
 				if !env.CheckFileContains("/workspace/.agents/lock.yaml", want) {
 					t.Fatalf("%s lock missing %q:\n%s", command, want, env.ReadFile("/workspace/.agents/lock.yaml"))
 				}
