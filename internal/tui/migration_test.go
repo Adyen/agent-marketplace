@@ -13,7 +13,7 @@ import (
 	mptestutil "github.com/Adyen/agent-marketplace/internal/testutil/marketplace"
 )
 
-func TestSnapshotV2ConfigOpensMigrationModal(t *testing.T) {
+func TestSnapshotRepoV2ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	writeV2Config(t, filepath.Join(repoRoot, ".agents", "config.yaml"))
@@ -44,11 +44,11 @@ func TestSnapshotV2ConfigOpensMigrationModal(t *testing.T) {
 	mi, _ := m.Update(snapshot)
 	m = mi.(Model)
 
-	if m.pane != paneMigrationModal {
-		t.Fatalf("expected migration modal for v2 config, got pane=%v", m.pane)
+	if m.pane == paneMigrationModal {
+		t.Fatalf("unexpected migration modal for repo v2 config, got pane=%v", m.pane)
 	}
-	if !m.migrationPrompt.hasConfigs() {
-		t.Fatal("expected pending v2 migration")
+	if m.migrationPrompt.hasConfigs() {
+		t.Fatal("unexpected pending repo migration")
 	}
 }
 
@@ -100,7 +100,10 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 
 	m := NewModel(repoRoot, t.TempDir())
 	m.pane = paneMigrationModal
-	m.migrationPrompt = pendingMigrationFor(repoRoot, "")
+	m.migrationPrompt = pendingMigrationFor("", repoRoot)
+	if !m.migrationPrompt.hasConfigs() {
+		t.Fatal("expected user migration prompt")
+	}
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = mi.(Model)
@@ -145,7 +148,14 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	}
 
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
 	writeV2Config(t, configPath)
+	writeV2Config(t, localPath)
+	t.Chdir(repoRoot)
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewModel(repoRoot, homeDir)
 	m.pane = paneMigrationModal
@@ -168,24 +178,35 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	if done.err != nil {
 		t.Fatalf("migration failed: %v", done.err)
 	}
-	if done.count != 2 {
-		t.Fatalf("expected both legacy configs to be migrated, got %d migrations", done.count)
+	if done.count != 1 {
+		t.Fatalf("expected only user config to be migrated, got %d migrations", done.count)
 	}
 
 	repoCfg, err := config.LoadConfigFromPath(configPath)
 	if err != nil {
 		t.Fatalf("load migrated repo config: %v", err)
 	}
-	if repoCfg.APIVersion != config.APIVersionV4 {
-		t.Fatalf("expected repo apiVersion %q, got %q", config.APIVersionV4, repoCfg.APIVersion)
+	if repoCfg.APIVersion != config.APIVersionV2 {
+		t.Fatalf("expected repo apiVersion %q, got %q", config.APIVersionV2, repoCfg.APIVersion)
 	}
 	if len(repoCfg.Harnesses) != 0 {
 		t.Fatalf("expected repo config to have no harnesses, got %v", repoCfg.Harnesses)
 	}
 
+	for _, path := range []string{configPath, localPath} {
+		if got, err := os.ReadFile(path); err != nil || string(got) != string(before) {
+			t.Fatalf("migration changed %s: %q, %v", path, got, err)
+		}
+		if backups, err := filepath.Glob(path + ".pre-v4.*.bak"); err != nil || len(backups) != 0 {
+			t.Fatalf("unexpected repo migration backups: %v, %v", backups, err)
+		}
+	}
 	globalCfg, err := config.LoadConfigFromPath(globalConfigPath)
 	if err != nil {
 		t.Fatalf("load migrated global config: %v", err)
+	}
+	if globalCfg.APIVersion != config.APIVersionV4 {
+		t.Fatalf("user config was not migrated: %q", globalCfg.APIVersion)
 	}
 	if !equalStrings(globalCfg.Harnesses, []string{"factory"}) {
 		t.Fatalf("expected global harnesses to be preserved, got %v", globalCfg.Harnesses)
@@ -205,7 +226,7 @@ func TestMigrationModalRunMigratesMarketplaceConfig(t *testing.T) {
 		"https://market.example", "mp", "src", "review")
 	contentDigest, archiveDigest := seed.ContentDigest, seed.ArchiveDigest
 
-	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +240,7 @@ func TestMigrationModalRunMigratesMarketplaceConfig(t *testing.T) {
 
 	m := NewModel(repoRoot, homeDir)
 	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: configPath, scope: config.V4MigrationRepo}}}
+	m.migrationPrompt = pendingMigrationFor(repoRoot, homeDir)
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	m = mi.(Model)
@@ -256,7 +277,7 @@ func TestRenderMigrationModalIncludesActions(t *testing.T) {
 	for _, want := range []string{
 		"Configuration migration required",
 		"Project",
-		"agent-marketplace migrate",
+		"agent-marketplace migrate --scope user",
 		"apiVersion: agent-marketplace/v4",
 		"preserves source selections and layer policies",
 		"[m]",

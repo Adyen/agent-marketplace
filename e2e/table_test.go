@@ -180,6 +180,17 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:      "migration/startup_preserves_legacy_repo_layers",
+		Desc:      "Given a v4 user config and legacy repo/local configs, When listing and explicitly migrating the repo, Then startup preserves both legacy layers and only explicit migration upgrades the repo",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries: []\n",
+		LocalCfg:  "registries: []\n",
+		Steps: []Step{
+			{Args: []string{"list"}, MustPass: true, OutNotContains: []string{"Migrate these configuration files"}, PathsUnchanged: []string{"/workspace/.agents"}},
+			{Args: []string{"migrate", "--scope", "repo"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+		},
+	},
+	{
 		Name:      "local_registry/v4_portable_directory",
 		Desc:      "Given a repository-local registry, When migrating and syncing v4 dot and nested directory sources, Then live skills materialize without absolute config paths or Git locks",
 		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",

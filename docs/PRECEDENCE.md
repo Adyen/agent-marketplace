@@ -8,7 +8,7 @@ Legacy configuration uses the **v2 schema** (`apiVersion: agent-marketplace/v2`)
 
 V4 is a separate, explicit source/resource schema. A v4 root must declare `apiVersion: agent-marketplace/v4`; v4 included fragments may omit the version, but an explicit v2/v3 version or legacy installation key is rejected. Normal CLI readers recognize v4 and adapt each layer into the runtime requirement model. V4 sources and resource groups are composed within their root/include tree before the normal layer order is applied; v4 does not make legacy `registries`, `skills`, or `marketplaces` keys valid.
 
-`agent-marketplace migrate` targets v4 by default; `--to v4` remains an accepted compatibility spelling. Interactive CLI startup and the TUI proactively ask before migrating detected writable v2/v3 roots (and unversioned local legacy roots). A declined or non-interactive prompt leaves the files unchanged and continues using the v2/v3 reader. Use `agent-marketplace migrate --to v2` only for the legacy structural-remediation flow.
+`agent-marketplace migrate` targets v4 by default; `--to v4` remains an accepted compatibility spelling. Interactive CLI startup and the TUI proactively ask before migrating only the user-personal v2/v3 root (`~/.agents/config.yaml`). Repository and personal-local roots are never offered for startup migration; migrate them explicitly with `agent-marketplace migrate --scope repo` or `--scope local` (or `--scope all`). A declined or non-interactive prompt leaves the files unchanged and continues using the v2/v3 reader. Use `agent-marketplace migrate --to v2` only for the legacy structural-remediation flow.
 
 ## Config includes
 
