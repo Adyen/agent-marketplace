@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("bundle-preview-resize", ["tui"], 80, 24, {
   bundleFiles: {
@@ -14,6 +14,7 @@ test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
 test("preview scrolling survives pager and resize while short terminals navigate the tree", async ({ terminal }) => {
+  await declineLegacyMigration(terminal);
   await expect(terminal.getByText("~ in sync")).toBeVisible();
   await terminal.write("G");
   await expect(terminal.getByText("guide.txt", { strict: false })).toBeVisible();

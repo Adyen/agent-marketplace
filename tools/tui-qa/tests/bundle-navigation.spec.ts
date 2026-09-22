@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("bundle-navigation", ["tui"], 80, 24, {
   bundleFiles: {
@@ -15,6 +15,7 @@ test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
 test("nested bundle navigation retains focus, expansion and selection through pager return", async ({ terminal }) => {
+  await declineLegacyMigration(terminal);
   await expect(terminal.getByText("~ in sync")).toBeVisible();
   await step("select alpha with inline tree but no preview", () => terminal.write("G"), async () => {
     await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();

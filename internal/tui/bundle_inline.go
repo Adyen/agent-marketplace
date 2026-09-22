@@ -50,6 +50,13 @@ func (m *Model) syncInlineBundle() tea.Cmd {
 		return nil
 	}
 	m.detailKey = rowKey(r)
+	if isMarketplaceDetailOnly(r) {
+		// Marketplace rows without local verified content open a bounded
+		// metadata detail instead of a filesystem lookup.
+		m.bundleError = "No local files to browse"
+		m.detailViewport.SetContent(renderMarketplaceDetailContent(r))
+		return nil
+	}
 	if r.Artifact.Path == "" {
 		m.bundleError = "No source available"
 		return nil

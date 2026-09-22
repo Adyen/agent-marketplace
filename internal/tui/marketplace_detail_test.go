@@ -71,8 +71,8 @@ func TestMarketplaceDiscoveryDetailShowsMetadataWithoutSourcePathError(t *testin
 	for _, kind := range []string{"skill", "collection", "command"} {
 		t.Run(kind, func(t *testing.T) {
 			m := modelWithSelectedRow(t, marketplaceDiscoveryRow(kind, "review-"+kind, mpapi.AvailabilityAvailable))
-			m.width = 100
-			m.height = 30
+			m.width = 120
+			m.height = 40
 			m, cmd := enterDetail(t, m)
 			if m.pane != paneDetail {
 				t.Fatalf("enter did not open the detail pane: %v", m.pane)
@@ -98,6 +98,8 @@ func TestMarketplaceDiscoveryDetailShowsMetadataWithoutSourcePathError(t *testin
 
 func TestMarketplaceUnavailableDiscoveryDetailIsActionable(t *testing.T) {
 	m := modelWithSelectedRow(t, marketplaceDiscoveryRow("skill", "revoked-skill", mpapi.Availability("revoked")))
+	m.width = 120
+	m.height = 40
 	m, _ = enterDetail(t, m)
 	out := ansi.Strip(m.detailViewport.View())
 	if !contains(out, "not currently installable") {
@@ -159,6 +161,10 @@ func TestInstalledMarketplaceArchiveOpensVerifiedBundle(t *testing.T) {
 	m.height = 30
 
 	m, cmd := enterDetail(t, m)
+	if cmd == nil {
+		t.Fatal("enter did not schedule an archive bundle load")
+	}
+	m = applyBundleCommand(t, m, cmd)
 	if m.bundle == nil {
 		t.Fatalf("installed archive did not open a bundle; viewport:\n%s", ansi.Strip(m.detailViewport.View()))
 	}
@@ -180,12 +186,6 @@ func TestInstalledMarketplaceArchiveOpensVerifiedBundle(t *testing.T) {
 			t.Fatalf("archive bundle missing %q in %v", want, names)
 		}
 	}
-	if cmd == nil {
-		t.Fatal("enter did not schedule an archive preview")
-	}
-	msg := cmd().(detailContentMsg)
-	updated, _ := m.Update(msg)
-	m = updated.(Model)
 	out := ansi.Strip(m.detailViewport.View())
 	if !contains(out, "review bundle") {
 		t.Fatalf("archive preview did not render verified payload:\n%s", out)
@@ -204,15 +204,14 @@ func TestInstalledMarketplaceSkillRendersAsMarkdownWithFrontmatter(t *testing.T)
 	m.height = 30
 
 	m, cmd := enterDetail(t, m)
+	if cmd == nil {
+		t.Fatal("enter did not schedule a skill bundle load")
+	}
+	m = applyBundleCommand(t, m, cmd)
 	if m.detailSelectedPath != "SKILL.md" {
 		t.Fatalf("initial skill selection = %q, want SKILL.md", m.detailSelectedPath)
 	}
-	if cmd == nil {
-		t.Fatal("enter did not schedule a skill preview")
-	}
-	msg := cmd().(detailContentMsg)
-	updated, _ := m.Update(msg)
-	out := ansi.Strip(updated.(Model).detailViewport.View())
+	out := ansi.Strip(m.detailViewport.View())
 	for _, want := range []string{"k8s-app-onboarding", "Onboard", "applications onto Kubernetes", "K8s App Onboarding", "Use this skill when onboarding an application."} {
 		if !contains(out, want) {
 			t.Fatalf("skill preview missing %q:\n%s", want, out)
@@ -268,15 +267,28 @@ func TestMarketplaceArchiveDetailFailsClosed(t *testing.T) {
 			m := modelWithSelectedRow(t, installedMarketplaceRow(ir.KindSkill, "review", path))
 			m.detailViewport.SetContent("stale preview content")
 			m, cmd := enterDetail(t, m)
-			if cmd != nil || m.bundle != nil || m.detailSelectedPath != "" {
-				t.Fatalf("unsafe archive opened a bundle: cmd=%v bundle=%v", cmd, m.bundle != nil)
+			if cmd == nil {
+				t.Fatal("enter did not schedule an archive bundle load")
+			}
+			msg := cmd()
+			load, ok := msg.(bundleLoadedMsg)
+			if !ok {
+				t.Fatalf("archive open returned %T instead of a bundle load", msg)
+			}
+			if load.err == nil {
+				t.Fatal("unsafe archive loaded without an error")
+			}
+			updated, _ := m.Update(load)
+			m = updated.(Model)
+			if m.bundle != nil || m.detailSelectedPath != "" {
+				t.Fatalf("unsafe archive opened a bundle: bundle=%v", m.bundle != nil)
 			}
 			out := ansi.Strip(m.detailViewport.View())
 			if contains(out, "stale preview content") {
 				t.Fatalf("stale preview survived a failed archive open:\n%s", out)
 			}
-			if !contains(out, "Error reading resource") {
-				t.Fatalf("failed archive did not produce an actionable state:\n%s", out)
+			if !strings.Contains(m.bundleError, "Error reading resource") {
+				t.Fatalf("failed archive did not produce an actionable state: %q", m.bundleError)
 			}
 		})
 	}
