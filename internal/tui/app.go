@@ -1588,7 +1588,6 @@ func (m Model) listVisibleHeight() int {
 }
 
 func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error {
-	applyTerminalBackground()
 	initRenderer()
 
 	model := NewModel(repoRoot, homeDir, options...)
