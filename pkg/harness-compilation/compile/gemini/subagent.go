@@ -22,10 +22,10 @@ const (
 //   - name: subagent name
 //   - description: one-line description
 //   - kind: always "local" for compiled subagents
-//   - model: mapped via mapping.Model() for Gemini target
+//   - model: resolved through the shared model catalog
 //   - tools: mapped via mapping.Tool() for Gemini target
 //
-// Effort is emitted from the canonical IR when present. Temperature,
+// Effort is omitted with a warning; agent Markdown has no field. Temperature,
 // max_turns, timeout_mins, and inline mcpServers are Gemini-specific fields
 // populated from Ext.Gemini.
 func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -75,16 +75,15 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 		}
 	}
 
-	// Map model via mapping table.
-	mappedModel := sub.Model
-	if sub.Model != "" {
-		m, ok := mapping.ModelWithOverride(sub.Model, mapping.TargetGemini, opts.ModelOverride())
-		if ok {
-			mappedModel = m
-		}
-		// If not ok, the model is not in the table; passthrough unchanged.
-		// No info diagnostic needed for Gemini model passthrough in v0.
+	// Resolve model and reasoning through the shared catalog.
+	selection, modelDiags, err := compile.SubagentModel(sub, mapping.TargetGemini, opts)
+	if err != nil {
+		return nil, nil, err
 	}
+	mappedModel := selection.Model
+	// Unknown cross-target models are omitted without suppressing the agent.
+	// Gemini agent Markdown has no standalone effort representation.
+	diags = append(diags, modelDiags...)
 
 	// Map tools via mapping table.
 	var mappedTools []string
@@ -122,9 +121,6 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 	if mappedTools != nil {
 		fm.Set("tools", mappedTools)
 	}
-	if sub.Effort != "" {
-		fm.Set("effort", sub.Effort)
-	}
 	if temperature != nil {
 		fm.Set("temperature", *temperature)
 	}
@@ -138,7 +134,7 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 		fm.Set("max-nesting", *sub.MaxNesting)
 	}
 
-	extraKeys, extraDiags := compile.ExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{
+	extraKeys, extraDiags := compile.ModelExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{
 		"name":            true,
 		"description":     true,
 		"kind":            true,

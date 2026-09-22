@@ -61,6 +61,10 @@ func (c *claudeCompiler) translateRule(r *ir.Rule) ([]artifact.Artifact, []diag.
 }
 
 func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	selection, modelDiags, err := compile.SkillModel(s, mapping.TargetClaude, opts)
+	if err != nil {
+		return nil, nil, err
+	}
 	// Build frontmatter with name, description, triggers, and extra fields.
 	fm := compile.Frontmatter{}
 	fm.Set("name", s.Name())
@@ -71,8 +75,8 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 	if s.ArgumentHint != "" {
 		fm.Set("argument-hint", s.ArgumentHint)
 	}
-	if s.Model != "" {
-		fm.Set("model", s.Model)
+	if selection.Model != "" {
+		fm.Set("model", selection.Model)
 	}
 	if s.AllowedTools != nil {
 		fm.Set("allowed-tools", s.AllowedTools)
@@ -93,8 +97,8 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 		"allowed-tools": s.AllowedTools != nil, "permissions": permissions != nil,
 		"subagent": s.Subagent != "", "agent": s.Agent != "",
 	})
-	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, canonical, mapping.TargetClaude, s.Name(), diag.SourceRef(s.Source))
-	extraDiags = append(compile.SupportFileDiagnostics(s, mapping.TargetClaude), extraDiags...)
+	extraKeys, extraDiags := compile.SkillModelExtraKeys(s.Extra, canonical, mapping.TargetClaude, s.Name(), diag.SourceRef(s.Source))
+	extraDiags = append(append(modelDiags, compile.SupportFileDiagnostics(s, mapping.TargetClaude)...), extraDiags...)
 	for _, k := range extraKeys {
 		fm.Set(k, s.Extra[k])
 	}
@@ -165,19 +169,16 @@ func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact,
 }
 
 func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	model := s.Model
+	selection, modelDiags, err := compile.SubagentModel(s, mapping.TargetClaude, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	model, effort := selection.Model, selection.Effort
 	tools := s.Tools
-	effort := s.Effort
 	isolation := s.Isolation
 	if sidecar := s.Ext.Claude; sidecar != nil {
-		if sidecar.Model != "" {
-			model = sidecar.Model
-		}
 		if sidecar.Tools != nil {
 			tools = sidecar.Tools
-		}
-		if sidecar.Effort != "" {
-			effort = sidecar.Effort
 		}
 		if sidecar.Isolation != "" {
 			isolation = sidecar.Isolation
@@ -206,7 +207,7 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 	if s.MaxNesting != nil {
 		fm.Set("max-nesting", *s.MaxNesting)
 	}
-	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, compile.PresentFields(map[string]bool{
+	extraKeys, extraDiags := compile.ModelExtraKeys(s.Extra, compile.PresentFields(map[string]bool{
 		"name": true, "description": true, "model": model != "", "tools": tools != nil,
 		"effort": effort != "", "disallowedTools": len(s.DisallowedTools) > 0,
 		"isolation": isolation != "", "max-nesting": s.MaxNesting != nil, "maxNesting": false,
@@ -261,7 +262,7 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 	pluginArt.ManagedByField, pluginArt.ManagedByValue = opts.ManagedBy()
 	pluginArt.MergeWithExisting = pluginArt.ManagedByField != ""
 
-	return []artifact.Artifact{agentArt, pluginArt}, extraDiags, nil
+	return []artifact.Artifact{agentArt, pluginArt}, append(modelDiags, extraDiags...), nil
 }
 
 func (c *claudeCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {

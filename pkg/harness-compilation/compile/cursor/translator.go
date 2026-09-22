@@ -173,19 +173,13 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 		return nil, dgs, nil
 	}
 
-	// Map model via mapping table.
-	mappedModel, modelOK := mapping.ModelWithOverride(sub.Model, mapping.TargetCursor, opts.ModelOverride())
-	if !modelOK && sub.Model != "" {
-		dgs = append(dgs, diag.Diagnostic{
-			Code:     diag.CodeSubagentCursorModelPassthrough,
-			Severity: diag.SeverityInfo,
-			Target:   string(mapping.TargetCursor),
-			Resource: sub.Name(),
-			Message:  fmt.Sprintf("model %q not in mapping table; passed through unchanged", sub.Model),
-			Hint:     "Add the model to the mapping table if a Cursor-specific ID exists",
-			Source:   diag.SourceRef(sub.Source),
-		})
+	// Resolve model and reasoning together through the shared catalog.
+	selection, modelDiags, err := compile.SubagentModel(sub, mapping.TargetCursor, opts)
+	if err != nil {
+		return nil, nil, err
 	}
+	mappedModel := selection.Model
+	dgs = append(dgs, modelDiags...)
 
 	// Map tools via mapping table.
 	var mappedTools []string
@@ -212,16 +206,10 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 		return nil, dgs, nil
 	}
 
-	effort := sub.Effort
+	effort := selection.Effort
 	if sidecar := sub.Ext.Cursor; sidecar != nil {
-		if sidecar.Model != "" {
-			mappedModel = sidecar.Model
-		}
 		if sidecar.Tools != nil {
 			mappedTools = sidecar.Tools
-		}
-		if sidecar.Effort != "" {
-			effort = sidecar.Effort
 		}
 	}
 
@@ -254,7 +242,7 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 			return nil, nil, err
 		}
 	}
-	extraKeys, extraDiags := compile.ExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": effort != "", "disallowedTools": false, "isolation": false, "max-nesting": sub.MaxNesting != nil, "maxNesting": false}), mapping.TargetCursor, sub.Name(), diag.SourceRef(sub.Source))
+	extraKeys, extraDiags := compile.ModelExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": effort != "", "disallowedTools": false, "isolation": false, "max-nesting": sub.MaxNesting != nil, "maxNesting": false}), mapping.TargetCursor, sub.Name(), diag.SourceRef(sub.Source))
 	for _, key := range extraKeys {
 		if err := writeYAMLKey(&fm, key, sub.Extra[key]); err != nil {
 			return nil, nil, err

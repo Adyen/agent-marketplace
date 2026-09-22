@@ -1202,7 +1202,7 @@ func TestRunFactorySubagentSymlinksCompiledDroidToCache(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	repoRoot := t.TempDir()
 
-	subagent := ir.NewSubagent("worker-generic", "Worker", "You are a worker", "sonnet", []string{"Read"}, "", nil, "", nil, ir.SourceRef{})
+	subagent := ir.NewSubagent("worker-generic", "Worker", "You are a worker", "claude-sonnet-4-5-20250929", []string{"Read"}, "", nil, "", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{
 			Entry:     catalog.Entry{Kind: ir.KindSubagent, Name: "worker-generic", Path: filepath.Join(t.TempDir(), "worker-generic.md"), Resource: subagent},
@@ -1351,7 +1351,7 @@ func TestRunFactorySubagentRenormalizationEffortToReasoningEffort(t *testing.T) 
 	t.Setenv("HOME", homeDir)
 	repoRoot := t.TempDir()
 
-	subagent := ir.NewSubagent("effort-agent", "Agent", "Body", "", []string{"Read"}, "high", nil, "", nil, ir.SourceRef{})
+	subagent := ir.NewSubagent("effort-agent", "Agent", "Body", "claude-sonnet-4-5-20250929", []string{"Read"}, "high", nil, "", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{
 			Entry:     catalog.Entry{Kind: ir.KindSubagent, Name: "effort-agent", Path: filepath.Join(t.TempDir(), "effort-agent.md"), Resource: subagent},
@@ -2034,7 +2034,7 @@ func TestRunSubagentMergesIntoExistingFactoryPluginManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	subagent := ir.NewSubagent("worker-generic", "Worker", "You are a worker", "sonnet", []string{"Read"}, "", nil, "", nil, ir.SourceRef{})
+	subagent := ir.NewSubagent("worker-generic", "Worker", "You are a worker", "claude-sonnet-4-5-20250929", []string{"Read"}, "", nil, "", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{
 			Entry:     catalog.Entry{Kind: ir.KindSubagent, Name: "worker-generic", Path: filepath.Join(t.TempDir(), "worker-generic.md"), Resource: subagent},

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
@@ -21,8 +22,8 @@ func TestCursorSubagentExtPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Translate() error: %v", err)
 		}
-		if len(diags) != 0 {
-			t.Fatalf("diagnostics = %#v, want none", diags)
+		if len(diags) != 1 || !diag.HasCode(diags, diag.CodeModelReasoningOmitted) {
+			t.Fatalf("diagnostics = %#v, want unsupported effort warning", diags)
 		}
 
 		body := string(arts[0].Bytes)
@@ -32,8 +33,8 @@ func TestCursorSubagentExtPrecedence(t *testing.T) {
 		if !strings.Contains(body, "- CursorTool") {
 			t.Fatalf("frontmatter missing ext tools override:\n%s", body)
 		}
-		if !strings.Contains(body, "effort: max") {
-			t.Fatalf("frontmatter missing ext effort override:\n%s", body)
+		if strings.Contains(body, "effort:") {
+			t.Fatalf("frontmatter emitted unsupported standalone effort:\n%s", body)
 		}
 	})
 
@@ -44,8 +45,8 @@ func TestCursorSubagentExtPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Translate() error: %v", err)
 		}
-		if len(diags) != 0 {
-			t.Fatalf("diagnostics = %#v, want none", diags)
+		if len(diags) != 2 || !diag.HasCode(diags, diag.CodeModelSelectorPinned) || !diag.HasCode(diags, diag.CodeModelReasoningOmitted) {
+			t.Fatalf("diagnostics = %#v, want pin and effort loss", diags)
 		}
 
 		body := string(arts[0].Bytes)
@@ -55,8 +56,8 @@ func TestCursorSubagentExtPrecedence(t *testing.T) {
 		if !strings.Contains(body, "- Read") {
 			t.Fatalf("frontmatter missing canonical tools:\n%s", body)
 		}
-		if !strings.Contains(body, "effort: medium") {
-			t.Fatalf("frontmatter missing canonical effort:\n%s", body)
+		if strings.Contains(body, "effort:") {
+			t.Fatalf("frontmatter emitted unsupported standalone effort:\n%s", body)
 		}
 	})
 }

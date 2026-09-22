@@ -1,9 +1,9 @@
 # Harness model catalogs and reasoning conversion
 
 Date: 2026-09-21
-Status: concrete design proposed for review; direction approved, implementation not authorized by this document.
+Status: approved by the user on 2026-09-21; generic implementation complete, with new Devin forward variants still gated by D1.
 Baseline: `d688dce101c4d2bddc434d8a2665ea9d1874ab64`.
-Audience: harness-compilation maintainers. This is a design reference, not documentation of an implemented feature.
+Audience: harness-compilation maintainers. This is the design reference; the library README contains the implemented maintenance workflow.
 
 ## 1. Contract and scope
 
@@ -220,7 +220,7 @@ An ingested native concrete model must not be collapsed into a family before can
 
 ### Git source revisions
 
-`internal/sourcerevision` regenerates content for lock verification; changing model normalization there can invalidate old locks. Introduce a new source-revision contract for provenance-preserving ingestion rather than redefining existing v1/v2/v3 generators. This source-revision version is independent of config API version and lockfile schema version.
+`internal/sourcerevision` normally hashes original source-file bytes. When those bytes are unavailable it falls back to IR JSON, where changing model normalization or adding provenance can invalidate old locks. Source-revision v4 captures provenance in that fallback; v1/v2/v3 retain frozen legacy projection without changing original-file hashing. This source-revision version is independent of config API version and lockfile schema version.
 
 The legacy verification adapter must reproduce the historical model/effort projection for every supported old revision, using frozen legacy model data rather than the evolving catalog. Normal runtime compilation consumes current source-aware resources after existing exact-source verification. Existing locks are not refreshed solely because the compiler gained a catalog; explicit lock upgrades can adopt the new generator. Compatibility fixtures must include known Factory/Cursor exact models, Devin aliases, Codex sidecars, and model-less agents, not only fixtures with empty model fields.
 
@@ -252,13 +252,9 @@ Existing library tests, affected materialization/source-revision tests, `make ha
 
 ## 8. Review and implementation gates
 
-This document is a design proposal. There is no implementation, no new configuration format in production, and no completed native-variant verification.
+The user approved the concrete design and bounded skill scope before implementation. The generic resolver, catalogs, provenance handling, compatibility projection, and offline maintenance gate are implemented. No runtime configuration surface was added.
 
-Required before implementation handoff:
-
-1. Human review of this concrete schema, raw-source IR behavior, and legacy source-revision strategy.
-2. Confirm the bounded skill scope in section 1: reuse for documented Claude/Devin model fields, retain other existing skill field policies and their named evidence limitations, and do not turn this into a skill-installation rewrite.
-3. D1 evidence before enabling the proposed Devin variant mappings. An unresolved D1 does not block the generic design, but does block claiming the reported examples are fully corrected.
+D1 remains open: acceptance evidence is required before enabling the proposed Devin forward variant mappings. This does not block the generic implementation, but does block claiming the Luna/Terra-to-Devin examples are fully corrected. Native same-harness preservation is a separate, tested contract and is not acceptance evidence.
 
 Required before delivery: independent expected-output tests, legacy digest tests, consumer-path coverage, native evidence labels, and updated diagnostic/field-matrix reference. Existing approximate cross-provider mappings such as Sonnet to Gemini are intentionally removed from automatic conversion; explicit library overrides remain the escape hatch.
 

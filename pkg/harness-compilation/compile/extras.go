@@ -69,7 +69,22 @@ func PresentFields(fields map[string]bool) map[string]struct{} {
 }
 
 func HookExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef) ([]string, []diag.Diagnostic) {
-	reserved := CanonicalFields("event", "type", "matcher", "command", "prompt", "timeout", "hooks")
+	return reservedExtraKeys(extra, canonical, target, resource, source, "event", "type", "matcher", "command", "prompt", "timeout", "hooks")
+}
+
+func SkillModelExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef) ([]string, []diag.Diagnostic) {
+	return reservedExtraKeys(extra, canonical, target, resource, source, "model", "ModelSource")
+}
+
+func ModelExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef) ([]string, []diag.Diagnostic) {
+	return reservedExtraKeys(extra, canonical, target, resource, source, "model", "effort", "reasoningEffort", "model_reasoning_effort", "ModelSource")
+}
+
+func reservedExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef, names ...string) ([]string, []diag.Diagnostic) {
+	if len(extra) == 0 {
+		return nil, nil
+	}
+	reserved := CanonicalFields(names...)
 	for key := range canonical {
 		reserved[key] = struct{}{}
 	}

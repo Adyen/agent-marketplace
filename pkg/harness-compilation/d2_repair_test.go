@@ -97,7 +97,7 @@ func TestD2PromptHookSupportAndSuppression(t *testing.T) {
 
 func TestD2AbsentTypedFieldsDoNotSuppressExtras(t *testing.T) {
 	for _, target := range []compile.Target{compile.TargetClaude, compile.TargetFactory, compile.TargetCursor, compile.TargetGemini, compile.TargetWindsurf} {
-		skill := ir.NewSkill("demo", "", "body", nil, map[string]any{"model": "extension-model", "permissions": map[string]any{"custom": true}}, ir.SourceRef{})
+		skill := ir.NewSkill("demo", "", "body", nil, map[string]any{"permissions": map[string]any{"custom": true}}, ir.SourceRef{})
 		result, err := compile.Compile(skill, target)
 		if err != nil {
 			t.Fatalf("Compile(%s): %v", target, err)
@@ -105,7 +105,7 @@ func TestD2AbsentTypedFieldsDoNotSuppressExtras(t *testing.T) {
 		if len(result.Diagnostics) != 0 {
 			t.Fatalf("Compile(%s) diagnostics = %#v, want extras preserved without conflicts", target, result.Diagnostics)
 		}
-		if len(result.Artifacts) == 0 || !strings.Contains(string(result.Artifacts[0].Bytes), "model") {
+		if len(result.Artifacts) == 0 || !strings.Contains(string(result.Artifacts[0].Bytes), "permissions") {
 			t.Fatalf("Compile(%s) omitted absent-field extra: %#v", target, result.Artifacts)
 		}
 	}
@@ -231,7 +231,7 @@ func TestD2GeminiSupportFilesRemainVisibleAsDeferredDiagnostics(t *testing.T) {
 	}
 }
 
-func TestD2GeminiSubagentEffortIsEmitted(t *testing.T) {
+func TestD2GeminiSubagentEffortIsOmittedWithWarning(t *testing.T) {
 	subagent := ir.NewSubagent("reviewer", "Review", "body", "", nil, "high", nil, "", nil, ir.SourceRef{})
 	result, err := Compile(subagent, TargetGemini)
 	if err != nil {
@@ -241,8 +241,11 @@ func TestD2GeminiSubagentEffortIsEmitted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := frontmatter["effort"]; got != "high" {
-		t.Fatalf("effort = %#v, want high", got)
+	if got := frontmatter["effort"]; got != nil {
+		t.Fatalf("unsupported effort emitted: %#v", got)
+	}
+	if !diag.HasCode(result.Diagnostics, diag.CodeModelReasoningOmitted) || diag.HasErrors(result.Diagnostics) {
+		t.Fatalf("expected warning-only effort loss: %+v", result.Diagnostics)
 	}
 }
 

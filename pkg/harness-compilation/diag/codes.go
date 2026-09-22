@@ -95,6 +95,12 @@ const (
 	CodeHookGeminiUnsupportedType      = "hook.gemini.unsupported-type"            // Gemini cannot represent hook type
 	CodeHookWindsurfUnsupportedType    = "hook.windsurf.unsupported-type"          // Windsurf cannot represent hook type
 	CodeHookWindsurfTimeoutUnsupported = "hook.windsurf.timeout-unsupported"
+	CodeModelUnresolved                = "model.unresolved"
+	CodeModelReasoningOmitted          = "model.reasoning-omitted"
+	CodeModelInheritanceMismatch       = "model.inheritance-mismatch"
+	CodeModelReasoningConflict         = "model.reasoning-conflict"
+	CodeModelSelectorPinned            = "model.selector-pinned"
+	CodeModelProvenanceConflict        = "model.provenance-conflict"
 	CodeSkillSupportFilesDeferred      = "skill.support-files-deferred"   // Support file bytes are unavailable to this layer
 	CodeMcpLiteralCredential           = "mcp.credentials.literal-secret" // Literal credential-like value detected
 
@@ -481,6 +487,12 @@ type CodeDoc struct {
 
 // codeCatalog is the single source of truth for all v0 diagnostic codes.
 var codeCatalog = []CodeDoc{
+	{CodeModelUnresolved, SeverityWarning, "Model could not be resolved; field omitted without suppressing the resource", "Update the shipped model catalog or use an explicit model override"},
+	{CodeModelReasoningOmitted, SeverityWarning, "Reasoning preference could not be represented and was omitted", "Choose a supported model and reasoning combination"},
+	{CodeModelInheritanceMismatch, SeverityWarning, "Model inheritance or default selection changed across harnesses", "Choose an explicit model to avoid differing harness defaults"},
+	{CodeModelReasoningConflict, SeverityWarning, "Explicit reasoning overrides a conflicting embedded model preference", "Specify reasoning once"},
+	{CodeModelSelectorPinned, SeverityInfo, "Floating family was pinned by the target catalog", "Use a concrete model when version identity is required"},
+	{CodeModelProvenanceConflict, SeverityWarning, "Conflicting native model sidecars were ignored", "Set source provenance and authoritative model fields"},
 	// Info
 	{CodeSubagentCursorModelPassthrough, SeverityInfo, "Cursor model not in mapping table; passed through unchanged", "Add the model to the mapping table if a Cursor-specific ID exists"},
 	{CodeIngestClaudeManifestSynthesized, SeverityInfo, "Workspace form has no plugin.json; manifest synthesized", "Add a .claude-plugin/plugin.json to the source if a manifest is needed"},
@@ -539,11 +551,11 @@ var codeCatalog = []CodeDoc{
 	{CodeHookWindsurfTimeoutUnsupported, SeverityError, "Windsurf cannot represent an explicit hook timeout; hook artifact suppressed", "Remove the timeout explicitly or use a target that supports it"},
 	{CodeSkillSupportFilesDeferred, SeverityWarning, "Skill support file names were preserved but bytes were not materialized", "Materialize source-relative support files in the owning layer"},
 	{CodeMcpLiteralCredential, SeverityWarning, "MCP configuration contains a literal credential-like value", "Use environment interpolation or an external secret reference"},
-	{CodeSkillDevinModelUnmappable, SeverityWarning, "Explicit skill model is not a stable Devin alias; model was omitted", "Use sonnet, opus, or haiku for a stable Devin model alias"},
+	{CodeSkillDevinModelUnmappable, SeverityWarning, "Explicit skill model has no resolved Devin representation; model was omitted", "Update the shipped Devin model catalog or use an explicit model override"},
 	{CodeSkillDevinTriggerUnmappable, SeverityWarning, "Trigger is outside Devin's user/model activation vocabulary; the trigger was dropped", "Use the user or model trigger, or select a target that represents this trigger"},
-	{CodeSubagentDevinModelUnmappable, SeverityWarning, "Explicit model is not a stable Devin alias; model was omitted", "Use sonnet, opus, or haiku for a stable Devin model alias"},
-	{CodeSubagentDevinModelDefault, SeverityWarning, "Empty subagent model uses Devin's default subagent model", "Set an explicit stable Devin model alias when a fixed model is required"},
-	{CodeSubagentDevinEffortDropped, SeverityWarning, "Devin does not represent subagent effort", "Remove effort or use a target that supports it"},
+	{CodeSubagentDevinModelUnmappable, SeverityWarning, "Explicit model has no resolved Devin representation; model was omitted", "Update the shipped Devin model catalog or use an explicit model override"},
+	{CodeSubagentDevinModelDefault, SeverityWarning, "Parent inheritance becomes Devin's default subagent model", "Select an explicit supported model when inheritance cannot be represented"},
+	{CodeSubagentDevinEffortDropped, SeverityWarning, "Requested reasoning has no supported Devin encoding and was omitted", "Use a cataloged model and reasoning combination"},
 	// Warnings since bead agent-marketplace-pu6b (Devin) and the Factory
 	// unknown-tool policy change; these used to suppress the artifact. See the
 	// rationale on the constants above and the dedicated section in codes.md.

@@ -52,6 +52,7 @@ func LoadSkill(src fs.FS, path string) (*ir.Skill, error) {
 		options = append(options, ir.WithSkillPermissions(permissions))
 	}
 	skill := ir.NewSkillWithOptions(name, description, body, triggers, extra, sourceRef(path+"/SKILL.md"), options...)
+	skill.ModelSource = "factory"
 	files, err := supportFiles(src, path)
 	if err != nil {
 		return nil, fmt.Errorf("ingest/factory: walk support files %s: %w", path, err)

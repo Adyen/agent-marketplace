@@ -89,6 +89,7 @@ func LoadSkill(src fs.FS, path string) (*ir.Skill, error) {
 		return nil, err
 	}
 	skill.Source.File = normalizeSourcePath(skill.Source.File)
+	skill.ModelSource = "cursor"
 	return skill, nil
 }
 
@@ -118,9 +119,7 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, error) {
 		return nil, err
 	}
 	sub.Source.File = normalizeSourcePath(sub.Source.File)
-	if reversed, ok := mapping.ReverseModel(sub.Model, mapping.TargetCursor); ok {
-		sub.Model = reversed
-	}
+	sub.ModelSource = "cursor"
 	for i, tool := range sub.Tools {
 		if reversed, ok := mapping.ReverseTool(tool, mapping.TargetCursor); ok {
 			sub.Tools[i] = reversed

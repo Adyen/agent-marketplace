@@ -60,8 +60,8 @@ func TestLoadSubagent(t *testing.T) {
 	if subagent.Name() != "reviewer" {
 		t.Fatalf("Name() = %q, want %q", subagent.Name(), "reviewer")
 	}
-	if subagent.Model != "sonnet" {
-		t.Fatalf("Model = %q, want %q", subagent.Model, "sonnet")
+	if subagent.Model != "claude-sonnet-4-5-20250929" || subagent.ModelSource != "factory" {
+		t.Fatalf("native model identity lost: %+v", subagent)
 	}
 	if got, want := strings.Join(subagent.Tools, ","), "Read,Write"; got != want {
 		t.Fatalf("Tools = %q, want %q", got, want)
@@ -75,8 +75,8 @@ func TestLoadSubagent(t *testing.T) {
 	if subagent.Extra["customFlag"] != true {
 		t.Fatalf("Extra[customFlag] = %v, want true", subagent.Extra["customFlag"])
 	}
-	if !diag.HasCode(diags, diag.CodeIngestFactoryReasoningEffortMappedToModel) {
-		t.Fatalf("missing diagnostic %q", diag.CodeIngestFactoryReasoningEffortMappedToModel)
+	if diag.HasCode(diags, diag.CodeIngestFactoryReasoningEffortMappedToModel) || len(diags) != 0 {
+		t.Fatalf("lossless native ingestion reported model canonicalization: %+v", diags)
 	}
 }
 

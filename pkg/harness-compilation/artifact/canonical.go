@@ -733,7 +733,11 @@ func resourceJSON(r ir.Resource) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("extract resource extra: %w", err)
 	}
+	modelBearing := r.Kind() == ir.KindSkill || r.Kind() == ir.KindSubagent
 	for k, v := range extra {
+		if modelBearing && strings.EqualFold(k, "ModelSource") {
+			continue
+		}
 		if _, ok := m[k]; !ok {
 			m[k] = v
 		}

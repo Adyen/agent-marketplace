@@ -4,6 +4,19 @@ Every diagnostic code emitted by the harness-compilation library is listed here.
 The test `TestDiagnosticCodes_Documented` enforces that each constant in `codes.go`
 has a corresponding entry in this file.
 
+## Model selection
+
+| Code | Meaning | Remediation |
+|---|---|---|
+| `model.unresolved` | Model omitted without suppressing the resource; target defaults apply | Update the shipped harness catalog or provide an explicit model override |
+| `model.reasoning-omitted` | Requested reasoning cannot be represented for the selected target/model | Choose a supported model and reasoning combination |
+| `model.inheritance-mismatch` | Source inheritance/default semantics differ from target omission | Specify a supported explicit model |
+| `model.reasoning-conflict` | Explicit reasoning overrides a conflicting model-encoded preference | Specify the reasoning preference once |
+| `model.selector-pinned` | A floating family selector was pinned by target catalog policy (info) | Use an exact model when version identity matters |
+| `model.provenance-conflict` | Conflicting legacy native sidecars were ignored in favor of canonical fields | Supply model source provenance and authoritative fields |
+
+Model and reasoning conversion is resolved jointly from shipped catalogs. These losses are warnings, except informational family pinning; none suppresses the resource. Existing target-specific Devin and native-Codex loss codes remain available for equivalent losses. Same-target native preservation does not certify current account availability.
+
 ## Severity ordinals count DOWN, so never compare them
 
 `SeverityError` is the **zero value** of `Severity`: error 0, warning 1, info 2.
@@ -92,11 +105,11 @@ comparison in non-test code.
 | `hook.windsurf.unsupported-type` | Windsurf cannot represent this hook type; hook dropped | Use a command hook on Windsurf |
 | `skill.support-files-deferred` | Skill support file names were preserved but bytes were not materialized | Materialize source-relative support files in the owning layer |
 | `mcp.credentials.literal-secret` | MCP configuration contains a literal credential-like value | Use environment interpolation or an external secret reference |
-| `skill.devin.model-unmappable` | Explicit skill model is not a stable Devin alias; model was omitted | Use sonnet, opus, or haiku for a stable Devin model alias |
+| `skill.devin.model-unmappable` | Explicit skill model has no resolved Devin representation; model omitted | Update the shipped Devin model catalog or use an explicit model override |
 | `skill.devin.trigger-unmappable` | Trigger is outside Devin's user/model activation vocabulary; the trigger was dropped | Use the user or model trigger, or select a target that represents this trigger |
-| `subagent.devin.model-unmappable` | Explicit model is not a stable Devin alias; model was omitted | Use sonnet, opus, or haiku for a stable Devin model alias |
-| `subagent.devin.model-default` | Empty subagent model uses Devin's default subagent model | Set an explicit stable Devin model alias when a fixed model is required |
-| `subagent.devin.effort-dropped` | Devin does not represent subagent effort | Remove effort or use a target that supports it |
+| `subagent.devin.model-unmappable` | Explicit model has no resolved Devin representation; model omitted | Update the shipped Devin model catalog or use an explicit model override |
+| `subagent.devin.model-default` | Parent inheritance becomes Devin's default subagent model | Choose a supported explicit model when inheritance cannot be represented |
+| `subagent.devin.effort-dropped` | Requested reasoning has no supported Devin encoding and was omitted | Use a cataloged model and reasoning combination |
 | `skill.devin.tool-unknown` | An explicitly allowed skill or command tool has no Devin equivalent; the `allowed-tools` key was omitted and the resource was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource |
 | `subagent.devin.tool-unknown` | An explicitly allowed subagent tool has no Devin equivalent; the `allowed-tools` key was omitted and the profile was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent |
 | `hook.devin.payload-dropped` | The hook carries the payload its type does not select; that payload was dropped | Split the hook into one command hook and one prompt hook if both payloads are required |

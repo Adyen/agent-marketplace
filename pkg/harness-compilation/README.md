@@ -18,7 +18,37 @@ make lint    # vet and lint
 
 `make lint` also runs `go mod tidy` and `go fmt ./...`, so it can rewrite files. This directory has no `go.mod` of its own, so `go mod tidy` acts on the repository's root module. The target runs `golangci-lint` only when it is installed.
 
-## How to consume this library
+## Update a shipped model catalog
+
+For an ordinary model release, edit data rather than a translator:
+
+1. Open [`modelpolicy/catalogs/<harness>.yaml`](modelpolicy/catalogs/). Add the provider-qualified identity under `models`, its native `model` spelling, and the reasoning combinations that the harness's **resource format** supports. Update `evidence.checked` and its first-party references; a session model list alone does not prove custom-agent field acceptance.
+2. Encode reasoning with `{effort: high}` for a separate field, or an exact `{model: "claude-opus-5[effort=high]"}` when it belongs in the model identifier. Do not guess suffixes or equate levels such as `max` and `xhigh`. Use `families` for floating aliases, not for concrete versions.
+3. Add an independently authored case to [`modelpolicy/testdata/conversions.yaml`](modelpolicy/testdata/conversions.yaml). Use canonical or cross-harness input so the case fails without the new catalog entry; an opaque same-harness round trip alone does not test a new mapping. For example:
+
+   ```yaml
+   - name: Terra high to Factory
+     source: claude
+     target: factory
+     model: gpt-5.6-terra
+     effort: high
+     want_model: gpt-5.6-terra
+     want_effort: high
+   ```
+
+4. From the repository root, run:
+
+   ```sh
+   make model-catalog-check
+   ```
+
+   Both Go test commands must exit zero. The gate checks catalog structure, ambiguous encodings, expected model/reasoning results, and public compiler fixtures without vendor executables or credentials. Run the normal repository verification gates before delivery as well.
+
+Do not update `compile/mapping/models.go` for new releases: that table is frozen for legacy source-revision digest projection and the legacy mapping interface. Active subagent compilation uses `modelpolicy`. No Marketplace config migration or runtime model-catalog setting is required. A new native field format, unlike a new model ID, still needs serializer/resolver support and acceptance evidence.
+
+Unresolved models produce warnings and omit the model field, never the whole resource. Source-native model strings retain `ModelSource` provenance through ingestion and canonical archives; same-harness preservation does not certify account availability. See the [catalog design reference](../../docs/plans/2026-09-21-harness-model-catalogs-design.md) for the schema and the outstanding Devin variant-acceptance gate.
+
+## How to Consume This Library
 
 ### The only import you need
 

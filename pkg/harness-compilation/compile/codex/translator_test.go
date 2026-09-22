@@ -469,8 +469,8 @@ func TestSubagentOmitsKnownUnmappableModel(t *testing.T) {
 	if len(result.Artifacts) != 1 || strings.Contains(string(result.Artifacts[0].Bytes), "model =") {
 		t.Fatalf("known cross-vendor model was emitted as a Codex model: %#v", result.Artifacts)
 	}
-	if !hasDiagnostic(result.Diagnostics, diag.CodeCodexFieldDropped) {
-		t.Fatalf("diagnostics = %#v, want %q", result.Diagnostics, diag.CodeCodexFieldDropped)
+	if !hasDiagnostic(result.Diagnostics, diag.CodeModelUnresolved) {
+		t.Fatalf("diagnostics = %#v, want %q", result.Diagnostics, diag.CodeModelUnresolved)
 	}
 }
 

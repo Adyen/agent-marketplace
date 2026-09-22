@@ -167,30 +167,15 @@ func (f *factoryCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact
 //   - effort → reasoningEffort
 //   - disallowedTools → drop + emit diagnostic
 //   - isolation: worktree → drop + emit diagnostic
-//   - model via mapping.Model()
+//   - model and effort via the shared catalog resolver
 //   - tools via mapping.Tool() (expand Write → Edit,Create)
 func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	var diags []diag.Diagnostic
-	reasoningEffort := s.Effort
 	isolation := ""
 	if sidecar := s.Ext.Factory; sidecar != nil {
-		if sidecar.ReasoningEffort != "" {
-			reasoningEffort = sidecar.ReasoningEffort
-		}
 		if sidecar.Isolation != "" {
 			isolation = sidecar.Isolation
 		}
-	}
-
-	// Map model
-	mappedModel := s.Model
-	if s.Model != "" {
-		m, ok := mapping.ModelWithOverride(s.Model, mapping.TargetFactory, opts.ModelOverride())
-		if ok {
-			mappedModel = m
-		}
-		// Unknown models remain passthrough; unlike explicit unknown tools, a model
-		// identifier does not widen the subagent's tool permissions.
 	}
 
 	// Map tools. Factory's droid frontmatter rejects unknown tool identifiers,
@@ -250,6 +235,16 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 		return nil, diags, nil
 	}
 
+	// Map model
+	selection, modelDiags, err := compile.SubagentModel(s, mapping.TargetFactory, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	mappedModel, reasoningEffort := selection.Model, selection.Effort
+	// Unresolved models are omitted; unlike explicit unknown tools, a model
+	// preference never suppresses the subagent's remaining configuration.
+	diags = append(diags, modelDiags...)
+
 	// Build frontmatter with Factory renormalizations
 	fm := &compile.Frontmatter{}
 	fm.Set("name", s.Name())
@@ -269,7 +264,7 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 	if s.MaxNesting != nil {
 		fm.Set("max-nesting", *s.MaxNesting)
 	}
-	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": false, "reasoningEffort": reasoningEffort != "", "disallowedTools": false, "isolation": isolation != "", "max-nesting": s.MaxNesting != nil, "maxNesting": false}), mapping.TargetFactory, s.Name(), diag.SourceRef(s.Source))
+	extraKeys, extraDiags := compile.ModelExtraKeys(s.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": false, "reasoningEffort": reasoningEffort != "", "disallowedTools": false, "isolation": isolation != "", "max-nesting": s.MaxNesting != nil, "maxNesting": false}), mapping.TargetFactory, s.Name(), diag.SourceRef(s.Source))
 	for _, k := range extraKeys {
 		fm.Set(k, s.Extra[k])
 	}

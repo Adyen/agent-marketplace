@@ -2029,8 +2029,8 @@ registries:
 		},
 	},
 	{
-		Name: "subagent/model_passthrough_to_factory",
-		Desc: "Given a registry with a subagent using an unknown model, When sync is run, Then the model value is passed through unchanged",
+		Name: "subagent/unknown_model_omitted_without_failing_sync",
+		Desc: "Given an unknown cross-harness model, When sync runs, Then a warning is emitted while the droid body and tools survive without the model and repeated sync converges",
 		Registries: []RegistryDef{
 			{Name: "sub-model-pt", Subagents: []Subagent{
 				{Name: "passthrough-agent", Model: "custom-model-v2", Tools: []string{"Read"}},
@@ -2045,10 +2045,37 @@ registries:
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
-				FilesExist: []string{"/root/.factory/droids/passthrough-agent.md"},
+				OutContains: []string{"model.unresolved"},
+				FilesExist:  []string{"/root/.factory/droids/passthrough-agent.md"},
 				FileContains: map[string]string{
-					"/root/.factory/droids/passthrough-agent.md": "model: custom-model-v2",
-				}},
+					"/root/.factory/droids/passthrough-agent.md": "# passthrough-agent",
+				},
+				FileNotContains: map[string]string{"/root/.factory/droids/passthrough-agent.md": "model:"}},
+			{FileContains: map[string]string{"/root/.factory/droids/passthrough-agent.md": "- Read"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/droids/passthrough-agent.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	{
+		Name:       "subagent/inheritance_uses_devin_default_without_failing",
+		Desc:       "Given an inherited model and effort preference, When compiling for Devin, Then sync warns about default selection without treating inherit as an unknown model and keeps the resource",
+		Registries: []RegistryDef{{Name: "sub-inherit", Subagents: []Subagent{{Name: "inherited-agent", Model: "inherit", Effort: "medium", Tools: []string{"Read"}}}}},
+		GlobalCfg: `
+harnesses: [devin]
+registries:
+  - url: {{REG:sub-inherit}}
+    ref: main
+    subagents:
+      - inherited-agent
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				OutContains:     []string{"subagent.devin.model-default", "subagent.devin.effort-dropped"},
+				OutNotContains:  []string{"subagent.devin.model-unmappable"},
+				FileContains:    map[string]string{"/root/.config/devin/agents/inherited-agent.md": "# inherited-agent"},
+				FileNotContains: map[string]string{"/root/.config/devin/agents/inherited-agent.md": "model:"}},
+			{FileContains: map[string]string{"/root/.config/devin/agents/inherited-agent.md": "- read"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
 	{
@@ -2108,7 +2135,7 @@ registries:
 		Desc: "Given a registry with a subagent using effort=high, When sync is run for factory, Then the droid file contains reasoningEffort: high and not effort:",
 		Registries: []RegistryDef{
 			{Name: "sub-effort", Subagents: []Subagent{
-				{Name: "effort-agent", Effort: "high", Tools: []string{"Read"}},
+				{Name: "effort-agent", Model: "gpt-5.6-terra", Effort: "high", Tools: []string{"Read"}},
 			}},
 		},
 		GlobalCfg: `

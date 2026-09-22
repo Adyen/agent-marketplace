@@ -1,7 +1,6 @@
 package devin
 
 import (
-	"fmt"
 	"log/slog"
 	"strings"
 
@@ -316,34 +315,4 @@ func normalizeToolEntries(entries []string) []string {
 		}
 	}
 	return tools
-}
-
-// mapModel resolves an explicit model to a stable Devin alias.
-//
-// Plan, loss policy: "Only stable Devin aliases are mapping targets. [...] An
-// unmappable explicit model is omitted and emits a warning." A versioned model
-// ID is never guessed at and never passed through.
-//
-// An empty model returns no diagnostic here. Absence means different things per
-// kind: a skill inherits, while an absent subagent model selects Devin's
-// default subagent model, which the plan gives its own warning. subagent.go
-// owns that case.
-func mapModel(resource string, source diag.SourceRef, model string, opts compile.Options, code string) (string, []diag.Diagnostic) {
-	if model == "" {
-		return "", nil
-	}
-	mapped, ok := mapping.ModelWithOverride(model, mapping.TargetDevin, opts.ModelOverride())
-	if ok {
-		return mapped, nil
-	}
-	slog.Warn("devin model unmappable", "target", mapping.TargetDevin, "resource", resource, "model", model)
-	return "", []diag.Diagnostic{{
-		Code:     code,
-		Severity: diag.SeverityWarning,
-		Target:   string(mapping.TargetDevin),
-		Resource: resource,
-		Message:  fmt.Sprintf("%q is not a stable Devin model alias; the model was omitted", model),
-		Hint:     "Use sonnet, opus, or haiku for a stable Devin model alias",
-		Source:   source,
-	}}
 }

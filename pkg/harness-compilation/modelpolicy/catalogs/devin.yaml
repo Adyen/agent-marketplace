@@ -1,0 +1,32 @@
+schema: 1
+harness: devin
+evidence:
+  checked: "2026-09-21"
+  refs:
+    - https://docs.devin.ai/cli/subagents
+    - https://docs.devin.ai/cli/models
+    - https://docs.devin.ai/cli/extensibility/skills/creating-skills
+surfaces:
+  subagent:
+    model_field: model
+    omitted_model: default
+  skill:
+    model_field: model
+    omitted_model: inherit
+    inherit_model: ""
+families:
+  anthropic/sonnet:
+    model: sonnet
+    aliases: [claude]
+  anthropic/opus:
+    model: opus
+  anthropic/haiku:
+    model: haiku
+  cognition/swe:
+    model: swe
+  openai/gpt:
+    model: gpt
+  openai/codex:
+    model: codex
+  google/gemini:
+    model: gemini

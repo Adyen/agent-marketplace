@@ -104,9 +104,8 @@ func canonicalizeSkill(skill *ir.Skill, file string) (ir.Resource, []diag.Diagno
 	}
 	skill.AllowedTools = tools
 
-	model, modelDiags := reverseModel(skill.Model, name, file)
-	skill.Model = model
-	diags := modelDiags
+	skill.ModelSource = "devin"
+	var diags []diag.Diagnostic
 
 	// The provenance marker is ALWAYS consumed, whatever its value. Leaving it
 	// in Extra would make every recompile emit
@@ -319,9 +318,7 @@ func canonicalizeSubagent(subagent *ir.Subagent, file string) ([]diag.Diagnostic
 		subagent.Tools = nil
 	}
 
-	model, modelDiags := reverseModel(subagent.Model, name, file)
-	subagent.Model = model
-	diags = append(diags, modelDiags...)
+	subagent.ModelSource = "devin"
 
 	if len(subagent.Extra) == 0 {
 		subagent.Extra = nil

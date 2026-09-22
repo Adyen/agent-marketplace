@@ -51,23 +51,6 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		disallowedTools = parsed
 	}
 
-	canonicalModel := reverseFactoryModel(model)
-	var diags []diag.Diagnostic
-	if reasoningEffort != "" && canonicalModel != "" && canonicalModel != model {
-		diags = append(diags, diag.Diagnostic{
-			Code:     diag.CodeIngestFactoryReasoningEffortMappedToModel,
-			Severity: diag.SeverityInfo,
-			Target:   "factory",
-			Resource: name,
-			Message:  fmt.Sprintf("mapped Factory model %q to canonical model %q while preserving reasoningEffort=%q", model, canonicalModel, reasoningEffort),
-			Hint:     "Compile back to Factory to restore the concrete Factory model identifier",
-			Source:   diag.SourceRef{File: path, Line: 1},
-		})
-	}
-	if canonicalModel == "" {
-		canonicalModel = model
-	}
-
 	options := []ir.SubagentOption{}
 	maxNestingValue, hasMaxNesting := fm["max-nesting"]
 	if !hasMaxNesting {
@@ -81,20 +64,9 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 	} else if maxNesting != nil {
 		options = append(options, ir.WithSubagentMaxNestingPtr(maxNesting))
 	}
-	return ir.NewSubagentWithOptions(name, description, body, canonicalModel, tools, reasoningEffort, disallowedTools, isolation, extraFields(fm, subagentKnownKeys), sourceRef(path), options...), diags, nil
-}
-
-func reverseFactoryModel(model string) string {
-	switch model {
-	case "claude-sonnet-4-5-20250929":
-		return "sonnet"
-	case "claude-opus-4-20250514":
-		return "opus"
-	case "claude-haiku-3-5-20241022":
-		return "haiku"
-	default:
-		return model
-	}
+	subagent := ir.NewSubagentWithOptions(name, description, body, model, tools, reasoningEffort, disallowedTools, isolation, extraFields(fm, subagentKnownKeys), sourceRef(path), options...)
+	subagent.ModelSource = "factory"
+	return subagent, nil, nil
 }
 
 func normalizeFactoryTools(tools []string) []string {

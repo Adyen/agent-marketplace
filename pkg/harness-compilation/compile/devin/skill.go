@@ -58,7 +58,11 @@ func translateSkill(s *ir.Skill, opts compile.Options) ([]artifact.Artifact, []d
 	triggers, triggersPresent, triggerDiags := mapTriggers(s.Name(), source, s.Triggers)
 	diags = append(diags, triggerDiags...)
 
-	model, modelDiags := mapModel(s.Name(), source, s.Model, opts, diag.CodeSkillDevinModelUnmappable)
+	selection, modelDiags, err := compile.SkillModel(s, mapping.TargetDevin, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	model := selection.Model
 	diags = append(diags, modelDiags...)
 
 	permissions := compile.SkillPermissionsValueWithExtra(s.Permissions.Allow, s.Permissions.Ask, s.Permissions.Deny, s.Permissions.Extra, s.PermissionsSet)
@@ -116,7 +120,7 @@ func translateSkill(s *ir.Skill, opts compile.Options) ([]artifact.Artifact, []d
 		"agent":          s.Agent != "",
 		kindExtensionKey: true, // reserved: a skill never carries command provenance
 	})
-	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, canonical, mapping.TargetDevin, s.Name(), source)
+	extraKeys, extraDiags := compile.SkillModelExtraKeys(s.Extra, canonical, mapping.TargetDevin, s.Name(), source)
 	diags = append(diags, extraDiags...)
 	diags = append(diags, compile.SupportFileDiagnostics(s, mapping.TargetDevin)...)
 	appendExtras(fm, s.Extra, extraKeys, toolsFromExtra)

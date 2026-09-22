@@ -2,7 +2,6 @@ package codex
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -996,7 +995,7 @@ func TestSubagentUnknownFieldsFailClosedByAuthority(t *testing.T) {
 	}
 }
 
-func TestNativeCodexEffortRoundTripsThroughSidecar(t *testing.T) {
+func TestNativeCodexEffortRoundTripsWithProvenance(t *testing.T) {
 	for _, effort := range []string{"minimal", "xhigh", "max", "ultra", "none", "future-effort"} {
 		t.Run(effort, func(t *testing.T) {
 			bundle, err := LoadBundle(fstest.MapFS{
@@ -1009,16 +1008,8 @@ func TestNativeCodexEffortRoundTripsThroughSidecar(t *testing.T) {
 				t.Fatalf("resources = %#v, want one subagent", bundle.Resources)
 			}
 			subagent := bundle.Resources[0].(*ir.Subagent)
-			if subagent.Effort != "" {
-				t.Fatalf("canonical effort = %q, want native-only effort kept out of canonical IR", subagent.Effort)
-			}
-			sidecar, err := json.Marshal(subagent.Ext.Codex)
-			if err != nil {
-				t.Fatal(err)
-			}
-			wantSidecar := `"reasoningEffort":"` + effort + `"`
-			if !strings.Contains(string(sidecar), wantSidecar) {
-				t.Fatalf("Codex sidecar = %s, want %s", sidecar, wantSidecar)
+			if subagent.Effort != effort || subagent.ModelSource != "codex" || subagent.Ext.Codex != nil {
+				t.Fatalf("native effort/provenance lost or duplicated: %+v", subagent)
 			}
 
 			artifacts, diagnostics, err := (compilecodex.Compiler{}).Translate(subagent)
@@ -1029,8 +1020,8 @@ func TestNativeCodexEffortRoundTripsThroughSidecar(t *testing.T) {
 			if diag.HasErrors(diagnostics) || len(artifacts) != 1 || !strings.Contains(string(artifacts[0].Bytes), wantTOML) {
 				t.Fatalf("round trip = %#v, %#v, want %q", artifacts, diagnostics, wantTOML)
 			}
-			if !hasDiagnosticCode(bundle.Diagnostics, diag.CodeIngestCodexFieldDropped) {
-				t.Fatalf("diagnostics = %#v, want non-portable effort warning", bundle.Diagnostics)
+			if hasDiagnosticCode(bundle.Diagnostics, diag.CodeIngestCodexFieldDropped) || len(diagnostics) != 0 {
+				t.Fatalf("lossless native effort produced a loss diagnostic: %+v / %+v", bundle.Diagnostics, diagnostics)
 			}
 		})
 	}
@@ -1056,15 +1047,15 @@ func TestSubagentRequiredFieldsAndEffortValidationArePerFile(t *testing.T) {
 	for _, resource := range bundle.Resources {
 		efforts[resource.Name()] = resource.(*ir.Subagent).Effort
 	}
-	if efforts["high"] != "high" || efforts["native"] != "" || efforts["unknown"] != "" {
-		t.Fatalf("efforts = %#v, want canonical high and native-only values kept out of canonical IR", efforts)
+	if efforts["high"] != "high" || efforts["native"] != "xhigh" || efforts["unknown"] != "future-effort" {
+		t.Fatalf("native efforts changed: %#v", efforts)
 	}
 	for _, resource := range bundle.Resources {
-		if resource.Name() != "high" && resource.(*ir.Subagent).Ext.Codex.ReasoningEffort == "" {
-			t.Fatalf("resource %q lost native reasoning effort", resource.Name())
+		if resource.(*ir.Subagent).ModelSource != "codex" {
+			t.Fatalf("resource %q lost native reasoning provenance", resource.Name())
 		}
 	}
-	if !hasDiagnosticCode(bundle.Diagnostics, diag.CodeIngestCodexFieldDropped) || !hasDiagnosticCode(bundle.Diagnostics, diag.CodeIngestCodexLoadResourceFailed) {
+	if hasDiagnosticCode(bundle.Diagnostics, diag.CodeIngestCodexFieldDropped) || !hasDiagnosticCode(bundle.Diagnostics, diag.CodeIngestCodexLoadResourceFailed) {
 		t.Fatalf("diagnostics = %#v", bundle.Diagnostics)
 	}
 }

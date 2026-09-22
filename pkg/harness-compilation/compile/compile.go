@@ -352,14 +352,7 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 		if typed.Ext.Codex.SandboxMode != "" {
 			return diagnostic(diag.CodeSubagentSecurityRestrictionUnsupported, diag.SeverityError, "Target cannot preserve the native Codex sandbox restriction; subagent suppressed", typed.Source)
 		}
-		var diagnostics []diag.Diagnostic
-		if typed.Ext.Codex.Model != "" {
-			diagnostics = append(diagnostics, diagnostic(diag.CodeSubagentCodexModelDropped, diag.SeverityWarning, "Target omitted a Codex-only model while preserving the subagent", typed.Source)...)
-		}
-		if typed.Ext.Codex.ReasoningEffort != "" {
-			diagnostics = append(diagnostics, diagnostic(diag.CodeSubagentCodexEffortDropped, diag.SeverityWarning, "Target omitted a Codex-only reasoning effort while preserving the subagent", typed.Source)...)
-		}
-		return diagnostics
+		return nil
 	case *ir.Hook:
 		if typed.Ext.Codex != nil && (typed.Ext.Codex.CommandWindows != nil || typed.Ext.Codex.AdditionalContextLimit != nil || typed.Ext.Codex.HookAsync != nil && *typed.Ext.Codex.HookAsync) {
 			return diagnostic(diag.CodeHookCodexNativeFieldsUnsupported, diag.SeverityError, "Target cannot preserve native Codex hook execution or context fields; hook suppressed", typed.Source)

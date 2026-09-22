@@ -166,9 +166,12 @@ func TestTranslate_Subagent(t *testing.T) {
 		t.Errorf("subagent body not found in artifact")
 	}
 
-	// No diagnostics expected — all tools and model are known
-	if len(diags) != 0 {
-		t.Errorf("Translate(subagent) diagnostics = %d, want 0; got: %+v", len(diags), diags)
+	// Family pinning and unrepresentable reasoning are distinct losses.
+	if len(diags) != 2 || !diag.HasCode(diags, diag.CodeModelSelectorPinned) || !diag.HasCode(diags, diag.CodeModelReasoningOmitted) {
+		t.Errorf("Translate(subagent) expected pin and effort diagnostics: %+v", diags)
+	}
+	if strings.Contains(body, "\neffort:") {
+		t.Fatal("Cursor emitted unsupported effort field")
 	}
 }
 
@@ -210,24 +213,24 @@ func TestTranslate_Subagent_UnknownModel(t *testing.T) {
 		t.Fatalf("Translate(subagent) error: %v", err)
 	}
 
-	// Unknown model should passthrough and emit a diagnostic
+	// Unknown models are omitted without suppressing the resource.
 	if len(arts) != 1 {
 		t.Fatalf("expected 1 artifact, got %d", len(arts))
 	}
 	body := string(arts[0].Bytes)
-	if !strings.Contains(body, "future-model-x") {
-		t.Errorf("unknown model should passthrough in artifact, got:\n%s", body)
+	if strings.Contains(body, "future-model-x") || strings.Contains(body, "\nmodel:") {
+		t.Errorf("unknown model should be omitted, got:\n%s", body)
 	}
 
-	// Should emit a model-passthrough diagnostic (info)
+	// The field omission is reported as a warning.
 	found := false
 	for _, d := range diags {
-		if d.Severity == diag.SeverityInfo && d.Code == diag.CodeSubagentCursorModelPassthrough {
+		if d.Severity == diag.SeverityWarning && d.Code == diag.CodeModelUnresolved {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected model-passthrough info diagnostic for unknown model, got: %+v", diags)
+		t.Errorf("expected unresolved-model warning, got: %+v", diags)
 	}
 }
 

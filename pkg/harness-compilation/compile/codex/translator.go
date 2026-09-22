@@ -130,30 +130,11 @@ func subagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag
 		return nil, []diag.Diagnostic{diagnostic(diag.CodeSubagentSecurityRestrictionUnsupported, diag.SeverityError, s.Name(), s.Source, "Codex subagent output cannot safely emit an invalid native sandbox mode; artifact suppressed")}, nil
 	}
 	var b strings.Builder
-	model := s.Model
-	effort := s.Effort
-	var diagnostics []diag.Diagnostic
-	if s.Ext.Codex != nil && s.Ext.Codex.Model != "" {
-		model = s.Ext.Codex.Model
-	} else if model != "" {
-		mapped, ok := mapping.ModelWithOverride(model, mapping.TargetCodex, opts.ModelOverride())
-		if ok || mapped != "" {
-			model = mapped
-		} else {
-			model = ""
-			diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, s.Name(), s.Source, "Codex subagent output omitted a source model with no documented Codex equivalent"))
-		}
+	selection, diagnostics, err := compile.SubagentModel(s, mapping.TargetCodex, opts)
+	if err != nil {
+		return nil, nil, err
 	}
-	if s.Ext.Codex != nil && s.Ext.Codex.ReasoningEffort != "" {
-		canonical, native, valid := mapping.CodexReasoningEffort(s.Ext.Codex.ReasoningEffort)
-		if !valid {
-			diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, s.Name(), s.Source, "Codex subagent output omitted an invalid native reasoning effort"))
-		} else if native != "" {
-			effort = native
-		} else {
-			effort = canonical
-		}
-	}
+	model, effort := selection.Model, selection.Effort
 	writeTOMLString(&b, "name", s.Name())
 	writeTOMLString(&b, "description", s.Description)
 	// Codex model and effort fields were verified 2026-08-19 against

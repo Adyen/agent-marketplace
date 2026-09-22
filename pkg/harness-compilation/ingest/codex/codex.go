@@ -128,6 +128,7 @@ func loadSkills(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 			diagnostics = append(diagnostics, loadFailure(skillFile, err))
 			continue
 		}
+		skill.ModelSource = "codex"
 		if marker, ok := skill.Extra[kindKey]; ok && marker == "command" {
 			if skill.AllowedTools != nil || skill.PermissionsSet || skill.Triggers != nil || skill.Agent != "" || skill.Subagent != "" {
 				diagnostics = append(diagnostics, diag.Diagnostic{
@@ -210,18 +211,10 @@ func loadSubagents(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 		if benignLoss {
 			diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "benign Codex subagent configuration fields were omitted", Source: diag.SourceRef{File: file, Line: 1}})
 		}
-		effort, nativeEffort, validEffort := mapping.CodexReasoningEffort(doc.Effort)
-		if !validEffort {
-			diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "unknown Codex reasoning effort was omitted", Source: diag.SourceRef{File: file, Line: 1}})
-		} else if nativeEffort != "" {
-			diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "native Codex reasoning effort was preserved for Codex but omitted from canonical IR", Source: diag.SourceRef{File: file, Line: 1}})
-		}
-		subagent := ir.NewSubagent(name, doc.Description, doc.Instructions, "", nil, effort, nil, "", nil, ir.SourceRef{File: file, Line: 1})
-		if doc.Model != "" || nativeEffort != "" || doc.SandboxMode != "" {
-			subagent.Ext.Codex = &extpkg.Codex{Model: doc.Model, ReasoningEffort: nativeEffort, SandboxMode: doc.SandboxMode}
-		}
-		if doc.Model != "" {
-			diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "native Codex model has no canonical cross-vendor equivalent", Source: diag.SourceRef{File: file, Line: 1}})
+		subagent := ir.NewSubagent(name, doc.Description, doc.Instructions, doc.Model, nil, doc.Effort, nil, "", nil, ir.SourceRef{File: file, Line: 1})
+		subagent.ModelSource = "codex"
+		if doc.SandboxMode != "" {
+			subagent.Ext.Codex = &extpkg.Codex{SandboxMode: doc.SandboxMode}
 		}
 		resources = append(resources, subagent)
 	}

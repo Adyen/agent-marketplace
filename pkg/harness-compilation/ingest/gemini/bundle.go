@@ -253,6 +253,7 @@ func LoadSkill(src fs.FS, root string) (*ir.Skill, error) {
 		options = append(options, ir.WithSkillPermissions(permissions))
 	}
 	skill := ir.NewSkillWithOptions(name, description, body, triggers, extra, ir.SourceRef{File: mdPath, Line: 1}, options...)
+	skill.ModelSource = "gemini"
 	supportFiles, err := skillSupportFiles(src, root)
 	if err != nil {
 		return nil, fmt.Errorf("ingest/gemini: walk support files %s: %w", root, err)
@@ -475,6 +476,7 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		extra,
 		ir.SourceRef{File: path, Line: 1}, options...,
 	)
+	subagent.ModelSource = "gemini"
 	subagent.Ext.Gemini = &extpkg.Gemini{
 		Kind:             kind,
 		KindSet:          kindSet,

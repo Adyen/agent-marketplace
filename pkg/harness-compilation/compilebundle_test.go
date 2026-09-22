@@ -44,7 +44,7 @@ var testPluginFS = fstest.MapFS{
 
 func TestCompileBundleFromIRWarnsWhenDroppingNativeCodexModelAndEffort(t *testing.T) {
 	resource := ir.NewSubagent("reviewer", "Review", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
-	resource.Ext.Codex = &ext.Codex{Model: "gpt-native", ReasoningEffort: "xhigh"}
+	resource.Ext.Codex = &ext.Codex{Model: "gpt-native", ReasoningEffort: "future-effort"}
 
 	result, err := compileBundleFromIR(&ingest.Bundle{Resources: []ir.Resource{resource}}, TargetClaude)
 	if err != nil {

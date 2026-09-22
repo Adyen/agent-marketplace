@@ -287,7 +287,7 @@ func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRev
 	if entry.Resource == nil {
 		return revisionResource{}, errors.New("resource is nil")
 	}
-	payload, err := resourceSourceBytes(root, entry)
+	payload, err := resourceSourceBytes(root, entry, contract)
 	if err != nil {
 		return revisionResource{}, err
 	}
@@ -314,7 +314,7 @@ func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRev
 	return revisionResource{Kind: entry.Kind.String(), Name: entry.Name, ContentDigest: digest, ArchiveDigest: contentDigest(archiveInput), SupportFiles: support}, nil
 }
 
-func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
+func resourceSourceBytes(root string, entry catalog.Entry, contract lockfile.SourceRevisionContract) ([]byte, error) {
 	// Collections digest over their canonical IR serialization, never the raw
 	// collection definition file: entry.Path is populated for collections so
 	// consumers can locate the definition file, but hashing that file would
@@ -333,6 +333,9 @@ func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
 		}
 	}
 	resource := entry.Resource
+	if !contract.ModelProvenance {
+		resource = legacyModelProjection(resource)
+	}
 	if collection, ok := resource.(*ir.Collection); ok {
 		copy := *collection
 		copy.SourceRegistryURL = ""

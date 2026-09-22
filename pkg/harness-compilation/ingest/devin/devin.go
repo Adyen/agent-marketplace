@@ -336,38 +336,6 @@ func reverseTools(tools []string, resource, file string) ([]string, []diag.Diagn
 	}}
 }
 
-// reverseModel maps a Devin model alias back to its canonical value.
-//
-// Only the aliases the mapping table actually carries reverse
-// (sonnet/opus/haiku, plus gemini). Devin publishes other stable aliases
-// (`swe`, `gpt`, `codex`, `claude`) that no canonical model corresponds to;
-// those are preserved VERBATIM rather than dropped, because dropping a model
-// silently changes which model runs, and a warning records that the value will
-// not survive a later compile.
-//
-// The model identifier is safe to name: it is a published alias, not a secret,
-// a payload, or a permission value.
-func reverseModel(model, resource, file string) (string, []diag.Diagnostic) {
-	if model == "" {
-		// Plan, models: "Reverse ingestion leaves an absent model empty."
-		// Absence is never replaced with a guess, on any kind.
-		return "", nil
-	}
-	canonical, ok := mapping.ReverseModel(model, mapping.TargetDevin)
-	if ok {
-		return canonical, nil
-	}
-	slog.Warn("devin model not canonical", "source", ingest.HarnessDevin, "resource", resource, "model", model)
-	return model, []diag.Diagnostic{{
-		Code:     diag.CodeIngestDevinModelNotCanonical,
-		Severity: diag.SeverityWarning,
-		Resource: resource,
-		Message:  fmt.Sprintf("%q is a Devin model alias with no canonical equivalent; the value was preserved verbatim", model),
-		Hint:     "Use sonnet, opus, or haiku so the model round-trips; other Devin aliases are dropped when the resource is compiled again",
-		Source:   diag.SourceRef{File: file, Line: 1},
-	}}
-}
-
 // --- filesystem helpers ---
 
 func fileExists(src fs.FS, name string) bool {

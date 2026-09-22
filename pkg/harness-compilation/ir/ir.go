@@ -153,6 +153,7 @@ type Skill struct {
 	Body           string         // Markdown body content
 	ArgumentHint   string         // Optional argument hint shown to callers
 	Model          string         // Optional model identifier
+	ModelSource    string         `json:"ModelSource,omitempty"`
 	AllowedTools   []string       // Explicitly allowed tool IDs; nil means absent, empty means explicit empty
 	Permissions    Permissions    // Optional allow/ask/deny permission policy
 	PermissionsSet bool           // Whether permissions was explicitly present in source
@@ -271,6 +272,7 @@ type Subagent struct {
 	Description     string         // One-line description
 	Body            string         // System prompt / instruction body
 	Model           string         // Model identifier (e.g. "sonnet")
+	ModelSource     string         `json:"ModelSource,omitempty"`
 	Tools           []string       // Allowed tool IDs
 	Effort          string         // Reasoning effort level (e.g. "high")
 	DisallowedTools []string       // Explicitly disallowed tool IDs
