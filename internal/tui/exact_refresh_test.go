@@ -46,7 +46,7 @@ func TestTUISnapshotDiscoversUnlockedOrganizationRegistry(t *testing.T) {
 		return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
 	}
 	loadRepoConfig = func() (*config.Config, error) { return nil, nil }
-	loadLocalConfig = func() (*config.LocalConfig, error) { return nil, nil }
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 	cloneOrPull = func(_, _ string) (string, error) { return registry, nil }
 	t.Cleanup(func() {
 		loadOrgConfig, loadGlobalConfig = originalOrg, originalGlobal
@@ -104,7 +104,7 @@ func TestTUISnapshotFallsBackToUnlockedRepoRegistry(t *testing.T) {
 	loadRepoConfig = func() (*config.Config, error) {
 		return config.LoadConfigFromPath(filepath.Join(agentsDir, "config.yaml"))
 	}
-	loadLocalConfig = func() (*config.LocalConfig, error) { return nil, nil }
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 	cloneOrPull = func(_, _ string) (string, error) { return registry, nil }
 	t.Cleanup(func() {
 		loadOrgConfig, loadGlobalConfig = originalOrg, originalGlobal
@@ -208,7 +208,7 @@ func TestAutomaticRefreshRemainsPinnedWhenRefMoves(t *testing.T) {
 	loadRepoConfig = func() (*config.Config, error) {
 		return config.LoadConfigFromPath(filepath.Join(agentsDir, "config.yaml"))
 	}
-	loadLocalConfig = func() (*config.LocalConfig, error) { return nil, nil }
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 	t.Cleanup(func() {
 		loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
 	})

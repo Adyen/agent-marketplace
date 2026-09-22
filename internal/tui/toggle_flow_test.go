@@ -420,7 +420,7 @@ func swapLoadRepoConfig(fn func() (*config.Config, error)) func() {
 
 func swapLoadLocalConfig(fn func() (*config.LocalConfig, error)) func() {
 	prev := loadLocalConfig
-	loadLocalConfig = fn
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return fn() }
 	return func() {
 		loadLocalConfig = prev
 	}

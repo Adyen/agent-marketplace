@@ -314,19 +314,25 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 	}
 }
 
-func runDependencyScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
-	if mutate == nil {
-		return runScopedToggle(repoRoot, act)
-	}
-	if act.isMarketplace && act.scope != scopeUserExclude {
-		return func() tea.Msg {
-			err := runMarketplaceScopedToggle(ctx, repoRoot, act, nil)
+func runDependencyScopedToggle(ctx context.Context, workspace pipeline.Workspace, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
+	return func() tea.Msg {
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
 			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
 		}
-	}
-	return func() tea.Msg {
-		err := mutate(ctx, repoRoot, func(mapper pipeline.ConfigPathMapper) error {
-			msg, ok := runScopedToggleAt(repoRoot, act, mapper)().(configWrittenMsg)
+		writeRoot := ws.RepoRoot()
+		if act.scope == scopeLocal || act.scope == scopeLocalExclude {
+			writeRoot = ws.LocalConfigDir()
+		}
+		if mutate == nil {
+			return runScopedToggle(writeRoot, act)()
+		}
+		if act.isMarketplace && act.scope != scopeUserExclude {
+			err = runMarketplaceScopedToggle(ctx, writeRoot, act, nil)
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
+		}
+		err = mutate(ctx, ws, func(mapper pipeline.ConfigPathMapper) error {
+			msg, ok := runScopedToggleAt(writeRoot, act, mapper)().(configWrittenMsg)
 			if !ok {
 				return fmt.Errorf("toggle did not produce a config result")
 			}
@@ -615,7 +621,7 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 	if act.enable && !act.isMarketplace && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 		m.pendingExcludeAction = &act
 	}
-	return m, correlateOperation(runDependencyScopedToggle(ctxOrBackground(m.ctx), m.repoRoot, act, m.dependencyLifecycle.Mutate), operation, false)
+	return m, correlateOperation(runDependencyScopedToggle(ctxOrBackground(m.ctx), m.workspace, act, m.dependencyLifecycle.Mutate), operation, false)
 }
 
 // handleToggleModalKey routes modal key presses. Returns (newModel, cmd).

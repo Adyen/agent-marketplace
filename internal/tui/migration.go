@@ -34,11 +34,14 @@ func (p migrationPrompt) hasConfigs() bool {
 	return len(p.configs) > 0
 }
 
-func pendingMigrationFor(repoRoot, homeDir string) migrationPrompt {
-	paths := config.MigratePaths{}
+func pendingMigrationFor(repoRoot, localDir, homeDir string) migrationPrompt {
+	paths := config.MigratePaths{
+		Repo: config.ProjectConfigPath(repoRoot),
+	}
 	if homeDir != "" {
 		paths.User = filepath.Join(homeDir, ".agents", "config.yaml")
 	}
+	paths.Local = config.LocalConfigPath(localDir)
 	candidates, err := config.FindV4MigrationCandidates(paths)
 	if err != nil {
 		return migrationPrompt{}

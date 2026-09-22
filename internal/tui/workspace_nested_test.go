@@ -2,11 +2,16 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
@@ -40,7 +45,11 @@ func TestTUIPipelineOptionsPreservesNestedLocalDiscovery(t *testing.T) {
 	}
 	t.Chdir(nested)
 
-	opts := tuiPipelineOptions(repoRoot)
+	ws, err := pipeline.NewWorkspace(repoRoot, nested)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	opts := tuiPipelineOptionsForWorkspace(ws)
 	if got, want := canonicalWorkspacePath(t, opts.Workspace.RepoRoot()), canonicalWorkspacePath(t, repoRoot); got != want {
 		t.Fatalf("workspace repository root = %q; want %q", got, want)
 	}
@@ -52,19 +61,59 @@ func TestTUIPipelineOptionsPreservesNestedLocalDiscovery(t *testing.T) {
 	}
 }
 
-// TestTUIWorkspaceFallsBackToRepositoryRootWhenDiscoveryIsOutside pins the
-// explicit-construction path: when cwd-based discovery lands outside the
-// given repository root, the workspace derives every root from the
-// repository root rather than failing or adopting an unrelated root.
-func TestTUIWorkspaceFallsBackToRepositoryRootWhenDiscoveryIsOutside(t *testing.T) {
+// TestTUIPipelineOptionsBindsLocalLoaderToWorkspace proves the TUI local
+// loader reads the validated Workspace root even when cwd discovery would now
+// select a different local root.
+func TestTUIPipelineOptionsBindsLocalLoaderToWorkspace(t *testing.T) {
 	repoRoot := t.TempDir()
-
-	ws := tuiWorkspace(repoRoot)
-	if got, want := canonicalWorkspacePath(t, ws.RepoRoot()), canonicalWorkspacePath(t, repoRoot); got != want {
-		t.Fatalf("workspace repository root = %q; want %q", got, want)
+	nested := filepath.Join(repoRoot, "sub")
+	outside := t.TempDir()
+	for _, dir := range []string{filepath.Join(repoRoot, ".agents"), filepath.Join(nested, ".agents"), filepath.Join(outside, ".agents")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if got, want := canonicalWorkspacePath(t, ws.LocalConfigDir()), canonicalWorkspacePath(t, repoRoot); got != want {
-		t.Fatalf("workspace local-config root = %q; want repository root %q", got, want)
+	if err := os.WriteFile(config.ProjectConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.LocalConfigPath(nested), []byte("skills:\n  exclude: [workspace-local]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.LocalConfigPath(outside), []byte("skills:\n  exclude: [ambient-local]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := pipeline.NewWorkspace(repoRoot, nested)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	t.Chdir(outside)
+
+	localCfg, err := tuiPipelineOptionsForWorkspace(ws).Loaders.Local()
+	if err != nil {
+		t.Fatalf("workspace local loader: %v", err)
+	}
+	if localCfg == nil || !slices.Contains(localCfg.AllExcludes(), "workspace-local") {
+		t.Fatalf("workspace local excludes = %#v; want workspace-local", localCfg)
+	}
+	if slices.Contains(localCfg.AllExcludes(), "ambient-local") {
+		t.Fatal("workspace local loader rediscovered the ambient local root")
+	}
+}
+
+func TestEditConfigLocalPathUsesWorkspaceRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	nested := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := pipeline.NewWorkspace(repoRoot, nested)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	m := NewModel(repoRoot, t.TempDir(), WithWorkspace(ws))
+	m.pane = paneEditConfigModal
+	if got := renderEditConfigModal(m); !strings.Contains(got, config.LocalConfigPath(nested)) {
+		t.Fatalf("edit config modal does not contain workspace local path %q: %s", config.LocalConfigPath(nested), got)
 	}
 }
 
@@ -95,8 +144,44 @@ func TestReadSnapshotDryRunUsesWorkspaceMaterializeRoot(t *testing.T) {
 	}
 	t.Cleanup(func() { runMaterialize = previous })
 
-	_ = readSnapshot(context.Background(), repoRoot, t.TempDir(), catalogLoadCached)
+	ws, err := pipeline.NewWorkspace(repoRoot, nested)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	_ = readSnapshotForWorkspace(context.Background(), ws, t.TempDir(), catalogLoadCached)
 	if got, want := canonicalWorkspacePath(t, gotRoot), canonicalWorkspacePath(t, nested); got != want {
 		t.Fatalf("TUI dry-run root = %q; want workspace materialization root %q (repository root %q)", got, want, repoRoot)
+	}
+}
+
+func TestReadSnapshotRejectsInvalidWorkspaceBeforeLoaders(t *testing.T) {
+	var loaderCalls int
+	previousOrg, previousGlobal, previousRepo, previousLocal := loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig
+	loadOrgConfig = func() (*config.Config, error) {
+		loaderCalls++
+		return nil, nil
+	}
+	loadGlobalConfig = func() (*config.Config, error) {
+		loaderCalls++
+		return nil, nil
+	}
+	loadRepoConfig = func() (*config.Config, error) {
+		loaderCalls++
+		return nil, nil
+	}
+	loadLocalConfig = func(string) (*config.LocalConfig, error) {
+		loaderCalls++
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
+	})
+
+	snapshot := readSnapshotForWorkspace(context.Background(), pipeline.Workspace{}, t.TempDir(), catalogLoadCached)
+	if !errors.Is(errors.Join(snapshot.errs...), pipeline.ErrInvalidWorkspace) {
+		t.Fatalf("snapshot errors = %v; want ErrInvalidWorkspace", snapshot.errs)
+	}
+	if loaderCalls != 0 {
+		t.Fatalf("invalid workspace invoked config loaders %d times", loaderCalls)
 	}
 }

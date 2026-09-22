@@ -28,15 +28,19 @@ func newTUICmd() *cobra.Command {
 }
 
 func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
+	workspace, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return err
+	}
 	if err := recoverDependencyTransactions(ctx); err != nil {
 		return err
 	}
-	return tui.Run(ctx, repoRoot, homeDir, tui.WithDependencyLifecycle(tui.DependencyLifecycle{
-		Sync: func(ctx context.Context, repoRoot string) error {
-			return runTUIDependencyLifecycle(ctx, repoRoot, false)
+	return tui.Run(ctx, workspace.RepoRoot(), homeDir, tui.WithWorkspace(workspace), tui.WithDependencyLifecycle(tui.DependencyLifecycle{
+		Sync: func(ctx context.Context, workspace pipeline.Workspace) error {
+			return runTUIDependencyLifecycle(ctx, workspace, false)
 		},
-		Update: func(ctx context.Context, repoRoot string) error {
-			return runTUIDependencyLifecycle(ctx, repoRoot, true)
+		Update: func(ctx context.Context, workspace pipeline.Workspace) error {
+			return runTUIDependencyLifecycle(ctx, workspace, true)
 		},
 		Mutate: runTUIConfigMutation,
 	}))
@@ -50,13 +54,20 @@ var (
 	runTUIExactSync = pipeline.Sync
 )
 
-func runTUIConfigMutation(ctx context.Context, repoRoot string, mutation func(pipeline.ConfigPathMapper) error) error {
-	return pipeline.MutateConfigWithDependencies(ctx, repoRoot, config.FindLocalConfigDir(), mutation, reconcileCommandDependencies)
+func runTUIConfigMutation(ctx context.Context, workspace pipeline.Workspace, mutation func(pipeline.ConfigPathMapper) error) error {
+	ws, err := pipeline.NewWorkspace(workspace.RepoRoot(), workspace.LocalConfigDir())
+	if err != nil {
+		return err
+	}
+	return pipeline.MutateConfigWithDependencies(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mutation, reconcileCommandDependencies)
 }
 
-func runTUIDependencyLifecycle(ctx context.Context, repoRoot string, upgrade bool) error {
+func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) error {
 	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
-	localDir := config.FindLocalConfigDir()
+	ws, err := pipeline.NewWorkspace(workspace.RepoRoot(), workspace.LocalConfigDir())
+	if err != nil {
+		return err
+	}
 	mode := lockMode{upgrade: upgrade}
 	if upgrade {
 		selected, _, err := parseLockSelection("all", false)
@@ -65,11 +76,7 @@ func runTUIDependencyLifecycle(ctx context.Context, repoRoot string, upgrade boo
 		}
 		mode.selects = selected
 	}
-	exactLease, err := prepareTUILocks(ctx, repoRoot, localDir, mode)
-	if err != nil {
-		return err
-	}
-	ws, err := pipeline.NewWorkspace(repoRoot, localDir)
+	exactLease, err := prepareTUILocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode)
 	if err != nil {
 		return err
 	}
