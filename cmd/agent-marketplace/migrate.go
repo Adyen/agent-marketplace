@@ -130,7 +130,7 @@ func currentMigratePaths() (config.MigratePaths, error) {
 }
 
 func pendingV4MigrationPaths(paths config.MigratePaths) (config.MigratePaths, error) {
-	candidates, err := config.FindV4MigrationCandidates(paths)
+	candidates, err := config.FindV4MigrationCandidates(config.MigratePaths{User: paths.User})
 	if err != nil {
 		return config.MigratePaths{}, err
 	}

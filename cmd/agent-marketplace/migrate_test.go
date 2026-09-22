@@ -158,7 +158,17 @@ func TestInteractiveStartupPromptMigratesLegacyConfig(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, ".local", "state"))
 	repoRoot := t.TempDir()
-	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	legacy := "apiVersion: agent-marketplace/v2\nregistries: []\n"
+	for _, name := range []string{"config.yaml", "config.local.yaml"} {
+		path := filepath.Join(repoRoot, ".agents", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -197,6 +207,48 @@ func TestInteractiveStartupPromptMigratesLegacyConfig(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Migrate these configuration files") {
 		t.Fatalf("prompt output = %q", out.String())
+	}
+	for _, name := range []string{"config.yaml", "config.local.yaml"} {
+		path := filepath.Join(repoRoot, ".agents", name)
+		if got, err := os.ReadFile(path); err != nil || string(got) != legacy {
+			t.Fatalf("startup changed %s: %q, %v", name, got, err)
+		}
+		if strings.Contains(out.String(), path) {
+			t.Fatalf("startup offered repo migration: %s", out.String())
+		}
+	}
+}
+
+func TestPendingV4MigrationPathsOnlyOffersUserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, version := range []string{"", "v2", "v3", "v4"} {
+		t.Run("user-"+version, func(t *testing.T) {
+			dir := t.TempDir()
+			paths := config.MigratePaths{User: filepath.Join(dir, "user.yaml"), Repo: filepath.Join(dir, "repo.yaml"), Local: filepath.Join(dir, "local.yaml")}
+			for _, path := range []string{paths.Repo, paths.Local} {
+				if err := os.WriteFile(path, []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if version != "" {
+				if err := os.WriteFile(paths.User, []byte("apiVersion: agent-marketplace/"+version+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := pendingV4MigrationPaths(paths)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := config.MigratePaths{}
+			if version == "v2" || version == "v3" {
+				want.User = paths.User
+			}
+			if got != want {
+				t.Fatalf("pending paths = %#v, want %#v", got, want)
+			}
+		})
 	}
 }
 
