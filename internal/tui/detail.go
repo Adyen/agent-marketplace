@@ -635,6 +635,8 @@ func renderMarketplaceDetailContent(r row) string {
 		b.WriteString(value("Verified content is not available locally; run sync to restore it."))
 	case r.MarketplaceDiscovery.Item.Availability == mpapi.AvailabilityAvailable:
 		b.WriteString(value("Discovery metadata only — content is verified during install.\nPress space to install this exact revision."))
+	case r.MarketplaceDiscovery.Item.Availability == mpapi.AvailabilityOperatorExposed:
+		b.WriteString(value("Operator-exposed rejection — the assessment remains rejected, but Marketplace policy permits installation.\nPress space to install this exact revision."))
 	default:
 		b.WriteString(value("This Marketplace resource is not currently installable."))
 	}

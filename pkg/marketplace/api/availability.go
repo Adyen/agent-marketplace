@@ -21,6 +21,7 @@ type availabilityView struct {
 	revision       int64
 	policyRevision int64
 	policy         admin.LicensePolicy
+	distribution   admin.DistributionPolicy
 	registries     map[store.RegistryID]admin.Registry
 }
 
@@ -60,10 +61,10 @@ func (s *Server) loadAvailability(ctx context.Context) (*availabilityView, error
 		return nil, err
 	}
 	var snapshot admin.Snapshot
-	if change.Marketplace != s.mpID || change.Revision < 1 || json.Unmarshal(change.Snapshot, &snapshot) != nil || snapshot.Version != 1 || snapshot.PolicyRevision < 1 || !validAvailabilityPolicy(snapshot.LicensePolicy, false) {
+	if change.Marketplace != s.mpID || change.Revision < 1 || json.Unmarshal(change.Snapshot, &snapshot) != nil || snapshot.Version != 1 || snapshot.PolicyRevision < 1 || !validAvailabilityPolicy(snapshot.LicensePolicy, false) || !validAvailabilityRejectedResources(snapshot.DistributionPolicy.RejectedResources) {
 		return nil, store.ErrManagedStateCorrupt
 	}
-	view := &availabilityView{revision: change.Revision, policyRevision: snapshot.PolicyRevision, policy: snapshot.LicensePolicy, registries: make(map[store.RegistryID]admin.Registry, len(snapshot.Registries))}
+	view := &availabilityView{revision: change.Revision, policyRevision: snapshot.PolicyRevision, policy: snapshot.LicensePolicy, distribution: snapshot.DistributionPolicy, registries: make(map[store.RegistryID]admin.Registry, len(snapshot.Registries))}
 	for _, registry := range snapshot.Registries {
 		if registry.ID == "" || registry.Generation < 1 || registry.Acquisition.Validate() != nil {
 			return nil, store.ErrManagedStateCorrupt
@@ -79,6 +80,9 @@ func (s *Server) loadAvailability(ctx context.Context) (*availabilityView, error
 		if registry.LicenseOverride != nil && !validAvailabilityPolicy(*registry.LicenseOverride, true) {
 			return nil, store.ErrManagedStateCorrupt
 		}
+		if !validAvailabilityRejectedResources(registry.RejectedResources) {
+			return nil, store.ErrManagedStateCorrupt
+		}
 		view.registries[registry.ID] = registry
 	}
 	return view, nil
@@ -86,6 +90,24 @@ func (s *Server) loadAvailability(ctx context.Context) (*availabilityView, error
 
 func validAvailabilityPolicy(policy admin.LicensePolicy, override bool) bool {
 	return (override && policy.Undeclared == "") || (policy.Undeclared != "" && config.ResolveUndeclaredLicenseOutcome(policy.Undeclared) == policy.Undeclared)
+}
+
+func validAvailabilityRejectedResources(value string) bool {
+	return value == "" || config.ResolveRejectedResourcesOutcome(value) == value
+}
+
+func rejectedResourcesForOverrides(policy config.Policy, overrides map[string]any) string {
+	if value, ok := overrides["rejected_resources"].(string); ok && value != "" {
+		return config.ResolveRejectedResourcesOutcome(value)
+	}
+	return policy.RejectedResourcesOutcome()
+}
+
+func effectiveRejectedResources(view *availabilityView, registry admin.Registry) string {
+	if registry.RejectedResources != "" {
+		return config.ResolveRejectedResourcesOutcome(registry.RejectedResources)
+	}
+	return config.ResolveRejectedResourcesOutcome(view.distribution.RejectedResources)
 }
 
 func (s *Server) evaluateAvailability(view *availabilityView, rev store.AssessedResourceRevision) availabilityDecision {
@@ -125,12 +147,16 @@ func (s *Server) evaluateAvailability(view *availabilityView, rev store.Assessed
 	switch {
 	case result.AdminWithdrawal || result.DeploymentRevocation:
 		result.Availability = AvailabilityRevoked
-	case license.Outcome == "reject" || rev.Assessment.Decision == store.AssessmentDecisionReject:
-		result.Availability = AvailabilityPolicyBlocked
-	case rev.Assessment.Decision != store.AssessmentDecisionAllow && rev.Assessment.Decision != store.AssessmentDecisionWarn:
-		result.Availability = AvailabilityBlocked
 	case registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "":
 		result.Availability = AvailabilityNoArtifact
+	case license.Outcome == "reject" || rev.Assessment.Decision == store.AssessmentDecisionReject:
+		if effectiveRejectedResources(view, registry) == config.RejectedResourcesExpose {
+			result.Availability = AvailabilityOperatorExposed
+		} else {
+			result.Availability = AvailabilityPolicyBlocked
+		}
+	case rev.Assessment.Decision != store.AssessmentDecisionAllow && rev.Assessment.Decision != store.AssessmentDecisionWarn:
+		result.Availability = AvailabilityBlocked
 	}
 	return result
 }
@@ -167,12 +193,31 @@ func (w *availabilityResponseWriter) Write(data []byte) (int, error) {
 func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision) any {
 	effective := s.applyEffectiveRevocation(rev)
 	if s.cfg.Management.Mode != "database" {
-		return effective
+		return struct {
+			store.AssessedResourceRevision
+			CurrentAvailability availabilityDecision `json:"current_availability"`
+		}{effective, availabilityDecision{Availability: s.fileResourceAvailability(rev), AssessmentDecision: rev.Assessment.Decision}}
 	}
 	return struct {
 		store.AssessedResourceRevision
 		CurrentAvailability availabilityDecision `json:"current_availability"`
 	}{effective, s.evaluateAvailability(availabilityFromContext(ctx), rev)}
+}
+
+func (s *Server) fileResourceAvailability(rev store.AssessedResourceRevision) Availability {
+	rev = s.applyEffectiveRevocation(rev)
+	for _, registry := range s.cfg.Registries {
+		if store.RegistryID(registry.ID) == rev.Coordinate.Registry {
+			return resourceAvailability(rev, store.Registry{Acquisition: store.AcquisitionMode(registry.Acquisition), PolicyOverrides: registry.PolicyOverrides}, registry.RejectedResourcesOutcome(s.cfg.Policy))
+		}
+	}
+	if rev.Revocation != nil {
+		return AvailabilityRevoked
+	}
+	if rev.Assessment.Decision == store.AssessmentDecisionReject {
+		return AvailabilityPolicyBlocked
+	}
+	return AvailabilityAvailable
 }
 
 func (s *Server) managedResourceAllowed(w http.ResponseWriter, ctx context.Context, rev store.AssessedResourceRevision) bool {
@@ -184,7 +229,7 @@ func (s *Server) managedResourceAllowed(w http.ResponseWriter, ctx context.Conte
 		return false
 	}
 	decision := s.evaluateAvailability(availabilityFromContext(ctx), rev)
-	if decision.Availability == AvailabilityAvailable {
+	if decision.Availability == AvailabilityAvailable || decision.Availability == AvailabilityOperatorExposed {
 		return true
 	}
 	status := http.StatusForbidden
@@ -209,17 +254,20 @@ func (s *Server) managedOwnerRestriction(ctx context.Context, revisions []store.
 	if len(revisions) == 0 {
 		return AvailabilityBlocked, store.ErrNotFound
 	}
-	result := AvailabilityAvailable
+	allowed := false
 	for _, revision := range revisions {
 		decision := s.evaluateAvailability(view, revision)
 		if decision.Availability == AvailabilityRevoked {
 			return AvailabilityRevoked, nil
 		}
-		if decision.Availability != AvailabilityAvailable {
-			result = AvailabilityBlocked
+		if decision.Availability == AvailabilityAvailable || decision.Availability == AvailabilityOperatorExposed {
+			allowed = true
 		}
 	}
-	return result, nil
+	if allowed {
+		return AvailabilityAvailable, nil
+	}
+	return AvailabilityBlocked, nil
 }
 
 func writeAvailabilityRestriction(w http.ResponseWriter, restriction Availability, err error) bool {
@@ -231,7 +279,7 @@ func writeAvailabilityRestriction(w http.ResponseWriter, restriction Availabilit
 		}
 		return false
 	}
-	if restriction == AvailabilityAvailable {
+	if restriction == AvailabilityAvailable || restriction == AvailabilityOperatorExposed {
 		return true
 	}
 	status := http.StatusForbidden

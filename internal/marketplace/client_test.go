@@ -80,6 +80,30 @@ func writeTestRegistry(w http.ResponseWriter, src store.Registry) {
 	})
 }
 
+func TestClientPreservesOperatorExposedAvailability(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	revision := rejectedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(digest), ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64))})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(struct {
+			store.AssessedResourceRevision
+			CurrentAvailability any `json:"current_availability"`
+		}{revision, map[string]any{"availability": "operator-exposed"}})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.instanceID = "mp"
+	got, err := client.GetResourceRevision(context.Background(), "src", "skill", "review", digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EffectiveAvailability != string(mpapi.AvailabilityOperatorExposed) {
+		t.Fatalf("effective availability = %q", got.EffectiveAvailability)
+	}
+}
+
 func TestNewClientValidatesBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string

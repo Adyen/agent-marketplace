@@ -28,6 +28,10 @@ type LicensePolicy struct {
 	Undeclared string   `json:"undeclared"`
 }
 
+type DistributionPolicy struct {
+	RejectedResources string `json:"rejected_resources"`
+}
+
 type Registry struct {
 	Paused              bool                  `json:"paused"`
 	Withdrawn           bool                  `json:"withdrawn"`
@@ -44,17 +48,19 @@ type Registry struct {
 	License             string                `json:"license"`
 	ProfileID           string                `json:"profile_id,omitempty"`
 	LicenseOverride     *LicensePolicy        `json:"license_override,omitempty"`
+	RejectedResources   string                `json:"rejected_resources,omitempty"`
 	NonLicenseOverrides map[string]any        `json:"non_license_overrides,omitempty"`
 	Generation          int64                 `json:"generation"`
 	Lifecycle           string                `json:"lifecycle"`
 }
 
 type Snapshot struct {
-	Version           int           `json:"version"`
-	PolicyRevision    int64         `json:"policy_revision"`
-	LicensePolicy     LicensePolicy `json:"license_policy"`
-	Registries        []Registry    `json:"registries"`
-	SourceFingerprint string        `json:"source_fingerprint"`
+	Version            int                `json:"version"`
+	PolicyRevision     int64              `json:"policy_revision"`
+	LicensePolicy      LicensePolicy      `json:"license_policy"`
+	DistributionPolicy DistributionPolicy `json:"distribution_policy"`
+	Registries         []Registry         `json:"registries"`
+	SourceFingerprint  string             `json:"source_fingerprint"`
 }
 
 type Service struct {
@@ -70,10 +76,10 @@ type AdoptionRequest struct {
 }
 
 func (s Service) Adopt(ctx context.Context, cfg config.Config, req AdoptionRequest) (store.ManagedChange, error) {
-	if s.Metadata == nil || cfg.Instance.ID == "" || len(cfg.Registries) > 10000 || !validUndeclared(cfg.Policy.LicenseUndeclared) {
+	if s.Metadata == nil || cfg.Instance.ID == "" || len(cfg.Registries) > 10000 || !validUndeclared(cfg.Policy.LicenseUndeclared) || !validRejectedResources(cfg.Policy.RejectedResources, true) {
 		return store.ManagedChange{}, ErrInvalidConfiguration
 	}
-	snapshot := Snapshot{Version: 1, PolicyRevision: 1, LicensePolicy: LicensePolicy{Allowlist: cfg.Policy.LicenseAllowlist, Undeclared: cfg.Policy.LicenseUndeclared}, Registries: make([]Registry, 0, len(cfg.Registries))}
+	snapshot := Snapshot{Version: 1, PolicyRevision: 1, LicensePolicy: LicensePolicy{Allowlist: cfg.Policy.LicenseAllowlist, Undeclared: cfg.Policy.LicenseUndeclared}, DistributionPolicy: DistributionPolicy{RejectedResources: cfg.Policy.RejectedResourcesOutcome()}, Registries: make([]Registry, 0, len(cfg.Registries))}
 	seen := make(map[store.RegistryID]bool)
 	for _, source := range cfg.Registries {
 		registry, err := s.adoptRegistry(source, cfg.Policy)
@@ -225,6 +231,12 @@ func (s Service) adoptRegistry(source config.Registry, policy config.Policy) (Re
 				registry.LicenseOverride = &LicensePolicy{}
 			}
 			registry.LicenseOverride.Undeclared = outcome
+		case "rejected_resources":
+			mode, ok := value.(string)
+			if !ok || !validRejectedResources(mode, false) {
+				return Registry{}, ErrInvalidConfiguration
+			}
+			registry.RejectedResources = mode
 		default:
 			registry.NonLicenseOverrides[key] = value
 		}

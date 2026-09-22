@@ -19,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -229,6 +230,11 @@ func TestMarketplaceConsentRejectsPolicyFindingAndRequiresRiskAcceptance(t *test
 	plan.Revision = testAssessedResourceRevision(t, revision, store.AssessmentDecisionReject, []store.Finding{{Code: "exec", Severity: "high", Policy: "reject"}})
 	if err := evaluateMarketplaceConsent(plan, true); err == nil || !strings.Contains(err.Error(), "cannot bypass") {
 		t.Fatalf("policy rejection error = %v", err)
+	}
+	plan.Revision.EffectiveAvailability = string(mpapi.AvailabilityOperatorExposed)
+	plan.Artifact.Manifest.Capabilities = nil
+	if err := evaluateMarketplaceConsent(plan, false); err != nil {
+		t.Fatalf("operator-exposed rejection required consent: %v", err)
 	}
 	plan.Revision = testAssessedResourceRevision(t, revision, store.AssessmentDecisionReject, []store.Finding{{Code: "exec", Severity: "high", Policy: "block"}})
 	if err := evaluateMarketplaceConsent(plan, true); err == nil || !strings.Contains(err.Error(), "unknown policy outcome") {

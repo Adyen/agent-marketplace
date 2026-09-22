@@ -3,8 +3,10 @@ package admin
 import (
 	"context"
 	"errors"
-	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 func managedFixture(t testing.TB) Service {
@@ -161,6 +163,42 @@ func TestManagedPreconditionsAndInactivePolicy(t *testing.T) {
 	history, err := s.History(ctx, "marketplace", 0, 2)
 	if err != nil || len(history) != 2 || history[0].Revision != 4 {
 		t.Fatalf("bounded history: %+v %v", history, err)
+	}
+}
+
+func TestManagedRejectedResourcesPolicyChangesWithoutReindex(t *testing.T) {
+	s := managedFixture(t)
+	ctx := context.Background()
+	global := mutation("set_policy", 1)
+	global.RegistryID = ""
+	global.DistributionPolicy = &DistributionPolicy{RejectedResources: config.RejectedResourcesExpose}
+	global.ConfirmRejectedResources = true
+	change, err := s.Apply(ctx, "marketplace", global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(change.JobIDs) != 0 {
+		t.Fatalf("distribution-only policy queued reindex: %+v", change.JobIDs)
+	}
+	view, _ := s.Read(ctx, "marketplace")
+	if view.Snapshot.PolicyRevision != 2 || view.Snapshot.DistributionPolicy.RejectedResources != config.RejectedResourcesExpose {
+		t.Fatalf("global distribution policy = %+v", view.Snapshot)
+	}
+	r := view.Snapshot.Registries[1]
+	r.RejectedResources = config.RejectedResourcesBlock
+	registry := mutation("upsert_registry", 2)
+	registry.Registry = &r
+	registry.IdempotencyKey = "registry-exposure"
+	change, err = s.Apply(ctx, "marketplace", registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(change.JobIDs) != 0 {
+		t.Fatalf("registry distribution-only policy queued reindex: %+v", change.JobIDs)
+	}
+	view, _ = s.Read(ctx, "marketplace")
+	if view.Snapshot.PolicyRevision != 3 || view.Snapshot.Registries[1].Generation != 1 || view.Snapshot.Registries[1].RejectedResources != config.RejectedResourcesBlock {
+		t.Fatalf("registry distribution policy = %+v", view.Snapshot)
 	}
 }
 

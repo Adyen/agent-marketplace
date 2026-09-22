@@ -51,6 +51,7 @@ type InstallPreview struct {
 	License                string
 	Findings               []hccartifact.CanonicalFinding
 	Capabilities           []string
+	OperatorExposed        bool
 	Provenance             hccartifact.CanonicalProvenance
 	CollectionMembers      []InstallPreview
 }
@@ -70,7 +71,7 @@ func (p *PreparedInstall) Preview() InstallPreview {
 		ArchiveDigest: p.ArchiveDigest, Acquisition: p.Pin.Acquisition,
 		RegistryCommit: p.Pin.RegistryCommit, RegistryManifestDigest: p.Pin.RegistryManifestDigest,
 		License: p.Artifact.Manifest.License, Findings: canonicalFindingsFromRevision(p.Revision),
-		Capabilities: p.Artifact.Manifest.Capabilities, Provenance: p.Artifact.Manifest.Provenance,
+		Capabilities: p.Artifact.Manifest.Capabilities, OperatorExposed: p.Revision.EffectiveAvailability == string(mpapi.AvailabilityOperatorExposed), Provenance: p.Artifact.Manifest.Provenance,
 	}
 	if p.Pin.Kind == "collection" || len(p.CollectionMembers) > 0 {
 		if preview.License == "" {

@@ -105,7 +105,7 @@ function edit(proposal: AdminProposal) {
 function editRegistry(value: AdminRegistry) { edit({ action: 'upsert_registry', registry: value, reason: '' }) }
 function restore(change: AdminChange, id?: string) {
   if (!configuration.value) return
-  if (!id) { edit({ action: 'set_policy', license_policy: change.snapshot.license_policy, reason: `Restore policy settings from revision ${change.revision}` }); return }
+  if (!id) { edit({ action: 'set_policy', license_policy: change.snapshot.license_policy, distribution_policy: change.snapshot.distribution_policy, reason: `Restore policy settings from revision ${change.revision}` }); return }
   const current = configuration.value.snapshot.registries.find(value => value.id === id)
   const previous = change.snapshot.registries.find(value => value.id === id)
   if (current && previous) edit({ action: 'upsert_registry', registry: restoreRegistrySettings(current, previous), reason: `Restore registry settings from revision ${change.revision}` })
@@ -161,7 +161,7 @@ watch(() => route.fullPath, () => { draft.value = undefined; changes.value = [];
             <thead class="bg-[var(--am-color-bg-subtle)] text-xs uppercase tracking-wide text-muted"><tr><th class="px-4 py-2.5 font-semibold">Registry</th><th class="hidden px-4 py-2.5 font-semibold md:table-cell">Origin</th><th class="hidden px-4 py-2.5 font-semibold sm:table-cell">Ref</th><th class="px-4 py-2.5 font-semibold">Lifecycle</th><th class="px-2 py-2.5"><span class="sr-only">Open</span></th></tr></thead>
             <tbody>
               <tr v-for="item in registries" :key="item.id" class="relative border-t border-default transition-colors hover:bg-[var(--am-color-bg-hover)]">
-                <th scope="row" class="px-4 py-3 font-normal"><NuxtLink :to="registryPath(item.id)" class="font-semibold text-highlighted after:absolute after:inset-0 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ item.slug }}</NuxtLink><p class="mt-0.5 font-mono text-xs text-muted">{{ item.id }}</p></th>
+                <th scope="row" class="px-4 py-3 font-normal"><NuxtLink :to="registryPath(item.id)" class="font-semibold text-highlighted after:absolute after:inset-0 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ item.slug }}</NuxtLink><UBadge v-if="item.rejected_resources && item.rejected_resources !== configuration.snapshot.distribution_policy.rejected_resources" color="warning" variant="subtle" size="sm" class="ml-2">Exposure override</UBadge><p class="mt-0.5 font-mono text-xs text-muted">{{ item.id }}</p></th>
                 <td class="hidden max-w-xs truncate px-4 py-3 font-mono text-xs text-toned md:table-cell" :title="item.origin">{{ item.origin }}</td>
                 <td class="hidden px-4 py-3 font-mono text-xs text-toned sm:table-cell">{{ item.ref || 'Default branch' }}</td>
                 <td class="px-4 py-3"><AdminStatusBadge :value="item.lifecycle" kind="lifecycle" /></td>
@@ -198,6 +198,7 @@ watch(() => route.fullPath, () => { draft.value = undefined; changes.value = [];
                 <div><dt class="text-xs font-semibold uppercase tracking-wide text-muted">Publisher</dt><dd class="mt-1 text-highlighted">{{ registry.publisher.name || 'Not set' }}</dd><dd v-if="registry.publisher.url" class="break-all font-mono text-xs text-muted">{{ registry.publisher.url }}</dd></div>
                 <div><dt class="text-xs font-semibold uppercase tracking-wide text-muted">Default license</dt><dd class="mt-1 text-highlighted">{{ registry.license || 'Not set' }}</dd></div>
                 <div class="sm:col-span-2"><dt class="text-xs font-semibold uppercase tracking-wide text-muted">License policy</dt><dd class="mt-1 text-highlighted">{{ registry.license_override ? `Override: ${registry.license_override.allowlist?.join(', ') || 'inherited allowlist'}; undeclared ${registry.license_override.undeclared || 'inherited'}` : 'Inherits the global policy' }}</dd></div>
+                <div class="sm:col-span-2"><dt class="text-xs font-semibold uppercase tracking-wide text-muted">Rejected resources</dt><dd class="mt-1 text-highlighted">{{ registry.rejected_resources ? `Override: ${registry.rejected_resources}` : `Inherits global ${configuration.snapshot.distribution_policy.rejected_resources}` }}</dd></div>
               </dl>
             </div>
             <AdminHint summary="View the managed representation"><pre class="overflow-auto rounded bg-[var(--am-color-bg-subtle)] p-3 font-mono text-xs">{{ JSON.stringify(registry, null, 2) }}</pre><p class="text-xs">Read-only JSON; also valid YAML 1.2.</p></AdminHint>
@@ -235,10 +236,11 @@ watch(() => route.fullPath, () => { draft.value = undefined; changes.value = [];
 
       <section v-else-if="section === 'policies'" class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div class="space-y-4 rounded-xl border border-default bg-[var(--am-color-bg-surface)] p-5">
-          <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="text-lg font-semibold text-highlighted">Global license policy</h2><UButton icon="i-lucide-pencil" size="sm" @click="edit({ action: 'set_policy', license_policy: configuration.snapshot.license_policy, reason: '' })">Edit license policy</UButton></div>
+          <div class="flex flex-wrap items-center justify-between gap-3"><h2 class="text-lg font-semibold text-highlighted">Global policy</h2><UButton icon="i-lucide-pencil" size="sm" @click="edit({ action: 'set_policy', license_policy: configuration.snapshot.license_policy, distribution_policy: configuration.snapshot.distribution_policy, reason: '' })">Edit policies</UButton></div>
           <dl class="grid gap-4 text-sm">
             <div><dt class="text-xs font-semibold uppercase tracking-wide text-muted">Allowlist</dt><dd class="mt-1.5 flex flex-wrap gap-1.5"><template v-if="configuration.snapshot.license_policy.allowlist?.length"><UBadge v-for="license in configuration.snapshot.license_policy.allowlist" :key="license" color="neutral" variant="outline" size="sm" class="font-mono">{{ license }}</UBadge></template><span v-else class="flex items-center gap-1 text-warning">Empty — enforcement disabled<AdminHint text="With no allowlisted licenses, resources are published regardless of their declared license." /></span></dd></div>
             <div><dt class="text-xs font-semibold uppercase tracking-wide text-muted">Undeclared licenses</dt><dd class="mt-1 capitalize text-highlighted">{{ configuration.snapshot.license_policy.undeclared }}</dd></div>
+            <div><dt class="text-xs font-semibold uppercase tracking-wide text-muted">Rejected resources</dt><dd class="mt-1 text-highlighted">{{ configuration.snapshot.distribution_policy.rejected_resources === 'expose' ? 'Expose as operator-approved' : 'Block publication' }}</dd></div>
           </dl>
           <AdminHint summary="What this policy does not tell you"><p>License impact analysis is unavailable: no affected-resource or retained-revision counts are claimed. Hidden-content analysis and resource or time limits remain deployment-managed.</p></AdminHint>
         </div>
@@ -247,8 +249,7 @@ watch(() => route.fullPath, () => { draft.value = undefined; changes.value = [];
           <ul class="divide-y divide-default">
             <li v-for="item in configuration.snapshot.registries" :key="item.id" class="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-sm">
               <NuxtLink :to="registryPath(item.id)" class="font-medium text-highlighted hover:underline">{{ item.slug }}</NuxtLink>
-              <span v-if="item.license_override" class="flex items-center gap-2"><UBadge color="warning" variant="subtle" size="sm">Override</UBadge><span class="text-xs text-muted">{{ item.license_override.allowlist?.join(', ') || 'Inherited allowlist' }}; undeclared {{ item.license_override.undeclared || 'inherited' }}</span></span>
-              <UBadge v-else color="neutral" variant="subtle" size="sm">Inherits global</UBadge>
+              <span class="flex flex-wrap items-center justify-end gap-2"><UBadge v-if="item.license_override" color="warning" variant="subtle" size="sm">License override</UBadge><UBadge v-if="item.rejected_resources" color="warning" variant="subtle" size="sm">Rejected: {{ item.rejected_resources }}</UBadge><UBadge v-if="!item.license_override && !item.rejected_resources" color="neutral" variant="subtle" size="sm">Inherits global</UBadge></span>
             </li>
           </ul>
         </div>

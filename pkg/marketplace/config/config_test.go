@@ -502,6 +502,51 @@ func TestLoadConfigLicenseUndeclaredInvalid(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectedResourcesPolicy(t *testing.T) {
+	for _, want := range []string{RejectedResourcesBlock, RejectedResourcesExpose} {
+		t.Run(want, func(t *testing.T) {
+			yaml := strings.Replace(validConfigYAML(), "  hidden_content: reject", "  hidden_content: reject\n  rejected_resources: "+want, 1)
+			cfg, err := LoadConfig(writeConfig(t, yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Policy.RejectedResources != want || cfg.Policy.RejectedResourcesOutcome() != want {
+				t.Fatalf("rejected resources = %q (%q), want %q", cfg.Policy.RejectedResources, cfg.Policy.RejectedResourcesOutcome(), want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigRejectedResourcesDefaultsAndOverrides(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, validConfigYAML()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Policy.RejectedResources != RejectedResourcesBlock || cfg.Policy.RejectedResourcesOutcome() != RejectedResourcesBlock {
+		t.Fatalf("default = %q (%q)", cfg.Policy.RejectedResources, cfg.Policy.RejectedResourcesOutcome())
+	}
+	registry := cfg.Registries[0]
+	registry.PolicyOverrides = map[string]any{"rejected_resources": RejectedResourcesExpose}
+	if got := registry.RejectedResourcesOutcome(cfg.Policy); got != RejectedResourcesExpose {
+		t.Fatalf("registry override = %q", got)
+	}
+	registry.PolicyOverrides["rejected_resources"] = "permit"
+	if err := registry.Validate(cfg.Policy); err == nil || !strings.Contains(err.Error(), "rejected_resources") {
+		t.Fatalf("invalid registry override error = %v", err)
+	}
+}
+
+func TestLoadConfigRejectedResourcesInvalid(t *testing.T) {
+	yaml := strings.Replace(validConfigYAML(), "  hidden_content: reject", "  hidden_content: reject\n  rejected_resources: permit", 1)
+	_, err := LoadConfig(writeConfig(t, yaml))
+	if err == nil || !strings.Contains(err.Error(), "policy.rejected_resources") {
+		t.Fatalf("error = %v", err)
+	}
+	if got := ResolveRejectedResourcesOutcome("permit"); got != RejectedResourcesBlock {
+		t.Fatalf("fail-closed outcome = %q", got)
+	}
+}
+
 // An operator config written before the option existed must keep today's
 // behaviour: an undeclared license is rejected. This is the config half of the
 // default-preservation guard.

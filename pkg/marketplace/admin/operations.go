@@ -22,17 +22,19 @@ type View struct {
 }
 
 type Mutation struct {
-	Action              string             `json:"action"`
-	RegistryID          store.RegistryID   `json:"registry_id,omitempty"`
-	Registry            *Registry          `json:"registry,omitempty"`
-	LicensePolicy       *LicensePolicy     `json:"license_policy,omitempty"`
-	ExpectedRevision    int64              `json:"expected_revision"`
-	Actor               store.ManagedActor `json:"-"`
-	Reason              string             `json:"reason"`
-	RequestID           string             `json:"-"`
-	IdempotencyKey      string             `json:"-"`
-	ConfirmOriginMove   bool               `json:"confirm_origin_move"`
-	ConfirmUnrestricted bool               `json:"confirm_unrestricted"`
+	Action                   string              `json:"action"`
+	RegistryID               store.RegistryID    `json:"registry_id,omitempty"`
+	Registry                 *Registry           `json:"registry,omitempty"`
+	LicensePolicy            *LicensePolicy      `json:"license_policy,omitempty"`
+	DistributionPolicy       *DistributionPolicy `json:"distribution_policy,omitempty"`
+	ExpectedRevision         int64               `json:"expected_revision"`
+	Actor                    store.ManagedActor  `json:"-"`
+	Reason                   string              `json:"reason"`
+	RequestID                string              `json:"-"`
+	IdempotencyKey           string              `json:"-"`
+	ConfirmOriginMove        bool                `json:"confirm_origin_move"`
+	ConfirmUnrestricted      bool                `json:"confirm_unrestricted"`
+	ConfirmRejectedResources bool                `json:"confirm_rejected_resources"`
 }
 
 func (s Service) Read(ctx context.Context, id store.MarketplaceID) (View, error) {
@@ -48,6 +50,7 @@ func (s Service) Read(ctx context.Context, id store.MarketplaceID) (View, error)
 	if json.Unmarshal(current.Snapshot, &snapshot) != nil || snapshot.Version != 1 || snapshot.PolicyRevision < 1 {
 		return View{}, store.ErrManagedStateCorrupt
 	}
+	normalizeDistributionPolicy(&snapshot)
 	return View{Revision: current.Revision, Snapshot: snapshot}, nil
 }
 
@@ -56,7 +59,28 @@ func (s Service) History(ctx context.Context, id store.MarketplaceID, before int
 	if !ok {
 		return nil, store.ErrTopology
 	}
-	return managed.ManagedConfigurationHistory(ctx, id, before, limit)
+	changes, err := managed.ManagedConfigurationHistory(ctx, id, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range changes {
+		var snapshot Snapshot
+		if json.Unmarshal(changes[i].Snapshot, &snapshot) != nil {
+			return nil, store.ErrManagedStateCorrupt
+		}
+		normalizeDistributionPolicy(&snapshot)
+		changes[i].Snapshot, err = json.Marshal(snapshot)
+		if err != nil {
+			return nil, store.ErrManagedStateCorrupt
+		}
+	}
+	return changes, nil
+}
+
+func normalizeDistributionPolicy(snapshot *Snapshot) {
+	if snapshot.DistributionPolicy.RejectedResources == "" {
+		snapshot.DistributionPolicy.RejectedResources = config.RejectedResourcesBlock
+	}
 }
 
 func (r Registry) Active() bool {
@@ -166,24 +190,38 @@ func (s Service) Apply(ctx context.Context, id store.MarketplaceID, m Mutation) 
 func (s Service) mutate(snapshot *Snapshot, m Mutation) (bool, error) {
 	if m.Action == "set_policy" {
 		switch {
-		case m.RegistryID != "" || m.Registry != nil || m.LicensePolicy == nil:
-			return false, invalid("", "A license policy change carries only a license policy, not a registry.")
-		case !validPolicy(*m.LicensePolicy, false):
+		case m.RegistryID != "" || m.Registry != nil || (m.LicensePolicy == nil && m.DistributionPolicy == nil):
+			return false, invalid("", "A policy change carries policy fields, not a registry.")
+		case m.LicensePolicy != nil && !validPolicy(*m.LicensePolicy, false):
 			return false, invalid("license_policy", "The license policy needs a valid undeclared outcome and nonempty SPDX identifiers.")
-		case len(m.LicensePolicy.Allowlist) == 0 && !m.ConfirmUnrestricted:
+		case m.LicensePolicy != nil && len(m.LicensePolicy.Allowlist) == 0 && !m.ConfirmUnrestricted:
 			return false, invalid("license_policy", "An empty allowlist disables license enforcement; confirm the unrestricted policy first.")
+		case m.DistributionPolicy != nil && !validRejectedResources(m.DistributionPolicy.RejectedResources, false):
+			return false, invalid("distribution_policy.rejected_resources", "Choose block or expose for rejected resources.")
+		case m.DistributionPolicy != nil && m.DistributionPolicy.RejectedResources == config.RejectedResourcesExpose && snapshot.DistributionPolicy.RejectedResources != config.RejectedResourcesExpose && !m.ConfirmRejectedResources:
+			return false, invalid("distribution_policy.rejected_resources", "Confirm that rejected resources from every inheriting registry may become installable.")
 		}
-		if !reflect.DeepEqual(snapshot.LicensePolicy, *m.LicensePolicy) {
-			snapshot.PolicyRevision++
+		changed := false
+		reindex := false
+		if m.LicensePolicy != nil && !reflect.DeepEqual(snapshot.LicensePolicy, *m.LicensePolicy) {
 			snapshot.LicensePolicy = *m.LicensePolicy
+			changed = true
+			reindex = true
 		}
-		return slices.ContainsFunc(snapshot.Registries, func(r Registry) bool { return r.Active() }), nil
+		if m.DistributionPolicy != nil && snapshot.DistributionPolicy != *m.DistributionPolicy {
+			snapshot.DistributionPolicy = *m.DistributionPolicy
+			changed = true
+		}
+		if changed {
+			snapshot.PolicyRevision++
+		}
+		return reindex && slices.ContainsFunc(snapshot.Registries, func(r Registry) bool { return r.Active() }), nil
 	}
 	if m.RegistryID == "" {
 		return false, invalid("id", "A registry ID is required.")
 	}
-	if m.LicensePolicy != nil {
-		return false, invalid("", "A registry operation cannot change the global license policy.")
+	if m.LicensePolicy != nil || m.DistributionPolicy != nil {
+		return false, invalid("", "A registry operation cannot change global policy.")
 	}
 	index := slices.IndexFunc(snapshot.Registries, func(r Registry) bool { return r.ID == m.RegistryID })
 	if m.Action == "upsert_registry" {
@@ -217,8 +255,14 @@ func (s Service) mutate(snapshot *Snapshot, m Mutation) (bool, error) {
 			if r.Origin != old.Origin {
 				r.HistoricalOrigins = uniqueNames(append(slices.Clone(old.HistoricalOrigins), old.Origin), "")
 			}
-			if !reflect.DeepEqual(r, old) {
+			policyChanged := r.RejectedResources != old.RejectedResources
+			withoutPolicy := r
+			withoutPolicy.RejectedResources = old.RejectedResources
+			if !reflect.DeepEqual(withoutPolicy, old) {
 				r.Generation++
+			}
+			if policyChanged {
+				snapshot.PolicyRevision++
 			}
 		}
 		if err := s.validateRegistry(r); err != nil {
@@ -238,7 +282,9 @@ func (s Service) mutate(snapshot *Snapshot, m Mutation) (bool, error) {
 			snapshot.Registries = append(snapshot.Registries, r)
 			slices.SortFunc(snapshot.Registries, func(a, b Registry) int { return strings.Compare(string(a.ID), string(b.ID)) })
 		} else {
+			priorGeneration := snapshot.Registries[index].Generation
 			snapshot.Registries[index] = r
+			return r.Active() && r.Generation != priorGeneration, nil
 		}
 		return r.Active(), nil
 	}
@@ -317,6 +363,10 @@ func (s Service) mutate(snapshot *Snapshot, m Mutation) (bool, error) {
 	return r.Active(), nil
 }
 
+func validRejectedResources(value string, inherit bool) bool {
+	return (inherit && value == "") || value == config.RejectedResourcesBlock || value == config.RejectedResourcesExpose
+}
+
 func validPolicy(p LicensePolicy, override bool) bool {
 	if (!override || p.Undeclared != "") && !validUndeclared(p.Undeclared) {
 		return false
@@ -353,6 +403,9 @@ func (s Service) validateRegistry(r Registry) error {
 	if r.LicenseOverride != nil && !validPolicy(*r.LicenseOverride, true) {
 		return invalid("license_override", "A license override needs a nonempty allowlist of SPDX identifiers or a valid undeclared outcome.")
 	}
+	if !validRejectedResources(r.RejectedResources, true) {
+		return invalid("rejected_resources", "Choose inherit, block, or expose for rejected resources.")
+	}
 	source := config.Registry{ID: string(r.ID), Slug: r.Slug, Origin: r.Origin, Ref: r.Ref, Acquisition: string(r.Acquisition), Publisher: config.Publisher{Name: r.Publisher.Name, URL: r.Publisher.URL}, License: r.License}
 	for i, root := range r.Roots {
 		if strings.ContainsAny(root.Path, "\\\x00\r\n") {
@@ -385,10 +438,12 @@ func (s Service) RestoreDraft(ctx context.Context, id store.MarketplaceID, revis
 	if json.Unmarshal(history[0].Snapshot, &old) != nil {
 		return Mutation{}, store.ErrManagedStateCorrupt
 	}
+	normalizeDistributionPolicy(&old)
 	m := Mutation{ExpectedRevision: current.Revision, RegistryID: registryID}
 	if registryID == "" {
 		m.Action = "set_policy"
 		m.LicensePolicy = &old.LicensePolicy
+		m.DistributionPolicy = &old.DistributionPolicy
 		return m, nil
 	}
 	i := slices.IndexFunc(old.Registries, func(r Registry) bool { return r.ID == registryID })

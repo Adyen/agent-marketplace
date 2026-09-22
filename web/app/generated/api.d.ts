@@ -691,6 +691,10 @@ export interface components {
             revision: number;
             snapshot: components["schemas"]["AdminSnapshot"];
         };
+        AdminDistributionPolicy: {
+            /** @enum {string} */
+            rejected_resources: "block" | "expose";
+        };
         AdminInstance: {
             management_mode: string;
             name: string;
@@ -784,7 +788,9 @@ export interface components {
             /** @enum {string} */
             action: "upsert_registry" | "set_policy" | "pause" | "resume" | "withdraw" | "restore" | "retire" | "restore_retired" | "reindex";
             confirm_origin_move?: boolean;
+            confirm_rejected_resources?: boolean;
             confirm_unrestricted?: boolean;
+            distribution_policy?: components["schemas"]["AdminDistributionPolicy"];
             license_policy?: components["schemas"]["AdminLicensePolicy"];
             reason: string;
             registry?: components["schemas"]["AdminRegistry"];
@@ -812,6 +818,11 @@ export interface components {
                 url?: string;
             };
             ref: string;
+            /**
+             * @description Empty means inherit the global policy.
+             * @enum {string}
+             */
+            rejected_resources?: "block" | "expose" | "";
             retired: boolean;
             roots: {
                 path: string;
@@ -832,6 +843,7 @@ export interface components {
             display?: string;
         };
         AdminSnapshot: {
+            distribution_policy: components["schemas"]["AdminDistributionPolicy"];
             license_policy: components["schemas"]["AdminLicensePolicy"];
             /** Format: int64 */
             policy_revision: number;
@@ -894,10 +906,10 @@ export interface components {
         /** @description Current catalog-visible resource with embedded supporting registry identity and display metadata. */
         CatalogResource: {
             /**
-             * @description Blocked and revoked rows remain catalog-visible so consumers can distinguish them from removed resources.
+             * @description Operator-exposed rows are installable with a retained rejection; blocked and revoked rows remain visible.
              * @enum {string}
              */
-            availability: "available" | "blocked" | "revoked";
+            availability: "available" | "operator-exposed" | "blocked" | "revoked";
             /** @description Present only when kind is collection; non-collection rows omit it. */
             collection?: components["schemas"]["CatalogCollection"];
             /** @description Optional normalized author-written resource summary. Collection description is omitted until it is covered by collection revision identity. */
@@ -1060,7 +1072,7 @@ export interface components {
              * @description Whether this revision can be installed from this instance, so a list card can show availability without fetching each resource. `available` means installable. `policy-blocked` means the current assessment rejected the revision. `no-artifact` means a mirrored revision has no artifact this instance can serve. `revoked` means an operator revoked the revision. `blocked` is the aggregate value used by older peers that cannot distinguish the reason. Optional: an instance that cannot determine availability omits the field, and clients must treat an absent value as unknown rather than as `available`.
              * @enum {string}
              */
-            availability?: "available" | "blocked" | "policy-blocked" | "no-artifact" | "revoked";
+            availability?: "available" | "blocked" | "policy-blocked" | "operator-exposed" | "no-artifact" | "revoked";
             content_digest: string;
             /** @description Author-written one-line summary from the upstream registry. Untrusted content: control characters are stripped, whitespace is collapsed, and the value is truncated to at most 1024 bytes on a UTF-8 boundary before it is stored or served. Omitted when the resource kind declares no description (hooks and MCP servers) or the author left it empty. */
             description?: string;
@@ -1087,6 +1099,12 @@ export interface components {
             assessment: components["schemas"]["ResourceAssessment"];
             content_digest: string;
             coordinate: components["schemas"]["ResourceCoordinate"];
+            current_availability?: {
+                /** @enum {string} */
+                availability: "available" | "blocked" | "policy-blocked" | "operator-exposed" | "no-artifact" | "revoked";
+            } & {
+                [key: string]: unknown;
+            };
             /** @description Author-written one-line summary from the upstream registry, bounded and normalized identically to ResourceListItem.description. */
             description?: string;
             license?: string;

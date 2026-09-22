@@ -346,9 +346,9 @@ Registry deletion is not supported. Retiring a registry marks it as inactive whi
 
 ---
 
-### Managing license policies
+### Managing license and rejected-resource policies
 
-Navigate to the **Policies** section to manage global and per-registry license enforcement.
+Navigate to **Policies** to manage global license enforcement and rejected-resource distribution. Choose **Block publication** (default) or **Expose as operator-approved**. Global exposure requires acknowledging that rejected resources from every inheriting registry may become installable; their reject assessment and findings remain visible, and revoked resources remain blocked.
 
 #### Global license policy
 
@@ -367,7 +367,7 @@ When you update the license policy:
 
 #### Per-registry overrides
 
-In the registry editor, you can override the global allowlist and undeclared license behavior for specific registries. A registry without overrides inherits the global policy.
+In the registry editor, you can override the global allowlist, undeclared license behavior, and **Rejected resource availability**. Choose **Inherit global policy**, **Block**, or **Expose as operator-approved**. Changing only rejected-resource availability takes effect immediately and does not enqueue a reindex; the activity log records the audited change.
 
 ---
 

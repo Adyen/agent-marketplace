@@ -259,9 +259,13 @@ func managedInputs(deps Deps, view admin.View, r admin.Registry) (config.Config,
 	cfg := deps.Config
 	cfg.Policy.LicenseAllowlist = slices.Clone(view.Snapshot.LicensePolicy.Allowlist)
 	cfg.Policy.LicenseUndeclared = view.Snapshot.LicensePolicy.Undeclared
+	cfg.Policy.RejectedResources = config.ResolveRejectedResourcesOutcome(view.Snapshot.DistributionPolicy.RejectedResources)
 	overrides := maps.Clone(r.NonLicenseOverrides)
 	if overrides == nil {
 		overrides = map[string]any{}
+	}
+	if r.RejectedResources != "" {
+		overrides["rejected_resources"] = r.RejectedResources
 	}
 	if r.LicenseOverride != nil {
 		values := make([]any, len(r.LicenseOverride.Allowlist))

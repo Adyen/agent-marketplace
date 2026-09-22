@@ -147,18 +147,20 @@ func TestResourceAvailability(t *testing.T) {
 		name string
 		rev  store.AssessedResourceRevision
 		src  store.Registry
+		mode string
 		want Availability
 	}{
-		{"mirrored allow is installable", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionAllow), mirror, AvailabilityAvailable},
-		{"warning stays installable", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionWarn), mirror, AvailabilityAvailable},
-		{"explicit reject blocks with archive", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionReject), mirror, AvailabilityPolicyBlocked},
-		{"missing mirrored artifact blocks", revision(KindSkill, "", store.AssessmentDecisionAllow), mirror, AvailabilityNoArtifact},
-		{"index-only needs no archive", revision(KindSkill, "", store.AssessmentDecisionAllow), indexOnly, AvailabilityAvailable},
-		{"collection needs no archive", revision(KindCollection, "", store.AssessmentDecisionAllow), mirror, AvailabilityAvailable},
-		{"revocation outranks reject", revoked, mirror, AvailabilityRevoked},
+		{"mirrored allow is installable", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionAllow), mirror, "", AvailabilityAvailable},
+		{"warning stays installable", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionWarn), mirror, "", AvailabilityAvailable},
+		{"explicit reject blocks with archive", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionReject), mirror, "", AvailabilityPolicyBlocked},
+		{"operator exposes reject with archive", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionReject), mirror, config.RejectedResourcesExpose, AvailabilityOperatorExposed},
+		{"missing mirrored artifact blocks", revision(KindSkill, "", store.AssessmentDecisionAllow), mirror, "", AvailabilityNoArtifact},
+		{"index-only needs no archive", revision(KindSkill, "", store.AssessmentDecisionAllow), indexOnly, "", AvailabilityAvailable},
+		{"collection needs no archive", revision(KindCollection, "", store.AssessmentDecisionAllow), mirror, "", AvailabilityAvailable},
+		{"revocation outranks reject", revoked, mirror, "", AvailabilityRevoked},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := resourceAvailability(test.rev, test.src); got != test.want {
+			if got := resourceAvailability(test.rev, test.src, config.ResolveRejectedResourcesOutcome(test.mode)); got != test.want {
 				t.Fatalf("resourceAvailability = %q, want %q", got, test.want)
 			}
 		})

@@ -273,21 +273,25 @@ func (s *Server) handleCatalogProjection(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
 		return
 	}
-	if s.cfg.Management.Mode == "database" {
-		view := availabilityFromContext(r.Context())
-		if view == nil {
-			writeError(w, http.StatusServiceUnavailable, "availability unavailable")
-			return
+	view := availabilityFromContext(r.Context())
+	if s.cfg.Management.Mode == "database" && view == nil {
+		writeError(w, http.StatusServiceUnavailable, "availability unavailable")
+		return
+	}
+	for i := range page.Resources {
+		availability := s.fileResourceAvailability(page.Resources[i].AssessedResourceRevision)
+		if s.cfg.Management.Mode == "database" {
+			availability = s.evaluateAvailability(view, page.Resources[i].AssessedResourceRevision).Availability
 		}
-		for i := range page.Resources {
-			decision := s.evaluateAvailability(view, page.Resources[i].AssessedResourceRevision)
-			switch decision.Availability {
-			case AvailabilityRevoked:
-				page.Resources[i].Availability = store.CatalogAvailabilityRevoked
-			case AvailabilityAvailable:
-			default:
-				page.Resources[i].Availability = store.CatalogAvailabilityBlocked
-			}
+		switch availability {
+		case AvailabilityRevoked:
+			page.Resources[i].Availability = store.CatalogAvailabilityRevoked
+		case AvailabilityAvailable:
+			page.Resources[i].Availability = store.CatalogAvailabilityAvailable
+		case AvailabilityOperatorExposed:
+			page.Resources[i].Availability = store.CatalogAvailabilityOperatorExposed
+		default:
+			page.Resources[i].Availability = store.CatalogAvailabilityBlocked
 		}
 	}
 	etag := s.availabilityETag(r.Context(), page.CatalogVersion)
@@ -543,6 +547,8 @@ func catalogAvailabilityDTO(value store.CatalogAvailability) (Availability, erro
 		return AvailabilityAvailable, nil
 	case store.CatalogAvailabilityBlocked:
 		return AvailabilityBlocked, nil
+	case store.CatalogAvailabilityOperatorExposed:
+		return AvailabilityOperatorExposed, nil
 	case store.CatalogAvailabilityRevoked:
 		return AvailabilityRevoked, nil
 	default:
@@ -1021,15 +1027,11 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 		}
 		revs[i] = s.applyEffectiveRevocation(rev)
 	}
-	if s.cfg.Management.Mode == "database" {
-		items := make([]any, len(revs))
-		for i, rev := range revs {
-			items[i] = s.availabilityResourceDTO(r.Context(), rev)
-		}
-		writeJSON(w, http.StatusOK, items)
-		return
+	items := make([]any, len(revs))
+	for i, rev := range revs {
+		items[i] = s.availabilityResourceDTO(r.Context(), rev)
 	}
-	writeJSON(w, http.StatusOK, revs)
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {
@@ -1660,16 +1662,23 @@ func latestEffectiveRevisions(revs []store.AssessedResourceRevision, evaluator *
 // revoked. A digest route has no coordinate and therefore cannot safely make a
 // narrower authorization decision.
 func (s *Server) resourceOwnerRestriction(revisions []store.AssessedResourceRevision) Availability {
-	restriction := AvailabilityAvailable
+	if len(revisions) == 0 {
+		return AvailabilityAvailable
+	}
+	allowed := false
 	for _, revision := range revisions {
-		if s.applyEffectiveRevocation(revision).Revocation != nil {
+		availability := s.fileResourceAvailability(revision)
+		if availability == AvailabilityRevoked {
 			return AvailabilityRevoked
 		}
-		if revision.Assessment.Decision == store.AssessmentDecisionReject {
-			restriction = AvailabilityBlocked
+		if availability == AvailabilityAvailable || availability == AvailabilityOperatorExposed {
+			allowed = true
 		}
 	}
-	return restriction
+	if allowed {
+		return AvailabilityAvailable
+	}
+	return AvailabilityBlocked
 }
 
 // manifestRestriction resolves all current assessments that own a registry or
@@ -1745,12 +1754,9 @@ func (s *Server) registryIndex(ctx context.Context) (map[store.RegistryID]store.
 // The archive check is qualified by acquisition mode because an index-only
 // registry legitimately has no archive, and a collection is addressed by its
 // manifest digest rather than an archive.
-func resourceAvailability(rev store.AssessedResourceRevision, registry store.Registry) Availability {
+func resourceAvailability(rev store.AssessedResourceRevision, registry store.Registry, rejectedResources string) Availability {
 	if rev.Revocation != nil {
 		return AvailabilityRevoked
-	}
-	if rev.Assessment.Decision == store.AssessmentDecisionReject {
-		return AvailabilityPolicyBlocked
 	}
 	if registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "" {
 		slog.Debug("listing resource without a mirrored artifact as blocked",
@@ -1758,6 +1764,12 @@ func resourceAvailability(rev store.AssessedResourceRevision, registry store.Reg
 			"content_digest", rev.ContentDigest,
 		)
 		return AvailabilityNoArtifact
+	}
+	if rev.Assessment.Decision == store.AssessmentDecisionReject {
+		if rejectedResources == config.RejectedResourcesExpose {
+			return AvailabilityOperatorExposed
+		}
+		return AvailabilityPolicyBlocked
 	}
 	return AvailabilityAvailable
 }
@@ -1775,7 +1787,7 @@ func (s *Server) resourceToListItem(rev store.AssessedResourceRevision, registri
 		// writes, but this response must stay safe for rows written by any
 		// other producer against the same database.
 		Description:  store.BoundDescription(rev.Description),
-		Availability: resourceAvailability(rev, registry),
+		Availability: resourceAvailability(rev, registry, rejectedResourcesForOverrides(s.cfg.Policy, registry.PolicyOverrides)),
 		Score:        score,
 	}
 	if rev.License != "" {

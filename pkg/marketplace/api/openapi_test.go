@@ -171,7 +171,7 @@ func TestOpenAPICatalogProjectionContract(t *testing.T) {
 	if values := properties["kind"].(map[string]any)["enum"].([]any); !sameAnyStrings(values, []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"}) {
 		t.Errorf("catalog kind enum = %#v", values)
 	}
-	if values := properties["availability"].(map[string]any)["enum"].([]any); !sameAnyStrings(values, []string{"available", "blocked", "revoked"}) {
+	if values := properties["availability"].(map[string]any)["enum"].([]any); !sameAnyStrings(values, []string{"available", "operator-exposed", "blocked", "revoked"}) {
 		t.Errorf("catalog availability enum = %#v", values)
 	}
 	for _, schemaName := range []string{"CatalogSource", "CatalogCollection", "CatalogCollectionResourceReference", "CatalogCollectionIncludeReference", "CatalogUnresolvedReference"} {
@@ -405,11 +405,12 @@ func TestOpenAPIAvailabilityMatchesServerConstants(t *testing.T) {
 		got[value.(string)] = true
 	}
 	want := map[string]bool{
-		string(AvailabilityAvailable):     true,
-		string(AvailabilityBlocked):       true,
-		string(AvailabilityPolicyBlocked): true,
-		string(AvailabilityNoArtifact):    true,
-		string(AvailabilityRevoked):       true,
+		string(AvailabilityAvailable):       true,
+		string(AvailabilityBlocked):         true,
+		string(AvailabilityPolicyBlocked):   true,
+		string(AvailabilityOperatorExposed): true,
+		string(AvailabilityNoArtifact):      true,
+		string(AvailabilityRevoked):         true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("availability enum = %#v, want %#v", got, want)

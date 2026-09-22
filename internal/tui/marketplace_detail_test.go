@@ -52,6 +52,21 @@ func enterDetail(t *testing.T, m Model) (Model, tea.Cmd) {
 	return updated.(Model), cmd
 }
 
+func TestMarketplaceDiscoveryDetailShowsOperatorExposedRejection(t *testing.T) {
+	m := modelWithSelectedRow(t, marketplaceDiscoveryRow("skill", "review", mpapi.AvailabilityOperatorExposed))
+	m.width = 100
+	m.height = 30
+	m, _ = enterDetail(t, m)
+	selected, ok := m.selectedRow()
+	if !ok {
+		t.Fatal("no selected row")
+	}
+	content := renderDetailFullContent(selected, 100)
+	if !strings.Contains(content, "Operator-exposed rejection") || !strings.Contains(content, "Press space to install") {
+		t.Fatalf("operator-exposed detail = %q", content)
+	}
+}
+
 func TestMarketplaceDiscoveryDetailShowsMetadataWithoutSourcePathError(t *testing.T) {
 	for _, kind := range []string{"skill", "collection", "command"} {
 		t.Run(kind, func(t *testing.T) {

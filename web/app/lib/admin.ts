@@ -2,6 +2,7 @@ import type { components } from '~/generated/api'
 
 export type AdminRegistry = components['schemas']['AdminRegistry']
 export type AdminPolicy = components['schemas']['AdminLicensePolicy']
+export type AdminDistributionPolicy = components['schemas']['AdminDistributionPolicy']
 export type AdminConfiguration = components['schemas']['AdminConfiguration']
 export type AdminProfiles = components['schemas']['AdminProfiles']
 export type AdminSession = components['schemas']['AdminSession']
@@ -96,7 +97,7 @@ export function cloneAdmin<T>(value: T): T {
 }
 
 export function newAdminRegistry(): AdminRegistry {
-  return { id: '', slug: '', origin: '', ref: 'main', roots: [{ path: '.', source_harness: '' }], acquisition: 'index-only', publisher: {}, license: '', aliases: [], historical_origins: [], generation: 0, lifecycle: 'active', paused: false, withdrawn: false, retired: false }
+  return { id: '', slug: '', origin: '', ref: 'main', roots: [{ path: '.', source_harness: '' }], acquisition: 'index-only', publisher: {}, license: '', rejected_resources: '', aliases: [], historical_origins: [], generation: 0, lifecycle: 'active', paused: false, withdrawn: false, retired: false }
 }
 
 // A historical settings restore must never restore old lifecycle or erase identity history.

@@ -60,6 +60,24 @@ func TestManagedAvailabilityMatrix(t *testing.T) {
 			s.LicensePolicy.Allowlist = nil
 			r.Assessment.Decision = store.AssessmentDecisionReject
 		}, AvailabilityPolicyBlocked},
+		{"global exposure preserves rejection", func(s *admin.Snapshot, r *store.AssessedResourceRevision) {
+			s.DistributionPolicy.RejectedResources = config.RejectedResourcesExpose
+			r.Assessment.Decision = store.AssessmentDecisionReject
+		}, AvailabilityOperatorExposed},
+		{"registry block overrides global exposure", func(s *admin.Snapshot, r *store.AssessedResourceRevision) {
+			s.DistributionPolicy.RejectedResources = config.RejectedResourcesExpose
+			s.Registries[0].RejectedResources = config.RejectedResourcesBlock
+			r.Assessment.Decision = store.AssessmentDecisionReject
+		}, AvailabilityPolicyBlocked},
+		{"registry exposure overrides global block", func(s *admin.Snapshot, r *store.AssessedResourceRevision) {
+			s.Registries[0].RejectedResources = config.RejectedResourcesExpose
+			r.Assessment.Decision = store.AssessmentDecisionReject
+		}, AvailabilityOperatorExposed},
+		{"revocation precedes exposure", func(s *admin.Snapshot, r *store.AssessedResourceRevision) {
+			s.DistributionPolicy.RejectedResources = config.RejectedResourcesExpose
+			r.Assessment.Decision = store.AssessmentDecisionReject
+			s.Registries[0].Retired = true
+		}, AvailabilityRevoked},
 		{"relax does not invent artifact", func(s *admin.Snapshot, r *store.AssessedResourceRevision) {
 			s.LicensePolicy.Allowlist = nil
 			r.ArchiveDigest = ""
@@ -110,6 +128,8 @@ func TestManagedAvailabilityRejectsCorruptSnapshots(t *testing.T) {
 		func(s *admin.Snapshot) { s.Version = 0 },
 		func(s *admin.Snapshot) { s.PolicyRevision = 0 },
 		func(s *admin.Snapshot) { s.LicensePolicy.Undeclared = "typo" },
+		func(s *admin.Snapshot) { s.DistributionPolicy.RejectedResources = "permit" },
+		func(s *admin.Snapshot) { s.Registries[0].RejectedResources = "permit" },
 		func(s *admin.Snapshot) { s.Registries[0].Generation = 0 },
 		func(s *admin.Snapshot) { s.Registries[0].Lifecycle = "unknown" },
 		func(s *admin.Snapshot) { s.Registries[0].Acquisition = "unknown" },

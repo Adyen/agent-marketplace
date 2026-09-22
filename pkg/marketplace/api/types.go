@@ -102,6 +102,10 @@ const (
 	// revision, so its artifact cannot be served.
 	AvailabilityPolicyBlocked Availability = "policy-blocked"
 
+	// AvailabilityOperatorExposed means the assessment remains rejected but
+	// the Marketplace operator explicitly permits distribution.
+	AvailabilityOperatorExposed Availability = "operator-exposed"
+
 	// AvailabilityNoArtifact means a mirrored revision has no artifact that
 	// this instance can serve for installation.
 	AvailabilityNoArtifact Availability = "no-artifact"
