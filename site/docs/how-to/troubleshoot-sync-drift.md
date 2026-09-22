@@ -42,7 +42,7 @@ agent-marketplace sync
 ## 3. Common causes and fixes
 
 | Symptom | Cause | Fix |
-|---|---|---|---|
+|---|---|---|
 | `missing` resources | A selected resource was removed from the registry | Remove it from configuration or pick a different ref |
 | `orphaned` output | A previously generated file no longer matches configuration | Run `agent-marketplace sync` to prune stale output |
 | `name collision` warning | Two registries select the same resource name | Use `remove` with `--from` and `--path`, or add an explicit `exclude` on the lower-priority source |
