@@ -18,8 +18,10 @@ import (
 // that consists of exactly the root token followed by one path, whose
 // failure stays a hard error. Composite values (env assignments, PATH-style
 // colon lists, multi-token commands) contribute best-effort candidates
-// instead: only candidates that resolve to regular bundle files are
-// assembled, and unresolvable ones are skipped without a diagnostic.
+// instead. Silent skipping is limited to clean candidates that are
+// missing or do not resolve to regular bundle files; an unclean
+// candidate (traversal, absolute, or backslash path) fails closed with
+// bundle.support-file.unsafe regardless of strictness.
 type supportFileCandidate struct {
 	sourcePath string
 	targetPath string
