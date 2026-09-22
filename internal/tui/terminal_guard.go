@@ -3,12 +3,9 @@ package tui
 import (
 	"io"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
 )
 
@@ -16,14 +13,10 @@ import (
 //
 // Two cooperating mechanisms live here:
 //
-//  1. Environment-only terminal style selection. Neither the TUI nor the
-//     glamour/lipgloss renderers may actively probe the terminal (OSC 10/11
-//     status reports): once Bubble Tea owns the terminal the probe response
-//     is swallowed by the input reader, which stalls startup for the full
-//     query timeout and leaks query bytes into the frame. The background is
-//     therefore derived from COLORFGBG only, defaulting to dark, and the
-//     result is pushed into the lipgloss background cache so adaptive colors
-//     never trigger a lazy probe either.
+//  1. Bubble Tea's package initialization lets Lip Gloss and Termenv query
+//     terminal capabilities before Bubble Tea acquires stdin. TUI styles use
+//     those Charm-provided results rather than maintaining a separate
+//     background detector.
 //  2. An outer terminal guard that snapshots termios state before the
 //     program starts and restores it — together with the alternate screen,
 //     cursor visibility, mouse modes, and bracketed paste — on every exit:
@@ -116,46 +109,4 @@ func runWithTerminalGuard(io terminalIO, run func() (tea.Model, error)) error {
 // input) and stdout.
 func defaultTerminalIO() terminalIO {
 	return terminalIO{sequenceOut: os.Stdout, termios: []*os.File{os.Stdin, os.Stdout}}
-}
-
-// detectDarkBackgroundFromEnv resolves the terminal background using only
-// process environment data. It never queries the terminal.
-//
-// COLORFGBG (xterm convention) is "fg;bg" — some terminals insert a middle
-// "default" field — where the background indices 7 and 15 are light and all
-// other values are dark. Unknown or unparsable values default to dark, the
-// far more common terminal background.
-func detectDarkBackgroundFromEnv() bool {
-	return colorFGBGHasDarkBackground(os.Getenv("COLORFGBG"))
-}
-
-func colorFGBGHasDarkBackground(value string) bool {
-	fields := strings.Split(value, ";")
-	background, err := strconv.Atoi(strings.TrimSpace(fields[len(fields)-1]))
-	if err != nil {
-		return true
-	}
-	return background != 7 && background != 15
-}
-
-// glamourStyleForBackground maps the environment-derived background to an
-// explicit, trusted glamour style. This replaces glamour's WithAutoStyle,
-// which actively probes the terminal with an OSC 11 query.
-func glamourStyleForBackground(dark bool) string {
-	if dark {
-		return "dark"
-	}
-	return "light"
-}
-
-// applyTerminalBackground resolves the terminal background from the
-// environment only and seeds the lipgloss background cache. Once the cache
-// is set explicitly, lipgloss adaptive colors never trigger a lazy OSC 11
-// probe — which would otherwise fire on the first styled render, after
-// Bubble Tea has taken over the terminal, and stall for the query timeout.
-// Returns the resolved background for callers that also pick a style.
-func applyTerminalBackground() (dark bool) {
-	dark = detectDarkBackgroundFromEnv()
-	lipgloss.SetHasDarkBackground(dark)
-	return dark
 }

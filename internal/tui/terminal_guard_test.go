@@ -8,70 +8,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
-
-func TestColorFGBGBackgroundSelectionIsEnvironmentOnly(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		value string
-		unset bool
-		want  bool // true = dark background
-	}{
-		{name: "unset defaults dark", unset: true, want: true},
-		{name: "empty defaults dark", value: "", want: true},
-		{name: "black background", value: "15;0", want: true},
-		{name: "dark blue background", value: "15;4", want: true},
-		{name: "bright black background", value: "7;8", want: true},
-		{name: "white background", value: "0;15", want: false},
-		{name: "light gray background", value: "0;7", want: false},
-		{name: "three field light background", value: "0;default;15", want: false},
-		{name: "garbage defaults dark", value: "not-a-number", want: true},
-		{name: "trailing garbage defaults dark", value: "15;x", want: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.unset {
-				t.Setenv("COLORFGBG", "")
-				_ = os.Unsetenv("COLORFGBG")
-			} else {
-				t.Setenv("COLORFGBG", tc.value)
-			}
-			if got := detectDarkBackgroundFromEnv(); got != tc.want {
-				t.Fatalf("detectDarkBackgroundFromEnv(COLORFGBG=%q) = %t, want %t", tc.value, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestTerminalBackgroundSelectionSetsLipglossCacheWithoutProbing(t *testing.T) {
-	previous := lipgloss.HasDarkBackground()
-	t.Cleanup(func() { lipgloss.SetHasDarkBackground(previous) })
-	// COLORFGBG declares a LIGHT background. Environment-only selection must
-	// seed the lipgloss background cache with light, so no renderer ever
-	// issues an OSC 11 query (which would race or hang once Bubble Tea owns
-	// the terminal). A probing implementation would instead answer from the
-	// real terminal and disagree with the environment override.
-	t.Setenv("COLORFGBG", "0;15")
-	applyTerminalBackground()
-	if lipgloss.HasDarkBackground() {
-		t.Fatal("lipgloss background cache was not seeded from COLORFGBG (light)")
-	}
-
-	t.Setenv("COLORFGBG", "15;0")
-	applyTerminalBackground()
-	if !lipgloss.HasDarkBackground() {
-		t.Fatal("lipgloss background cache was not seeded from COLORFGBG (dark)")
-	}
-}
-
-func TestExplicitGlamourStyleSelection(t *testing.T) {
-	if got := glamourStyleForBackground(true); got != "dark" {
-		t.Fatalf("dark background style = %q, want dark", got)
-	}
-	if got := glamourStyleForBackground(false); got != "light" {
-		t.Fatalf("light background style = %q, want light", got)
-	}
-}
 
 func TestTerminalGuardRestoreEmitsTrustedSequencesOnce(t *testing.T) {
 	var buf bytes.Buffer

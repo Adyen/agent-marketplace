@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -110,7 +111,7 @@ func TestWidthMismatchWithoutSourceAppliesDeliveredContent(t *testing.T) {
 
 func TestMarkdownRendererCacheIsBoundedAndConcurrentSafe(t *testing.T) {
 	cache := &markdownRendererCache{renderers: make(map[int]*glamour.TermRenderer)}
-	cache.init("dark")
+	cache.init()
 	var wait sync.WaitGroup
 	for width := 20; width < 40; width++ {
 		wait.Add(1)
@@ -124,5 +125,30 @@ func TestMarkdownRendererCacheIsBoundedAndConcurrentSafe(t *testing.T) {
 	wait.Wait()
 	if got := len(cache.renderers); got > maxCachedRenderers {
 		t.Fatalf("renderer cache size = %d, max %d", got, maxCachedRenderers)
+	}
+}
+
+func TestMarkdownRendererCacheUsesCachedNativeThemeForEveryWidth(t *testing.T) {
+	previous := lipgloss.HasDarkBackground()
+	t.Cleanup(func() { lipgloss.SetHasDarkBackground(previous) })
+
+	outputs := make(map[bool]string)
+	for _, dark := range []bool{false, true} {
+		lipgloss.SetHasDarkBackground(dark)
+		cache := &markdownRendererCache{renderers: make(map[int]*glamour.TermRenderer)}
+		cache.init()
+		for _, width := range []int{0, 40} {
+			rendered, err := cache.render("# title", width)
+			if err != nil {
+				t.Fatalf("render dark=%t width=%d: %v", dark, width, err)
+			}
+			if ansi.Strip(rendered) == rendered {
+				t.Fatalf("render dark=%t width=%d did not use the cached native terminal theme", dark, width)
+			}
+			outputs[dark] += rendered
+		}
+	}
+	if outputs[false] == outputs[true] {
+		t.Fatal("light and dark native terminal themes rendered identically")
 	}
 }

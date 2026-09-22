@@ -47,25 +47,27 @@ type markdownRendererCache struct {
 // (before bubbletea enters alt-screen) by initRenderer.
 var cachedRenderers = &markdownRendererCache{renderers: make(map[int]*glamour.TermRenderer)}
 
-// initRenderer seeds the process-level renderer cache exactly once. The
-// style is an explicit trusted choice derived from the process environment
-// only (see terminal_guard.go): glamour's WithAutoStyle actively probes the
-// terminal with an OSC 11 query, whose response is swallowed once Bubble
-// Tea owns input — stalling the first render for the full query timeout.
+// initRenderer seeds the process-level renderer cache exactly once. Bubble
+// Tea initializes and caches Lip Gloss's terminal detection before acquiring
+// stdin. Capture that native result as an explicit Glamour style so lazily
+// created width-specific renderers never query the terminal after startup.
 // Safe to call concurrently; only the first call acts.
 func initRenderer() {
-	cachedRenderers.init(glamourStyleForBackground(detectDarkBackgroundFromEnv()))
+	cachedRenderers.init()
 }
 
-func (c *markdownRendererCache) init(style string) {
+func (c *markdownRendererCache) init() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.initialized {
 		return
 	}
 	c.initialized = true
-	c.style = style
-	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style))
+	c.style = "light"
+	if lipgloss.HasDarkBackground() {
+		c.style = "dark"
+	}
+	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(c.style))
 	if err != nil {
 		// Fall back to dark style; better than crashing.
 		r, err = glamour.NewTermRenderer(glamour.WithStandardStyle("dark"))
