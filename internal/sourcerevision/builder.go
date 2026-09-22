@@ -93,7 +93,7 @@ func Build(input Input) (Result, error) {
 		return Result{}, err
 	}
 
-	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks}
+	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks, LegacyBareMCP: !contract.BareBundleMCP}
 	cat, err := catalog.LoadWithOptions(root, input.SourceHarness, options)
 	loaded := cat
 	if err != nil || len(cat.Entries) == 0 {

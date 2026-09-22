@@ -14,8 +14,9 @@ import (
 )
 
 type workspaceRoot struct {
-	fs   fs.FS
-	base string
+	fs       fs.FS
+	base     string
+	isBundle bool
 }
 
 func LoadWorkspace(src fs.FS, opts LoadOptions) (*ingest.Bundle, error) {
@@ -27,7 +28,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 	if opts.User != nil {
 		roots = append(roots, workspaceRoot{fs: opts.User, base: "."})
 	}
-	roots = append(roots, workspaceRoot{fs: src, base: sourceBase})
+	roots = append(roots, workspaceRoot{fs: src, base: sourceBase, isBundle: true})
 
 	skills := map[string]*ir.Skill{}
 	commands := map[string]*ir.Command{}
@@ -63,7 +64,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 			commands[name] = command
 		}
 
-		loadedHooks, hookDiags, err := loadHooksRoot(root, opts)
+		loadedHooks, hookDiags, hookPath, err := loadHooksRoot(root, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -76,7 +77,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 			currentHooks = append(currentHooks, loadedHooks...)
 		}
 
-		loadedServers, mcpDiags, err := loadMcpRoot(root)
+		loadedServers, mcpDiags, mcpPath, err := loadMcpRoot(root)
 		if err != nil {
 			return nil, err
 		}
@@ -97,6 +98,24 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 				Source:   diag.SourceRef{File: agentsPath, Line: 1},
 			})
 		}
+		if !root.isBundle {
+			continue
+		}
+		consumed := make([]string, 0, 2)
+		if hookPath != "" {
+			consumed = append(consumed, hookPath)
+			if hookPath == "hooks" {
+				consumed = append(consumed, "hooks/hooks.json")
+			}
+		}
+		if mcpPath != "" {
+			consumed = append(consumed, mcpPath)
+		}
+		layout := "windsurf direct-root"
+		if root.base != "." {
+			layout = "windsurf workspace"
+		}
+		diags = append(diags, ingest.UnconsumedConfigs(root.fs, diag.CodeIngestWindsurfUnconsumedConfig, layout, consumed...)...)
 	}
 	if opts.LegacyHookInventory {
 		currentHooks = sortHooks(hooks)
@@ -180,28 +199,35 @@ func loadWorkflows(root workspaceRoot) (map[string]*ir.Command, []diag.Diagnosti
 	return resources, diags, nil
 }
 
-func loadHooksRoot(root workspaceRoot, opts LoadOptions) ([]*ir.Hook, []diag.Diagnostic, error) {
+func loadHooksRoot(root workspaceRoot, opts LoadOptions) ([]*ir.Hook, []diag.Diagnostic, string, error) {
 	var hooks []*ir.Hook
 	var diags []diag.Diagnostic
 	var err error
+	selected := path.Join(root.base, "hooks.json")
 	if opts.LegacyHookInventory {
-		hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks"), opts)
+		selected = path.Join(root.base, "hooks")
+		hooks, diags, err = loadHooksWithOptions(root.fs, selected, opts)
 		if errors.Is(err, fs.ErrNotExist) {
-			hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks.json"), opts)
+			selected = path.Join(root.base, "hooks.json")
+			hooks, diags, err = loadHooksWithOptions(root.fs, selected, opts)
 		}
 	} else {
-		hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks.json"), opts)
+		hooks, diags, err = loadHooksWithOptions(root.fs, selected, opts)
 		if errors.Is(err, fs.ErrNotExist) {
-			hooks, diags, err = loadHooksWithOptions(root.fs, path.Join(root.base, "hooks"), opts)
+			selected = path.Join(root.base, "hooks")
+			hooks, diags, err = loadHooksWithOptions(root.fs, selected, opts)
 		}
 	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, err
+		return nil, nil, selected, err
 	}
-	return hooks, diags, nil
+	if errors.Is(err, fs.ErrNotExist) {
+		selected = ""
+	}
+	return hooks, diags, selected, nil
 }
 
-func loadMcpRoot(root workspaceRoot) (map[string]*ir.McpServer, []diag.Diagnostic, error) {
+func loadMcpRoot(root workspaceRoot) (map[string]*ir.McpServer, []diag.Diagnostic, string, error) {
 	paths := []string{path.Join(root.base, "mcp_config.json")}
 	if root.base != "." {
 		// Backward compatibility for older Windsurf layouts where
@@ -215,15 +241,15 @@ func loadMcpRoot(root workspaceRoot) (map[string]*ir.McpServer, []diag.Diagnosti
 			if isNotExist(err) {
 				continue
 			}
-			return nil, nil, err
+			return nil, nil, file, err
 		}
 		resources := map[string]*ir.McpServer{}
 		for _, server := range servers {
 			resources[server.Name()] = server
 		}
-		return resources, diags, nil
+		return resources, diags, file, nil
 	}
-	return map[string]*ir.McpServer{}, nil, nil
+	return map[string]*ir.McpServer{}, nil, "", nil
 }
 
 func hasWorkspaceLayout(src fs.FS, base string) bool {

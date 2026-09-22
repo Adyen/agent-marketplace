@@ -42,6 +42,13 @@ const (
 
 // Warning codes.
 const (
+	CodeIngestClaudeUnconsumedConfig        = "ingest.claude.unconsumed-config"
+	CodeIngestFactoryUnconsumedConfig       = "ingest.factory.unconsumed-config"
+	CodeIngestCursorUnconsumedConfig        = "ingest.cursor.unconsumed-config"
+	CodeIngestGeminiUnconsumedConfig        = "ingest.gemini.unconsumed-config"
+	CodeIngestWindsurfUnconsumedConfig      = "ingest.windsurf.unconsumed-config"
+	CodeIngestDevinUnconsumedConfig         = "ingest.devin.unconsumed-config"
+	CodeIngestCodexUnconsumedConfig         = "ingest.codex.unconsumed-config"
 	CodeSubagentWindsurfNoPrimitive         = "subagent.windsurf.no-primitive"           // Windsurf has no subagent primitive
 	CodeHookClaudeUnsupportedType           = "hook.claude.unsupported-type"             // Claude hook with unsupported type (http/prompt/agent)
 	CodeHookFactoryNonCommandTypeDropped    = "hook.factory.non-command-type-dropped"    // Factory dropped non-command hook type

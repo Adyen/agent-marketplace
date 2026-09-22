@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -72,15 +73,89 @@ func TestSourceRevisionCompatibilityVectors(t *testing.T) {
 	}
 }
 
+func TestBareBundleMCPRevisionCompatibility(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "skills", "demo", "SKILL.md"), "---\nname: demo\ndescription: Demo\n---\nDemo\n")
+	writeFixture(t, filepath.Join(root, "commands", "hi.md"), "---\nname: hi\ndescription: Hi\n---\nHi\n")
+	writeFixture(t, filepath.Join(root, "mcp.json"), `{"mcpServers":{"probe":{"command":"npx","args":["-y","x"]}}}`)
+	var baseline map[string]string
+	for _, version := range []string{"v1", "v2", "v3", "v4"} {
+		built, err := Build(Input{SnapshotRoot: root, RevisionSchema: version})
+		if err != nil {
+			t.Fatalf("Build %s: %v", version, err)
+		}
+		if _, err := Verify(Input{SnapshotRoot: root}, built.Projection()); err != nil {
+			t.Fatalf("Verify %s: %v", version, err)
+		}
+		digests := map[string]string{}
+		hasMCP := false
+		for _, resource := range built.Manifest.Resources {
+			digests[resource.Kind+"/"+resource.Name] = resource.ContentDigest
+			if resource.Kind == "mcpserver" && resource.Name == "probe" {
+				hasMCP = true
+			}
+		}
+		if version == "v4" {
+			if !hasMCP {
+				t.Fatalf("v4 resources = %+v, want probe MCP", built.Manifest.Resources)
+			}
+		} else if hasMCP {
+			t.Fatalf("%s unexpectedly contains probe MCP: %+v", version, built.Manifest.Resources)
+		}
+		if digests["skill/demo"] == "" || digests["command/hi"] == "" {
+			t.Fatalf("%s resources = %+v, want exact demo skill and hi command", version, built.Manifest.Resources)
+		}
+		delete(digests, "mcpserver/probe")
+		if baseline == nil {
+			baseline = digests
+		} else if !maps.Equal(baseline, digests) {
+			t.Fatalf("%s skill/command digests changed: baseline=%v got=%v", version, baseline, digests)
+		}
+	}
+}
+
+func TestUnconsumedContainerRevisionCompatibility(t *testing.T) {
+	for _, version := range []string{"v1", "v2", "v3", "v4"} {
+		t.Run(version, func(t *testing.T) {
+			root := t.TempDir()
+			writeFixture(t, filepath.Join(root, "group", ".factory-plugin", "plugin.json"), `{"name":"group"}`)
+			writeFixture(t, filepath.Join(root, "group", "child", "skills", "demo", "SKILL.md"), "---\nname: demo\ndescription: Demo\n---\nDemo\n")
+
+			baseline, err := Build(Input{SnapshotRoot: root, RevisionSchema: version})
+			if err != nil {
+				t.Fatalf("Build baseline: %v", err)
+			}
+			if len(baseline.Manifest.Resources) != 1 || baseline.Manifest.Resources[0].Kind != "skill" || baseline.Manifest.Resources[0].Name != "demo" || baseline.Manifest.Resources[0].ContentDigest == "" {
+				t.Fatalf("baseline resources = %+v", baseline.Manifest.Resources)
+			}
+
+			writeFixture(t, filepath.Join(root, "group", ".mcp.json"), `{"mcpServers":{"foreign":{"command":"npx"}}}`)
+			built, err := Build(Input{SnapshotRoot: root, RevisionSchema: version})
+			if err != nil {
+				t.Fatalf("Build with audit-only config: %v", err)
+			}
+			if !bytes.Equal(baseline.Payload, built.Payload) {
+				t.Fatalf("audit-only config changed %s payload:\nbaseline: %s\nwith audit: %s", version, baseline.Payload, built.Payload)
+			}
+			if len(built.Manifest.Resources) != 1 || built.Manifest.Resources[0].Kind != "skill" || built.Manifest.Resources[0].Name != "demo" {
+				t.Fatalf("resources = %+v", built.Manifest.Resources)
+			}
+			if _, err := Verify(Input{SnapshotRoot: root}, baseline.Projection()); err != nil {
+				t.Fatalf("Verify baseline projection: %v", err)
+			}
+		})
+	}
+}
+
 func TestSourceRevisionRejectsUnknownVersionsAndMislabeledGenerators(t *testing.T) {
-	for _, version := range []string{"", "v0", "v4"} {
+	for _, version := range []string{"", "v0", "v999"} {
 		_, err := VerifyLockedGitRoot("not-opened", lockfile.GitRoot{RevisionSchema: version})
 		var coded *lockfile.Error
 		if !errors.As(err, &coded) || coded.Code != lockfile.CodeUnsupportedVersion {
 			t.Fatalf("verify %q: %v", version, err)
 		}
 	}
-	_, err := Build(Input{SnapshotRoot: "not-opened", RevisionSchema: "v4"})
+	_, err := Build(Input{SnapshotRoot: "not-opened", RevisionSchema: "v999"})
 	var coded *lockfile.Error
 	if !errors.As(err, &coded) || coded.Code != lockfile.CodeUnsupportedVersion {
 		t.Fatalf("build unknown version: %v", err)
@@ -107,8 +182,8 @@ func TestCurrentRevisionIncludesHookSupport(t *testing.T) {
 	if hook.Kind != "hook" || len(hook.SupportFiles) != 1 || hook.SupportFiles["check.sh"] == "" {
 		t.Fatalf("hook support projection = %+v", hook)
 	}
-	if built.Manifest.SchemaVersion != "v3" {
-		t.Fatalf("corrected hook support requires v3, got %q", built.Manifest.SchemaVersion)
+	if built.Manifest.SchemaVersion != "v4" {
+		t.Fatalf("current revision requires v4, got %q", built.Manifest.SchemaVersion)
 	}
 	writeFixture(t, filepath.Join(root, "hooks", "check.sh"), "echo changed\n")
 	changed, err := Build(Input{SnapshotRoot: root, SourceHarness: "claude"})

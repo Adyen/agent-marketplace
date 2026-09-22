@@ -688,6 +688,18 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	if err != nil {
 		return nil, 0, nil, err
 	}
+	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && mode.commitScope == nil
+	if canBootstrapMarketplace && hasMarketplaceLockRequiredError(ec.Errors) {
+		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		changed += bootstrapChanged
+		ec, configSnapshots, err = loadStableEffective(ctx, loadOptions)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+	}
 	consumed := make(map[string]int, len(stagedEdits))
 	for source, snapshot := range configSnapshots {
 		if !source.IsWritable() {
