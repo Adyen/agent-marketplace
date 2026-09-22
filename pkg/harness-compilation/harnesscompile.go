@@ -439,14 +439,8 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 }
 
 // compileBundleFromIR compiles all resources in an ingest.Bundle to the
-// target harness. It is the generalized N-to-N compilation path used by
-// Convert for all source harnesses.
-//
-// When srcFS is non-nil it also performs source-aware assembly: declared skill
-// support files and explicitly referenced hook/MCP assets are read from the
-// source filesystem and attached to the owning resource's artifacts so the
-// published bundle is complete. A nil srcFS keeps pure IR compilation
-// filesystem-free.
+// target harness with no source filesystem. It is a thin filesystem-free
+// wrapper that delegates to compileBundleFromIRWithFS with a nil srcFS.
 //
 // # Bundle error contract
 //
@@ -466,6 +460,14 @@ func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, e
 	return compileBundleFromIRWithFS(b, t, nil, opts...)
 }
 
+// compileBundleFromIRWithFS is the generalized N-to-N compilation path used
+// by Convert for all source harnesses.
+//
+// When srcFS is non-nil it also performs source-aware assembly: declared skill
+// support files and explicitly referenced hook/MCP assets are read from the
+// source filesystem and attached to the owning resource's artifacts so the
+// published bundle is complete. A nil srcFS keeps pure IR compilation
+// filesystem-free.
 func compileBundleFromIRWithFS(b *ingest.Bundle, t Target, srcFS fs.FS, opts ...Option) (*Result, error) {
 	cfg := &config{}
 	for _, o := range opts {
