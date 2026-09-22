@@ -63,7 +63,7 @@ func prepareBlockedOwnedRemoval(ctx context.Context, opts RemoveOptions, ec conf
 			return nil, fmt.Errorf("blocked resource cleanup requires exact registry input: %w", err)
 		}
 	}
-	ws, err := workspaceForRoots(opts.RepoRoot, "")
+	ws, err := removeWorkspace(opts)
 	if err != nil {
 		view.release()
 		return nil, err
@@ -112,7 +112,7 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	if err != nil {
 		return err
 	}
-	ws, err := workspaceForRoots(opts.RepoRoot, "")
+	ws, err := removeWorkspace(opts)
 	if err != nil {
 		return err
 	}
@@ -125,9 +125,9 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	}
 	var plan ownedCleanupCommitPlan
 	if p.target.Kind == ir.KindMcpServer {
-		plan, err = materialize.PrepareOwnedMCPRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved))
+		plan, err = materialize.PrepareOwnedMCPRemoval(p.ctx, ws.MaterializeRoot(), p.target, resolver.MaterializationWinners(after.Resolved))
 	} else {
-		plan, err = materialize.PrepareManagedLinkRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved), after.MaterializationModes)
+		plan, err = materialize.PrepareManagedLinkRemoval(p.ctx, ws.MaterializeRoot(), p.target, resolver.MaterializationWinners(after.Resolved), after.MaterializationModes)
 	}
 	if err != nil {
 		return err

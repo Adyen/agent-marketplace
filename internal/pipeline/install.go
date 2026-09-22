@@ -63,6 +63,7 @@ type InstallOptions struct {
 	PrepareDependencies InstallDependencyPreparer
 	bindRegistry        func(config.RegistryEntry) error
 	configStaging       *configStagingManager
+	workspace           *Workspace
 }
 
 // silentSyncOptsForInstall builds silentSync options from InstallOptions.
@@ -129,6 +130,11 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 	kind, hasKind := opts.Kind, opts.HasKind
 	repoRoot := opts.RepoRoot
+	workspace, err := workspaceForRoots(repoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	opts.workspace = &workspace
 	marketplaceInstallRequested := isMarketplaceInstall(opts) && !marketplaceEndpointRequested
 	if marketplaceInstallRequested {
 		prepared, err := PrepareMarketplaceInstall(ctx, opts)
@@ -236,6 +242,11 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	}
 
 	configDestination := configPath
+	workspace, err = workspaceForRoots(repoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	opts.workspace = &workspace
 	if opts.DependencyReconcile != nil && !marketplaceEndpointRequested {
 		opts.configStaging, err = newConfigStagingManager()
 		if err != nil {
@@ -617,11 +628,15 @@ func partitionInstalledNames(names []string, resources []resourceIdentity, resol
 }
 
 func syncAfterInstall(ctx context.Context, iopts InstallOptions, installed []resourceIdentity, opts ...silentSyncOpt) ([]error, error) {
-	ws, err := workspaceForRoots(iopts.RepoRoot, iopts.LocalConfigDir)
-	if err != nil {
-		return nil, err
+	ws := iopts.workspace
+	if ws == nil {
+		resolved, err := workspaceForRoots(iopts.RepoRoot, iopts.LocalConfigDir)
+		if err != nil {
+			return nil, err
+		}
+		ws = &resolved
 	}
-	warnings, err := silentSyncCollect(ctx, ws, opts...)
+	warnings, err := silentSyncCollect(ctx, *ws, opts...)
 	if err != nil {
 		return nil, err
 	}

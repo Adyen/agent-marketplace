@@ -106,6 +106,37 @@ func TestNewWorkspaceRejectsMissingLeafBeneathEscapingSymlink(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRejectsSymlinkRetargetBeforeResolve(t *testing.T) {
+	repoRoot := canonicalTempDir(t)
+	inside := filepath.Join(repoRoot, "inside")
+	outside := canonicalTempDir(t)
+	if err := os.MkdirAll(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(repoRoot, "local")
+	if err := os.Symlink(inside, link); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := NewWorkspace(repoRoot, link)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	result := Resolve(context.Background(), ResolveOptions{
+		Workspace:   ws,
+		CatalogMode: catalog.LoadModeInspect,
+	})
+	if !errors.Is(errors.Join(result.Errors...), ErrInvalidWorkspace) {
+		t.Fatalf("Resolve after symlink retarget = %v; want ErrInvalidWorkspace", result.Errors)
+	}
+}
+
 func TestNewWorkspaceAcceptsMissingNestedDirWithinRepository(t *testing.T) {
 	repoRoot := canonicalTempDir(t)
 	// Positive control: a not-yet-created nested local root under a real

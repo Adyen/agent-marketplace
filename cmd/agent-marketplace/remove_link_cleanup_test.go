@@ -97,6 +97,63 @@ func TestRemoveBlockedManagedSkillPreservesSiblings(t *testing.T) {
 	}
 }
 
+func TestRemoveBlockedManagedSkillFromNestedLocalUsesNestedMaterializationRoot(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	repo := filepath.Join(base, "repo")
+	nested := filepath.Join(repo, "sub")
+	for _, dir := range []string{home, repo, nested, filepath.Join(base, "tmp")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("TMPDIR", filepath.Join(base, "tmp"))
+	origin, working := createBareRepoWithWorkingClone(t, "nested-blocked-skills.git")
+	writeSkill(t, working, "remove", "REMOVE ORIGINAL", nil)
+	writeSkill(t, working, "keep", "KEEP ORIGINAL", nil)
+	commitAndPushAll(t, working, "seed skills")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n    default: true\n")
+	writeConfig(t, filepath.Join(nested, ".agents", "config.local.yaml"), "registries: []\n")
+	withWorkingDir(t, nested)
+	if out, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed nested sync: %v\n%s", err, out)
+	}
+	removePath := filepath.Join(nested, ".factory", "skills", "remove")
+	keepPath := filepath.Join(nested, ".factory", "skills", "keep")
+	if _, err := os.Lstat(removePath); err != nil {
+		t.Fatal(err)
+	}
+	keepTarget, err := os.Readlink(keepPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keepPath, "SKILL.md"), []byte("KEEP EDITED BY USER\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\nallowed_registries: []\n")
+	if out, err := executeCommand("remove", "remove", "--kind", "skill", "--from", origin, "--ref", "main"); err != nil {
+		t.Fatalf("blocked nested skill removal: %v\n%s", err, out)
+	}
+	if _, err := os.Lstat(removePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed nested skill link remains: %v", err)
+	}
+	if got, err := os.Readlink(keepPath); err != nil || got != keepTarget {
+		t.Fatalf("nested keep target = %q err=%v, want %q", got, err, keepTarget)
+	}
+	if got, err := os.ReadFile(filepath.Join(keepPath, "SKILL.md")); err != nil || string(got) != "KEEP EDITED BY USER\n" {
+		t.Fatalf("nested keep bytes = %q err=%v", got, err)
+	}
+}
+
 type managedSkillLinkFixture struct {
 	base, home, repo, origin, configPath, removePath, keepPath string
 }

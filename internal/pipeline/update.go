@@ -100,6 +100,10 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	}()
 
 	repoRoot := opts.RepoRoot
+	ws, err := workspaceForRoots(repoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
 	if len(ec.Errors) > 0 {
@@ -206,10 +210,6 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 	}
 
-	ws, err := workspaceForRoots(repoRoot, opts.LocalConfigDir)
-	if err != nil {
-		return nil, err
-	}
 	syncOpts := []silentSyncOpt{withConfigStaging(staging), withDependencyReconciler(func(ctx context.Context, repoRoot, localDir string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
 		ordered := make([]StagedLockEdit, 0, len(lockEditOrder))
 		for _, path := range lockEditOrder {
