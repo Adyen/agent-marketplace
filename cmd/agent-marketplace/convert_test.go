@@ -1092,12 +1092,16 @@ func TestConvertCommandToDevinSyncPrunesStaleOutput(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	srcDir := t.TempDir()
 	writeClaudePluginSkill(t, srcDir, "stale-skill")
+	writeClaudePluginSkill(t, srcDir, "kept-skill")
 	outDir := filepath.Join(t.TempDir(), "devin-out")
 	if output, err := executeCommand("convert", "--from", "claude", "--to", "devin", "--out", outDir, srcDir); err != nil {
 		t.Fatalf("initial Devin conversion: %v\\n%s", err, output)
 	}
 	stale := filepath.Join(outDir, "stale.txt")
 	writeFile(t, stale, "stale\\n")
+	// Conversion fails closed on a recognized source with zero resources, so
+	// stale pruning is exercised with a surviving skill keeping the source
+	// non-empty while stale-skill becomes stale.
 	if err := os.RemoveAll(filepath.Join(srcDir, "skills", "stale-skill")); err != nil {
 		t.Fatalf("remove source skill: %v", err)
 	}
@@ -1105,6 +1109,7 @@ func TestConvertCommandToDevinSyncPrunesStaleOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync Devin conversion: %v\\n%s", err, output)
 	}
+	assertFileExists(t, filepath.Join(outDir, "skills", "kept-skill", "SKILL.md"))
 	assertPathExistence(t, filepath.Join(outDir, "skills", "stale-skill", "SKILL.md"), false)
 	assertPathExistence(t, stale, false)
 }
