@@ -36,7 +36,9 @@ for (const version of ['latest', 'preview', release]) {
     await page.keyboard.press('Escape')
     await sidebar.getByRole('link', { name: 'Quick start', exact: true }).click()
     await expect(page).toHaveURL(new RegExp(`${prefix}quick-start$`))
-    await expect(page.locator('.vp-doc img')).toHaveCount(5)
+    // The preview tracks the unreleased quick start, which currently embeds
+    // two screenshots; released snapshots keep the original five.
+    await expect(page.locator('.vp-doc img')).toHaveCount(version === 'preview' ? 2 : 5)
     await expect.poll(() => page.locator('.vp-doc img').evaluateAll((images) => images.every((image) => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true)
     expect(errors).toEqual([])
   })
