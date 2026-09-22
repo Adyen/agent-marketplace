@@ -235,13 +235,15 @@ func decodeAdminMutation(r *http.Request) (admin.Mutation, error) {
 		return admin.Mutation{}, store.ErrManagedChangeInvalid
 	}
 	var body struct {
-		Action              string               `json:"action"`
-		RegistryID          store.RegistryID     `json:"registry_id"`
-		Registry            *admin.Registry      `json:"registry"`
-		LicensePolicy       *admin.LicensePolicy `json:"license_policy"`
-		Reason              string               `json:"reason"`
-		ConfirmOriginMove   bool                 `json:"confirm_origin_move"`
-		ConfirmUnrestricted bool                 `json:"confirm_unrestricted"`
+		Action                   string                    `json:"action"`
+		RegistryID               store.RegistryID          `json:"registry_id"`
+		Registry                 *admin.Registry           `json:"registry"`
+		LicensePolicy            *admin.LicensePolicy      `json:"license_policy"`
+		DistributionPolicy       *admin.DistributionPolicy `json:"distribution_policy"`
+		Reason                   string                    `json:"reason"`
+		ConfirmOriginMove        bool                      `json:"confirm_origin_move"`
+		ConfirmUnrestricted      bool                      `json:"confirm_unrestricted"`
+		ConfirmRejectedResources bool                      `json:"confirm_rejected_resources"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -251,7 +253,7 @@ func decodeAdminMutation(r *http.Request) (admin.Mutation, error) {
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return admin.Mutation{}, errAdminJSON
 	}
-	return admin.Mutation{Action: body.Action, RegistryID: body.RegistryID, Registry: body.Registry, LicensePolicy: body.LicensePolicy, Reason: body.Reason, ExpectedRevision: revision, ConfirmOriginMove: body.ConfirmOriginMove, ConfirmUnrestricted: body.ConfirmUnrestricted}, nil
+	return admin.Mutation{Action: body.Action, RegistryID: body.RegistryID, Registry: body.Registry, LicensePolicy: body.LicensePolicy, DistributionPolicy: body.DistributionPolicy, Reason: body.Reason, ExpectedRevision: revision, ConfirmOriginMove: body.ConfirmOriginMove, ConfirmUnrestricted: body.ConfirmUnrestricted, ConfirmRejectedResources: body.ConfirmRejectedResources}, nil
 }
 
 func writeAdminJSON(w http.ResponseWriter, r *http.Request, status int, value any) {

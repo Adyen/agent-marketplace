@@ -261,13 +261,23 @@ func (c *Client) GetResourceRevisionForRegistry(ctx context.Context, routeRegist
 }
 
 func (c *Client) getResourceRevision(ctx context.Context, routeRegistry, expectedRegistry, kind, name, revision string) (store.AssessedResourceRevision, error) {
+	var response struct {
+		store.AssessedResourceRevision
+		CurrentAvailability *struct {
+			Availability mpapi.Availability `json:"availability"`
+		} `json:"current_availability,omitempty"`
+	}
 	var rev store.AssessedResourceRevision
 	if err := validateSHA256Digest(revision); err != nil {
 		return rev, fmt.Errorf("revision digest %q: %w", revision, err)
 	}
 	segments := []string{"api", "v1", "resources", routeRegistry, kind, name, "revisions", revision}
-	if err := c.getJSON(ctx, c.requestURL(segments, nil), &rev); err != nil {
+	if err := c.getJSON(ctx, c.requestURL(segments, nil), &response); err != nil {
 		return rev, err
+	}
+	rev = response.AssessedResourceRevision
+	if response.CurrentAvailability != nil {
+		rev.EffectiveAvailability = string(response.CurrentAvailability.Availability)
 	}
 	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedRegistry, kind, name), store.RevisionDigest(revision)); err != nil {
 		return rev, fmt.Errorf("invalid Marketplace resource revision: %w", err)
@@ -395,10 +405,20 @@ func (c *Client) GetLatestResourceRevisionForRegistry(ctx context.Context, route
 }
 
 func (c *Client) getLatestResourceRevision(ctx context.Context, routeRegistry, expectedRegistry, kind, name string) (store.AssessedResourceRevision, error) {
+	var response struct {
+		store.AssessedResourceRevision
+		CurrentAvailability *struct {
+			Availability mpapi.Availability `json:"availability"`
+		} `json:"current_availability,omitempty"`
+	}
 	var rev store.AssessedResourceRevision
 	segments := []string{"api", "v1", "resources", routeRegistry, kind, name}
-	if err := c.getJSON(ctx, c.requestURL(segments, nil), &rev); err != nil {
+	if err := c.getJSON(ctx, c.requestURL(segments, nil), &response); err != nil {
 		return rev, err
+	}
+	rev = response.AssessedResourceRevision
+	if response.CurrentAvailability != nil {
+		rev.EffectiveAvailability = string(response.CurrentAvailability.Availability)
 	}
 	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedRegistry, kind, name), ""); err != nil {
 		return rev, fmt.Errorf("invalid Marketplace resource revision: %w", err)

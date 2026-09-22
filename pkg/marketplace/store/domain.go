@@ -426,9 +426,10 @@ func (o ResourceOccurrence) Equal(other ResourceOccurrence) bool {
 // AssessedResourceRevision is the current read projection for one immutable resource revision.
 type AssessedResourceRevision struct {
 	ResourceRevision
-	Assessment ResourceAssessment `json:"assessment"`
-	Occurrence ResourceOccurrence `json:"occurrence"`
-	Revocation *Revocation        `json:"revocation,omitempty"`
+	Assessment            ResourceAssessment `json:"assessment"`
+	Occurrence            ResourceOccurrence `json:"occurrence"`
+	Revocation            *Revocation        `json:"revocation,omitempty"`
+	EffectiveAvailability string             `json:"-"`
 }
 
 // RegistryOccurrence connects a registry revision manifest to an exact registry commit.

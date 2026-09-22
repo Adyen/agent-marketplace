@@ -71,6 +71,10 @@ function setOverride(event: Event) {
       </div>
     </section>
 
+    <AdminField id="rejected-resources" label="Rejected resource availability" description="Override whether rejected resources from this registry are downloadable and installable." :error="problem('rejected_resources')">
+      <select id="rejected-resources" v-model="registry.rejected_resources" :class="control"><option value="">Inherit global policy</option><option value="block">Block</option><option value="expose">Expose as operator-approved</option></select>
+    </AdminField>
+
     <section class="space-y-3 rounded-lg border p-4" :class="problem('license_override') ? 'border-error/60' : 'border-default'" aria-labelledby="override-heading">
       <label id="override-heading" class="flex items-center gap-2 text-sm font-semibold text-highlighted"><input type="checkbox" :checked="!!registry.license_override" class="size-4 accent-[var(--ui-primary)]" @change="setOverride">Override the inherited license policy for this registry</label>
       <AdminPolicyFields v-if="registry.license_override" v-model="registry.license_override" prefix="override" override :error="problem('license_override')" />

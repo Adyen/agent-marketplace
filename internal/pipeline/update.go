@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -377,6 +378,9 @@ func validateMarketplaceUpdateArtifact(plan *marketplace.PreparedInstall) error 
 	case store.AssessmentDecisionAllow, store.AssessmentDecisionWarn:
 		return nil
 	case store.AssessmentDecisionReject:
+		if plan.Revision.EffectiveAvailability == string(mpapi.AvailabilityOperatorExposed) {
+			return nil
+		}
 		return fmt.Errorf("latest revision is rejected by policy")
 	default:
 		return fmt.Errorf("latest revision has unknown assessment decision %q", marketplace.QuoteTerminal(string(plan.Revision.Assessment.Decision)))

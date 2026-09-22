@@ -159,7 +159,7 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
   }
 }
 
-const LIST_AVAILABILITIES = ['available', 'blocked', 'policy-blocked', 'no-artifact', 'revoked'] as const
+const LIST_AVAILABILITIES = ['available', 'blocked', 'policy-blocked', 'operator-exposed', 'no-artifact', 'revoked'] as const
 
 /**
  * Keep only an availability value this client understands. A value a newer
@@ -248,6 +248,8 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     manifest_digest: requiredDigest(occurrenceObject.manifest_digest, 'occurrence.manifest_digest'),
   }
 
+  const currentAvailabilityObject = object.current_availability === undefined ? undefined : asObject(object.current_availability, 'current_availability')
+  const currentAvailability = currentAvailabilityObject === undefined ? undefined : normalizeListAvailability(currentAvailabilityObject.availability, 'current_availability.availability')
   const revocationObject = object.revocation === undefined ? undefined : asObject(object.revocation, 'revocation')
   const revocationKind = revocationObject === undefined ? undefined : requiredString(revocationObject.kind, 'revocation.kind')
   if (revocationKind !== undefined && !['registry', 'coordinate', 'revision'].includes(revocationKind)) throw new ApiValidationError('revocation.kind is unsupported')
@@ -259,6 +261,7 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     ...optionalString(object, 'description'),
     assessment,
     occurrence,
+    ...(currentAvailability === undefined ? {} : { current_availability: { availability: currentAvailability } }),
     ...(revocationObject === undefined ? {} : { revocation: {
       kind: revocationKind as NonNullable<ResourceRevision['revocation']>['kind'],
       target_id: requiredString(revocationObject.target_id, 'revocation.target_id'),

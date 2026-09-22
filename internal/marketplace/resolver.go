@@ -306,7 +306,7 @@ func marketplacePinRequired(source config.Source) bool {
 }
 
 func enforceMarketplaceAssessment(rev store.AssessedResourceRevision) error {
-	if rev.Assessment.Decision == store.AssessmentDecisionReject {
+	if rev.Assessment.Decision == store.AssessmentDecisionReject && rev.EffectiveAvailability != string(mpapi.AvailabilityOperatorExposed) {
 		return fmt.Errorf("assessment rejected revision")
 	}
 	return nil

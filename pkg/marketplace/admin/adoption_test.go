@@ -37,6 +37,8 @@ func adoptionFixture(t testing.TB) (*sqlite.Store, config.Config, Deployment) {
 func TestAdoptionPreservesIdentityAndStoresOnlyProfiles(t *testing.T) {
 	ctx := context.Background()
 	meta, cfg, deployment := adoptionFixture(t)
+	cfg.Policy.RejectedResources = config.RejectedResourcesExpose
+	cfg.Registries[0].PolicyOverrides["rejected_resources"] = config.RejectedResourcesBlock
 	existing := store.Registry{ID: "registry", Slug: "old-slug", Aliases: []string{"older-slug"}, Origins: []string{"https://git.example.test/old.git"}, Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}
 	if err := meta.PutRegistry(ctx, existing); err != nil {
 		t.Fatal(err)
@@ -57,6 +59,12 @@ func TestAdoptionPreservesIdentityAndStoresOnlyProfiles(t *testing.T) {
 	r := snapshot.Registries[0]
 	if r.ID != "registry" || r.ProfileID != "engineering-readonly" || r.Generation != 1 || r.Lifecycle != "active" || r.NonLicenseOverrides["hidden_content"] != "reject" {
 		t.Fatalf("lost managed settings: %+v", r)
+	}
+	if snapshot.DistributionPolicy.RejectedResources != config.RejectedResourcesExpose || r.RejectedResources != config.RejectedResourcesBlock {
+		t.Fatalf("lost rejected-resource policy: snapshot=%+v registry=%+v", snapshot.DistributionPolicy, r)
+	}
+	if _, leaked := r.NonLicenseOverrides["rejected_resources"]; leaked {
+		t.Fatal("typed rejected-resource policy leaked into non-license overrides")
 	}
 	if strings.Join(r.Aliases, ",") != "old-slug,older-slug" || strings.Join(r.HistoricalOrigins, ",") != "https://git.example.test/old.git" {
 		t.Fatalf("lost identity history: %+v", r)

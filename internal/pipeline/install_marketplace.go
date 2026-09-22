@@ -19,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 // MarketplaceConsentError carries the verified preview even when consent
@@ -394,6 +395,9 @@ func marketplaceInstallSummary(plan *marketplace.PreparedInstall) MarketplaceIns
 			capabilities[capability] = struct{}{}
 		}
 		for _, finding := range current.Revision.Assessment.Findings {
+			if current.Revision.EffectiveAvailability == string(mpapi.AvailabilityOperatorExposed) && finding.Policy == "reject" {
+				continue
+			}
 			message := nonEmpty(finding.Message, finding.Code)
 			findings[MarketplaceInstallFinding{Resource: current.Pin.Name, Severity: finding.Severity, Message: message}] = struct{}{}
 		}
@@ -732,6 +736,9 @@ func validateMarketplacePreviewConsentRecursive(preview marketplace.InstallPrevi
 		case "allow", "warn":
 			continue
 		case "reject":
+			if preview.OperatorExposed {
+				continue
+			}
 			return fmt.Errorf("marketplace revision is rejected by policy (%s: %s); --accept-risk cannot bypass policy rejection", marketplace.QuoteTerminal(finding.Code), marketplace.QuoteTerminal(finding.Message))
 		default:
 			return fmt.Errorf("marketplace finding %s has unknown policy outcome %q; refusing to continue", marketplace.QuoteTerminal(finding.Code), marketplace.QuoteTerminal(finding.PolicyOutcome))

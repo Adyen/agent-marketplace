@@ -55,9 +55,10 @@ type CatalogProjectionResource struct {
 type CatalogAvailability string
 
 const (
-	CatalogAvailabilityAvailable CatalogAvailability = "available"
-	CatalogAvailabilityBlocked   CatalogAvailability = "blocked"
-	CatalogAvailabilityRevoked   CatalogAvailability = "revoked"
+	CatalogAvailabilityAvailable       CatalogAvailability = "available"
+	CatalogAvailabilityOperatorExposed CatalogAvailability = "operator-exposed"
+	CatalogAvailabilityBlocked         CatalogAvailability = "blocked"
+	CatalogAvailabilityRevoked         CatalogAvailability = "revoked"
 )
 
 // CatalogProjectionPage is a moving, stateless scan page. CatalogVersion

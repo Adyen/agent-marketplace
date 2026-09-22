@@ -187,6 +187,37 @@ func TestManagedPublicRouteAvailability(t *testing.T) {
 	}
 }
 
+func TestManagedOperatorExposedRoutesRemainInstallable(t *testing.T) {
+	server, meta, snapshot, handler, paths := managedRouteFixture(t)
+	blobs := &countingBlobStore{BlobStore: server.blobs}
+	server.blobs = blobs
+	meta.rev.Assessment.Decision = store.AssessmentDecisionReject
+	meta.rev.Assessment.AssessmentDigest = ""
+	var err error
+	meta.rev.Assessment, err = store.FinalizeResourceAssessment(meta.rev.Assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta.owners[0] = meta.rev
+	snapshot.DistributionPolicy.RejectedResources = config.RejectedResourcesExpose
+	meta.change.Snapshot, _ = json.Marshal(snapshot)
+	search := httptest.NewRecorder()
+	handler.ServeHTTP(search, httptest.NewRequest("GET", "/api/v1/search", nil))
+	if search.Code != http.StatusOK || !strings.Contains(search.Body.String(), `"availability":"operator-exposed"`) {
+		t.Fatalf("search = %d %s", search.Code, search.Body.String())
+	}
+	for _, path := range paths {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", path, response.Code, response.Body.String())
+		}
+	}
+	if blobs.gets == 0 {
+		t.Fatal("operator-exposed content did not read blob storage")
+	}
+}
+
 func TestManagedSharedDigestOwnersConservative(t *testing.T) {
 	_, meta, snapshot, handler, paths := managedRouteFixture(t)
 	other := meta.rev

@@ -33,6 +33,7 @@ const (
 	defaultRefreshInterval    = 30 * time.Minute
 	defaultHiddenContent      = "warn"
 	defaultLicenseUndeclared  = LicenseUndeclaredReject
+	defaultRejectedResources  = RejectedResourcesBlock
 	defaultAcquisitionDefault = "mirror"
 	defaultRepositoryBytes    = 100 * 1024 * 1024
 	defaultFileCount          = 1024
@@ -59,6 +60,9 @@ const (
 	LicenseUndeclaredWarn = "warn"
 	// LicenseUndeclaredAllow accepts such a resource silently.
 	LicenseUndeclaredAllow = "allow"
+
+	RejectedResourcesBlock  = "block"
+	RejectedResourcesExpose = "expose"
 )
 
 var (
@@ -69,6 +73,7 @@ var (
 	// validLicenseUndeclared is an ordered slice, not a map, so the accepted
 	// values appear in a stable, least-to-most permissive order in errors.
 	validLicenseUndeclared = []string{LicenseUndeclaredReject, LicenseUndeclaredWarn, LicenseUndeclaredAllow}
+	validRejectedResources = []string{RejectedResourcesBlock, RejectedResourcesExpose}
 	validSourceHarnesses   = map[string]bool{
 		"":         true,
 		"factory":  true,
@@ -222,6 +227,7 @@ type Policy struct {
 	// reject (default), warn, or allow. It has no effect when no allowlist is
 	// configured, because license policy is not enforced at all then.
 	LicenseUndeclared string `yaml:"license_undeclared"`
+	RejectedResources string `yaml:"rejected_resources"`
 	Limits            Limits `yaml:"limits"`
 }
 
@@ -245,6 +251,25 @@ func ResolveUndeclaredLicenseOutcome(value string) string {
 		return value
 	}
 	return LicenseUndeclaredReject
+}
+
+func (p Policy) RejectedResourcesOutcome() string {
+	return ResolveRejectedResourcesOutcome(p.RejectedResources)
+}
+
+func ResolveRejectedResourcesOutcome(value string) string {
+	if slices.Contains(validRejectedResources, value) {
+		return value
+	}
+	return RejectedResourcesBlock
+}
+
+func (r Registry) RejectedResourcesOutcome(policy Policy) string {
+	value, ok := r.PolicyOverrides["rejected_resources"].(string)
+	if !ok || value == "" {
+		return policy.RejectedResourcesOutcome()
+	}
+	return ResolveRejectedResourcesOutcome(value)
 }
 
 // Limits are resource and timing bounds enforced by the worker.
@@ -356,6 +381,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Policy.LicenseUndeclared == "" {
 		cfg.Policy.LicenseUndeclared = defaultLicenseUndeclared
+	}
+	if cfg.Policy.RejectedResources == "" {
+		cfg.Policy.RejectedResources = defaultRejectedResources
 	}
 	if cfg.Policy.Limits.RepositoryBytes == 0 {
 		cfg.Policy.Limits.RepositoryBytes = defaultRepositoryBytes
@@ -625,6 +653,10 @@ func (p Policy) Validate() []error {
 		errs = append(errs, fmt.Errorf("policy.license_undeclared %q must be one of %v (unset means %q)",
 			p.LicenseUndeclared, validLicenseUndeclared, LicenseUndeclaredReject))
 	}
+	if p.RejectedResources != "" && !slices.Contains(validRejectedResources, p.RejectedResources) {
+		errs = append(errs, fmt.Errorf("policy.rejected_resources %q must be one of %v (unset means %q)",
+			p.RejectedResources, validRejectedResources, RejectedResourcesBlock))
+	}
 	if p.Limits.RepositoryBytes <= 0 {
 		errs = append(errs, errors.New("policy.limits.repository_bytes must be positive"))
 	}
@@ -695,6 +727,12 @@ func validateRegistry(idx int, src Registry, policy Policy) []error {
 	}
 	if src.License != "" && len(policy.LicenseAllowlist) > 0 && !slices.Contains(policy.LicenseAllowlist, src.License) {
 		errs = append(errs, fmt.Errorf("registries[%d].license %q is not in policy.license_allowlist", idx, src.License))
+	}
+	if value, exists := src.PolicyOverrides["rejected_resources"]; exists {
+		mode, ok := value.(string)
+		if !ok || !slices.Contains(validRejectedResources, mode) {
+			errs = append(errs, fmt.Errorf("registries[%d].policy_overrides.rejected_resources must be one of %v", idx, validRejectedResources))
+		}
 	}
 	errs = append(errs, validateCredentials(idx, src.Credentials)...)
 	return errs

@@ -166,7 +166,7 @@ export function assessmentFindings(findings: readonly unknown[] | undefined): Fi
   return (findings ?? []).map(findingDetails)
 }
 
-export type ResourceAvailability = 'available' | 'revoked' | 'policy-blocked' | 'no-artifact'
+export type ResourceAvailability = 'available' | 'operator-exposed' | 'revoked' | 'policy-blocked' | 'no-artifact'
 
 export type ResourceAvailabilityCopy = {
   /** Text that states the revision's install status. */
@@ -182,6 +182,12 @@ export const RESOURCE_AVAILABILITY: Record<ResourceAvailability, ResourceAvailab
   'available': {
     label: 'Available',
     color: 'success',
+    installable: true,
+    installNotice: '',
+  },
+  'operator-exposed': {
+    label: 'Operator-exposed rejection',
+    color: 'warning',
     installable: true,
     installNotice: '',
   },
@@ -205,7 +211,7 @@ export const RESOURCE_AVAILABILITY: Record<ResourceAvailability, ResourceAvailab
   },
 }
 
-type RevisionAvailabilityFields = Pick<ResourceRevision, 'archive_digest' | 'assessment' | 'revocation'>
+type RevisionAvailabilityFields = Pick<ResourceRevision, 'archive_digest' | 'assessment' | 'revocation' | 'current_availability'>
 
 /** True when the Marketplace has marked this exact revision as revoked. */
 export function isRevoked(revision: Pick<ResourceRevision, 'revocation'>): boolean {
@@ -218,7 +224,8 @@ export function isRevoked(revision: Pick<ResourceRevision, 'revocation'>): boole
  * they never override the assessment decision.
  */
 export function resourceAvailability(revision: RevisionAvailabilityFields, acquisition?: string, kind?: ResourceKind): ResourceAvailability {
-  if (isRevoked(revision)) return 'revoked'
+  if (isRevoked(revision) || revision.current_availability?.availability === 'revoked') return 'revoked'
+  if (revision.current_availability?.availability === 'operator-exposed') return 'operator-exposed'
   if (revision.assessment.decision === 'reject') return 'policy-blocked'
   if (!revision.archive_digest && acquisition !== 'index-only' && kind !== 'collection') return 'no-artifact'
   return 'available'
@@ -238,6 +245,7 @@ export type ListAvailability = NonNullable<ResourceListItem['availability']>
 
 const LIST_AVAILABILITY: Record<ListAvailability, ResourceAvailabilityCopy> = {
   available: RESOURCE_AVAILABILITY.available,
+  'operator-exposed': RESOURCE_AVAILABILITY['operator-exposed'],
   revoked: {
     ...RESOURCE_AVAILABILITY.revoked,
     label: 'Not available',

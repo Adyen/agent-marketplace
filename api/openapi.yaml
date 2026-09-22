@@ -1007,6 +1007,11 @@ components:
           nullable: true
           items: { type: string }
         undeclared: { type: string, enum: [reject, warn, allow, ''] }
+    AdminDistributionPolicy:
+      type: object
+      required: [rejected_resources]
+      properties:
+        rejected_resources: { type: string, enum: [block, expose] }
     AdminRegistry:
       type: object
       required: [id, slug, aliases, origin, historical_origins, ref, roots, acquisition, publisher, license, generation, lifecycle, paused, withdrawn, retired]
@@ -1044,6 +1049,7 @@ components:
         license: { type: string }
         profile_id: { type: string }
         license_override: { $ref: '#/components/schemas/AdminLicensePolicy' }
+        rejected_resources: { type: string, enum: [block, expose, ''], description: Empty means inherit the global policy. }
         non_license_overrides:
           type: object
           additionalProperties: true
@@ -1051,11 +1057,12 @@ components:
         lifecycle: { type: string }
     AdminSnapshot:
       type: object
-      required: [version, policy_revision, license_policy, registries, source_fingerprint]
+      required: [version, policy_revision, license_policy, distribution_policy, registries, source_fingerprint]
       properties:
         version: { type: integer }
         policy_revision: { type: integer, format: int64 }
         license_policy: { $ref: '#/components/schemas/AdminLicensePolicy' }
+        distribution_policy: { $ref: '#/components/schemas/AdminDistributionPolicy' }
         registries:
           type: array
           items: { $ref: '#/components/schemas/AdminRegistry' }
@@ -1102,9 +1109,11 @@ components:
         registry_id: { type: string }
         registry: { $ref: '#/components/schemas/AdminRegistry' }
         license_policy: { $ref: '#/components/schemas/AdminLicensePolicy' }
+        distribution_policy: { $ref: '#/components/schemas/AdminDistributionPolicy' }
         reason: { type: string }
         confirm_origin_move: { type: boolean }
         confirm_unrestricted: { type: boolean }
+        confirm_rejected_resources: { type: boolean }
     AdminChange:
       type: object
       required: [marketplace_id, revision, parent_revision, actor, operation, reason, request_id, idempotency_key, request_digest, snapshot, job_ids, created_at]
@@ -1547,6 +1556,7 @@ components:
             - available
             - blocked
             - policy-blocked
+            - operator-exposed
             - no-artifact
             - revoked
           description: >-
@@ -1595,6 +1605,12 @@ components:
           $ref: "#/components/schemas/ResourceOccurrence"
         revocation:
           $ref: "#/components/schemas/Revocation"
+        current_availability:
+          type: object
+          additionalProperties: true
+          required: [availability]
+          properties:
+            availability: { type: string, enum: [available, blocked, policy-blocked, operator-exposed, no-artifact, revoked] }
 
     ResourceAssessment:
       type: object
@@ -1760,8 +1776,8 @@ components:
           type: string
         availability:
           type: string
-          enum: [available, blocked, revoked]
-          description: Blocked and revoked rows remain catalog-visible so consumers can distinguish them from removed resources.
+          enum: [available, operator-exposed, blocked, revoked]
+          description: Operator-exposed rows are installable with a retained rejection; blocked and revoked rows remain visible.
         source:
           $ref: "#/components/schemas/CatalogSource"
         collection:

@@ -17,6 +17,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -27,6 +28,18 @@ func TestResolverRejectsCachedBroadRevocationWithoutOverride(t *testing.T) {
 	}, "src"), nil)
 	if err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("broad cached revocation error = %v, want revoked error", err)
+	}
+}
+
+func TestOperatorExposedAssessmentIsUsable(t *testing.T) {
+	rev := rejectedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64))})
+	rev.EffectiveAvailability = string(mpapi.AvailabilityOperatorExposed)
+	if err := enforceMarketplaceAssessment(rev); err != nil {
+		t.Fatalf("operator-exposed assessment rejected: %v", err)
+	}
+	rev.EffectiveAvailability = "unknown"
+	if err := enforceMarketplaceAssessment(rev); err == nil {
+		t.Fatal("unknown availability bypassed rejection")
 	}
 }
 

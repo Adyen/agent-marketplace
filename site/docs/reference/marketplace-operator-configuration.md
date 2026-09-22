@@ -35,6 +35,7 @@ policy:
   hidden_content: warn
   license_allowlist: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause]
   license_undeclared: reject
+  rejected_resources: block
   limits:
     repository_bytes: 104857600
     file_count: 1024
@@ -145,6 +146,7 @@ Exactly one of `dsn`, `dsn_env`, and `dsn_file` must resolve to a usable value. 
 | `hidden_content` | string | no | `warn` | `reject` or `warn`. Controls the outcome for hidden repository content. |
 | `license_allowlist` | list of SPDX-like strings | no | `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause` | Allowed declared licenses. An empty list disables license enforcement. |
 | `license_undeclared` | string | no | `reject` | `reject`, `warn`, or `allow` when the allowlist is non-empty and a resource declares no license. |
+| `rejected_resources` | string | no | `block` | `block` withholds rejected revisions; `expose` serves them as `operator-exposed` while preserving their reject assessment. Revocations and integrity failures remain non-bypassable. |
 | `limits` | mapping | no | values below | Positive acquisition and ingestion bounds. |
 
 ### `policy.limits`
@@ -209,12 +211,13 @@ A token requires a non-empty `file` or `env` reference. `ssh_key` and `token` ar
 
 ### `registries[].policy_overrides`
 
-Registry overrides accept the same `hidden_content`, `license_allowlist`, `license_undeclared`, and nested `limits` shapes as the global policy. Recognized values replace the corresponding global value for that registry. Missing, malformed, and unrecognized values retain the global value.
+Registry overrides accept `hidden_content`, `license_allowlist`, `license_undeclared`, `rejected_resources`, and nested `limits`. `rejected_resources` must be `block` or `expose`; malformed values reject the configuration rather than enabling exposure. Missing values inherit the global policy.
 
 ```yaml
 policy_overrides:
   hidden_content: reject
   license_undeclared: warn
+  rejected_resources: expose
   limits:
     repository_bytes: 52428800
 ```

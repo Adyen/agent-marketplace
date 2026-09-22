@@ -33,14 +33,15 @@ const steps = [{ id: 'edit', label: 'Edit' }, { id: 'review', label: 'Review' },
 const stepIndex = computed(() => steps.findIndex(step => step.id === stage.value))
 const changed = computed(() => !accepted.value)
 const originalRegistry = computed(() => baseline.value.snapshot.registries.find(value => value.id === props.initial.registry?.id))
-const before = computed(() => draft.value.action === 'set_policy' ? baseline.value.snapshot.license_policy : draft.value.action === 'upsert_registry' ? originalRegistry.value : { lifecycle: baseline.value.snapshot.registries.find(value => value.id === draft.value.registry_id)?.lifecycle })
-const after = computed(() => draft.value.license_policy || draft.value.registry || { action: draft.value.action })
+const before = computed(() => draft.value.action === 'set_policy' ? { license_policy: baseline.value.snapshot.license_policy, distribution_policy: baseline.value.snapshot.distribution_policy } : draft.value.action === 'upsert_registry' ? originalRegistry.value : { lifecycle: baseline.value.snapshot.registries.find(value => value.id === draft.value.registry_id)?.lifecycle })
+const after = computed(() => draft.value.action === 'set_policy' ? { license_policy: draft.value.license_policy, distribution_policy: draft.value.distribution_policy } : draft.value.registry || { action: draft.value.action })
 const diff = computed(() => adminDiff(before.value, after.value))
 const lifecycle = computed(() => lifecycleActions.find(value => value.action === draft.value.action))
 const destructive = computed(() => destructiveLifecycleActions.has(draft.value.action))
 const originMove = computed(() => !!originalRegistry.value && originalRegistry.value.origin !== draft.value.registry?.origin)
-const unrestricted = computed(() => draft.value.action === 'set_policy' && !draft.value.license_policy?.allowlist?.length)
-const title = computed(() => lifecycle.value?.label || (draft.value.action === 'set_policy' ? 'Edit license policy' : originalRegistry.value ? `Edit ${originalRegistry.value.slug}` : 'Add registry'))
+const unrestricted = computed(() => draft.value.action === 'set_policy' && !!draft.value.license_policy && !draft.value.license_policy.allowlist?.length)
+const exposesRejected = computed(() => draft.value.distribution_policy?.rejected_resources === 'expose' && baseline.value.snapshot.distribution_policy.rejected_resources !== 'expose')
+const title = computed(() => lifecycle.value?.label || (draft.value.action === 'set_policy' ? 'Edit Marketplace policies' : originalRegistry.value ? `Edit ${originalRegistry.value.slug}` : 'Add registry'))
 const blocked = computed(() => error.value && ['unauthenticated', 'forbidden', 'revision_conflict', 'idempotency_conflict', 'network_error', 'invalid_response'].includes(error.value.code))
 const errorTitle = computed(() => ({ unauthenticated: 'Your session expired', forbidden: 'Not authorized', revision_conflict: 'Configuration changed while you were editing', idempotency_conflict: 'This request was already submitted', network_error: 'The request outcome is unknown', invalid_response: 'Unexpected response', invalid_configuration: Object.keys(error.value?.fields || {}).length ? 'Please fix the highlighted problems' : 'The change was rejected' } as Record<string, string>)[error.value?.code || ''] || 'The request could not be completed')
 
@@ -146,9 +147,11 @@ onBeforeRouteUpdate(canLeave)
             <AdminRegistryFields v-if="draft.registry" v-model="draft.registry" :profiles="profiles" :existing="!!originalRegistry" :errors="error?.fields" />
             <AdminPreviewPanel v-if="draft.registry" v-model="previewState" :registry="draft.registry" :revision="baseline.revision" :disabled="busy || !!blocked" @rejected="captureError" />
             <AdminPolicyFields v-if="draft.license_policy" v-model="draft.license_policy" prefix="global" :error="error?.fields?.license_policy" />
-            <div v-if="originMove || unrestricted" class="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4 text-sm">
+            <AdminField v-if="draft.distribution_policy" id="global-rejected-resources" label="Rejected resources" description="Controls distribution while preserving reject assessments." :error="error?.fields?.['distribution_policy.rejected_resources']"><select id="global-rejected-resources" v-model="draft.distribution_policy.rejected_resources" class="w-full rounded-md border border-default bg-default px-2.5 py-1.5 text-sm text-highlighted"><option value="block">Block publication</option><option value="expose">Expose as operator-approved</option></select></AdminField>
+            <div v-if="originMove || unrestricted || exposesRejected" class="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4 text-sm">
               <label v-if="originMove" class="flex items-start gap-2"><input v-model="draft.confirm_origin_move" type="checkbox" required class="mt-1 size-4 accent-[var(--ui-primary)]"><span>I confirm the origin move for the same immutable registry identity.</span></label>
               <label v-if="unrestricted" class="flex items-start gap-2"><input v-model="draft.confirm_unrestricted" type="checkbox" required class="mt-1 size-4 accent-[var(--ui-primary)]"><span>I understand that an empty global allowlist disables license enforcement.</span></label>
+              <label v-if="exposesRejected" class="flex items-start gap-2"><input v-model="draft.confirm_rejected_resources" type="checkbox" required class="mt-1 size-4 accent-[var(--ui-primary)]"><span>I understand that rejected resources from every inheriting registry may become downloadable and installable. Revoked resources remain blocked.</span></label>
             </div>
             <AdminField id="change-reason" label="Reason for change" required description="Recorded in the activity log with your identity." :error="error?.fields.reason">
               <UTextarea id="change-reason" v-model="draft.reason" required :maxlength="1024" :rows="3" autoresize placeholder="Why is this change needed?" class="w-full" :aria-invalid="!!error?.fields.reason" :aria-describedby="error?.fields.reason ? 'change-reason-help' : undefined" />
@@ -187,7 +190,7 @@ onBeforeRouteUpdate(canLeave)
       <template v-else-if="accepted">
         <div class="flex items-start gap-3 rounded-lg border border-success/40 bg-success/5 p-4">
           <UIcon name="i-lucide-circle-check" class="mt-0.5 size-5 shrink-0 text-success" aria-hidden="true" />
-          <div class="space-y-1 text-sm"><p role="status" class="font-semibold text-highlighted">Change accepted as revision {{ accepted.revision }}</p><p class="flex flex-wrap items-center gap-1 text-toned">Indexing work has been queued. Acceptance does not mean indexing succeeded.<AdminHint text="Watch the job status below or the registry's Indexing history for the actual outcome." /></p><AdminIdChip label="Request" :value="accepted.request_id" /></div>
+          <div class="space-y-1 text-sm"><p role="status" class="font-semibold text-highlighted">Change accepted as revision {{ accepted.revision }}</p><p v-if="accepted.job_ids?.length" class="flex flex-wrap items-center gap-1 text-toned">Indexing work has been queued. Acceptance does not mean indexing succeeded.<AdminHint text="Watch the job status below or the registry's Indexing history for the actual outcome." /></p><p v-else class="text-toned">The policy change is effective immediately; no reindex was queued.</p><AdminIdChip label="Request" :value="accepted.request_id" /></div>
         </div>
         <AdminJobs :ids="accepted.job_ids || []" observe />
         <div class="border-t border-default pt-5"><UButton color="neutral" variant="outline" @click="cancel">Close</UButton></div>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -16,7 +17,7 @@ func BenchmarkManagedAvailability(b *testing.B) {
 	b.Run("legacy-decision", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			if resourceAvailability(rev, store.Registry{Acquisition: store.AcquisitionMirror}) != AvailabilityAvailable {
+			if resourceAvailability(rev, store.Registry{Acquisition: store.AcquisitionMirror}, config.RejectedResourcesBlock) != AvailabilityAvailable {
 				b.Fatal("not available")
 			}
 		}
