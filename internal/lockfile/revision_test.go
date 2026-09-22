@@ -7,11 +7,11 @@ import (
 )
 
 func TestRevisionSchemaDispatchAtDecodeBoundary(t *testing.T) {
-	for _, version := range []string{"v1", "v2", "v99"} {
+	for _, version := range []string{"v1", "v2", "v3", "v4", "v999"} {
 		t.Run(version, func(t *testing.T) {
 			payload := fmt.Sprintf("apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries:\n- url: https://example.com/repo\n  ref: main\n  commit: sha1:0123456789abcdef0123456789abcdef01234567\n  roots:\n  - path: .\n    source_harness: claude\n    revision_schema: %s\n    revision_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", version)
 			doc, err := Decode([]byte(payload))
-			if version == "v99" {
+			if version == "v999" {
 				var coded *Error
 				if !errors.As(err, &coded) || coded.Code != CodeUnsupportedVersion {
 					t.Fatalf("unknown generator: %v", err)

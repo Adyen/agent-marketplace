@@ -252,6 +252,13 @@ func loadBundle(src fs.FS, paths roots, synthesizedManifest bool) (*ingest.Bundl
 		})
 	}
 
+	layout := "cursor bare-plugin"
+	if synthesizedManifest {
+		layout = "cursor workspace"
+	} else if _, err := fs.Stat(src, cursorPluginManifest); err == nil {
+		layout = "cursor plugin"
+	}
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestCursorUnconsumedConfig, layout, paths.hooks, paths.mcp)...)
 	return &ingest.Bundle{
 		Manifest:    manifest,
 		Resources:   resources,

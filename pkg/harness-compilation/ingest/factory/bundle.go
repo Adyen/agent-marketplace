@@ -53,6 +53,7 @@ func (l *Loader) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 
 	var resources []ir.Resource
 	var diags []diag.Diagnostic
+	var consumed []string
 
 	seenSkills := map[string]bool{}
 	seenCommands := map[string]bool{}
@@ -60,6 +61,7 @@ func (l *Loader) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 	seenRules := map[string]bool{}
 
 	if hasPlugin || hasBare {
+		consumed = append(consumed, "hooks/hooks.json", "mcp.json")
 		added, addedDiags, err := loadSkillsFromRoot(src, "skills", skillMeta, seenSkills)
 		if err != nil {
 			return nil, err
@@ -130,6 +132,7 @@ func (l *Loader) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 		diags = append(diags, addedDiags...)
 
 		if !hasPlugin {
+			consumed = append(consumed, ".factory/hooks/hooks.json", ".factory/mcp.json")
 			if hooks, hookDiags, err := LoadHooks(src, ".factory/hooks/hooks.json"); err == nil {
 				for _, hook := range hooks {
 					resources = append(resources, hook)
@@ -151,6 +154,18 @@ func (l *Loader) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 		})
 	}
 
+	layout := "factory workspace"
+	switch {
+	case hasPlugin && hasWorkspace:
+		layout = "factory plugin+workspace"
+	case hasBare && hasWorkspace:
+		layout = "factory bare-plugin+workspace"
+	case hasPlugin:
+		layout = "factory plugin"
+	case hasBare:
+		layout = "factory bare-plugin"
+	}
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestFactoryUnconsumedConfig, layout, consumed...)...)
 	return &ingest.Bundle{
 		Manifest:    manifest,
 		Resources:   resources,
