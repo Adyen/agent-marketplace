@@ -323,7 +323,7 @@ func TestHarnessModalSavesGlobalHarnessesToV4Config(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory", "claude"}) {
 		t.Fatalf("expected global factory+claude harnesses, got %#v", cfg.Harnesses)
 	}
-	if len(cfg.Registries) != 1 || cfg.Registries[0].Skills.Include[0] != "review" {
+	if len(cfg.Registries) != 1 || len(cfg.Registries[0].Skills.Include) == 0 || cfg.Registries[0].Skills.Include[0] != "review" {
 		t.Fatalf("expected v4 sources preserved after harness save, got %#v", cfg.Registries)
 	}
 }

@@ -601,7 +601,71 @@ func appendUniqueValues(existing, additions []string) []string {
 	return append(normalizedUniqueValues(existing), normalizedUniqueValues(additions)...)
 }
 
+// encodeConfigDocument renders doc to the exact bytes writeConfigDocumentData
+// writes, so callers can validate the candidate document before any byte
+// lands on disk.
+func encodeConfigDocument(configPath string, doc *yaml.Node) ([]byte, error) {
+	if isEmptyConfigDocument(doc) {
+		return nil, nil
+	}
+	var encoded bytes.Buffer
+	encoder := yaml.NewEncoder(&encoded)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(doc); err != nil {
+		return nil, fmt.Errorf("encode config %q: %w", configPath, err)
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, fmt.Errorf("close yaml encoder for %q: %w", configPath, err)
+	}
+	return encoded.Bytes(), nil
+}
+
+// validateConfigDocumentData applies the root-document validation the normal
+// loaders enforce for a config at configPath to the candidate bytes about to
+// be written: v4 documents go through the same root parse the loader uses
+// (unknown-field, legacy-key, and structural rules) plus the layer-field
+// rules for the destination layer; v2/v3 documents go through the strict
+// legacy decoder with the same api-version, harness-target, and logging
+// policy as LoadRootConfigFromPath. It deliberately resolves neither
+// includes nor Marketplace locks: neither is a property of the document
+// being edited, and the harness edit does not touch them.
+func validateConfigDocumentData(configPath string, data []byte) error {
+	kind := repoLayer
+	requireAPIVersion := true
+	if isLocalConfigPath(configPath) {
+		kind = localLayer
+		requireAPIVersion = false
+	} else if isGlobalConfigPath(configPath) {
+		kind = userLayer
+	}
+	if PeekAPIVersion(data) == APIVersionV4 {
+		v4, err := ParseV4Config(data, configPath, true)
+		if err != nil {
+			return err
+		}
+		return v4.validateLayerFields(kind)
+	}
+	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, requireAPIVersion)
+	if len(errs) > 0 {
+		return fmt.Errorf("validate config %q: %w", configPath, errors.Join(errs...))
+	}
+	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
+		return fmt.Errorf("validate logging config %q: %w", configPath, errors.Join(logErrs...))
+	}
+	return nil
+}
+
 func writeConfigDocument(configPath string, mode os.FileMode, doc *yaml.Node) error {
+	data, err := encodeConfigDocument(configPath, doc)
+	if err != nil {
+		return err
+	}
+	return writeConfigDocumentData(configPath, mode, data)
+}
+
+// writeConfigDocumentData atomically replaces the config file at configPath
+// with data, preserving the existing file's mode.
+func writeConfigDocumentData(configPath string, mode os.FileMode, data []byte) error {
 	// Edit through a symlink, not over it. The atomic rename below replaces
 	// whatever `configPath` names, so on the common dotfile setup where
 	// .agents/config.yaml is a symlink into a shared/checked-out file, the
@@ -618,20 +682,6 @@ func writeConfigDocument(configPath string, mode os.FileMode, doc *yaml.Node) er
 	dir := filepath.Dir(configPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create config directory for %q: %w", configPath, err)
-	}
-
-	var data []byte
-	if !isEmptyConfigDocument(doc) {
-		var encoded bytes.Buffer
-		encoder := yaml.NewEncoder(&encoded)
-		encoder.SetIndent(2)
-		if err := encoder.Encode(doc); err != nil {
-			return fmt.Errorf("encode config %q: %w", configPath, err)
-		}
-		if err := encoder.Close(); err != nil {
-			return fmt.Errorf("close yaml encoder for %q: %w", configPath, err)
-		}
-		data = encoded.Bytes()
 	}
 
 	tmp, err := os.CreateTemp(dir, filepath.Base(configPath)+".tmp-*")

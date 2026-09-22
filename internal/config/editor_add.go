@@ -624,8 +624,9 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	// the user-personal root is routinely v4 (init writes v4 directly and the
 	// TUI offers startup migration), so harness editing is an explicit
 	// v4-aware operation: edit the sequence in place in the parsed document
-	// and fail closed when the written file no longer loads. Selection edits
-	// (install/remove) remain legacy and keep rejecting v4 roots.
+	// and validate the encoded candidate before anything is written, so a
+	// refusal changes no bytes. Selection edits (install/remove) remain
+	// legacy and keep rejecting v4 roots.
 	doc, mode, err := readOrInitConfigWithV4(configPath, true)
 	if err != nil {
 		return err
@@ -642,18 +643,28 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	}
 
 	setSequenceValues(sequence, harnesses)
-	if err := writeConfigDocument(configPath, mode, doc); err != nil {
+
+	// Validate the exact bytes that will be written before the atomic
+	// replace, so a refusal leaves the file untouched. The check is
+	// deliberately not the full LoadConfigFromPath reload the first
+	// v4-aware version used: the loader also enforces Marketplace lock
+	// policy, so a schema-valid harness save on a marketplace-source root
+	// whose acquisition lock was absent or malformed wrote the file and
+	// still failed with v4.marketplace-lock-required. Lock availability is
+	// runtime acquisition state, not a property of the document, and the
+	// harness edit does not touch it. cfg.Validate() is deliberately not
+	// run either: it hardcodes the user-personal layer flavor and would
+	// mis-validate project-scope destinations.
+	data, err := encodeConfigDocument(configPath, doc)
+	if err != nil {
 		return err
 	}
-
-	// LoadConfigFromPath applies the full schema and layer validation for
-	// the destination (v4 adds unknown-field, target-name, and layer-field
-	// rules), so a failed reload proves the edit corrupted the document. The
-	// struct-level cfg.Validate() is deliberately not re-run here: it
-	// hardcodes the user-personal layer flavor, which would mis-validate
-	// project-scope destinations that LoadConfigFromPath accepts.
-	if _, err := LoadConfigFromPath(configPath); err != nil {
-		return fmt.Errorf("config written to %q is not valid: %w", configPath, err)
+	if err := validateConfigDocumentData(configPath, data); err != nil {
+		slog.Debug("harnesses update rejected: edited config failed validation", "config_path", configPath, "error", err)
+		return fmt.Errorf("edited config %q is not valid: %w", configPath, err)
+	}
+	if err := writeConfigDocumentData(configPath, mode, data); err != nil {
+		return err
 	}
 	slog.Debug("harnesses updated in config", "config_path", configPath, "harnesses", len(harnesses))
 	return nil
