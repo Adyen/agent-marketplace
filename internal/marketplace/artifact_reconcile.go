@@ -9,10 +9,18 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 )
 
-func (r *Resolver) ReconcileArtifactLocks(ctx context.Context, cfg *config.Config, input lockfile.Document) (lockfile.Document, bool, error) {
+// ReconcileArtifactLocks upgrades legacy artifact lock entries to v2 selections.
+// An optional per-invocation revocation policy keeps explicit --allow-revoked
+// overrides honored while reconciling a writable lock.
+func (r *Resolver) ReconcileArtifactLocks(ctx context.Context, cfg *config.Config, input lockfile.Document, policies ...resolver.MarketplaceRevocationPolicy) (lockfile.Document, bool, error) {
+	var policy resolver.MarketplaceRevocationPolicy
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
 	doc, err := lockfile.Normalize(input)
 	if err != nil {
 		return input, false, err
@@ -71,7 +79,7 @@ func (r *Resolver) ReconcileArtifactLocks(ctx context.Context, cfg *config.Confi
 			if err := validateResourceRevision(entry, pin, rev); err != nil {
 				return input, false, err
 			}
-			if err := enforceMarketplaceUse(rev, nil); err != nil {
+			if err := enforceMarketplaceUse(rev, policy); err != nil {
 				return input, false, err
 			}
 			unlocked := pin

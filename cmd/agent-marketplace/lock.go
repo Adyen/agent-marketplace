@@ -929,7 +929,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		doc := gitDesired.doc
 		if !mode.locked && !mode.offline && !implicitOrg && layer.Source.IsWritable() && mode.prepareInstall == nil && mode.reuseInstall == nil {
-			upgraded, artifactChanged, err := marketplace.NewResolver().ReconcileArtifactLocks(ctx, ec.Merged, doc)
+			upgraded, artifactChanged, err := marketplace.NewResolver().ReconcileArtifactLocks(ctx, ec.Merged, doc, mode.marketplacePolicy)
 			if err != nil {
 				return nil, changed, nil, err
 			}
