@@ -604,6 +604,107 @@ func TestConvertSingleTokenRemainderWithTerminatorsResolvesFile(t *testing.T) {
 	}
 }
 
+// When a single root-token value already offered its full
+// terminator-containing remainder as a best-effort candidate, the composite
+// scan must not also publish the terminator-truncated prefix of that same
+// remainder: the remainder is the better interpretation, and the prefix was
+// never independently referenced. Multi-token composite scanning and PATH
+// best-effort behavior are unaffected.
+func TestConvertSingleTokenRemainderDoesNotPublishTruncatedPrefix(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"run",` +
+				`"env":{` +
+				`"LIST":"${CLAUDE_PLUGIN_ROOT}/data/a,b.txt",` +
+				`"PATH":"${CLAUDE_PLUGIN_ROOT}/sbin:$PATH"` +
+				`}}}}`),
+		},
+		"data/a,b.txt": &fstest.MapFile{Data: []byte("comma")},
+		// Present on disk so a mistaken truncated-prefix publish is
+		// observable as an extra artifact.
+		"data/a": &fstest.MapFile{Data: []byte("prefix")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("terminator remainder references produced errors: %v", result.Diagnostics)
+	}
+	asset := artifactByPath(result.Artifacts, "data/a,b.txt")
+	if asset == nil {
+		t.Fatalf("comma-named referenced asset was not assembled; artifacts: %v", result.Artifacts)
+	}
+	if !bytes.Equal(asset.Bytes, []byte("comma")) {
+		t.Errorf("comma-named asset bytes mismatch: %q", asset.Bytes)
+	}
+	if artifactByPath(result.Artifacts, "data/a") != nil {
+		t.Errorf("terminator-truncated prefix data/a was published alongside data/a,b.txt")
+	}
+	for _, a := range result.Artifacts {
+		if strings.Contains(a.Path, "$PATH") || a.Path == "sbin" {
+			t.Errorf("PATH expansion fabricated artifact %q", a.Path)
+		}
+	}
+}
+
+// VCS and OS metadata names inside a skill directory are never skill
+// content: they must be excluded at enumeration so .git, .svn, .hg, and
+// .DS_Store entries can never reach IR or compiled artifacts, while real
+// scripts, templates, and binary/executable assets still materialize.
+func TestConvertSkillSupportFilesExcludeMetadata(t *testing.T) {
+	src := fstest.MapFS{
+		"skills/demo/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: demo\ndescription: demo skill\n---\nBody"),
+		},
+		"skills/demo/scripts/run.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\necho hi\n"),
+			Mode: 0o755,
+		},
+		"skills/demo/templates/prompt.tmpl": &fstest.MapFile{Data: []byte("tmpl")},
+		"skills/demo/assets/blob.bin":       &fstest.MapFile{Data: []byte{0x00, 0xff}},
+		"skills/demo/.git/config":           &fstest.MapFile{Data: []byte("[core]")},
+		"skills/demo/.svn/entries":          &fstest.MapFile{Data: []byte("12")},
+		"skills/demo/.hg/store/data.i":      &fstest.MapFile{Data: []byte("hg")},
+		"skills/demo/.DS_Store":             &fstest.MapFile{Data: []byte("ds")},
+		"skills/demo/sub/.DS_Store":         &fstest.MapFile{Data: []byte("ds")},
+		"skills/demo/sub/nested/.git/HEAD":  &fstest.MapFile{Data: []byte("ref")},
+		"skills/demo/sub/keep.txt":          &fstest.MapFile{Data: []byte("keep")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("metadata exclusion produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{
+		"skills/demo/scripts/run.sh",
+		"skills/demo/templates/prompt.tmpl",
+		"skills/demo/assets/blob.bin",
+		"skills/demo/sub/keep.txt",
+	} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing support artifact %s; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	for _, a := range result.Artifacts {
+		for _, component := range strings.Split(a.Path, "/") {
+			switch component {
+			case ".git", ".svn", ".hg", ".DS_Store":
+				t.Errorf("metadata component %q reached artifact %q", component, a.Path)
+			}
+		}
+	}
+	script := artifactByPath(result.Artifacts, "skills/demo/scripts/run.sh")
+	if script != nil && script.Mode.Perm() != 0o755 {
+		t.Errorf("script mode = %o, want 0755", script.Mode.Perm())
+	}
+}
+
 // A token glued inside a protocol-relative URL word (//host/${TOKEN}/x)
 // names a remote URL and is skipped, while a reference joined to that word
 // by a declared terminator remains a genuine bundle candidate.

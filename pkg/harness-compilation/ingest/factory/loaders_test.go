@@ -27,6 +27,33 @@ func TestLoadSkill(t *testing.T) {
 	}
 }
 
+func TestLoadSkillSupportFilesExcludeMetadata(t *testing.T) {
+	src := fstest.MapFS{
+		"skills/my-skill/SKILL.md":          {Data: []byte("Do the thing\n")},
+		"skills/my-skill/scripts/run.sh":    {Data: []byte("#!/bin/sh\n")},
+		"skills/my-skill/.git/config":       {Data: []byte("[core]")},
+		"skills/my-skill/.svn/entries":      {Data: []byte("12")},
+		"skills/my-skill/.hg/dirstate":      {Data: []byte("hg")},
+		"skills/my-skill/.DS_Store":         {Data: []byte("ds")},
+		"skills/my-skill/scripts/.DS_Store": {Data: []byte("ds")},
+		"skills/my-skill/scripts/.git/HEAD": {Data: []byte("ref")},
+	}
+
+	skill, err := LoadSkill(src, "skills/my-skill")
+	if err != nil {
+		t.Fatalf("LoadSkill: %v", err)
+	}
+	want := []string{"scripts/run.sh"}
+	if len(skill.SupportFiles) != len(want) {
+		t.Fatalf("SupportFiles = %v, want %v", skill.SupportFiles, want)
+	}
+	for i := range want {
+		if skill.SupportFiles[i] != want[i] {
+			t.Fatalf("SupportFiles = %v, want %v", skill.SupportFiles, want)
+		}
+	}
+}
+
 func TestLoadCommand(t *testing.T) {
 	src := fstest.MapFS{
 		"commands/my-cmd.md": {

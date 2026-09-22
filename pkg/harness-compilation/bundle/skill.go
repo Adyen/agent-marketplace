@@ -133,24 +133,45 @@ func pathJoin(base, elem string) string {
 	return path.Join(base, elem)
 }
 
+// skillSupportMetadataNames are file and directory base names that describe
+// version-control or operating-system metadata rather than skill content.
+// They are excluded by name at the source-aware enumeration boundary so a
+// checked-out or copied skill tree can never carry repository internals or
+// OS droppings into IR SupportFiles or compiled artifacts.
+var skillSupportMetadataNames = map[string]struct{}{
+	".git":      {},
+	".svn":      {},
+	".hg":       {},
+	".DS_Store": {},
+}
+
+// IsSkillSupportMetadataName reports whether base name is a VCS or OS
+// metadata name that must never be enumerated as a skill support file. The
+// check is by base name only, so it applies uniformly at any depth of the
+// source tree and to both files and directories.
+func IsSkillSupportMetadataName(name string) bool {
+	_, ok := skillSupportMetadataNames[name]
+	return ok
+}
+
 func skillSupportFiles(src fs.FS, root string) ([]string, error) {
 	var files []string
 	err := fs.WalkDir(src, root, func(current string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.Name() == ".git" && !d.IsDir() {
+		// VCS internals are never skill content. A root skill's
+		// directory is the whole checkout and a marketplace clone keeps
+		// .git on disk, so walking it would publish object databases
+		// into installable archives and feed multi-megabyte pack files
+		// to bounded support reads.
+		if IsSkillSupportMetadataName(d.Name()) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
-			// VCS internals are never skill content. A root skill's
-			// directory is the whole checkout and a marketplace clone keeps
-			// .git on disk, so walking it would publish object databases
-			// into installable archives and feed multi-megabyte pack files
-			// to bounded support reads.
-			if d.Name() == ".git" {
-				return fs.SkipDir
-			}
 			return nil
 		}
 

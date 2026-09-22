@@ -224,6 +224,13 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 		refs = append(refs, referencedAsset{rel: rel, strict: strict})
 	}
 	for _, value := range values {
+		// offeredRemainder records the full terminator-containing remainder
+		// a single root-token value already offered as a best-effort
+		// candidate. When set, the composite scan must not also publish a
+		// terminator-truncated prefix of that same remainder: the remainder
+		// is the better interpretation and the prefix was never
+		// independently referenced.
+		var offeredRemainder string
 		// Strict single-token detection normalizes one matching
 		// surrounding quote pair first: a quoted lone reference is still
 		// one deliberate file contract, not a composite command.
@@ -240,6 +247,7 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 				// unresolvable expansions such as a $PATH tail
 				// non-error.
 				add(rel, false)
+				offeredRemainder = rel
 			}
 		}
 		// Composite scan: find each token occurrence by cursor so the URL
@@ -269,6 +277,13 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 				rel, start = rest, len(value)
 			} else {
 				rel, start = rest[:end], idx+len(rootTokenPrefix)+end
+			}
+			if offeredRemainder != "" && strings.HasPrefix(offeredRemainder, rel) && len(offeredRemainder) > len(rel) {
+				// rel is a terminator-truncated prefix of the full
+				// remainder this single-token value already offered;
+				// publishing it would invent a reference the author
+				// never made.
+				continue
 			}
 			add(rel, false)
 		}

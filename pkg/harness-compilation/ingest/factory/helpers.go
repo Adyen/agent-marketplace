@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -207,6 +208,12 @@ func supportFiles(src fs.FS, root string) ([]string, error) {
 	err := fs.WalkDir(src, root, func(current string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if bundle.IsSkillSupportMetadataName(d.Name()) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if d.IsDir() {
 			return nil
