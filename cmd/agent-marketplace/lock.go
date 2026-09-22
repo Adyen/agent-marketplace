@@ -19,7 +19,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
 
@@ -58,6 +60,7 @@ type lockMode struct {
 	prepareInstall       *preparedInstallLocks
 	reuseInstall         *preparedInstallLocks
 	warningSink          *[]error
+	marketplacePolicy    resolver.MarketplaceRevocationPolicy
 }
 
 type lockReconcileStats struct {
@@ -579,6 +582,9 @@ func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeli
 	byPath := make(map[string]string)
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
+			if read.RuntimeLock {
+				continue
+			}
 			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
 				return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
 			}
@@ -688,9 +694,30 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	if err != nil {
 		return nil, 0, nil, err
 	}
+	transientOrganizationLockPath := ""
+	if !mode.check && marketplacelock.HasRequiredError(ec.Errors) {
+		lockPath, added, err := addTransientOrganizationMarketplaceProvisional(&loadOptions)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		if added {
+			transientOrganizationLockPath = lockPath
+			ec, configSnapshots, err = loadStableEffective(ctx, loadOptions)
+			if err != nil {
+				return nil, 0, nil, err
+			}
+			generation, err := dependencytxn.ReadGeneration(transientOrganizationLockPath)
+			if err != nil {
+				return nil, 0, nil, err
+			}
+			if generation.Exists {
+				return nil, 0, nil, fmt.Errorf("%w: organization Marketplace lock appeared while loading", dependencytxn.ErrGenerationConflict)
+			}
+		}
+	}
 	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && mode.commitScope == nil
-	if canBootstrapMarketplace && hasMarketplaceLockRequiredError(ec.Errors) {
-		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects)
+	if canBootstrapMarketplace && marketplacelock.HasRequiredError(ec.Errors) {
+		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects, mode.marketplacePolicy)
 		if err != nil {
 			return nil, 0, nil, err
 		}
@@ -971,6 +998,12 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		reads, err := effectiveReadAssertions(ec, stagedEdits)
 		if err != nil {
 			return nil, changed, nil, err
+		}
+		if transientOrganizationLockPath != "" {
+			reads = append(reads, dependencytxn.ReadAssertion{
+				Path:          transientOrganizationLockPath,
+				RequestedPath: transientOrganizationLockPath,
+			})
 		}
 		reads = append(reads, mode.commitReads...)
 		if mode.commitScope != nil && len(desiredFiles) == 0 {

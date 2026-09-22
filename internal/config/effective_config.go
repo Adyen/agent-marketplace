@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 const defaultOrganizationConfigPath = "/etc/agent-marketplace/config.yaml"
@@ -86,10 +88,12 @@ type LayerResult struct {
 }
 
 type ConfigRead struct {
-	Path          string
-	RequestedPath string
-	Digest        string
-	Overlay       bool
+	Path            string
+	RequestedPath   string
+	Digest          string
+	Overlay         bool
+	RuntimeLock     bool
+	AcquisitionLock bool
 }
 
 // EffectiveConfig is the result of loading and merging all applicable
@@ -129,6 +133,9 @@ type LoadEffectiveOptions struct {
 	RepoPath         string
 	LocalPath        string
 	FileOverlays     map[string][]byte
+	// OrganizationRuntimeLock supplies a verified, process-local lock without
+	// making organization configuration itself overlayable.
+	OrganizationRuntimeLock []byte
 }
 
 func (ec EffectiveConfig) LayerResults() []LayerResult {
@@ -172,7 +179,7 @@ func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConf
 	ec := EffectiveConfig{}
 
 	orgPath := organizationConfigPath(opts.OrganizationPath)
-	ec.Organization, ec.Diagnostics = loadEffectiveOrganization(orgPath)
+	ec.Organization, ec.Diagnostics = loadEffectiveOrganizationWithRuntimeLock(orgPath, opts.OrganizationRuntimeLock)
 	ec.Managed = ec.Diagnostics.Managed()
 	ec.Warnings = append(ec.Warnings, ec.Diagnostics.Warnings...)
 	LogManagedDiagnostics(ec.Diagnostics)
@@ -287,6 +294,10 @@ func globalConfigPath() (string, error) {
 // unmanaged. A missing file is valid (unmanaged). Any other read error is a
 // hard error.
 func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDiagnostics) {
+	return loadEffectiveOrganizationWithRuntimeLock(path, nil)
+}
+
+func loadEffectiveOrganizationWithRuntimeLock(path string, runtimeLock []byte) (LayerResult, ManagedInstallationDiagnostics) {
 	if runtime.GOOS == "windows" {
 		lr := LayerResult{Source: SourceUnset, Path: path}
 		return lr, inspectManagedConfig(path, fs.ErrNotExist, nil, SourceUnset, nil)
@@ -314,7 +325,21 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 		lr := LayerResult{Source: Organization, Path: path, Errors: []error{fmt.Errorf("read organization config %q: %w", path, readErr)}}
 		return lr, inspectManagedConfig(path, readErr, nil, Organization, lr.Errors)
 	}
-	lr := loadOrganizationConfig(path, canonicalPath, data)
+	var lockOverlays map[string][]byte
+	if len(runtimeLock) > 0 {
+		paths, pathErr := configLockPaths(path, canonicalPath)
+		if pathErr != nil {
+			lr := LayerResult{Source: Organization, Path: path, Errors: []error{pathErr}}
+			return lr, inspectManagedConfig(path, pathErr, nil, Organization, lr.Errors)
+		}
+		var overlayErr error
+		lockOverlays, overlayErr = organizationRuntimeLockOverlay(paths.CanonicalLock, runtimeLock)
+		if overlayErr != nil {
+			lr := LayerResult{Source: Organization, Path: path, Errors: []error{overlayErr}}
+			return lr, inspectManagedConfig(path, overlayErr, nil, Organization, lr.Errors)
+		}
+	}
+	lr := loadOrganizationConfig(path, canonicalPath, data, lockOverlays)
 	lr.Path = path
 	if len(lr.Reads) > 0 {
 		lr.Reads[0].RequestedPath, _ = filepath.Abs(path)
@@ -346,6 +371,9 @@ func LoadOrganizationConfig() (*Config, error) {
 }
 
 func organizationHasRemoteRequirements(cfg *Config) bool {
+	if len(cfg.Marketplaces) > 0 {
+		return true
+	}
 	for _, entry := range cfg.Registries {
 		if !entry.IsLocal() {
 			return true
@@ -354,13 +382,35 @@ func organizationHasRemoteRequirements(cfg *Config) bool {
 	return false
 }
 
-func loadOrganizationConfig(path, canonicalPath string, data []byte) LayerResult {
-	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, organizationLayer, nil)
+func loadOrganizationConfig(path, canonicalPath string, data []byte, runtimeLocks map[string][]byte) LayerResult {
+	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, organizationLayer, runtimeLocks)
+	for i := range reads {
+		if !reads[i].Overlay {
+			continue
+		}
+		if _, ok := runtimeLocks[reads[i].Path]; ok {
+			reads[i].RuntimeLock = true
+			continue
+		}
+		if _, ok := runtimeLocks[reads[i].RequestedPath]; ok {
+			reads[i].RuntimeLock = true
+		}
+	}
 	lr := LayerResult{Source: Organization, Path: path, Config: cfg, Reads: reads}
 	if err != nil {
 		lr.Errors = []error{err}
 	}
 	return lr
+}
+
+func organizationRuntimeLockOverlay(lockPath string, runtimeLock []byte) (map[string][]byte, error) {
+	if len(runtimeLock) == 0 {
+		return nil, nil
+	}
+	if int64(len(runtimeLock)) > lockfile.MaxFileSize {
+		return nil, fmt.Errorf("%w: runtime lock %q exceeds %d bytes", lockfile.ErrFileTooLarge, lockPath, lockfile.MaxFileSize)
+	}
+	return map[string][]byte{lockPath: append([]byte(nil), runtimeLock...)}, nil
 }
 
 func loadEffectiveUser(override string, overlays map[string][]byte) LayerResult {

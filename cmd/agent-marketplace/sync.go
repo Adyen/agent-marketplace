@@ -98,7 +98,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	repoRoot := config.FindRepoRoot()
 	localDir := config.FindLocalConfigDir()
 	var lockWarnings []error
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: locked || offline, offline: offline, warningSink: &lockWarnings})
+	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: locked || offline, offline: offline, warningSink: &lockWarnings, marketplacePolicy: marketplacePolicy})
 	if err != nil {
 		style := newSyncOutputStyle(out)
 		if summaryErr := writeSyncSummary(out, style, 0, 0, 0, 1); summaryErr != nil {
@@ -300,7 +300,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 			// remove (collection-sourced, or a failed config edit) are still
 			// in the config — silently discarding the promotion the user
 			// asked for. Pinned by TestSyncPruneStaleStrictSurvivesTheReSync.
-			return runSyncWithLocks(ctx, out, noBackup, strict, false, verbose, offline, lockRunOptions{locked: locked})
+			return runSyncWithLocks(ctx, out, noBackup, strict, false, verbose, offline, lockRunOptions{locked: locked, marketplacePolicy: marketplacePolicy})
 		}
 	}
 
@@ -424,7 +424,11 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	defer releaseExactLocks()
 	ctx = cache.ContextWithExactGitNamespaceLease(ctx)
 
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease}
+	resolveOpts := pipeline.ResolveOptions{
+		RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
+		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
+		DisableTransientOrganizationMarketplaceLock: true,
+	}
 	resolveOpts.RequireTargetSet = true
 	if localDir != "" && localDir != repoRoot {
 		resolveOpts.MaterializeRoot = localDir

@@ -1591,7 +1591,7 @@ func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error
 	initRenderer()
 
 	model := NewModel(repoRoot, homeDir, options...)
-	model.ctx = ctxOrBackground(ctx)
+	model.ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctxOrBackground(ctx))
 	tel := telemetry.TelemetryFromContext(model.ctx)
 	if tel != nil {
 		model.ctx, model.sessionSpan = tel.StartSpan(model.ctx, "agent_marketplace.tui.session", nil)

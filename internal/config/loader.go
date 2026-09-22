@@ -287,6 +287,47 @@ func canonicalConfigPath(path string) (string, error) {
 	return filepath.Clean(canonical), nil
 }
 
+// ConfigLockPaths identifies one config and its layer-owned lock through both
+// the requested and canonical filesystem names.
+type ConfigLockPaths struct {
+	RequestedConfig string
+	CanonicalConfig string
+	RequestedLock   string
+	CanonicalLock   string
+}
+
+// ResolveConfigLockPaths resolves path before deriving its layer-owned lock.
+func ResolveConfigLockPaths(path string) (ConfigLockPaths, error) {
+	canonical, err := canonicalConfigPath(path)
+	if err != nil {
+		return ConfigLockPaths{}, err
+	}
+	return configLockPaths(path, canonical)
+}
+
+func configLockPaths(path, canonical string) (ConfigLockPaths, error) {
+	requested, err := filepath.Abs(path)
+	if err != nil {
+		return ConfigLockPaths{}, fmt.Errorf("resolve config path %q: %w", path, err)
+	}
+	requested = filepath.Clean(requested)
+	canonical = filepath.Clean(canonical)
+	requestedLock, err := lockfile.PathForConfig(requested)
+	if err != nil {
+		return ConfigLockPaths{}, err
+	}
+	canonicalLock, err := lockfile.PathForConfig(canonical)
+	if err != nil {
+		return ConfigLockPaths{}, err
+	}
+	return ConfigLockPaths{
+		RequestedConfig: requested,
+		CanonicalConfig: canonical,
+		RequestedLock:   requestedLock,
+		CanonicalLock:   canonicalLock,
+	}, nil
+}
+
 func sourceForLayer(kind layerKind) Source {
 	switch kind {
 	case organizationLayer:
@@ -488,34 +529,26 @@ func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overla
 	if err != nil {
 		return nil, nil, err
 	}
-	lockPath, err := lockfile.PathForConfig(canonical)
+	paths, err := configLockPaths(configPath, canonical)
 	if err != nil {
 		return nil, nil, err
 	}
-	authored, err := filepath.Abs(configPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	authoredLockPath, err := lockfile.PathForConfig(authored)
-	if err != nil {
-		return nil, nil, err
-	}
-	data, overlaid := overlays[lockPath]
+	data, overlaid := overlays[paths.CanonicalLock]
 	if !overlaid {
-		data, overlaid = overlays[authoredLockPath]
+		data, overlaid = overlays[paths.RequestedLock]
 	}
 	if !overlaid {
-		data, err = lockfile.ReadBytes(lockPath)
+		data, err = lockfile.ReadBytes(paths.CanonicalLock)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return nil, nil, v4err("v4.marketplace-lock-required", lockPath, 0, "Marketplace resources require acquisition lock %q: %v", lockPath, err)
+				return nil, nil, v4err("v4.marketplace-lock-required", paths.CanonicalLock, 0, "Marketplace resources require acquisition lock %q: %v", paths.CanonicalLock, err)
 			}
-			return nil, nil, fmt.Errorf("read lock %q for config %q: %w", lockPath, configPath, err)
+			return nil, nil, fmt.Errorf("read lock %q for config %q: %w", paths.CanonicalLock, configPath, err)
 		}
 	}
 	doc, err := lockfile.Decode(data)
 	if err != nil {
-		return nil, nil, fmt.Errorf("decode lock %q for config %q: %w", lockPath, configPath, err)
+		return nil, nil, fmt.Errorf("decode lock %q for config %q: %w", paths.CanonicalLock, configPath, err)
 	}
 	// Decode already returns a normalized document; skip the defensive second
 	// normalization that ToLegacyConfigWithLock performs for untrusted callers.
@@ -523,7 +556,13 @@ func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overla
 	if err != nil {
 		return nil, nil, err
 	}
-	read := &ConfigRead{Path: lockPath, RequestedPath: authoredLockPath, Digest: fmt.Sprintf("%x", sha256.Sum256(data)), Overlay: overlaid}
+	read := &ConfigRead{
+		Path:            paths.CanonicalLock,
+		RequestedPath:   paths.RequestedLock,
+		Digest:          fmt.Sprintf("%x", sha256.Sum256(data)),
+		Overlay:         overlaid,
+		AcquisitionLock: true,
+	}
 	return cfg, read, nil
 }
 

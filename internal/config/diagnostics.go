@@ -110,6 +110,9 @@ func ValidateOrganizationConfigAuthority(configPath string) error {
 }
 
 func OrganizationLockPath(configPath string) string {
+	if paths, err := ResolveConfigLockPaths(configPath); err == nil {
+		return paths.CanonicalLock
+	}
 	path, err := lockfile.PathForConfig(configPath)
 	if err == nil {
 		return path
