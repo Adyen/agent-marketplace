@@ -1,61 +1,77 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { kindLabel } from '~/lib/presentation'
-import { RESOURCE_KINDS, type RegistrySummary, type ResourceKind } from '~/types/marketplace'
+import { computed, ref } from "vue";
+import { kindLabel } from "~/lib/presentation";
+import {
+  RESOURCE_KINDS,
+  type RegistrySummary,
+  type ResourceKind,
+} from "~/types/marketplace";
 
-const props = withDefaults(defineProps<{
-  kind: ResourceKind | ''
-  registry: string[]
-  registries: RegistrySummary[]
-  kinds?: ResourceKind[]
-  idPrefix?: string
-}>(), {
-  kinds: () => [...RESOURCE_KINDS],
-  idPrefix: 'catalog-filter',
-})
+const props = withDefaults(
+  defineProps<{
+    kind: ResourceKind | "";
+    registry: string[];
+    registries: RegistrySummary[];
+    kinds?: ResourceKind[];
+    idPrefix?: string;
+  }>(),
+  {
+    kinds: () => [...RESOURCE_KINDS],
+    idPrefix: "catalog-filter",
+  },
+);
 
 const emit = defineEmits<{
-  'update:kind': [value: ResourceKind | '']
-  'update:registry': [value: string[]]
-}>()
+  "update:kind": [value: ResourceKind | ""];
+  "update:registry": [value: string[]];
+}>();
 
-const INITIAL_REGISTRY_LIMIT = 6
-const showAllRegistries = ref(false)
+const INITIAL_REGISTRY_LIMIT = 6;
+const showAllRegistries = ref(false);
 
-const registryOptions = computed(() => props.registries.map(registry => ({
-  label: registry.slug || registry.id,
-  value: registry.slug || registry.id,
-})))
+const registryOptions = computed(() =>
+  props.registries.map((registry) => ({
+    label: registry.slug || registry.id,
+    value: registry.slug || registry.id,
+  })),
+);
 
 const visibleRegistries = computed(() => {
-  if (showAllRegistries.value || registryOptions.value.length <= INITIAL_REGISTRY_LIMIT) {
-    return registryOptions.value
+  if (
+    showAllRegistries.value ||
+    registryOptions.value.length <= INITIAL_REGISTRY_LIMIT
+  ) {
+    return registryOptions.value;
   }
 
-  const initial = registryOptions.value.slice(0, INITIAL_REGISTRY_LIMIT)
-  const selected = registryOptions.value.filter(option => props.registry.includes(option.value))
-  return [...new Map([...initial, ...selected].map(option => [option.value, option])).values()]
-})
+  const initial = registryOptions.value.slice(0, INITIAL_REGISTRY_LIMIT);
+  const selected = registryOptions.value.filter((option) =>
+    props.registry.includes(option.value),
+  );
+  return [
+    ...new Map(
+      [...initial, ...selected].map((option) => [option.value, option]),
+    ).values(),
+  ];
+});
 
 function updateKind(value: string) {
-  emit('update:kind', value as ResourceKind | '')
+  emit("update:kind", value as ResourceKind | "");
 }
 
 function updateRegistry(value: string, checked: boolean) {
   const next = checked
     ? [...new Set([...props.registry, value])]
-    : props.registry.filter(registry => registry !== value)
+    : props.registry.filter((registry) => registry !== value);
 
-  emit('update:registry', next)
+  emit("update:registry", next);
 }
 </script>
 
 <template>
   <div class="catalog-filter-rail">
     <fieldset class="catalog-filter-group">
-      <legend class="catalog-filter-label">
-        Kind
-      </legend>
+      <legend class="catalog-filter-label">Kind</legend>
       <label class="catalog-filter-option">
         <input
           :name="`${idPrefix}-kind`"
@@ -63,7 +79,7 @@ function updateRegistry(value: string, checked: boolean) {
           value=""
           :checked="kind === ''"
           @change="updateKind('')"
-        >
+        />
         <span>All kinds</span>
       </label>
       <label
@@ -77,19 +93,14 @@ function updateRegistry(value: string, checked: boolean) {
           :value="resourceKind"
           :checked="kind === resourceKind"
           @change="updateKind(resourceKind)"
-        >
+        />
         <span>{{ kindLabel(resourceKind) }}</span>
       </label>
     </fieldset>
 
     <fieldset class="catalog-filter-group">
-      <legend class="catalog-filter-label">
-        Registry
-      </legend>
-      <p
-        v-if="registryOptions.length === 0"
-        class="catalog-filter-empty"
-      >
+      <legend class="catalog-filter-label">Registry</legend>
+      <p v-if="registryOptions.length === 0" class="catalog-filter-empty">
         No registries available
       </p>
       <label
@@ -101,8 +112,13 @@ function updateRegistry(value: string, checked: boolean) {
           type="checkbox"
           :value="option.value"
           :checked="registry.includes(option.value)"
-          @change="updateRegistry(option.value, ($event.target as HTMLInputElement).checked)"
-        >
+          @change="
+            updateRegistry(
+              option.value,
+              ($event.target as HTMLInputElement).checked,
+            )
+          "
+        />
         <span>{{ option.label }}</span>
       </label>
       <button
@@ -112,7 +128,11 @@ function updateRegistry(value: string, checked: boolean) {
         :aria-expanded="showAllRegistries"
         @click="showAllRegistries = !showAllRegistries"
       >
-        {{ showAllRegistries ? 'Show fewer' : `Show all (${registryOptions.length})` }}
+        {{
+          showAllRegistries
+            ? "Show fewer"
+            : `Show all (${registryOptions.length})`
+        }}
       </button>
     </fieldset>
   </div>
