@@ -619,7 +619,7 @@ metadata:
 			if !strings.Contains(message, "common/") {
 				t.Errorf("warning message should suggest common/ sub-bundle, got: %v", m.Error)
 			}
-			if !strings.Contains(message, `path: "<configured-path>/guides/alpha-plugin"`) {
+			if !strings.Contains(message, `path: "<entry-path>/guides/alpha-plugin"`) {
 				t.Errorf("warning message should explain how to target the ignored bundle, got: %v", m.Error)
 			}
 			if strings.Contains(message, dir) {
@@ -662,7 +662,7 @@ func TestLoadRegistriesAddsRegistryToIgnoredSubBundleWarning(t *testing.T) {
 		t.Fatalf("registry context did not preserve the diagnostic cause: %v", result.Malformed[0].Error)
 	}
 	message := result.Malformed[0].Error.Error()
-	if want := `registry "https://example.invalid/team/resources.git" (ref "main", configured path "catalog")`; !strings.Contains(message, want) {
+	if want := `registry "https://example.invalid/team/resources.git" (ref "main", entry path "catalog")`; !strings.Contains(message, want) {
 		t.Fatalf("warning message should identify the configured registry; missing %q in %q", want, message)
 	}
 }
