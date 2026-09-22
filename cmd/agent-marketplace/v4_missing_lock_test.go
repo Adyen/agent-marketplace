@@ -396,8 +396,12 @@ resources:
 	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := t.TempDir()
+	ws, err := pipeline.NewWorkspace(repo, "")
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
 	opts := pipeline.ResolveOptions{
-		RepoRoot: repo,
+		Workspace: ws,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,
