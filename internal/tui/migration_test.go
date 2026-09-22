@@ -100,7 +100,7 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 
 	m := NewModel(repoRoot, t.TempDir())
 	m.pane = paneMigrationModal
-	m.migrationPrompt = pendingMigrationFor(repoRoot, repoRoot, "")
+	m.migrationPrompt = pendingMigrationFor("", "", repoRoot)
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = mi.(Model)
@@ -237,7 +237,7 @@ func TestMigrationModalRunMigratesMarketplaceConfig(t *testing.T) {
 
 	m := NewModel(repoRoot, homeDir)
 	m.pane = paneMigrationModal
-	m.migrationPrompt = pendingMigrationFor(repoRoot, homeDir)
+	m.migrationPrompt = pendingMigrationFor(repoRoot, repoRoot, homeDir)
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	m = mi.(Model)
