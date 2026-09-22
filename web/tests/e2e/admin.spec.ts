@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test'
 
 const base = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || '4322'}/marketplace`
 const registry = { id: 'stable-team', slug: 'team', aliases: ['old-team'], historical_origins: [], origin: 'https://git.example/team', ref: 'main', roots: [{ path: '.agents', source_harness: '' }, { path: '.claude', source_harness: 'claude' }], acquisition: 'index-only', publisher: { name: 'Team' }, license: 'MIT', generation: 2, lifecycle: 'active', paused: false, withdrawn: false, retired: false }
-const snapshot = { version: 1, policy_revision: 2, license_policy: { allowlist: ['MIT'], undeclared: 'reject' }, registries: [registry], source_fingerprint: 'fingerprint' }
+const snapshot = { version: 1, policy_revision: 2, license_policy: { allowlist: ['MIT'], undeclared: 'reject' }, distribution_policy: { rejected_resources: 'block' }, registries: [registry], source_fingerprint: 'fingerprint' }
 
 const preview = { id: 'preview-1', marketplace_id: 'test', actor: { issuer: 'test-sso', subject: 'operator' }, base_revision: 2, registry, existing: true, job_id: 'managed-preview-preview-1', status: 'pending', created_at: '2026-09-18T10:00:00Z' }
 const previewResult = {
