@@ -234,6 +234,39 @@ func LoadV4ConfigFromPath(file string) (*V4Config, error) {
 	return loadV4Tree(file, true, map[string]bool{})
 }
 
+func LoadV4ConfigIfPresent(file string, source Source) (*V4Config, error) {
+	data, err := readConfigFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if PeekAPIVersion(data) != APIVersionV4 {
+		return nil, nil
+	}
+	kind, organizationPath, err := v4LayerForSource(source, file)
+	if err != nil {
+		return nil, err
+	}
+	return loadV4TreeWithOverlays(file, true, map[string]bool{}, nil, data, organizationPath, kind)
+}
+
+func v4LayerForSource(source Source, path string) (layerKind, string, error) {
+	switch source {
+	case Organization:
+		return organizationLayer, path, nil
+	case UserPersonal:
+		return userLayer, "", nil
+	case RepoCommitted:
+		return repoLayer, "", nil
+	case RepoPersonal:
+		return localLayer, "", nil
+	default:
+		return 0, "", fmt.Errorf("unsupported v4 configuration source %q", source)
+	}
+}
+
 // LoadV4RootConfigFromPath is an explicit name for callers loading a committed,
 // user, or organization root. Unlike legacy loaders, apiVersion is required.
 func LoadV4RootConfigFromPath(file string) (*V4Config, error) {
