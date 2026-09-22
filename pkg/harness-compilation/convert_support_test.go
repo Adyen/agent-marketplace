@@ -523,6 +523,120 @@ func TestConvertCompositeUnsafeCandidateFailsClosed(t *testing.T) {
 	}
 }
 
+// A quoted single-token root reference is still one deliberate file
+// reference: one matching surrounding quote pair is normalized before strict
+// detection, so an existing asset is assembled and a missing one fails
+// closed instead of degrading to a silent best-effort skip.
+func TestConvertQuotedRootReferenceKeepsStrictSemantics(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` +
+				strconv.Quote(`"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"`) + `}]}}`),
+		},
+		"hooks/check.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\nexit 0\n"),
+			Mode: 0o755,
+		},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("quoted existing reference produced errors: %v", result.Diagnostics)
+	}
+	asset := artifactByPath(result.Artifacts, "hooks/check.sh")
+	if asset == nil {
+		t.Fatalf("missing quoted referenced asset hooks/check.sh; artifacts: %v", result.Artifacts)
+	}
+
+	missingSrc := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` +
+				strconv.Quote(`'${CLAUDE_PLUGIN_ROOT}/hooks/absent.sh'`) + `}]}}`),
+		},
+	}
+	missingResult, err := Convert(missingSrc, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert missing: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(missingResult), diag.CodeBundleSupportFileMissing) {
+		t.Errorf("quoted missing reference lost strict semantics; codes: %v", diagnosticCodes(missingResult))
+	}
+}
+
+// A whitespace-free single-token remainder that contains declared asset
+// terminators may itself be a legal filename (e.g. a comma-named file): the
+// full remainder joins the best-effort candidates so it can resolve, while
+// unresolvable expansions such as a $PATH tail stay non-error.
+func TestConvertSingleTokenRemainderWithTerminatorsResolvesFile(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"run",` +
+				`"env":{` +
+				`"LIST":"${CLAUDE_PLUGIN_ROOT}/data/a,b.txt",` +
+				`"PATH":"${CLAUDE_PLUGIN_ROOT}/sbin:$PATH"` +
+				`}}}}`),
+		},
+		"data/a,b.txt": &fstest.MapFile{Data: []byte("comma")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("terminator remainder references produced errors: %v", result.Diagnostics)
+	}
+	asset := artifactByPath(result.Artifacts, "data/a,b.txt")
+	if asset == nil {
+		t.Fatalf("comma-named referenced asset was not assembled; artifacts: %v", result.Artifacts)
+	}
+	if !bytes.Equal(asset.Bytes, []byte("comma")) {
+		t.Errorf("comma-named asset bytes mismatch: %q", asset.Bytes)
+	}
+	for _, a := range result.Artifacts {
+		if strings.Contains(a.Path, "$PATH") || a.Path == "sbin" {
+			t.Errorf("PATH expansion fabricated artifact %q", a.Path)
+		}
+	}
+}
+
+// A token glued inside a protocol-relative URL word (//host/${TOKEN}/x)
+// names a remote URL and is skipped, while a reference joined to that word
+// by a declared terminator remains a genuine bundle candidate.
+func TestConvertProtocolRelativeURLWordSkipsRemoteReference(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"env":{` +
+				`"CDN":"//cdn.example.com/${CLAUDE_PLUGIN_ROOT}/tok",` +
+				`"MIX":"//cdn.example.com/a,${CLAUDE_PLUGIN_ROOT}/certs/ca.pem"` +
+				`}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("PEM")},
+		// Present on disk so a mistaken local read would be observable.
+		"tok": &fstest.MapFile{Data: []byte("t")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("protocol-relative references produced errors: %v", result.Diagnostics)
+	}
+	if artifactByPath(result.Artifacts, "certs/ca.pem") == nil {
+		t.Errorf("missing separator-joined asset after protocol-relative word; artifacts: %v", result.Artifacts)
+	}
+	if artifactByPath(result.Artifacts, "tok") != nil {
+		t.Errorf("protocol-relative URL-embedded token was materialized as a bundle asset")
+	}
+}
+
 // Literal-only destinations must keep a stable diagnostic and must never
 // embed a caller-supplied author-machine path in emitted bytes.
 func TestConvertLiteralTargetDoesNotEmbedSourcePath(t *testing.T) {

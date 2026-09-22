@@ -224,10 +224,22 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 		refs = append(refs, referencedAsset{rel: rel, strict: strict})
 	}
 	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); strings.HasPrefix(trimmed, rootTokenPrefix) {
-			if rel := trimmed[len(rootTokenPrefix):]; !strings.ContainsAny(rel, assetTerminators) {
+		// Strict single-token detection normalizes one matching
+		// surrounding quote pair first: a quoted lone reference is still
+		// one deliberate file contract, not a composite command.
+		if normalized := stripOneQuotePair(strings.TrimSpace(value)); strings.HasPrefix(normalized, rootTokenPrefix) {
+			if rel := normalized[len(rootTokenPrefix):]; !strings.ContainsAny(rel, assetTerminators) {
 				add(rel, true)
 				continue
+			} else if !strings.ContainsAny(rel, " \t\r\n") {
+				// A whitespace-free remainder that contains declared
+				// terminators may itself be a legal filename (for
+				// example a comma-named file). Offer the full
+				// remainder as a best-effort candidate so it can
+				// resolve, while the composite scan below keeps
+				// unresolvable expansions such as a $PATH tail
+				// non-error.
+				add(rel, false)
 			}
 		}
 		// Composite scan: find each token occurrence by cursor so the URL
@@ -265,15 +277,27 @@ func referencedAssetPaths(values ...string) []referencedAsset {
 	return refs
 }
 
+// stripOneQuotePair removes exactly one matching surrounding quote pair
+// (single, double, or backtick) from s. Anything else is returned unchanged.
+func stripOneQuotePair(s string) string {
+	if len(s) >= 2 && s[0] == s[len(s)-1] &&
+		(s[0] == '\'' || s[0] == '"' || s[0] == '`') {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 // urlEmbeddedToken reports whether the root-token occurrence at idx is glued
 // inside a remote URL: the whitespace-delimited word shows a scheme
-// separator ("://") before the token and the token is not separated from
-// that URL text by a declared asset terminator. The second reference in
-// "https://h/a,${TOKEN}/b" or "https://h:${TOKEN}/c" is therefore a genuine
-// bundle candidate, while "https://h/${TOKEN}/d" stays remote.
+// separator ("://") or opens as a protocol-relative "//" word before the
+// token, and the token is not separated from that URL text by a declared
+// asset terminator. The second reference in "https://h/a,${TOKEN}/b" or
+// "//h:${TOKEN}/c" is therefore a genuine bundle candidate, while
+// "https://h/${TOKEN}/d" and "//h/${TOKEN}/e" stay remote.
 func urlEmbeddedToken(value string, idx int) bool {
 	wordStart := strings.LastIndexAny(value[:idx], " \t\r\n") + 1
-	if !strings.Contains(value[wordStart:idx], "://") {
+	prefix := value[wordStart:idx]
+	if !strings.HasPrefix(prefix, "//") && !strings.Contains(prefix, "://") {
 		return false
 	}
 	return !strings.ContainsRune(assetTerminators, rune(value[idx-1]))
