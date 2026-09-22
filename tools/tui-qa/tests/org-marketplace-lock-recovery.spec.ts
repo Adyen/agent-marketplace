@@ -5,10 +5,9 @@ import { expect, test } from "@microsoft/tui-test";
 import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
-// The healthy counterpart to the lock-failure journey: the same organization
-// v4 Marketplace declaration with its acquisition lock published. The TUI must
-// reach its settled baseline with the endpoint live, and drift checks must
-// pass, proving the organization layer is the only difference.
+// The deployed-lock counterpart to the transient-acquisition journey. The TUI
+// must honor the same exact organization resource from the published policy
+// lock and reach its settled baseline without changing behavior.
 const journey = defineFixture("org-marketplace-lock-recovery", ["tui"], 80, 24, { organization: "published-lock" });
 test.use(journey.options);
 test.beforeAll(journey.setup);
@@ -21,6 +20,7 @@ test("a published organization lock keeps the marketplace-backed workspace healt
   await step("settled baseline with the organization marketplace", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("org-review", { strict: false })).toBeVisible();
     await expect(terminal.getByText("~ in sync")).toBeVisible();
   });
 
@@ -31,6 +31,7 @@ test("a published organization lock keeps the marketplace-backed workspace healt
   });
 
   await step("status tab groups render", () => terminal.write("3"), async () => {
+    await expect(terminal.getByText(/Required\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Enabled\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Available\s+\(1\)/g)).toBeVisible();
   });

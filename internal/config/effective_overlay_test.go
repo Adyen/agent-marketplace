@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 func TestLoadEffectiveFileOverlaysRetainRealPaths(t *testing.T) {
@@ -86,5 +88,70 @@ func TestLoadEffectiveNeverOverlaysOrganization(t *testing.T) {
 	})
 	if ec.Organization.Config != nil || ec.Managed {
 		t.Fatalf("organization overlay bypassed trust: %#v", ec.Organization)
+	}
+}
+
+func TestLoadEffectiveUsesOnlyOrganizationRuntimeLockOverlay(t *testing.T) {
+	dir := t.TempDir()
+	org := filepath.Join(dir, "config.yaml")
+	onDisk := []byte(`apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: https://marketplace.example}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	if err := os.WriteFile(org, onDisk, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(dir, "lock.yaml")
+	lockData, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeOrganization,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL:              "https://marketplace.example",
+			InstanceID:       "marketplace",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "registry"}},
+			Resources: []lockfile.MarketplaceResourceLock{{
+				RegistryName:  "tools",
+				RegistryID:    "registry",
+				Kind:          "skill",
+				Name:          "review",
+				Revision:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				ContentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				ArchiveDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				Acquisition:   lockfile.MarketplaceAcquisitionMirror,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+		OrganizationPath:        org,
+		GlobalPath:              filepath.Join(dir, "missing-user.yaml"),
+		RepoPath:                filepath.Join(dir, "missing-repo.yaml"),
+		LocalPath:               filepath.Join(dir, "missing-local.yaml"),
+		OrganizationRuntimeLock: lockData,
+	})
+	if len(ec.Errors) != 0 {
+		t.Fatalf("errors = %v", ec.Errors)
+	}
+	if ec.Organization.Config == nil || len(ec.Organization.Config.Marketplaces) != 1 || ec.Organization.Config.Marketplaces[0].InstanceID != "marketplace" {
+		t.Fatalf("runtime lock was not applied: %#v", ec.Organization.Config)
+	}
+	runtimeRead := false
+	for _, read := range ec.Organization.Reads {
+		if (read.Path == lockPath || read.RequestedPath == lockPath) && read.Overlay && read.RuntimeLock {
+			runtimeRead = true
+		}
+	}
+	if !runtimeRead {
+		t.Fatalf("runtime lock read was not distinguished from a staged config overlay: %#v", ec.Organization.Reads)
+	}
+	if got, err := os.ReadFile(org); err != nil || string(got) != string(onDisk) {
+		t.Fatalf("runtime lock changed organization config: %q, %v", got, err)
+	}
+	if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("runtime lock was published: %v", err)
 	}
 }

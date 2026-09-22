@@ -27,17 +27,9 @@ test("deleting every personal layer then re-initializing recovers the workspace"
   // Wipe everything a reinstall touches: user config and lock, registry and
   // discovery caches, durable state, the repo config directory, and every
   // generated harness output.
-  fs.rmSync(path.join(fixture.home, ".agents"), { recursive: true, force: true });
-  fs.rmSync(fixture.cacheDir, { recursive: true, force: true });
-  fs.rmSync(fixture.stateDir, { recursive: true, force: true });
-  fs.rmSync(path.join(fixture.repo, ".agents"), { recursive: true, force: true });
-  fs.rmSync(path.join(fixture.repo, ".factory"), { recursive: true, force: true });
+  fixture.resetPersonalState();
   assert.equal(fs.lstatSync(userConfigPath, { throwIfNoEntry: false }), undefined);
   assert.equal(fs.lstatSync(betaSkill, { throwIfNoEntry: false }), undefined);
-
-  // A fresh checkout restores the committed repo config.
-  fs.mkdirSync(path.dirname(repoConfigPath), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(repoConfigPath, fixture.expectedRepoConfig, { encoding: "utf8", mode: 0o600 });
 
   const init = runNonTTY(fixture, ["init", "--harnesses", "factory"], 30_000);
   assert.equal(init.status, 0, `${init.stdout}\n${init.stderr}`);

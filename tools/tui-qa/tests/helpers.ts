@@ -2,9 +2,6 @@ import { expect, test } from "@microsoft/tui-test";
 
 import { createFixture, type Fixture, type FixtureOptions } from "./fixture.js";
 
-export type { Fixture, FixtureOptions };
-export type OrganizationFixtureMode = import("./fixture.js").OrganizationFixtureMode;
-
 type TestBody = Parameters<typeof test>[1];
 type TestOptions = Parameters<typeof test.use>[0];
 type StepPart = () => void | Promise<void>;

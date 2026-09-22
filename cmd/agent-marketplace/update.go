@@ -49,7 +49,7 @@ func runUpdate(ctx context.Context, out io.Writer, bump bool, selected map[lockf
 	if err := prepareDependencyTransactions(ctx, false); err != nil {
 		return err
 	}
-	if _, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, selected); err != nil {
+	if _, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, selected, nil); err != nil {
 		return err
 	}
 	targetResult := &upgradeTargetResult{}

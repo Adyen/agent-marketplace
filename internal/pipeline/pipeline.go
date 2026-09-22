@@ -20,6 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -70,6 +71,10 @@ type ResolveOptions struct {
 	// except that Offline always forces CachedNoFetch.
 	MarketplaceMode    *resolver.MarketplaceResolveMode
 	marketplaceInstall *marketplace.PreparedInstall
+	// DisableTransientOrganizationMarketplaceLock preserves strictly
+	// read-only/check-only command semantics when an organization lock is
+	// absent. Normal online consumer paths acquire a verified in-memory lock.
+	DisableTransientOrganizationMarketplaceLock bool
 	// MarketplaceSourceFilter limits Marketplace resolution to entries owned by
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
@@ -318,6 +323,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		ctx = cache.ContextWithExactGitNamespaceLease(ctx)
 	}
 	var ec config.EffectiveConfig
+	var transientOrganizationMarketplaceLock transientOrganizationMarketplaceLockUse
 
 	var configLoadSpan telemetry.Span
 	if tel != nil {
@@ -330,6 +336,14 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		}
 	}()
 
+	effectiveOpts := opts.EffectiveOpts
+	if effectiveOpts.RepoRoot == "" {
+		effectiveOpts.RepoRoot = opts.RepoRoot
+	}
+	if effectiveOpts.LocalConfigDir == "" {
+		effectiveOpts.LocalConfigDir = opts.LocalConfigDir
+	}
+	allowTransientOrganizationLock := !opts.DisableTransientOrganizationMarketplaceLock && !opts.Offline && opts.CatalogMode != catalog.LoadModeCachedNoFetch
 	useLoaders := opts.Loaders.Org != nil || opts.Loaders.Global != nil || opts.Loaders.Repo != nil || opts.Loaders.Local != nil
 	if useLoaders {
 		loaders := opts.Loaders
@@ -370,15 +384,15 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			Local:        localCfg,
 			Errors:       errs,
 		}
+		if allowTransientOrganizationLock && marketplacelock.HasRequiredError(ec.Errors) {
+			ec, transientOrganizationMarketplaceLock = loadEffectiveWithTransientOrganizationLock(ctx, effectiveOpts, opts.MarketplaceRevocationPolicy)
+		}
 	} else {
-		effectiveOpts := opts.EffectiveOpts
-		if effectiveOpts.RepoRoot == "" {
-			effectiveOpts.RepoRoot = opts.RepoRoot
+		if allowTransientOrganizationLock {
+			ec, transientOrganizationMarketplaceLock = loadEffectiveWithTransientOrganizationLock(ctx, effectiveOpts, opts.MarketplaceRevocationPolicy)
+		} else {
+			ec = config.LoadEffective(ctx, effectiveOpts)
 		}
-		if effectiveOpts.LocalConfigDir == "" {
-			effectiveOpts.LocalConfigDir = opts.LocalConfigDir
-		}
-		ec = config.LoadEffective(ctx, effectiveOpts)
 	}
 
 	result.Diagnostics = ec.Diagnostics
@@ -550,6 +564,9 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		marketplaceResolver.AllowedRegistries = *mergedCfg.AllowedRegistries
 	}
 	var mpResolver resolver.MarketplaceResolver = marketplaceResolver
+	if transientOrganizationMarketplaceLock == transientOrganizationMarketplaceLockAcquired && mpMode != resolver.MarketplaceResolveModeInspect {
+		mpResolver = transientOrganizationMarketplaceResolver{delegate: marketplaceResolver}
+	}
 	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {
 		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, result.TargetHarnesses, mpMode)
 		result.MarketplaceStatuses = inspection.Pins
