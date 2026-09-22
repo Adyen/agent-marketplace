@@ -116,11 +116,16 @@ func (w Workspace) LocalConfigDir() string { return w.localConfigDir }
 // below the nested directory, never independently of it.
 func (w Workspace) MaterializeRoot() string { return w.localConfigDir }
 
-// validate rejects the zero Workspace before any loader, catalog access,
-// backup, or materialization can run against empty roots.
+// validate rejects the zero Workspace and rechecks physical containment before
+// any loader, catalog access, backup, or materialization can use its logical
+// roots. The filesystem can change after construction, including retargeting a
+// symlink beneath the repository, so construction-time validation is not enough.
 func (w Workspace) validate() error {
-	if w.repoRoot == "" {
+	if w.repoRoot == "" || w.localConfigDir == "" {
 		return fmt.Errorf("%w: zero Workspace; construct one with NewWorkspace or DiscoverWorkspace", ErrInvalidWorkspace)
+	}
+	if _, err := NewWorkspace(w.repoRoot, w.localConfigDir); err != nil {
+		return err
 	}
 	return nil
 }

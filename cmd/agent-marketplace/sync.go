@@ -92,6 +92,7 @@ var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as wa
 // real materialization. It is a package var so tests can observe ordering and
 // reuse.
 var discoverSyncWorkspace = pipeline.DiscoverWorkspace
+var ensureGlobalConfigForSync = config.EnsureGlobalConfig
 
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
@@ -99,16 +100,16 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	if len(lockOpts) > 0 {
 		marketplacePolicy = lockOpts[0].marketplacePolicy
 	}
-	if !offline && !locked {
-		if err := config.EnsureGlobalConfig(); err != nil {
-			slog.Warn("failed to create global config skeleton", "error", err)
-		}
-	}
-
 	ws, err := discoverSyncWorkspace()
 	if err != nil {
 		return err
 	}
+	if !offline && !locked {
+		if err := ensureGlobalConfigForSync(); err != nil {
+			slog.Warn("failed to create global config skeleton", "error", err)
+		}
+	}
+
 	repoRoot := ws.RepoRoot()
 	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
