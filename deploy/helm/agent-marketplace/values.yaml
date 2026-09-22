@@ -288,6 +288,9 @@ prometheusRule:
   apiTargetMissing:
     for: 5m
     severity: critical
+  apiTargetDown:
+    for: 5m
+    severity: critical
   http5xx:
     for: 10m
     severity: critical
