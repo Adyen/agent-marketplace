@@ -183,7 +183,7 @@ func compileManagedLinkCleanup(repoRoot string, resolved []resolver.ResolvedArti
 			outputs[outputKey{target: name, machineScope: machine}] = true
 		}
 	}
-	compiled := compileWorkItems(work, nil, outputs, make(blockedOutputs), repoRoot)
+	compiled := compileWorkItems(work, nil, outputs, make(blockedOutputs), nil, repoRoot)
 	if len(compiled.blocked) > 0 || diag.HasErrors(compiled.allDiags) {
 		return compilePhaseResult{}, fmt.Errorf("%w: cleanup compilation is incomplete", ErrOwnedCleanupUnsupported)
 	}
