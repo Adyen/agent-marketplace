@@ -1,0 +1,9 @@
+version: "2"
+linters:
+  exclusions:
+    paths:
+      # Frozen verbatim copy of Go 1.26.6's compress/flate writer path. It is
+      # stdlib code kept byte-identical so canonical artifact digests stay
+      # toolchain-independent; it must not be edited to satisfy this repo's
+      # linters. See pkg/harness-compilation/internal/frozengzip/flate/doc.go.
+      - pkg/harness-compilation/internal/frozengzip/flate

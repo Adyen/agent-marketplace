@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/frozengzip"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -119,6 +120,12 @@ func isDigestFormat(s string) bool {
 // the manifest's archive_digest field is replaced by a fixed-length placeholder.
 // This breaks the self-referential cycle: the final archive carries the real
 // digest, but verification recomputes the digest over the placeholder form.
+//
+// The gzip layer is the frozen encoding from internal/frozengzip, not
+// compress/gzip: Go does not promise byte-stable compression output, and the
+// digest covers the compressed bytes. Pinning the compressor keeps encode and
+// verify byte-identical across toolchains and preserves every digest recorded
+// before Go 1.27 changed compress/flate.
 func Encode(a CanonicalArtifact) ([]byte, string, error) {
 	if err := a.Manifest.Validate(); err != nil {
 		return nil, "", fmt.Errorf("invalid manifest: %w", err)
@@ -150,22 +157,15 @@ type archiveEntry struct {
 	dir  bool
 }
 
-// encodeArtifact writes a deterministic gzip-compressed tar archive.
+// encodeArtifact writes a deterministic gzip-compressed tar archive. The
+// gzip stream is the frozen canonical encoding; see Encode.
 func encodeArtifact(a CanonicalArtifact) ([]byte, error) {
 	if err := a.Manifest.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid manifest: %w", err)
 	}
 
 	var buf bytes.Buffer
-	gw, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
-	if err != nil {
-		return nil, err
-	}
-	gw.Name = ""
-	gw.Comment = ""
-	gw.Extra = nil
-	gw.ModTime = time.Time{}
-	gw.OS = 0xff // unknown
+	gw := frozengzip.NewBestSpeed(&buf)
 
 	tw := tar.NewWriter(gw)
 

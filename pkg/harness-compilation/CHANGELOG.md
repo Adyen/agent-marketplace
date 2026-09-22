@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Canonical artifacts pin their gzip compression
+
+`artifact.Encode`/`VerifyArchiveDigest` no longer compress through
+`compress/gzip`: Go 1.27 replaced `compress/flate`, and gzip's exact output is
+explicitly outside the Go 1 compatibility promise. Because the archive digest
+covers the compressed bytes, artifacts indexed by a binary built with Go 1.26
+or older failed verification on binaries built with Go 1.27 or newer, and vice
+versa; in production this broke every marketplace install on CLI 4.0.0
+against artifacts indexed by server v4.0.0-rc.3.
+
+The canonical archive format now owns its compression: `internal/frozengzip`
+wraps a frozen, verbatim copy of Go 1.26's flate BestSpeed writer path with
+the fixed RFC 1952 framing compress/gzip emits for the canonical settings
+(no name/comment/extra, zero mtime, OS 255). Encoding and verification are
+therefore byte-identical across toolchains, and every digest recorded before
+Go 1.27 continues to verify unchanged. The regression test pins the real
+production artifact whose mismatch (`342126ac…` recorded vs `f7802276…`
+re-encoded) caused the incident.
+
 ### Validated native-layout descriptors now cover Codex, Devin, and Claude
 
 `target/native_layout.go` now carries a complete `NativeLayout` descriptor for
