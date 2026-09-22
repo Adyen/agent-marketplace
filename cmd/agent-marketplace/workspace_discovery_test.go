@@ -61,12 +61,22 @@ registries:
 	stubSyncWorkspaceDiscovery(t, func() (pipeline.Workspace, error) {
 		return pipeline.Workspace{}, sentinel
 	})
+	previousEnsure := ensureGlobalConfigForSync
+	ensureCalls := 0
+	ensureGlobalConfigForSync = func() error {
+		ensureCalls++
+		return nil
+	}
+	t.Cleanup(func() { ensureGlobalConfigForSync = previousEnsure })
 
 	if err := runSyncWithLocks(context.Background(), io.Discard, false, false, false, false, false); !errors.Is(err, sentinel) {
 		t.Fatalf("runSyncWithLocks error = %v; want discovery sentinel", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(repoRoot, ".agents", "lock.yaml")); !os.IsNotExist(statErr) {
 		t.Fatalf("lock preparation ran before workspace validation; stat err = %v", statErr)
+	}
+	if ensureCalls != 0 {
+		t.Fatalf("global config initialization ran before workspace validation: %d calls", ensureCalls)
 	}
 	if err := runSyncCheck(context.Background(), io.Discard); !errors.Is(err, sentinel) {
 		t.Fatalf("runSyncCheck error = %v; want discovery sentinel", err)

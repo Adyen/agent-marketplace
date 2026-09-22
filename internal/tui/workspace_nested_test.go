@@ -148,7 +148,22 @@ func TestReadSnapshotDryRunUsesWorkspaceMaterializeRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
-	_ = readSnapshotForWorkspace(context.Background(), ws, t.TempDir(), catalogLoadCached)
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	previousOrg, previousGlobal, previousRepo, previousLocal := loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig
+	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	loadGlobalConfig = func() (*config.Config, error) { return nil, nil }
+	loadRepoConfig = func() (*config.Config, error) {
+		return config.LoadConfigFromPath(config.ProjectConfigPath(repoRoot))
+	}
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+	t.Cleanup(func() {
+		loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
+	})
+
+	snapshot := readSnapshotForWorkspace(context.Background(), ws, t.TempDir(), catalogLoadCached)
+	if len(snapshot.errs) != 0 {
+		t.Fatalf("snapshot errors = %v", snapshot.errs)
+	}
 	if got, want := canonicalWorkspacePath(t, gotRoot), canonicalWorkspacePath(t, nested); got != want {
 		t.Fatalf("TUI dry-run root = %q; want workspace materialization root %q (repository root %q)", got, want, repoRoot)
 	}

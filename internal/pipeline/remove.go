@@ -57,6 +57,7 @@ type RemoveOptions struct {
 	DependencyReconcile DependencyReconciler
 	CleanupDependencies CleanupDependencyCommitter
 	configStaging       *configStagingManager
+	workspace           *Workspace
 	warningSink         *[]error
 }
 
@@ -76,11 +77,18 @@ type RemoveResult struct {
 // Remove removes a resource from the appropriate config layer and re-syncs.
 // It handles collection detection, scope inference, scope boundary validation,
 // per-scope config editing, and --from ad-hoc registry removal.
+func removeWorkspace(opts RemoveOptions) (Workspace, error) {
+	if opts.workspace != nil {
+		return *opts.workspace, nil
+	}
+	return workspaceForRoots(opts.RepoRoot, "")
+}
+
 func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyncOpt) error {
 	if opts.DependencyReconcile != nil {
 		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
 	}
-	ws, err := workspaceForRoots(opts.RepoRoot, "")
+	ws, err := removeWorkspace(opts)
 	if err != nil {
 		return err
 	}
@@ -94,6 +102,11 @@ func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyn
 func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retErr error) {
 	var warnings []error
 	opts.warningSink = &warnings
+	ws, err := workspaceForRoots(opts.RepoRoot, "")
+	if err != nil {
+		return nil, err
+	}
+	opts.workspace = &ws
 	defer func() {
 		if result != nil {
 			result.Warnings = warnings
@@ -264,7 +277,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		}
 	}
 
-	ws, err := workspaceForRoots(opts.RepoRoot, "")
+	ws, err = removeWorkspace(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -1459,7 +1472,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// resource like a skill enabled at both user and repo scope would be
 	// reported as spuriously "ambiguous" even though --from already names the
 	// entry to operate on).
-	ws, err := workspaceForRoots(repoRoot, "")
+	ws, err := removeWorkspace(opts)
 	if err != nil {
 		return nil, err
 	}
