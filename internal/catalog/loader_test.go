@@ -493,6 +493,43 @@ func TestHasWarningOrHigher(t *testing.T) {
 	}
 }
 
+func TestHasDiscoveryBoundaryDiagnostics(t *testing.T) {
+	auditCodes := []string{
+		diag.CodeIngestClaudeUnconsumedConfig,
+		diag.CodeIngestFactoryUnconsumedConfig,
+		diag.CodeIngestCursorUnconsumedConfig,
+		diag.CodeIngestGeminiUnconsumedConfig,
+		diag.CodeIngestWindsurfUnconsumedConfig,
+		diag.CodeIngestDevinUnconsumedConfig,
+		diag.CodeIngestCodexUnconsumedConfig,
+	}
+	tests := []struct {
+		name        string
+		diagnostics []diag.Diagnostic
+		want        bool
+	}{
+		{name: "audit warnings", diagnostics: func() []diag.Diagnostic {
+			out := make([]diag.Diagnostic, 0, len(auditCodes))
+			for _, code := range auditCodes {
+				out = append(out, diag.Diagnostic{Code: code, Severity: diag.SeverityWarning})
+			}
+			return out
+		}(), want: false},
+		{name: "audit error", diagnostics: []diag.Diagnostic{{Code: diag.CodeIngestClaudeUnconsumedConfig, Severity: diag.SeverityError}}, want: true},
+		{name: "arbitrary warning", diagnostics: []diag.Diagnostic{{Code: "other.warning", Severity: diag.SeverityWarning}}, want: true},
+		{name: "mixed audit and ordinary warning", diagnostics: []diag.Diagnostic{{Code: diag.CodeIngestClaudeUnconsumedConfig, Severity: diag.SeverityWarning}, {Code: "other.warning", Severity: diag.SeverityWarning}}, want: true},
+		{name: "info only", diagnostics: []diag.Diagnostic{{Code: "other.info", Severity: diag.SeverityInfo}}, want: false},
+		{name: "nil", diagnostics: nil, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasDiscoveryBoundaryDiagnostics(tt.diagnostics); got != tt.want {
+				t.Fatalf("hasDiscoveryBoundaryDiagnostics() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestDiscover_DoesNotRecurseWhenWarningDiagnostics verifies that the vacant-lot
 // recursion does NOT happen when there are warning-level diagnostics, even if
 // there are zero entries. This prevents recursing into directories that HCC

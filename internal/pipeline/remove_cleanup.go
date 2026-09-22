@@ -141,35 +141,11 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 }
 
 func cleanupReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAssertion, error) {
+	byRequested, err := configReadAssertions(ec, true)
+	if err != nil {
+		return nil, err
+	}
 	layers := []config.LayerResult{ec.Organization, ec.User, ec.Repo, ec.LocalLayer}
-	byRequested := map[string]dependencytxn.ReadAssertion{}
-	represented := map[string]bool{}
-	for _, layer := range layers {
-		for _, read := range layer.Reads {
-			assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath, Expected: dependencytxn.Generation{Exists: true, Digest: read.Digest}}
-			if prior, ok := byRequested[assertion.RequestedPath]; ok && prior != assertion {
-				return nil, fmt.Errorf("%w: inconsistent config read", dependencytxn.ErrGenerationConflict)
-			}
-			byRequested[assertion.RequestedPath] = assertion
-			represented[assertion.Path] = true
-		}
-	}
-	for _, layer := range layers {
-		if len(layer.Reads) != 0 || layer.Path == "" {
-			continue
-		}
-		canonical, err := dependencytxn.CanonicalConfigDestination(layer.Path)
-		if err != nil {
-			return nil, err
-		}
-		if represented[canonical] {
-			continue
-		}
-		if _, exists := byRequested[layer.Path]; !exists {
-			byRequested[layer.Path] = dependencytxn.ReadAssertion{Path: canonical, RequestedPath: layer.Path}
-			represented[canonical] = true
-		}
-	}
 	for _, layer := range layers {
 		if len(readOnlyRemoteEntries(layer)) == 0 || layer.Path == "" {
 			continue
@@ -198,6 +174,42 @@ func cleanupReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAsser
 	}
 	sort.Slice(reads, func(i, j int) bool { return reads[i].RequestedPath < reads[j].RequestedPath })
 	return reads, nil
+}
+
+func configReadAssertions(ec config.EffectiveConfig, includeAcquisitionLocks bool) (map[string]dependencytxn.ReadAssertion, error) {
+	layers := []config.LayerResult{ec.Organization, ec.User, ec.Repo, ec.LocalLayer}
+	byRequested := map[string]dependencytxn.ReadAssertion{}
+	represented := map[string]bool{}
+	for _, layer := range layers {
+		for _, read := range layer.Reads {
+			if read.RuntimeLock || (read.AcquisitionLock && !includeAcquisitionLocks) {
+				continue
+			}
+			assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath, Expected: dependencytxn.Generation{Exists: true, Digest: read.Digest}}
+			if prior, ok := byRequested[assertion.RequestedPath]; ok && prior != assertion {
+				return nil, fmt.Errorf("%w: inconsistent config read", dependencytxn.ErrGenerationConflict)
+			}
+			byRequested[assertion.RequestedPath] = assertion
+			represented[assertion.Path] = true
+		}
+	}
+	for _, layer := range layers {
+		if len(layer.Reads) != 0 || layer.Path == "" {
+			continue
+		}
+		canonical, err := dependencytxn.CanonicalConfigDestination(layer.Path)
+		if err != nil {
+			return nil, err
+		}
+		if represented[canonical] {
+			continue
+		}
+		if _, exists := byRequested[layer.Path]; !exists {
+			byRequested[layer.Path] = dependencytxn.ReadAssertion{Path: canonical, RequestedPath: layer.Path}
+			represented[canonical] = true
+		}
+	}
+	return byRequested, nil
 }
 
 func sameCleanupTarget(a, b resolver.ResolvedArtifact) bool {

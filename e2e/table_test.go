@@ -180,6 +180,17 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:      "migration/startup_preserves_legacy_repo_layers",
+		Desc:      "Given a v4 user config and legacy repo/local configs, When listing and explicitly migrating the repo, Then startup preserves both legacy layers and only explicit migration upgrades the repo",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries: []\n",
+		LocalCfg:  "registries: []\n",
+		Steps: []Step{
+			{Args: []string{"list"}, MustPass: true, OutNotContains: []string{"Migrate these configuration files"}, PathsUnchanged: []string{"/workspace/.agents"}},
+			{Args: []string{"migrate", "--scope", "repo"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+		},
+	},
+	{
 		Name:      "local_registry/v4_portable_directory",
 		Desc:      "Given a repository-local registry, When migrating and syncing v4 dot and nested directory sources, Then live skills materialize without absolute config paths or Git locks",
 		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
@@ -4505,6 +4516,61 @@ harnesses:
 				OutContains:    []string{"Effective level:", "off"},
 				OutNotContains: []string{"basic"}},
 			{Args: []string{"telemetry", "purge"}, MustPass: true},
+		},
+	},
+	{
+		Name: "ingest/bare_bundle_mcp",
+		Desc: "Given a bare Claude bundle with skills, a command, and undotted MCP configuration, when list and sync run, then MCP is discovered and materialized without changing the native definition.",
+		Registries: []RegistryDef{{Name: "bare-bundle-mcp", Skills: []Skill{{Name: "demo"}}, Commands: []Command{{Name: "hi"}}, Files: map[string]string{
+			"mcp.json": (MCPServer{Name: "probe", Command: "npx", Args: []string{"-y", "x"}}).MCPFile(),
+		}}},
+		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:bare-bundle-mcp}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
+			{Args: []string{"list", "--kind", "skill"}, MustPass: true, OutContains: []string{"demo"}},
+			{Args: []string{"list", "--kind", "command"}, MustPass: true, OutContains: []string{"hi"}},
+			{Args: []string{"list", "--kind", "mcp"}, MustPass: true, OutContains: []string{"probe"}},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/mcp.json": "\"probe\": {"}},
+			{FileContains: map[string]string{"/workspace/.factory/mcp.json": "\"command\": \"npx\""}},
+			{FileContains: map[string]string{"/workspace/.factory/mcp.json": "\"-y\""}},
+			{FileContains: map[string]string{"/workspace/.factory/mcp.json": "\"x\""}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"probe"}},
+		},
+	},
+	{
+		Name: "ingest/unconsumed_container",
+		Desc: "Given a diagnostic-only Factory container with a nested skill, when lock, list, sync, and status run, then the child resource is discovered while the container audit remains visible.",
+		Registries: []RegistryDef{{Name: "unconsumed-container", Files: map[string]string{
+			"group/.factory-plugin/plugin.json": `{"name":"group"}`,
+			"group/.mcp.json":                   `{"mcpServers":{"foreign":{"command":"npx"}}}`,
+			"group/child/skills/demo/SKILL.md":  "---\nname: demo\ndescription: Demo\n---\nDemo\n",
+		}}},
+		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:unconsumed-container}}\n    ref: main\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
+			{Args: []string{"list", "--kind", "skill"}, MustPass: true, OutContains: []string{"demo", "ingest.factory.unconsumed-config"}},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/demo/SKILL.md": "Demo"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"demo", "ingest.factory.unconsumed-config"}},
+		},
+	},
+	{
+		Name: "ingest/unconsumed_config",
+		Desc: "Given an explicit Claude plugin with native MCP and foreign configurations, when list, sync, and status run, then the foreign files are warned about while the selected native MCP remains materializable.",
+		Registries: []RegistryDef{{Name: "unconsumed-config", Skills: []Skill{{Name: "demo"}}, Files: map[string]string{
+			".claude-plugin/plugin.json": `{"name":"unconsumed-config"}`,
+			".mcp.json":                  (MCPServer{Name: "native", Command: "npx", Args: []string{"-y", "native"}}).MCPFile(),
+			"mcp.json":                   `{"mcpServers":{"foreign":{"command":"npx"}}}`,
+			"gemini-extension.json":      `{"name":"gemini","mcpServers":{"foreign-gemini":{"command":"npx"}}}`,
+		}}},
+		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:unconsumed-config}}\n    ref: main\n    source_harness: claude\n    default: true\n",
+		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
+			{Args: []string{"list"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "gemini-extension.json", "For Claude plugins, rename"}},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/mcp.json": "native"}, FileNotContains: map[string]string{"/workspace/.factory/mcp.json": "foreign"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "gemini-extension.json", "For Claude plugins, rename"}},
 		},
 	},
 }

@@ -102,6 +102,90 @@ func TestClaudeIngester_Detect_NoMatch(t *testing.T) {
 	}
 }
 
+func TestClaudeIngester_LoadBundle_BareMCPFallback(t *testing.T) {
+	ing, ok := ingest.For(ingest.HarnessClaude)
+	if !ok {
+		t.Fatal("Claude ingester not registered")
+	}
+	src := fstest.MapFS{
+		"skills/demo/SKILL.md": {Data: []byte("---\nname: demo\ndescription: Demo\n---\nDemo")},
+		"commands/hi.md":       {Data: []byte("---\nname: hi\ndescription: Hi\n---\nHi")},
+		"mcp.json":             {Data: []byte(`{"mcpServers":{"probe":{"command":"npx","args":["-y","x"]}}}`)},
+	}
+	b, err := ing.LoadBundle(src)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	if len(b.Resources) != 3 {
+		t.Fatalf("resources = %d, want 3", len(b.Resources))
+	}
+	for _, resource := range b.Resources {
+		if resource.Kind() == ir.KindMcpServer {
+			server := resource.(*ir.McpServer)
+			if server.Name() != "probe" || server.Command != "npx" || len(server.Args) != 2 || server.Source.File != "mcp.json" {
+				t.Fatalf("MCP resource = %#v, want probe/npx/-y x/mcp.json", server)
+			}
+			return
+		}
+	}
+	t.Fatal("bare mcp.json was not ingested")
+}
+
+func TestClaudeIngester_LoadBundle_BareMCPCompatibility(t *testing.T) {
+	base := fstest.MapFS{"skills/demo/SKILL.md": {Data: []byte("---\nname: demo\ndescription: Demo\n---\nDemo")}}
+	tests := []struct {
+		name       string
+		src        fstest.MapFS
+		legacy     bool
+		wantMCP    bool
+		wantWarn   bool
+		wantSource string
+	}{
+		{name: "dotted-only", src: cloneMapFS(base, ".mcp.json", `{"mcpServers":{"probe":{"command":"npx"}}}`), wantMCP: true, wantSource: ".mcp.json"},
+		{name: "both", src: cloneMapFS(cloneMapFS(base, ".mcp.json", `{"mcpServers":{"dotted":{"command":"npx"}}}`), "mcp.json", `{"mcpServers":{"bare":{"command":"npx"}}}`), wantMCP: true, wantWarn: true, wantSource: ".mcp.json"},
+		{name: "explicit-manifest", src: cloneMapFS(cloneMapFS(base, ".claude-plugin/plugin.json", `{}`), "mcp.json", `{"mcpServers":{"bare":{"command":"npx"}}}`), wantWarn: true},
+		{name: "legacy", src: cloneMapFS(base, "mcp.json", `{"mcpServers":{"bare":{"command":"npx"}}}`), legacy: true, wantWarn: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, err := LoadBundleWithOptions(tt.src, LoadOptions{LegacyBareMCP: tt.legacy})
+			if err != nil {
+				t.Fatalf("LoadBundleWithOptions: %v", err)
+			}
+			var mcpCount int
+			for _, resource := range b.Resources {
+				if resource.Kind() == ir.KindMcpServer {
+					mcpCount++
+					if tt.wantSource != "" && resource.(*ir.McpServer).Source.File != tt.wantSource {
+						t.Fatalf("MCP source = %q, want %q", resource.(*ir.McpServer).Source.File, tt.wantSource)
+					}
+				}
+			}
+			if (mcpCount > 0) != tt.wantMCP || tt.legacy && mcpCount != 0 {
+				t.Fatalf("MCP count = %d, wantMCP=%v legacy=%v", mcpCount, tt.wantMCP, tt.legacy)
+			}
+			var warned bool
+			for _, diagnostic := range b.Diagnostics {
+				if diagnostic.Code == diag.CodeIngestClaudeUnconsumedConfig && diagnostic.Source.File == "mcp.json" {
+					warned = true
+				}
+			}
+			if warned != tt.wantWarn {
+				t.Fatalf("undotted warning = %v, want %v; diagnostics=%#v", warned, tt.wantWarn, b.Diagnostics)
+			}
+		})
+	}
+}
+
+func cloneMapFS(src fstest.MapFS, name, content string) fstest.MapFS {
+	clone := make(fstest.MapFS, len(src)+1)
+	for path, file := range src {
+		clone[path] = file
+	}
+	clone[name] = &fstest.MapFile{Data: []byte(content)}
+	return clone
+}
+
 func TestClaudeIngester_LoadBundle_PluginForm(t *testing.T) {
 	ing, ok := ingest.For(ingest.HarnessClaude)
 	if !ok {

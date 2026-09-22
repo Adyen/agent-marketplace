@@ -29,6 +29,7 @@ type PreparedInstall struct {
 	// collection. The collection itself is never passed to materialization.
 	CollectionMembers  []*PreparedInstall
 	CollectionManifest hccartifact.CollectionManifest
+	PreparationWork    int
 }
 
 // InstallPreview is the stable, typed preview surface for a prepared install.
@@ -197,6 +198,39 @@ func validateLocatorRevision(locator MarketplaceLocator, revision store.Assessed
 // PrepareLocator resolves a user-facing locator and fully prefetches and
 // verifies its mirror artifact. It deliberately does not edit configuration.
 func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target) (*PreparedInstall, error) {
+	return r.prepareLocator(ctx, entry, locator, targets, 0, nil)
+}
+
+// PrepareLocatorWithResourceLimit is PrepareLocator with an upper bound on
+// collection traversal work and an optional per-invocation revocation policy.
+func (r *Resolver) PrepareLocatorWithResourceLimit(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, resourceLimit int, policies ...resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
+	if resourceLimit < 1 {
+		return nil, fmt.Errorf("marketplace prepared resource limit must be positive")
+	}
+	var policy resolver.MarketplaceRevocationPolicy
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
+	return r.prepareLocator(ctx, entry, locator, targets, resourceLimit, policy)
+}
+
+type collectionPreparationBudget struct {
+	limit int
+	used  int
+}
+
+func (b *collectionPreparationBudget) consume(count int) error {
+	if b == nil || count == 0 {
+		return nil
+	}
+	if count < 0 || (b.limit > 0 && b.used > b.limit-count) {
+		return fmt.Errorf("marketplace collection preparation work exceeds resource limit %d", b.limit)
+	}
+	b.used += count
+	return nil
+}
+
+func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, resourceLimit int, policy resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -256,7 +290,7 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 			return nil, err
 		}
 	}
-	if err := enforceMarketplaceUse(revision, nil); err != nil {
+	if err := enforceMarketplaceUse(revision, policy); err != nil {
 		return nil, fmt.Errorf("resource revision: %w", err)
 	}
 	pinRevision := locator.Revision
@@ -292,10 +326,14 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 
 	cache := r.cache()
 	if locator.Kind == "collection" {
+		budget := &collectionPreparationBudget{limit: resourceLimit}
+		if err := budget.consume(1); err != nil {
+			return nil, err
+		}
 		if registry.Acquisition != store.AcquisitionMirror {
 			return nil, fmt.Errorf("collection %q requires mirror acquisition", locator.Name)
 		}
-		if err := enforceMarketplaceUse(revision, nil); err != nil {
+		if err := enforceMarketplaceUse(revision, policy); err != nil {
 			return nil, fmt.Errorf("collection revision: %w", err)
 		}
 		if _, err := cache.WriteResourceRevision(canonical.URL, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, revision); err != nil {
@@ -315,14 +353,14 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 			return nil, fmt.Errorf("mark collection manifest verified: %w", err)
 		}
 		nestedManifests := make(map[string]hccartifact.CollectionManifest)
-		if err := r.verifyNestedCollectionManifests(ctx, client, manifest, map[string]bool{string(revision.ContentDigest): true}, nestedManifests); err != nil {
+		if err := r.verifyNestedCollectionManifests(ctx, client, cache, canonical, manifest, map[string]bool{string(revision.ContentDigest): true}, nestedManifests, budget, policy); err != nil {
 			return nil, err
 		}
 		leaves, err := hccartifact.ValidateAndExpandCollectionManifestGraph(manifest, nestedManifests)
 		if err != nil {
 			return nil, fmt.Errorf("validate collection graph: %w", err)
 		}
-		members := make([]*PreparedInstall, 0, len(leaves))
+		uniqueLeaves := make([]hccartifact.CollectionMemberEntry, 0, len(leaves))
 		seen := make(map[string]string, len(leaves))
 		for _, member := range leaves {
 			key := member.RegistryID + "/" + member.Kind + "/" + member.Name
@@ -333,16 +371,23 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 				continue
 			}
 			seen[key] = member.Revision
-			memberPlan, err := r.prepareCollectionLeaf(ctx, client, cache, canonical, registry, revision, member, targets)
+			uniqueLeaves = append(uniqueLeaves, member)
+		}
+		if err := budget.consume(len(uniqueLeaves)); err != nil {
+			return nil, err
+		}
+		members := make([]*PreparedInstall, 0, len(uniqueLeaves))
+		for _, member := range uniqueLeaves {
+			memberPlan, err := r.prepareCollectionLeaf(ctx, client, cache, canonical, registry, revision, member, targets, policy)
 			if err != nil {
 				return nil, err
 			}
 			members = append(members, memberPlan)
 		}
 		slog.Info("marketplace collection install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "registry_id", registry.ID, "name", locator.Name, "manifest_digest", revision.ContentDigest, "members", len(members))
-		return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, CollectionManifest: manifest, CollectionMembers: members}, nil
+		return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, CollectionManifest: manifest, CollectionMembers: members, PreparationWork: budget.used}, nil
 	}
-	resolved, artifact, err := r.resolvePinWithArtifact(ctx, client, cache, canonical, pin, targets, resolver.MarketplaceResolveModeRefresh)
+	resolved, artifact, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, canonical, pin, targets, resolver.MarketplaceResolveModeRefresh, policy, r.AllowedRegistries)
 	if err != nil {
 		return nil, fmt.Errorf("verify Marketplace artifact: %w", err)
 	}
@@ -354,13 +399,16 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		archiveDigest = artifact.Manifest.ArchiveDigest
 	}
 	slog.Info("marketplace install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "registry_id", registry.ID, "kind", locator.Kind, "name", locator.Name, "digest", pin.Digest, "acquisition", pin.Acquisition, "registry_commit", pin.RegistryCommit)
-	return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, Resolved: resolved, Artifact: artifact, ArchiveDigest: archiveDigest}, nil
+	return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, Resolved: resolved, Artifact: artifact, ArchiveDigest: archiveDigest, PreparationWork: 1}, nil
 }
 
-func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *Client, manifest hccartifact.CollectionManifest, visiting map[string]bool, nestedManifests map[string]hccartifact.CollectionManifest) error {
+func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, manifest hccartifact.CollectionManifest, visiting map[string]bool, nestedManifests map[string]hccartifact.CollectionManifest, budget *collectionPreparationBudget, policy resolver.MarketplaceRevocationPolicy) error {
 	for _, member := range manifest.Members {
 		if member.Kind != "collection" {
 			continue
+		}
+		if err := budget.consume(1); err != nil {
+			return err
 		}
 		if member.RegistryID == "" || member.Revision == "" {
 			return fmt.Errorf("collection %q has an unresolved nested member %q", manifest.Name, member.Name)
@@ -382,8 +430,11 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 		if nestedRevision.ContentDigest != store.RevisionDigest(member.Revision) || nestedRevision.ArchiveDigest != "" {
 			return fmt.Errorf("nested collection %q revision metadata does not match manifest", member.Name)
 		}
-		if err := enforceMarketplaceUse(nestedRevision, nil); err != nil {
+		if err := enforceMarketplaceUse(nestedRevision, policy); err != nil {
 			return fmt.Errorf("nested collection %q revision: %w", member.Name, err)
+		}
+		if _, err := cache.WriteResourceRevision(entry.URL, string(nestedRegistry.ID), "collection", member.Name, member.Revision, nestedRevision); err != nil {
+			return fmt.Errorf("cache nested collection %q revision: %w", member.Name, err)
 		}
 		nested, payload, err := client.GetCollectionManifest(ctx, member.Revision)
 		if err != nil {
@@ -392,15 +443,15 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 		if nested.Name != member.Name {
 			return fmt.Errorf("nested collection name mismatch: got %q, want %q", nested.Name, member.Name)
 		}
-		if _, err := r.cache().WriteCollectionManifest(member.Revision, payload); err != nil {
+		if _, err := cache.WriteCollectionManifest(member.Revision, payload); err != nil {
 			return fmt.Errorf("cache nested collection %q: %w", member.Name, err)
 		}
-		if err := r.cache().MarkCollectionVerified(member.Revision); err != nil {
+		if err := cache.MarkCollectionVerified(member.Revision); err != nil {
 			return fmt.Errorf("mark nested collection %q manifest verified: %w", member.Name, err)
 		}
 		nestedManifests[member.Revision] = nested
 		visiting[member.Revision] = true
-		if err := r.verifyNestedCollectionManifests(ctx, client, nested, visiting, nestedManifests); err != nil {
+		if err := r.verifyNestedCollectionManifests(ctx, client, cache, entry, nested, visiting, nestedManifests, budget, policy); err != nil {
 			return err
 		}
 		delete(visiting, member.Revision)
@@ -420,7 +471,7 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 	return nil
 }
 
-func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, collectionRegistry store.Registry, collectionRevision store.AssessedResourceRevision, member hccartifact.CollectionMemberEntry, targets []hcc.Target) (*PreparedInstall, error) {
+func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, collectionRegistry store.Registry, collectionRevision store.AssessedResourceRevision, member hccartifact.CollectionMemberEntry, targets []hcc.Target, policy resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
 	memberRegistry, err := client.GetRegistry(ctx, member.RegistryID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve collection member registry %q: %w", member.RegistryID, err)
@@ -444,7 +495,7 @@ func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, ca
 	if err := validateResourceRevision(entry, leafPin, leafRevision); err != nil {
 		return nil, fmt.Errorf("collection member %s/%q metadata: %w", member.Kind, member.Name, err)
 	}
-	if err := enforceMarketplaceUse(leafRevision, nil); err != nil {
+	if err := enforceMarketplaceUse(leafRevision, policy); err != nil {
 		return nil, fmt.Errorf("collection member %s/%q: %w", member.Kind, member.Name, err)
 	}
 	if acquisition == config.MarketplaceAcquisitionIndexOnly {
@@ -461,7 +512,7 @@ func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, ca
 		leafPin.RegistryCommit = occurrence.Commit
 		leafPin.RegistryManifestDigest = string(occurrence.RegistryRevisionManifestDigest)
 	}
-	resolved, decoded, err := r.resolvePinWithArtifact(ctx, client, cache, entry, leafPin, targets, resolver.MarketplaceResolveModeRefresh)
+	resolved, decoded, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, leafPin, targets, resolver.MarketplaceResolveModeRefresh, policy, r.AllowedRegistries)
 	if err != nil {
 		return nil, fmt.Errorf("verify collection member %s/%q: %w", member.Kind, member.Name, err)
 	}

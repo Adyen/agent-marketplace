@@ -167,6 +167,15 @@ func (g *geminiIngester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 		}
 	}
 
+	consumed := []string{settingsPath, mcpPath}
+	if hasManifest {
+		consumed = append(consumed, extensionManifestPath)
+	}
+	layout := "gemini workspace"
+	if hasManifest {
+		layout = "gemini plugin"
+	}
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestGeminiUnconsumedConfig, layout, consumed...)...)
 	return &ingest.Bundle{
 		Manifest:    manifest,
 		Resources:   resources,

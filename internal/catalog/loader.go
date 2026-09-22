@@ -194,9 +194,12 @@ func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOp
 	// about. This can happen when the directory is a meta-directory containing
 	// multiple independent bundle subdirectories. Scan for sub-bundles and
 	// recurse into them.
-	if len(cat.Entries) == 0 && !hasWarningOrHigher(cat.Diagnostics) {
+	if len(cat.Entries) == 0 && !hasDiscoveryBoundaryDiagnostics(cat.Diagnostics) {
 		subBundles := scanForSubBundles(dir, sourceHarness, opts)
 		if len(subBundles) > 0 {
+			if hasWarningOrHigher(cat.Diagnostics) {
+				subBundles = append([]subBundle{{path: dir, catalog: cat}}, subBundles...)
+			}
 			return discoverSubBundles(subBundles)
 		}
 	}
@@ -300,6 +303,24 @@ func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOp
 func hasWarningOrHigher(diagnostics []diag.Diagnostic) bool {
 	for _, d := range diagnostics {
 		if d.Severity <= diag.SeverityWarning {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiscoveryBoundaryDiagnostics(diagnostics []diag.Diagnostic) bool {
+	for _, d := range diagnostics {
+		if d.Severity == diag.SeverityWarning {
+			switch d.Code {
+			case diag.CodeIngestClaudeUnconsumedConfig, diag.CodeIngestFactoryUnconsumedConfig,
+				diag.CodeIngestCursorUnconsumedConfig, diag.CodeIngestGeminiUnconsumedConfig,
+				diag.CodeIngestWindsurfUnconsumedConfig, diag.CodeIngestDevinUnconsumedConfig,
+				diag.CodeIngestCodexUnconsumedConfig:
+				continue
+			}
+		}
+		if d.Severity.AtLeastAsSevereAs(diag.SeverityWarning) {
 			return true
 		}
 	}
@@ -425,7 +446,7 @@ func loadSubBundle(path, sourceHarness string, options ...IngestOptions) subBund
 }
 
 func (b subBundle) coveredBy(entries []Entry, dir string) bool {
-	if b.err != nil || hasWarningOrHigher(b.catalog.Diagnostics) {
+	if b.err != nil || hasDiscoveryBoundaryDiagnostics(b.catalog.Diagnostics) {
 		return false
 	}
 	paths := make([]string, 0, len(b.catalog.Entries))
@@ -454,11 +475,16 @@ func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle, options
 		subDir := filepath.Join(dir, name)
 		if hasBundleRoot(subDir) {
 			candidate := loadSubBundle(subDir, sourceHarness, options...)
-			if candidate.err != nil || len(candidate.catalog.Entries) > 0 || hasWarningOrHigher(candidate.catalog.Diagnostics) {
+			if candidate.err != nil || len(candidate.catalog.Entries) > 0 || hasDiscoveryBoundaryDiagnostics(candidate.catalog.Diagnostics) {
 				*bundles = append(*bundles, candidate)
 				continue
 			}
-			slog.Debug("ignoring empty bundle candidate", "path", subDir)
+			if hasWarningOrHigher(candidate.catalog.Diagnostics) {
+				*bundles = append(*bundles, candidate)
+				slog.Debug("traversing diagnostic-only bundle container", "path", subDir)
+			} else {
+				slog.Debug("ignoring empty bundle candidate", "path", subDir)
+			}
 		} else if hasRootSkill(os.DirFS(subDir)) {
 			continue
 		}
@@ -1275,6 +1301,7 @@ func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCata
 		result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q): %w", parentEntry.URL, parentEntry.Ref, subErr))
 	}
 
+	var diagnosticOnlyDirs []string
 	for _, subDir := range subDirs {
 		subCat := subBundles[subDir]
 
@@ -1285,6 +1312,21 @@ func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCata
 		}
 
 		subKey := cache.CatalogKeyForEntry(parentEntry.URL, parentEntry.Ref, relPath)
+		if len(subCat.Entries) == 0 && !hasDiscoveryBoundaryDiagnostics(subCat.Diagnostics) {
+			result.Catalogs[subKey] = subCat
+			result.Malformed = append(result.Malformed, subCat.Malformed...)
+			result.MalformedCount += len(subCat.Malformed)
+			diagnosticOnlyDirs = append(diagnosticOnlyDirs, subDir)
+			if !slices.ContainsFunc(subDirs, func(candidate string) bool {
+				return candidate != subDir && catalogPathWithin(subDir, candidate) && len(subBundles[candidate].Entries) > 0
+			}) {
+				subEntry := parentEntry
+				subEntry.Path = relPath
+				subEntry.CatalogKey = subKey
+				result.Config.Registries = append(result.Config.Registries, subEntry)
+			}
+			continue
+		}
 
 		// Avoid re-scanning if this sub-bundle directory was already
 		// discovered (e.g. as an explicit registry entry). Create the
@@ -1385,6 +1427,32 @@ func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCata
 		result.Collections = appendUniqueCollections(result.Collections, subCat.Collections)
 		result.Malformed = append(result.Malformed, subCat.Malformed...)
 		result.MalformedCount += len(subCat.Malformed)
+	}
+
+	for _, containerDir := range diagnosticOnlyDirs {
+		for _, subDir := range subDirs {
+			if subDir == containerDir || !catalogPathWithin(containerDir, subDir) || len(subBundles[subDir].Entries) == 0 {
+				continue
+			}
+			relPath, err := filepath.Rel(basePath, subDir)
+			if err != nil {
+				continue
+			}
+			subKey := cache.CatalogKeyForEntry(parentEntry.URL, parentEntry.Ref, relPath)
+			subCat, ok := result.Catalogs[subKey]
+			if !ok {
+				continue
+			}
+			for _, malformed := range subBundles[containerDir].Malformed {
+				if !slices.ContainsFunc(subCat.Malformed, func(existing skill.MalformedSkill) bool {
+					return existing.Path == malformed.Path && existing.DirName == malformed.DirName
+				}) {
+					subCat.Malformed = append(subCat.Malformed, malformed)
+				}
+			}
+			result.Catalogs[subKey] = subCat
+			discoveredByKey[subKey] = subCat
+		}
 	}
 }
 

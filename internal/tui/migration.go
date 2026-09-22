@@ -35,13 +35,10 @@ func (p migrationPrompt) hasConfigs() bool {
 }
 
 func pendingMigrationFor(repoRoot, homeDir string) migrationPrompt {
-	paths := config.MigratePaths{
-		Repo: config.ProjectConfigPath(repoRoot),
-	}
+	paths := config.MigratePaths{}
 	if homeDir != "" {
 		paths.User = filepath.Join(homeDir, ".agents", "config.yaml")
 	}
-	paths.Local = config.LocalConfigPath(config.FindLocalConfigDir())
 	candidates, err := config.FindV4MigrationCandidates(paths)
 	if err != nil {
 		return migrationPrompt{}
@@ -123,7 +120,7 @@ func renderMigrationModal(m Model) string {
 	b.WriteString("Existing v2 and v3 configurations remain readable if you decline.\n")
 	b.WriteString("The migrated root declares:\n```yaml\napiVersion: agent-marketplace/v4\n```\n\n")
 	b.WriteString("Runs the in-process equivalent of:\n")
-	b.WriteString("```sh\nagent-marketplace migrate\n```\n\n")
+	b.WriteString("```sh\nagent-marketplace migrate --scope user\n```\n\n")
 	b.WriteString("The migration preserves source selections and layer policies, but regenerates canonical YAML.\n\n")
 	b.WriteString("Detected legacy configuration in:\n")
 	for _, cfg := range m.migrationPrompt.configs {

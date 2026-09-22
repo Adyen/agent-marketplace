@@ -19,6 +19,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/claude"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/windsurf"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
@@ -283,6 +284,7 @@ func markdownBody(content string) string {
 
 type IngestOptions struct {
 	LegacyWindsurfHooks bool
+	LegacyBareMCP       bool
 }
 
 // Load discovers resources from a directory on disk using HCC IngestBundle,
@@ -340,7 +342,9 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 
 	var bundle *ingest.Bundle
 	var err error
-	if opts.LegacyWindsurfHooks && from == ingest.HarnessWindsurf {
+	if opts.LegacyBareMCP && from == ingest.HarnessClaude {
+		bundle, err = claude.LoadBundleWithOptions(srcFS, claude.LoadOptions{LegacyBareMCP: true})
+	} else if opts.LegacyWindsurfHooks && from == ingest.HarnessWindsurf {
 		bundle, err = (windsurf.Ingester{}).LoadBundleWithOptions(srcFS, windsurf.LoadOptions{LegacyHookInventory: true})
 	} else {
 		bundle, err = hcc.IngestBundle(srcFS, hcc.Harness(from))
