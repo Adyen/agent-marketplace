@@ -286,6 +286,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/blobs/sha256/{digest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download an owned v2 artifact blob
+         * @description Ownership and current restrictions are checked before storage access. Blob, artifact, content and resource identity are verified before returning bytes.
+         */
+        get: operations["getArtifactBlob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/capabilities": {
         parameters: {
             query?: never;
@@ -851,6 +871,14 @@ export interface components {
             source_fingerprint: string;
             version: number;
         };
+        ArtifactReference: {
+            artifact_digest: string;
+            blob_digest: string;
+            /** @enum {string} */
+            media_type: "application/vnd.agent-marketplace.artifact.v2.tar+gzip";
+            /** @enum {string} */
+            schema_version: "v2";
+        };
         AssessmentFinding: {
             code: string;
             location?: components["schemas"]["FindingLocation"];
@@ -861,7 +889,7 @@ export interface components {
         Capabilities: {
             acquisition_modes: ("index-only" | "mirror")[];
             api_versions: "v1"[];
-            artifact_schema_versions: "v1"[];
+            artifact_schema_versions: ("v2" | "v1")[];
             features: string[];
             resource_kinds: ("skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection")[];
         };
@@ -1096,6 +1124,7 @@ export interface components {
         };
         ResourceRevision: {
             archive_digest?: string;
+            artifacts?: components["schemas"]["ArtifactReference"][];
             assessment: components["schemas"]["ResourceAssessment"];
             content_digest: string;
             coordinate: components["schemas"]["ResourceCoordinate"];
@@ -1680,6 +1709,56 @@ export interface operations {
             };
             /** @description Assessment not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getArtifactBlob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified immutable v2 artifact tar.gz */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.agent-marketplace.artifact.v2.tar+gzip": string;
+                };
+            };
+            /** @description An owning resource is blocked */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unowned or unavailable exact blob */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description An owning resource is revoked */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stored bytes or reference failed integrity verification */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

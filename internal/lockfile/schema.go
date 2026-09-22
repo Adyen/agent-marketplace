@@ -5,6 +5,7 @@ import "fmt"
 const (
 	APIVersionV1 = "agent-marketplace-lock/v1"
 	APIVersionV2 = "agent-marketplace-lock/v2"
+	APIVersionV3 = "agent-marketplace-lock/v3"
 )
 
 type Scope string
@@ -52,7 +53,15 @@ type MarketplaceRegistryBinding struct {
 	RegistryID string `yaml:"registry_id"`
 }
 
+type MarketplaceArtifactLock struct {
+	Schema         string `yaml:"schema"`
+	ArchiveDigest  Digest `yaml:"archive_digest,omitempty"`
+	ArtifactDigest Digest `yaml:"artifact_digest,omitempty"`
+	BlobDigest     Digest `yaml:"blob_digest,omitempty"`
+}
+
 type MarketplaceResourceLock struct {
+	Artifact                 *MarketplaceArtifactLock   `yaml:"artifact,omitempty"`
 	RegistryName             string                     `yaml:"registry_name"`
 	RegistryID               string                     `yaml:"registry_id"`
 	Kind                     string                     `yaml:"kind"`

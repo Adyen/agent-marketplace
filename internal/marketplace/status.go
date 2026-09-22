@@ -388,7 +388,13 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 	if !status.MetadataCached {
 		status.Cache = CacheStateMissing
 	}
-	if rev.ArchiveDigest == "" && status.Acquisition != AcquisitionIndexOnly {
+	selected, selectionErr := selectArtifact(pin, rev)
+	if selectionErr != nil {
+		status.Cache = CacheStateError
+		status.Detail = selectionErr.Error()
+		return
+	}
+	if selected == nil && rev.ArchiveDigest == "" && status.Acquisition != AcquisitionIndexOnly {
 		if status.MetadataCached {
 			status.Cache = CacheStateMetadataOnly
 		}
@@ -405,6 +411,13 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 	if status.Acquisition == AcquisitionIndexOnly {
 		identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, RegistryID: pin.RegistryID, Commit: pin.RegistryCommit, ManifestDigest: pin.RegistryManifestDigest}
 		raw, verified, err = cache.ReadIndexOnlyArtifact(identity, pin.Digest)
+	} else if selected != nil {
+		var decoded hccartifact.ArtifactV2
+		decoded, raw, err = cache.ReadArtifactV2(*selected)
+		if err == nil && raw != nil {
+			err = decoded.VerifyIdentity(pin.Kind, pin.Name, pin.Digest)
+		}
+		verified = err == nil && raw != nil
 	} else {
 		raw, verified, err = cache.ReadArtifact(string(rev.ArchiveDigest))
 	}

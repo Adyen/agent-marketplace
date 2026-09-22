@@ -30,19 +30,15 @@ Container startup probes should target this on the operations listener.
 
 ## `/metrics`
 
-The current application metrics expose only these series:
+Application metrics include:
 
-```text
-# HELP agent_marketplace_requests_total Total HTTP requests
-# TYPE agent_marketplace_requests_total counter
-agent_marketplace_requests_total <n>
+- `agent_marketplace_requests_total{listener,method,route,code}`: requests by registered route pattern, never raw paths or digests.
+- `agent_marketplace_request_duration_seconds{listener,method,route}`: request latency histogram.
+- `agent_marketplace_active_requests{listener}`: active requests.
+- `agent_marketplace_artifact_revisions{schema="v1"|"v2"}`: mirrored revisions with legacy archives and v2 associations, respectively. The difference measures remaining backfill coverage.
+- `agent_marketplace_artifact_coverage_available`: 1 when the bounded-time metadata query succeeds, otherwise 0; coverage samples are omitted on failure.
 
-# HELP agent_marketplace_active_requests Active HTTP requests
-# TYPE agent_marketplace_active_requests gauge
-agent_marketplace_active_requests <n>
-```
-
-These counters do not include route, status, latency, queue, or reindex labels. Broader monitoring such as route error rate, p95 latency, queue age, and reindex duration must be provided by external infrastructure.
+Go runtime and process collectors are also registered. Compare `/api/v1/artifacts/` and `/api/v1/blobs/` route counters to observe schema selection and errors without high-cardinality labels. Queue age and worker reindex duration still require worker logs or external monitoring.
 
 ## Do not expose operations endpoints publicly
 

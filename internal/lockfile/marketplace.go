@@ -11,6 +11,18 @@ import (
 
 func normalizeMarketplaces(doc *Document) error {
 	for i := range doc.Marketplaces {
+		for _, resource := range doc.Marketplaces[i].Resources {
+			mirror := resource.Acquisition == MarketplaceAcquisitionMirror && resource.Kind != api.KindCollection
+			if doc.APIVersion != APIVersionV3 && resource.Artifact != nil {
+				return coded(CodeUnsupportedVersion, "artifact selection requires lock v3")
+			}
+			if doc.APIVersion == APIVersionV3 && mirror && (resource.Artifact == nil || resource.ArchiveDigest != "") {
+				return coded(CodeInvalidDocument, "lock v3 mirror resource requires exactly one artifact selection")
+			}
+			if resource.Artifact != nil && !mirror {
+				return coded(CodeInvalidDocument, "artifact selection is only valid for mirrored non-collection resources")
+			}
+		}
 		if err := normalizeMarketplace(&doc.Marketplaces[i], i); err != nil {
 			return err
 		}
@@ -184,7 +196,11 @@ func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j in
 		if resource.CollectionManifestDigest != "" {
 			return coded(CodeInvalidDocument, "%s is forbidden for non-collection resources", field("collection_manifest_digest"))
 		}
-		if err := validateDigest(resource.ArchiveDigest, field("archive_digest")); err != nil {
+		if resource.Artifact != nil {
+			if err := resource.Artifact.Validate(); err != nil {
+				return err
+			}
+		} else if err := validateDigest(resource.ArchiveDigest, field("archive_digest")); err != nil {
 			return err
 		}
 	}

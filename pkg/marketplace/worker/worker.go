@@ -106,6 +106,10 @@ func Refresh(ctx context.Context, deps Deps, registry store.Registry) error {
 		ExtraBlobs:          rev.ExtraBlobs,
 		InspectionBlobs:     rev.InspectionBlobs,
 	}
+	pub, err = store.PrepareArtifactV2Publication(ctx, deps.MetadataStore, deps.BlobStore, pub)
+	if err != nil {
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
+	}
 	if err := store.PublishRegistryRevision(ctx, deps.MetadataStore, deps.BlobStore, pub); err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
 	}

@@ -101,8 +101,8 @@ func Plan(requirements Requirements, current *Document, operation Operation) (Re
 		}
 		old = normalized
 	}
-	if old.APIVersion == APIVersionV2 {
-		plan.Desired.APIVersion = APIVersionV2
+	if old.APIVersion == APIVersionV2 || old.APIVersion == APIVersionV3 {
+		plan.Desired.APIVersion = old.APIVersion
 		plan.Desired.Marketplaces = old.Marketplaces
 	}
 

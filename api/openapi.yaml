@@ -864,6 +864,31 @@ paths:
                 type: string
                 format: binary
 
+  /api/v1/blobs/sha256/{digest}:
+    get:
+      operationId: getArtifactBlob
+      summary: Download an owned v2 artifact blob
+      description: Ownership and current restrictions are checked before storage access. Blob, artifact, content and resource identity are verified before returning bytes.
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200":
+          description: Verified immutable v2 artifact tar.gz
+          content:
+            application/vnd.agent-marketplace.artifact.v2.tar+gzip:
+              schema: { type: string, format: binary }
+        "403":
+          description: An owning resource is blocked
+        "404":
+          description: Unowned or unavailable exact blob
+        "410":
+          description: An owning resource is revoked
+        "500":
+          description: Stored bytes or reference failed integrity verification
+
   /r/{registry}/{kind}/{name}:
     get:
       operationId: getBrowserResourceLatest
@@ -1258,6 +1283,7 @@ components:
           items:
             type: string
             enum:
+              - v2
               - v1
         resource_kinds:
           type: array
@@ -1578,6 +1604,16 @@ components:
           type: number
           description: Server-assigned relevance score for the query.
 
+    ArtifactReference:
+      type: object
+      additionalProperties: false
+      required: [schema_version, artifact_digest, blob_digest, media_type]
+      properties:
+        schema_version: { type: string, enum: [v2] }
+        artifact_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        blob_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        media_type: { type: string, enum: [application/vnd.agent-marketplace.artifact.v2.tar+gzip] }
+
     ResourceRevision:
       type: object
       additionalProperties: false
@@ -1591,6 +1627,9 @@ components:
         archive_digest:
           type: string
           pattern: "^sha256:[0-9a-f]{64}$"
+        artifacts:
+          type: array
+          items: { $ref: "#/components/schemas/ArtifactReference" }
         license:
           type: string
         description:

@@ -102,6 +102,9 @@ type MarketplaceResourcePin struct {
 	// Runtime-only integrity fields hydrated from the owning acquisition lock.
 	// They are never serialized to user-facing configuration.
 	LockArchiveDigest            string `yaml:"-"`
+	LockArtifactSchema           string `yaml:"-"`
+	LockArtifactDigest           string `yaml:"-"`
+	LockBlobDigest               string `yaml:"-"`
 	LockCollectionManifestDigest string `yaml:"-"`
 	LockSourcePath               string `yaml:"-"`
 }

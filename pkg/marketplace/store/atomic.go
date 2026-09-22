@@ -39,6 +39,8 @@ type RegistryRevisionPublication struct {
 	// Resources are the resource revisions to publish.
 	Resources []ResourceRevision
 
+	Artifacts []ResourceArtifact
+
 	ResourceOccurrences []ResourceOccurrence
 
 	Assessments []ResourceAssessment
@@ -74,6 +76,9 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 	if err != nil {
 		return err
 	}
+	if err := validateArtifactPublication(req, uploads); err != nil {
+		return err
+	}
 	if err := validateInspectionPublication(req, uploads); err != nil {
 		return err
 	}
@@ -94,6 +99,9 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 				return fmt.Errorf("%w: publication identities unsupported", ErrConflict)
 			}
 			if err := publisher.PublishRegistryPublication(txCtx, req); err != nil {
+				return err
+			}
+			if err := putResourceArtifacts(txCtx, tx, req.Artifacts); err != nil {
 				return err
 			}
 			return recordPublicationBlobOwners(txCtx, tx, req, uploads)
@@ -128,6 +136,9 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 			if err := tx.PutCollectionRevision(txCtx, collection); err != nil {
 				return err
 			}
+		}
+		if err := putResourceArtifacts(txCtx, tx, req.Artifacts); err != nil {
+			return err
 		}
 		if err := tx.SetRegistryHead(txCtx, req.Occurrence.RegistryID, req.Occurrence.Commit, req.ExpectedHeadCommit); err != nil {
 			return err

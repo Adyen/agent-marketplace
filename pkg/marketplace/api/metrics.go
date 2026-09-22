@@ -18,6 +18,7 @@ const (
 )
 
 type serverMetrics struct {
+	registry *prometheus.Registry
 	requests *prometheus.CounterVec
 	duration *prometheus.HistogramVec
 	active   *prometheus.GaugeVec
@@ -31,6 +32,7 @@ func newServerMetrics() *serverMetrics {
 		active:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "agent_marketplace_active_requests", Help: "Active HTTP requests."}, []string{"listener"}),
 	}
 	registry := prometheus.NewRegistry()
+	metrics.registry = registry
 	registry.MustRegister(metrics.requests, metrics.duration, metrics.active, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics.scrape = promhttp.HandlerFor(registry, promhttp.HandlerOpts{EnableOpenMetrics: true})
 	return metrics

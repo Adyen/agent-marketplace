@@ -673,6 +673,9 @@ func (s *Store) leaseError(ctx context.Context, id store.JobID, workerID string,
 // -- Integrity --
 
 func (s *Store) CheckIntegrity(ctx context.Context, blobs store.BlobStore) error {
+	if err := store.CheckResourceArtifactIntegrity(ctx, s.q, blobs); err != nil {
+		return err
+	}
 	rows, err := s.q.QueryContext(ctx,
 		`SELECT DISTINCT archive_digest AS digest, 0 AS inspection
 		 FROM resource_revisions

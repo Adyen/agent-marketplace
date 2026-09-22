@@ -386,6 +386,10 @@ func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, 
 		return err
 	}
 	publication := store.RegistryRevisionPublication{PublicationID: store.PublicationID(uuid.NewString()), ManagedFence: &fence, Occurrence: revision.Occurrence, Resources: revision.Resources, ResourceOccurrences: revision.ResourceOccurrences, Assessments: revision.Assessments, Collections: revision.Collections, ManifestPayload: revision.ManifestPayload, ExtraBlobs: revision.ExtraBlobs, InspectionBlobs: revision.InspectionBlobs}
+	publication, err = store.PrepareArtifactV2Publication(workCtx, deps.MetadataStore, deps.BlobStore, publication)
+	if err != nil {
+		return err
+	}
 	metadata := managedPublicationCompletion{MetadataStore: deps.MetadataStore, fence: fence, publication: publication.PublicationID}
 	if err := store.PublishRegistryRevision(workCtx, metadata, deps.BlobStore, publication); err != nil {
 		if workCtx.Err() != nil {

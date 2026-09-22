@@ -96,6 +96,10 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 		record.SourcePath = rev.Occurrence.SourcePath
 	}
 
+	selected, err := selectArtifact(pin, rev)
+	if err != nil {
+		return lockfile.MarketplaceResourceLock{}, err
+	}
 	if pin.Kind == "collection" {
 		if acquisition != config.MarketplaceAcquisitionMirror {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("collection acquisition %q is not supported", acquisition)
@@ -121,6 +125,18 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("collection manifest name mismatch: got %q, want %q", manifest.Name, pin.Name)
 		}
 		record.CollectionManifestDigest = lockfile.Digest(pin.Digest)
+	} else if selected != nil && acquisition == config.MarketplaceAcquisitionMirror {
+		decoded, raw, err := c.ReadArtifactV2(*selected)
+		if err != nil {
+			return lockfile.MarketplaceResourceLock{}, err
+		}
+		if raw == nil {
+			return lockfile.MarketplaceResourceLock{}, ErrExactArtifactUnavailable
+		}
+		if err := decoded.VerifyIdentity(pin.Kind, pin.Name, pin.Digest); err != nil {
+			return lockfile.MarketplaceResourceLock{}, err
+		}
+		record.Artifact = &lockfile.MarketplaceArtifactLock{Schema: "v2", ArtifactDigest: lockfile.Digest(selected.ArtifactDigest), BlobDigest: lockfile.Digest(selected.BlobDigest)}
 	} else {
 		if rev.ArchiveDigest == "" {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("cached revision metadata has no archive digest")
@@ -186,6 +202,9 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 			RegistryBindings: bindings,
 			Resources:        []lockfile.MarketplaceResourceLock{check},
 		}},
+	}
+	if record.Artifact != nil {
+		probe.APIVersion = lockfile.APIVersionV3
 	}
 	if err := lockfile.Validate(probe); err != nil {
 		return lockfile.MarketplaceResourceLock{}, fmt.Errorf("lock record failed codec validation: %w", err)

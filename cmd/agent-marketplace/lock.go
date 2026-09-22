@@ -19,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -857,7 +858,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			return nil, changed, nil, loadErr
 		}
-		if len(remote) > 0 {
+		if len(remote) > 0 || current != nil && len(current.Marketplaces) > 0 {
 			lockExpectations[lockPath] = generation
 			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
 			if stateErr != nil {
@@ -927,6 +928,14 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, changed, nil, gitDesired.err
 		}
 		doc := gitDesired.doc
+		if !mode.locked && !mode.offline && !implicitOrg && layer.Source.IsWritable() && mode.prepareInstall == nil && mode.reuseInstall == nil {
+			upgraded, artifactChanged, err := marketplace.NewResolver().ReconcileArtifactLocks(ctx, ec.Merged, doc)
+			if err != nil {
+				return nil, changed, nil, err
+			}
+			doc = upgraded
+			gitFresh = gitFresh && !artifactChanged
+		}
 		if mode.prepareInstall != nil {
 			mode.prepareInstall.documents[lockPath] = doc
 		}
@@ -1142,6 +1151,10 @@ func runRegistryJobs(count int, run func(int) error) error {
 
 func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
+	if current != nil && len(current.Marketplaces) > 0 {
+		doc.APIVersion = current.APIVersion
+		doc.Marketplaces = current.Marketplaces
+	}
 	stats := lockReconcileStats{}
 	old := map[string]lockfile.GitRegistry{}
 	if current != nil {

@@ -43,7 +43,22 @@ All routes are `GET` or `HEAD` only; other methods return `405 Method Not Allowe
 - `GET /api/v1/assessments/sha256/{digest}`: immutable resource assessment. `{digest}` is 64 lowercase hex characters.
 - `GET /api/v1/inspection/sha256/{digest}`: immutable inspection manifest. `{digest}` is 64 lowercase hex characters.
 - `GET /api/v1/content/sha256/{digest}`: allowlisted inspection file. `{digest}` is 64 lowercase hex characters.
-- `GET /api/v1/artifacts/sha256/{digest}`: canonical artifact bytes. `{digest}` is 64 lowercase hex characters.
+- `GET /api/v1/artifacts/sha256/{digest}`: exact legacy v1 artifact bytes. `{digest}` is 64 lowercase hex characters.
+- `GET /api/v1/blobs/sha256/{digest}`: exact v2 artifact blob bytes, addressed by the SHA-256 of the compressed bytes. `{digest}` is 64 lowercase hex characters.
+
+### Artifact identities and compatibility
+
+Capabilities advertise `artifact_schema_versions: [v2, v1]`. Exact resource responses retain `archive_digest` and add an `artifacts` array containing `schema_version`, `artifact_digest`, `blob_digest`, and `media_type`. An absent v2 reference means that revision has not been backfilled; global capabilities alone never authorize selection.
+
+V2 has three identities: `content_digest` authenticates the unchanged canonical resource payload; `artifact_digest` authenticates all decoded entries; `blob_digest` authenticates the transported compressed bytes. The response media type is `application/vnd.agent-marketplace.artifact.v2.tar+gzip`.
+
+The artifact frame starts with `agent-marketplace-artifact-v2` followed by a NUL and a big-endian u32 entry count. Each entry has a u8 type, u32 UTF-8 path length, path bytes, u64 content length, and content bytes. Types are manifest (1), payload (2), asset (3), and license (4), ordered by type and then bytewise path. Paths are `manifest.json`, `resource/<kind>.json`, `assets/<name>`, and `licenses/<name>`. Directories are implied, not hashed. Different gzip encodings can share an artifact digest while having different blob digests.
+
+The v2 manifest contains, in order: `schema_version`, `artifact_version`, `kind`, `name`, `content_digest`, optional nonempty `license`, required ordered `capabilities`, `provenance` containing only the fixed `generator`, and `supported_schema_versions: [v2]`. Both version fields are `v2`; the generator is `agent-marketplace canonical artifact v2`. Digest and registry provenance fields are detached. Canonical JSON is compact UTF-8 without a trailing newline; duplicate, unknown, missing required, null, and noncanonical fields are rejected. Quotes, backslashes, controls, U+2028 and U+2029 are escaped; other Unicode, `/`, `<`, `>`, and `&` are literal, without Unicode normalization.
+
+Before blob storage is read, every owning resource is checked against current restrictions. Unowned addresses return 404, blocked owners 403, and revoked owners 410. Stored integrity failures return 500. Verification checks blob bytes before bounded decompression, then structure, manifest, framed identity, payload digest, and coordinate binding. No failure permits downgrade or materialization.
+
+V1 encoding remains frozen to Go 1.26.6 tar, gzip/DEFLATE, and manifest byte behavior. Existing v1 routes, blobs, and exact locks remain supported. Registry and collection manifests retain their existing formats; their legacy references are not rewritten during backfill.
 
 ## Browser routes
 

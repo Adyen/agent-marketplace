@@ -26,6 +26,12 @@ License policy fails closed. With `policy.license_allowlist` configured, a resou
 
 Repository-local relative symlinks are dereferenced in the isolated checkout before ingestion. Absolute links, repository escapes, broken links, cycles, special files, and links into `.git` are rejected. Expanded files count against repository size, per-file size, and file-count limits, and published artifacts remain symlink-free.
 
+## Artifact integrity
+
+V2 separates SHA-256 payload identity, framed decoded-entry identity, and raw compressed-blob identity. The blob route resolves current resource ownership and restrictions before storage access, then verifies the complete reference and resource identity. Unowned, revoked, and blocked references cannot expose bytes. Blob addressing is not authentication or authorization by itself and does not replace the network boundary above.
+
+Exact v1 and v2 locks cannot silently switch schema. The frozen v1 codec continues authenticating the complete legacy archive. Backfill and writable lock upgrades require equivalence of every payload, asset, license, and retained manifest value; matching content digests alone is insufficient. V2 cache evidence binds schema, artifact digest, blob digest, and media type, and cache reads verify bytes again. Failed verification cannot mark evidence, publish a lock, or materialize a candidate.
+
 ## Isolation and updates
 
 Run API and worker as non-root users. Give the worker only the writable directories it needs, use a read-only configuration mount, and use separate service identities where possible. Keep the worker's outbound access limited to approved Git and object-storage destinations. Keep database and blob stores on private networks.

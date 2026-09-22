@@ -1694,7 +1694,7 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 // acquisition lock. Marketplace sources hydrate exact pins from normalized v2
 // lock records; a nil or non-v2 lock fails closed for Marketplace state.
 func (c *V4Config) ToLegacyConfigWithLock(kind layerKind, doc *lockfile.Document) (*Config, error) {
-	if doc != nil && doc.APIVersion == lockfile.APIVersionV2 {
+	if doc != nil && (doc.APIVersion == lockfile.APIVersionV2 || doc.APIVersion == lockfile.APIVersionV3) {
 		normalized, err := lockfile.Normalize(*doc)
 		if err != nil {
 			return nil, v4err("v4.marketplace-lock-mismatch", "", 0, "lock failed codec normalization: %v", err)
@@ -1746,7 +1746,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 		if src.Kind != V4SourceMarketplace {
 			continue
 		}
-		if lockDoc == nil || lockDoc.APIVersion != lockfile.APIVersionV2 {
+		if lockDoc == nil || (lockDoc.APIVersion != lockfile.APIVersionV2 && lockDoc.APIVersion != lockfile.APIVersionV3) {
 			return nil, v4err("v4.marketplace-lock-required", "sources."+name, src.Line, "Marketplace resources require an acquisition lock and cannot be resolved by the legacy runtime")
 		}
 		if _, duplicate := marketplaceEndpoints[src.CanonicalURL]; duplicate {
@@ -1947,6 +1947,12 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 			LockArchiveDigest:            string(r.ArchiveDigest),
 			LockCollectionManifestDigest: string(r.CollectionManifestDigest),
 			LockSourcePath:               r.SourcePath,
+		}
+		if r.Artifact != nil {
+			pin.LockArtifactSchema = r.Artifact.Schema
+			pin.LockArchiveDigest = string(r.Artifact.ArchiveDigest)
+			pin.LockArtifactDigest = string(r.Artifact.ArtifactDigest)
+			pin.LockBlobDigest = string(r.Artifact.BlobDigest)
 		}
 		selections := make([]MarketplaceSelection, 0, len(r.SelectedBy))
 		for _, edge := range r.SelectedBy {

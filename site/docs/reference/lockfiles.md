@@ -26,7 +26,7 @@ Each root records its relative path, source harness, source-manifest revision, a
 
 ## Marketplace lock records
 
-A v4 `marketplace` source uses a lock with `apiVersion: agent-marketplace-lock/v2`. The lock records verified endpoint identity, registry bindings, exact resource revisions, content digests, acquisition mode, and collection selection edges. The consumer resolves an explicit v4 request only when its endpoint, registry, resource, and revision match the lock evidence.
+A v4 `marketplace` source uses a lock with `apiVersion: agent-marketplace-lock/v2` or `agent-marketplace-lock/v3`. The lock records verified endpoint identity, registry bindings, exact resource revisions, content digests, acquisition mode, and collection selection edges. The consumer resolves an explicit v4 request only when its endpoint, registry, resource, and revision match the lock evidence.
 
 Marketplace lock records include:
 
@@ -38,7 +38,28 @@ Marketplace lock records include:
 | `resources` | Exact resource or collection records. |
 | `selected_by` | Collection revisions that retain a resource. |
 
-Mirror records carry the compiled archive digest. Index-only records carry the exact source commit and source-manifest digest needed for the consumer to acquire the content from Git.
+Lock-v2 mirror records carry the exact legacy `archive_digest`. Lock-v3 non-collection mirror records replace that field with exactly one tagged artifact selection:
+
+```yaml
+artifact:
+  schema: v1
+  archive_digest: sha256:<64 lowercase hex digits>
+```
+
+or:
+
+```yaml
+artifact:
+  schema: v2
+  artifact_digest: sha256:<64 lowercase hex digits>
+  blob_digest: sha256:<64 lowercase hex digits>
+```
+
+Collections retain `collection_manifest_digest` and have no artifact selection. Index-only records retain their source archive digest, exact source commit, source path, and source-manifest digest.
+
+All exact selections are authoritative, including lock-v2 and lock-v3/v1 selections after server backfill. Missing exact bytes do not permit a schema substitution. A v2 integrity failure is terminal, never a reason to retry v1.
+
+Writable online lock reconciliation can upgrade v1 to v2 without changing the selected resource revision. It verifies the exact old archive, the complete candidate reference, and equivalence of payload, assets, licenses, and retained metadata, then commits the lock with configuration and old-lock generation checks. Missing source bytes or unsupported conversion leave the old pin in place with a diagnostic. Corruption or an equivalence mismatch fails the operation. Locked, check-only, offline, and read-only-layer operation never upgrade.
 
 ## Behavior
 

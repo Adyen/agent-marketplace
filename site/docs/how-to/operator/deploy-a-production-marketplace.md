@@ -90,6 +90,14 @@ agent-marketplace serve reindex --config /app/marketplace.yaml
 
 and confirm a known resource is searchable with `agent-marketplace search <name> --marketplace https://marketplace.example.com`.
 
+## Artifact-v2 upgrade sequence
+
+Deploy the API and worker before releasing v2-preferring clients. Startup adds the `resource_artifacts` table without rewriting existing resource revisions. Workers publish both v1 and v2 representations; reindex adds v2 only after verifying equivalence to the stored v1 archive. Existing v2 associations and blob bytes are immutable and reused across compressor changes.
+
+Use the normal reindex workflow after upgrading the server. A missing or unsupported v1 source remains unbackfilled and logs `artifact.exact-bytes-unavailable` or `artifact.conversion-unsupported`; restore exact source bytes rather than recreating them from a newer checkout. Corrupt or inequivalent artifacts fail publication. Historical revisions can be backfilled through the store's `BackfillResourceArtifact` integration without changing assessments or occurrences.
+
+Retain v1 storage and serving throughout the compatibility window. Roll out clients only after the blob route and references are available. Existing exact pins remain v1 until eligible writable online reconciliation succeeds; locked and offline consumers continue using their exact representation. Validate the promoted binary against hosted artifact downloads as well as the Go 1.26.6/1.27.1 compatibility CI matrix.
+
 ## Rollback
 
 The database schema is migrated forward on startup and there is no automatic down-migration. Take a database backup before every upgrade (see [How to back up and restore a Marketplace](./back-up-and-restore.md)); roll back by restoring it and redeploying the previous image.
@@ -98,7 +106,7 @@ The database schema is migrated forward on startup and there is no automatic dow
 
 - The public listener returns `404` for `/readyz` and `/metrics`.
 - No built-in authentication, authorization, or TLS; the proxy owns all three.
-- `/metrics` exposes two unlabeled series; see [health and metrics](../../reference/marketplace-health-and-metrics.md) before designing alerts.
+- `/metrics` exposes bounded route/status/latency metrics and artifact-schema coverage; see [health and metrics](../../reference/marketplace-health-and-metrics.md) before designing alerts.
 
 ## Related documentation
 

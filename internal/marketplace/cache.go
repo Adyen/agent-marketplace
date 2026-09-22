@@ -208,13 +208,16 @@ func (c *Cache) referencedArchiveDigests(cfg *config.Config) (map[string]struct{
 			if err := validateResourceRevision(entry, pin, rev); err != nil {
 				return nil, fmt.Errorf("validate metadata for marketplace %d pin %d: %w", entryIndex, pinIndex, err)
 			}
-			if rev.ArchiveDigest == "" {
-				return nil, fmt.Errorf("metadata for active marketplace %d pin %d has no archive digest", entryIndex, pinIndex)
+			if rev.ArchiveDigest != "" {
+				referenced[safeDigest(string(rev.ArchiveDigest))] = struct{}{}
 			}
-			if err := validateSHA256Digest(string(rev.ArchiveDigest)); err != nil {
-				return nil, fmt.Errorf("metadata for active marketplace %d pin %d has invalid archive digest: %w", entryIndex, pinIndex, err)
+			selected, err := selectArtifact(pin, rev)
+			if err != nil {
+				return nil, err
 			}
-			referenced[safeDigest(string(rev.ArchiveDigest))] = struct{}{}
+			if selected != nil {
+				referenced[safeDigest(string(selected.BlobDigest))] = struct{}{}
+			}
 		}
 	}
 	return referenced, nil

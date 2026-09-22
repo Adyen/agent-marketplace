@@ -157,17 +157,14 @@ func encodeArtifact(a CanonicalArtifact) ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
-	gw, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
-	if err != nil {
-		return nil, err
-	}
+	gw := newLegacyGzipWriter(&buf)
 	gw.Name = ""
 	gw.Comment = ""
 	gw.Extra = nil
 	gw.ModTime = time.Time{}
 	gw.OS = 0xff // unknown
 
-	tw := tar.NewWriter(gw)
+	tw := newLegacyTarWriter(gw)
 
 	entries, err := a.buildEntries()
 	if err != nil {
@@ -212,7 +209,7 @@ func encodeArtifact(a CanonicalArtifact) ([]byte, error) {
 }
 
 func (a CanonicalArtifact) buildEntries() ([]archiveEntry, error) {
-	manifestBytes, err := json.Marshal(a.Manifest)
+	manifestBytes, err := legacyManifestBytes(a.Manifest)
 	if err != nil {
 		return nil, fmt.Errorf("marshal manifest: %w", err)
 	}

@@ -71,6 +71,13 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 		return nil, []error{err}
 	}
 
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if _, err := selectArtifact(pin, store.AssessedResourceRevision{}); err != nil {
+				return nil, []error{err}
+			}
+		}
+	}
 	cache := r.cache()
 	var out []resolver.ResolvedArtifact
 	var errs []error
@@ -447,6 +454,13 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		return artifact, hccartifact.CanonicalArtifact{}, nil
 	}
 
+	selected, err := selectArtifact(pin, rev)
+	if err != nil {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+	}
+	if selected != nil {
+		return r.resolveV2Artifact(ctx, client, cache, pin, *selected, artifact, mode)
+	}
 	archiveDigest := string(rev.ArchiveDigest)
 	raw, verified, err := cache.ReadArtifact(archiveDigest)
 	if err != nil {
@@ -454,13 +468,13 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	}
 	if mode == resolver.MarketplaceResolveModeCachedNoFetch && (!verified || raw == nil) {
 		if raw == nil {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verified artifact is missing from cache")
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("%w: verified artifact is missing from cache", ErrExactArtifactUnavailable)
 		}
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached artifact is not verified")
 	}
 	if !verified || raw == nil {
 		if mode == resolver.MarketplaceResolveModeCached {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("artifact not in cache")
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("%w: artifact not in cache", ErrExactArtifactUnavailable)
 		}
 		slog.Debug("marketplace fetching artifact", "url", entry.URL, "registry", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "archive_digest", rev.ArchiveDigest)
 		raw, err = client.GetArtifact(ctx, archiveDigest)
@@ -1047,7 +1061,11 @@ func validateResourceRevision(entry config.MarketplaceEntry, pin config.Marketpl
 	if acquisition == "" {
 		acquisition = config.MarketplaceAcquisitionMirror
 	}
-	if rev.Revocation == nil && rev.ArchiveDigest == "" && pin.Kind != "collection" && acquisition != config.MarketplaceAcquisitionIndexOnly {
+	selected, err := selectArtifact(pin, rev)
+	if err != nil {
+		return err
+	}
+	if selected == nil && rev.Revocation == nil && rev.ArchiveDigest == "" && pin.Kind != "collection" && acquisition != config.MarketplaceAcquisitionIndexOnly {
 		return fmt.Errorf("revision archive digest is required")
 	}
 	if pin.LockArchiveDigest != "" && string(rev.ArchiveDigest) != pin.LockArchiveDigest {

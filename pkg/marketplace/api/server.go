@@ -86,6 +86,9 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	}
 
 	s.metrics = newServerMetrics()
+	if coverage, ok := meta.(store.ArtifactCoverageStore); ok {
+		s.metrics.registry.MustRegister(newArtifactCoverageCollector(coverage, s.mpID))
+	}
 
 	publicMux := http.NewServeMux()
 	s.registerAdmin(publicMux)
@@ -104,6 +107,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.Handle("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
 	publicMux.Handle("/api/v1/content/", s.methodGet(s.handleContentDigest))
 	publicMux.Handle("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
+	publicMux.Handle("/api/v1/blobs/", s.methodGet(s.handleArtifactBlobs))
 	publicMux.Handle("/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
 	// listener directly; the operations listener remains the only route.
@@ -991,6 +995,9 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
 		return
 	}
+	if !s.loadArtifactReferences(w, r, &rev) {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev))
 }
 
@@ -1023,6 +1030,9 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		if !s.managedResourceAllowed(w, r.Context(), rev) {
+			return
+		}
+		if !s.loadArtifactReferences(w, r, &rev) {
 			return
 		}
 		revs[i] = s.applyEffectiveRevocation(rev)
@@ -1070,6 +1080,9 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
+		return
+	}
+	if !s.loadArtifactReferences(w, r, &rev) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev))

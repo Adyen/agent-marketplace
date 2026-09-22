@@ -525,7 +525,8 @@ func (c *Client) GetArtifact(ctx context.Context, archiveDigest string) ([]byte,
 	}
 	hexDigest := strings.TrimPrefix(archiveDigest, "sha256:")
 	path := c.requestURL([]string{"api", "v1", "artifacts", "sha256", hexDigest}, nil)
-	return c.getRaw(ctx, path)
+	raw, err := c.getRaw(ctx, path)
+	return raw, exactArtifactFetchError(err)
 }
 
 // getRaw performs a GET and returns the response body bytes for non-JSON endpoints.

@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 )
 
 // Strong ID types for the Marketplace domain.
@@ -22,7 +24,9 @@ type (
 
 	// ArchiveDigest is the content-addressed digest of a complete resource
 	// artifact archive.
-	ArchiveDigest string
+	ArchiveDigest = BlobDigest
+
+	BlobDigest string
 
 	// AssessmentDigest is the content-addressed identity of a resource
 	// assessment.
@@ -426,10 +430,11 @@ func (o ResourceOccurrence) Equal(other ResourceOccurrence) bool {
 // AssessedResourceRevision is the current read projection for one immutable resource revision.
 type AssessedResourceRevision struct {
 	ResourceRevision
-	Assessment            ResourceAssessment `json:"assessment"`
-	Occurrence            ResourceOccurrence `json:"occurrence"`
-	Revocation            *Revocation        `json:"revocation,omitempty"`
-	EffectiveAvailability string             `json:"-"`
+	Artifacts             []artifact.ArtifactReference `json:"artifacts,omitempty"`
+	Assessment            ResourceAssessment           `json:"assessment"`
+	Occurrence            ResourceOccurrence           `json:"occurrence"`
+	Revocation            *Revocation                  `json:"revocation,omitempty"`
+	EffectiveAvailability string                       `json:"-"`
 }
 
 // RegistryOccurrence connects a registry revision manifest to an exact registry commit.

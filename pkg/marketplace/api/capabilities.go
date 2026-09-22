@@ -10,6 +10,7 @@ import (
 const (
 	APIVersionV1                     = "v1"
 	ArtifactSchemaVersionV1          = "v1"
+	ArtifactSchemaVersionV2          = "v2"
 	AcquisitionMirror                = "mirror"
 	AcquisitionIndexOnly             = "index-only"
 	CatalogProjectionV1Alpha1Feature = "catalog-projection-v1alpha1"
@@ -21,7 +22,7 @@ const (
 func DefaultCapabilities() Capabilities {
 	return Capabilities{
 		APIVersions:            []string{APIVersionV1},
-		ArtifactSchemaVersions: []string{ArtifactSchemaVersionV1},
+		ArtifactSchemaVersions: []string{ArtifactSchemaVersionV2, ArtifactSchemaVersionV1},
 		ResourceKinds:          SupportedResourceKinds,
 		AcquisitionModes:       []string{AcquisitionIndexOnly, AcquisitionMirror},
 		Features:               []string{"inspection", CatalogProjectionV1Alpha1Feature},

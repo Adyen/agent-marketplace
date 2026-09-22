@@ -951,7 +951,7 @@ func mergeV4MigrationLock(input v4MigrationInput, desired []lockfile.Marketplace
 		switch existing.APIVersion {
 		case lockfile.APIVersionV1:
 			doc.Registries = existing.Registries
-		case lockfile.APIVersionV2:
+		case lockfile.APIVersionV2, lockfile.APIVersionV3:
 			if !reflect.DeepEqual(existing.Marketplaces, desired) {
 				return fail(v4err("v4.migration-marketplace-lock-conflict", input.path, 0, "existing lock %q records different Marketplace identity", lockPath))
 			}
@@ -961,7 +961,7 @@ func mergeV4MigrationLock(input v4MigrationInput, desired []lockfile.Marketplace
 		}
 	}
 	doc.Marketplaces = desired
-	normalized, err := lockfile.Normalize(doc)
+	normalized, err := lockfile.NormalizeArtifactSelections(doc)
 	if err != nil {
 		return fail(v4err("v4.migration-marketplace-lock", input.path, 0, "normalize merged lock: %v", err))
 	}
@@ -1160,7 +1160,7 @@ func encodeV4MigrationWithEvidence(cfg *Config, configPath string, kind layerKin
 		for _, binding := range bindingNames {
 			lock.RegistryBindings = append(lock.RegistryBindings, lockfile.MarketplaceRegistryBinding{Name: binding, RegistryID: bindings[binding]})
 		}
-		normalized, err := lockfile.Normalize(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: layerScope, Marketplaces: []lockfile.MarketplaceLock{lock}})
+		normalized, err := lockfile.NormalizeArtifactSelections(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: layerScope, Marketplaces: []lockfile.MarketplaceLock{lock}})
 		if err != nil {
 			return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "marketplaces[%d]: normalize desired lock endpoint: %v", index, err)
 		}
@@ -1172,7 +1172,7 @@ func encodeV4MigrationWithEvidence(cfg *Config, configPath string, kind layerKin
 	if len(encoding.Marketplaces) > 0 {
 		// Normalize the complete endpoint list so the merge comparison sees the
 		// same canonical order a decoded existing lock uses (sorted by URL).
-		normalized, err := lockfile.Normalize(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: layerScope, Marketplaces: encoding.Marketplaces})
+		normalized, err := lockfile.NormalizeArtifactSelections(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: layerScope, Marketplaces: encoding.Marketplaces})
 		if err != nil {
 			return encoding, v4err("v4.migration-marketplace-evidence", configPath, 0, "normalize desired marketplace locks: %v", err)
 		}

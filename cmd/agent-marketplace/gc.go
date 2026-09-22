@@ -34,6 +34,24 @@ func newGCCmd() *cobra.Command {
 	return cmd
 }
 
+func marketplaceGCConfig(effective config.EffectiveConfig) *config.Config {
+	out := &config.Config{}
+	for _, layer := range effective.PresentLayers() {
+		var entries []config.MarketplaceEntry
+		if layer.Config != nil {
+			entries = layer.Config.Marketplaces
+		} else if layer.Local != nil {
+			entries = layer.Local.Marketplaces
+		}
+		for _, entry := range entries {
+			entry.Alias = ""
+			entry.Source = layer.Source
+			out.Marketplaces = append(out.Marketplaces, entry)
+		}
+	}
+	return out
+}
+
 func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	started := time.Now()
 	var registryResult cache.GCResult
@@ -64,6 +82,7 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 		return errors.New("gc requires at least one effective configuration layer")
 	}
 	marketplaceCache := marketplace.DefaultCache()
+	marketplaceReachability := marketplaceGCConfig(effective)
 	readReachability := func(readCtx context.Context) (cache.GCReachability, error) {
 		effective := config.LoadEffective(readCtx, loadOptions)
 		if len(effective.Errors) > 0 {
@@ -86,18 +105,18 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	var registryErr, marketplaceErr error
 	if dryRun {
 		registryResult, registryErr = cache.GarbageCollectWithReachabilityAndContext(ctx, true, readReachability)
-		marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollect(true, effective.Merged)
+		marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollect(true, marketplaceReachability)
 	} else {
 		_, registryErr = cache.GarbageCollectWithReachabilityAndContext(ctx, true, readReachability)
 		if registryErr != nil {
 			registryErr = fmt.Errorf("cache garbage collection preflight: %w", registryErr)
 		}
-		_, marketplaceErr = marketplaceCache.GarbageCollect(true, effective.Merged)
+		_, marketplaceErr = marketplaceCache.GarbageCollect(true, marketplaceReachability)
 		if marketplaceErr != nil {
 			marketplaceErr = fmt.Errorf("marketplace cache garbage collection preflight: %w", marketplaceErr)
 		}
 		if registryErr == nil && marketplaceErr == nil {
-			marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollect(false, effective.Merged)
+			marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollect(false, marketplaceReachability)
 			if marketplaceErr == nil {
 				registryResult, registryErr = cache.GarbageCollectWithReachabilityAndContext(ctx, false, readReachability)
 			}
