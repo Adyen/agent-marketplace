@@ -57,7 +57,9 @@ test("toggles a v4 directory source globally and syncs native harnesses", async 
     assert.equal(fs.lstatSync(generated).isSymbolicLink(), true, generated);
     assert.equal(fs.readFileSync(path.join(generated, "SKILL.md"), "utf8"), fixture.expectedAlphaSkillContent);
   }
-  assert.equal(fs.lstatSync(path.join(fixture.home, ".factory", "skills", "beta-skill"), { throwIfNoEntry: false }), undefined);
+  for (const generated of alphaPaths) {
+    assert.equal(fs.lstatSync(path.join(path.dirname(generated), "beta-skill"), { throwIfNoEntry: false }), undefined);
+  }
   for (const repoRoot of [".factory/skills", ".gemini/skills", ".devin/skills"]) {
     assert.equal(fs.lstatSync(path.join(fixture.repo, repoRoot, "alpha-skill"), { throwIfNoEntry: false }), undefined);
   }

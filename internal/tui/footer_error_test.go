@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,35 @@ func TestFooterErrorPriorityKeepsRecoveryActions(t *testing.T) {
 				t.Fatalf("error overlay lost complete diagnostic at width %d: %q", width, overlay)
 			}
 		}
+	}
+}
+
+func TestFooterErrorHandlesNilValues(t *testing.T) {
+	var typedNil *os.PathError
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, "! 1 errors"},
+		{"typed-nil", typedNil, "<nil>"},
+		{"ordinary", errors.New("selection failed"), "selection failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.width, m.height = 80, 24
+			m.loading = false
+			m.errs = []error{tc.err}
+			footer := ansi.Strip(renderFooter(m))
+			for _, want := range []string{"! 1 errors", tc.want, "e:errors", "r:reload", "q:quit"} {
+				if !strings.Contains(footer, want) {
+					t.Fatalf("footer %q missing %q", footer, want)
+				}
+			}
+			if ansi.StringWidth(footer) > m.width {
+				t.Fatalf("footer exceeds width: %q", footer)
+			}
+		})
 	}
 }
 

@@ -86,7 +86,7 @@ func TestEditV4ResourceSelectionDirectoryIdentityAndActions(t *testing.T) {
 }
 
 func TestEditV4ResourceSelectionUsesOriginalIncludeRootAndPreservesFragment(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalDirectoryTestRoot(t)
 	root := filepath.Join(dir, ".agents", "config.yaml")
 	fragment := filepath.Join(dir, ".agents", "fragments", "sources.yaml")
 	registry := filepath.Join(dir, ".agents", "fragments", "registry")
@@ -328,6 +328,123 @@ func TestEditV4ResourceSelectionGitIdentityUsesRefAndPath(t *testing.T) {
 	}
 	if loaded.Groups["devSkills"].Include[0].Locator != "skill/dev" || loaded.Groups["mainCommands"].Include[0].Locator != "command/alpha" {
 		t.Fatalf("unrelated Git source selections changed")
+	}
+}
+
+func TestEditV4ResourceSelectionKeepsSymlinkSourceIdentities(t *testing.T) {
+	dir := canonicalDirectoryTestRoot(t)
+	real := filepath.Join(dir, "version-1")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	currentA := filepath.Join(dir, "current-a")
+	currentB := filepath.Join(dir, "current-b")
+	if err := os.Symlink(real, currentA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, currentB); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	data := []byte("apiVersion: agent-marketplace/v4\nsources:\n  one: {directory: " + currentA + "}\n  two: {directory: " + currentB + "}\nresources:\n  two: [skill/beta]\n")
+	if err := os.WriteFile(path, data, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	entry := RegistryEntry{URL: currentA, V4Kind: V4SourceDirectory}
+	if handled, err := EditV4ResourceSelection(path, path, entry, ir.KindSkill, "alpha", V4SelectionEnable); !handled || err != nil {
+		t.Fatalf("enable = handled %v err %v", handled, err)
+	}
+	loaded, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Sources) != 2 || loaded.Sources["one"].Directory != currentA || loaded.Sources["two"].Directory != currentB {
+		t.Fatalf("source identities = %#v", loaded.Sources)
+	}
+	seen := map[string]string{}
+	for _, request := range loaded.Requests {
+		seen[request.SourceName+"/"+request.Locator] = request.Locator
+	}
+	if len(seen) != 2 || seen["one/skill/alpha"] == "" || seen["two/skill/beta"] == "" {
+		t.Fatalf("requests = %#v", loaded.Requests)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixedTime := time.Unix(888, 0)
+	if err := os.Chtimes(path, fixedTime, fixedTime); err != nil {
+		t.Fatal(err)
+	}
+	beforeInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := EditV4ResourceSelection(path, path, entry, ir.KindSkill, "alpha", V4SelectionEnable); !handled || err != nil {
+		t.Fatalf("repeat enable = handled %v err %v", handled, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterInfo, err := os.Stat(path)
+	if err != nil || string(after) != string(before) || !afterInfo.ModTime().Equal(beforeInfo.ModTime()) {
+		t.Fatalf("repeat enable changed bytes/mtime: %v", err)
+	}
+}
+
+func TestEditV4ResourceSelectionCreatesSeparateSymlinkBinding(t *testing.T) {
+	dir := canonicalDirectoryTestRoot(t)
+	real := filepath.Join(dir, "version-1")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	currentA := filepath.Join(dir, "current-a")
+	currentB := filepath.Join(dir, "current-b")
+	if err := os.Symlink(real, currentA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, currentB); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	data := []byte("apiVersion: agent-marketplace/v4\nsources:\n  one: {directory: " + currentA + "}\nresources:\n  one: [skill/beta]\n")
+	if err := os.WriteFile(path, data, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := EditV4ResourceSelection(path, path, RegistryEntry{URL: currentB, V4Kind: V4SourceDirectory}, ir.KindSkill, "alpha", V4SelectionEnable); !handled || err != nil {
+		t.Fatalf("separate binding = handled %v err %v", handled, err)
+	}
+	loaded, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newName := ""
+	for name, source := range loaded.Sources {
+		if source.Directory == currentB {
+			newName = name
+		}
+	}
+	if newName == "" || len(loaded.Sources) != 2 || loaded.Sources["one"].Directory != currentA {
+		t.Fatalf("sources = %#v", loaded.Sources)
+	}
+	oneBeta, newAlpha := false, false
+	for _, request := range loaded.Requests {
+		if request.SourceName == "one" {
+			if request.Locator != "skill/beta" {
+				t.Fatalf("one source request = %#v", request)
+			}
+			oneBeta = true
+		}
+		if request.SourceName == newName {
+			if request.Locator != "skill/alpha" {
+				t.Fatalf("new source request = %#v", request)
+			}
+			newAlpha = true
+		}
+	}
+	if !oneBeta || !newAlpha {
+		t.Fatalf("requests did not preserve separate selections: %#v", loaded.Requests)
 	}
 }
 

@@ -91,7 +91,7 @@ func renderErrorFooter(m Model) string {
 	if budget > ansi.StringWidth(status)+2 {
 		latest := ""
 		if err := m.errs[len(m.errs)-1]; err != nil {
-			latest = sanitizeTerminalData(err.Error(), terminalSingleLine)
+			latest = sanitizeTerminalData(fmt.Sprint(err), terminalSingleLine)
 		}
 		if latest != "" {
 			status += ": " + latest

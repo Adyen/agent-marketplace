@@ -244,17 +244,9 @@ func v4EditSourceMatches(source V4Source, identity v4EditIdentity) bool {
 		return false
 	}
 	if source.Kind == V4SourceDirectory {
-		return v4EditCanonicalPath(source.CanonicalURL) == v4EditCanonicalPath(identity.url)
+		return filepath.Clean(source.CanonicalURL) == filepath.Clean(identity.url)
 	}
 	return NormalizeGitURL(source.CanonicalURL) == identity.url && source.Ref == identity.ref && NormalizeRegistryPath(source.Path) == identity.path
-}
-
-func v4EditCanonicalPath(value string) string {
-	value = filepath.Clean(value)
-	if resolved, err := filepath.EvalSymlinks(value); err == nil {
-		return filepath.Clean(resolved)
-	}
-	return value
 }
 
 func addV4EditSource(root *yaml.Node, name string, entry RegistryEntry, identity v4EditIdentity, kind V4SourceKind) error {
