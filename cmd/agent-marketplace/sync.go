@@ -843,8 +843,30 @@ func pruneStaleSelections(repoRoot string, stale []*resolver.SelectedNotFoundErr
 
 	var pruned []prunedStale
 	var errs []error
+	v4, err := config.LoadV4ConfigIfPresent(configPath, config.RepoCommitted)
+	if err != nil {
+		return nil, []error{fmt.Errorf("load repo v4 config before pruning: %w", err)}
+	}
 
 	for _, snf := range dedupStaleSelections(stale) {
+		if v4 != nil {
+			entry := config.RegistryEntry{URL: snf.URL, Ref: snf.Ref, Path: snf.Path}
+			for _, source := range v4.Sources {
+				if source.URL == snf.URL && source.Ref == snf.Ref && source.Path == config.NormalizeRegistryPath(snf.Path) {
+					entry.V4Kind, entry.SourceHarness = source.Kind, source.SourceHarness
+				}
+			}
+			handled, editErr := config.EditV4ResourceSelection(configPath, configPath, entry, snf.Kind, snf.Name, config.V4SelectionRemoveInclude)
+			if editErr != nil || !handled {
+				if editErr == nil {
+					editErr = fmt.Errorf("v4 selection editor did not handle %s", configPath)
+				}
+				errs = append(errs, fmt.Errorf("prune %s %q: %w", skill.KindLabel(snf.Kind), snf.Name, editErr))
+				continue
+			}
+			pruned = append(pruned, prunedStale{Kind: snf.Kind, Name: snf.Name})
+			continue
+		}
 		// A direct selection (Via == "") can be written in either of two
 		// places: a registry entry's include list, or the TOP-LEVEL per-kind
 		// include list. DisableResourceWithShadowFallback only knows the

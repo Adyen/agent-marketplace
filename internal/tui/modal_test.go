@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,9 +13,14 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	mptestutil "github.com/Adyen/agent-marketplace/internal/testutil/marketplace"
 )
 
 // helperFlatCursorOnSkill returns a model with cursor on a known skill row.
@@ -32,6 +38,304 @@ func helperFlatCursorOnSkill(t *testing.T, r row) Model {
 	}
 	t.Fatalf("no skill flatItem found")
 	return m
+}
+
+func TestV4ToggleExcludesCompetingSource(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	trusted := t.TempDir()
+	rival := t.TempDir()
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  trusted: {directory: " + trusted + "}\n  rival: {directory: " + rival + "}\nresources:\n  trusted: {include: [skill/review]}\n  rival: {include: [skill/review]}\n")
+	if err := os.WriteFile(userPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows := []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal}, RegistryURL: rival}}
+	act := toggleAction{scope: scopeGlobal, enable: true, kind: ir.KindSkill, skillName: "review", registryURL: trusted}
+	cmd := excludeCompetingRegistriesCmd(repo, rows, act)
+	if cmd == nil {
+		t.Fatal("v4 competing source did not produce a toggle command")
+	}
+	written, ok := cmd().(configWrittenMsg)
+	if !ok || written.err != nil {
+		t.Fatalf("v4 competing exclusion = %#v", written)
+	}
+	v4, err := config.LoadV4ConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group := v4.Groups["rival"]; len(group.Include) != 0 || len(group.Exclude) != 1 || group.Exclude[0] != "skill/review" {
+		t.Fatalf("competing v4 source was not excluded: %#v", group)
+	}
+	if group := v4.Groups["trusted"]; len(group.Include) != 1 || group.Include[0].Locator != "skill/review" {
+		t.Fatalf("trusted v4 source was modified: %#v", group)
+	}
+}
+
+func TestV4MarketplaceToggleCopiesAndRemovesExactPinAtomically(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	repo := t.TempDir()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	url := "https://market.example"
+	data := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {hosted: {marketplace: " + url + "}}\nresources: {hosted: {include: [tools/skill/review]}}\n")
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest := lockfile.Digest("sha256:" + strings.Repeat("a", 64))
+	archive := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	lockData, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeUser, Marketplaces: []lockfile.MarketplaceLock{{
+		URL: url, InstanceID: "mp", RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+		Resources: []lockfile.MarketplaceResourceLock{{RegistryName: "tools", RegistryID: "src", Kind: "skill", Name: "review", Revision: string(digest), ContentDigest: digest, ArchiveDigest: archive, Acquisition: lockfile.MarketplaceAcquisitionMirror}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	if err := os.WriteFile(lockPath, lockData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadConfigFromPath(configPath)
+	if err != nil || len(loaded.Marketplaces) != 1 || len(loaded.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("load v4 Marketplace selection: %#v: %v", loaded, err)
+	}
+	entry := loaded.Marketplaces[0]
+	entry.Source = config.UserPersonal
+	r := row{
+		Artifact:      resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}, IsMarketplace: true, Source: config.UserPersonal},
+		EnabledGlobal: true, RegistryURL: url,
+		MarketplaceSelections: map[config.Source]marketplaceSelection{config.UserPersonal: {Entry: entry, Pin: entry.Resources[0]}},
+	}
+	localPath := config.LocalConfigPath(repo)
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	localAct := scopedToggleAction(r, scopeLocal)
+	if !localAct.enable {
+		t.Fatal("v4 Marketplace pin should be available in local scope")
+	}
+	localMutatorCalled := false
+	localMsg := runDependencyScopedToggle(context.Background(), repo, localAct, func(context.Context, string, func(pipeline.ConfigPathMapper) error) error {
+		localMutatorCalled = true
+		return errors.New("legacy local mutation was used")
+	})()
+	localWritten, ok := localMsg.(configWrittenMsg)
+	if !ok || localWritten.err != nil || localMutatorCalled {
+		t.Fatalf("v4 cross-scope Marketplace toggle = %#v, legacy mutator called=%t", localMsg, localMutatorCalled)
+	}
+	localV4, err := config.LoadV4ConfigFromPath(localPath)
+	if err != nil || len(localV4.Sources) != 1 {
+		t.Fatalf("local Marketplace source missing: %#v: %v", localV4, err)
+	}
+	var localSourceName string
+	for name := range localV4.Sources {
+		localSourceName = name
+		if group := localV4.Groups[name]; len(group.Include) != 1 || group.Include[0].Locator != "tools/skill/review" {
+			t.Fatalf("local Marketplace pin not selected: %#v", group)
+		}
+	}
+	localLockBytes, err := os.ReadFile(filepath.Join(repo, ".agents", "lock.local.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	localLock, err := lockfile.Decode(localLockBytes)
+	if err != nil || len(localLock.Marketplaces) != 1 || len(localLock.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("exact Marketplace pin not copied to local lock: %#v: %v", localLock, err)
+	}
+	originalLocal, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasedLocal := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {%s: {marketplace: %s}}\nresources:\n  %s:\n    include:\n      - tools/skill/review:\n          as: team-review\n", localSourceName, url, localSourceName)
+	if err := os.WriteFile(localPath, []byte(aliasedLocal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	localOff := localAct
+	localOff.enable = false
+	staleLocalMsg := runDependencyScopedToggle(context.Background(), repo, localOff, func(context.Context, string, func(pipeline.ConfigPathMapper) error) error {
+		localMutatorCalled = true
+		return errors.New("legacy local mutation was used")
+	})()
+	staleLocal, ok := staleLocalMsg.(configWrittenMsg)
+	if !ok || !errors.Is(staleLocal.err, dependencytxn.ErrGenerationConflict) || localMutatorCalled {
+		t.Fatalf("stale cross-scope toggle did not fail closed: %#v", staleLocalMsg)
+	}
+	if after, err := os.ReadFile(localPath); err != nil || string(after) != aliasedLocal {
+		t.Fatalf("stale cross-scope toggle changed local config: %v", err)
+	}
+	if after, err := os.ReadFile(filepath.Join(repo, ".agents", "lock.local.yaml")); err != nil || string(after) != string(localLockBytes) {
+		t.Fatalf("stale cross-scope toggle changed local lock: %v", err)
+	}
+	if err := os.WriteFile(localPath, originalLocal, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := os.ReadFile(configPath); err != nil || string(after) != string(data) {
+		t.Fatalf("cross-scope toggle changed user config: %v", err)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || string(after) != string(lockData) {
+		t.Fatalf("cross-scope toggle changed user lock: %v", err)
+	}
+	act := scopedToggleAction(r, scopeGlobal)
+	if act.enable {
+		t.Fatal("selected v4 Marketplace request should be disabled")
+	}
+	mutatorCalled := false
+	mutate := func(context.Context, string, func(pipeline.ConfigPathMapper) error) error {
+		mutatorCalled = true
+		return errors.New("legacy config mutation was used")
+	}
+	stale := act
+	stale.marketplaceSelection.Pin.Digest = "sha256:" + strings.Repeat("c", 64)
+	staleMsg := runDependencyScopedToggle(context.Background(), repo, stale, mutate)()
+	staleWritten, ok := staleMsg.(configWrittenMsg)
+	if !ok || !errors.Is(staleWritten.err, dependencytxn.ErrGenerationConflict) || mutatorCalled {
+		t.Fatalf("stale v4 Marketplace toggle did not fail closed: %#v, legacy mutator called=%t", staleMsg, mutatorCalled)
+	}
+	if after, err := os.ReadFile(configPath); err != nil || string(after) != string(data) {
+		t.Fatalf("stale toggle changed v4 config: %v", err)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || string(after) != string(lockData) {
+		t.Fatalf("stale toggle changed v4 lock: %v", err)
+	}
+	msg := runDependencyScopedToggle(context.Background(), repo, act, mutate)()
+	written, ok := msg.(configWrittenMsg)
+	if !ok || written.err != nil || mutatorCalled {
+		t.Fatalf("v4 Marketplace toggle = %#v, legacy mutator called=%t", msg, mutatorCalled)
+	}
+	v4, err := config.LoadV4ConfigFromPath(configPath)
+	if err != nil || len(v4.Groups["hosted"].Include) != 0 {
+		t.Fatalf("v4 request remains after toggle: %#v: %v", v4, err)
+	}
+	updated, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked, err := lockfile.Decode(updated)
+	if err != nil || len(locked.Marketplaces) != 1 || len(locked.Marketplaces[0].Resources) != 0 {
+		t.Fatalf("v4 Marketplace lock not pruned with config: %#v: %v", locked, err)
+	}
+}
+
+func TestV4MarketplaceToggleLegacyPinEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		verified bool
+		slug     string
+		revision string
+	}{{name: "missing", slug: "tools"}, {name: "verified", verified: true, slug: "tools"}, {name: "verified-without-slug", verified: true}, {name: "unrepresentable-revision", verified: true, slug: "tools", revision: "v2"}} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			repo := t.TempDir()
+			url := "https://market.example"
+			digest := "sha256:" + strings.Repeat("a", 64)
+			var archiveDigest string
+			if test.verified {
+				proof := mptestutil.SeedVerifiedMarketplaceSkill(t, filepath.Join(cache.CacheDir(), "marketplace"), url, "mp", "src", "review")
+				digest, archiveDigest = proof.ContentDigest, proof.ArchiveDigest
+			}
+			userPath := filepath.Join(home, ".agents", "config.yaml")
+			if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			revision := digest
+			if test.revision != "" {
+				revision = test.revision
+			}
+			pin := config.MarketplaceResourcePin{RegistryID: "src", RegistrySlug: test.slug, Kind: "skill", Name: "review", Revision: revision, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror, Direct: true}
+			if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(userPath, url, "mp", "hosted", []config.MarketplaceResourcePin{pin}); err != nil {
+				t.Fatal(err)
+			}
+			beforeUser, err := os.ReadFile(userPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			localPath := config.LocalConfigPath(repo)
+			if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			localData := []byte("apiVersion: agent-marketplace/v4\n")
+			if err := os.WriteFile(localPath, localData, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			entry := config.MarketplaceEntry{URL: url, InstanceID: "mp", Alias: "hosted", Source: config.UserPersonal}
+			r := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}, IsMarketplace: true, Source: config.UserPersonal}, EnabledGlobal: true,
+				MarketplaceSelections: map[config.Source]marketplaceSelection{config.UserPersonal: {Entry: entry, Pin: pin}}}
+			act := scopedToggleAction(r, scopeLocal)
+			mutatorCalled := false
+			msg := runDependencyScopedToggle(context.Background(), repo, act, func(context.Context, string, func(pipeline.ConfigPathMapper) error) error {
+				mutatorCalled = true
+				return errors.New("legacy local mutation was used")
+			})()
+			if mutatorCalled {
+				t.Fatalf("v4 Marketplace copy used the legacy mutator: %#v", msg)
+			}
+			lockPath := filepath.Join(repo, ".agents", "lock.local.yaml")
+			if test.verified && test.revision == "" {
+				written, ok := msg.(configWrittenMsg)
+				if !ok || written.err != nil {
+					t.Fatalf("verified legacy pin was not copied: %#v", msg)
+				}
+				v4, err := config.LoadV4ConfigFromPath(localPath)
+				if err != nil || len(v4.Sources) != 1 {
+					t.Fatalf("v4 target source missing: %#v: %v", v4, err)
+				}
+				wantRegistry := test.slug
+				if wantRegistry == "" {
+					wantRegistry = "src"
+				}
+				for name := range v4.Sources {
+					if group := v4.Groups[name]; len(group.Include) != 1 || group.Include[0].Locator != wantRegistry+"/skill/review" {
+						t.Fatalf("v4 target pin not selected: %#v", group)
+					}
+				}
+				lockBytes, err := os.ReadFile(lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				locked, err := lockfile.Decode(lockBytes)
+				if err != nil || len(locked.Marketplaces) != 1 || len(locked.Marketplaces[0].Resources) != 1 || string(locked.Marketplaces[0].Resources[0].ArchiveDigest) != archiveDigest {
+					t.Fatalf("verified legacy evidence not published: %#v: %v", locked, err)
+				}
+			} else {
+				fallback, ok := msg.(marketplaceToggleFallbackMsg)
+				if !ok {
+					t.Fatalf("legacy pin did not request a consented preview: %#v", msg)
+				}
+				if test.revision != "" {
+					if !errors.Is(fallback.reason, pipeline.ErrV4MarketplaceRevisionUnrepresentable) {
+						t.Fatalf("unrepresentable legacy revision was not identified: %v", fallback.reason)
+					}
+				} else if !errors.Is(fallback.reason, dependencytxn.ErrGenerationConflict) || !errors.Is(fallback.reason, pipeline.ErrV4MarketplaceEvidenceUnavailable) {
+					t.Fatalf("missing legacy evidence was not identified: %v", fallback.reason)
+				}
+				if after, err := os.ReadFile(localPath); err != nil || string(after) != string(localData) {
+					t.Fatalf("v4 target changed during refused copy: %v", err)
+				}
+				if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+					t.Fatalf("v4 target lock created without proof: %v", err)
+				}
+			}
+			if after, err := os.ReadFile(userPath); err != nil || string(after) != string(beforeUser) {
+				t.Fatalf("legacy source changed during copy: %v", err)
+			}
+		})
+	}
 }
 
 func TestSpaceOnSkillRowOpensToggleModal(t *testing.T) {

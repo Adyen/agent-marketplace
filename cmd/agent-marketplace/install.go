@@ -137,6 +137,9 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 	detailsShown := false
 
 	repoRoot := config.FindRepoRoot()
+	if _, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, config.FindLocalConfigDir(), nil, nil); err != nil {
+		return err
+	}
 	result, err := pipeline.Install(ctx, pipeline.InstallOptions{
 		RepoRoot:            repoRoot,
 		Args:                args,

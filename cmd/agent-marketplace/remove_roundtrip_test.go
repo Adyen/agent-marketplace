@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -385,6 +386,324 @@ harnesses:
 // ---------------------------------------------------------------------------
 // remove --from round-trip
 // ---------------------------------------------------------------------------
+
+func TestRemoveOrganizationResourceIntoV4UserShadow(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	registry := t.TempDir()
+	writeSkill(t, registry, "committing-code", "Commit changes", nil)
+	writeSkill(t, registry, "other-skill", "Keep changes", nil)
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v3\nregistries:\n  - url: "+registry+"\n    default: true\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync organization skills: %v: %s", err, output)
+	}
+	for _, name := range []string{"committing-code", "other-skill"} {
+		if _, err := os.Stat(filepath.Join(home, ".factory", "skills", name, "SKILL.md")); err != nil {
+			t.Fatalf("%s missing before shadow removal: %v", name, err)
+		}
+	}
+
+	if output, err := executeCommand("remove", "committing-code", "--scope", "user"); err != nil {
+		t.Fatalf("remove into v4 user shadow: %v: %s", err, output)
+	}
+	v4, err := config.LoadV4ConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shadowed bool
+	for alias, source := range v4.Sources {
+		if source.Kind == config.V4SourceDirectory && source.Directory == registry && slices.Contains(v4.Groups[alias].Exclude, "skill/committing-code") {
+			shadowed = true
+		}
+	}
+	if !shadowed {
+		t.Fatalf("organization resource lacks v4 user exclusion: %#v", v4.Groups)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".factory", "skills", "committing-code")); !os.IsNotExist(err) {
+		t.Fatalf("excluded organization resource remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "other-skill", "SKILL.md")); err != nil {
+		t.Fatalf("unrelated organization resource removed: %v", err)
+	}
+
+	if output, err := executeCommand("remove", "--from", registry, "--scope", "user"); err != nil {
+		t.Fatalf("exclude organization source in v4 user config: %v: %s", err, output)
+	}
+	v4, err = config.LoadV4ConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sourceExcluded bool
+	for alias, source := range v4.Sources {
+		if source.Kind == config.V4SourceDirectory && source.Directory == registry && slices.Contains(v4.Groups[alias].Exclude, "*") {
+			sourceExcluded = true
+		}
+	}
+	if !sourceExcluded {
+		t.Fatalf("organization source lacks v4 all-exclusion: %#v", v4.Groups)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".factory", "skills", "other-skill")); !os.IsNotExist(err) {
+		t.Fatalf("excluded organization source remains: %v", err)
+	}
+}
+
+func TestRemoveConfiguredResourceFromV4UserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	registry := t.TempDir()
+	writeSkill(t, registry, "user-review", "Review at user scope", nil)
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	writeConfig(t, userPath, `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  local: {directory: `+registry+`}
+resources:
+  local: {include: [skill/user-review]}
+`)
+	withWorkingDir(t, t.TempDir())
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync selected v4 resource: %v: %s", err, output)
+	}
+	skillPath := filepath.Join(home, ".factory", "skills", "user-review", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Fatalf("v4 selected resource was not materialized: %v", err)
+	}
+
+	output, err := executeCommand("remove", "user-review", "--scope", "user")
+	if err != nil {
+		t.Fatalf("remove from v4 user config: %v: %s", err, output)
+	}
+	v4, err := config.LoadV4ConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	group := v4.Groups["local"]
+	if len(group.Include) != 0 || len(group.Exclude) != 1 || group.Exclude[0] != "skill/user-review" {
+		t.Fatalf("v4 removal selection = %#v", group)
+	}
+	if _, err := os.Lstat(skillPath); !os.IsNotExist(err) {
+		t.Fatalf("removed user resource remains: %v", err)
+	}
+}
+
+func TestRemoveFromDirectoryInV4UserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+	registry := t.TempDir()
+	bundlePath := "pstack/skills/show-me-your-work/"
+	skillRoot := filepath.Join(registry, "pstack", "skills", "show-me-your-work")
+	writeFile(t, filepath.Join(skillRoot, "SKILL.md"), `---
+name: show-me-your-work
+description: Show your work
+---
+Show your work.
+`)
+	if output, err := executeCommand("install", "--from", registry, "--path", bundlePath, "--scope", "user"); err != nil {
+		t.Fatalf("install into v4 user config: %v: %s", err, output)
+	}
+	skillPath := filepath.Join(home, ".factory", "skills", "show-me-your-work", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Fatalf("selected skill missing before removal: %v", err)
+	}
+
+	if output, err := executeCommand("remove", "show-me-your-work", "--from", registry, "--path", bundlePath, "--scope", "user"); err != nil {
+		t.Fatalf("remove v4 selected skill by source: %v: %s", err, output)
+	}
+	v4, err := config.LoadV4ConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sourceName string
+	for name, source := range v4.Sources {
+		if source.Kind == config.V4SourceDirectory && source.Directory == skillRoot {
+			sourceName = name
+		}
+	}
+	if sourceName == "" || len(v4.Groups[sourceName].Include) != 0 || !slices.Contains(v4.Groups[sourceName].Exclude, "skill/show-me-your-work") {
+		t.Fatalf("named removal did not exclude the v4 skill: %#v", v4.Groups)
+	}
+	if _, err := os.Lstat(skillPath); !os.IsNotExist(err) {
+		t.Fatalf("removed skill remains: %v", err)
+	}
+
+	if output, err := executeCommand("remove", "--from", registry, "--path", bundlePath, "--scope", "user"); err != nil {
+		t.Fatalf("remove v4 source: %v: %s", err, output)
+	}
+	v4, err = config.LoadV4ConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := v4.Sources[sourceName]; exists {
+		t.Fatalf("removed directory source remains: %#v", v4.Sources)
+	}
+	if _, exists := v4.Groups[sourceName]; exists {
+		t.Fatalf("removed directory resource group remains: %#v", v4.Groups)
+	}
+}
+
+func TestRemoveGitSourceFromV4UserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	origin, working := createBareRepoWithWorkingClone(t, "v4-remove.git")
+	writeSkill(t, working, "git-review", "Review from Git", nil)
+	commitAndPushAll(t, working, "seed skill")
+	origin = "file://" + filepath.ToSlash(origin)
+	withWorkingDir(t, t.TempDir())
+	if output, err := executeCommand("install", "git-review", "--from", origin, "--ref", "main", "--scope", "user"); err != nil {
+		t.Fatalf("install Git skill into v4: %v: %s", err, output)
+	}
+	skillPath := filepath.Join(home, ".factory", "skills", "git-review", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Fatalf("Git skill missing before removal: %v", err)
+	}
+
+	if output, err := executeCommand("remove", "--from", origin, "--scope", "user"); err != nil {
+		t.Fatalf("remove v4 Git source: %v: %s", err, output)
+	}
+	v4, err := config.LoadV4ConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v4.Sources) != 0 || len(v4.Groups) != 0 {
+		t.Fatalf("Git source or selection remains after removal: %#v %#v", v4.Sources, v4.Groups)
+	}
+	if _, err := os.Lstat(skillPath); !os.IsNotExist(err) {
+		t.Fatalf("Git skill remains after source removal: %v", err)
+	}
+	lock := readLockDocument(t, filepath.Join(home, ".agents", "lock.yaml"))
+	if len(lock.Registries) != 0 {
+		t.Fatalf("removed Git source is still locked: %#v", lock)
+	}
+}
+
+func TestRemoveCollectionFromV4RepoConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	registry := t.TempDir()
+	writeSkill(t, registry, "first-review", "Review changes", nil)
+	writeCollection(t, registry, "review-bundle", `
+apiVersion: agent-marketplace/v1
+kind: Collection
+name: review-bundle
+version: 1.0.0
+skills:
+  - name: first-review
+`)
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  local: {directory: `+registry+`}
+resources:
+  local: {include: [collection/review-bundle]}
+`)
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync v4 collection: %v: %s", err, output)
+	}
+	skillPath := filepath.Join(repo, ".factory", "skills", "first-review", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Fatalf("collection member missing before removal: %v", err)
+	}
+
+	if output, err := executeCommand("remove", "review-bundle", "--scope", "repo"); err != nil {
+		t.Fatalf("remove v4 collection: %v: %s", err, output)
+	}
+	v4, err := config.LoadV4ConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	group := v4.Groups["local"]
+	if len(group.Include) != 0 || !slices.Contains(group.Exclude, "collection/review-bundle") {
+		t.Fatalf("collection selection remains: %#v", group)
+	}
+	if _, err := os.Lstat(skillPath); !os.IsNotExist(err) {
+		t.Fatalf("collection member remains after removal: %v", err)
+	}
+}
+
+func TestRemoveMarketplaceResourceFromV4UserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server := newV4MarketplaceLockServer(t)
+	defer server.Close()
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {hosted: {marketplace: "+server.URL+"}}\n")
+	encoded, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeUser, Marketplaces: []lockfile.MarketplaceLock{{URL: server.URL, InstanceID: "mp"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeFile(t, lockPath, string(encoded))
+	withWorkingDir(t, t.TempDir())
+	if output, err := executeCommand("install", "tools/skill/review", "--marketplace", "hosted", "--scope", "user", "--yes"); err != nil {
+		t.Fatalf("install Marketplace skill into v4: %v: %s", err, output)
+	}
+	skillPath := filepath.Join(home, ".factory", "skills", "review", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Fatalf("v4 Marketplace skill missing before removal: %v", err)
+	}
+
+	if output, err := executeCommand("remove", "review", "--scope", "user"); err != nil {
+		t.Fatalf("remove Marketplace skill from v4: %v: %s", err, output)
+	}
+	v4, err := config.LoadV4ConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v4.Groups["hosted"].Include) != 0 {
+		t.Fatalf("v4 Marketplace request remains: %#v", v4.Groups["hosted"])
+	}
+	lock := readLockDocument(t, lockPath)
+	if len(lock.Marketplaces) != 1 || len(lock.Marketplaces[0].Resources) != 0 {
+		t.Fatalf("removed Marketplace resource remains in lock: %#v", lock)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".factory", "skills", "review")); !os.IsNotExist(err) {
+		t.Fatalf("removed Marketplace skill remains: %v", err)
+	}
+}
 
 func TestRemoveFromFlagRemovesNamedResourceFromAdHocRegistry(t *testing.T) {
 	if isolateCommandTest(t) {

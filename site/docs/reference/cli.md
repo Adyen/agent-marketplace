@@ -115,7 +115,7 @@ Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` colu
 
 ## `install`
 
-Adds selections to one writable config layer and syncs harness output. Install operations that write config, including endpoint registration, return `v4.writer-opt-in` if the destination is v4. They cannot translate the edit to v4 automatically. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+Adds selections to one writable config layer and syncs harness output. Git and directory installs, including `--from`, `--tag`, `--all`, and collections, edit v2/v3 or v4 destinations. Marketplace endpoint registration and explicit resource installs into v4 publish the source or request with its matching `agent-marketplace-lock/v2` acquisition record in one dependency transaction. Unsupported v4 policies and legacy-only writers still fail closed with a coded diagnostic. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace install <resource-name> [flags]
@@ -309,7 +309,7 @@ Source kinds are explicit:
 - `directory` sources are live and never acquire a Git lock. Relative paths in repository `.agents/config.yaml` and `.agents/config.local.yaml` roots use the repository root; user/organization configs and included fragments use the declaring directory.
 - `marketplace` sources require a matching verified layer lock for explicit requests.
 
-Use the [v4 configuration reference](configuration.md) to write source declarations and resource groups directly. Legacy resource-selection editors cannot edit v4 roots. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Explicit hosted requests need matching verified records in the layer's lockfile; general hosted v4 acquisition, update, and snapshots for dynamic selectors are not implemented.
+The [v4 configuration reference](configuration.md) defines source declarations and resource groups for direct authoring. CLI `install` and `remove` also edit supported v4 Git/directory and explicit Marketplace selections; hosted edits publish matching lock/v2 evidence with the config. Legacy-only writers continue to reject v4 roots. The CLI rejects unknown fields, mixed source kinds, invalid locators, and mismatched Marketplace locks. Dynamic hosted selector snapshots and hosted v4 update/rebind remain unsupported.
 
 ## `migrate`
 

@@ -9,13 +9,17 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -52,7 +56,11 @@ type MarketplaceInstallSummary struct {
 	Capabilities []string
 }
 
-var ErrMarketplaceInstallCollision = errors.New("marketplace.install-collision")
+var (
+	ErrMarketplaceInstallCollision          = errors.New("marketplace.install-collision")
+	ErrV4MarketplaceEvidenceUnavailable     = errors.New("v4.marketplace-evidence-unavailable")
+	ErrV4MarketplaceRevisionUnrepresentable = errors.New("v4.marketplace-revision-unrepresentable")
+)
 
 type PreparedMarketplaceInstall struct {
 	options             InstallOptions
@@ -165,11 +173,179 @@ func registerMarketplaceEndpoint(ctx context.Context, opts InstallOptions, confi
 		slog.Info("Marketplace endpoint already configured", "url", canonical, "instance_id", entry.InstanceID, "config_path", existingPath)
 		return &InstallResult{MarketplaceEndpoint: canonical, MarketplaceConfigPath: existingPath, MarketplaceAlreadyConfigured: true}, nil
 	}
+	v4, err := config.LoadV4ConfigIfPresent(configPath, targetSource)
+	if err != nil {
+		return nil, err
+	}
+	if v4 != nil {
+		return registerV4MarketplaceEndpoint(ctx, opts, configPath, *ec, entry)
+	}
 	if err := config.EnsureMarketplaceEntryInConfig(configPath, entry); err != nil {
 		return nil, fmt.Errorf("write Marketplace endpoint: %w", err)
 	}
 	slog.Info("Marketplace endpoint registered", "url", canonical, "instance_id", entry.InstanceID, "config_path", configPath)
 	return &InstallResult{MarketplaceEndpoint: canonical, MarketplaceConfigPath: configPath}, nil
+}
+
+func registerV4MarketplaceEndpoint(ctx context.Context, opts InstallOptions, configPath string, ec config.EffectiveConfig, entry config.MarketplaceEntry) (result *InstallResult, retErr error) {
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return nil, err
+	}
+	if err := dependencytxn.Recover(ctx, stateDir); err != nil {
+		return nil, err
+	}
+	staging, err := newConfigStagingManager()
+	if err != nil {
+		return nil, err
+	}
+	defer closeConfigStaging(staging, "v4 Marketplace endpoint registration", &retErr)
+	stagedPath, err := staging.Path(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := config.EnsureV4MarketplaceSourceInConfig(stagedPath, configPath, installScopeSource(opts.Scope), entry.URL); err != nil {
+		return nil, err
+	}
+	edits, err := staging.Edits()
+	if err != nil {
+		return nil, err
+	}
+	if len(edits) != 1 {
+		return nil, fmt.Errorf("v4 Marketplace endpoint registration must stage exactly one config")
+	}
+	paths, err := config.ResolveConfigLockPaths(configPath)
+	if err != nil {
+		return nil, err
+	}
+	lockBytes, generation, mode, err := dependencytxn.ReadSnapshot(paths.CanonicalLock)
+	if err != nil {
+		return nil, err
+	}
+	lock := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.Scope(installScopeSource(opts.Scope).LockScope())}
+	if generation.Exists {
+		current, err := lockfile.Decode(lockBytes)
+		if err != nil {
+			return nil, fmt.Errorf("read v4 Marketplace lock %q: %w", paths.CanonicalLock, err)
+		}
+		if current.Scope != lock.Scope {
+			return nil, fmt.Errorf("v4 Marketplace lock %q has scope %q, want %q", paths.CanonicalLock, current.Scope, lock.Scope)
+		}
+		lock.Registries = current.Registries
+		if current.APIVersion == lockfile.APIVersionV2 {
+			lock.Marketplaces = current.Marketplaces
+		} else if current.APIVersion != lockfile.APIVersionV1 {
+			return nil, fmt.Errorf("v4 Marketplace lock %q has unsupported version %q", paths.CanonicalLock, current.APIVersion)
+		}
+	}
+	lock.Marketplaces = append(lock.Marketplaces, lockfile.MarketplaceLock{URL: entry.URL, InstanceID: entry.InstanceID})
+	newLock, err := lockfile.Encode(lock)
+	if err != nil {
+		return nil, err
+	}
+	_, err = publishV4MarketplacePair(ctx, stateDir, config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir}, ec, edits[0], paths, lockBytes, generation, mode, newLock)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("Marketplace endpoint registered", "url", entry.URL, "instance_id", entry.InstanceID, "config_path", configPath)
+	return &InstallResult{MarketplaceEndpoint: entry.URL, MarketplaceConfigPath: configPath}, nil
+}
+
+func v4MarketplaceEditReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAssertion, error) {
+	byRequested, err := configReadAssertions(ec, true)
+	if err != nil {
+		return nil, err
+	}
+	for _, read := range ec.Organization.Reads {
+		if !read.RuntimeLock {
+			continue
+		}
+		paths, err := config.ResolveConfigLockPaths(ec.Organization.Path)
+		if err != nil {
+			return nil, err
+		}
+		transient, err := transientMarketplaceReadAssertions(ec, paths.CanonicalLock)
+		if err != nil {
+			return nil, err
+		}
+		for _, assertion := range transient {
+			if previous, ok := byRequested[assertion.RequestedPath]; ok && previous != assertion {
+				return nil, fmt.Errorf("%w: Marketplace policy changed during endpoint registration", dependencytxn.ErrGenerationConflict)
+			}
+			byRequested[assertion.RequestedPath] = assertion
+		}
+		break
+	}
+	reads := make([]dependencytxn.ReadAssertion, 0, len(byRequested))
+	for _, read := range byRequested {
+		reads = append(reads, read)
+	}
+	sort.Slice(reads, func(i, j int) bool { return reads[i].RequestedPath < reads[j].RequestedPath })
+	return reads, nil
+}
+
+type v4MarketplacePublication struct {
+	stateDir, configPath, lockPath string
+	oldConfig, newConfig           []byte
+	oldLock, newLock               []byte
+	configMode, oldLockMode        os.FileMode
+	newLockMode                    os.FileMode
+	lockExisted                    bool
+}
+
+func publishV4MarketplacePair(ctx context.Context, stateDir string, opts config.LoadEffectiveOptions, ec config.EffectiveConfig, edit StagedConfigEdit, paths config.ConfigLockPaths, oldLock []byte, lockGeneration dependencytxn.Generation, lockMode os.FileMode, newLock []byte) (v4MarketplacePublication, error) {
+	publication := v4MarketplacePublication{}
+	overlays := make(map[string][]byte, len(opts.FileOverlays)+2)
+	for path, data := range opts.FileOverlays {
+		overlays[path] = data
+	}
+	overlays[edit.Path] = edit.Bytes
+	overlays[paths.CanonicalLock] = newLock
+	opts.FileOverlays = overlays
+	validated := LoadEffectiveOnline(ctx, opts, nil)
+	if len(validated.Errors) > 0 {
+		return publication, errors.Join(validated.Errors...)
+	}
+	reads, err := v4MarketplaceEditReadAssertions(ec)
+	if err != nil {
+		return publication, err
+	}
+	oldConfig, generation, configMode, err := dependencytxn.ReadSnapshot(edit.Path)
+	if err != nil {
+		return publication, err
+	}
+	if generation != edit.Expected || configMode != edit.Mode {
+		return publication, fmt.Errorf("%w: v4 Marketplace config changed before publication", dependencytxn.ErrGenerationConflict)
+	}
+	newLockMode := lockMode
+	if !lockGeneration.Exists {
+		newLockMode = 0o644
+	}
+	desired := []dependencytxn.DesiredFile{
+		{Path: edit.Path, Expected: edit.Expected, ExpectedMode: edit.Mode, Bytes: edit.Bytes, Mode: edit.Mode},
+		{Path: paths.CanonicalLock, Expected: lockGeneration, ExpectedMode: lockMode, Bytes: newLock, Mode: newLockMode},
+	}
+	if _, err := dependencytxn.Commit(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads)); err != nil {
+		return publication, fmt.Errorf("publish v4 Marketplace config and acquisition lock: %w", err)
+	}
+	return v4MarketplacePublication{
+		stateDir: stateDir, configPath: edit.Path, lockPath: paths.CanonicalLock,
+		oldConfig: oldConfig, newConfig: edit.Bytes, oldLock: oldLock, newLock: newLock,
+		configMode: configMode, oldLockMode: lockMode, newLockMode: newLockMode, lockExisted: lockGeneration.Exists,
+	}, nil
+}
+
+func (p v4MarketplacePublication) rollback(ctx context.Context) error {
+	desired := []dependencytxn.DesiredFile{
+		{Path: p.configPath, Expected: dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(p.newConfig)}, ExpectedMode: p.configMode, Bytes: p.oldConfig, Mode: p.configMode},
+		{Path: p.lockPath, Expected: dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(p.newLock)}, ExpectedMode: p.newLockMode, Bytes: p.oldLock, Mode: p.oldLockMode, Delete: !p.lockExisted},
+	}
+	if !p.lockExisted {
+		desired[1].Bytes = nil
+		desired[1].Mode = 0
+	}
+	_, err := dependencytxn.Commit(context.WithoutCancel(ctx), p.stateDir, desired)
+	return err
 }
 
 func installScopeSource(scope Scope) config.Source {
@@ -220,7 +396,7 @@ func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*Prepa
 	if opts.Scope == ScopeRepo && config.IsHomeDir(opts.RepoRoot) {
 		return nil, fmt.Errorf("cannot install to repo config from home directory: the project config path would overwrite %s; use --scope user to write to the global config instead", configPath)
 	}
-	if opts.Scope == ScopeRepo || opts.Scope == ScopeLocal {
+	if (opts.Scope == ScopeRepo || opts.Scope == ScopeLocal) && !opts.PreserveScopeRoot {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("get current working directory for Marketplace install: %w", err)
@@ -252,6 +428,9 @@ func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*Prepa
 func prepareMarketplaceInstall(ctx context.Context, opts InstallOptions, configPath string, ec *config.EffectiveConfig) (*PreparedMarketplaceInstall, error) {
 	if ec == nil || len(ec.TargetHarnesses) == 0 {
 		return nil, &TargetHarnessSetMissingError{}
+	}
+	if err := validateLegacyMarketplacePreview(*ec, configPath, opts); err != nil {
+		return nil, err
 	}
 	var locator marketplace.MarketplaceLocator
 	var err error
@@ -354,6 +533,9 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	if !slices.Equal(ec.TargetHarnesses, prepared.targetHarnesses) {
 		return nil, errors.New("target harnesses changed after Marketplace install preview; preview again")
 	}
+	if err := validateLegacyMarketplacePreview(ec, prepared.configPath, prepared.options); err != nil {
+		return nil, err
+	}
 	commitEntry := prepared.plan.Entry
 	if current, ok := marketplaceIdentity(ec.Merged, prepared.plan.Entry); ok {
 		commitEntry.Alias = current.Alias
@@ -365,10 +547,19 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	}
 	pins := marketplaceInstallPins(prepared.plan)
 	identities := marketplaceInstallIdentities(prepared.plan)
-	requirementWarnings, err := ensureMarketplacePinsAndSync(prepared.configPath, commitEntry, pins, func() ([]error, error) {
-		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan))
-		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
-	})
+	v4, err := config.LoadV4ConfigIfPresent(prepared.configPath, installScopeSource(prepared.options.Scope))
+	if err != nil {
+		return nil, err
+	}
+	var requirementWarnings []error
+	if v4 != nil {
+		requirementWarnings, err = commitPreparedV4MarketplaceInstall(ctx, prepared, ec, commitEntry, identities)
+	} else {
+		requirementWarnings, err = ensureMarketplacePinsAndSync(prepared.configPath, commitEntry, pins, func() ([]error, error) {
+			syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan))
+			return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +571,311 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 		Installed: installed, IsCollection: len(prepared.plan.CollectionMembers) > 0,
 		CollectionLabel: prepared.plan.Pin.Name, MarketplacePreview: prepared.preview,
 		MarketplaceSummary: marketplaceInstallSummary(prepared.plan), RequirementWarnings: requirementWarnings,
+		PendingSync: prepared.options.DeferMarketplaceSync,
 	}, nil
+}
+
+func commitPreparedV4MarketplaceInstall(ctx context.Context, prepared *PreparedMarketplaceInstall, ec config.EffectiveConfig, entry config.MarketplaceEntry, identities []resourceIdentity) (warnings []error, retErr error) {
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return nil, err
+	}
+	if err := dependencytxn.Recover(ctx, stateDir); err != nil {
+		return nil, err
+	}
+	staging, err := newConfigStagingManager()
+	if err != nil {
+		return nil, err
+	}
+	defer closeConfigStaging(staging, "v4 Marketplace resource install", &retErr)
+	stagedPath, err := staging.Path(prepared.configPath)
+	if err != nil {
+		return nil, err
+	}
+	source := installScopeSource(prepared.options.Scope)
+	sourceName, err := config.EnsureV4MarketplaceSourceInConfig(stagedPath, prepared.configPath, source, entry.URL)
+	if err != nil {
+		return nil, err
+	}
+	var revision string
+	if prepared.options.ExactMarketplaceLocator != nil {
+		revision = prepared.options.ExactMarketplaceLocator.Revision
+	} else if len(prepared.options.Args) == 1 {
+		locator, err := marketplaceLocator(prepared.options.Args[0], prepared.options.Marketplace)
+		if err != nil {
+			return nil, err
+		}
+		revision = locator.Revision
+	}
+	if err := config.AddV4MarketplaceRequestInConfig(stagedPath, prepared.configPath, source, sourceName, prepared.plan.Pin, revision); err != nil {
+		return nil, err
+	}
+	edits, err := staging.Edits()
+	if err != nil {
+		return nil, err
+	}
+	if len(edits) != 1 {
+		return nil, fmt.Errorf("v4 Marketplace install must stage exactly one config")
+	}
+	edit := edits[0]
+	candidateV4, err := config.LoadV4ConfigFromRootData(prepared.configPath, source, edit.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	paths, err := config.ResolveConfigLockPaths(prepared.configPath)
+	if err != nil {
+		return nil, err
+	}
+	oldLock, lockGeneration, lockMode, err := dependencytxn.ReadSnapshot(paths.CanonicalLock)
+	if err != nil {
+		return nil, err
+	}
+	current := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.Scope(source.LockScope())}
+	if lockGeneration.Exists {
+		current, err = lockfile.Decode(oldLock)
+		if err != nil {
+			return nil, err
+		}
+		if current.Scope != lockfile.Scope(source.LockScope()) || current.APIVersion != lockfile.APIVersionV2 && current.APIVersion != lockfile.APIVersionV1 {
+			return nil, fmt.Errorf("v4 Marketplace lock %q has incompatible scope or version", paths.CanonicalLock)
+		}
+	}
+	var instances []config.MarketplaceEntry
+	if ec.Merged != nil {
+		instances = ec.Merged.Marketplaces
+	}
+	provisional, err := marketplacelock.Provisional(candidateV4, lockfile.Scope(source.LockScope()), instances...)
+	if err != nil {
+		return nil, err
+	}
+	provisional.Registries = current.Registries
+	provisionalBytes, err := lockfile.Encode(provisional)
+	if err != nil {
+		return nil, err
+	}
+	loadOpts := config.LoadEffectiveOptions{
+		RepoRoot: prepared.options.RepoRoot, LocalConfigDir: prepared.options.LocalConfigDir,
+		FileOverlays: map[string][]byte{edit.Path: edit.Bytes, paths.CanonicalLock: provisionalBytes},
+	}
+	preflight := LoadEffectiveForLockPlanning(ctx, loadOpts)
+	if len(preflight.Errors) > 0 {
+		return nil, errors.Join(preflight.Errors...)
+	}
+	marketplaceResolver := marketplace.NewResolver()
+	marketplaceResolver.AllowedRegistries = preflight.Allowed
+	exact, err := marketplacelock.Resolve(ctx, marketplaceResolver, marketplacelock.Layer{Source: source, LockPath: paths.CanonicalLock, V4: candidateV4}, preflight.TargetHarnesses, nil)
+	if err != nil {
+		return nil, fmt.Errorf("acquire v4 Marketplace request: %w", err)
+	}
+	exact.Registries = current.Registries
+	if err := verifyV4MarketplaceInstallEvidence(current, exact, entry, marketplaceInstallPins(prepared.plan)); err != nil {
+		return nil, err
+	}
+	exactBytes, err := lockfile.Encode(exact)
+	if err != nil {
+		return nil, err
+	}
+	publication, err := publishV4MarketplacePair(ctx, stateDir, loadOpts, ec, edit, paths, oldLock, lockGeneration, lockMode, exactBytes)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if retErr != nil {
+			if rollbackErr := publication.rollback(ctx); rollbackErr != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("rollback v4 Marketplace config and lock: %w", rollbackErr))
+			}
+		}
+	}()
+	if !prepared.options.DeferMarketplaceSync {
+		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan))
+		warnings, err = syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
+		if err != nil {
+			return nil, err
+		}
+	}
+	committed, err := os.ReadFile(edit.Path)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(committed, edit.Bytes) {
+		return nil, fmt.Errorf("v4 Marketplace config changed concurrently during install")
+	}
+	return warnings, nil
+}
+
+func verifyV4MarketplaceInstallEvidence(current, exact lockfile.Document, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin) error {
+	byURL := make(map[string]lockfile.MarketplaceLock, len(exact.Marketplaces))
+	for _, mp := range exact.Marketplaces {
+		byURL[mp.URL] = mp
+	}
+	for _, old := range current.Marketplaces {
+		next, ok := byURL[old.URL]
+		if !ok || next.InstanceID != old.InstanceID {
+			return fmt.Errorf("%w: existing Marketplace endpoint changed during install", dependencytxn.ErrGenerationConflict)
+		}
+		for _, binding := range old.RegistryBindings {
+			found := false
+			for _, candidate := range next.RegistryBindings {
+				found = found || candidate == binding
+			}
+			if !found {
+				return fmt.Errorf("%w: existing Marketplace registry binding changed during install", dependencytxn.ErrGenerationConflict)
+			}
+		}
+		for _, resource := range old.Resources {
+			found := false
+			for _, candidate := range next.Resources {
+				if candidate.RegistryID == resource.RegistryID && candidate.Kind == resource.Kind && candidate.Name == resource.Name {
+					found = reflect.DeepEqual(candidate, resource)
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("%w: existing Marketplace resource changed during install", dependencytxn.ErrGenerationConflict)
+			}
+		}
+	}
+	locked, ok := byURL[entry.URL]
+	if !ok || locked.InstanceID != entry.InstanceID {
+		return fmt.Errorf("%w: Marketplace identity changed during install", dependencytxn.ErrGenerationConflict)
+	}
+	for _, pin := range pins {
+		found := false
+		for _, resource := range locked.Resources {
+			if resource.RegistryID == pin.RegistryID && resource.Kind == pin.Kind && resource.Name == pin.Name && resource.Revision == pin.Revision && string(resource.ContentDigest) == pin.Digest {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("%w: Marketplace resource changed since install preview", dependencytxn.ErrGenerationConflict)
+		}
+	}
+	return nil
+}
+
+func marketplaceLockRecordMatchesPin(resource lockfile.MarketplaceResourceLock, pin config.MarketplaceResourcePin) bool {
+	return resource.RegistryName == pin.RegistrySlug && resource.RegistryID == pin.RegistryID && resource.Kind == pin.Kind && resource.Name == pin.Name &&
+		resource.Revision == pin.Revision && string(resource.ContentDigest) == pin.Digest && resource.Acquisition == pin.Acquisition &&
+		resource.RegistryCommit == pin.RegistryCommit && string(resource.RegistryManifestDigest) == pin.RegistryManifestDigest &&
+		string(resource.ArchiveDigest) == pin.LockArchiveDigest && string(resource.CollectionManifestDigest) == pin.LockCollectionManifestDigest && resource.SourcePath == pin.LockSourcePath
+}
+
+func copyV4MarketplacePinEvidence(ec config.EffectiveConfig, target lockfile.Document, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (lockfile.Document, error) {
+	fail := func(reason string) (lockfile.Document, error) {
+		return lockfile.Document{}, fmt.Errorf("%w: %s; install the resource in this scope through the CLI to reacquire it", dependencytxn.ErrGenerationConflict, reason)
+	}
+	for _, existing := range target.Marketplaces {
+		if existing.URL != entry.URL {
+			continue
+		}
+		if existing.InstanceID != entry.InstanceID {
+			return fail("Marketplace endpoint identity differs in target lock")
+		}
+		for _, resource := range existing.Resources {
+			if resource.RegistryID == pin.RegistryID && resource.Kind == pin.Kind && resource.Name == pin.Name {
+				if !marketplaceLockRecordMatchesPin(resource, pin) {
+					return fail("Marketplace resource differs in target lock")
+				}
+				return target, nil
+			}
+		}
+	}
+	var sourceLayer config.LayerResult
+	for _, layer := range ec.LayerResults() {
+		if layer.Source == entry.Source {
+			sourceLayer = layer
+			break
+		}
+	}
+	if sourceLayer.Path == "" {
+		return fail("Marketplace pin source layer is unavailable")
+	}
+	paths, err := config.ResolveConfigLockPaths(sourceLayer.Path)
+	if err != nil {
+		return lockfile.Document{}, err
+	}
+	raw, generation, _, err := dependencytxn.ReadSnapshot(paths.CanonicalLock)
+	if err != nil {
+		return lockfile.Document{}, err
+	}
+	verified := false
+	for _, read := range sourceLayer.Reads {
+		if read.AcquisitionLock && read.Path == paths.CanonicalLock && read.Digest == generation.Digest {
+			verified = true
+			break
+		}
+	}
+	var binding lockfile.MarketplaceRegistryBinding
+	var resource lockfile.MarketplaceResourceLock
+	bound := true
+	if generation.Exists && verified {
+		origin, err := lockfile.Decode(raw)
+		if err != nil {
+			return lockfile.Document{}, err
+		}
+		if origin.APIVersion != lockfile.APIVersionV2 || origin.Scope != lockfile.Scope(entry.Source.LockScope()) {
+			return fail("Marketplace pin source lock has incompatible scope or version")
+		}
+		bound = false
+		pinned := false
+		for _, mp := range origin.Marketplaces {
+			if mp.URL != entry.URL {
+				continue
+			}
+			if mp.InstanceID != entry.InstanceID {
+				return fail("Marketplace pin source identity changed")
+			}
+			for _, candidate := range mp.RegistryBindings {
+				if candidate.Name == pin.RegistrySlug && candidate.RegistryID == pin.RegistryID {
+					binding, bound = candidate, true
+				}
+			}
+			for _, candidate := range mp.Resources {
+				if marketplaceLockRecordMatchesPin(candidate, pin) {
+					resource, pinned = candidate, true
+				}
+			}
+		}
+		if !bound || !pinned {
+			return fail("Marketplace pin evidence changed in its source lock")
+		}
+	} else {
+		legacy := sourceLayer.Config != nil && sourceLayer.Config.APIVersion != config.APIVersionV4 || sourceLayer.Local != nil && sourceLayer.Local.APIVersion != config.APIVersionV4
+		if !legacy {
+			return fail("Marketplace pin has no current acquisition lock in its source layer")
+		}
+		resource, err = marketplace.DefaultCache().VerifiedMarketplaceLockResource(entry, pin)
+		if err != nil {
+			return lockfile.Document{}, fmt.Errorf("%w: %w: verified cache evidence for legacy pin is missing or invalid: %v; install the resource in this scope through the CLI to reacquire it", ErrV4MarketplaceEvidenceUnavailable, dependencytxn.ErrGenerationConflict, err)
+		}
+		binding = lockfile.MarketplaceRegistryBinding{Name: resource.RegistryName, RegistryID: resource.RegistryID}
+	}
+	resource.SelectedBy = nil
+	index := -1
+	for i := range target.Marketplaces {
+		if target.Marketplaces[i].URL == entry.URL {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		target.Marketplaces = append(target.Marketplaces, lockfile.MarketplaceLock{URL: entry.URL, InstanceID: entry.InstanceID})
+		index = len(target.Marketplaces) - 1
+	}
+	for _, existing := range target.Marketplaces[index].RegistryBindings {
+		if existing.Name == binding.Name && existing.RegistryID != binding.RegistryID {
+			return fail("Marketplace registry binding differs in target lock")
+		}
+		if existing == binding {
+			bound = false
+		}
+	}
+	if bound {
+		target.Marketplaces[index].RegistryBindings = append(target.Marketplaces[index].RegistryBindings, binding)
+	}
+	target.Marketplaces[index].Resources = append(target.Marketplaces[index].Resources, resource)
+	return lockfile.Normalize(target)
 }
 
 func marketplaceInstallSummary(plan *marketplace.PreparedInstall) MarketplaceInstallSummary {
@@ -603,6 +1098,55 @@ func resolveMarketplaceEntry(locator marketplace.MarketplaceLocator, selector st
 	return config.MarketplaceEntry{URL: want}, nil
 }
 
+func validateLegacyMarketplacePreview(ec config.EffectiveConfig, configPath string, opts InstallOptions) error {
+	preview := opts.ReacquireLegacyPin
+	if preview == nil {
+		if opts.DeferMarketplaceSync {
+			return fmt.Errorf("deferred Marketplace sync requires a verified legacy-pin preview")
+		}
+		return nil
+	}
+	if !opts.DeferMarketplaceSync || !opts.PreserveScopeRoot {
+		return fmt.Errorf("legacy-pin preview requires a fixed v4 scope and pending-sync confirmation")
+	}
+	v4, err := config.LoadV4ConfigIfPresent(configPath, installScopeSource(opts.Scope))
+	if err != nil {
+		return err
+	}
+	if v4 == nil {
+		return fmt.Errorf("legacy-pin preview target is no longer v4; preview again")
+	}
+	for _, layer := range ec.LayerResults() {
+		if layer.Source != preview.Entry.Source {
+			continue
+		}
+		var entries []config.MarketplaceEntry
+		if layer.Config != nil {
+			if layer.Config.APIVersion == config.APIVersionV4 {
+				break
+			}
+			entries = layer.Config.Marketplaces
+		} else if layer.Local != nil {
+			if layer.Local.APIVersion == config.APIVersionV4 {
+				break
+			}
+			entries = layer.Local.Marketplaces
+		}
+		for _, entry := range entries {
+			if canonicalMarketplaceURL(entry.URL) != canonicalMarketplaceURL(preview.Entry.URL) || entry.InstanceID != preview.Entry.InstanceID || entry.Alias != preview.Entry.Alias {
+				continue
+			}
+			for _, pin := range entry.Resources {
+				if pin == preview.Pin {
+					return nil
+				}
+			}
+		}
+		break
+	}
+	return fmt.Errorf("%w: legacy Marketplace pin changed after toggle; preview again", dependencytxn.ErrGenerationConflict)
+}
+
 func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig, plan *marketplace.PreparedInstall) error {
 	if len(plan.CollectionMembers) > 0 {
 		seen := make(map[string]*marketplace.PreparedInstall, len(plan.CollectionMembers))
@@ -643,7 +1187,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 		return ctx.Err()
 	}
 	marketplaceMode := resolver.MarketplaceResolveModeRefresh
-	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true})
+	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true, marketplaceSkipPin: opts.ReacquireLegacyPin})
 	if len(resolved.Errors) > 0 {
 		return errors.Join(resolved.Errors...)
 	}

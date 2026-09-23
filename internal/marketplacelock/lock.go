@@ -234,6 +234,92 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 	return lockfile.Normalize(doc)
 }
 
+func PruneToV4(v4 *config.V4Config, current lockfile.Document) (lockfile.Document, error) {
+	if v4 == nil || current.APIVersion != lockfile.APIVersionV2 {
+		return lockfile.Document{}, fmt.Errorf("v4 Marketplace removal requires a normalized v2 acquisition lock")
+	}
+	byURL := make(map[string]lockfile.MarketplaceLock, len(current.Marketplaces))
+	for _, entry := range current.Marketplaces {
+		byURL[entry.URL] = entry
+	}
+	desired := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: current.Scope, Registries: current.Registries}
+	for _, group := range marketplaceSourceRequests(v4) {
+		endpoint := v4.Sources[group.name].CanonicalURL
+		entry, ok := byURL[endpoint]
+		if !ok {
+			return lockfile.Document{}, fmt.Errorf("marketplace source %q has no acquisition lock", group.name)
+		}
+		bindings := make(map[string]string, len(entry.RegistryBindings))
+		for _, binding := range entry.RegistryBindings {
+			bindings[binding.Name] = binding.RegistryID
+		}
+		resources := make(map[string]int, len(entry.Resources))
+		collections := make(map[string]int)
+		for i, resource := range entry.Resources {
+			resources[resource.RegistryID+"\x00"+resource.Kind+"\x00"+resource.Name] = i
+			if resource.Kind == "collection" {
+				collections[resource.RegistryID+"\x00"+resource.Name] = i
+			}
+		}
+		reachable := make([]bool, len(entry.Resources))
+		for _, request := range group.requests {
+			registryID, ok := bindings[request.Registry]
+			if !ok {
+				return lockfile.Document{}, fmt.Errorf("marketplace registry %q has no acquisition binding", request.Registry)
+			}
+			kind := request.Kind
+			if kind == "mcp" {
+				kind = "mcpserver"
+			}
+			index, ok := resources[registryID+"\x00"+kind+"\x00"+request.Name]
+			if !ok || request.Options.Revision != "" && request.Options.Revision != entry.Resources[index].Revision {
+				return lockfile.Document{}, fmt.Errorf("marketplace request %q has no matching acquisition record", request.Locator)
+			}
+			reachable[index] = true
+		}
+		for changed := true; changed; {
+			changed = false
+			for i, resource := range entry.Resources {
+				if reachable[i] {
+					continue
+				}
+				for _, edge := range resource.SelectedBy {
+					parent, ok := collections[edge.RegistryID+"\x00"+edge.Name]
+					if ok && reachable[parent] && entry.Resources[parent].ContentDigest == edge.Revision {
+						reachable[i] = true
+						changed = true
+						break
+					}
+				}
+			}
+		}
+		retained := lockfile.MarketplaceLock{URL: entry.URL, InstanceID: entry.InstanceID}
+		usedBindings := map[string]bool{}
+		for i, resource := range entry.Resources {
+			if !reachable[i] {
+				continue
+			}
+			copy := resource
+			copy.SelectedBy = nil
+			for _, edge := range resource.SelectedBy {
+				parent, ok := collections[edge.RegistryID+"\x00"+edge.Name]
+				if ok && reachable[parent] && entry.Resources[parent].ContentDigest == edge.Revision {
+					copy.SelectedBy = append(copy.SelectedBy, edge)
+				}
+			}
+			retained.Resources = append(retained.Resources, copy)
+			usedBindings[resource.RegistryName] = true
+		}
+		for _, binding := range entry.RegistryBindings {
+			if usedBindings[binding.Name] {
+				retained.RegistryBindings = append(retained.RegistryBindings, binding)
+			}
+		}
+		desired.Marketplaces = append(desired.Marketplaces, retained)
+	}
+	return lockfile.Normalize(desired)
+}
+
 func sortedMarketplaceSources(v4 *config.V4Config) []string {
 	names := make([]string, 0, len(v4.Sources))
 	for name, source := range v4.Sources {

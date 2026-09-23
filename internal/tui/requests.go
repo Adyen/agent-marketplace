@@ -167,6 +167,9 @@ func correlateOperation(cmd tea.Cmd, id operationID, followUp bool) tea.Cmd {
 			msg.operation = id
 			msg.followUp = followUp
 			return msg
+		case marketplaceToggleFallbackMsg:
+			msg.operation = id
+			return msg
 		case harnessWrittenMsg:
 			msg.operation = id
 			return msg

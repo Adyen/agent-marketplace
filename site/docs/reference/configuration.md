@@ -4,7 +4,7 @@ The committed `.agents/config.yaml` file declares which sources a repository use
 
 For task-oriented guidance, see [How to adopt agent-marketplace in a repository](../how-to/adopt-agent-marketplace-in-a-repository.md) and [How to keep resources reproducible](../how-to/keep-resources-reproducible.md).
 
-Agent Marketplace treats configuration as the source of selection policy and generated layer locks as the exact Git acquisition record. Normal readers adapt v4 Git and directory sources to the runtime requirement model. Configuration editors that do not understand v4 refuse to rewrite a v4 root; edit the `sources` and `resources` declarations directly.
+Configuration records selection policy; generated layer locks record exact Git and Marketplace acquisitions. Readers adapt v4 Git and directory sources to runtime requirements and hydrate explicit Marketplace requests from matching lock/v2 evidence. CLI Git/directory and explicit Marketplace editors write v4 `sources`/`resources` directly, with hosted edits publishing the matching lock. Legacy-only editors refuse v4 roots instead of rewriting them as legacy YAML.
 
 ## File location and scope
 

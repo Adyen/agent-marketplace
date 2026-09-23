@@ -11,6 +11,128 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func ExcludeAllV4SourceInConfig(stagedPath, originalPath string, source Source, sourceName string) error {
+	return editV4RootConfig(stagedPath, originalPath, source, func(root *yaml.Node, parsed *V4Config) (bool, error) {
+		bound, ok := parsed.Sources[sourceName]
+		if !ok || bound.Kind == V4SourceMarketplace {
+			return false, v4err("v4.source-kind", "sources."+sourceName, 0, "source exclusion requires a git or directory source")
+		}
+		resources := ensureTopLevelMapping(root, "resources")
+		if resources == nil {
+			return false, v4err("v4.type", "resources", 0, "resources must be a mapping")
+		}
+		group := findMappingValue(resources, sourceName)
+		if group == nil {
+			group = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setMappingValue(resources, sourceName, group)
+		} else if group.Kind == yaml.SequenceNode {
+			includes := group
+			group = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setMappingValue(group, "include", includes)
+			setMappingValue(resources, sourceName, group)
+		}
+		if group.Kind != yaml.MappingNode {
+			return false, v4err("v4.type", "resources."+sourceName, 0, "resource group must be a mapping")
+		}
+		excludes, err := ensureMappingSequence(group, "exclude")
+		if err != nil {
+			return false, err
+		}
+		for _, item := range excludes.Content {
+			if item.Value == "*" {
+				return false, nil
+			}
+		}
+		excludes.Content = append(excludes.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "*"})
+		return true, nil
+	})
+}
+
+func RemoveV4MarketplaceRequestInConfig(stagedPath, originalPath string, source Source, sourceName string, pin MarketplaceResourcePin) error {
+	locator := fmt.Sprintf("%s/%s/%s", pin.RegistrySlug, v4MigrationMarketplaceKind(pin.Kind), pin.Name)
+	if _, _, _, err := parseV4Locator(locator, sourceName); err != nil {
+		return v4err("v4.locator", locator, 0, "%v", err)
+	}
+	return editV4RootConfig(stagedPath, originalPath, source, func(root *yaml.Node, parsed *V4Config) (bool, error) {
+		bound, ok := parsed.Sources[sourceName]
+		if !ok || bound.Kind != V4SourceMarketplace {
+			return false, v4err("v4.source-kind", "sources."+sourceName, 0, "Marketplace request requires a Marketplace source")
+		}
+		resources := findMappingValue(root, "resources")
+		group := findMappingValue(resources, sourceName)
+		if group == nil {
+			return false, v4err("v4.include-owned", "resources."+sourceName, 0, "Marketplace request is not in the editable root")
+		}
+		var includes *yaml.Node
+		switch group.Kind {
+		case yaml.SequenceNode:
+			includes = group
+		case yaml.MappingNode:
+			includes = findMappingValue(group, "include")
+		}
+		if includes == nil || includes.Kind != yaml.SequenceNode {
+			return false, v4err("v4.include-owned", "resources."+sourceName, 0, "Marketplace request is not in the editable root")
+		}
+		filtered := includes.Content[:0]
+		removed := false
+		for _, item := range includes.Content {
+			selected := item.Kind == yaml.ScalarNode && item.Value == locator || item.Kind == yaml.MappingNode && len(item.Content) == 2 && item.Content[0].Value == locator
+			if selected {
+				removed = true
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		if !removed {
+			return false, v4err("v4.include-owned", "resources."+sourceName, 0, "Marketplace request is not in the editable root")
+		}
+		includes.Content = filtered
+		if len(filtered) == 0 {
+			if group.Kind == yaml.SequenceNode {
+				removeMappingKeyByName(resources, sourceName)
+			} else {
+				removeMappingKeyByName(group, "include")
+				if len(group.Content) == 0 {
+					removeMappingKeyByName(resources, sourceName)
+				}
+			}
+		}
+		if len(resources.Content) == 0 {
+			removeMappingKeyByName(root, "resources")
+		}
+		return true, nil
+	})
+}
+
+func RemoveV4RegistrySourceInConfig(stagedPath, originalPath string, source Source, entry RegistryEntry) error {
+	canonical, err := canonicalConfigPath(originalPath)
+	if err != nil {
+		return err
+	}
+	return editV4RootConfig(stagedPath, originalPath, source, func(root *yaml.Node, parsed *V4Config) (bool, error) {
+		sources := findMappingValue(root, "sources")
+		for alias, candidate := range parsed.Sources {
+			if candidate.Kind == V4SourceMarketplace || candidate.URL != entry.URL || candidate.Ref != entry.Ref || candidate.Path != NormalizeRegistryPath(entry.Path) {
+				continue
+			}
+			if candidate.File != canonical || !removeMappingKeyByName(sources, alias) {
+				return false, v4err("v4.include-owned", "sources."+alias, 0, "source is owned by an included configuration")
+			}
+			if len(sources.Content) == 0 {
+				removeMappingKeyByName(root, "sources")
+			}
+			if resources := findMappingValue(root, "resources"); resources != nil {
+				removeMappingKeyByName(resources, alias)
+				if len(resources.Content) == 0 {
+					removeMappingKeyByName(root, "resources")
+				}
+			}
+			return true, nil
+		}
+		return false, v4err("v4.source-not-found", "sources", 0, "registry source is not defined in this v4 root")
+	})
+}
+
 // DisableResourceWithShadowFallback disables a resource in the target config.
 // When the registry entry already exists in the config, it delegates to
 // DisableResourceInRegistryInConfig (remove from include + add exclude).
@@ -340,6 +462,9 @@ func DisableResourceInRegistryInConfig(configPath, registryURL, registryPath str
 	}
 	if cfg == nil {
 		return nil
+	}
+	if cfg.APIVersion == APIVersionV4 {
+		return v4WriterOptIn(configPath)
 	}
 	for _, entry := range cfg.Registries {
 		if NormalizeGitURL(strings.TrimSpace(entry.URL)) != NormalizeGitURL(registryURL) {

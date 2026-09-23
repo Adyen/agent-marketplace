@@ -18,6 +18,7 @@ const (
 	V4SelectionEnable V4SelectionEdit = iota
 	V4SelectionDisable
 	V4SelectionClearExclude
+	V4SelectionRemoveInclude
 )
 
 func EditV4ResourceSelection(configPath, declaringPath string, entry RegistryEntry, kind ir.ResourceKind, name string, action V4SelectionEdit) (handled bool, err error) {
@@ -48,7 +49,7 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	if err := loaded.validateLayerFields(layer); err != nil {
 		return err
 	}
-	if action > V4SelectionClearExclude {
+	if action > V4SelectionRemoveInclude {
 		return v4err("v4.edit-action", declaringPath, 0, "unsupported selection edit")
 	}
 	if strings.TrimSpace(name) == "" {
@@ -103,7 +104,7 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	sourceName := ""
 	if len(matches) == 1 {
 		sourceName = matches[0]
-	} else if action != V4SelectionClearExclude {
+	} else if action != V4SelectionClearExclude && action != V4SelectionRemoveInclude {
 		if action == V4SelectionEnable && layer == userLayer {
 			if err := ValidateGlobalRegistryWrite(entry); err != nil {
 				return err
@@ -120,6 +121,9 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 		changed = true
 	}
 	if sourceName == "" {
+		if action == V4SelectionRemoveInclude {
+			return v4err("v4.edit-selection", declaringPath, 0, "stale direct selection has no matching v4 source")
+		}
 		return nil
 	}
 	locator := v4ResourceKindName(kind) + "/" + name
@@ -172,6 +176,32 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 		}
 		if v4EditRemoveLocator(exclude, locator) {
 			changed = true
+		}
+	case V4SelectionRemoveInclude:
+		canonical, err := canonicalConfigPath(declaringPath)
+		if err != nil {
+			return err
+		}
+		for _, decision := range loaded.Groups[sourceName].Decisions {
+			if decision.Action == V4SelectionExplicit && decision.Locator == locator && decision.Provenance.File != canonical {
+				return v4err("v4.edit-selection", "resources."+sourceName+".include", 0, "selection is also authored in included fragment %q", decision.Provenance.File)
+			}
+		}
+		if !v4EditRemoveLocator(include, locator) {
+			return v4err("v4.edit-selection", "resources."+sourceName+".include", 0, "stale direct selection is not in the editable root")
+		}
+		changed = true
+		if len(include.Content) == 0 {
+			removeMappingKeyByName(group, "include")
+		}
+		if len(exclude.Content) == 0 {
+			removeMappingKeyByName(group, "exclude")
+		}
+		if len(group.Content) == 0 {
+			removeMappingKeyByName(resources, sourceName)
+		}
+		if len(resources.Content) == 0 {
+			removeMappingKeyByName(root, "resources")
 		}
 	}
 	if !changed {

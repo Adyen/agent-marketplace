@@ -1103,6 +1103,100 @@ func TestSetHarnessesInConfigCanonicalizesAndValidatesTargets(t *testing.T) {
 	})
 }
 
+func TestLegacyRegistryDisableRejectsV4WithoutClaimingSuccess(t *testing.T) {
+	home := canonicalDirectoryTestRoot(t)
+	t.Setenv("HOME", home)
+	registry := filepath.Join(home, "registry")
+	mustMkdirAll(t, registry)
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(configPath))
+	original := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {local: {directory: " + registry + "}}\nresources: {local: {include: [skill/review]}}\n")
+	mustWriteFile(t, configPath, original)
+
+	err := DisableResourceInRegistryInConfig(configPath, registry, "", ir.KindSkill, "review")
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.writer-opt-in" {
+		t.Fatalf("legacy v4 disable error = %v, want v4.writer-opt-in", err)
+	}
+	if after, err := os.ReadFile(configPath); err != nil || !reflect.DeepEqual(after, original) {
+		t.Fatalf("legacy disable changed v4 config: %v", err)
+	}
+}
+
+func TestV4RegistryEditorKeepsIncludedDirectorySourceWhenStaged(t *testing.T) {
+	home := canonicalDirectoryTestRoot(t)
+	t.Setenv("HOME", home)
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	fragmentPath := filepath.Join(home, ".agents", "fragments", "sources.yaml")
+	directory := filepath.Join(home, ".agents", "fragments", "resources")
+	mustMkdirAll(t, directory)
+	mustWriteFile(t, fragmentPath, []byte("sources: {local: {directory: ./resources}}\n"))
+	original := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: fragments/sources.yaml\n")
+	mustWriteFile(t, userPath, original)
+	staged := filepath.Join(t.TempDir(), "config.yaml")
+	mustWriteFile(t, staged, original)
+
+	binding, err := EnsureV4RegistrySourceInConfig(staged, userPath, UserPersonal, RegistryEntry{URL: directory}, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.Name != "local" || binding.Entry.URL != directory {
+		t.Fatalf("included source was not reused: %#v", binding)
+	}
+	if after, err := os.ReadFile(staged); err != nil || !reflect.DeepEqual(after, original) {
+		t.Fatalf("source reuse rewrote staged config: %v", err)
+	}
+	if handled, err := EditV4ResourceSelection(staged, userPath, RegistryEntry{URL: directory, V4Kind: V4SourceDirectory}, ir.KindSkill, "review", V4SelectionEnable); err != nil || !handled {
+		t.Fatalf("staged v4 selection handled=%t: %v", handled, err)
+	}
+	candidate, err := os.ReadFile(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(candidate), "\nsources:") {
+		t.Fatalf("included source was copied into root: %s", candidate)
+	}
+	composed, err := loadV4TreeWithOverlays(userPath, true, map[string]bool{}, nil, candidate, "", userLayer)
+	if err != nil || len(composed.Sources) != 1 || len(composed.Groups["local"].Include) != 1 || composed.Groups["local"].Include[0].Locator != "skill/review" {
+		t.Fatalf("staged v4 composition: %#v, %v", composed, err)
+	}
+	if handled, err := EditV4ResourceSelection(staged, userPath, RegistryEntry{URL: directory, V4Kind: V4SourceDirectory}, ir.KindSkill, "review", V4SelectionEnable); err != nil || !handled {
+		t.Fatalf("staged v4 selection handled=%t: %v", handled, err)
+	}
+	if after, err := os.ReadFile(staged); err != nil || !reflect.DeepEqual(after, candidate) {
+		t.Fatalf("duplicate selection rewrote stage: %v", err)
+	}
+	if after, err := os.ReadFile(userPath); err != nil || !reflect.DeepEqual(after, original) {
+		t.Fatalf("staged selection changed original: %v", err)
+	}
+}
+
+func TestV4RegistryEditorRejectsRelativeSymlinkEscapeWithoutWriting(t *testing.T) {
+	repo := canonicalDirectoryTestRoot(t)
+	outside := canonicalDirectoryTestRoot(t)
+	mustMkdirAll(t, filepath.Join(outside, "skills", "review"))
+	if err := os.Symlink(outside, filepath.Join(repo, "escaped")); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, original)
+	staged := filepath.Join(t.TempDir(), "config.yaml")
+	mustWriteFile(t, staged, original)
+
+	_, err := EnsureV4RegistrySourceInConfig(staged, configPath, RepoCommitted, RegistryEntry{URL: "./escaped", Path: "skills/review"}, repo)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.directory-path" {
+		t.Fatalf("symlink escape error = %v, want v4.directory-path", err)
+	}
+	for _, path := range []string{configPath, staged} {
+		if after, err := os.ReadFile(path); err != nil || !reflect.DeepEqual(after, original) {
+			t.Fatalf("invalid source changed %s: %v", path, err)
+		}
+	}
+}
+
 // TestSetHarnessesInConfigEditsV4Roots pins the TUI harness-modal save path
 // against the v4.writer-opt-in regression: init writes the user-personal
 // root as v4 directly and the TUI startup offers migration, so harness

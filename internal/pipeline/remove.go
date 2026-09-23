@@ -11,6 +11,8 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -143,7 +145,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if err != nil {
 			return nil, fmt.Errorf("resolve config path: %w", err)
 		}
-		if err := removeMarketplaceAndSync(ctx, opts.RepoRoot, configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
+		if err := removeMarketplaceSelectionAndSync(ctx, opts.RepoRoot, configPath, scopeToConfigSource(effective), entry, collection, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
 			return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, collection)
 		}); err != nil {
 			return nil, err
@@ -166,7 +168,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if err != nil {
 			return nil, fmt.Errorf("resolve config path: %w", err)
 		}
-		if err := removeMarketplaceAndSync(ctx, opts.RepoRoot, configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
+		if err := removeMarketplaceSelectionAndSync(ctx, opts.RepoRoot, configPath, scopeToConfigSource(effective), entry, pin, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
 			return config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, pin)
 		}); err != nil {
 			return nil, err
@@ -205,13 +207,24 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 			if err != nil {
 				return nil, fmt.Errorf("resolve config path: %w", err)
 			}
+			originalPath := configPath
 			configPath, err = stageConfigPath(opts.configStaging, configPath)
 			if err != nil {
 				return nil, err
 			}
 			if selection.RegistryScoped {
 				registryURL, registryPath := collectionRegistryLocation(selection)
-				if err := disableCollectionInRegistry(configPath, registryURL, registryPath, selection.Ref, name); err != nil {
+				v4, err := config.LoadV4ConfigIfPresent(originalPath, scopeToConfigSource(effective))
+				if err != nil {
+					return nil, err
+				}
+				if v4 != nil {
+					target := &resolver.ResolvedArtifact{RegistryURL: registryURL, RegistryPath: registryPath, Ref: selection.Ref}
+					target.Kind = ir.KindCollection
+					if _, err := disableV4ResourceInConfig(configPath, originalPath, target, name); err != nil {
+						return nil, err
+					}
+				} else if err := disableCollectionInRegistry(configPath, registryURL, registryPath, selection.Ref, name); err != nil {
 					return nil, err
 				}
 			} else if err := removeOrExcludeCollection(configPath, name); err != nil {
@@ -574,8 +587,12 @@ func excludeCollectionMember(repoRoot string, scope Scope, staging *configStagin
 	if err != nil {
 		return err
 	}
+	originalPath := path
 	path, err = stageConfigPath(staging, path)
 	if err != nil {
+		return err
+	}
+	if handled, err := disableV4ResourceInConfig(path, originalPath, target, name); handled || err != nil {
 		return err
 	}
 	switch scope {
@@ -596,8 +613,12 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 	if err != nil {
 		return err
 	}
+	originalPath := path
 	path, err = stageConfigPath(staging, path)
 	if err != nil {
+		return err
+	}
+	if handled, err := disableV4ResourceInConfig(path, originalPath, target, name); handled || err != nil {
 		return err
 	}
 	switch scope {
@@ -649,6 +670,11 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 		}
 		return config.DisableResourceWithShadowFallback(path, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
 	}
+}
+
+func disableV4ResourceInConfig(stagedPath, originalPath string, target *resolver.ResolvedArtifact, name string) (bool, error) {
+	entry := config.RegistryEntry{URL: target.RegistryURL, Ref: target.Ref, Path: target.RegistryPath, V4Kind: target.V4Kind, SourceHarness: target.SourceHarness}
+	return config.EditV4ResourceSelection(stagedPath, originalPath, entry, target.Kind, name, config.V4SelectionDisable)
 }
 
 // inferRemoveScope returns the scope to use for remove when none is explicitly
@@ -1137,6 +1163,24 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if err != nil {
 		return nil, fmt.Errorf("resolve config path: %w", err)
 	}
+	source := scopeToConfigSource(opts.Scope)
+	v4Target, err := config.LoadV4ConfigIfPresent(configPath, source)
+	if err != nil {
+		return nil, err
+	}
+	if v4Target != nil && syntheticEntry.IsLocal() && ec.Merged != nil {
+		localPath, err := syntheticEntry.ResolveLocalPath(repoRoot)
+		if err != nil {
+			return nil, err
+		}
+		bundle := syntheticEntry.BundlePath(localPath)
+		for _, entry := range ec.Merged.Registries {
+			if entry.V4Kind == config.V4SourceDirectory && entry.URL == bundle {
+				fromURL, fromPath = bundle, ""
+				break
+			}
+		}
+	}
 
 	// Load only the target root to decide whether the entry is defined there;
 	// included entries belong to their included files and must not be edited.
@@ -1179,6 +1223,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if entryInMerged && strings.TrimSpace(mergedEntry.Ref) != "" {
 		shadowRef = mergedEntry.Ref
 	}
+	originalConfigPath := configPath
 	configPath, err = stageConfigPath(opts.configStaging, configPath)
 	if err != nil {
 		return nil, err
@@ -1192,7 +1237,13 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 				return nil, err
 			}
 			var setErr error
-			if strings.TrimSpace(shadowRef) != "" {
+			if v4Target != nil {
+				binding, err := config.EnsureV4RegistrySourceInConfig(configPath, originalConfigPath, source, mergedEntry, repoRoot)
+				if err != nil {
+					return nil, err
+				}
+				setErr = config.ExcludeAllV4SourceInConfig(configPath, originalConfigPath, source, binding.Name)
+			} else if strings.TrimSpace(shadowRef) != "" {
 				setErr = config.SetRegistryExcludeAllInConfigAtRef(configPath, fromURL, shadowRef, selectedPath)
 			} else {
 				setErr = config.SetRegistryExcludeAllInConfig(configPath, fromURL, shadowRef, selectedPath)
@@ -1209,7 +1260,9 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		// deleting the entry fully removes it.
 		if entryInTarget {
 			var removeErr error
-			if strings.TrimSpace(fromRef) != "" {
+			if v4Target != nil {
+				removeErr = config.RemoveV4RegistrySourceInConfig(configPath, originalConfigPath, source, targetEntry)
+			} else if strings.TrimSpace(fromRef) != "" {
 				removeErr = config.RemoveRegistryEntryFromConfigAtRef(configPath, fromURL, selectedPath, fromRef)
 			} else {
 				removeErr = config.RemoveRegistryEntryFromConfig(configPath, fromURL, selectedPath)
@@ -1318,7 +1371,18 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// newly created shadow entry (cross-layer case) passes ref-required
 	// validation for git registries.
 	var disableErr error
-	if strings.TrimSpace(shadowRef) != "" {
+	if v4Target != nil {
+		if target == nil {
+			target = &resolver.ResolvedArtifact{RegistryURL: fromURL, RegistryPath: selectedPath, Ref: shadowRef}
+			target.Kind = resolvedKind
+			if syntheticEntry.IsLocal() {
+				target.V4Kind = config.V4SourceDirectory
+			} else {
+				target.V4Kind = config.V4SourceGit
+			}
+		}
+		_, disableErr = disableV4ResourceInConfig(configPath, originalConfigPath, target, name)
+	} else if strings.TrimSpace(shadowRef) != "" {
 		disableErr = config.DisableResourceWithShadowFallbackAtRef(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
 	} else {
 		disableErr = config.DisableResourceWithShadowFallback(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
@@ -1337,6 +1401,203 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, err
 	}
 	return &RemoveResult{RemovedName: name}, nil
+}
+
+func removeMarketplaceSelectionAndSync(ctx context.Context, repoRoot, configPath string, source config.Source, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mutate func() (*config.FileSnapshot, config.ConfigFileCommit, error)) error {
+	v4, err := config.LoadV4ConfigIfPresent(configPath, source)
+	if err != nil {
+		return err
+	}
+	if v4 != nil {
+		return removeV4MarketplaceRequestAndSync(ctx, repoRoot, configPath, source, entry, pin)
+	}
+	return removeMarketplaceAndSync(ctx, repoRoot, configPath, mutate)
+}
+
+func ToggleV4MarketplaceDirectSelection(ctx context.Context, repoRoot, configPath string, source config.Source, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, enable bool) error {
+	return editV4MarketplaceDirectSelection(ctx, repoRoot, configPath, source, entry, pin, enable, false)
+}
+
+func removeV4MarketplaceRequestAndSync(ctx context.Context, repoRoot, configPath string, source config.Source, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {
+	return editV4MarketplaceDirectSelection(ctx, repoRoot, configPath, source, entry, pin, false, true)
+}
+
+func editV4MarketplaceDirectSelection(ctx context.Context, repoRoot, configPath string, source config.Source, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, enable, syncNow bool) (retErr error) {
+	ctx = WithTransientOrganizationMarketplaceLockCache(ctx)
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return err
+	}
+	if err := dependencytxn.Recover(ctx, stateDir); err != nil {
+		return err
+	}
+	ec := LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
+	if len(ec.Errors) > 0 {
+		return errors.Join(ec.Errors...)
+	}
+	foundEndpoint, foundPin := false, false
+	if ec.Merged != nil {
+		for _, current := range ec.Merged.Marketplaces {
+			if current.URL == entry.URL && current.InstanceID == entry.InstanceID {
+				foundEndpoint = true
+				for _, candidate := range current.Resources {
+					foundPin = foundPin || candidate == pin
+				}
+			}
+		}
+	}
+	if !foundEndpoint || !foundPin {
+		return fmt.Errorf("%w: Marketplace identity or resource pin changed before selection edit", dependencytxn.ErrGenerationConflict)
+	}
+	if !enable {
+		foundTarget := false
+		for _, layer := range ec.LayerResults() {
+			if layer.Source != source {
+				continue
+			}
+			var entries []config.MarketplaceEntry
+			if layer.Config != nil {
+				entries = layer.Config.Marketplaces
+			} else if layer.Local != nil {
+				entries = layer.Local.Marketplaces
+			}
+			for _, current := range entries {
+				if current.URL == entry.URL && current.InstanceID == entry.InstanceID {
+					for _, candidate := range current.Resources {
+						foundTarget = foundTarget || candidate == pin
+					}
+				}
+			}
+		}
+		if !foundTarget {
+			return fmt.Errorf("%w: target layer Marketplace pin changed before removal", dependencytxn.ErrGenerationConflict)
+		}
+	}
+	if enable && pin.Revision != pin.Digest {
+		if _, err := lockfile.ParseDigest(pin.Revision); err != nil {
+			return fmt.Errorf("%w: legacy revision %q cannot be represented in v4: %v", ErrV4MarketplaceRevisionUnrepresentable, pin.Revision, err)
+		}
+	}
+	v4, err := config.LoadV4ConfigIfPresent(configPath, source)
+	if err != nil {
+		return err
+	}
+	if v4 == nil {
+		return fmt.Errorf("marketplace selection edit requires a v4 config at %s", configPath)
+	}
+	var sourceName string
+	for name, candidate := range v4.Sources {
+		if candidate.Kind == config.V4SourceMarketplace && candidate.CanonicalURL == entry.URL && (sourceName == "" || name < sourceName) {
+			sourceName = name
+		}
+	}
+	if sourceName == "" && !enable {
+		return fmt.Errorf("marketplace source %q is not in the selected v4 layer", entry.URL)
+	}
+	staging, err := newConfigStagingManager()
+	if err != nil {
+		return err
+	}
+	defer closeConfigStaging(staging, "v4 Marketplace selection edit", &retErr)
+	stagedPath, err := staging.Path(configPath)
+	if err != nil {
+		return err
+	}
+	if enable {
+		if sourceName == "" {
+			sourceName, err = config.EnsureV4MarketplaceSourceInConfig(stagedPath, configPath, source, entry.URL)
+		}
+		if err == nil {
+			targetPin := pin
+			if targetPin.RegistrySlug == "" {
+				targetPin.RegistrySlug = targetPin.RegistryID
+			}
+			revision := ""
+			if pin.Revision != pin.Digest {
+				revision = pin.Revision
+			}
+			err = config.AddV4MarketplaceRequestInConfig(stagedPath, configPath, source, sourceName, targetPin, revision)
+		}
+	} else {
+		err = config.RemoveV4MarketplaceRequestInConfig(stagedPath, configPath, source, sourceName, pin)
+	}
+	if err != nil {
+		return err
+	}
+	edits, err := staging.Edits()
+	if err != nil {
+		return err
+	}
+	if len(edits) != 1 {
+		return fmt.Errorf("v4 Marketplace selection edit must stage exactly one config")
+	}
+	edit := edits[0]
+	candidate, err := config.LoadV4ConfigFromRootData(configPath, source, edit.Bytes)
+	if err != nil {
+		return err
+	}
+	paths, err := config.ResolveConfigLockPaths(configPath)
+	if err != nil {
+		return err
+	}
+	oldLock, lockGeneration, lockMode, err := dependencytxn.ReadSnapshot(paths.CanonicalLock)
+	if err != nil {
+		return err
+	}
+	current := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.Scope(source.LockScope())}
+	if lockGeneration.Exists {
+		existing, err := lockfile.Decode(oldLock)
+		if err != nil {
+			return err
+		}
+		if existing.Scope != current.Scope || existing.APIVersion != lockfile.APIVersionV1 && existing.APIVersion != lockfile.APIVersionV2 {
+			return fmt.Errorf("v4 Marketplace lock %q has incompatible scope or version", paths.CanonicalLock)
+		}
+		current.Registries = existing.Registries
+		if existing.APIVersion == lockfile.APIVersionV2 {
+			current.Marketplaces = existing.Marketplaces
+		}
+	} else if !enable {
+		return fmt.Errorf("v4 Marketplace acquisition lock %q disappeared", paths.CanonicalLock)
+	}
+	if enable {
+		current, err = copyV4MarketplacePinEvidence(ec, current, entry, pin)
+		if err != nil {
+			return err
+		}
+	}
+	exact, err := marketplacelock.PruneToV4(candidate, current)
+	if err != nil {
+		return err
+	}
+	exactBytes, err := lockfile.Encode(exact)
+	if err != nil {
+		return err
+	}
+	publication, err := publishV4MarketplacePair(ctx, stateDir, config.LoadEffectiveOptions{RepoRoot: repoRoot}, ec, edit, paths, oldLock, lockGeneration, lockMode, exactBytes)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if retErr != nil {
+			if rollbackErr := publication.rollback(ctx); rollbackErr != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("rollback v4 Marketplace selection edit: %w", rollbackErr))
+			}
+		}
+	}()
+	if syncNow {
+		if err := silentSync(ctx, repoRoot); err != nil {
+			return err
+		}
+	}
+	committed, err := os.ReadFile(edit.Path)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(committed, edit.Bytes) {
+		return fmt.Errorf("v4 Marketplace config changed concurrently during selection edit")
+	}
+	return nil
 }
 
 func removeMarketplaceAndSync(ctx context.Context, repoRoot, configPath string, mutate func() (*config.FileSnapshot, config.ConfigFileCommit, error)) (retErr error) {

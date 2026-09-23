@@ -14,10 +14,8 @@ Find → Inspect → Choose scope and harnesses → Install → Use
 
 [Install the CLI](../install.md), then choose your coding harnesses with `agent-marketplace init` or the TUI's first-run prompt. You can browse with `list` before choosing harnesses, but installation and sync need that choice.
 
-::: warning Check your configuration version
-V4 is the canonical configuration schema, and `init` creates a v4 user config directly; interactive CLI startup and the TUI also offer to migrate a legacy user config (the user-personal root only). However, the commands and TUI actions that change resource selections still require v2/v3 files: the CLI's `install` and `remove` operations, endpoint registration, and TUI resource toggles fail with `v4.writer-opt-in` if they need to edit a v4 file. The TUI's harness modal (`H`) can still edit the target harness list of a v4 config.
-
-For v2/v3, follow the command and TUI steps below. For v4 Git and directory sources, edit `sources` and `resources` directly, then run `sync`. Hosted v4 requests also need matching verified records in the layer's lockfile. Adding a source and digest by hand is not enough to install one. Read [maintaining and migrating configuration](../how-to/migrate-configuration.md) before switching to v4.
+::: warning Hosted v4 editing still has boundaries
+V4 is the canonical schema: `init` creates a v4 user config, and interactive CLI startup or the TUI can offer to migrate that user root. CLI Git/directory `install` and `remove`, Marketplace endpoint registration, and explicit hosted resource install/removal now edit v4 directly. Git/directory TUI toggles and the harness modal also edit v4. Unlike a Git selection, a hosted request is valid only when its owning layer lock contains matching verified evidence, so hosted CLI edits publish config and lock together rather than writing a digest by hand. Hosted TUI toggles can reuse verified v4 layer locks or reconstruct legacy pins from verified local cache evidence. Uncached or unrepresentable legacy pins instead enter a verified preview; confirmation publishes only the selected v4 scope and leaves the old pin unchanged, so output can remain pending until that pin is repaired. Dynamic hosted selectors and hosted v4 update/rebind remain unavailable; v2/v3 configurations remain supported. See [maintaining and migrating configuration](../how-to/migrate-configuration.md).
 :::
 
 Choose where a resource belongs before installing it:
@@ -85,7 +83,7 @@ Checking for drift and installing a new upstream revision are different operatio
 
 An ordinary sync keeps a healthy Git lock at its recorded revision, even if the branch has moved. `update` defaults to all writable scopes, so pass a scope to limit it to the repository. The TUI's `u` action upgrades Git locks across writable scopes and syncs the output. To reload state without upgrading, use `r`.
 
-Once the revisions you wanted are installed, review the config/lock diff and run `sync --check`. When the check passes, commit shared changes together. Legacy hosted mirror pins can be updated. Updates to index-only and organization-required pins have restrictions. General hosted v4 acquisition/update and snapshots for dynamic selectors are not implemented. See [the command reference](../reference/cli.md#update).
+Once the revisions you wanted are installed, review the config/lock diff and run `sync --check`. When the check passes, commit shared changes together. Legacy hosted mirror pins can be updated. Updates to index-only and organization-required pins have restrictions. Explicit hosted v4 acquisition is available through CLI install, but hosted v4 update/rebind and snapshots for dynamic selectors are not implemented. See [the command reference](../reference/cli.md#update).
 
 ## 5. Remove something without changing everyone else's setup
 
@@ -119,6 +117,6 @@ Harness support and these limits determine which parts of the workflows are avai
 
 - In the browser, you can inspect resources and copy install commands. Run those commands locally to install them in your harness.
 - TUI Marketplace discovery shows at most 50 results per endpoint/query, without pagination. Narrow the query or use CLI search for more.
-- V4 supports reading configuration and explicit migration. Resource editors and general hosted acquisition do not yet support it.
+- V4 supports CLI Git/directory selection edits and exact hosted endpoint/resource operations with paired locks. TUI non-hosted toggles and hosted direct-pin edits backed by verified v4 locks or local cache work; uncached legacy pins require verified preview and consent, with output pending until sync. Dynamic hosted selectors and hosted update/rebind remain outside this slice.
 - Agent Marketplace does not install prerequisites for you. Collections and tags group selections but do not resolve dependencies.
 - Publishing resources, running a Marketplace, and setting organization policy are outside these consumer journeys.

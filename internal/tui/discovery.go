@@ -83,6 +83,34 @@ func discoveryInstallOptions(repoRoot string, r row, s scope) (pipeline.InstallO
 	return pipeline.InstallOptions{RepoRoot: repoRoot, Args: []string{locator}, Kind: kind, HasKind: true, Scope: pipelineScope(s), ScopeSpecified: true, Marketplace: selector, ExactMarketplaceLocator: exact}, nil
 }
 
+func legacyToggleInstallOptions(repoRoot string, act toggleAction, reason error) (pipeline.InstallOptions, string, error) {
+	if !act.isMarketplace || !act.hasMarketplaceSelection || !act.enable || act.scope == scopeLocalExclude {
+		return pipeline.InstallOptions{}, "", fmt.Errorf("marketplace toggle cannot start an installation preview")
+	}
+	selection := act.marketplaceSelection
+	pin, entry := selection.Pin, selection.Entry
+	selector := entry.Alias
+	if selector == "" {
+		selector = entry.URL
+	}
+	registry := pin.RegistrySlug
+	if registry == "" || pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
+		registry = pin.RegistryID
+	}
+	if entry.URL == "" || registry == "" || pin.Kind == "" || pin.Name == "" {
+		return pipeline.InstallOptions{}, "", fmt.Errorf("legacy marketplace pin has no acquisition coordinate")
+	}
+	locator := &marketplace.MarketplaceLocator{Marketplace: selector, Alias: entry.Alias, URL: entry.URL, Registry: registry, Kind: pin.Kind, Name: pin.Name}
+	options := pipeline.InstallOptions{RepoRoot: repoRoot, Kind: act.kind, HasKind: true, Scope: pipelineScope(act.scope), ScopeSpecified: true, PreserveScopeRoot: true, Marketplace: selector, ExactMarketplaceLocator: locator, InstalledName: pin.InstalledName, ReacquireLegacyPin: &pipeline.LegacyMarketplacePreview{Entry: entry, Pin: pin}, DeferMarketplaceSync: true}
+	notice := fmt.Sprintf("Previous legacy pin: revision %s; digest %s.\nThe newly verified revision below may differ. Confirm only if you intend to replace it.", pin.Revision, pin.Digest)
+	if errors.Is(reason, pipeline.ErrV4MarketplaceRevisionUnrepresentable) {
+		notice += "\nThe previous legacy revision cannot be represented in v4; confirmation replaces that constraint."
+	} else {
+		notice += "\nLocal proof for the previous pin is unavailable; confirmation acquires a new verified revision."
+	}
+	return options, notice, nil
+}
+
 var (
 	prepareDiscoveryMarketplaceInstall = pipeline.PrepareMarketplaceInstall
 	commitPreparedMarketplaceInstall   = pipeline.CommitPreparedMarketplaceInstall
@@ -116,6 +144,8 @@ func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 		return m, operationBlockedCmd()
 	}
 	m.pane = paneList
+	m.marketplaceFallbackNotice = ""
+	m.marketplacePendingSync = false
 	m.marketplaceInstallOptions = options
 	m.marketplaceInstallOperation = operation
 	return m, prepareDiscoveryInstall(ctxOrBackground(m.ctx), operation, options)
@@ -125,17 +155,28 @@ func (m *Model) finishMarketplaceInstallReload(generation requestGeneration, err
 	if m.marketplaceInstallReload == 0 || generation < m.marketplaceInstallReload {
 		return nil
 	}
+	pending := m.marketplacePendingSync
 	m.finishOperation(m.marketplaceInstallOperation)
 	m.marketplaceInstallOperation = 0
 	m.marketplaceInstallReload = 0
+	m.marketplaceFallbackNotice = ""
+	m.marketplacePendingSync = false
 	if err != nil {
 		m.recordOperationFailure(operationMutation, diagnosticMutation, err)
-		m.toast = "Marketplace install reload failed: " + err.Error()
+		if pending {
+			m.toast = "Marketplace selection saved; sync pending: " + err.Error()
+		} else {
+			m.toast = "Marketplace install reload failed: " + err.Error()
+		}
 		m.toastExp = time.Now().Add(5 * time.Second)
 		return toastExpiryCmd(5 * time.Second)
 	}
 	m.recordOperationSuccess(operationMutation)
-	m.toast = "Marketplace resource installed"
+	if pending {
+		m.toast = "Marketplace selection saved; press s to sync"
+	} else {
+		m.toast = "Marketplace resource installed"
+	}
 	m.toastExp = time.Now().Add(2 * time.Second)
 	return toastExpiryCmd(2 * time.Second)
 }
@@ -150,6 +191,9 @@ func (m *Model) resizeMarketplaceConsentViewport(reset bool) {
 }
 
 func (m *Model) setMarketplaceConsentPreview(preview string) {
+	if m.marketplaceFallbackNotice != "" {
+		preview = m.marketplaceFallbackNotice + "\n\n" + preview
+	}
 	m.marketplaceInstallPreview = sanitizeTerminalData(preview, terminalMarkdownBody)
 	m.resizeMarketplaceConsentViewport(true)
 }
@@ -169,6 +213,8 @@ func (m Model) handleMarketplaceConsentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		m.marketplaceInstallOperation = 0
 		m.marketplacePreparedInstall = nil
 		m.marketplaceInstallPreview = ""
+		m.marketplaceFallbackNotice = ""
+		m.marketplacePendingSync = false
 		m.marketplaceConsentViewport.SetContent("")
 		m.marketplaceConsentViewport.GotoTop()
 		return m, nil
