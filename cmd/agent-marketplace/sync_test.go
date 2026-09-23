@@ -772,6 +772,120 @@ registries: []
 	}
 }
 
+func TestSyncPruneStaleRemovesV4DirectIncludeWithoutExclusion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "v4-stale.git")
+	writeSkill(t, working, "vm-lifecycle", "Manage VMs", nil)
+	commitAndPushAll(t, working, "seed v4 registry")
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, configPath, `# keep this authored note
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  infra: {git: file://`+filepath.ToSlash(origin)+`, ref: main}
+resources:
+  infra: {include: [skill/vm-lifecycle, skill/deleted-skill]}
+`)
+	withWorkingDir(t, repo)
+
+	output, err := executeCommand("sync", "--prune-stale")
+	if err != nil {
+		t.Fatalf("prune v4 direct selection: %v: %s", err, output)
+	}
+	if !strings.Contains(output, `pruned stale skill "deleted-skill"`) {
+		t.Fatalf("v4 prune did not report removed selection: %s", output)
+	}
+	v4, err := config.LoadV4ConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	group := v4.Groups["infra"]
+	if len(group.Include) != 1 || group.Include[0].Locator != "skill/vm-lifecycle" || len(group.Exclude) != 0 {
+		t.Fatalf("v4 prune left a stale include or permanent exclude: %#v", group)
+	}
+	if after, err := os.ReadFile(configPath); err != nil || !strings.Contains(string(after), "# keep this authored note") {
+		t.Fatalf("v4 prune lost authored data: %v: %s", err, after)
+	}
+	assertFileExists(t, filepath.Join(repo, ".factory", "skills", "vm-lifecycle", "SKILL.md"))
+	if output, err := executeCommand("sync", "--prune-stale"); err != nil || strings.Contains(output, "pruned stale") {
+		t.Fatalf("second v4 prune was not a no-op: %v: %s", err, output)
+	}
+}
+
+func TestSyncPruneStaleV4IncludeTreeRefusesPartialRemoval(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "v4-included-stale.git")
+	writeSkill(t, working, "vm-lifecycle", "Manage VMs", nil)
+	commitAndPushAll(t, working, "seed v4 included registry")
+	repo := t.TempDir()
+	rootPath := filepath.Join(repo, ".agents", "config.yaml")
+	rootData := `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+include: fragments/skills.yaml
+resources:
+  infra: {include: [skill/deleted-skill]}
+`
+	writeConfig(t, rootPath, rootData)
+	fragmentPath := filepath.Join(repo, ".agents", "fragments", "skills.yaml")
+	fragmentData := "sources: {infra: {git: file://" + filepath.ToSlash(origin) + ", ref: main}}\nresources: {infra: {include: [skill/vm-lifecycle, skill/deleted-skill]}}\n"
+	writeFile(t, fragmentPath, fragmentData)
+	withWorkingDir(t, repo)
+
+	output, _ := executeCommand("sync", "--prune-stale")
+	if !strings.Contains(output, `skill "deleted-skill" was selected but not found`) || !strings.Contains(output, "prune failed") || strings.Contains(output, `pruned stale skill "deleted-skill"`) {
+		t.Fatalf("v4 include-owned selection was not refused: %s", output)
+	}
+	if after, err := os.ReadFile(rootPath); err != nil || string(after) != rootData {
+		t.Fatalf("v4 root changed during refused prune: %v: %s", err, after)
+	}
+	if after, err := os.ReadFile(fragmentPath); err != nil || string(after) != fragmentData {
+		t.Fatalf("included fragment changed during refused prune: %v: %s", err, after)
+	}
+	assertFileExists(t, filepath.Join(repo, ".factory", "skills", "vm-lifecycle", "SKILL.md"))
+}
+
+func TestSyncPruneStaleKeepsV4RequiredSelection(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "v4-required.git")
+	writeSkill(t, working, "existing-skill", "Existing", nil)
+	commitAndPushAll(t, working, "seed v4 required registry")
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	original := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {infra: {git: file://" + filepath.ToSlash(origin) + ", ref: main}}\nresources: {infra: {required: true, include: [skill/mandatory-skill]}}\n"
+	writeConfig(t, configPath, original)
+	withWorkingDir(t, repo)
+
+	output, _ := executeCommand("sync", "--prune-stale")
+	if !strings.Contains(output, "mandatory-skill") || strings.Contains(output, `pruned stale skill "mandatory-skill"`) {
+		t.Fatalf("v4 required selection was pruned or not checked: %s", output)
+	}
+	if after, err := os.ReadFile(configPath); err != nil || string(after) != original {
+		t.Fatalf("required v4 config changed: %v: %s", err, after)
+	}
+	if lock := readLockDocument(t, filepath.Join(repo, ".agents", "lock.yaml")); len(lock.Registries) != 1 {
+		t.Fatalf("source was not acquired before required validation: %#v", lock)
+	}
+}
+
 // TestSyncPruneStaleRemovesStaleSkillSelection verifies that sync --prune-stale
 // automatically removes stale (selected but not found) skill selections from
 // the repo config and re-syncs. A skill that exists in the registry should

@@ -79,6 +79,7 @@ type ResolveOptions struct {
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
+	marketplaceSkipPin      *LegacyMarketplacePreview
 }
 
 type ResolveResult struct {
@@ -581,6 +582,23 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			if opts.MarketplaceSourceFilter(entry.Source) {
 				filtered.Marketplaces = append(filtered.Marketplaces, entry)
 			}
+		}
+		marketplaceCfg = &filtered
+	}
+	if marketplaceCfg != nil && opts.marketplaceSkipPin != nil {
+		preview := opts.marketplaceSkipPin
+		filtered := *marketplaceCfg
+		filtered.Marketplaces = make([]config.MarketplaceEntry, len(marketplaceCfg.Marketplaces))
+		for i, entry := range marketplaceCfg.Marketplaces {
+			copy := entry
+			copy.Resources = make([]config.MarketplaceResourcePin, 0, len(entry.Resources))
+			for _, pin := range entry.Resources {
+				if entry.Source == preview.Entry.Source && canonicalMarketplaceURL(entry.URL) == canonicalMarketplaceURL(preview.Entry.URL) && entry.InstanceID == preview.Entry.InstanceID && pin == preview.Pin {
+					continue
+				}
+				copy.Resources = append(copy.Resources, pin)
+			}
+			filtered.Marketplaces[i] = copy
 		}
 		marketplaceCfg = &filtered
 	}

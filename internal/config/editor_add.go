@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -914,4 +915,437 @@ func removeValuesFromExactRegistryEntryWithRef(configPath, registryURL, registry
 	}
 
 	return writeConfigDocument(configPath, info.Mode().Perm(), doc)
+}
+
+type V4RegistryBinding struct {
+	Name  string
+	Entry RegistryEntry
+}
+
+func EnsureV4RegistrySourceInConfig(stagedPath, originalPath string, source Source, entry RegistryEntry, localBase string) (V4RegistryBinding, error) {
+	var binding V4RegistryBinding
+	if err := ValidateRegistryPath(entry.Path); err != nil {
+		return binding, err
+	}
+	if source == UserPersonal {
+		if err := ValidateGlobalRegistryWrite(entry); err != nil {
+			return binding, err
+		}
+	}
+	kind, _, err := v4LayerForSource(source, originalPath)
+	if err != nil {
+		return binding, err
+	}
+	var directory string
+	if entry.IsLocal() {
+		if entry.Ref != "" {
+			return binding, v4err("v4.source-field", "sources", 0, "directory sources do not support a Git ref")
+		}
+		localPath, err := entry.ResolveLocalPath(localBase)
+		if err != nil {
+			return binding, err
+		}
+		directory = entry.BundlePath(localPath)
+		if err := ValidateLocalRegistryPath(directory); err != nil {
+			return binding, err
+		}
+		binding.Entry = RegistryEntry{URL: directory, V4Kind: V4SourceDirectory, SourceHarness: entry.SourceHarness}
+		if entry.IsRepoRelativeLocal() {
+			base := v4DirectoryBase(originalPath, true, kind)
+			if !v4PathWithin(base, directory) {
+				return binding, v4err("v4.directory-path", "sources", 0, "relative directory source must remain within its source base directory")
+			}
+			rel, err := filepath.Rel(base, directory)
+			if err != nil {
+				return binding, err
+			}
+			directory = filepath.ToSlash(rel)
+			if directory != "." {
+				directory = "./" + directory
+			}
+		}
+	} else {
+		if entry.Ref == "" {
+			return binding, v4err("v4.git-ref-required", "sources", 0, "git sources require an explicit ref")
+		}
+		binding.Entry = RegistryEntry{URL: entry.URL, Ref: entry.Ref, Path: NormalizeRegistryPath(entry.Path), V4Kind: V4SourceGit, SourceHarness: entry.SourceHarness}
+	}
+	err = editV4RootConfig(stagedPath, originalPath, source, func(root *yaml.Node, parsed *V4Config) (bool, error) {
+		for name, existing := range parsed.Sources {
+			matches := existing.SourceHarness == entry.SourceHarness
+			if entry.IsLocal() {
+				matches = matches && existing.Kind == V4SourceDirectory && existing.Directory == binding.Entry.URL
+			} else {
+				matches = matches && existing.Kind == V4SourceGit && existing.CanonicalURL == NormalizeGitURL(entry.URL) && existing.Ref == entry.Ref && existing.Path == binding.Entry.Path
+			}
+			if matches && (binding.Name == "" || name < binding.Name) {
+				binding.Name = name
+			}
+		}
+		if binding.Name != "" {
+			return false, nil
+		}
+		occupied := make(map[string]v4MigrationSource, len(parsed.Sources))
+		for name := range parsed.Sources {
+			occupied[name] = v4MigrationSource{}
+		}
+		binding.Name = v4MigrationRegistrySourceName(occupied, binding.Entry.URL)
+		sources := ensureTopLevelMapping(root, "sources")
+		if sources == nil {
+			return false, v4err("v4.type", "sources", 0, "sources must be a mapping")
+		}
+		node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		field := "git"
+		value := entry.URL
+		if entry.IsLocal() {
+			field, value = "directory", directory
+		}
+		setMappingValue(node, field, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+		if !entry.IsLocal() {
+			setMappingValue(node, "ref", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry.Ref})
+			if binding.Entry.Path != "" {
+				setMappingValue(node, "path", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: binding.Entry.Path})
+			}
+		}
+		if entry.SourceHarness != "" {
+			setMappingValue(node, "source_harness", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry.SourceHarness})
+		}
+		setMappingValue(sources, binding.Name, node)
+		return true, nil
+	})
+	return binding, err
+}
+
+func EnsureV4MarketplaceSourceInConfig(stagedPath, originalPath string, source Source, marketplaceURL string) (string, error) {
+	canonical, err := NormalizeMarketplaceURL(marketplaceURL)
+	if err != nil {
+		return "", err
+	}
+	var sourceName string
+	err = editV4RootConfig(stagedPath, originalPath, source, func(root *yaml.Node, parsed *V4Config) (bool, error) {
+		for name, existing := range parsed.Sources {
+			if existing.Kind == V4SourceMarketplace && existing.CanonicalURL == canonical && (sourceName == "" || name < sourceName) {
+				sourceName = name
+			}
+		}
+		if sourceName != "" {
+			return false, nil
+		}
+		occupied := make(map[string]v4MigrationSource, len(parsed.Sources))
+		for name := range parsed.Sources {
+			occupied[name] = v4MigrationSource{}
+		}
+		sourceName = v4MigrationMarketplaceSourceName(occupied, "")
+		sources := ensureTopLevelMapping(root, "sources")
+		if sources == nil {
+			return false, v4err("v4.type", "sources", 0, "sources must be a mapping")
+		}
+		entry := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		setMappingValue(entry, "marketplace", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: canonical})
+		setMappingValue(sources, sourceName, entry)
+		return true, nil
+	})
+	return sourceName, err
+}
+
+func AddV4MarketplaceRequestInConfig(stagedPath, originalPath string, source Source, sourceName string, pin MarketplaceResourcePin, revision string) error {
+	if err := ValidateMarketplaceResourcePin(pin); err != nil {
+		return err
+	}
+	if pin.RegistrySlug == "" {
+		return v4err("v4.registry-slug", "resources."+sourceName, 0, "Marketplace request requires a verified registry slug")
+	}
+	locator := fmt.Sprintf("%s/%s/%s", pin.RegistrySlug, v4MigrationMarketplaceKind(pin.Kind), pin.Name)
+	if _, _, _, err := parseV4Locator(locator, sourceName); err != nil {
+		return v4err("v4.locator", locator, 0, "%v", err)
+	}
+	return editV4RootConfig(stagedPath, originalPath, source, func(root *yaml.Node, parsed *V4Config) (bool, error) {
+		bound, ok := parsed.Sources[sourceName]
+		if !ok || bound.Kind != V4SourceMarketplace {
+			return false, v4err("v4.source-kind", "sources."+sourceName, 0, "Marketplace request requires a Marketplace source")
+		}
+		resources := ensureTopLevelMapping(root, "resources")
+		if resources == nil {
+			return false, v4err("v4.type", "resources", 0, "resources must be a mapping")
+		}
+		group := findMappingValue(resources, sourceName)
+		if group == nil {
+			group = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setMappingValue(resources, sourceName, group)
+		}
+		var includes *yaml.Node
+		switch group.Kind {
+		case yaml.SequenceNode:
+			includes = group
+		case yaml.MappingNode:
+			var err error
+			includes, err = ensureMappingSequence(group, "include")
+			if err != nil {
+				return false, err
+			}
+		default:
+			return false, v4err("v4.type", "resources."+sourceName, 0, "resource group must be an include list or mapping")
+		}
+		for _, item := range includes.Content {
+			existing := item.Value
+			if item.Kind == yaml.MappingNode && len(item.Content) > 0 {
+				existing = item.Content[0].Value
+			}
+			if existing == locator {
+				wantAs := ""
+				if pin.InstalledName != "" && pin.InstalledName != pin.Name {
+					wantAs = pin.InstalledName
+				}
+				if item.Kind == yaml.ScalarNode && wantAs == "" && revision == "" {
+					return false, nil
+				}
+				if item.Kind == yaml.MappingNode && len(item.Content) == 2 {
+					as, rev := findMappingValue(item.Content[1], "as"), findMappingValue(item.Content[1], "revision")
+					asValue, revValue := "", ""
+					if as != nil {
+						asValue = as.Value
+					}
+					if rev != nil {
+						revValue = rev.Value
+					}
+					if asValue == wantAs && revValue == revision {
+						return false, nil
+					}
+				}
+				return false, v4err("v4.duplicate-request", "resources."+sourceName, 0, "Marketplace resource %q is already requested with different options", locator)
+			}
+		}
+		item := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: locator}
+		if pin.InstalledName != "" && pin.InstalledName != pin.Name || revision != "" {
+			options := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			if pin.InstalledName != "" && pin.InstalledName != pin.Name {
+				setMappingValue(options, "as", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: pin.InstalledName})
+			}
+			if revision != "" {
+				setMappingValue(options, "revision", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: revision})
+			}
+			item = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setMappingValue(item, locator, options)
+		}
+		includes.Content = append(includes.Content, item)
+		return true, nil
+	})
+}
+
+func AddV4ResourcesToSourceInConfig(stagedPath, originalPath string, source Source, sourceName string, kind ir.ResourceKind, names []string) error {
+	kindName := v4ResourceKindName(kind)
+	if kindName == "unknown" {
+		return v4err("v4.locator", sourceName, 0, "unsupported resource kind")
+	}
+	locators := make([]string, 0, len(names))
+	wanted := make(map[string]bool, len(names))
+	for _, name := range names {
+		locator := kindName + "/" + name
+		if _, _, _, err := parseV4Locator(locator, sourceName); err != nil {
+			return v4err("v4.locator", locator, 0, "%v", err)
+		}
+		if !wanted[locator] {
+			wanted[locator] = true
+			locators = append(locators, locator)
+		}
+	}
+	if len(locators) == 0 {
+		return nil
+	}
+	return editV4RootConfig(stagedPath, originalPath, source, func(root *yaml.Node, parsed *V4Config) (bool, error) {
+		bound, ok := parsed.Sources[sourceName]
+		if !ok || bound.Kind == V4SourceMarketplace {
+			return false, v4err("v4.source-kind", "sources."+sourceName, 0, "resource selection requires a git or directory source")
+		}
+		resources := ensureTopLevelMapping(root, "resources")
+		if resources == nil {
+			return false, v4err("v4.type", "resources", 0, "resources must be a mapping")
+		}
+		group := findMappingValue(resources, sourceName)
+		if group == nil {
+			group = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setMappingValue(resources, sourceName, group)
+		}
+		changed := false
+		var includes *yaml.Node
+		switch group.Kind {
+		case yaml.SequenceNode:
+			includes = group
+		case yaml.MappingNode:
+			if excludes := findMappingValue(group, "exclude"); excludes != nil {
+				filtered := excludes.Content[:0]
+				for _, node := range excludes.Content {
+					if node.Value == "*" || node.Value == kindName+"/*" {
+						return false, v4err("v4.selection-conflict", "resources."+sourceName+".exclude", 0, "cannot re-enable one resource while its kind is excluded")
+					}
+					if wanted[node.Value] {
+						changed = true
+						continue
+					}
+					filtered = append(filtered, node)
+				}
+				excludes.Content = filtered
+				if len(filtered) == 0 {
+					removeMappingKeyByName(group, "exclude")
+				}
+			}
+			var err error
+			includes, err = ensureMappingSequence(group, "include")
+			if err != nil {
+				return false, err
+			}
+		default:
+			return false, v4err("v4.type", "resources."+sourceName, 0, "resource group must be an include list or mapping")
+		}
+		for _, item := range includes.Content {
+			delete(wanted, item.Value)
+		}
+		for _, locator := range locators {
+			if wanted[locator] {
+				includes.Content = append(includes.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: locator})
+				changed = true
+			}
+		}
+		return changed, nil
+	})
+}
+
+func AddV4TagToSourceInConfig(stagedPath, originalPath string, source Source, sourceName, tag string) error {
+	if strings.TrimSpace(tag) == "" {
+		return v4err("v4.type", "resources."+sourceName+".tags", 0, "tag must be a non-empty string")
+	}
+	return editV4RootConfig(stagedPath, originalPath, source, func(root *yaml.Node, parsed *V4Config) (bool, error) {
+		bound, ok := parsed.Sources[sourceName]
+		if !ok || bound.Kind == V4SourceMarketplace {
+			return false, v4err("v4.source-kind", "sources."+sourceName, 0, "tag selection requires a git or directory source")
+		}
+		resources := ensureTopLevelMapping(root, "resources")
+		if resources == nil {
+			return false, v4err("v4.type", "resources", 0, "resources must be a mapping")
+		}
+		group := findMappingValue(resources, sourceName)
+		if group == nil {
+			group = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setMappingValue(resources, sourceName, group)
+		} else if group.Kind == yaml.SequenceNode {
+			includes := group
+			group = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setMappingValue(group, "include", includes)
+			setMappingValue(resources, sourceName, group)
+		}
+		if group.Kind != yaml.MappingNode {
+			return false, v4err("v4.type", "resources."+sourceName, 0, "resource group must be a mapping")
+		}
+		tags, err := ensureMappingSequence(group, "tags")
+		if err != nil {
+			return false, err
+		}
+		for _, item := range tags.Content {
+			if item.Value == tag {
+				return false, nil
+			}
+		}
+		tags.Content = append(tags.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: tag})
+		return true, nil
+	})
+}
+
+func SelectAllV4SourceInConfig(stagedPath, originalPath string, source Source, sourceName string) error {
+	return editV4RootConfig(stagedPath, originalPath, source, func(root *yaml.Node, parsed *V4Config) (bool, error) {
+		bound, ok := parsed.Sources[sourceName]
+		if !ok || bound.Kind == V4SourceMarketplace {
+			return false, v4err("v4.source-kind", "sources."+sourceName, 0, "all selection requires a git or directory source")
+		}
+		resources := ensureTopLevelMapping(root, "resources")
+		if resources == nil {
+			return false, v4err("v4.type", "resources", 0, "resources must be a mapping")
+		}
+		group := findMappingValue(resources, sourceName)
+		if group == nil {
+			group = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setMappingValue(resources, sourceName, group)
+		} else if group.Kind == yaml.SequenceNode {
+			includes := group
+			group = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setMappingValue(group, "include", includes)
+			setMappingValue(resources, sourceName, group)
+		}
+		if group.Kind != yaml.MappingNode {
+			return false, v4err("v4.type", "resources."+sourceName, 0, "resource group must be a mapping")
+		}
+		changed := !boolMappingValue(group, "all")
+		if changed {
+			setMappingValue(group, "all", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+		}
+		if excludes := findMappingValue(group, "exclude"); excludes != nil {
+			filtered := excludes.Content[:0]
+			for _, node := range excludes.Content {
+				if node.Value == "*" {
+					changed = true
+					continue
+				}
+				filtered = append(filtered, node)
+			}
+			excludes.Content = filtered
+			if len(filtered) == 0 {
+				removeMappingKeyByName(group, "exclude")
+			}
+		}
+		return changed, nil
+	})
+}
+
+func editV4RootConfig(stagedPath, originalPath string, source Source, mutate func(*yaml.Node, *V4Config) (bool, error)) error {
+	if !source.IsWritable() {
+		return fmt.Errorf("cannot edit externally managed v4 configuration at %q", originalPath)
+	}
+	return withConfigPathLock(stagedPath, func() error {
+		data, err := readConfigFile(stagedPath)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(stagedPath)
+		if err != nil {
+			return err
+		}
+		doc, err := parseConfigDocument(stagedPath, data)
+		if err != nil {
+			return err
+		}
+		root, err := ensureDocumentMapping(doc)
+		if err != nil {
+			return err
+		}
+		parsed, err := LoadV4ConfigFromRootData(originalPath, source, data)
+		if err != nil {
+			return err
+		}
+		changed, err := mutate(root, parsed)
+		if err != nil || !changed {
+			return err
+		}
+		candidate, err := encodeConfigDocument(stagedPath, doc)
+		if err != nil {
+			return err
+		}
+		if _, err := LoadV4ConfigFromRootData(originalPath, source, candidate); err != nil {
+			return fmt.Errorf("edited v4 config %q is not valid: %w", originalPath, err)
+		}
+		return writeConfigDocumentData(stagedPath, info.Mode().Perm(), candidate)
+	})
+}
+
+func LoadV4ConfigFromRootData(originalPath string, source Source, data []byte) (*V4Config, error) {
+	kind, organizationPath, err := v4LayerForSource(source, originalPath)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := loadV4TreeWithOverlays(originalPath, true, map[string]bool{}, nil, data, organizationPath, kind)
+	if err != nil {
+		return nil, err
+	}
+	if err := parsed.validateLayerFields(kind); err != nil {
+		return nil, err
+	}
+	return parsed, nil
 }

@@ -5,17 +5,17 @@
 - `agent-marketplace` starts the TUI when stdin is a terminal and `AGENT_MARKETPLACE_NO_TUI` is not set.
 - `agent-marketplace tui` always launches it.
 
-On first launch, choose your target harnesses and press `enter` to save an editable v2 user config. The TUI leaves existing configs at their current version. You can browse and sync v4 sources, but resource toggles cannot edit v4 files. Edit their `sources` and `resources` maps directly; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+On first launch, choose your target harnesses and press `enter` to save a v4 user config. The TUI leaves existing configs at their current version unless you accept its user-root migration prompt. It browses and syncs v4 sources, and Git/directory resource toggles edit v4 `sources` and `resources` directly. Hosted Marketplace direct-pin toggles in v4 reuse the target lock or verified evidence from another v4 layer or the legacy cache. If that proof is missing or the old revision cannot be represented, the TUI opens a verified Marketplace install preview. Rejecting it changes no config or lock; confirming saves only the selected v4 scope and its exact lock, leaving the old source pin unchanged and output pending explicit sync. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ## Browse, inspect, select, sync
 
 1. Open **Registry** (`2`) to browse sources, or **Scope** (`1`) to see where resources are selected. Use `/` to search and `esc` to clear it.
 2. Press `enter` on a resource to inspect it. Local resources open a file browser. For a Marketplace resource you haven't installed, the TUI shows metadata without downloading the artifact. Installed Marketplace resources can show files from their trusted cached bundles. If the cached files are missing, sync can restore them.
 3. Press `space` to choose a scope. Check the current selection before toggling it for user, project, or local scope. Required resources cannot be excluded.
-4. For a new Marketplace resource, review the verified revision preview and confirm the installation scope. Installation requires this check even if the resource appears in search. You can inspect blocked and revoked rows but cannot install them.
+4. For a new Marketplace resource or a legacy pin without usable proof, review the verified revision preview and confirm the installation scope. The preview shows the old pin when reacquisition could change its revision; confirmation is required before a v4 config/lock pair is written. You can inspect blocked and revoked rows but cannot install them.
 5. Press `s` to sync pending changes, then check **Status** (`3`) and diagnostics (`e`). Fix any errors before relying on the generated output.
 
-The TUI saves selection changes to config as soon as you accept them. They remain saved if you quit without syncing; "pending" means the output still needs a sync. Marketplace installation has a separate verification and confirmation step.
+The TUI saves selection changes to config as soon as you accept them. They remain saved if you quit without syncing; "pending" means the output still needs a sync. Marketplace installation has a separate verification and confirmation step. A consented legacy-pin fallback leaves its old scope unchanged; if that pin still blocks sync, repair it separately.
 
 ## Hosted Marketplace discovery
 

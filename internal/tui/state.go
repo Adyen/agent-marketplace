@@ -266,6 +266,8 @@ type Model struct {
 	marketplaceInstallOperation operationID
 	marketplaceInstallReload    requestGeneration
 	marketplaceInstallPreview   string
+	marketplaceFallbackNotice   string
+	marketplacePendingSync      bool
 	harnessModal                harnessModalState
 	initModal                   initModalState
 	migrationPrompt             migrationPrompt

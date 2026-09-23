@@ -124,7 +124,8 @@ If everything is in sync, the check exits with status 0 and prints no drift verd
 ## Troubleshooting
 
 - `no Marketplace source configured`: Register the endpoint as in step 1, or search an unconfigured endpoint with `--marketplace <endpoint-url>`.
-- `v4.writer-opt-in`: Install commands cannot edit the selected v4 config. Changing only its `apiVersion` or writing lock evidence by hand will not make this a supported installation path. Keep CLI-managed selections in a suitable editable layer, or follow the [v4 migration and maintenance guide](./migrate-configuration.md). General acquisition of new hosted v4 requests is not implemented.
+- `v4.writer-opt-in`: A legacy-only writer was used on a v4 root. Current CLI endpoint registration and explicit Marketplace install/remove commands use v4-aware config-and-lock transactions; rebuild or upgrade the CLI if one of those commands reports this code, and report the failing command. Do not change `apiVersion` or write acquisition evidence by hand.
+- `dependency transaction: generation conflict` while copying a hosted pin in the TUI: The selected pin, target binding, or source acquisition lock changed after the row was loaded. Reload the TUI. If only legacy evidence is missing, the TUI opens a verified install preview instead; rejecting it writes nothing, and confirmation saves the target v4 config/lock pair with output pending sync. An unchanged stale legacy source pin can still block that sync.
 - `marketplace "..." not found`: Check the configured alias, or pass the endpoint URL to `--marketplace`.
 - Instance ID mismatch: The endpoint identity changed or the URL points to a different deployment. Do not edit `instance_id` to bypass the check; confirm the endpoint with its operator.
 - Marketplace URL blocked: The effective `allowed_marketplaces` policy does not permit the endpoint. Use an approved endpoint or ask the policy owner to update the controlling layer.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -44,6 +45,61 @@ sources:
 	}
 	if doc.Scope != lockfile.ScopeOrganization || len(doc.Marketplaces) != 1 {
 		t.Fatalf("provisional lock = %#v", doc)
+	}
+}
+
+func TestPruneToV4PreservesReachableCollectionEvidence(t *testing.T) {
+	collectionDigest := lockfile.Digest("sha256:" + strings.Repeat("c", 64))
+	leafDigest := lockfile.Digest("sha256:" + strings.Repeat("a", 64))
+	archiveDigest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	current := lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeUser,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: "https://market.example", InstanceID: "mp",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+			Resources: []lockfile.MarketplaceResourceLock{
+				{RegistryName: "tools", RegistryID: "src", Kind: "collection", Name: "bundle", Revision: string(collectionDigest), ContentDigest: collectionDigest, CollectionManifestDigest: collectionDigest, Acquisition: lockfile.MarketplaceAcquisitionMirror},
+				{RegistryName: "tools", RegistryID: "src", Kind: "skill", Name: "review", Revision: string(leafDigest), ContentDigest: leafDigest, ArchiveDigest: archiveDigest, Acquisition: lockfile.MarketplaceAcquisitionMirror, SelectedBy: []lockfile.MarketplaceSelectionLock{{RegistryID: "src", Name: "bundle", Revision: collectionDigest}}},
+			},
+		}},
+	}
+	encoded, err := lockfile.Encode(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err = lockfile.Decode(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		resources string
+		want      int
+		wantEdges int
+	}{
+		{name: "collection", resources: "resources: {hosted: {include: [tools/collection/bundle]}}\n", want: 2, wantEdges: 1},
+		{name: "direct leaf", resources: "resources: {hosted: {include: [tools/skill/review]}}\n", want: 1, wantEdges: 0},
+		{name: "endpoint only", want: 0, wantEdges: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			v4, err := config.ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nsources: {hosted: {marketplace: https://market.example}}\n"+test.resources), "", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pruned, err := PruneToV4(v4, current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pruned.Marketplaces) != 1 || len(pruned.Marketplaces[0].Resources) != test.want {
+				t.Fatalf("pruned evidence = %#v", pruned)
+			}
+			for _, resource := range pruned.Marketplaces[0].Resources {
+				if resource.Kind == "skill" && len(resource.SelectedBy) != test.wantEdges {
+					t.Fatalf("retained leaf has stale collection edges: %#v", resource)
+				}
+			}
+		})
 	}
 }
 

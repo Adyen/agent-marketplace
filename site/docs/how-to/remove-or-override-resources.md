@@ -7,7 +7,7 @@ Remove a selected resource, exclude an auto-selected one, or override a resource
 - A configured `.agents/config.yaml` or `~/.agents/config.yaml`.
 - `agent-marketplace` on your `PATH`.
 
-These commands need an editable v2/v3 config. For v4 Git/directory sources, change the selection or exclusion in `resources` and run `sync`, since CLI `remove` cannot edit v4 files. Hosted v4 requests also have lock requirements; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+CLI `remove` edits v2/v3 or v4 selections. For v4 Git/directory sources it removes or excludes the matching request in `resources`; explicit hosted v4 removal also prunes matching acquisition-lock records in the same dependency transaction. Hosted TUI direct-pin toggles reuse exact lock/cache evidence; if that evidence is missing, enabling a v4 target requires a verified preview and consent, and the old source scope remains unchanged. Dynamic hosted selectors remain unsupported. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ## 1. Remove an explicit selection
 

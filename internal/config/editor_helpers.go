@@ -81,6 +81,10 @@ func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 	return readOrInitConfigWithV4(configPath, false)
 }
 
+func v4WriterOptIn(configPath string) error {
+	return v4err("v4.writer-opt-in", configPath, 0, "legacy config writers do not edit v4 files; use an explicit v4-aware operation")
+}
+
 func readOrInitConfigWithV4(configPath string, allowV4 bool) (*yaml.Node, os.FileMode, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -119,7 +123,7 @@ func readOrInitConfigWithV4(configPath string, allowV4 bool) (*yaml.Node, os.Fil
 	}
 
 	if PeekAPIVersion(data) == APIVersionV4 && !allowV4 {
-		return nil, 0, v4err("v4.writer-opt-in", configPath, 0, "legacy config writers do not edit v4 files; use an explicit v4-aware operation")
+		return nil, 0, v4WriterOptIn(configPath)
 	}
 	info, err := os.Stat(configPath)
 	if err != nil {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -108,6 +109,12 @@ func scopedToggleAction(r row, s scope) toggleAction {
 	return act
 }
 
+type marketplaceToggleFallbackMsg struct {
+	operation operationID
+	action    toggleAction
+	reason    error
+}
+
 func (a toggleAction) disablesResource() bool {
 	if a.scope == scopeLocalExclude {
 		return a.enable
@@ -146,9 +153,38 @@ func scopedToggleConfigPath(repoRoot string, s scope) (string, error) {
 	return marketplaceToggleConfigPath(repoRoot, s)
 }
 
+func v4MarketplaceScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mapper pipeline.ConfigPathMapper) (bool, error) {
+	if !act.isMarketplace {
+		return false, nil
+	}
+	configPath, err := marketplaceToggleConfigPath(repoRoot, act.scope)
+	if err != nil {
+		return true, err
+	}
+	source := marketplaceSourceForScope(act.scope)
+	v4, err := config.LoadV4ConfigIfPresent(configPath, source)
+	if err != nil || v4 == nil {
+		return false, err
+	}
+	if mapper != nil {
+		return true, fmt.Errorf("v4 Marketplace toggle requires an atomic config-and-lock edit")
+	}
+	if !act.hasMarketplaceSelection {
+		return true, fmt.Errorf("marketplace %s %q has no direct installation pin", skill.KindLabel(act.kind), act.skillName)
+	}
+	selection := act.marketplaceSelection
+	if !act.enable && !selection.Pin.Direct && len(selection.Pin.SelectedBy.List()) > 0 {
+		return true, fmt.Errorf("marketplace %s %q is selected only through a collection", skill.KindLabel(act.kind), act.skillName)
+	}
+	return true, pipeline.ToggleV4MarketplaceDirectSelection(ctx, repoRoot, configPath, source, selection.Entry, selection.Pin, act.enable)
+}
+
 func runMarketplaceScopedToggle(repoRoot string, act toggleAction, mapper pipeline.ConfigPathMapper) error {
 	if !act.hasMarketplaceSelection {
 		return fmt.Errorf("marketplace %s %q has no direct installation pin", skill.KindLabel(act.kind), act.skillName)
+	}
+	if handled, err := v4MarketplaceScopedToggle(context.Background(), repoRoot, act, mapper); handled || err != nil {
+		return err
 	}
 	configPath, err := marketplaceToggleConfigPath(repoRoot, act.scope)
 	if err != nil {
@@ -357,10 +393,16 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 }
 
 func runDependencyScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
-	if mutate == nil {
-		return runScopedToggle(repoRoot, act)
-	}
 	return func() tea.Msg {
+		if handled, err := v4MarketplaceScopedToggle(ctx, repoRoot, act, nil); handled || err != nil {
+			if act.enable && (errors.Is(err, pipeline.ErrV4MarketplaceEvidenceUnavailable) || errors.Is(err, pipeline.ErrV4MarketplaceRevisionUnrepresentable)) {
+				return marketplaceToggleFallbackMsg{action: act, reason: err}
+			}
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
+		}
+		if mutate == nil {
+			return runScopedToggle(repoRoot, act)()
+		}
 		err := mutate(ctx, repoRoot, func(mapper pipeline.ConfigPathMapper) error {
 			msg, ok := runScopedToggleAt(repoRoot, act, mapper)().(configWrittenMsg)
 			if !ok {

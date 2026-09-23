@@ -515,6 +515,160 @@ func TestLowRiskMarketplaceDiscoveryPreparesBeforePreviewAndCommitsSamePlan(t *t
 	}
 }
 
+func TestV4LegacyToggleFallbackPreviewsWithoutWritingBeforeConsent(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		revision string
+	}{
+		{name: "missing evidence", revision: "sha256:" + strings.Repeat("a", 64)},
+		{name: "unrepresentable revision", revision: "v2"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			repo := t.TempDir()
+			userPath := filepath.Join(home, ".agents", "config.yaml")
+			if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			pin := config.MarketplaceResourcePin{RegistryID: "src", RegistrySlug: "tools", Kind: "skill", Name: "review", Revision: test.revision, Digest: "sha256:" + strings.Repeat("a", 64), Acquisition: config.MarketplaceAcquisitionMirror, Direct: true}
+			entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp", Alias: "hosted", Source: config.UserPersonal}
+			if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(userPath, entry.URL, entry.InstanceID, entry.Alias, []config.MarketplaceResourcePin{pin}); err != nil {
+				t.Fatal(err)
+			}
+			beforeUser, err := os.ReadFile(userPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			localPath := config.LocalConfigPath(repo)
+			if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			localData := []byte("apiVersion: agent-marketplace/v4\n")
+			if err := os.WriteFile(localPath, localData, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			originalPrepare := prepareDiscoveryMarketplaceInstall
+			t.Cleanup(func() { prepareDiscoveryMarketplaceInstall = originalPrepare })
+			prepared := &pipeline.PreparedMarketplaceInstall{}
+			preparedCalled := false
+			prepareDiscoveryMarketplaceInstall = func(_ context.Context, opts pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
+				preparedCalled = true
+				if opts.Scope != pipeline.ScopeLocal || !opts.PreserveScopeRoot || !opts.DeferMarketplaceSync || opts.ReacquireLegacyPin == nil || opts.ReacquireLegacyPin.Pin != pin || opts.Marketplace != entry.Alias || opts.ExactMarketplaceLocator == nil || opts.ExactMarketplaceLocator.URL != entry.URL || opts.ExactMarketplaceLocator.Registry != pin.RegistrySlug || opts.ExactMarketplaceLocator.Name != pin.Name || opts.ExactMarketplaceLocator.Revision != "" {
+					t.Fatalf("fallback install options = %#v", opts)
+				}
+				return prepared, nil
+			}
+			m := newTestModel()
+			m.repoRoot = repo
+			operation, ok := m.beginOperation(operationMutation)
+			if !ok {
+				t.Fatal("failed to start toggle operation")
+			}
+			act := toggleAction{scope: scopeLocal, enable: true, kind: ir.KindSkill, skillName: "review", isMarketplace: true, hasMarketplaceSelection: true, marketplaceSelection: marketplaceSelection{Entry: entry, Pin: pin}}
+			msg := correlateOperation(runDependencyScopedToggle(context.Background(), repo, act, nil), operation, false)()
+			updated, cmd := m.Update(msg)
+			m = updated.(Model)
+			if cmd == nil {
+				t.Fatalf("fallback did not schedule preparation: %#v", msg)
+			}
+			preparedMsg := cmd()
+			if !preparedCalled {
+				t.Fatalf("fallback did not enter verified Marketplace preparation: %#v", preparedMsg)
+			}
+			updated, _ = m.Update(preparedMsg)
+			m = updated.(Model)
+			if m.pane != paneMarketplaceConsent || m.marketplacePreparedInstall != prepared || !strings.Contains(m.marketplaceInstallPreview, pin.Revision) || !strings.Contains(m.marketplaceInstallPreview, "newly verified revision") {
+				t.Fatalf("fallback did not show verified preview with legacy revision: pane=%v preview=%q", m.pane, m.marketplaceInstallPreview)
+			}
+			if test.name == "unrepresentable revision" && !strings.Contains(m.marketplaceInstallPreview, "cannot be represented") {
+				t.Fatalf("unrepresentable legacy revision not highlighted: %q", m.marketplaceInstallPreview)
+			}
+			if after, err := os.ReadFile(localPath); err != nil || string(after) != string(localData) {
+				t.Fatalf("v4 target changed before consent: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(repo, ".agents", "lock.local.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("v4 target lock created before consent: %v", err)
+			}
+			updated, _ = m.handleMarketplaceConsentKey(keyPress('n'))
+			m = updated.(Model)
+			if m.operations.active != nil || m.pane != paneList || m.marketplacePreparedInstall != nil || m.marketplaceFallbackNotice != "" {
+				t.Fatalf("cancel did not clear fallback preview: %#v", m)
+			}
+			if after, err := os.ReadFile(userPath); err != nil || string(after) != string(beforeUser) {
+				t.Fatalf("legacy source changed on cancelled fallback: %v", err)
+			}
+			if after, err := os.ReadFile(localPath); err != nil || string(after) != string(localData) {
+				t.Fatalf("v4 target changed on cancelled fallback: %v", err)
+			}
+			if test.name == "missing evidence" {
+				originalCommit := commitPreparedMarketplaceInstall
+				t.Cleanup(func() { commitPreparedMarketplaceInstall = originalCommit })
+				var committed *pipeline.PreparedMarketplaceInstall
+				commitPreparedMarketplaceInstall = func(_ context.Context, got *pipeline.PreparedMarketplaceInstall) (*pipeline.InstallResult, error) {
+					committed = got
+					return &pipeline.InstallResult{Installed: []string{"review"}, PendingSync: true}, nil
+				}
+				operation, ok := m.beginOperation(operationMutation)
+				if !ok {
+					t.Fatal("cancelled fallback blocked a second toggle")
+				}
+				msg := correlateOperation(runDependencyScopedToggle(context.Background(), repo, act, nil), operation, false)()
+				updated, cmd := m.Update(msg)
+				m = updated.(Model)
+				if cmd == nil {
+					t.Fatal("second fallback did not prepare")
+				}
+				updated, _ = m.Update(cmd())
+				m = updated.(Model)
+				if m.marketplacePreparedInstall != prepared || m.pane != paneMarketplaceConsent {
+					t.Fatal("second fallback did not retain the exact prepared plan")
+				}
+				updated, cmd = m.handleMarketplaceConsentKey(keyPress('y'))
+				m = updated.(Model)
+				if cmd == nil || committed != nil {
+					t.Fatal("confirmation committed before the explicit command ran")
+				}
+				result, ok := cmd().(discoveryInstallMsg)
+				if !ok || result.err != nil || result.operation != operation || committed != prepared {
+					t.Fatalf("confirmed fallback did not commit the same verified plan: %#v", result)
+				}
+				updated, cmd = m.Update(result)
+				m = updated.(Model)
+				if cmd == nil || m.marketplaceInstallReload == 0 {
+					t.Fatal("accepted fallback did not request authoritative reload")
+				}
+				generation := m.marketplaceInstallReload
+				updated, _ = m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: &config.Config{}, errs: []error{errors.New("legacy user pin stale")}, driftAssessment: driftFailed})
+				m = updated.(Model)
+				if m.operations.active != nil || !strings.Contains(m.toast, "Marketplace selection saved") || !strings.Contains(m.toast, "sync pending") || !strings.Contains(m.toast, "legacy user pin stale") {
+					t.Fatalf("pending fallback hid the unchanged source failure: toast=%q operation=%#v", m.toast, m.operations.active)
+				}
+			}
+		})
+	}
+}
+
+func TestPendingMarketplaceSelectionReportsSavedNotInstalled(t *testing.T) {
+	m := newTestModel()
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("failed to start pending Marketplace operation")
+	}
+	m.marketplaceInstallOperation = operation
+	m.marketplaceInstallReload = m.beginRequest(requestSnapshot)
+	m.marketplacePendingSync = true
+	updated, _ := m.Update(snapshotLoadedMsg{generation: m.marketplaceInstallReload, mergedCfg: &config.Config{}, driftAssessment: driftReady})
+	m = updated.(Model)
+	if m.toast != "Marketplace selection saved; press s to sync" || m.operations.active != nil || m.marketplacePendingSync {
+		t.Fatalf("pending Marketplace selection claimed installation: toast=%q operation=%#v", m.toast, m.operations.active)
+	}
+}
+
 func TestMarketplaceConsentRetainsAndDelegatesPreparedInstall(t *testing.T) {
 	m := newTestModel()
 	operation, ok := m.beginOperation(operationMutation)

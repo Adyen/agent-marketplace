@@ -378,6 +378,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyDiscovery(msg.query, msg.outcomes)
 		return m, waitMarketplaceDiscoveryUpdate(msg.generation, msg.sequence+1, msg.query, msg.updates)
 
+	case marketplaceToggleFallbackMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		options, notice, err := legacyToggleInstallOptions(m.repoRoot, msg.action, msg.reason)
+		if err != nil {
+			m.finishOperation(msg.operation)
+			m.recordOperationFailure(operationMutation, diagnosticMutation, err)
+			m.toast = "Marketplace install failed: " + err.Error()
+			m.toastExp = time.Now().Add(5 * time.Second)
+			return m, toastExpiryCmd(5 * time.Second)
+		}
+		m.marketplaceFallbackNotice = notice
+		m.marketplaceInstallOptions = options
+		m.marketplaceInstallOperation = msg.operation
+		m.marketplacePreparedInstall = nil
+		m.marketplacePendingSync = false
+		m.marketplaceInstallPreview = ""
+		m.pane = paneList
+		return m, prepareDiscoveryInstall(ctxOrBackground(m.ctx), msg.operation, options)
+
 	case discoveryInstallMsg:
 		if !m.acceptsOperation(msg.operation) {
 			return m, nil
@@ -402,12 +423,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.marketplacePreparedInstall = nil
 		m.marketplaceInstallPreview = ""
 		if msg.err != nil {
+			m.marketplaceFallbackNotice = ""
+			m.marketplacePendingSync = false
 			m.finishOperation(msg.operation)
 			m.marketplaceInstallOperation = 0
 			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
 			m.toast = "Marketplace install failed: " + msg.err.Error()
 			m.toastExp = time.Now().Add(5 * time.Second)
 			return m, toastExpiryCmd(5 * time.Second)
+		}
+		if msg.result != nil {
+			m.marketplacePendingSync = msg.result.PendingSync
 		}
 		generation := m.beginRequest(requestSnapshot)
 		m.marketplaceInstallReload = generation

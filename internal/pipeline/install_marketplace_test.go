@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -401,6 +403,56 @@ func TestMarketplaceInstallRequiresTargetHarnessSetBeforeMutation(t *testing.T) 
 	}
 	if _, statErr := os.Stat(configPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("config mutation occurred: stat error = %v", statErr)
+	}
+}
+
+func TestMarketplacePreviewPreservesExplicitScopeRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	child := filepath.Join(repo, "nested")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := config.ProjectConfigPath(repo)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nallowed_marketplaces: ['^https://approved[.]example$']\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(child)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	url := server.URL
+	_, err := PrepareMarketplaceInstall(context.Background(), InstallOptions{
+		RepoRoot: repo, Scope: ScopeRepo, ScopeSpecified: true, PreserveScopeRoot: true,
+		Marketplace: url, ExactMarketplaceLocator: &marketplace.MarketplaceLocator{Marketplace: url, URL: url, Registry: "tools", Kind: "skill", Name: "review"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "rejected before network access") || calls.Load() != 0 {
+		t.Fatalf("preview ignored configured project scope policy: %v, network requests=%d", err, calls.Load())
+	}
+	localPath := config.LocalConfigPath(repo)
+	if err := os.WriteFile(localPath, []byte("apiVersion: agent-marketplace/v4\nsources: {hosted: {marketplace: "+url+"}}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = PrepareMarketplaceInstall(context.Background(), InstallOptions{
+		RepoRoot: repo, Scope: ScopeLocal, ScopeSpecified: true, PreserveScopeRoot: true,
+		Marketplace: url, ExactMarketplaceLocator: &marketplace.MarketplaceLocator{Marketplace: url, URL: url, Registry: "tools", Kind: "skill", Name: "review"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "v4.marketplace-lock-required") || calls.Load() != 0 {
+		t.Fatalf("preview ignored selected local config: %v, network requests=%d", err, calls.Load())
 	}
 }
 
