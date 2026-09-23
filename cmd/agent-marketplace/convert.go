@@ -131,7 +131,12 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 		}
 		return nil
 	}
-	srcFS := os.DirFS(canonicalSource)
+	sourceFSRoot, err := os.OpenRoot(canonicalSource)
+	if err != nil {
+		return fmt.Errorf("open conversion source root: %w", err)
+	}
+	defer func() { _ = sourceFSRoot.Close() }()
+	srcFS := sourceFSRoot.FS()
 
 	// No compile-time plugin root is supplied: the source path is an
 	// author-machine location, never a runtime root. Token-capable targets

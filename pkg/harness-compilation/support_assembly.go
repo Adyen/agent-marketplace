@@ -1,8 +1,11 @@
 package harnesscompile
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -119,14 +122,25 @@ func assembleResourceSupportArtifacts(srcFS fs.FS, resource ir.Resource, compile
 			diagnostics = append(diagnostics, supportFileDiagnostic(diag.CodeBundleSupportFileUnsafe, t, name, kind, candidate.sourcePath, "does not map to a clean target-relative path", resource))
 			continue
 		}
-		data, mode, code, detail := readSupportFile(srcFS, candidate.sourcePath)
+		data, mode, code, detail, skippable := readSupportFile(srcFS, candidate.sourcePath)
+		if code == diag.CodeBundleSupportFileMissing && !candidate.strict {
+			if i := strings.Index(candidate.sourcePath, ":$"); i > 0 {
+				fallback := candidate.targetPath[:i]
+				if !seen[fallback] {
+					candidate.sourcePath = candidate.sourcePath[:i]
+					candidate.targetPath = fallback
+					data, mode, code, detail, skippable = readSupportFile(srcFS, candidate.sourcePath)
+				}
+			}
+		}
 		if code != "" {
-			if !candidate.strict {
+			if !candidate.strict && skippable {
 				continue
 			}
 			diagnostics = append(diagnostics, supportFileDiagnostic(code, t, name, kind, candidate.sourcePath, detail, resource))
 			continue
 		}
+		seen[candidate.targetPath] = true
 		support = append(support, Artifact{Path: candidate.targetPath, Bytes: data, Mode: mode})
 	}
 	if len(diagnostics) > 0 {
@@ -337,16 +351,19 @@ func urlEmbeddedToken(value string, idx int) bool {
 // bytes and mode. It fails closed on traversal, absolute or unclean paths,
 // symlink components, non-regular files, and read errors. The returned code
 // is a stable diagnostic code; empty means success.
-func readSupportFile(srcFS fs.FS, rel string) (data []byte, mode fs.FileMode, code string, detail string) {
+func readSupportFile(srcFS fs.FS, rel string) (data []byte, mode fs.FileMode, code string, detail string, skippable bool) {
 	if !isCleanRelativePath(rel) {
-		return nil, 0, diag.CodeBundleSupportFileUnsafe, "is not a clean bundle-relative path"
+		return nil, 0, diag.CodeBundleSupportFileUnsafe, "is not a clean bundle-relative path", false
 	}
 	components := strings.Split(rel, "/")
 	dir := "."
 	for i, component := range components {
 		entries, err := fs.ReadDir(srcFS, dir)
 		if err != nil {
-			return nil, 0, diag.CodeBundleSupportFileMissing, "could not be located in the source bundle"
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, 0, diag.CodeBundleSupportFileMissing, "could not be located in the source bundle", true
+			}
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "could not be safely located in the source bundle", false
 		}
 		var entry fs.DirEntry
 		for _, e := range entries {
@@ -356,29 +373,55 @@ func readSupportFile(srcFS fs.FS, rel string) (data []byte, mode fs.FileMode, co
 			}
 		}
 		if entry == nil {
-			return nil, 0, diag.CodeBundleSupportFileMissing, "does not exist in the source bundle"
+			return nil, 0, diag.CodeBundleSupportFileMissing, "does not exist in the source bundle", true
 		}
 		if entry.Type()&fs.ModeSymlink != 0 {
-			return nil, 0, diag.CodeBundleSupportFileUnsafe, "traverses a symlink, which is refused"
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "traverses a symlink, which is refused", false
 		}
 		if i < len(components)-1 {
 			if !entry.IsDir() {
-				return nil, 0, diag.CodeBundleSupportFileUnsafe, "traverses a non-directory component"
+				return nil, 0, diag.CodeBundleSupportFileUnsafe, "traverses a non-directory component", false
 			}
 			dir = path.Join(dir, component)
 			continue
 		}
 		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return nil, 0, diag.CodeBundleSupportFileUnsafe, "is not a regular file"
-		}
-		data, err = fs.ReadFile(srcFS, rel)
 		if err != nil {
-			return nil, 0, diag.CodeBundleSupportFileMissing, "could not be read from the source bundle"
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "could not inspect file", false
 		}
-		return data, info.Mode().Perm(), "", ""
+		if info.IsDir() {
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "is a directory", true
+		}
+		if !info.Mode().IsRegular() {
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "is not a regular file", false
+		}
+		file, err := srcFS.Open(rel)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, 0, diag.CodeBundleSupportFileMissing, "could not be read from the source bundle", true
+			}
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "could not be safely opened from the source bundle", false
+		}
+		defer func() { _ = file.Close() }()
+		opened, err := file.Stat()
+		if err != nil || !opened.Mode().IsRegular() || !sameSupportFile(info, opened) {
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "changed during inspection or is not a regular file", false
+		}
+		data, err = io.ReadAll(file)
+		if err != nil {
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "could not be read from the source bundle", false
+		}
+		return data, opened.Mode().Perm(), "", "", false
 	}
-	return nil, 0, diag.CodeBundleSupportFileMissing, "does not exist in the source bundle"
+	return nil, 0, diag.CodeBundleSupportFileMissing, "does not exist in the source bundle", true
+}
+
+func sameSupportFile(expected, opened fs.FileInfo) bool {
+	if expected.Sys() != nil || opened.Sys() != nil {
+		return os.SameFile(expected, opened)
+	}
+	return expected.Name() == opened.Name() && expected.Size() == opened.Size() &&
+		expected.Mode() == opened.Mode() && expected.ModTime().Equal(opened.ModTime())
 }
 
 // isCleanRelativePath reports whether rel is a slash-separated path that stays

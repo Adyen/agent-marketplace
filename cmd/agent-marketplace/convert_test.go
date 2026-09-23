@@ -1357,6 +1357,30 @@ func TestConvertCommandMaterializesSupportFilesAndReferencedAssets(t *testing.T)
 	}
 }
 
+func TestConvertCommandRefusesCompositeSymlinkAndWritesCleanSibling(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	srcDir := t.TempDir()
+	writeClaudePluginSkill(t, srcDir, "demo-skill")
+	writeFile(t, filepath.Join(srcDir, "hooks", "hooks.json"),
+		`{"hooks":{"Stop":[{"type":"command","command":"sh ${CLAUDE_PLUGIN_ROOT}/hooks/escape.sh"}]}}`)
+	outside := filepath.Join(t.TempDir(), "external.txt")
+	writeFile(t, outside, "external sentinel")
+	if err := os.Symlink(outside, filepath.Join(srcDir, "hooks", "escape.sh")); err != nil {
+		t.Fatal(err)
+	}
+	outDir := filepath.Join(t.TempDir(), "claude-out")
+	output, err := executeCommand("convert", "--from", "claude", "--to", "claude", "--out", outDir, srcDir)
+	if !errors.Is(err, hcc.ErrPartialResult) || !strings.Contains(output, "bundle.support-file.unsafe") {
+		t.Fatalf("expected partial conversion with unsafe support diagnostic: output=%q err=%v", output, err)
+	}
+	assertFileExists(t, filepath.Join(outDir, "skills", "demo-skill", "SKILL.md"))
+	assertPathExistence(t, filepath.Join(outDir, "hooks", "hooks.json"), false)
+	assertPathExistence(t, filepath.Join(outDir, "hooks", "escape.sh"), false)
+	assertFileContents(t, outside, "external sentinel")
+}
+
 // A literal-only destination must emit a stable diagnostic and must never
 // substitute the author-machine source path for a root reference.
 func TestConvertCommandLiteralTargetDoesNotEmbedSourcePath(t *testing.T) {

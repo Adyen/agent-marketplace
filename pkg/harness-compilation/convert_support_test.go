@@ -3,6 +3,8 @@ package harnesscompile
 import (
 	"bytes"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -927,5 +929,159 @@ func TestConvertLiteralTargetDoesNotEmbedSourcePath(t *testing.T) {
 	if !found {
 		t.Errorf("expected %q diagnostic for literal-only target; codes: %v",
 			diag.CodeHookWindsurfEnvTokenExpanded, diagnosticCodes(result))
+	}
+}
+
+func TestConvertCompositeSymlinkFailsClosed(t *testing.T) {
+	cases := []struct {
+		name, configPath, config, assetPath, aggregatePath string
+	}{
+		{"hook", "hooks/hooks.json", `{"hooks":{"Stop":[{"type":"command","command":"sh ${CLAUDE_PLUGIN_ROOT}/hooks/escape.sh"}]}}`, "hooks/escape.sh", "hooks/hooks.json"},
+		{"mcp", ".mcp.json", `{"mcpServers":{"demo":{"command":"run","env":{"CFG":"prefix=${CLAUDE_PLUGIN_ROOT}/certs/escape.pem"}}}}`, "certs/escape.pem", ".mcp.json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := fstest.MapFS{
+				tc.configPath: &fstest.MapFile{Data: []byte(tc.config)},
+				tc.assetPath:  &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("/outside")},
+			}
+			result, err := Convert(src, HarnessClaude, HarnessClaude)
+			if err != nil {
+				t.Fatalf("Convert: %v", err)
+			}
+			if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileUnsafe) || len(result.Skipped) != 1 {
+				t.Errorf("symlink did not suppress its resource: diagnostics=%v skipped=%v", result.Diagnostics, result.Skipped)
+			}
+			if artifactByPath(result.Artifacts, tc.aggregatePath) != nil || artifactByPath(result.Artifacts, tc.assetPath) != nil {
+				t.Errorf("unsafe resource was emitted: %v", result.Artifacts)
+			}
+			src[tc.assetPath] = &fstest.MapFile{Data: []byte("safe")}
+			valid, err := Convert(src, HarnessClaude, HarnessClaude)
+			if err != nil || valid.HasErrors() {
+				t.Fatalf("regular-file control: result=%v err=%v", valid, err)
+			}
+			if a := artifactByPath(valid.Artifacts, tc.assetPath); a == nil || !bytes.Equal(a.Bytes, []byte("safe")) {
+				t.Errorf("regular-file control lost asset: %v", valid.Artifacts)
+			}
+		})
+	}
+}
+
+func TestConvertCompositeTailIncludesExistingFile(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json":    &fstest.MapFile{Data: []byte(`{"mcpServers":{"demo":{"command":"run","env":{"CFG":"${CLAUDE_PLUGIN_ROOT}/certs/ca.pem:$TAIL"}}}}`)},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("bundle PEM")},
+	}
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil || result.HasErrors() {
+		t.Fatalf("Convert: result=%v err=%v", result, err)
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Fatal("MCP control resource was not emitted")
+	}
+	if a := artifactByPath(result.Artifacts, "certs/ca.pem"); a == nil || !bytes.Equal(a.Bytes, []byte("bundle PEM")) {
+		t.Errorf("existing file preceding expansion tail was omitted: %v", result.Artifacts)
+	}
+	if artifactByPath(result.Artifacts, "certs/ca.pem:$TAIL") != nil {
+		t.Error("expansion tail was published as a filename")
+	}
+}
+
+func TestConvertMissingCommaNamedFileDoesNotPublishPrefix(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{Data: []byte(`{"mcpServers":{"demo":{"command":"run","env":{"CFG":"${CLAUDE_PLUGIN_ROOT}/data/a,b.txt"}}}}`)},
+		"data/a":    &fstest.MapFile{Data: []byte("unrelated")},
+	}
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil || result.HasErrors() {
+		t.Fatalf("Convert: result=%v err=%v", result, err)
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Fatal("MCP control resource was not emitted")
+	}
+	if artifactByPath(result.Artifacts, "data/a") != nil {
+		t.Errorf("unreferenced filename prefix was published: %v", result.Artifacts)
+	}
+}
+
+type swappingSupportFS struct {
+	fs.FS
+	inside, outside string
+}
+
+type swappingSupportEntry struct {
+	fs.DirEntry
+	inside, outside string
+}
+
+func (e swappingSupportEntry) Info() (fs.FileInfo, error) {
+	info, err := e.DirEntry.Info()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Remove(e.inside); err != nil {
+		return nil, err
+	}
+	if err := os.Symlink(e.outside, e.inside); err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func (s swappingSupportFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	entries, err := fs.ReadDir(s.FS, name)
+	if name == "certs" && err == nil {
+		for i, entry := range entries {
+			if entry.Name() == "ca.pem" {
+				entries[i] = swappingSupportEntry{DirEntry: entry, inside: s.inside, outside: s.outside}
+			}
+		}
+	}
+	return entries, err
+}
+
+func TestConvertRefusesSupportFileReplacedAfterInspection(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(filepath.Join(source, "certs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(source, "certs", "ca.pem")
+	outside := filepath.Join(root, "outside.pem")
+	for path, data := range map[string]string{
+		filepath.Join(source, ".mcp.json"): `{"mcpServers":{"demo":{"command":"run","env":{"CFG":"${CLAUDE_PLUGIN_ROOT}/certs/ca.pem"}}}}`,
+		inside:                             "bundle PEM", outside: "external!!",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insideInfo, err := os.Stat(inside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(outside, insideInfo.ModTime(), insideInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	control, err := Convert(os.DirFS(source), HarnessClaude, HarnessClaude)
+	if err != nil || control.HasErrors() {
+		t.Fatalf("regular-file control: result=%v err=%v", control, err)
+	}
+	if a := artifactByPath(control.Artifacts, "certs/ca.pem"); a == nil || !bytes.Equal(a.Bytes, []byte("bundle PEM")) {
+		t.Fatalf("regular-file control did not read source bytes: %v", control.Artifacts)
+	}
+	result, err := Convert(swappingSupportFS{FS: os.DirFS(source), inside: inside, outside: outside}, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileUnsafe) || len(result.Skipped) != 1 {
+		t.Errorf("swapped source was not refused: diagnostics=%v skipped=%v", result.Diagnostics, result.Skipped)
+	}
+	if artifactByPath(result.Artifacts, "certs/ca.pem") != nil || artifactByPath(result.Artifacts, ".mcp.json") != nil {
+		t.Errorf("swapped source was emitted: %v", result.Artifacts)
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil || !bytes.Equal(data, []byte("external!!")) {
+		t.Errorf("external bytes changed: %q, %v", data, err)
 	}
 }
