@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,6 +30,16 @@ func TestSyncUpgradesGitOnlyLockWhenMarketplaceSourceIsAdded(t *testing.T) {
 	repo := t.TempDir()
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	checkMode := func(want os.FileMode) {
+		t.Helper()
+		info, err := os.Stat(lockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("lock mode = %04o, want %04o", got, want)
+		}
+	}
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n"+gitSource)
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
@@ -39,6 +50,10 @@ func TestSyncUpgradesGitOnlyLockWhenMarketplaceSourceIsAdded(t *testing.T) {
 		t.Fatalf("initial lock = %#v, want Git-only v1", gitOnly)
 	}
 
+	checkMode(0o644)
+	if err := os.Chmod(lockPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n"+gitSource+
 		"  hosted: {marketplace: "+server.URL+"}\nresources:\n  git-tools: {all: true}\n  hosted: {include: [tools/skill/review]}\n")
 	if output, err := executeCommand("sync"); err != nil {
@@ -54,6 +69,10 @@ func TestSyncUpgradesGitOnlyLockWhenMarketplaceSourceIsAdded(t *testing.T) {
 		}
 	}
 
+	checkMode(0o600)
+	if err := os.Chmod(lockPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	writeSkill(t, working, "git-review", "Git review v2", nil)
 	commitAndPushAll(t, working, "advance")
 	if output, err := executeCommand("update"); err != nil {
@@ -62,6 +81,58 @@ func TestSyncUpgradesGitOnlyLockWhenMarketplaceSourceIsAdded(t *testing.T) {
 	updated := readLockDocument(t, lockPath)
 	if updated.APIVersion != lockfile.APIVersionV2 || len(updated.Marketplaces) != 1 || len(updated.Registries) != 1 || updated.Registries[0].Commit == gitOnly.Registries[0].Commit {
 		t.Fatalf("updated lock = %#v, want advanced Git commit with retained Marketplace records", updated)
+	}
+	checkMode(0o600)
+	if err := os.Chmod(lockPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {marketplace: "+server.URL+"}\nresources:\n  hosted: {include: [tools/skill/review]}\n")
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync after removing Git source: %v\n%s", err, output)
+	}
+	pruned := readLockDocument(t, lockPath)
+	if len(pruned.Registries) != 0 || !reflect.DeepEqual(pruned.Marketplaces, updated.Marketplaces) {
+		t.Fatalf("pruned lock = %#v, want only retained Marketplace records", pruned)
+	}
+	checkMode(0o600)
+}
+
+func TestMergeInstallBindingsRetainsLockVersionAndMarketplaceEvidence(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	registry := reviewBindingRegistry(t)
+	registry.Roots[0].Resources[0].SupportFiles = map[string]lockfile.Digest{}
+	digest := lockfile.Digest("sha256:" + strings.Repeat("c", 64))
+	marketplaces := []lockfile.MarketplaceLock{{
+		URL: "https://market.example", InstanceID: "mp",
+		RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+		Resources:        []lockfile.MarketplaceResourceLock{{RegistryName: "tools", RegistryID: "src", Kind: "skill", Name: "review", Revision: string(digest), ContentDigest: digest, ArchiveDigest: digest, Acquisition: lockfile.MarketplaceAcquisitionMirror}},
+	}}
+	for _, tc := range []struct {
+		name        string
+		base        lockfile.Document
+		wantVersion string
+	}{
+		{name: "new", wantVersion: lockfile.APIVersionV1},
+		{name: "v1", base: lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}, wantVersion: lockfile.APIVersionV1},
+		{name: "v2 endpoint-only", base: lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo, Marketplaces: []lockfile.MarketplaceLock{{URL: "https://market.example", InstanceID: "mp"}}}, wantVersion: lockfile.APIVersionV2},
+		{name: "v2 Marketplace", base: lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo, Marketplaces: marketplaces}, wantVersion: lockfile.APIVersionV2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.base.APIVersion != "" {
+				if _, err := lockfile.Encode(tc.base); err != nil {
+					t.Fatalf("invalid lock fixture: %v", err)
+				}
+			}
+			merged, err := mergeInstallBindings(tc.base, lockfile.ScopeRepo, []lockfile.GitRegistry{registry})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if merged.APIVersion != tc.wantVersion || merged.Scope != lockfile.ScopeRepo || !reflect.DeepEqual(merged.Marketplaces, tc.base.Marketplaces) || !reflect.DeepEqual(merged.Registries, []lockfile.GitRegistry{registry}) {
+				t.Fatalf("merged lock = %#v, want version %s with Git binding and unchanged Marketplace evidence", merged, tc.wantVersion)
+			}
+		})
 	}
 }
 

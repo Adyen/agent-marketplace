@@ -858,7 +858,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			return nil, changed, nil, loadErr
 		}
-		if len(remote) > 0 {
+		if len(remote) > 0 || exists {
 			lockExpectations[lockPath] = generation
 			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
 			if stateErr != nil {
@@ -943,7 +943,11 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 					return nil, changed, nil, err
 				}
 				lockDesired[lockPath] = data
-				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: 0o644})
+				fileMode := lockModes[lockPath]
+				if !generation.Exists {
+					fileMode = 0o644
+				}
+				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: fileMode})
 			}
 		}
 		layerChangedCount := 0
@@ -1135,12 +1139,19 @@ func runRegistryJobs(count int, run func(int) error) error {
 	return err
 }
 
-func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
+func gitReconciliationDocument(scope lockfile.Scope, current *lockfile.Document) lockfile.Document {
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
+	if current != nil && current.APIVersion == lockfile.APIVersionV2 {
+		doc.APIVersion, doc.Marketplaces = current.APIVersion, current.Marketplaces
+	}
+	return doc
+}
+
+func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
+	doc := gitReconciliationDocument(scope, current)
 	stats := lockReconcileStats{}
 	old := map[string]lockfile.GitRegistry{}
 	if current != nil {
-		doc.APIVersion, doc.Marketplaces = current.APIVersion, current.Marketplaces
 		for _, registry := range current.Registries {
 			old[gitLockIdentity(registry.URL, registry.Ref)] = registry
 		}

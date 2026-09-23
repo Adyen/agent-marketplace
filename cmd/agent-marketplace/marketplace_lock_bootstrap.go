@@ -41,7 +41,11 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		if err := os.MkdirAll(filepath.Dir(layer.LockPath), 0o755); err != nil {
 			return 0, fmt.Errorf("create Marketplace lock directory: %w", err)
 		}
-		desired = append(desired, dependencytxn.DesiredFile{Path: layer.LockPath, Expected: layer.expected, ExpectedMode: layer.expectedMode, Bytes: data, Mode: 0o644})
+		mode := layer.expectedMode
+		if !layer.expected.Exists {
+			mode = 0o644
+		}
+		desired = append(desired, dependencytxn.DesiredFile{Path: layer.LockPath, Expected: layer.expected, ExpectedMode: layer.expectedMode, Bytes: data, Mode: mode})
 	}
 	reads, err := effectiveReadAssertions(ec, nil)
 	if err != nil {
