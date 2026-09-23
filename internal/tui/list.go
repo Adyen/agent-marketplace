@@ -44,7 +44,11 @@ func renderList(m Model, visibleHeight int) string {
 	for i := m.listOffset; i < len(m.flatItems); i++ {
 		line := formatFlatItem(m.flatItems[i], listWidth)
 		if i == m.cursor {
-			line = styleSelected.Render(line)
+			selectedStyle := styleSelected
+			if m.pane == paneDetail {
+				selectedStyle = selectedStyle.UnsetBackground().UnsetForeground().Faint(true)
+			}
+			line = selectedStyle.Render(line)
 		} else {
 			line = stylizeFlatItem(m.flatItems[i], listWidth)
 		}

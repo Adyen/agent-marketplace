@@ -8,6 +8,21 @@ import (
 )
 
 func renderFooter(m Model) string {
+	if m.pane == paneDetail {
+		action := "enter open"
+		if entry, ok := m.bundle.selectedEntry(); ok && entry.IsDir {
+			action = "enter fold"
+		}
+		quit := "q quit · Ctrl+C quit"
+		if compactTerminalLayout(m) {
+			quit = "Ctrl+C quit"
+		}
+		actions := action + " · ←/esc resources · " + quit
+		if m.toast != "" && !m.toastExp.IsZero() {
+			return footerWithRight(styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine)), "←/esc resources · Ctrl+C quit", m.width)
+		}
+		return footerWithRight("↑/↓/j/k files · h/l fold · pgup/pgdn preview", actions, m.width)
+	}
 	var leftParts []string
 
 	// Animated spinner + status indicator for in-flight work.
@@ -57,6 +72,12 @@ func renderFooter(m Model) string {
 		if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
 			actions = "e:errors · r:reload · q:quit"
 		}
+		if _, ok := m.selectedRow(); ok {
+			actions = "→/enter browse · ? help · q quit"
+			if m.failuresOrDrift() {
+				actions = "→/enter browse · e errors · r reload · q quit"
+			}
+		}
 		if m.filterActive {
 			actions = "enter apply · esc cancel · q quit"
 		}
@@ -72,6 +93,9 @@ func renderFooter(m Model) string {
 	}
 	leftParts = append(leftParts, m.help.ShortHelpView(bindings))
 	right := "q quit"
+	if _, ok := m.selectedRow(); ok && !m.filterActive {
+		right = "→/enter browse · q quit"
+	}
 	if m.toast != "" && !m.toastExp.IsZero() {
 		right += " · " + styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
 	}

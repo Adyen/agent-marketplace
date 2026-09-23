@@ -350,7 +350,7 @@ func TestInitialModalFitsTerminal(t *testing.T) {
 	}
 }
 
-func TestViewWrapsUnicodeDetailWithoutDataLoss(t *testing.T) {
+func TestViewBoundsUnicodeSummaryWithoutSplittingCodePoints(t *testing.T) {
 	const source = "/缓存/技能/非常长的资源位置/另一个目录/SKILL.md"
 	r := mkRow("unicode", withGlobal)
 	r.Artifact.Path = source
@@ -361,10 +361,14 @@ func TestViewWrapsUnicodeDetailWithoutDataLoss(t *testing.T) {
 	if !utf8.ValidString(out) {
 		t.Fatalf("View() split a Unicode code point: %q", out)
 	}
-	compact := strings.NewReplacer("\n", "", " ", "").Replace(out)
-	if !strings.Contains(compact, source) {
-		t.Fatalf("View() lost part of the wrapped source path:\n%s", out)
+	if !strings.Contains(out, "…") || !strings.Contains(out, "Files") {
+		t.Fatalf("bounded metadata must indicate truncation and leave room for files:\n%s", out)
 	}
+	compact := strings.NewReplacer("\n", "", " ", "").Replace(ansi.Strip(renderDetail(updated.(Model))))
+	if !strings.Contains(compact, source) {
+		t.Fatalf("metadata renderer lost part of the wrapped source path:\n%s", compact)
+	}
+	assertTerminalBounds(t, out, 60, 20)
 }
 
 func visibleListPane(output string, paneWidth int) string {

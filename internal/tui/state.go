@@ -294,6 +294,9 @@ type Model struct {
 	detailRenderWidth  int
 	detailStickyBottom bool
 	bundle             *bundleTree
+	bundleKey          string
+	bundleError        string
+	bundleDirty        bool
 	bundleOffset       int
 	detailSelectedPath string
 	detailLegacyRender bool

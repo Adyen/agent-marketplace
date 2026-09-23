@@ -32,6 +32,7 @@ const (
 	diagnosticUpdate          diagnosticCategory = "update"
 	diagnosticMigration       diagnosticCategory = "migration"
 	diagnosticEditor          diagnosticCategory = "editor"
+	diagnosticPager           diagnosticCategory = "pager"
 )
 
 type operationKind string
@@ -43,6 +44,7 @@ const (
 	operationUpdate    operationKind = "update"
 	operationMigration operationKind = "migration"
 	operationEditor    operationKind = "editor"
+	operationPager     operationKind = "pager"
 )
 
 type tuiDiagnostic struct {

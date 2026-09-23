@@ -501,11 +501,11 @@ func TestDetailViewportResizesOnWindowResize(t *testing.T) {
 	updatedModel, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m2 := updatedModel.(Model)
 
-	if m2.detailViewport.Width != 120 {
-		t.Fatalf("viewport width should be 120 after resize, got %d", m2.detailViewport.Width)
+	if m2.detailViewport.Width != 71 {
+		t.Fatalf("viewport width should fit the right pane: got %d, want 71", m2.detailViewport.Width)
 	}
-	if m2.detailViewport.Height != 39 {
-		t.Fatalf("viewport height should reserve the footer row: got %d, want 39", m2.detailViewport.Height)
+	if m2.detailViewport.Height != 14 {
+		t.Fatalf("viewport height should reserve metadata, tree, and preview label: got %d, want 14", m2.detailViewport.Height)
 	}
 }
 

@@ -13,6 +13,38 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func TestBundlePreviewPreservesSourceWhitespace(t *testing.T) {
+	for _, name := range []string{"script.py", "notes.txt", "config.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			content := "first  line\nsecond line\n\n\n  indented\n    nested  content\n```\n**literal**\nlast line\n"
+			if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			output := ansi.Strip(renderBundleFile(root, name, 80))
+			lines := strings.Split(output, "\n")
+			for i, line := range lines {
+				if strings.TrimSpace(line) != "first  line" {
+					continue
+				}
+				margin := line[:strings.Index(line, "first")]
+				want := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+				if len(lines)-i < len(want) {
+					t.Fatalf("preview lost source lines:\n%s", output)
+				}
+				for j, expected := range want {
+					got := strings.TrimRight(strings.TrimPrefix(lines[i+j], margin), " ")
+					if got != expected {
+						t.Errorf("source line %d = %q, want %q", j+1, got, expected)
+					}
+				}
+				return
+			}
+			t.Fatalf("preview lost the first source line:\n%s", output)
+		})
+	}
+}
+
 func TestDetailSourceAndRenderedOutputAreBounded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "large.md")
 	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxDetailSourceBytes+1024)), 0o644); err != nil {
@@ -61,11 +93,12 @@ func TestDetailResizeRendersAtCurrentWidth(t *testing.T) {
 	m.height = 24
 	generation := m.beginRequest(requestDetail)
 	m.enterDetailPane()
-	initial := loadDetailContent(r, generation, 80, false)().(detailContentMsg)
+	initialWidth := 47
+	initial := loadDetailContent(r, generation, initialWidth, false)().(detailContentMsg)
 	updated, _ := m.Update(initial)
 	m = updated.(Model)
-	if m.detailRenderWidth != 80 {
-		t.Fatalf("initial render width = %d", m.detailRenderWidth)
+	if m.detailRenderWidth != initialWidth {
+		t.Fatalf("initial render width = %d, want %d", m.detailRenderWidth, initialWidth)
 	}
 
 	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
@@ -74,15 +107,41 @@ func TestDetailResizeRendersAtCurrentWidth(t *testing.T) {
 		t.Fatal("resize did not schedule a detail rerender")
 	}
 	resized := cmd().(detailContentMsg)
-	if resized.width != 50 || !resized.keepScroll {
-		t.Fatalf("resize message = %+v", resized)
+	wantWidth := 29
+	if resized.width != wantWidth || !resized.keepScroll {
+		t.Fatalf("resize message = %+v, want width %d", resized, wantWidth)
 	}
 	updated, _ = m.Update(resized)
 	m = updated.(Model)
-	if m.detailRenderWidth != 50 {
-		t.Fatalf("accepted render width = %d, want 50", m.detailRenderWidth)
+	if m.detailRenderWidth != wantWidth {
+		t.Fatalf("accepted render width = %d, want %d", m.detailRenderWidth, wantWidth)
 	}
 	assertTerminalBounds(t, m.View(), 50, 12)
+}
+
+func TestLegacyDetailWidthMismatchSchedulesRerender(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "detail.md")
+	if err := os.WriteFile(path, []byte("# Detail\n\ncontent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := mkRow("detail", withProject)
+	r.Artifact.Path = path
+	m := modelWithSelectedRow(t, r)
+	m.width = 50
+	m.height = 24
+	m.enterDetailPane()
+	m.detailLegacyRender = true
+	generation := m.beginRequest(requestDetail)
+
+	updated, cmd := m.Update(detailContentMsg{generation: generation, content: "stale width", width: 47})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("legacy detail accepted stale-width content without rerendering")
+	}
+	rendered := cmd().(detailContentMsg)
+	if want := previewWidthFor(m.width); rendered.width != want || !rendered.keepScroll {
+		t.Fatalf("legacy rerender message = %+v, want width %d with scroll preservation", rendered, want)
+	}
 }
 
 func TestWidthMismatchWithoutSourceAppliesDeliveredContent(t *testing.T) {

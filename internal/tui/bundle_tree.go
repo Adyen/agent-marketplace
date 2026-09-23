@@ -263,7 +263,7 @@ func (t *bundleTree) rebuild() {
 		return
 	}
 	t.cursor = min(max(t.cursor, 0), len(t.visible)-1)
-	if t.selected == "" || t.visible[t.cursor].IsDir {
+	if t.selected == "" || t.visible[t.cursor].RelPath != t.selected {
 		for i := range t.visible {
 			if t.visible[i].RelPath == t.selected && !t.visible[i].IsDir {
 				t.cursor = i
@@ -306,22 +306,6 @@ func (t *bundleTree) move(delta int) {
 	entry := t.visible[t.cursor]
 	if !entry.IsDir {
 		t.selected = entry.RelPath
-	}
-}
-func (t *bundleTree) top() {
-	if len(t.visible) > 0 {
-		t.cursor = 0
-		if !t.visible[0].IsDir {
-			t.selected = t.visible[0].RelPath
-		}
-	}
-}
-func (t *bundleTree) bottom() {
-	if len(t.visible) > 0 {
-		t.cursor = len(t.visible) - 1
-		if !t.visible[t.cursor].IsDir {
-			t.selected = t.visible[t.cursor].RelPath
-		}
 	}
 }
 

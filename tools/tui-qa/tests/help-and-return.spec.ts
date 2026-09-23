@@ -26,7 +26,7 @@ test("help closes back to the selected alpha-skill", async ({ terminal }) => {
     await expect(terminal.getByText("agent-marketplace — Keyboard Shortcuts")).toBeVisible();
     await expect(terminal.getByText("jump to bottom")).toBeVisible();
     await expect(terminal.getByText("fuzzy search")).toBeVisible();
-    await expect(terminal.getByText("clear search / close")).toBeVisible();
+    await expect(terminal.getByText("esc/? close")).toBeVisible();
   });
 
   await step("close keyboard shortcuts", () => terminal.write("?"), async () => {

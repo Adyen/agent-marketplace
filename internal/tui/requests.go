@@ -12,6 +12,7 @@ type requestKind string
 type requestGeneration uint64
 
 const (
+	requestBundle    requestKind = "bundle"
 	requestDetail    requestKind = "detail"
 	requestSnapshot  requestKind = "snapshot"
 	requestDiscovery requestKind = "marketplace-discovery"
@@ -19,6 +20,7 @@ const (
 
 type requestState struct {
 	next      requestGeneration
+	bundle    requestGeneration
 	detail    requestGeneration
 	snapshot  requestGeneration
 	discovery requestGeneration
@@ -26,13 +28,15 @@ type requestState struct {
 
 func (r *requestState) begin(kind requestKind) requestGeneration {
 	switch kind {
-	case requestDetail, requestSnapshot, requestDiscovery:
+	case requestBundle, requestDetail, requestSnapshot, requestDiscovery:
 	default:
 		return 0
 	}
 
 	r.next++
 	switch kind {
+	case requestBundle:
+		r.bundle = r.next
 	case requestDetail:
 		r.detail = r.next
 	case requestSnapshot:
@@ -45,6 +49,8 @@ func (r *requestState) begin(kind requestKind) requestGeneration {
 
 func (r requestState) active(kind requestKind) requestGeneration {
 	switch kind {
+	case requestBundle:
+		return r.bundle
 	case requestDetail:
 		return r.detail
 	case requestSnapshot:
@@ -59,6 +65,8 @@ func (r requestState) active(kind requestKind) requestGeneration {
 func (r *requestState) cancel(kind requestKind) requestGeneration {
 	generation := r.active(kind)
 	switch kind {
+	case requestBundle:
+		r.bundle = 0
 	case requestDetail:
 		r.detail = 0
 	case requestSnapshot:

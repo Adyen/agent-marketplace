@@ -20,6 +20,9 @@ export interface FixtureOptions {
   //    The initial fixture sync is skipped to keep the TUI's first load cold.
   //  - "published-lock" publishes the same exact lock alongside the config.
   organization?: OrganizationFixtureMode;
+  // Additional files written into the alpha-skill bundle source before the
+  // registry is seeded, so journeys can exercise multi-file bundle browsing.
+  bundleFiles?: Record<string, string>;
 }
 
 export interface Fixture {
@@ -99,6 +102,9 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     const env = isolatedEnvironment(root, home, tmp, xdg, orgConfigPath);
     const source = path.join(registries, "source");
     write(path.join(source, "skills", "alpha-skill", "SKILL.md"), alphaSkillContent);
+    for (const [relative, content] of Object.entries(options.bundleFiles ?? {})) {
+      write(path.join(source, "skills", "alpha-skill", relative), content);
+    }
     write(path.join(source, "skills", "beta-skill", "SKILL.md"), betaSkillContent);
     git(source, env, ["init", "--quiet", "--initial-branch=main"]);
     git(source, env, ["add", "."]);
