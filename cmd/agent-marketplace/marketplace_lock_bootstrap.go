@@ -13,28 +13,23 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
-func addTransientOrganizationMarketplaceProvisional(opts *config.LoadEffectiveOptions) (string, bool, error) {
-	orgPath := opts.OrganizationPath
-	if orgPath == "" {
-		orgPath = config.OrganizationConfigPath()
-	}
-	layer, data, missing, err := marketplacelock.OrganizationProvisional(orgPath)
-	if err != nil || !missing {
-		return "", false, err
-	}
-	opts.OrganizationRuntimeLock = data
-	return layer.LockPath, true, nil
+type marketplaceLockBootstrap struct {
+	marketplacelock.Layer
+	current  *lockfile.Document
+	expected dependencytxn.Generation
+	mode     os.FileMode
 }
 
 func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) (int, error) {
-	layers, overlays, err := missingMarketplaceLockLayers(repoRoot, localDir, selected)
+	layers, overlays, err := missingMarketplaceLockLayers(ctx, repoRoot, localDir, selected)
 	if err != nil || len(layers) == 0 {
 		return 0, err
 	}
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir, FileOverlays: overlays})
+	ec := pipeline.LoadEffectiveForLockPlanning(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir, FileOverlays: overlays})
 	if len(ec.Errors) > 0 {
 		return 0, errors.Join(ec.Errors...)
 	}
@@ -42,9 +37,12 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	resolver.AllowedRegistries = ec.Allowed
 	desired := make([]dependencytxn.DesiredFile, 0, len(layers))
 	for _, layer := range layers {
-		doc, err := marketplacelock.Resolve(ctx, resolver, layer, ec.TargetHarnesses, policy)
+		doc, err := marketplacelock.Resolve(ctx, resolver, layer.Layer, ec.TargetHarnesses, policy)
 		if err != nil {
 			return 0, fmt.Errorf("create Marketplace lock %q: %w", layer.LockPath, err)
+		}
+		if layer.current != nil {
+			doc.Registries = layer.current.Registries
 		}
 		data, err := lockfile.Encode(doc)
 		if err != nil {
@@ -53,7 +51,11 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		if err := os.MkdirAll(filepath.Dir(layer.LockPath), 0o755); err != nil {
 			return 0, fmt.Errorf("create Marketplace lock directory: %w", err)
 		}
-		desired = append(desired, dependencytxn.DesiredFile{Path: layer.LockPath, Expected: dependencytxn.Generation{}, Bytes: data, Mode: 0o644})
+		mode := layer.mode
+		if !layer.expected.Exists {
+			mode = 0o644
+		}
+		desired = append(desired, dependencytxn.DesiredFile{Path: layer.LockPath, Expected: layer.expected, ExpectedMode: layer.mode, Bytes: data, Mode: mode})
 	}
 	reads, err := effectiveReadAssertions(ec, nil)
 	if err != nil {
@@ -66,11 +68,11 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	if _, err := commitDependencyTransaction(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads)); err != nil {
 		return 0, fmt.Errorf("commit missing Marketplace locks: %w", err)
 	}
-	slog.Info("missing Marketplace locks created", "count", len(desired))
+	slog.Info("Marketplace acquisition locks bootstrapped", "count", len(desired))
 	return len(desired), nil
 }
 
-func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfile.Scope]bool) ([]marketplacelock.Layer, map[string][]byte, error) {
+func missingMarketplaceLockLayers(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool) ([]marketplaceLockBootstrap, map[string][]byte, error) {
 	userPath, err := config.GlobalConfigPath()
 	if err != nil {
 		return nil, nil, err
@@ -83,7 +85,7 @@ func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfi
 		{config.RepoCommitted, config.ProjectConfigPath(repoRoot)},
 		{config.RepoPersonal, config.LocalConfigPath(localDir)},
 	}
-	var layers []marketplacelock.Layer
+	var layers []marketplaceLockBootstrap
 	overlays := map[string][]byte{}
 	for _, candidate := range paths {
 		if (candidate.source == config.RepoCommitted && config.IsHomeDir(repoRoot)) || (candidate.source == config.RepoPersonal && config.IsHomeDir(localDir)) {
@@ -108,12 +110,31 @@ func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfi
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, err := os.Lstat(lockPath); err == nil {
-			continue
-		} else if !errors.Is(err, os.ErrNotExist) {
+		current, generation, exists, err := loadLayerLock(lockPath, scope)
+		if err != nil {
 			return nil, nil, err
 		}
-		doc, err := marketplacelock.Provisional(v4, scope)
+		if exists && current.APIVersion == lockfile.APIVersionV2 {
+			continue
+		}
+		freshGeneration, mode, err := dependencytxn.ReadGenerationAndMode(lockPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		if freshGeneration != generation {
+			return nil, nil, fmt.Errorf("%w: Marketplace lock changed while loading %s", dependencytxn.ErrGenerationConflict, lockPath)
+		}
+		layers = append(layers, marketplaceLockBootstrap{Layer: marketplacelock.Layer{Source: candidate.source, LockPath: lockPath, V4: v4}, current: current, expected: generation, mode: mode})
+	}
+	if len(layers) == 0 {
+		return layers, overlays, nil
+	}
+	var instances []config.MarketplaceEntry
+	if ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir}); ec.Merged != nil {
+		instances = ec.Merged.Marketplaces
+	}
+	for _, layer := range layers {
+		doc, err := marketplacelock.Provisional(layer.V4, lockfile.Scope(layer.Source.LockScope()), instances...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -121,8 +142,7 @@ func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfi
 		if err != nil {
 			return nil, nil, err
 		}
-		overlays[lockPath] = data
-		layers = append(layers, marketplacelock.Layer{Source: candidate.source, LockPath: lockPath, V4: v4})
+		overlays[layer.LockPath] = data
 	}
 	return layers, overlays, nil
 }

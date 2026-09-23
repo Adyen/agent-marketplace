@@ -48,7 +48,21 @@ func WithTransientOrganizationMarketplaceLockCache(ctx context.Context) context.
 	return context.WithValue(ctx, transientOrganizationMarketplaceLockCacheKey{}, cache)
 }
 
+func LoadEffectiveOnline(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
+	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy)
+	return ec
+}
+
+func LoadEffectiveForLockPlanning(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+	ec, _ := loadEffectiveOrganizationLock(ctx, opts, nil, false)
+	return ec
+}
+
 func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+	return loadEffectiveOrganizationLock(ctx, opts, policy, true)
+}
+
+func loadEffectiveOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, acquire bool) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
 	initial := config.LoadEffective(ctx, opts)
 	if !marketplacelock.HasRequiredError(initial.Errors) {
 		return initial, transientOrganizationMarketplaceLockUnused
@@ -58,7 +72,11 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 	if orgPath == "" {
 		orgPath = config.OrganizationConfigPath()
 	}
-	layer, provisionalData, missing, err := marketplacelock.OrganizationProvisional(orgPath)
+	var instances []config.MarketplaceEntry
+	if initial.Merged != nil {
+		instances = initial.Merged.Marketplaces
+	}
+	layer, provisionalData, missing, err := marketplacelock.OrganizationProvisional(orgPath, instances...)
 	if err != nil {
 		return effectiveConfigError(initial, fmt.Errorf("inspect organization Marketplace lock: %w", err)), transientOrganizationMarketplaceLockUnused
 	}
@@ -66,6 +84,9 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 		return initial, transientOrganizationMarketplaceLockUnused
 	}
 	cache := transientOrganizationMarketplaceLockCacheFrom(ctx)
+	if !acquire || len(opts.FileOverlays) > 0 {
+		cache = nil
+	}
 	if cache != nil {
 		if data, reads, ok := cache.load(layer.LockPath); ok {
 			if err := dependencytxn.ValidateReadAssertions(reads); err == nil {
@@ -89,7 +110,7 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 	provisionalOpts := opts
 	provisionalOpts.OrganizationRuntimeLock = provisionalData
 	provisionalEC := config.LoadEffective(ctx, provisionalOpts)
-	if len(provisionalEC.Errors) > 0 {
+	if !acquire || len(provisionalEC.Errors) > 0 {
 		return provisionalEC, transientOrganizationMarketplaceLockUnused
 	}
 	reads, err := transientMarketplaceReadAssertions(provisionalEC, layer.LockPath)
@@ -198,6 +219,18 @@ func transientMarketplaceReadAssertions(ec config.EffectiveConfig, lockPath stri
 	byRequested, err := configReadAssertions(ec, false)
 	if err != nil {
 		return nil, err
+	}
+	for _, layer := range ec.LayerResults() {
+		for _, read := range layer.Reads {
+			if !read.Overlay || read.RuntimeLock || read.AcquisitionLock {
+				continue
+			}
+			generation, err := dependencytxn.ReadGeneration(read.Path)
+			if err != nil {
+				return nil, err
+			}
+			byRequested[read.RequestedPath] = dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath, Expected: generation}
+		}
 	}
 	expected, err := dependencytxn.ReadGeneration(lockPath)
 	if err != nil {

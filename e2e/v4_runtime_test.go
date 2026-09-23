@@ -78,6 +78,61 @@ resources:
 	}
 }
 
+func TestV4OrganizationMarketplaceRecoveryAcrossCommands(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Review carefully.", false))
+	digest := fixture.resourceDigest(t, "command", "command-one")
+	for _, command := range []string{"sync", "update", "lock", "install"} {
+		t.Run(command, func(t *testing.T) {
+			env := newEnv(t)
+			env.InitGitRepo()
+			env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+			env.WriteOrgConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  behavior: {marketplace: %s}
+resources:
+  behavior: {include: [behavior-source/skill/skill-one]}
+`, fixture.server.URL))
+			before := env.ReadFile("/etc/agent-marketplace/config.yaml")
+			args := []string{command}
+			if command == "install" {
+				args = append(args, fixture.server.URL+"/r/behavior-source/command/command-one/revisions/"+digest, "--yes")
+			} else {
+				gitURL := env.CreateBareRepo("mixed-git", RegistryFiles([]Skill{{Name: "git-review"}}, nil, nil))
+				env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  git: {git: %s, ref: main}\nresources:\n  git: {include: [skill/git-review]}\n", gitURL))
+				env.AssertExitCode(env.RunAM("lock"), 0)
+				env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  behavior: {marketplace: %s}
+  git: {git: %s, ref: main}
+resources:
+  behavior: {include: [behavior-source/skill/skill-one]}
+  git: {include: [skill/git-review]}
+`, fixture.server.URL, gitURL))
+			}
+			result := env.RunAM(args...)
+			env.AssertExitCode(result, 0)
+			if got := env.ReadFile("/etc/agent-marketplace/config.yaml"); got != before {
+				t.Fatalf("%s changed organization config: %q", command, got)
+			}
+			if env.CheckFileExists("/etc/agent-marketplace/lock.yaml") {
+				t.Fatal("consumer published an organization lock")
+			}
+			if command == "install" {
+				env.AssertFileExists("/workspace/.factory/commands/command-one.md")
+				env.AssertFileExists("/root/.factory/skills/skill-one/SKILL.md")
+			} else {
+				if !env.CheckFileContains("/workspace/.agents/lock.yaml", "agent-marketplace-lock/v2") || !env.CheckFileContains("/workspace/.agents/lock.yaml", "behavior-marketplace") {
+					t.Fatal("mixed lock lost Marketplace acquisition evidence")
+				}
+				if command != "lock" {
+					env.AssertFileExists("/workspace/.factory/skills/skill-one/SKILL.md")
+					env.AssertFileExists("/workspace/.factory/skills/git-review/SKILL.md")
+				}
+			}
+		})
+	}
+}
+
 func TestV4MarketplaceRuntimeRejectionIsFailClosed(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()

@@ -82,7 +82,7 @@ func BenchmarkLoadStableEffectiveIncludes(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := loadStableEffective(context.Background(), opts); err != nil {
+		if _, _, err := loadStableEffective(context.Background(), opts, lockMode{}); err != nil {
 			b.Fatal(err)
 		}
 	}

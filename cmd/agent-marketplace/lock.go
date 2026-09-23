@@ -583,6 +583,7 @@ func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeli
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
 			if read.RuntimeLock {
+				byAlias[read.RequestedPath] = dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath}
 				continue
 			}
 			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
@@ -628,13 +629,17 @@ func sameConfigSnapshots(left, right map[config.Source]configTransactionSnapshot
 	return true
 }
 
-func loadStableEffective(ctx context.Context, options config.LoadEffectiveOptions) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
-	probe := config.LoadEffective(ctx, options)
+func loadStableEffective(ctx context.Context, options config.LoadEffectiveOptions, mode lockMode) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
+	load := config.LoadEffective
+	if !mode.check {
+		load = pipeline.LoadEffectiveForLockPlanning
+	}
+	probe := load(ctx, options)
 	before, err := snapshotEffectiveConfigs(probe, options.FileOverlays)
 	if err != nil {
 		return probe, nil, err
 	}
-	fresh := config.LoadEffective(ctx, options)
+	fresh := load(ctx, options)
 	after, err := snapshotEffectiveConfigs(fresh, options.FileOverlays)
 	if err != nil {
 		return fresh, nil, err
@@ -690,30 +695,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
 		FileOverlays: overlays,
 	}
-	ec, configSnapshots, err := loadStableEffective(ctx, loadOptions)
+	ec, configSnapshots, err := loadStableEffective(ctx, loadOptions, mode)
 	if err != nil {
 		return nil, 0, nil, err
-	}
-	transientOrganizationLockPath := ""
-	if !mode.check && marketplacelock.HasRequiredError(ec.Errors) {
-		lockPath, added, err := addTransientOrganizationMarketplaceProvisional(&loadOptions)
-		if err != nil {
-			return nil, 0, nil, err
-		}
-		if added {
-			transientOrganizationLockPath = lockPath
-			ec, configSnapshots, err = loadStableEffective(ctx, loadOptions)
-			if err != nil {
-				return nil, 0, nil, err
-			}
-			generation, err := dependencytxn.ReadGeneration(transientOrganizationLockPath)
-			if err != nil {
-				return nil, 0, nil, err
-			}
-			if generation.Exists {
-				return nil, 0, nil, fmt.Errorf("%w: organization Marketplace lock appeared while loading", dependencytxn.ErrGenerationConflict)
-			}
-		}
 	}
 	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && mode.commitScope == nil
 	if canBootstrapMarketplace && marketplacelock.HasRequiredError(ec.Errors) {
@@ -722,7 +706,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, 0, nil, err
 		}
 		changed += bootstrapChanged
-		ec, configSnapshots, err = loadStableEffective(ctx, loadOptions)
+		ec, configSnapshots, err = loadStableEffective(ctx, loadOptions, mode)
 		if err != nil {
 			return nil, 0, nil, err
 		}
@@ -857,7 +841,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			return nil, changed, nil, loadErr
 		}
-		if len(remote) > 0 {
+		if len(remote) > 0 || exists {
 			lockExpectations[lockPath] = generation
 			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
 			if stateErr != nil {
@@ -942,7 +926,11 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 					return nil, changed, nil, err
 				}
 				lockDesired[lockPath] = data
-				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: 0o644})
+				fileMode := lockModes[lockPath]
+				if !generation.Exists {
+					fileMode = 0o644
+				}
+				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: fileMode})
 			}
 		}
 		layerChangedCount := 0
@@ -998,12 +986,6 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		reads, err := effectiveReadAssertions(ec, stagedEdits)
 		if err != nil {
 			return nil, changed, nil, err
-		}
-		if transientOrganizationLockPath != "" {
-			reads = append(reads, dependencytxn.ReadAssertion{
-				Path:          transientOrganizationLockPath,
-				RequestedPath: transientOrganizationLockPath,
-			})
 		}
 		reads = append(reads, mode.commitReads...)
 		if mode.commitScope != nil && len(desiredFiles) == 0 {
@@ -1140,8 +1122,17 @@ func runRegistryJobs(count int, run func(int) error) error {
 	return err
 }
 
-func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
+func gitReconciliationDocument(scope lockfile.Scope, current *lockfile.Document) lockfile.Document {
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
+	if current != nil && current.APIVersion == lockfile.APIVersionV2 {
+		doc.APIVersion = lockfile.APIVersionV2
+		doc.Marketplaces = current.Marketplaces
+	}
+	return doc
+}
+
+func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
+	doc := gitReconciliationDocument(scope, current)
 	stats := lockReconcileStats{}
 	old := map[string]lockfile.GitRegistry{}
 	if current != nil {

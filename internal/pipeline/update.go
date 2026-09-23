@@ -98,7 +98,8 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 
 	repoRoot := opts.RepoRoot
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir})
+	ctx = WithTransientOrganizationMarketplaceLockCache(ctx)
+	ec := LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}

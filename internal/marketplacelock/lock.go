@@ -74,12 +74,12 @@ func MissingOrganizationLayer(configPath string) (Layer, bool, error) {
 
 // OrganizationProvisional returns the missing organization layer and its
 // encoded placeholder lock for policy-only loading.
-func OrganizationProvisional(configPath string) (Layer, []byte, bool, error) {
+func OrganizationProvisional(configPath string, instances ...config.MarketplaceEntry) (Layer, []byte, bool, error) {
 	layer, missing, err := MissingOrganizationLayer(configPath)
 	if err != nil || !missing {
 		return Layer{}, nil, missing, err
 	}
-	doc, err := Provisional(layer.V4, lockfile.ScopeOrganization)
+	doc, err := Provisional(layer.V4, lockfile.ScopeOrganization, instances...)
 	if err != nil {
 		return Layer{}, nil, false, err
 	}
@@ -103,13 +103,19 @@ func HasMarketplaceSource(v4 *config.V4Config) bool {
 
 // Provisional returns a structurally valid placeholder lock. It is used only
 // to load and validate the complete effective policy before any acquisition.
-func Provisional(v4 *config.V4Config, scope lockfile.Scope) (lockfile.Document, error) {
+func Provisional(v4 *config.V4Config, scope lockfile.Scope, instances ...config.MarketplaceEntry) (lockfile.Document, error) {
 	const digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: scope}
 	for _, group := range marketplaceSourceRequests(v4) {
 		sourceName := group.name
 		source := v4.Sources[sourceName]
 		entry := lockfile.MarketplaceLock{URL: source.CanonicalURL, InstanceID: "bootstrap"}
+		for _, instance := range instances {
+			if url, err := marketplace.NormalizeMarketplaceURL(instance.URL); err == nil && url == entry.URL && instance.InstanceID != "" {
+				entry.InstanceID = instance.InstanceID
+				break
+			}
+		}
 		requests := group.requests
 		bindings := make(map[string]string, len(requests))
 		entry.Resources = make([]lockfile.MarketplaceResourceLock, 0, len(requests))
