@@ -299,6 +299,47 @@ func BenchmarkRunDoctor(b *testing.B) {
 	}
 }
 
+func BenchmarkRunGCDryRunEmptyCache(b *testing.B) {
+	home := b.TempDir()
+	b.Setenv("HOME", home)
+	b.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	b.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	config.SetTestOrganizationConfigPath(b, filepath.Join(home, "missing-organization.yaml"))
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	repo := b.TempDir()
+	original, err := os.Getwd()
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() {
+		if err := os.Chdir(original); err != nil {
+			b.Fatalf("restore benchmark directory: %v", err)
+		}
+	})
+	b.Cleanup(config.ResetRepoRootCache)
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.Cleanup(func() { slog.SetDefault(previous) })
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		config.ResetRepoRootCache()
+		if err := runGC(context.Background(), io.Discard, true); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // BenchmarkBuildHarnessTargetRows measures the status HARNESS TARGETS section,
 // which runs on every `status` invocation.
 func BenchmarkBuildHarnessTargetRows(b *testing.B) {

@@ -160,6 +160,31 @@ resources:
 	}
 }
 
+func TestV4OrganizationGCWithoutLock(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("GC collection", true))
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	env.WriteOrgConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  behavior: {marketplace: %s}
+resources:
+  behavior: {include: [behavior-source/collection/behavior-bundle]}
+`, fixture.server.URL))
+	before := env.ReadFile("/etc/agent-marketplace/config.yaml")
+	for _, args := range [][]string{{"gc", "--dry-run"}, {"gc"}} {
+		result := env.RunAM(args...)
+		env.AssertExitCode(result, 0)
+		env.AssertOutputContains(result, "0 marketplace artifact directories")
+		if got := env.ReadFile("/etc/agent-marketplace/config.yaml"); got != before {
+			t.Fatalf("%v changed organization config:\n%s", args, got)
+		}
+		if env.CheckFileExists("/etc/agent-marketplace/lock.yaml") {
+			t.Fatalf("%v created organization lock", args)
+		}
+	}
+}
+
 func TestV4MarketplaceRuntimeRejectionIsFailClosed(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
