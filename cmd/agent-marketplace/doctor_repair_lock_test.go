@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -8,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/devincli"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -169,6 +172,51 @@ func TestDoctorRepairHoldsNoOwnershipLockWhileAwaitingConfirmation(t *testing.T)
 	}
 	if _, err := os.Lstat(filepath.Join(outDir, harness.DevinMcpConfigFile)); err != nil {
 		t.Fatalf("the aggregate disappeared: %v", err)
+	}
+}
+
+func TestDoctorRepairRefusesConfigChangeDuringConfirmation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, _ := devinDoctorEnv(t)
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries: []\n")
+	mcpPath, selection := prepareTwoDevinConflicts(t, repoRoot)
+	before, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdinReader, stdinWriter := io.Pipe()
+	watcher := newPromptWatcher()
+	done := make(chan error, 1)
+	go func() {
+		done <- runDoctor(doctorOptions{
+			out: watcher, in: stdinReader, isTTY: true, repair: true,
+			probe:   staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+			resolve: staticResolve(selection),
+		})
+	}()
+
+	select {
+	case <-watcher.promptCh:
+	case err := <-done:
+		t.Fatalf("doctor finished before confirmation: %v\n%s", err, watcher.String())
+	}
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdinWriter.Write([]byte("y\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdinWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("doctor did not reject changed selection policy: %v\n%s", err, watcher.String())
+	}
+	if after, err := os.ReadFile(mcpPath); err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("doctor changed aggregate after config changed: %v\n%s", err, after)
 	}
 }
 

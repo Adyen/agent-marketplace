@@ -354,7 +354,9 @@ func (r transientOrganizationMarketplaceResolver) ResolveWithPolicy(ctx context.
 }
 
 func effectiveConfigError(ec config.EffectiveConfig, err error) config.EffectiveConfig {
-	ec.Errors = []error{err}
+	rest := ec.Errors[min(len(ec.Organization.Errors), len(ec.Errors)):]
+	ec.Organization.Errors = []error{err}
+	ec.Errors = append([]error{err}, rest...)
 	return ec
 }
 

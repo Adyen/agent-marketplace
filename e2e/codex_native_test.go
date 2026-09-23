@@ -461,6 +461,7 @@ func TestE2ECodexDestructiveRepairRequiresConfirmationAndRedactsSecrets(t *testi
 	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	preview := env.RunAM("doctor", "--repair", "--yes")
 	assertRepairResult(t, preview, 0, "replace mcp-server", "left unchanged")
@@ -514,6 +515,7 @@ func TestE2ECodexRepairCorruptionAfterIndependentAdoptionIsPartialFailure(t *tes
 	if err := os.WriteFile(codexPath, []byte(codexOriginal), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	result := env.RunAM("doctor", "--repair", "--yes")
 	if result.ExitCode == 0 {

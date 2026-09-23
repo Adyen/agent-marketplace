@@ -21,6 +21,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/devincli"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -54,7 +55,8 @@ type doctorOptions struct {
 	// cloned registry. Its error reaches the caller, so a Workspace
 	// construction failure keeps its wrapped cause instead of degrading to a
 	// silently empty selection.
-	resolve func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error)
+	resolve    func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error)
+	revalidate func() error
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -106,20 +108,12 @@ func runDoctor(opts doctorOptions) error {
 	if opts.ctx == nil {
 		opts.ctx = context.Background()
 	}
+	opts.ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(opts.ctx)
 	if opts.out == nil {
 		opts.out = os.Stdout
 	}
 	if opts.probe == nil {
 		opts.probe = func(ctx context.Context) devincli.Probe { return devincli.Detect(ctx) }
-	}
-	if opts.resolve == nil {
-		opts.resolve = func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
-			ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
-			if err != nil {
-				return nil, err
-			}
-			return pipeline.Resolve(ctx, pipeline.ResolveOptions{Workspace: ws}).Resolved, nil
-		}
 	}
 	out := opts.out
 
@@ -144,7 +138,7 @@ func runDoctor(opts doctorOptions) error {
 	if _, err := fmt.Fprintf(out, "detected harness: %s\n", detected); err != nil {
 		return err
 	}
-	ec := pipeline.LoadEffective(opts.ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{}, nil)
+	ec := pipeline.LoadEffective(opts.ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 	config.LogManagedDiagnostics(ec.Diagnostics)
 
 	managed := "false"
@@ -175,6 +169,17 @@ func runDoctor(opts doctorOptions) error {
 
 	if !opts.repair {
 		return nil
+	}
+	if len(ec.Errors) > 0 {
+		return fmt.Errorf("doctor --repair: invalid configuration: %w", errors.Join(ec.Errors...))
+	}
+	reads, err := pipeline.EffectivePolicyReadAssertions(ec)
+	if err != nil {
+		return fmt.Errorf("doctor --repair: snapshot policy: %w", err)
+	}
+	opts.revalidate = func() error { return dependencytxn.ValidateReadAssertions(reads) }
+	if err := opts.revalidate(); err != nil {
+		return fmt.Errorf("doctor --repair: validate policy: %w", err)
 	}
 	return runDoctorRepair(out, opts, repoRoot)
 }
@@ -396,14 +401,37 @@ func devinHarnessSelection(ec config.EffectiveConfig) (bool, []string) {
 func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string) error {
 	ctx := opts.ctx
 	slog.Info("doctor repair preview start", "repo_root", repoRoot)
-	selection, err := opts.resolve(ctx, repoRoot)
-	if err != nil {
-		return err
+	var selection []resolver.ResolvedArtifact
+	var err error
+	releaseExactLease := func() {}
+	if opts.resolve != nil {
+		selection, err = opts.resolve(ctx, repoRoot)
+		if err != nil {
+			return err
+		}
+	} else {
+		ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+		if err != nil {
+			return err
+		}
+		resolved, release := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
+			Workspace: ws, CatalogMode: catalog.LoadModeCached, ReadOnlyExactLocks: true,
+		})
+		releaseExactLease = release
+		if err := errors.Join(resolved.Errors...); err != nil {
+			releaseExactLease()
+			return fmt.Errorf("repair preview: resolve selected resources: %w", err)
+		}
+		selection = resolved.Resolved
 	}
 	previews, err := materialize.RepairPreviews(ctx, repoRoot, selection)
+	releaseExactLease()
 	if err != nil {
 		slog.Error("doctor repair preview failed", "repo_root", repoRoot, "status", "error", "code", diag.CodeDoctorRepairFailed)
 		return fmt.Errorf("repair preview: %w", err)
+	}
+	if err := opts.revalidate(); err != nil {
+		return fmt.Errorf("repair preview: policy changed: %w", err)
 	}
 
 	actionable := false
@@ -466,6 +494,11 @@ func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string) error {
 			}
 		}
 		slog.Error("doctor repair execution failed", "repo_root", repoRoot, "status", "error", "corrupt", corrupt, "failures", len(failures), "code", diag.CodeDoctorRepairFailed)
+		for _, failure := range failures {
+			if errors.Is(failure, dependencytxn.ErrGenerationConflict) {
+				return fmt.Errorf("doctor --repair: policy changed: %w", dependencytxn.ErrGenerationConflict)
+			}
+		}
 		return fmt.Errorf("doctor --repair: %d repair action(s) failed", len(failures))
 	}
 	if corrupt {
@@ -629,6 +662,9 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 			}
 		}
 		if len(adopt) > 0 {
+			if err := opts.revalidate(); err != nil {
+				return append(failures, fmt.Errorf("repair policy changed before adoption: %w", err))
+			}
 			if _, err := file.Adopt(adopt); err != nil {
 				slog.Error("doctor repair action failed", "target", file.Target, "file", file.Rel, "action", "adopt", "entries", len(adopt), "code", diag.CodeDoctorRepairFailed)
 				failures = append(failures, fmt.Errorf("adopt %d entr(y/ies) in %s: %w", len(adopt), file.Rel, err))
@@ -665,6 +701,9 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				}
 				logDoctorRepairDecision(file, "replace", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
 				continue
+			}
+			if err := opts.revalidate(); err != nil {
+				return append(failures, fmt.Errorf("repair policy changed before replacement: %w", err))
 			}
 			logDoctorRepairDecision(file, "replace", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
 			if _, err := file.ReplaceConflict(i, true); err != nil {
@@ -703,6 +742,9 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				}
 				logDoctorRepairDecision(file, "remove", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
 				continue
+			}
+			if err := opts.revalidate(); err != nil {
+				return append(failures, fmt.Errorf("repair policy changed before removal: %w", err))
 			}
 			logDoctorRepairDecision(file, "remove", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
 			if _, err := file.RemoveOrphan(i, true); err != nil {
