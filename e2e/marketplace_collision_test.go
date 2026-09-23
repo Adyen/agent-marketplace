@@ -1,12 +1,69 @@
 package e2e_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/worker"
 )
+
+func TestMarketplaceInstallAfterCollectionMemberExclusion(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("collection member", true))
+	other := fixture.cfg.Registries[0]
+	other.ID, other.Slug = "other-source-id", "other-source"
+	fixture.cfg.Registries = append(fixture.cfg.Registries, other)
+	fixture.mutateSource(t, "skills/skill-one/SKILL.md", "---\nname: skill-one\ndescription: Replacement skill\nlicense: MIT\n---\nreplacement body\n")
+	if err := worker.Reindex(context.Background(), worker.Deps{Config: fixture.cfg, MetadataStore: fixture.meta, BlobStore: fixture.blobs}, fixture.cfg, other.Slug); err != nil {
+		t.Fatal(err)
+	}
+	fixture.setHandler(mpapi.NewServer(fixture.cfg, fixture.meta, fixture.blobs).PublicHandler())
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: %s\n    instance_id: behavior-marketplace\n    alias: replacement\n", fixture.server.URL))
+	consumer.WriteOrgConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  org: {marketplace: %s}
+resources:
+  org:
+    include: [behavior-source/collection/behavior-bundle]
+`, fixture.server.URL))
+	consumer.MustRunAM("sync")
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "collection member")
+	locator := fixture.server.URL + "/r/other-source/skill/skill-one"
+	before := consumer.ReadFile("/workspace/.agents/config.yaml")
+	result := consumer.RunAM("install", locator, "--yes", "--scope", "repo")
+	if result.ExitCode == 0 || !strings.Contains(result.Combined, "marketplace.install-collision") {
+		t.Fatalf("active member collision not refused (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	if !strings.Contains(result.Combined, "--as <name>") {
+		t.Errorf("collision lacks alias guidance:\n%s", result.Combined)
+	}
+	if after := consumer.ReadFile("/workspace/.agents/config.yaml"); after != before {
+		t.Fatalf("collision changed repository config:\n%s", after)
+	}
+	consumer.WriteGlobalConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  company: {marketplace: %s}
+resources:
+  company:
+    exclude: [behavior-source/skill/skill-one]
+`, fixture.server.URL))
+	consumer.MustRunAM("install", locator, "--yes", "--scope", "repo")
+	consumer.MustRunAM("sync")
+	consumer.AssertFileAbsent("/root/.factory/skills/skill-one")
+	consumer.AssertFileContains("/root/.factory/commands/command-one.md", "echo behavior")
+	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "replacement body")
+	if cfg := consumer.ReadFile("/workspace/.agents/config.yaml"); !strings.Contains(cfg, "other-source-id") {
+		t.Fatalf("replacement source not persisted:\n%s", cfg)
+	}
+}
 
 func TestMarketplaceInstallChecksReconciledCollision(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("APPROVED MARKETPLACE BODY", true))
