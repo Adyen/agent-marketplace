@@ -1,0 +1,16 @@
+{
+  "claude-models": {"checked": "2026-09-23", "sha256": "e61fa76c045829f728f7fef414d846952d94cfe1be2f3e5ef43ee0ce868612d6"},
+  "claude-subagents": {"checked": "2026-09-23", "sha256": "57f1f85a5d3524946d3b3146823f9ab32a96c42c630360897e41efef0751e092"},
+  "claude-skills": {"checked": "2026-09-23", "sha256": "e4f95538ce94d702dbdf9e31110a186cd886fd0d9e9574071e51348243a674e6"},
+  "codex-models": {"checked": "2026-09-23", "sha256": "045df2b33a80edb707ce1b5efa8bf2e58ecb811e9a3744e75a36c10fd1896ad5"},
+  "codex-subagents": {"checked": "2026-09-23", "sha256": "c37289f467baa2dfe9d862aafcfc1a9afd15b4a4a18c29c42e3787b9ebf70d66"},
+  "cursor-models": {"checked": "2026-09-23", "sha256": "1789212555408cfa6846d84e8584b5df1214ababb7ab383b1f06ab6127d66357"},
+  "cursor-subagents": {"checked": "2026-09-23", "sha256": "a53ce3b346f033f8dee3cb06273904a52da991851911c587ae5f627915554305"},
+  "devin-models": {"checked": "2026-09-23", "sha256": "7458271bb8799afc94de84ec17975300acd1279401e553b1ada5f92773547391"},
+  "devin-subagents": {"checked": "2026-09-23", "sha256": "c48e72474d74e451a44b6048e9f0563a23a30ba4f2688eb979ddf6ed567d163d"},
+  "devin-skills": {"checked": "2026-09-23", "sha256": "bbb3daaab1a67ac61567bdb0945bc3756112b7e9e965420a4f781ec742dbe296"},
+  "factory-models": {"checked": "2026-09-23", "sha256": "179d81bdd77b50dea000e54a3c60678d2490a71b17a6d8e46d5e9e9f9648ab22"},
+  "factory-subagents": {"checked": "2026-09-23", "sha256": "d228d52b4a048f8d2087bb6f7f2b58ebde8fe9c8f8169d77712a6f6d4ae3abe0"},
+  "gemini-models": {"checked": "2026-09-23", "sha256": "b04bbff424c81aa5ff173df3f92e425931e1c55db9b8cdaea06a97cb70c27d85"},
+  "gemini-subagents": {"checked": "2026-09-23", "sha256": "a9c0179604da39e8368bf3d964433a905fe52f3646c824c6b07f593ab5dbfe51"}
+}

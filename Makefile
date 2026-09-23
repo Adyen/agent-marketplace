@@ -94,7 +94,10 @@ validate-e2e:
 lint: LINT_MODE=fix
 lint: lint-common
 
-.PHONY: model-catalog-check
+.PHONY: model-catalog-check model-catalog-audit
+model-catalog-audit:
+	CGO_ENABLED=0 $(GO) run ./tools/model-catalog-audit check
+
 model-catalog-check:
 	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/modelpolicy -count=1
 	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation -run 'TestModelPolicy|TestMatrix_Subagent' -count=1

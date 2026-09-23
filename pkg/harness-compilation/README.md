@@ -48,6 +48,29 @@ Do not update `compile/mapping/models.go` for new releases: that table is frozen
 
 Unresolved models produce warnings and omit the model field, never the whole resource. Source-native model strings retain `ModelSource` provenance through ingestion and canonical archives; same-harness preservation does not certify account availability. See the [catalog design reference](../../docs/plans/2026-09-21-harness-model-catalogs-design.md) for the schema and the outstanding Devin variant-acceptance gate.
 
+## Investigate nightly model drift
+
+The daily **Harness Images** workflow runs a separate, read-only model audit. It fails on inventory differences, changed model-related documentation, or unavailable/unparseable sources. It publishes a job summary and a `model-catalog-audit-<run-id>` JSON/log artifact even when the audit fails. It never edits catalogs, opens PRs, or makes authenticated model calls. Normal PR tests and `make model-catalog-check` remain offline.
+
+1. Reproduce the online audit from the repository root:
+
+   ```sh
+   go run ./tools/model-catalog-audit check > /tmp/model-catalog-report.json
+   go run ./tools/model-catalog-audit summary < /tmp/model-catalog-report.json
+   ```
+
+   The check exits nonzero for drift or unknown evidence, but still emits the JSON report after source-level failures. Run the summary command even if the check fails. `make model-catalog-audit` also runs the online check and prints JSON to stdout.
+
+2. Inspect each source's `status`, `findings`, and `observed` evidence. `catalog.model-missing` identifies upstream IDs needing resource-support review. `catalog.model-not-observed` does **not** prove retirement: current-model tables, rollout, and preview sources are incomplete. Review `catalog.family-pin-review` as an explicit conversion-policy decision, not permission to float exact model IDs. A source failure is `unknown`, never a passing freshness result.
+
+3. Verify native resource acceptance before changing mappings, aliases, or reasoning support, then follow [Update a shipped model catalog](#update-a-shipped-model-catalog). Keep valid legacy IDs. If an inventory adapter overstates its scope, correct the adapter and its offline tests rather than deleting valid mappings to silence it.
+
+4. For `source.evidence-changed`, review the selected evidence and source URL. After resolving the change, update that source's `checked` date and `sha256` in [`tools/model-catalog-audit/baselines.json`](../../tools/model-catalog-audit/baselines.json) using the report's `observed_sha256`. These baselines detect source changes; updating them does **not** suppress catalog inventory differences or attest that all shipped mappings are current. The initial baselines observe September 23, 2026 sources, not a refreshed catalog.
+
+5. Run `go test ./tools/model-catalog-audit` and `make model-catalog-check`, then rerun the online audit. A pass means **no observed drift within the declared coverage**, not exhaustive vendor compatibility.
+
+Read the report's coverage notes: Claude, Codex, Factory, and Gemini have exact-ID inventory adapters; Cursor watches display-name inventory and resource documentation without guessing native IDs; Devin watches public model/resource documentation, which does not enumerate concrete IDs. Windsurf has no model-bearing resource surface in the shipped catalog and is explicitly not applicable. Source adapters and their scope live in [`tools/model-catalog-audit/sources.go`](../../tools/model-catalog-audit/sources.go).
+
 ## How to Consume This Library
 
 ### The only import you need
