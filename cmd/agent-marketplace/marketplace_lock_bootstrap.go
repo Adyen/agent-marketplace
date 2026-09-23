@@ -30,18 +30,18 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	resolver.AllowedRegistries = ec.Allowed
 	desired := make([]dependencytxn.DesiredFile, 0, len(layers))
 	for _, layer := range layers {
-		doc, err := marketplacelock.Resolve(ctx, resolver, layer, ec.TargetHarnesses, policy)
+		doc, err := marketplacelock.Resolve(ctx, resolver, layer.Layer, ec.TargetHarnesses, policy)
 		if err != nil {
 			return 0, fmt.Errorf("create Marketplace lock %q: %w", layer.LockPath, err)
 		}
-		data, err := lockfile.Encode(doc)
+		data, err := encodeWithGitRegistries(doc, layer.registries)
 		if err != nil {
 			return 0, err
 		}
 		if err := os.MkdirAll(filepath.Dir(layer.LockPath), 0o755); err != nil {
 			return 0, fmt.Errorf("create Marketplace lock directory: %w", err)
 		}
-		desired = append(desired, dependencytxn.DesiredFile{Path: layer.LockPath, Expected: dependencytxn.Generation{}, Bytes: data, Mode: 0o644})
+		desired = append(desired, dependencytxn.DesiredFile{Path: layer.LockPath, Expected: layer.expected, ExpectedMode: layer.expectedMode, Bytes: data, Mode: 0o644})
 	}
 	reads, err := effectiveReadAssertions(ec, nil)
 	if err != nil {
@@ -58,7 +58,26 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	return len(desired), nil
 }
 
-func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfile.Scope]bool) ([]marketplacelock.Layer, map[string][]byte, error) {
+// marketplaceLockBootstrap is a writable layer whose lock is absent or still a
+// Git-only v1 document. An existing v1 lock keeps its Git registries and is
+// replaced only if its generation is unchanged at commit.
+type marketplaceLockBootstrap struct {
+	marketplacelock.Layer
+	registries   []lockfile.GitRegistry
+	expected     dependencytxn.Generation
+	expectedMode os.FileMode
+}
+
+func encodeWithGitRegistries(doc lockfile.Document, registries []lockfile.GitRegistry) ([]byte, error) {
+	doc.Registries = registries
+	normalized, err := lockfile.Normalize(doc)
+	if err != nil {
+		return nil, err
+	}
+	return lockfile.Encode(normalized)
+}
+
+func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfile.Scope]bool) ([]marketplaceLockBootstrap, map[string][]byte, error) {
 	userPath, err := config.GlobalConfigPath()
 	if err != nil {
 		return nil, nil, err
@@ -71,7 +90,7 @@ func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfi
 		{config.RepoCommitted, config.ProjectConfigPath(repoRoot)},
 		{config.RepoPersonal, config.LocalConfigPath(localDir)},
 	}
-	var layers []marketplacelock.Layer
+	var layers []marketplaceLockBootstrap
 	overlays := map[string][]byte{}
 	for _, candidate := range paths {
 		if (candidate.source == config.RepoCommitted && config.IsHomeDir(repoRoot)) || (candidate.source == config.RepoPersonal && config.IsHomeDir(localDir)) {
@@ -96,21 +115,36 @@ func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfi
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, err := os.Lstat(lockPath); err == nil {
-			continue
-		} else if !errors.Is(err, os.ErrNotExist) {
+		current, expected, exists, err := loadLayerLock(lockPath, scope)
+		if err != nil {
 			return nil, nil, err
+		}
+		if exists && current.APIVersion != lockfile.APIVersionV1 {
+			continue
+		}
+		var registries []lockfile.GitRegistry
+		var expectedMode os.FileMode
+		if exists {
+			registries = current.Registries
+			if _, expectedMode, err = dependencytxn.ReadGenerationAndMode(lockPath); err != nil {
+				return nil, nil, err
+			}
 		}
 		doc, err := marketplacelock.Provisional(v4, scope)
 		if err != nil {
 			return nil, nil, err
 		}
-		data, err := lockfile.Encode(doc)
+		data, err := encodeWithGitRegistries(doc, registries)
 		if err != nil {
 			return nil, nil, err
 		}
 		overlays[lockPath] = data
-		layers = append(layers, marketplacelock.Layer{Source: candidate.source, LockPath: lockPath, V4: v4})
+		layers = append(layers, marketplaceLockBootstrap{
+			Layer:        marketplacelock.Layer{Source: candidate.source, LockPath: lockPath, V4: v4},
+			registries:   registries,
+			expected:     expected,
+			expectedMode: expectedMode,
+		})
 	}
 	return layers, overlays, nil
 }

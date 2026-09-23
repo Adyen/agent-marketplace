@@ -1140,6 +1140,7 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 	stats := lockReconcileStats{}
 	old := map[string]lockfile.GitRegistry{}
 	if current != nil {
+		doc.APIVersion, doc.Marketplaces = current.APIVersion, current.Marketplaces
 		for _, registry := range current.Registries {
 			old[gitLockIdentity(registry.URL, registry.Ref)] = registry
 		}

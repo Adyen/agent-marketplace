@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
 func newGCCmd() *cobra.Command {
@@ -56,7 +57,8 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 		RepoRoot:       config.FindRepoRoot(),
 		LocalConfigDir: config.FindLocalConfigDir(),
 	}
-	effective := config.LoadEffective(ctx, loadOptions)
+	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
+	effective := pipeline.LoadEffectiveOnline(ctx, loadOptions, nil)
 	if len(effective.Errors) > 0 {
 		return errors.Join(effective.Errors...)
 	}
@@ -65,7 +67,7 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	}
 	marketplaceCache := marketplace.DefaultCache()
 	readReachability := func(readCtx context.Context) (cache.GCReachability, error) {
-		effective := config.LoadEffective(readCtx, loadOptions)
+		effective := pipeline.LoadEffectiveOnlineCached(readCtx, loadOptions, nil)
 		if len(effective.Errors) > 0 {
 			return cache.GCReachability{}, errors.Join(effective.Errors...)
 		}
