@@ -42,6 +42,11 @@ test("a missing organization marketplace lock is acquired transiently without po
     await expect(terminal.getByText(/~ in sync/g)).toBeVisible({ timeout: 30_000 });
   });
 
+  await step("update from the TUI reuses transient organization evidence", () => terminal.write("u"), async () => {
+    await expect(terminal.getByText("Update complete", { strict: false })).toBeVisible({ timeout: 30_000 });
+    await expect(terminal.getByText(/~ in sync/g)).toBeVisible();
+  });
+
   await step("quit cleanly", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });
@@ -53,8 +58,8 @@ test("a missing organization marketplace lock is acquired transiently without po
   assert.equal(fs.readFileSync(path.join(orgSkill, "SKILL.md"), "utf8"), fixture.expectedOrgSkillContent);
   assert.equal(
     fixture.marketplaceAcquisitionDataRequestCount?.(),
-    5,
-    `TUI startup, sync, and reload must reuse one transient acquisition while revalidating the exact revision during online sync: ${JSON.stringify(
+    4,
+    `TUI startup, sync, update, and reload must reuse one invocation-scoped transient acquisition: ${JSON.stringify(
       fixture.marketplaceAcquisitionDataRequestPaths?.()
     )}`
   );

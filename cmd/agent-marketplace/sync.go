@@ -85,6 +85,9 @@ type lockRunOptions struct {
 
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
+	if !offline && !locked {
+		ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
+	}
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
 	if len(lockOpts) > 0 {
 		marketplacePolicy = lockOpts[0].marketplacePolicy

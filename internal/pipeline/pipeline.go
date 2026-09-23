@@ -385,11 +385,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			Errors:       errs,
 		}
 		if allowTransientOrganizationLock && marketplacelock.HasRequiredError(ec.Errors) {
-			ec, transientOrganizationMarketplaceLock = loadEffectiveWithTransientOrganizationLock(ctx, effectiveOpts, opts.MarketplaceRevocationPolicy)
+			ec, transientOrganizationMarketplaceLock = loadEffectiveWithTransientOrganizationLock(ctx, effectiveOpts, opts.MarketplaceRevocationPolicy, transientOrganizationLockAcquire)
 		}
 	} else {
 		if allowTransientOrganizationLock {
-			ec, transientOrganizationMarketplaceLock = loadEffectiveWithTransientOrganizationLock(ctx, effectiveOpts, opts.MarketplaceRevocationPolicy)
+			ec, transientOrganizationMarketplaceLock = loadEffectiveWithTransientOrganizationLock(ctx, effectiveOpts, opts.MarketplaceRevocationPolicy, transientOrganizationLockAcquire)
 		} else {
 			ec = config.LoadEffective(ctx, effectiveOpts)
 		}
@@ -564,7 +564,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		marketplaceResolver.AllowedRegistries = *mergedCfg.AllowedRegistries
 	}
 	var mpResolver resolver.MarketplaceResolver = marketplaceResolver
-	if transientOrganizationMarketplaceLock == transientOrganizationMarketplaceLockAcquired && mpMode != resolver.MarketplaceResolveModeInspect {
+	if transientOrganizationMarketplaceLock != transientOrganizationMarketplaceLockUnused && mpMode != resolver.MarketplaceResolveModeInspect {
 		mpResolver = transientOrganizationMarketplaceResolver{delegate: marketplaceResolver}
 	}
 	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {

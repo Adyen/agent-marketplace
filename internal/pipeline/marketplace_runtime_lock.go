@@ -48,21 +48,35 @@ func WithTransientOrganizationMarketplaceLockCache(ctx context.Context) context.
 	return context.WithValue(ctx, transientOrganizationMarketplaceLockCacheKey{}, cache)
 }
 
+type transientOrganizationLockLoadMode uint8
+
+const (
+	transientOrganizationLockAcquire transientOrganizationLockLoadMode = iota
+	transientOrganizationLockReuse
+	transientOrganizationLockPlan
+)
+
+// LoadEffectiveOnline loads effective configuration for an online consumer,
+// resolving an intentionally absent organization Marketplace lock in memory.
 func LoadEffectiveOnline(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
-	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy)
+	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, transientOrganizationLockAcquire)
+	return ec
+}
+
+// LoadEffectiveOnlineCached reloads effective configuration with organization
+// Marketplace state acquired earlier in the same online operation, without
+// contacting the Marketplace again.
+func LoadEffectiveOnlineCached(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
+	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, transientOrganizationLockReuse)
 	return ec
 }
 
 func LoadEffectiveForLockPlanning(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
-	ec, _ := loadEffectiveOrganizationLock(ctx, opts, nil, false)
+	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, nil, transientOrganizationLockPlan)
 	return ec
 }
 
-func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
-	return loadEffectiveOrganizationLock(ctx, opts, policy, true)
-}
-
-func loadEffectiveOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, acquire bool) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, mode transientOrganizationLockLoadMode) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
 	initial := config.LoadEffective(ctx, opts)
 	if !marketplacelock.HasRequiredError(initial.Errors) {
 		return initial, transientOrganizationMarketplaceLockUnused
@@ -84,7 +98,7 @@ func loadEffectiveOrganizationLock(ctx context.Context, opts config.LoadEffectiv
 		return initial, transientOrganizationMarketplaceLockUnused
 	}
 	cache := transientOrganizationMarketplaceLockCacheFrom(ctx)
-	if !acquire || len(opts.FileOverlays) > 0 {
+	if mode == transientOrganizationLockPlan {
 		cache = nil
 	}
 	if cache != nil {
@@ -106,11 +120,14 @@ func loadEffectiveOrganizationLock(ctx context.Context, opts config.LoadEffectiv
 			cache.delete(layer.LockPath)
 		}
 	}
+	if mode == transientOrganizationLockReuse {
+		return initial, transientOrganizationMarketplaceLockUnused
+	}
 
 	provisionalOpts := opts
 	provisionalOpts.OrganizationRuntimeLock = provisionalData
 	provisionalEC := config.LoadEffective(ctx, provisionalOpts)
-	if !acquire || len(provisionalEC.Errors) > 0 {
+	if mode == transientOrganizationLockPlan || len(provisionalEC.Errors) > 0 {
 		return provisionalEC, transientOrganizationMarketplaceLockUnused
 	}
 	reads, err := transientMarketplaceReadAssertions(provisionalEC, layer.LockPath)
