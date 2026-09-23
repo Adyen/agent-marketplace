@@ -117,7 +117,7 @@ func initializeAndReport(out io.Writer, harnesses []string) (string, bool, error
 }
 
 func promptTelemetryConsent(out io.Writer, reader *bufio.Reader, configPath string) error {
-	org, err := config.LoadOrganizationConfig()
+	org, err := config.LoadOrganizationPolicyConfig()
 	if err != nil {
 		return fmt.Errorf("load organization config: %w", err)
 	}

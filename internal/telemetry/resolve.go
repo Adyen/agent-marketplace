@@ -103,7 +103,7 @@ func queueRootFromInstallationIDPath(path string) string {
 func LoadAndResolve(ctx context.Context) (TelemetryState, error) {
 	slog.InfoContext(ctx, "loading and resolving telemetry config")
 
-	org, err := amconfig.LoadOrganizationConfig()
+	org, err := amconfig.LoadOrganizationPolicyConfig()
 	if err != nil {
 		return TelemetryState{}, fmt.Errorf("load organization config: %w", err)
 	}

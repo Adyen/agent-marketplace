@@ -360,10 +360,13 @@ func loadEffectiveOrganizationWithRuntimeLock(path string, runtimeLock []byte) (
 // LoadOrganizationConfig reads the externally managed organization config at
 // the default path. It returns nil when the file is missing. It returns an
 // error when the file is present but cannot be read or declares an unsupported
-// apiVersion. A v4 config whose Marketplace lock is intentionally absent
-// yields only its policy fields, without sources, so offline policy readers
-// such as telemetry never need runtime acquisition.
+// apiVersion.
 func LoadOrganizationConfig() (*Config, error) {
+	lr, _ := loadEffectiveOrganization(organizationConfigPath(""))
+	return lr.Config, errors.Join(lr.Errors...)
+}
+
+func LoadOrganizationPolicyConfig() (*Config, error) {
 	path := organizationConfigPath("")
 	lr, _ := loadEffectiveOrganization(path)
 	if len(lr.Errors) == 0 {

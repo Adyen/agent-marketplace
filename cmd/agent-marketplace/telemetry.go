@@ -129,7 +129,7 @@ func runTelemetryEnable(out io.Writer, level, endpoint string) error {
 		return err
 	}
 
-	org, err := config.LoadOrganizationConfig()
+	org, err := config.LoadOrganizationPolicyConfig()
 	if err != nil {
 		return fmt.Errorf("load organization config: %w", err)
 	}
