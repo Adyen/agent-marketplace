@@ -624,13 +624,13 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 	if ec.Merged != nil {
 		for _, entry := range ec.Merged.Marketplaces {
 			for _, pin := range entry.Resources {
-				if pin.Kind != plan.Pin.Kind || marketplaceInstalledName(pin) != installed {
+				if pin.Kind != plan.Pin.Kind || marketplaceInstalledName(pin) != installed || ec.Merged.MarketplacePinExcluded(entry, pin) {
 					continue
 				}
 				if sameMarketplacePinIdentity(entry.URL, entry.InstanceID, pin, plan) {
 					continue
 				}
-				return fmt.Errorf("%w: marketplace %s %q collides with installed name %q", ErrMarketplaceInstallCollision, pin.Kind, pin.Name, installed)
+				return marketplaceInstallCollisionError("marketplace "+pin.Kind, pin.Name, installed)
 			}
 		}
 	}
@@ -665,9 +665,13 @@ func checkResolvedMarketplaceInstallCollision(resolved []resolver.ResolvedArtifa
 		if sameResolvedMarketplaceIdentity(existing, plan) {
 			continue
 		}
-		return fmt.Errorf("%w: %s %q collides with installed name %q", ErrMarketplaceInstallCollision, existing.Kind, existing.Name, installed)
+		return marketplaceInstallCollisionError(existing.Kind.String(), existing.Name, installed)
 	}
 	return nil
+}
+
+func marketplaceInstallCollisionError(kind, name, installed string) error {
+	return fmt.Errorf("%w: %s %q collides with installed name %q; use --as <name> to install the resource individually under a different local name", ErrMarketplaceInstallCollision, kind, name, installed)
 }
 
 func sameMarketplacePinIdentity(url, instanceID string, pin config.MarketplaceResourcePin, plan *marketplace.PreparedInstall) bool {

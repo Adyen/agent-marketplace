@@ -1,7 +1,9 @@
 package pipeline
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -50,6 +52,52 @@ func TestMarketplaceResolvedCollision(t *testing.T) {
 			err := checkResolvedMarketplaceInstallCollision([]resolver.ResolvedArtifact{tc.existing}, collection)
 			if tc.collision != errors.Is(err, ErrMarketplaceInstallCollision) || (!tc.collision && err != nil) {
 				t.Fatalf("collision error=%v want collision=%v", err, tc.collision)
+			}
+			if tc.collision && !strings.Contains(err.Error(), "--as <name>") {
+				t.Fatalf("collision lacks alias guidance: %v", err)
+			}
+		})
+	}
+}
+
+func TestMarketplaceInstallCollisionHonorsCollectionExclusions(t *testing.T) {
+	plan := &marketplace.PreparedInstall{
+		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
+		Pin:      config.MarketplaceResourcePin{RegistryID: "new-source", Kind: "skill", Name: "review"},
+		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
+	}
+	for _, tc := range []struct {
+		name            string
+		source          config.Source
+		exclusionSource config.Source
+		exclude         bool
+		required        bool
+		direct          bool
+		collision       bool
+	}{
+		{name: "active member", source: config.Organization, collision: true},
+		{name: "excluded organization member", source: config.Organization, exclusionSource: config.UserPersonal, exclude: true},
+		{name: "excluded user member", source: config.UserPersonal, exclusionSource: config.UserPersonal, exclude: true},
+		{name: "excluded repo member", source: config.RepoCommitted, exclusionSource: config.RepoCommitted, exclude: true},
+		{name: "excluded local member", source: config.RepoPersonal, exclusionSource: config.RepoPersonal, exclude: true},
+		{name: "required member", source: config.Organization, exclusionSource: config.UserPersonal, exclude: true, required: true, collision: true},
+		{name: "direct user pin", source: config.UserPersonal, exclusionSource: config.UserPersonal, exclude: true, direct: true, collision: true},
+		{name: "wrong exclusion scope", source: config.Organization, exclusionSource: config.RepoCommitted, exclude: true, collision: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+				URL: "https://market.example", InstanceID: "mp", Source: tc.source, Required: tc.required,
+				Resources: []config.MarketplaceResourcePin{{RegistryID: "old-source", RegistrySlug: "old", Kind: "skill", Name: "review", Direct: tc.direct}},
+			}}}
+			if tc.exclude {
+				cfg.MarketplaceExclusions = []config.MarketplaceExclusion{{URL: "https://market.example", Locator: "old/skill/review", Source: tc.exclusionSource}}
+			}
+			err := checkMarketplaceInstallCollision(context.Background(), InstallOptions{RepoRoot: t.TempDir()}, &config.EffectiveConfig{Merged: cfg}, plan)
+			if tc.collision != errors.Is(err, ErrMarketplaceInstallCollision) || (!tc.collision && err != nil) {
+				t.Fatalf("collision error=%v want collision=%v", err, tc.collision)
+			}
+			if tc.collision && !strings.Contains(err.Error(), "--as <name>") {
+				t.Fatalf("collision lacks alias guidance: %v", err)
 			}
 		})
 	}
