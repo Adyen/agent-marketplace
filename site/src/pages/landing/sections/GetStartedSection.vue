@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { INSTALL_COMMAND } from '../../../shared/site'
-import CommandBar from '../components/CommandBar.vue'
-import SectionShell from '../components/SectionShell.vue'
+import { INSTALL_COMMAND } from "../../../shared/site";
+import CommandBar from "../components/CommandBar.vue";
+import SectionShell from "../components/SectionShell.vue";
 </script>
 
 <template>
@@ -16,7 +16,8 @@ import SectionShell from '../components/SectionShell.vue'
       Ready to try <span class="product-name">agent-marketplace</span>?
     </template>
     <template #sub>
-      Install one CLI, then sync shared agent tooling into each harness’s native layout.
+      Install one CLI, then sync shared agent tooling into each harness’s native
+      layout.
     </template>
 
     <CommandBar :command="INSTALL_COMMAND" class="bar" />

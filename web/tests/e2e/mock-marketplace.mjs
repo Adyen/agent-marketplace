@@ -1,188 +1,369 @@
-import { createServer } from 'node:http'
+import { createServer } from "node:http";
 
-const port = Number(process.env.E2E_MOCK_PORT || 4311)
-const appOrigin = process.env.E2E_APP_ORIGIN || 'http://127.0.0.1:4321'
-const browserBase = `${appOrigin}/marketplace`
-const digest = `sha256:${'a'.repeat(64)}`
-const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>'
-const inspectionDigest = `sha256:${'d'.repeat(64)}`
-const primaryDigest = `sha256:${'e'.repeat(64)}`
-const notesDigest = `sha256:${'f'.repeat(64)}`
-const configDigest = `sha256:${'1'.repeat(64)}`
-const primaryContent = '# Safe review\n\n[docs](https://example.com/docs)\n\nRun `agent-marketplace status` first.\n\n```sh\nagent-marketplace install example\n```\n\n![remote image](https://evil.invalid/pixel.png)\n\n<div>raw HTML</div>\n<script>alert("xss")</script>\n'
-const notesContent = '# Additional notes\n\n<script>alert("support-xss")</script>\n'
-const configContent = '{"html":"<script>escaped</script>"}'
+const port = Number(process.env.E2E_MOCK_PORT || 4311);
+const appOrigin = process.env.E2E_APP_ORIGIN || "http://127.0.0.1:4321";
+const browserBase = `${appOrigin}/marketplace`;
+const digest = `sha256:${"a".repeat(64)}`;
+const hostileDescription =
+  'Deploy safely & review <script>alert("xss")</script>';
+const inspectionDigest = `sha256:${"d".repeat(64)}`;
+const primaryDigest = `sha256:${"e".repeat(64)}`;
+const notesDigest = `sha256:${"f".repeat(64)}`;
+const configDigest = `sha256:${"1".repeat(64)}`;
+const primaryContent =
+  '# Safe review\n\n[docs](https://example.com/docs)\n\nRun `agent-marketplace status` first.\n\n```sh\nagent-marketplace install example\n```\n\n![remote image](https://evil.invalid/pixel.png)\n\n<div>raw HTML</div>\n<script>alert("xss")</script>\n';
+const notesContent =
+  '# Additional notes\n\n<script>alert("support-xss")</script>\n';
+const configContent = '{"html":"<script>escaped</script>"}';
 
 const items = [
   {
-    registry_id: 'team-tools',
-    registry_slug: 'team-tools',
-    kind: 'skill',
-    name: 'secure-review',
+    registry_id: "team-tools",
+    registry_slug: "team-tools",
+    kind: "skill",
+    name: "secure-review",
     revision: digest,
     content_digest: digest,
     description: hostileDescription,
-    metadata: { owner: 'platform' },
+    metadata: { owner: "platform" },
   },
   {
-    registry_id: 'team-tools',
-    registry_slug: 'team-tools',
-    kind: 'command',
-    name: 'deploy-preview',
-    revision: `sha256:${'b'.repeat(64)}`,
-    content_digest: `sha256:${'b'.repeat(64)}`,
-    description: 'Deploy a preview environment.',
-    availability: 'revoked',
+    registry_id: "team-tools",
+    registry_slug: "team-tools",
+    kind: "command",
+    name: "deploy-preview",
+    revision: `sha256:${"b".repeat(64)}`,
+    content_digest: `sha256:${"b".repeat(64)}`,
+    description: "Deploy a preview environment.",
+    availability: "revoked",
   },
-]
+];
 
 const registry = {
-  id: 'team-tools',
-  slug: 'team-tools',
+  id: "team-tools",
+  slug: "team-tools",
   aliases: [],
-  origins: ['https://example.invalid/team-tools.git'],
-  ref: 'main',
-  roots: [{ path: 'skills' }],
-  acquisition: 'mirror',
-  publisher: { name: 'Platform Team' },
-  license: 'MIT',
+  origins: ["https://example.invalid/team-tools.git"],
+  ref: "main",
+  roots: [{ path: "skills" }],
+  acquisition: "mirror",
+  publisher: { name: "Platform Team" },
+  license: "MIT",
   listed: true,
-}
+};
 
 const wellKnown = {
-  instance_id: 'e2e-marketplace',
-  version: 'v4.0.0-e2e',
+  instance_id: "e2e-marketplace",
+  version: "v4.0.0-e2e",
   canonical_url: appOrigin,
   api_base: `http://127.0.0.1:${port}/api/v1`,
   browser_base: browserBase,
   browser_latest_route_template: `${browserBase}/r/{registry}/{kind}/{name}`,
   browser_exact_route_template: `${browserBase}/r/{registry}/{kind}/{name}/revisions/{revision}`,
-  api_versions: ['v1'],
-  artifact_schema_versions: ['v1'],
-  resource_kinds: ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection'],
-  acquisition_modes: ['index-only', 'mirror'],
-  features: ['search', 'registry-history', 'inspection'],
-}
+  api_versions: ["v1"],
+  artifact_schema_versions: ["v1"],
+  resource_kinds: [
+    "skill",
+    "command",
+    "subagent",
+    "hook",
+    "mcpserver",
+    "collection",
+  ],
+  acquisition_modes: ["index-only", "mirror"],
+  features: ["search", "registry-history", "inspection"],
+};
 
 function resource(item, contentDigest = item.content_digest, revocation) {
-  const coordinate = { marketplace: 'e2e-marketplace', registry: item.registry_id, kind: item.kind, name: item.name }
-  const reason = revocation?.reason ?? (revocation === undefined && item.name === 'deploy-preview' ? 'security review' : '')
+  const coordinate = {
+    marketplace: "e2e-marketplace",
+    registry: item.registry_id,
+    kind: item.kind,
+    name: item.name,
+  };
+  const reason =
+    revocation?.reason ??
+    (revocation === undefined && item.name === "deploy-preview"
+      ? "security review"
+      : "");
   return {
     coordinate,
     content_digest: contentDigest,
-    archive_digest: `sha256:${'c'.repeat(64)}`,
-    license: 'MIT',
+    archive_digest: `sha256:${"c".repeat(64)}`,
+    license: "MIT",
     description: item.description,
     assessment: {
       coordinate,
       content_digest: contentDigest,
-      assessment_digest: `sha256:${'6'.repeat(64)}`,
-      analyzer_version: 'e2e-analyzer-2',
-      policy_digest: `sha256:${'7'.repeat(64)}`,
-      decision: 'allow',
-      findings: item.name === 'secure-review' ? [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', location: { path: 'SKILL.md', line: 1, column: 1, start_byte: 0, end_byte: 1 }, message: 'External reference requires review.' }] : [],
+      assessment_digest: `sha256:${"6".repeat(64)}`,
+      analyzer_version: "e2e-analyzer-2",
+      policy_digest: `sha256:${"7".repeat(64)}`,
+      decision: "allow",
+      findings:
+        item.name === "secure-review"
+          ? [
+              {
+                code: "remote-reference",
+                severity: "warn",
+                policy: "network-policy",
+                location: {
+                  path: "SKILL.md",
+                  line: 1,
+                  column: 1,
+                  start_byte: 0,
+                  end_byte: 1,
+                },
+                message: "External reference requires review.",
+              },
+            ]
+          : [],
       inspection_manifest_digest: inspectionDigest,
-      assessed_at: '2026-01-02T03:04:05Z',
+      assessed_at: "2026-01-02T03:04:05Z",
     },
-    occurrence: { coordinate, content_digest: contentDigest, commit: '8'.repeat(40), manifest_digest: `sha256:${'5'.repeat(64)}` },
-    ...(reason ? { revocation: { kind: 'revision', target_id: contentDigest, reason, applied_at: '2026-01-03T03:04:05Z' } } : {}),
-  }
+    occurrence: {
+      coordinate,
+      content_digest: contentDigest,
+      commit: "8".repeat(40),
+      manifest_digest: `sha256:${"5".repeat(64)}`,
+    },
+    ...(reason
+      ? {
+          revocation: {
+            kind: "revision",
+            target_id: contentDigest,
+            reason,
+            applied_at: "2026-01-03T03:04:05Z",
+          },
+        }
+      : {}),
+  };
 }
 
 function sendJson(response, status, payload) {
-  const body = JSON.stringify(payload)
+  const body = JSON.stringify(payload);
   response.writeHead(status, {
-    'Access-Control-Allow-Origin': appOrigin,
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'content-type',
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
-  })
-  response.end(body)
+    "Access-Control-Allow-Origin": appOrigin,
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "content-type",
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  response.end(body);
 }
 
 function decodeSegment(value) {
   try {
-    return decodeURIComponent(value)
+    return decodeURIComponent(value);
   } catch {
-    return ''
+    return "";
   }
 }
 
 function search(url) {
-  const q = (url.searchParams.get('q') || '').trim().toLowerCase()
-  const kind = url.searchParams.get('kind') || ''
-  const registryIDs = url.searchParams.getAll('registry').map(value => value.trim()).filter(Boolean)
-  const offset = Math.max(Number(url.searchParams.get('offset') || 0), 0)
-  const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 12), 1), 100)
-  const filtered = items.filter(item => {
-    const matchesQuery = !q || `${item.name} ${item.description}`.toLowerCase().includes(q)
-    return matchesQuery && (!kind || item.kind === kind) && (!registryIDs.length || registryIDs.includes(item.registry_id))
-  })
-  return { items: filtered.slice(offset, offset + limit), total: filtered.length, offset, limit }
+  const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+  const kind = url.searchParams.get("kind") || "";
+  const registryIDs = url.searchParams
+    .getAll("registry")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const offset = Math.max(Number(url.searchParams.get("offset") || 0), 0);
+  const limit = Math.min(
+    Math.max(Number(url.searchParams.get("limit") || 12), 1),
+    100,
+  );
+  const filtered = items.filter((item) => {
+    const matchesQuery =
+      !q || `${item.name} ${item.description}`.toLowerCase().includes(q);
+    return (
+      matchesQuery &&
+      (!kind || item.kind === kind) &&
+      (!registryIDs.length || registryIDs.includes(item.registry_id))
+    );
+  });
+  return {
+    items: filtered.slice(offset, offset + limit),
+    total: filtered.length,
+    offset,
+    limit,
+  };
 }
 
 const server = createServer((request, response) => {
-  if (request.method === 'OPTIONS') {
-    response.writeHead(204, { 'Access-Control-Allow-Origin': appOrigin, 'Access-Control-Allow-Methods': 'GET, OPTIONS' })
-    response.end()
-    return
+  if (request.method === "OPTIONS") {
+    response.writeHead(204, {
+      "Access-Control-Allow-Origin": appOrigin,
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+    });
+    response.end();
+    return;
   }
-  if (request.method !== 'GET') {
-    sendJson(response, 405, { error: 'method not allowed' })
-    return
+  if (request.method !== "GET") {
+    sendJson(response, 405, { error: "method not allowed" });
+    return;
   }
 
-  const url = new URL(request.url || '/', `http://127.0.0.1:${port}`)
-  const parts = url.pathname.split('/').filter(Boolean).map(decodeSegment)
-  if (url.pathname === '/.well-known/agent-marketplace.json') return sendJson(response, 200, wellKnown)
-  if (parts.join('/') === 'api/v1/search') return sendJson(response, 200, search(url))
-  if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: appOrigin, version: 'v4.0.0-e2e' })
-  if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, [
-    { id: registry.id, slug: registry.slug },
-    { id: 'community-tools', slug: 'community-tools' },
-    { id: 'registry-with-an-extremely-long-name', slug: 'registry-with-an-extremely-long-name' },
-  ])
-  if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'registries') {
-    return parts[3] === registry.id ? sendJson(response, 200, registry) : sendJson(response, 404, { error: 'registry not found' })
+  const url = new URL(request.url || "/", `http://127.0.0.1:${port}`);
+  const parts = url.pathname.split("/").filter(Boolean).map(decodeSegment);
+  if (url.pathname === "/.well-known/agent-marketplace.json")
+    return sendJson(response, 200, wellKnown);
+  if (parts.join("/") === "api/v1/search")
+    return sendJson(response, 200, search(url));
+  if (parts.join("/") === "api/v1/instance")
+    return sendJson(response, 200, {
+      id: "e2e-operator",
+      name: "E2E Marketplace",
+      canonical_url: appOrigin,
+      version: "v4.0.0-e2e",
+    });
+  if (parts.join("/") === "api/v1/registries")
+    return sendJson(response, 200, [
+      { id: registry.id, slug: registry.slug },
+      { id: "community-tools", slug: "community-tools" },
+      {
+        id: "registry-with-an-extremely-long-name",
+        slug: "registry-with-an-extremely-long-name",
+      },
+    ]);
+  if (
+    parts.length === 4 &&
+    parts[0] === "api" &&
+    parts[1] === "v1" &&
+    parts[2] === "registries"
+  ) {
+    return parts[3] === registry.id
+      ? sendJson(response, 200, registry)
+      : sendJson(response, 404, { error: "registry not found" });
   }
-  if (parts.length === 5 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'registries' && parts[4] === 'history') {
-    return parts[3] === registry.id ? sendJson(response, 200, []) : sendJson(response, 404, { error: 'registry not found' })
+  if (
+    parts.length === 5 &&
+    parts[0] === "api" &&
+    parts[1] === "v1" &&
+    parts[2] === "registries" &&
+    parts[4] === "history"
+  ) {
+    return parts[3] === registry.id
+      ? sendJson(response, 200, [])
+      : sendJson(response, 404, { error: "registry not found" });
   }
-  if (parts.length >= 6 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'resources') {
-    const item = items.find(candidate => candidate.registry_id === parts[3] && candidate.kind === parts[4] && candidate.name === parts[5])
-    if (!item) return sendJson(response, 404, { error: 'resource not found' })
-    const previousDigest = `sha256:${'9'.repeat(64)}`
-    const requestedRevision = parts[6] === 'revisions' ? (parts[7] || item.content_digest) : item.content_digest
-    if (parts[6] === 'revisions' && parts[7] === undefined) {
-      return sendJson(response, 200, [resource(item), resource(item, previousDigest, item.name === 'secure-review' ? { reason: 'superseded policy' } : undefined)])
+  if (
+    parts.length >= 6 &&
+    parts[0] === "api" &&
+    parts[1] === "v1" &&
+    parts[2] === "resources"
+  ) {
+    const item = items.find(
+      (candidate) =>
+        candidate.registry_id === parts[3] &&
+        candidate.kind === parts[4] &&
+        candidate.name === parts[5],
+    );
+    if (!item) return sendJson(response, 404, { error: "resource not found" });
+    const previousDigest = `sha256:${"9".repeat(64)}`;
+    const requestedRevision =
+      parts[6] === "revisions"
+        ? parts[7] || item.content_digest
+        : item.content_digest;
+    if (parts[6] === "revisions" && parts[7] === undefined) {
+      return sendJson(response, 200, [
+        resource(item),
+        resource(
+          item,
+          previousDigest,
+          item.name === "secure-review"
+            ? { reason: "superseded policy" }
+            : undefined,
+        ),
+      ]);
     }
-    if (parts[6] === 'revisions' && ![item.content_digest, previousDigest].includes(requestedRevision)) return sendJson(response, 404, { error: 'revision not found' })
-    if (parts[8] === 'inspection') {
-      if (parts[9] === 'content') {
+    if (
+      parts[6] === "revisions" &&
+      ![item.content_digest, previousDigest].includes(requestedRevision)
+    )
+      return sendJson(response, 404, { error: "revision not found" });
+    if (parts[8] === "inspection") {
+      if (parts[9] === "content") {
         if (parts[10] === notesDigest) {
-          response.writeHead(200, { 'Access-Control-Allow-Origin': appOrigin, 'Content-Type': 'text/markdown', 'X-Content-Type-Options': 'nosniff' })
-          return response.end(notesContent)
+          response.writeHead(200, {
+            "Access-Control-Allow-Origin": appOrigin,
+            "Content-Type": "text/markdown",
+            "X-Content-Type-Options": "nosniff",
+          });
+          return response.end(notesContent);
         }
         if (parts[10] === configDigest) {
-          response.writeHead(200, { 'Access-Control-Allow-Origin': appOrigin, 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' })
-          return response.end(configContent)
+          response.writeHead(200, {
+            "Access-Control-Allow-Origin": appOrigin,
+            "Content-Type": "application/json",
+            "X-Content-Type-Options": "nosniff",
+          });
+          return response.end(configContent);
         }
-        response.writeHead(200, { 'Access-Control-Allow-Origin': appOrigin, 'Content-Type': 'text/markdown', 'X-Content-Type-Options': 'nosniff' })
-        return response.end(primaryContent)
+        response.writeHead(200, {
+          "Access-Control-Allow-Origin": appOrigin,
+          "Content-Type": "text/markdown",
+          "X-Content-Type-Options": "nosniff",
+        });
+        return response.end(primaryContent);
       }
-      return sendJson(response, 200, { schema_version: 'v1', coordinate: { marketplace: 'e2e-marketplace', registry: item.registry_id, kind: item.kind, name: item.name }, revision_digest: requestedRevision, primary_path: 'SKILL.md', files: [
-        { path: 'SKILL.md', content_digest: primaryDigest, media_type: 'text/markdown', size: Buffer.byteLength(primaryContent), inspection_class: 'text' },
-        { path: 'support/notes.md', content_digest: notesDigest, media_type: 'text/markdown', size: Buffer.byteLength(notesContent), inspection_class: 'text' },
-        { path: 'support/config.json', content_digest: configDigest, media_type: 'application/json', size: Buffer.byteLength(configContent), inspection_class: 'text' },
-        { path: 'support/tool.bin', content_digest: `sha256:${'2'.repeat(64)}`, media_type: 'application/octet-stream', size: 4, inspection_class: 'metadata' },
-      ] })
+      return sendJson(response, 200, {
+        schema_version: "v1",
+        coordinate: {
+          marketplace: "e2e-marketplace",
+          registry: item.registry_id,
+          kind: item.kind,
+          name: item.name,
+        },
+        revision_digest: requestedRevision,
+        primary_path: "SKILL.md",
+        files: [
+          {
+            path: "SKILL.md",
+            content_digest: primaryDigest,
+            media_type: "text/markdown",
+            size: Buffer.byteLength(primaryContent),
+            inspection_class: "text",
+          },
+          {
+            path: "support/notes.md",
+            content_digest: notesDigest,
+            media_type: "text/markdown",
+            size: Buffer.byteLength(notesContent),
+            inspection_class: "text",
+          },
+          {
+            path: "support/config.json",
+            content_digest: configDigest,
+            media_type: "application/json",
+            size: Buffer.byteLength(configContent),
+            inspection_class: "text",
+          },
+          {
+            path: "support/tool.bin",
+            content_digest: `sha256:${"2".repeat(64)}`,
+            media_type: "application/octet-stream",
+            size: 4,
+            inspection_class: "metadata",
+          },
+        ],
+      });
     }
-    return sendJson(response, 200, resource(item, requestedRevision, requestedRevision === previousDigest && item.name === 'secure-review' ? { reason: 'superseded policy' } : undefined))
+    return sendJson(
+      response,
+      200,
+      resource(
+        item,
+        requestedRevision,
+        requestedRevision === previousDigest && item.name === "secure-review"
+          ? { reason: "superseded policy" }
+          : undefined,
+      ),
+    );
   }
-  sendJson(response, 404, { error: 'not found' })
-})
+  sendJson(response, 404, { error: "not found" });
+});
 
-server.listen(port, '127.0.0.1', () => {
-  process.stdout.write(`Mock Marketplace listening on http://127.0.0.1:${port}\n`)
-})
+server.listen(port, "127.0.0.1", () => {
+  process.stdout.write(
+    `Mock Marketplace listening on http://127.0.0.1:${port}\n`,
+  );
+});

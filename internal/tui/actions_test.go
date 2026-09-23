@@ -913,7 +913,7 @@ func TestBuildRowsLabelsInheritedAndRegistryOverrideHarnesses(t *testing.T) {
 		{Entry: pkgcatalog.Entry{Name: "default-skill"}, RegistryURL: "git@example.com:org/default.git", CatalogKey: "default-key", Harnesses: testTargets("factory")},
 		{Entry: pkgcatalog.Entry{Name: "override-skill"}, RegistryURL: "git@example.com:org/override.git", CatalogKey: "override-key", Harnesses: testTargets("cursor")},
 	}
-	defaults := map[config.Source][]string{config.RepoCommitted: []string{"factory"}}
+	defaults := map[config.Source][]string{config.RepoCommitted: {"factory"}}
 
 	rows := buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{}, defaults)
 

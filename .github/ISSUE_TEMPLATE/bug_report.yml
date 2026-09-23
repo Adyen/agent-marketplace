@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible defect in Agent Marketplace.
+title: "[Bug]: "
+labels:
+  - bug report
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Which release, commit, or image tag shows the problem?
+      placeholder: 1.2.3 or abc1234
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, architecture, deployment mode, harness, and relevant runtime versions.
+      placeholder: macOS arm64, local CLI, Claude Code 1.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Give the smallest complete set of steps or configuration that reproduces the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste relevant logs or error output after removing credentials, tokens, personal data, and private URLs.
+      render: text
+    validations:
+      required: false

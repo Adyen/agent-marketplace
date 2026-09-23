@@ -9,7 +9,8 @@
 
 :root {
   --vp-font-family-base: Inter, "Avenir Next", "Segoe UI", sans-serif;
-  --vp-font-family-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --vp-font-family-mono:
+    "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --vp-c-brand-1: #087a3d;
   --vp-c-brand-2: #0a9850;
   --vp-c-brand-3: #12af60;

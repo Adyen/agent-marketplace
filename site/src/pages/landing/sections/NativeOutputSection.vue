@@ -1,50 +1,59 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { DEMO_RESOURCE_NAMES } from '../data/demo'
+import { computed, ref } from "vue";
+import { DEMO_RESOURCE_NAMES } from "../data/demo";
 import {
   kinds,
   outputRows,
   statusesUsed,
   targets,
-  type Status
-} from '../data/harnesses'
-import SectionShell from '../components/SectionShell.vue'
+  type Status,
+} from "../data/harnesses";
+import SectionShell from "../components/SectionShell.vue";
 
-const KINDS = kinds.map((kind) => kind.id)
+const KINDS = kinds.map((kind) => kind.id);
 
 const EXAMPLE_NAMES = {
-  skill: 'tdd',
-  command: 'create-module',
+  skill: "tdd",
+  command: "create-module",
   subagent: DEMO_RESOURCE_NAMES.oncall,
   mcp: DEMO_RESOURCE_NAMES.docsSearch,
-  hook: 'pre-user-prompt',
-  rule: 'project-guide',
-}
+  hook: "pre-user-prompt",
+  rule: "project-guide",
+};
 
 const STATUS_META: Record<Status, { badge: string; note: string }> = {
-  native: { badge: '', note: '' },
-  shared: { badge: 'shared file', note: 'an entry inside a file the harness owns' },
-  'as-skill': { badge: 'as skill', note: 'no command primitive, so it ships as a skill' },
-  none: { badge: '', note: '' }
-}
+  native: { badge: "", note: "" },
+  shared: {
+    badge: "shared file",
+    note: "an entry inside a file the harness owns",
+  },
+  "as-skill": {
+    badge: "as skill",
+    note: "no command primitive, so it ships as a skill",
+  },
+  none: { badge: "", note: "" },
+};
 
-const metaFor = (status: Status) => STATUS_META[status] ?? { badge: status, note: '' }
+const metaFor = (status: Status) =>
+  STATUS_META[status] ?? { badge: status, note: "" };
 
 /** Claude Code leads when present: it is the harness most visitors know. */
-const active = ref(targets.find((target) => target.id === 'claude')?.id ?? targets[0]?.id ?? '')
+const active = ref(
+  targets.find((target) => target.id === "claude")?.id ?? targets[0]?.id ?? "",
+);
 
-const rows = computed(() => outputRows(active.value, KINDS, EXAMPLE_NAMES))
-const supportingArtifacts = computed(() =>
-  [...new Set(rows.value.flatMap((row) => row.extra))],
-)
+const rows = computed(() => outputRows(active.value, KINDS, EXAMPLE_NAMES));
+const supportingArtifacts = computed(() => [
+  ...new Set(rows.value.flatMap((row) => row.extra)),
+]);
 
 /** Explain only the output forms reached by the full matrix. */
 const legend = computed(() => {
-  const used = new Set(statusesUsed(KINDS))
+  const used = new Set(statusesUsed(KINDS));
   return (Object.keys(STATUS_META) as Status[])
     .filter((status) => used.has(status) && STATUS_META[status].note)
-    .map((status) => ({ status, ...STATUS_META[status] }))
-})
+    .map((status) => ({ status, ...STATUS_META[status] }));
+});
 </script>
 
 <template>
@@ -54,7 +63,8 @@ const legend = computed(() => {
     title="Same resources. Different native layouts"
   >
     <template #sub>
-      Each harness expects agent tooling in different paths and formats. <span class="product-name">agent-marketplace</span>
+      Each harness expects agent tooling in different paths and formats.
+      <span class="product-name">agent-marketplace</span>
       handles those differences for you.
     </template>
 
@@ -82,8 +92,12 @@ const legend = computed(() => {
       >
         <span class="kind">{{ row.kindLabel }}</span>
         <span class="arrow">→</span>
-        <span class="status-mark" :class="{ 'is-none': !row.lead }" aria-hidden="true">
-          {{ row.lead ? '✓' : '–' }}
+        <span
+          class="status-mark"
+          :class="{ 'is-none': !row.lead }"
+          aria-hidden="true"
+        >
+          {{ row.lead ? "✓" : "–" }}
         </span>
         <code>
           {{ row.lead ?? `no ${row.kindLabel.toLowerCase()} primitive` }}
@@ -101,7 +115,8 @@ const legend = computed(() => {
 
     <p v-if="legend.length" class="foot">
       <template v-for="(item, i) in legend" :key="item.status">
-        <template v-if="i"> · </template><span class="note-tag">{{ item.badge }}</span> — {{ item.note }}
+        <template v-if="i"> · </template
+        ><span class="note-tag">{{ item.badge }}</span> — {{ item.note }}
       </template>
     </p>
   </SectionShell>
@@ -269,5 +284,4 @@ const legend = computed(() => {
   font-size: 0.9em;
   line-height: 1.2;
 }
-
 </style>

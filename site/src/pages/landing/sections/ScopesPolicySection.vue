@@ -1,45 +1,45 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import CommandBar from '../components/CommandBar.vue'
-import SectionShell from '../components/SectionShell.vue'
+import { computed, ref } from "vue";
+import CommandBar from "../components/CommandBar.vue";
+import SectionShell from "../components/SectionShell.vue";
 
-type ScopeID = 'user' | 'repo' | 'local'
+type ScopeID = "user" | "repo" | "local";
 
 const scopes = [
   {
-    id: 'user' as ScopeID,
-    title: 'User',
-    summary: 'Available to you in every repository on this machine.',
-    configPath: '~/.agents/config.yaml',
-    reach: 'Every repository',
-    versionControl: 'Not committed',
+    id: "user" as ScopeID,
+    title: "User",
+    summary: "Available to you in every repository on this machine.",
+    configPath: "~/.agents/config.yaml",
+    reach: "Every repository",
+    versionControl: "Not committed",
   },
   {
-    id: 'repo' as ScopeID,
-    title: 'Repository',
-    summary: 'Shared with the team and committed to this repository.',
-    configPath: '.agents/config.yaml',
-    reach: 'This repository',
-    versionControl: 'Committed',
+    id: "repo" as ScopeID,
+    title: "Repository",
+    summary: "Shared with the team and committed to this repository.",
+    configPath: ".agents/config.yaml",
+    reach: "This repository",
+    versionControl: "Committed",
     isDefault: true,
   },
   {
-    id: 'local' as ScopeID,
-    title: 'Local',
-    summary: 'Available only to you in this repository and kept out of Git.',
-    configPath: '.agents/config.local.yaml',
-    reach: 'This checkout',
-    versionControl: 'Gitignored',
+    id: "local" as ScopeID,
+    title: "Local",
+    summary: "Available only to you in this repository and kept out of Git.",
+    configPath: ".agents/config.local.yaml",
+    reach: "This checkout",
+    versionControl: "Gitignored",
   },
-]
+];
 
-const activeScopeID = ref<ScopeID>('repo')
+const activeScopeID = ref<ScopeID>("repo");
 const activeScope = computed(
   () => scopes.find((scope) => scope.id === activeScopeID.value) ?? scopes[1],
-)
+);
 const installCommand = computed(
   () => `agent-marketplace install pdf --scope ${activeScope.value.id}`,
-)
+);
 </script>
 
 <template>
@@ -86,7 +86,9 @@ const installCommand = computed(
         <dl class="scope-outcome">
           <div>
             <dt>Config file</dt>
-            <dd><code>{{ activeScope.configPath }}</code></dd>
+            <dd>
+              <code>{{ activeScope.configPath }}</code>
+            </dd>
           </div>
           <div>
             <dt>Applies to</dt>
@@ -131,7 +133,8 @@ const installCommand = computed(
   border: 1px solid var(--am-border);
   border-radius: var(--am-radius-lg);
   background: var(--am-surface);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 2.5%, transparent);
+  box-shadow: inset 0 1px
+    color-mix(in srgb, var(--am-color-text-primary) 2.5%, transparent);
 }
 
 .tabs {
@@ -260,7 +263,8 @@ h3 {
   background:
     linear-gradient(90deg, var(--am-accent-soft), transparent 55%),
     var(--am-surface);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 2.5%, transparent);
+  box-shadow: inset 0 1px
+    color-mix(in srgb, var(--am-color-text-primary) 2.5%, transparent);
 }
 
 .organization-baseline::before {

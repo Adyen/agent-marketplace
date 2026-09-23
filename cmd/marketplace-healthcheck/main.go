@@ -12,12 +12,17 @@ import (
 const readinessURL = "http://127.0.0.1:9090/readyz"
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	os.Exit(run(context.Background(), readinessURL, os.Stderr))
+}
+
+func run(parent context.Context, url string, stderr io.Writer) int {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
-	if err := check(ctx, readinessURL); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	if err := check(ctx, url); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 1
 	}
+	return 0
 }
 
 func check(ctx context.Context, url string) error {

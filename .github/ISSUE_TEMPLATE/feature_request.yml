@@ -1,0 +1,34 @@
+name: Feature request
+description: Suggest an improvement to Agent Marketplace.
+title: "[Feature]: "
+labels:
+  - feature-request
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What user or operator problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the behavior or result you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or alternative approaches have you tried?
+    validations:
+      required: false
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and context
+      description: Include affected applications, harnesses, deployment environments, or compatibility constraints.
+    validations:
+      required: false

@@ -1,0 +1,48 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gocritic
+    - gocyclo
+  settings:
+    gocritic:
+      disable-all: true
+      enabled-checks:
+        - exitAfterDefer
+    gocyclo:
+      min-complexity: 75
+  exclusions:
+    rules:
+      - path: pkg/marketplace/ingest/ingest.go
+        text: "BuildRegistryRevision"
+        linters:
+          - gocyclo
+      - path: cmd/agent-marketplace/lock.go
+        text: "prepareRuntimeLocks"
+        linters:
+          - gocyclo
+      - path: internal/pipeline/install.go
+        text: "Install"
+        linters:
+          - gocyclo
+      - path: internal/pipeline/pipeline.go
+        text: "resolve"
+        linters:
+          - gocyclo
+      - path: internal/tui/app.go
+        text: "Update"
+        linters:
+          - gocyclo
+      - path: internal/tui/app.go
+        text: "handleKey"
+        linters:
+          - gocyclo
+
+      - path: '.*_test\.go$'
+        linters:
+          - gocyclo
+
+formatters:
+  enable:
+    - gofmt

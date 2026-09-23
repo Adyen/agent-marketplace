@@ -1,26 +1,24 @@
 <script setup lang="ts">
 withDefaults(
   defineProps<{
-    id?: string
-    eyebrow: string
-    title: string
-    soft?: boolean
+    id?: string;
+    eyebrow: string;
+    title: string;
+    soft?: boolean;
   }>(),
-  { soft: false }
-)
+  { soft: false },
+);
 </script>
 
 <template>
-  <section
-    :id="id"
-    class="sec"
-    :class="{ 'is-soft': soft }"
-  >
+  <section :id="id" class="sec" :class="{ 'is-soft': soft }">
     <div class="am-wrap">
       <div class="head">
         <div>
           <span class="eyebrow">{{ eyebrow }}</span>
-          <h2><slot name="title">{{ title }}</slot></h2>
+          <h2>
+            <slot name="title">{{ title }}</slot>
+          </h2>
           <p v-if="$slots.sub" class="sub"><slot name="sub" /></p>
         </div>
       </div>
@@ -39,7 +37,11 @@ withDefaults(
 
 .is-soft {
   background:
-    radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--am-color-action-primary) 4.5%, transparent), transparent 28rem),
+    radial-gradient(
+      circle at 82% 18%,
+      color-mix(in srgb, var(--am-color-action-primary) 4.5%, transparent),
+      transparent 28rem
+    ),
     var(--am-surface-soft);
 }
 
@@ -72,5 +74,4 @@ h2 {
   font-size: 17px;
   line-height: 1.6;
 }
-
 </style>

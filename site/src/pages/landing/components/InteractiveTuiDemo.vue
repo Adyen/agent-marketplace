@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
-import TerminalFrame from './TerminalFrame.vue'
+import { computed, onUnmounted, ref } from "vue";
+import TerminalFrame from "./TerminalFrame.vue";
 import {
   DEMO_LOCAL_REGISTRY,
   DEMO_PROJECT_NAME,
   DEMO_REMOTE_REGISTRY,
   DEMO_RESOURCE_NAMES,
-} from '../data/demo'
+} from "../data/demo";
 
-type Scope = 'user' | 'repo' | 'local'
+type Scope = "user" | "repo" | "local";
 
 /**
  * This marketing demo intentionally compresses the real TUI flow: Space
@@ -17,157 +17,172 @@ type Scope = 'user' | 'repo' | 'local'
  * harness-resolution rules.
  */
 type Resource = {
-  id: string
-  kind: 'skill' | 'command' | 'mcp'
-  name: string
-  registry: string
-  scope: Scope
-  enabled: boolean
-}
+  id: string;
+  kind: "skill" | "command" | "mcp";
+  name: string;
+  registry: string;
+  scope: Scope;
+  enabled: boolean;
+};
 
-const scopeMeta: Record<Scope, { label: string; marker: string; targets: string[] }> = {
-  user: { label: 'User', marker: 'G', targets: ['Factory Droid', 'Windsurf'] },
-  repo: { label: 'Repository', marker: 'P', targets: ['Claude Code', 'Cursor', 'Codex'] },
-  local: { label: 'Local', marker: 'L', targets: ['Claude Code', 'Codex'] },
-}
+const scopeMeta: Record<
+  Scope,
+  { label: string; marker: string; targets: string[] }
+> = {
+  user: { label: "User", marker: "G", targets: ["Factory Droid", "Windsurf"] },
+  repo: {
+    label: "Repository",
+    marker: "P",
+    targets: ["Claude Code", "Cursor", "Codex"],
+  },
+  local: { label: "Local", marker: "L", targets: ["Claude Code", "Codex"] },
+};
 
 const initialResources: Resource[] = [
   {
-    id: 'auth-preflight',
-    kind: 'skill',
-    name: 'auth-preflight-shared',
+    id: "auth-preflight",
+    kind: "skill",
+    name: "auth-preflight-shared",
     registry: DEMO_REMOTE_REGISTRY,
-    scope: 'repo',
+    scope: "repo",
     enabled: true,
   },
   {
     id: DEMO_RESOURCE_NAMES.oncall,
-    kind: 'skill',
+    kind: "skill",
     name: DEMO_RESOURCE_NAMES.oncall,
     registry: DEMO_REMOTE_REGISTRY,
-    scope: 'user',
+    scope: "user",
     enabled: true,
   },
   {
-    id: 'docs',
-    kind: 'mcp',
+    id: "docs",
+    kind: "mcp",
     name: DEMO_RESOURCE_NAMES.docsSearch,
     registry: DEMO_LOCAL_REGISTRY,
-    scope: 'repo',
+    scope: "repo",
     enabled: false,
   },
-]
+];
 
-const cloneResources = () => initialResources.map((resource) => ({ ...resource }))
+const cloneResources = () =>
+  initialResources.map((resource) => ({ ...resource }));
 
-const resources = ref(cloneResources())
-const selectedID = ref(initialResources[0].id)
-const syncState = ref<'pending' | 'syncing' | 'synced'>('pending')
-const spinner = ref('\\')
-const terminal = ref<InstanceType<typeof TerminalFrame> | null>(null)
-const hasFocus = ref(false)
-let spinnerTimer: ReturnType<typeof setInterval> | undefined
-let syncTimer: ReturnType<typeof setTimeout> | undefined
+const resources = ref(cloneResources());
+const selectedID = ref(initialResources[0].id);
+const syncState = ref<"pending" | "syncing" | "synced">("pending");
+const spinner = ref("\\");
+const terminal = ref<InstanceType<typeof TerminalFrame> | null>(null);
+const hasFocus = ref(false);
+let spinnerTimer: ReturnType<typeof setInterval> | undefined;
+let syncTimer: ReturnType<typeof setTimeout> | undefined;
 
 const selected = computed(
-  () => resources.value.find((resource) => resource.id === selectedID.value) ?? resources.value[0],
-)
+  () =>
+    resources.value.find((resource) => resource.id === selectedID.value) ??
+    resources.value[0],
+);
 
 const groups = computed(() => {
-  const grouped = new Map<string, Resource[]>()
+  const grouped = new Map<string, Resource[]>();
   for (const resource of resources.value) {
-    const group = grouped.get(resource.registry) ?? []
-    group.push(resource)
-    grouped.set(resource.registry, group)
+    const group = grouped.get(resource.registry) ?? [];
+    group.push(resource);
+    grouped.set(resource.registry, group);
   }
-  return [...grouped]
-})
+  return [...grouped];
+});
 
-const enabledCount = computed(() => resources.value.filter((resource) => resource.enabled).length)
+const enabledCount = computed(
+  () => resources.value.filter((resource) => resource.enabled).length,
+);
 
 function toggleResource(id: string) {
-  const resource = resources.value.find((item) => item.id === id)
-  if (!resource) return
+  const resource = resources.value.find((item) => item.id === id);
+  if (!resource) return;
 
-  resource.enabled = !resource.enabled
-  selectedID.value = id
-  markPending()
+  resource.enabled = !resource.enabled;
+  selectedID.value = id;
+  markPending();
 }
 
 function sync() {
-  if (syncState.value === 'syncing') return
+  if (syncState.value === "syncing") return;
 
-  clearSyncTimers()
-  syncState.value = 'syncing'
-  const frames = ['\\', '|', '/', '—']
-  let frame = 0
-  spinner.value = frames[frame]
+  clearSyncTimers();
+  syncState.value = "syncing";
+  const frames = ["\\", "|", "/", "—"];
+  let frame = 0;
+  spinner.value = frames[frame];
   spinnerTimer = setInterval(() => {
-    frame = (frame + 1) % frames.length
-    spinner.value = frames[frame]
-  }, 120)
+    frame = (frame + 1) % frames.length;
+    spinner.value = frames[frame];
+  }, 120);
   syncTimer = setTimeout(() => {
-    clearSyncTimers()
-    syncState.value = 'synced'
-  }, 680)
+    clearSyncTimers();
+    syncState.value = "synced";
+  }, 680);
 }
 
 function reset() {
-  resources.value = cloneResources()
-  selectedID.value = initialResources[0].id
-  markPending()
+  resources.value = cloneResources();
+  selectedID.value = initialResources[0].id;
+  markPending();
 }
 
 function clearSyncTimers() {
-  if (spinnerTimer) clearInterval(spinnerTimer)
-  if (syncTimer) clearTimeout(syncTimer)
-  spinnerTimer = undefined
-  syncTimer = undefined
+  if (spinnerTimer) clearInterval(spinnerTimer);
+  if (syncTimer) clearTimeout(syncTimer);
+  spinnerTimer = undefined;
+  syncTimer = undefined;
 }
 
 function markPending() {
-  clearSyncTimers()
-  syncState.value = 'pending'
+  clearSyncTimers();
+  syncState.value = "pending";
 }
 
 function focusDemo() {
-  terminal.value?.focus()
+  terminal.value?.focus();
 }
 
 function selectOffset(offset: number) {
-  const currentIndex = resources.value.findIndex((resource) => resource.id === selectedID.value)
-  const nextIndex = (currentIndex + offset + resources.value.length) % resources.value.length
-  selectedID.value = resources.value[nextIndex].id
+  const currentIndex = resources.value.findIndex(
+    (resource) => resource.id === selectedID.value,
+  );
+  const nextIndex =
+    (currentIndex + offset + resources.value.length) % resources.value.length;
+  selectedID.value = resources.value[nextIndex].id;
 }
 
 function handleKeydown(event: KeyboardEvent) {
   switch (event.key) {
-    case 'ArrowDown':
-      event.preventDefault()
-      selectOffset(1)
-      break
-    case 'ArrowUp':
-      event.preventDefault()
-      selectOffset(-1)
-      break
-    case ' ':
-      event.preventDefault()
-      toggleResource(selectedID.value)
-      break
-    case 's':
-    case 'S':
-      event.preventDefault()
-      sync()
-      break
-    case 'r':
-    case 'R':
-      event.preventDefault()
-      reset()
-      break
+    case "ArrowDown":
+      event.preventDefault();
+      selectOffset(1);
+      break;
+    case "ArrowUp":
+      event.preventDefault();
+      selectOffset(-1);
+      break;
+    case " ":
+      event.preventDefault();
+      toggleResource(selectedID.value);
+      break;
+    case "s":
+    case "S":
+      event.preventDefault();
+      sync();
+      break;
+    case "r":
+    case "R":
+      event.preventDefault();
+      reset();
+      break;
   }
 }
 
-onUnmounted(clearSyncTimers)
+onUnmounted(clearSyncTimers);
 </script>
 
 <template>
@@ -191,7 +206,7 @@ onUnmounted(clearSyncTimers)
         :aria-pressed="hasFocus"
         @click.stop="focusDemo"
       >
-        {{ hasFocus ? 'Keyboard active' : 'Click to interact' }}
+        {{ hasFocus ? "Keyboard active" : "Click to interact" }}
       </button>
     </template>
 
@@ -200,7 +215,11 @@ onUnmounted(clearSyncTimers)
 
       <div class="panes">
         <div class="resources" aria-label="Available resources">
-          <div v-for="[registry, items] in groups" :key="registry" class="registry">
+          <div
+            v-for="[registry, items] in groups"
+            :key="registry"
+            class="registry"
+          >
             <div class="registry-title">▼ {{ registry }}</div>
             <div
               v-for="resource in items"
@@ -208,11 +227,13 @@ onUnmounted(clearSyncTimers)
               class="resource"
               :class="{ selected: selected.id === resource.id }"
             >
-              <span class="toggle">[{{ resource.enabled ? 'x' : ' ' }}]</span>
+              <span class="toggle">[{{ resource.enabled ? "x" : " " }}]</span>
               <span class="resource-row">
                 <span class="kind">{{ resource.kind }}</span>
                 <span class="name">{{ resource.name }}</span>
-                <span class="scope">{{ scopeMeta[resource.scope].marker }}</span>
+                <span class="scope">{{
+                  scopeMeta[resource.scope].marker
+                }}</span>
               </span>
             </div>
           </div>
@@ -233,24 +254,32 @@ onUnmounted(clearSyncTimers)
                 :key="target"
                 class="target-name"
               >
-                {{ target }}<span
+                {{ target
+                }}<span
                   v-if="index < scopeMeta[selected.scope].targets.length - 1"
                   class="target-separator"
                   aria-hidden="true"
-                >·</span>
+                  >·</span
+                >
               </span>
             </dd>
             <dt>Status:</dt>
             <dd
               :class="{
-                pending: syncState === 'syncing' || (selected.enabled && syncState === 'pending'),
+                pending:
+                  syncState === 'syncing' ||
+                  (selected.enabled && syncState === 'pending'),
                 positive: selected.enabled && syncState === 'synced',
               }"
             >
               {{
                 selected.enabled
-                  ? (syncState === 'synced' ? 'enabled' : syncState === 'syncing' ? 'syncing...' : 'enabled (pending sync)')
-                  : 'disabled'
+                  ? syncState === "synced"
+                    ? "enabled"
+                    : syncState === "syncing"
+                      ? "syncing..."
+                      : "enabled (pending sync)"
+                  : "disabled"
               }}
             </dd>
           </dl>
@@ -260,13 +289,21 @@ onUnmounted(clearSyncTimers)
       <div class="activity">
         <span class="sync-status" :class="{ positive: syncState === 'synced' }">
           <template v-if="syncState === 'syncing'">
-            <span class="spinner" aria-hidden="true">{{ spinner }}</span> syncing...
+            <span class="spinner" aria-hidden="true">{{ spinner }}</span>
+            syncing...
           </template>
           <template v-else>
-            {{ syncState === 'synced' ? '✓ in sync' : `~ ${enabledCount} enabled, pending sync` }}
+            {{
+              syncState === "synced"
+                ? "✓ in sync"
+                : `~ ${enabledCount} enabled, pending sync`
+            }}
           </template>
         </span>
-        <span><kbd>↑↓</kbd> navigate · <kbd>space</kbd> toggle · <kbd>s</kbd> sync</span>
+        <span
+          ><kbd>↑↓</kbd> navigate · <kbd>space</kbd> toggle ·
+          <kbd>s</kbd> sync</span
+        >
       </div>
     </div>
   </TerminalFrame>
@@ -466,5 +503,4 @@ kbd {
     border-left: 0;
   }
 }
-
 </style>

@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { withBase } from 'vitepress'
-import {
-  DOCS_PATH,
-  GITHUB_REPOSITORY_URL,
-  MARKETPLACE_PATH,
-} from '../site'
+import { withBase } from "vitepress";
+import { DOCS_PATH, GITHUB_REPOSITORY_URL, MARKETPLACE_PATH } from "../site";
 
 const links = [
-  { label: 'Documentation', href: withBase(DOCS_PATH), external: false },
-  { label: 'Marketplace', href: MARKETPLACE_PATH, external: false, hardNavigation: true },
-  { label: 'GitHub', href: GITHUB_REPOSITORY_URL, external: true },
-]
+  { label: "Documentation", href: withBase(DOCS_PATH), external: false },
+  {
+    label: "Marketplace",
+    href: MARKETPLACE_PATH,
+    external: false,
+    hardNavigation: true,
+  },
+  { label: "GitHub", href: GITHUB_REPOSITORY_URL, external: true },
+];
 </script>
 
 <template>
@@ -23,7 +24,9 @@ const links = [
           v-for="link in links"
           :key="link.label"
           :href="link.href"
-          :target="link.external ? '_blank' : link.hardNavigation ? '_self' : undefined"
+          :target="
+            link.external ? '_blank' : link.hardNavigation ? '_self' : undefined
+          "
           :rel="link.external ? 'noreferrer' : undefined"
         >
           {{ link.label }}

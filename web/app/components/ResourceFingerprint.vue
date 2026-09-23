@@ -1,18 +1,22 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { FINGERPRINT_SIDE, fingerprintCells, shortDigest } from '~/lib/presentation'
+import { computed } from "vue";
+import {
+  FINGERPRINT_SIDE,
+  fingerprintCells,
+  shortDigest,
+} from "~/lib/presentation";
 
 type Props = {
-  digest: string
+  digest: string;
   /** Rendered size in px. The mark is a square. */
-  size?: number
-}
+  size?: number;
+};
 
-const props = withDefaults(defineProps<Props>(), { size: 26 })
+const props = withDefaults(defineProps<Props>(), { size: 26 });
 
 // Weights arrive already quantized, and are used as opacity directly. The mark
 // is ink-only so it never competes with a verdict colour.
-const cells = computed(() => fingerprintCells(props.digest))
+const cells = computed(() => fingerprintCells(props.digest));
 </script>
 
 <template>
@@ -38,5 +42,10 @@ const cells = computed(() => fingerprintCells(props.digest))
     />
   </svg>
   <!-- No digest, no mark: an invented one would imply an identity we do not have. -->
-  <span v-else :style="{ width: `${size}px`, height: `${size}px` }" class="shrink-0" aria-hidden="true" />
+  <span
+    v-else
+    :style="{ width: `${size}px`, height: `${size}px` }"
+    class="shrink-0"
+    aria-hidden="true"
+  />
 </template>
