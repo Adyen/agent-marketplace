@@ -13,28 +13,16 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
-
-func addTransientOrganizationMarketplaceProvisional(opts *config.LoadEffectiveOptions) (string, bool, error) {
-	orgPath := opts.OrganizationPath
-	if orgPath == "" {
-		orgPath = config.OrganizationConfigPath()
-	}
-	layer, data, missing, err := marketplacelock.OrganizationProvisional(orgPath)
-	if err != nil || !missing {
-		return "", false, err
-	}
-	opts.OrganizationRuntimeLock = data
-	return layer.LockPath, true, nil
-}
 
 func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) (int, error) {
 	layers, overlays, err := missingMarketplaceLockLayers(repoRoot, localDir, selected)
 	if err != nil || len(layers) == 0 {
 		return 0, err
 	}
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir, FileOverlays: overlays})
+	ec := pipeline.LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir, FileOverlays: overlays}, policy)
 	if len(ec.Errors) > 0 {
 		return 0, errors.Join(ec.Errors...)
 	}

@@ -255,10 +255,10 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 	// Load the effective configuration once to validate config versions and resolve
 	// the registry allowlist before mutating any config files.
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{
+	ec := LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
 		RepoRoot:       repoRoot,
 		LocalConfigDir: opts.LocalConfigDir,
-	})
+	}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}
@@ -302,11 +302,11 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				return nil, err
 			}
 		}
-		ec = config.LoadEffective(ctx, config.LoadEffectiveOptions{
+		ec = LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
 			RepoRoot:       repoRoot,
 			LocalConfigDir: opts.LocalConfigDir,
 			FileOverlays:   overlays,
-		})
+		}, nil)
 		if len(ec.Errors) > 0 {
 			return nil, errors.Join(ec.Errors...)
 		}
@@ -672,10 +672,10 @@ func prepareInstallDiscovery(ctx context.Context, opts *InstallOptions) (Prepare
 func loadInstallDiscoveryConfig(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig) (*config.Config, error) {
 	if ec == nil {
 		ec = new(config.EffectiveConfig)
-		*ec = config.LoadEffective(ctx, config.LoadEffectiveOptions{
+		*ec = LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
 			RepoRoot:       opts.RepoRoot,
 			LocalConfigDir: opts.LocalConfigDir,
-		})
+		}, nil)
 	}
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
@@ -992,10 +992,10 @@ func pathBase(p string) string {
 func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, kind ir.ResourceKind, hasKind bool, ec *config.EffectiveConfig) (result *InstallResult, retErr error) {
 	if ec == nil {
 		ec = new(config.EffectiveConfig)
-		*ec = config.LoadEffective(ctx, config.LoadEffectiveOptions{
+		*ec = LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
 			RepoRoot:       opts.RepoRoot,
 			LocalConfigDir: opts.LocalConfigDir,
-		})
+		}, nil)
 	}
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
@@ -1087,11 +1087,11 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			return nil, err
 		}
 	}
-	*ec = config.LoadEffective(ctx, config.LoadEffectiveOptions{
+	*ec = LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
 		RepoRoot:       repoRoot,
 		LocalConfigDir: opts.LocalConfigDir,
 		FileOverlays:   overlays,
-	})
+	}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}
