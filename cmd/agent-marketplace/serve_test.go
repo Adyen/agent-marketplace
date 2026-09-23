@@ -52,6 +52,20 @@ func TestServeRejectsUnsupportedRole(t *testing.T) {
 	}
 }
 
+func TestServeArtifactProofBackfillRequiresConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	cmd := newServeBackfillArtifactProofsCmd()
+	cmd.SetArgs(nil)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "config") {
+		t.Fatalf("missing config error = %v", err)
+	}
+}
+
 func TestServeRejectsDigestOnlyRevisionRevocation(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

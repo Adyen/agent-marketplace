@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -642,6 +643,33 @@ func TestClientRejectsInvalidArtifactDigest(t *testing.T) {
 		if _, err := c.GetArtifact(context.Background(), digest); err == nil {
 			t.Fatalf("GetArtifact(%q) succeeded", digest)
 		}
+		if _, err := c.GetArtifactProof(context.Background(), digest); err == nil {
+			t.Fatalf("GetArtifactProof(%q) succeeded", digest)
+		}
+	}
+}
+
+func TestClientGetsArtifactProofFromDistinctRoute(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	proof := []byte("proof bytes")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/artifact-proofs/sha256/"+strings.Repeat("a", 64) {
+			t.Fatalf("request path = %q", r.URL.Path)
+		}
+		_, _ = w.Write(proof)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.GetArtifactProof(context.Background(), digest)
+	if err != nil {
+		t.Fatalf("GetArtifactProof: %v", err)
+	}
+	if !bytes.Equal(got, proof) {
+		t.Fatalf("proof = %q, want %q", got, proof)
 	}
 }
 

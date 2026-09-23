@@ -5,6 +5,7 @@ import (
 	"context"
 	"testing"
 
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 )
@@ -31,8 +32,17 @@ func TestBuildResourceArtifact(t *testing.T) {
 	if len(result.RawArchive) == 0 {
 		t.Fatal("expected raw archive")
 	}
+	if len(result.ProofArchive) == 0 {
+		t.Fatal("expected proof archive")
+	}
 	if result.ContentDigest == "" || result.ArchiveDigest == "" {
 		t.Fatal("expected content and archive digests")
+	}
+	if got := hccartifact.ArchiveDigest(result.ProofArchive); got != result.ArchiveDigest {
+		t.Fatalf("proof digest = %s, want %s", got, result.ArchiveDigest)
+	}
+	if _, err := hccartifact.DecodeProof(result.ProofArchive, result.ArchiveDigest, nil); err != nil {
+		t.Fatalf("DecodeProof: %v", err)
 	}
 	if result.RevisionDigest == "" {
 		t.Fatal("expected revision digest")

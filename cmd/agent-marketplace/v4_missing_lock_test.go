@@ -815,7 +815,7 @@ func newV4MarketplaceLockServerWithOptions(t *testing.T, instanceID, resourceNam
 	}
 	canonical.Manifest.RegistryID = "src"
 	canonical.Manifest.RegistrySlug = "tools"
-	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	raw, proof, archiveDigest, err := hccartifact.EncodeWithProof(canonical)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -839,6 +839,9 @@ func newV4MarketplaceLockServerWithOptions(t *testing.T, instanceID, resourceNam
 			_ = json.NewEncoder(w).Encode(registry)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/"+resourceName) || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"+resourceName):
 			_ = json.NewEncoder(w).Encode(revision)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/artifact-proofs/"):
+			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact-proof.v1.tar+gzip")
+			_, _ = w.Write(proof)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/"):
 			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
 			_, _ = w.Write(raw)

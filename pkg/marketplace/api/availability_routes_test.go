@@ -75,7 +75,7 @@ func managedRouteFixture(t *testing.T) (*Server, *availabilityRouteStore, admin.
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifactData, archive, err := hccartifact.Encode(artifact)
+	artifactData, proofData, archive, err := hccartifact.EncodeWithProof(artifact)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,10 @@ func managedRouteFixture(t *testing.T) (*Server, *availabilityRouteStore, admin.
 		t.Fatal(err)
 	}
 	blobs := fsblob.New(t.TempDir())
-	uploads := map[string][]byte{archive: artifactData, projection.Manifest.ManifestDigest: projection.Payload, manifestDigest: manifest}
+	uploads := map[string][]byte{
+		archive: artifactData, string(store.ArtifactProofBlobKey(store.ArchiveDigest(archive))): proofData,
+		projection.Manifest.ManifestDigest: projection.Payload, manifestDigest: manifest,
+	}
 	for digest, body := range projection.Bodies {
 		uploads[digest] = body
 	}
@@ -114,6 +117,7 @@ func managedRouteFixture(t *testing.T) (*Server, *availabilityRouteStore, admin.
 	mux.HandleFunc("/api/v1/resources/", server.handleResources)
 	mux.HandleFunc("/api/v1/registries/", server.handleRegistries)
 	mux.HandleFunc("/api/v1/artifacts/", server.handleArtifacts)
+	mux.HandleFunc("/api/v1/artifact-proofs/", server.handleArtifactProofs)
 	mux.HandleFunc("/api/v1/inspection/", server.handleInspectionDigest)
 	mux.HandleFunc("/api/v1/content/", server.handleContentDigest)
 	mux.HandleFunc("/api/v1/manifests/", server.handleManifests)
@@ -123,7 +127,7 @@ func managedRouteFixture(t *testing.T) (*Server, *availabilityRouteStore, admin.
 	resource := "/api/v1/resources/source/mcpserver/example"
 	exact := resource + "/revisions/" + string(intrinsic.ContentDigest)
 	bodyDigest := projection.Manifest.Files[0].ContentDigest
-	paths := []string{resource, resource + "/revisions", exact, exact + "/inspection", exact + "/inspection/content", exact + "/inspection/content/" + bodyDigest, "/api/v1/artifacts/" + strings.Replace(archive, ":", "/", 1), "/api/v1/inspection/" + strings.Replace(projection.Manifest.ManifestDigest, ":", "/", 1), "/api/v1/content/" + strings.Replace(bodyDigest, ":", "/", 1), "/api/v1/manifests/" + manifestDigest}
+	paths := []string{resource, resource + "/revisions", exact, exact + "/inspection", exact + "/inspection/content", exact + "/inspection/content/" + bodyDigest, "/api/v1/artifacts/" + strings.Replace(archive, ":", "/", 1), "/api/v1/artifact-proofs/" + strings.Replace(archive, ":", "/", 1), "/api/v1/inspection/" + strings.Replace(projection.Manifest.ManifestDigest, ":", "/", 1), "/api/v1/content/" + strings.Replace(bodyDigest, ":", "/", 1), "/api/v1/manifests/" + manifestDigest}
 	paths = append(paths, "/api/v1/registries/source/occurrences/"+adapter.occurrence.Commit)
 	return server, adapter, snapshot, server.availabilityHandler(mux), paths
 }

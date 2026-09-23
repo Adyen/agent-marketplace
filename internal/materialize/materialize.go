@@ -825,10 +825,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			result.Artifacts, compiledSkillArtifacts, installDirRel = splitSkillArtifacts(w.target, w.skill.Name, result.Artifacts)
 			installDirRel = machineSkillInstallDirRel(w.target, w.machineScope, installDirRel)
 			if len(compiledSkillArtifacts) > 0 {
-				sourceDir := materializationSourcePath(w.skill)
-				if info, err := os.Stat(sourceDir); err == nil && !info.IsDir() {
-					sourceDir = filepath.Dir(sourceDir)
-				}
+				sourceDir := skillSupportSourceDir(w.skill)
 				addSkillLink(skillLinks, key, installDirRel, skillLink{
 					name:      w.skill.Name,
 					target:    cachedSkillDir(w.target, w.skill, compiledSkillArtifacts),
@@ -2071,6 +2068,23 @@ func cachedResourceDir(target hcc.Target, kind ir.ResourceKind, s resolver.Resol
 	}, "\x00")
 	sum := sha256.Sum256([]byte(key))
 	return filepath.Join(cache.CacheDir(), "compiled", string(target), hex.EncodeToString(sum[:])[:16], kind.String(), s.Name)
+}
+
+func skillSupportSourceDir(resolved resolver.ResolvedArtifact) string {
+	if isMarketplaceCacheArchive(resolved) {
+		// Marketplace cache directories contain protocol evidence, not source
+		// support files. Canonical assets are carried in the archive itself.
+		return ""
+	}
+	sourceDir := materializationSourcePath(resolved)
+	if info, err := os.Stat(sourceDir); err == nil && !info.IsDir() {
+		return filepath.Dir(sourceDir)
+	}
+	return sourceDir
+}
+
+func isMarketplaceCacheArchive(resolved resolver.ResolvedArtifact) bool {
+	return resolved.IsMarketplace && strings.HasSuffix(filepath.Base(resolved.Path), ".tar.gz")
 }
 
 func cachedPlanDir(target hcc.Target, machineScope bool, outDir, reportPrefix string, _ []artifact.Artifact) string {

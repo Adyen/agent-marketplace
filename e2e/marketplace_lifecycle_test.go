@@ -223,14 +223,14 @@ func TestMarketplacePinRemainsExactUntilUpdateAndWorksOffline(t *testing.T) {
 
 func TestMarketplaceInstallArtifactFailureIsTransactional(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("transactional", false))
-	var artifactRequests atomic.Int32
-	var failArtifact atomic.Bool
-	failArtifact.Store(true)
+	var proofRequests atomic.Int32
+	var failProof atomic.Bool
+	failProof.Store(true)
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") {
-			artifactRequests.Add(1)
-			if failArtifact.Load() {
-				http.Error(w, "artifact unavailable", http.StatusBadGateway)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/artifact-proofs/") {
+			proofRequests.Add(1)
+			if failProof.Load() {
+				http.Error(w, "artifact proof unavailable", http.StatusBadGateway)
 				return
 			}
 		}
@@ -241,14 +241,14 @@ func TestMarketplaceInstallArtifactFailureIsTransactional(t *testing.T) {
 	before := consumer.ReadFile("/workspace/.agents/config.yaml")
 
 	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
-	if result.ExitCode == 0 || artifactRequests.Load() != 1 {
-		t.Fatalf("failed artifact install = exit %d, requests %d:\n%s", result.ExitCode, artifactRequests.Load(), result.Combined)
+	if result.ExitCode == 0 || proofRequests.Load() != 1 {
+		t.Fatalf("failed artifact install = exit %d, proof requests %d:\n%s", result.ExitCode, proofRequests.Load(), result.Combined)
 	}
 	if after := consumer.ReadFile("/workspace/.agents/config.yaml"); after != before {
 		t.Fatalf("failed install mutated config:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 	consumer.AssertFileAbsent("/workspace/.factory/skills/skill-one")
-	failArtifact.Store(false)
+	failProof.Store(false)
 	result = consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("install did not recover after artifact became available (exit %d):\n%s", result.ExitCode, result.Combined)

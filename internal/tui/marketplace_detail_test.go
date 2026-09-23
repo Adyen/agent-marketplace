@@ -14,6 +14,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -127,15 +128,43 @@ func writeVerifiedArtifact(t *testing.T, kind, name string, payload []byte, asse
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(t.TempDir(), "artifacts", strings.ReplaceAll(digest, ":", "_"))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	cache := marketplace.NewCache(t.TempDir())
+	path, err := cache.WriteArtifact(digest, raw)
+	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, marketplaceArtifactName)
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
+	if err := cache.MarkArtifactVerified(digest); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, marketplaceVerifiedMarker), []byte("ok"), 0o644); err != nil {
+	return path
+}
+
+func writeVerifiedProofArtifact(t *testing.T, kind, name string, payload []byte, assets map[string][]byte) string {
+	t.Helper()
+	ca := hccartifact.CanonicalArtifact{
+		Manifest: hccartifact.CanonicalManifest{
+			SchemaVersion:    hccartifact.CanonicalArtifactSchemaV1,
+			ArtifactVersion:  hccartifact.CanonicalArtifactSchemaV1,
+			Kind:             kind,
+			Name:             name,
+			Revision:         "rev-1",
+			ContentDigest:    hccartifact.ContentDigest(payload),
+			Provenance:       hccartifact.CanonicalProvenance{Generator: "test"},
+			SupportedSchemas: []string{hccartifact.CanonicalArtifactSchemaV1},
+		},
+		Payload: payload,
+		Assets:  assets,
+	}
+	_, proof, digest, err := hccartifact.EncodeWithProof(ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := marketplace.NewCache(t.TempDir())
+	path, err := cache.WriteArtifactProof(digest, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkArtifactProofVerified(digest); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -193,6 +222,22 @@ func TestInstalledMarketplaceArchiveOpensVerifiedBundle(t *testing.T) {
 	// The cache container itself must never be browsable.
 	if contains(out, "verified.marker") || contains(out, "artifact.tar.gz") {
 		t.Fatalf("archive preview leaked cache container details:\n%s", out)
+	}
+}
+
+func TestInstalledMarketplaceProofOpensVerifiedBundle(t *testing.T) {
+	payload := []byte(`{"name":"review","description":"review proof"}`)
+	proofPath := writeVerifiedProofArtifact(t, "skill", "review", payload, nil)
+	m := modelWithSelectedRow(t, installedMarketplaceRow(ir.KindSkill, "review", proofPath))
+
+	m, cmd := enterDetail(t, m)
+	if m.bundle == nil || cmd == nil {
+		t.Fatalf("installed proof did not open a bundle; viewport:\n%s", ansi.Strip(m.detailViewport.View()))
+	}
+	msg := cmd().(detailContentMsg)
+	updated, _ := m.Update(msg)
+	if out := ansi.Strip(updated.(Model).detailViewport.View()); !contains(out, "review proof") {
+		t.Fatalf("proof preview did not render verified payload:\n%s", out)
 	}
 }
 

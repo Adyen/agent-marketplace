@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -190,7 +191,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 	sourceRef := "refs/heads/main"
 	artifact.Manifest.RegistryID = "src"
 	artifact.Manifest.Revision = sourceRef
-	raw, archiveDigest, err := hccartifact.Encode(artifact)
+	raw, proof, archiveDigest, err := hccartifact.EncodeWithProof(artifact)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
@@ -206,7 +207,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
 	})
 
-	var requestCount int
+	var requestCount, artifactRequests, proofRequests int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
@@ -219,6 +220,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 	})
 	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
+		artifactRequests++
 		expected := "sha256/" + strings.TrimPrefix(archiveDigest, "sha256:")
 		if !strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/"+expected) {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -226,6 +228,17 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
 		_, _ = w.Write(raw)
+	})
+	mux.HandleFunc("/api/v1/artifact-proofs/", func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		proofRequests++
+		expected := "sha256/" + strings.TrimPrefix(archiveDigest, "sha256:")
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/artifact-proofs/"+expected) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact-proof.v1.tar+gzip")
+		_, _ = w.Write(proof)
 	})
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
@@ -280,8 +293,11 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 	if strings.Contains(art.CatalogKey, strings.ToUpper(server.URL)) || !strings.Contains(art.CatalogKey, server.URL) {
 		t.Fatalf("catalog key = %q, want canonical endpoint", art.CatalogKey)
 	}
-	if art.Path != cache.ArtifactPath(archiveDigest) {
-		t.Fatalf("artifact path = %q, want archive-digest cache path %q", art.Path, cache.ArtifactPath(archiveDigest))
+	if art.Path != cache.ArtifactProofPath(archiveDigest) {
+		t.Fatalf("artifact path = %q, want proof cache path %q", art.Path, cache.ArtifactProofPath(archiveDigest))
+	}
+	if artifactRequests != 0 || proofRequests != 1 {
+		t.Fatalf("artifact/proof requests = %d/%d, want 0/1", artifactRequests, proofRequests)
 	}
 
 	// An equivalent lowercase, slashless configuration must reuse the same
@@ -358,6 +374,180 @@ func TestResolverDoesNotMarkArtifactVerifiedBeforeResourceDecode(t *testing.T) {
 		t.Fatalf("ReadArtifact: %v", err)
 	} else if verified {
 		t.Fatal("artifact was marked verified before resource decode completed")
+	}
+}
+
+func TestResolverDoesNotFallbackFromInvalidProof(t *testing.T) {
+	cache := NewCache(t.TempDir())
+	resource := ir.NewSkill("review", "Review code", "body", nil, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.Revision = contentDigest
+	_, proof, archiveDigest, err := hccartifact.EncodeWithProof(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof[len(proof)-1] ^= 0xff
+	rev := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+
+	var artifactRequests int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(rev) })
+	mux.HandleFunc("/api/v1/artifact-proofs/", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(proof) })
+	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, _ *http.Request) {
+		artifactRequests++
+		http.Error(w, "must not downgrade", http.StatusInternalServerError)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
+		}},
+	}}}
+	resolved, errs := (&Resolver{Cache: cache}).Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeRefresh)
+	if len(resolved) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "artifact proof digest mismatch") {
+		t.Fatalf("invalid proof result = %d artifacts, errors %v", len(resolved), errs)
+	}
+	if artifactRequests != 0 {
+		t.Fatalf("invalid proof caused %d legacy artifact requests", artifactRequests)
+	}
+}
+
+func TestResolverFallsBackOnlyWhenProofIsNotFound(t *testing.T) {
+	resource := ir.NewSkill("review", "Review code", "body", nil, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.Revision = contentDigest
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+
+	for _, tc := range []struct {
+		name                 string
+		proofStatus          int
+		cacheUnverifiedProof bool
+		wantResolved         bool
+		wantArtifactGets     int
+	}{
+		{name: "not found", proofStatus: http.StatusNotFound, wantResolved: true, wantArtifactGets: 1},
+		{name: "cached unverified proof then not found", proofStatus: http.StatusNotFound, cacheUnverifiedProof: true, wantResolved: true, wantArtifactGets: 1},
+		{name: "server failure", proofStatus: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var artifactRequests int
+			mux := http.NewServeMux()
+			mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
+			mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(rev) })
+			mux.HandleFunc("/api/v1/artifact-proofs/", func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, http.StatusText(tc.proofStatus), tc.proofStatus)
+			})
+			mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, _ *http.Request) {
+				artifactRequests++
+				_, _ = w.Write(raw)
+			})
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+				URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+					RegistryID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
+				}},
+			}}}
+			cache := NewCache(t.TempDir())
+			if tc.cacheUnverifiedProof {
+				if _, err := cache.WriteArtifactProof(archiveDigest, []byte("interrupted proof write")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			resolved, errs := (&Resolver{Cache: cache}).Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeRefresh)
+			if tc.wantResolved {
+				if len(resolved) != 1 || len(errs) != 0 {
+					t.Fatalf("resolve = %d artifacts, errors %v", len(resolved), errs)
+				}
+			} else if len(resolved) != 0 || len(errs) != 1 {
+				t.Fatalf("resolve = %d artifacts, errors %v", len(resolved), errs)
+			}
+			if artifactRequests != tc.wantArtifactGets {
+				t.Fatalf("legacy artifact requests = %d, want %d", artifactRequests, tc.wantArtifactGets)
+			}
+		})
+	}
+}
+
+func TestResolverRefreshSelfHealsCachedLegacyArchiveAcrossCompressors(t *testing.T) {
+	resource := ir.NewSkill("review", "Review code", "body", nil, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.Revision = contentDigest
+	raw, proof, archiveDigest, err := hccartifact.EncodeWithProof(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Clone(raw)
+	raw[9] ^= 1 // Preserve decoded content while simulating another gzip encoder.
+	rev := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+
+	var proofRequests int
+	mux := http.NewServeMux()
+	serveWellKnown(mux, "mp")
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(rev) })
+	mux.HandleFunc("/api/v1/artifact-proofs/", func(w http.ResponseWriter, _ *http.Request) {
+		proofRequests++
+		_, _ = w.Write(proof)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	cache := NewCache(t.TempDir())
+	if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
+		}},
+	}}}
+	resolved, errs := (&Resolver{Cache: cache}).Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeRefresh)
+	if len(resolved) != 1 || len(errs) != 0 {
+		t.Fatalf("resolve = %d artifacts, errors %v", len(resolved), errs)
+	}
+	if proofRequests != 1 {
+		t.Fatalf("proof requests = %d, want 1", proofRequests)
+	}
+	if resolved[0].Path != cache.ArtifactProofPath(archiveDigest) {
+		t.Fatalf("resolved path = %q, want proof path", resolved[0].Path)
 	}
 }
 

@@ -44,6 +44,9 @@ All routes are `GET` or `HEAD` only; other methods return `405 Method Not Allowe
 - `GET /api/v1/inspection/sha256/{digest}`: immutable inspection manifest. `{digest}` is 64 lowercase hex characters.
 - `GET /api/v1/content/sha256/{digest}`: allowlisted inspection file. `{digest}` is 64 lowercase hex characters.
 - `GET /api/v1/artifacts/sha256/{digest}`: canonical artifact bytes. `{digest}` is 64 lowercase hex characters.
+- `GET /api/v1/artifact-proofs/sha256/{digest}`: retained placeholder-form proof bytes for the same v1 artifact digest. `{digest}` is 64 lowercase hex characters. The route applies the same ownership, assessment, and revocation checks as the artifact route.
+
+Servers that provide proof archives advertise the `artifact-proof-v1` feature. A client verifies the proof bytes directly against the requested legacy `archive_digest`; this avoids reproducing toolchain-dependent gzip bytes. A `404` means that this optional proof is unavailable and a compatible client may request the legacy artifact route instead. Other proof errors are terminal and must not trigger a downgrade.
 
 ## Browser routes
 

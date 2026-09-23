@@ -448,74 +448,106 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	}
 
 	archiveDigest := string(rev.ArchiveDigest)
-	raw, verified, err := cache.ReadArtifact(archiveDigest)
+	evidence, err := cache.ReadArtifactEvidence(archiveDigest)
 	if err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("read cached artifact: %w", err)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("read cached artifact evidence: %w", err)
 	}
+	raw, verified, useProof := evidence.Raw, evidence.Verified, evidence.Proof
 	if mode == resolver.MarketplaceResolveModeCachedNoFetch && (!verified || raw == nil) {
 		if raw == nil {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verified artifact is missing from cache")
 		}
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached artifact is not verified")
 	}
+	fetchEvidence := func() ([]byte, bool, error) {
+		slog.Debug("marketplace fetching artifact proof", "url", entry.URL, "registry", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "archive_digest", rev.ArchiveDigest)
+		fetched, fetchErr := client.GetArtifactProof(ctx, archiveDigest)
+		if fetchErr == nil {
+			if _, writeErr := cache.WriteArtifactProof(archiveDigest, fetched); writeErr != nil {
+				return nil, false, fmt.Errorf("write artifact proof cache: %w", writeErr)
+			}
+			return fetched, true, nil
+		}
+		var apiErr *APIError
+		if !errors.As(fetchErr, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+			return nil, false, fmt.Errorf("fetch artifact proof: %w", fetchErr)
+		}
+		slog.Debug("marketplace artifact proof unavailable, using legacy archive", "url", entry.URL, "registry", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "archive_digest", rev.ArchiveDigest)
+		fetched, fetchErr = client.GetArtifact(ctx, archiveDigest)
+		if fetchErr != nil {
+			return nil, false, fmt.Errorf("fetch artifact: %w", fetchErr)
+		}
+		if _, writeErr := cache.WriteArtifact(archiveDigest, fetched); writeErr != nil {
+			return nil, false, fmt.Errorf("write artifact cache: %w", writeErr)
+		}
+		return fetched, false, nil
+	}
 	if !verified || raw == nil {
 		if mode == resolver.MarketplaceResolveModeCached {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("artifact not in cache")
 		}
-		slog.Debug("marketplace fetching artifact", "url", entry.URL, "registry", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "archive_digest", rev.ArchiveDigest)
-		raw, err = client.GetArtifact(ctx, archiveDigest)
+		raw, useProof, err = fetchEvidence()
 		if err != nil {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("fetch artifact: %w", err)
-		}
-		if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("write artifact cache: %w", err)
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 		}
 		verified = false
 	}
 
-	ca, caRaw, err := hccartifact.Decode(bytes.NewReader(raw))
+	invalidate := func() {
+		if useProof {
+			cache.InvalidateArtifactProofVerified(archiveDigest)
+		} else {
+			cache.InvalidateArtifactVerified(archiveDigest)
+		}
+	}
+	ca, err := hccartifact.DecodeVerified(raw, archiveDigest, useProof, nil)
+	if err != nil && verified && !useProof && mode == resolver.MarketplaceResolveModeRefresh &&
+		(errors.Is(err, hccartifact.ErrArchiveDigestMismatch) || errors.Is(err, hccartifact.ErrArchiveBytesMismatch)) {
+		cache.InvalidateArtifactVerified(archiveDigest)
+		raw, useProof, err = fetchEvidence()
+		if err == nil {
+			verified = false
+			ca, err = hccartifact.DecodeVerified(raw, archiveDigest, useProof, nil)
+		}
+	}
 	if err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode artifact: %w", err)
-	}
-	// Decode only parses the archive. Validate the complete decoded artifact
-	// before any metadata can reach install consent/preview or the cache can be
-	// marked verified; this includes schema, finding severity, and policy outcome.
-	if err := ca.ValidateArchive(nil); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("validate artifact archive: %w", err)
-	}
-	if err := ca.VerifyArchiveDigest(caRaw); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify archive digest: %w", err)
-	}
-	if err := ca.VerifyContentDigest(); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify content digest: %w", err)
+		invalidate()
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify artifact evidence: %w", err)
 	}
 	if err := validateArtifactManifest(entry, pin, rev, ca); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		invalidate()
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 
 	resource, err := hccartifact.DecodeResource(pin.Kind, ca.Payload)
 	if err != nil {
+		invalidate()
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode resource: %w", err)
 	}
 	if err := validateDecodedArtifactIdentity(pin, resource); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		invalidate()
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	if err := validateMirrorSourcePath(resource); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		invalidate()
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
-	artifact.Path = cache.ArtifactPath(archiveDigest)
+	if useProof {
+		artifact.Path = cache.ArtifactProofPath(archiveDigest)
+	} else {
+		artifact.Path = cache.ArtifactPath(archiveDigest)
+	}
 
 	if !verified {
-		if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("mark artifact verified: %w", err)
+		if useProof {
+			err = cache.MarkArtifactProofVerified(archiveDigest)
+		} else {
+			err = cache.MarkArtifactVerified(archiveDigest)
+		}
+		if err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("mark artifact evidence verified: %w", err)
 		}
 	}
 	return artifact, ca, nil

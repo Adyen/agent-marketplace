@@ -28,7 +28,17 @@ const (
 	CanonicalArtifactSchemaV1 = "v1"
 	ContentDigestPrefix       = "sha256"
 	archiveDigestValueLen     = 71 // len("sha256:") + 64 hex characters
-	archiveDigestPlaceholder  = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	// archiveDigestPlaceholder is the manifest value embedded in a canonical
+	// proof archive. The SHA-256 of those exact proof bytes is the artifact's
+	// existing v1 archive digest.
+	archiveDigestPlaceholder = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+)
+
+var (
+	ErrArchiveDigestMismatch = errors.New("artifact archive digest mismatch")
+	ErrArchiveBytesMismatch  = errors.New("artifact archive bytes mismatch")
+	ErrInvalidProof          = errors.New("invalid artifact proof")
+	ErrProofDigestMismatch   = errors.New("artifact proof digest mismatch")
 )
 
 // CanonicalArtifact is the in-memory representation of a deterministic,
@@ -120,8 +130,17 @@ func isDigestFormat(s string) bool {
 // This breaks the self-referential cycle: the final archive carries the real
 // digest, but verification recomputes the digest over the placeholder form.
 func Encode(a CanonicalArtifact) ([]byte, string, error) {
+	raw, _, digest, err := EncodeWithProof(a)
+	return raw, digest, err
+}
+
+// EncodeWithProof serializes a CanonicalArtifact and returns both its normal
+// v1 archive and the exact placeholder-form archive whose SHA-256 is the
+// archive digest. Retaining the proof lets clients verify v1 identity without
+// reproducing the producer's compressor output.
+func EncodeWithProof(a CanonicalArtifact) ([]byte, []byte, string, error) {
 	if err := a.Manifest.Validate(); err != nil {
-		return nil, "", fmt.Errorf("invalid manifest: %w", err)
+		return nil, nil, "", fmt.Errorf("invalid manifest: %w", err)
 	}
 
 	// 1. Encode with the placeholder so the digest field length stays constant.
@@ -129,7 +148,7 @@ func Encode(a CanonicalArtifact) ([]byte, string, error) {
 	canon.Manifest.ArchiveDigest = archiveDigestPlaceholder
 	canonRaw, err := encodeArtifact(canon)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	digest := ArchiveDigest(canonRaw)
 
@@ -138,10 +157,10 @@ func Encode(a CanonicalArtifact) ([]byte, string, error) {
 	final.Manifest.ArchiveDigest = digest
 	raw, err := encodeArtifact(final)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 
-	return raw, digest, nil
+	return raw, canonRaw, digest, nil
 }
 
 type archiveEntry struct {
@@ -280,37 +299,182 @@ func validateArchiveMemberPath(p string) error {
 // Decode reads a canonical artifact archive and returns the parsed artifact plus
 // the raw archive bytes.
 func Decode(r io.Reader) (CanonicalArtifact, []byte, error) {
-	var raw bytes.Buffer
-	tr, err := gzipToTar(io.TeeReader(r, &raw))
+	raw, err := io.ReadAll(r)
 	if err != nil {
 		return CanonicalArtifact{}, nil, err
 	}
+	a, err := decodeBytes(raw, false, nil)
+	return a, raw, err
+}
+
+// DecodeProof verifies and decodes exact placeholder-form v1 proof bytes.
+// Verification hashes the producer's retained canonical bytes before
+// decompression, so it is independent of the client's gzip implementation.
+func DecodeProof(raw []byte, expectedArchiveDigest string, limits *ArchiveLimits) (CanonicalArtifact, error) {
+	if !isDigestFormat(expectedArchiveDigest) || expectedArchiveDigest == archiveDigestPlaceholder {
+		return CanonicalArtifact{}, fmt.Errorf("%w: invalid expected digest", ErrInvalidProof)
+	}
+	if got := ArchiveDigest(raw); got != expectedArchiveDigest {
+		return CanonicalArtifact{}, fmt.Errorf("%w: got %s, want %s", ErrProofDigestMismatch, got, expectedArchiveDigest)
+	}
+	a, err := decodeBytes(raw, true, limits)
+	if err != nil {
+		return CanonicalArtifact{}, fmt.Errorf("%w: %w", ErrInvalidProof, err)
+	}
+	if a.Manifest.ArchiveDigest != archiveDigestPlaceholder {
+		return CanonicalArtifact{}, fmt.Errorf("%w: manifest does not contain the digest placeholder", ErrInvalidProof)
+	}
+	a.rawArchive = nil
+	if err := a.ValidateArchive(limits); err != nil {
+		return CanonicalArtifact{}, fmt.Errorf("%w: %w", ErrInvalidProof, err)
+	}
+	a.Manifest.ArchiveDigest = expectedArchiveDigest
+	return a, nil
+}
+
+// DecodeCanonical verifies the structure and content of canonical v1 archive
+// bytes without requiring the active compressor to reproduce those bytes.
+func DecodeCanonical(raw []byte, limits *ArchiveLimits) (CanonicalArtifact, error) {
+	a, err := decodeBytes(raw, true, limits)
+	if err != nil {
+		return CanonicalArtifact{}, err
+	}
+	a.rawArchive = nil
+	if err := a.ValidateArchive(limits); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	return a, nil
+}
+
+// DecodeVerified decodes and fully verifies either proof bytes or a final v1
+// archive against one expected archive digest.
+func DecodeVerified(raw []byte, expectedArchiveDigest string, proof bool, limits *ArchiveLimits) (CanonicalArtifact, error) {
+	if proof {
+		return DecodeProof(raw, expectedArchiveDigest, limits)
+	}
+	a, err := decodeBytes(raw, false, limits)
+	if err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if a.Manifest.ArchiveDigest != expectedArchiveDigest {
+		return CanonicalArtifact{}, fmt.Errorf("%w: manifest has %s, want %s", ErrArchiveDigestMismatch, a.Manifest.ArchiveDigest, expectedArchiveDigest)
+	}
+	if err := a.ValidateArchive(limits); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	return a, nil
+}
+
+// ReproduceProof derives proof bytes from an existing final v1 archive. It
+// succeeds only when the active compressor reproduces the published bytes
+// exactly, which makes it safe for pre-upgrade backfills.
+func ReproduceProof(raw []byte, expectedArchiveDigest string, limits *ArchiveLimits) ([]byte, error) {
+	if !isDigestFormat(expectedArchiveDigest) {
+		return nil, fmt.Errorf("%w: invalid expected digest", ErrArchiveDigestMismatch)
+	}
+	a, err := decodeBytes(raw, true, limits)
+	if err != nil {
+		return nil, err
+	}
+	if a.Manifest.ArchiveDigest != expectedArchiveDigest {
+		return nil, fmt.Errorf("%w: manifest has %s, want %s", ErrArchiveDigestMismatch, a.Manifest.ArchiveDigest, expectedArchiveDigest)
+	}
+	a.rawArchive = nil
+	if err := a.ValidateArchive(limits); err != nil {
+		return nil, err
+	}
+	reencoded, proof, reproducedDigest, err := EncodeWithProof(a)
+	if err != nil {
+		return nil, err
+	}
+	if reproducedDigest != expectedArchiveDigest {
+		return nil, fmt.Errorf("%w: got %s, want %s", ErrArchiveDigestMismatch, reproducedDigest, expectedArchiveDigest)
+	}
+	if !bytes.Equal(reencoded, raw) {
+		return nil, fmt.Errorf("%w: raw archive bytes do not match canonical archive", ErrArchiveBytesMismatch)
+	}
+	return proof, nil
+}
+
+type archiveMember struct {
+	name string
+	dir  bool
+}
+
+func decodeBytes(raw []byte, strict bool, limits *ArchiveLimits) (CanonicalArtifact, error) {
+	tr, err := gzipToTar(bytes.NewReader(raw))
+	if err != nil {
+		return CanonicalArtifact{}, err
+	}
 
 	var a CanonicalArtifact
+	var seen map[string]struct{}
+	var members []archiveMember
+	if strict {
+		seen = make(map[string]struct{})
+	}
+	maxTotalBytes := int64(0)
+	maxTotalFiles := int64(0)
+	if limits == nil {
+		defaults := DefaultArchiveLimits()
+		maxTotalBytes = defaults.MaxTotalBytes
+		maxTotalFiles = defaults.MaxTotalFiles
+	} else {
+		maxTotalBytes = limits.MaxTotalBytes
+		maxTotalFiles = limits.MaxTotalFiles
+	}
+	var totalBytes int64
+	var totalFiles int64
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return CanonicalArtifact{}, nil, fmt.Errorf("tar next: %w", err)
+			return CanonicalArtifact{}, fmt.Errorf("tar next: %w", err)
 		}
 
 		name, err := validateTarHeaderPath(hdr.Name)
 		if err != nil {
-			return CanonicalArtifact{}, nil, err
+			return CanonicalArtifact{}, err
+		}
+		if strict {
+			if _, ok := seen[name]; ok {
+				return CanonicalArtifact{}, fmt.Errorf("duplicate tar entry: %s", name)
+			}
+			seen[name] = struct{}{}
 		}
 
 		switch hdr.Typeflag {
 		case tar.TypeReg:
+			if name != CanonicalManifestPath {
+				totalFiles++
+				if maxTotalFiles > 0 && totalFiles > maxTotalFiles {
+					return CanonicalArtifact{}, fmt.Errorf("total files exceeds max %d", maxTotalFiles)
+				}
+			}
+			if strict && name != CanonicalManifestPath {
+				switch path.Dir(name) {
+				case CanonicalPayloadDir, CanonicalAssetsDir, CanonicalLicensesDir:
+				default:
+					return CanonicalArtifact{}, fmt.Errorf("unexpected tar entry: %s", name)
+				}
+			}
+			if maxTotalBytes > 0 && (hdr.Size < 0 || hdr.Size > maxTotalBytes-totalBytes) {
+				return CanonicalArtifact{}, fmt.Errorf("total archive size exceeds max %d", maxTotalBytes)
+			}
 			data, err := safeTarRead(tr, hdr.Size)
 			if err != nil {
-				return CanonicalArtifact{}, nil, fmt.Errorf("read tar body for %s: %w", hdr.Name, err)
+				return CanonicalArtifact{}, fmt.Errorf("read tar body for %s: %w", hdr.Name, err)
+			}
+			totalBytes += int64(len(data))
+			if maxTotalBytes > 0 && totalBytes > maxTotalBytes {
+				return CanonicalArtifact{}, fmt.Errorf("total archive size exceeds max %d", maxTotalBytes)
 			}
 			switch name {
 			case CanonicalManifestPath:
 				if err := json.Unmarshal(data, &a.Manifest); err != nil {
-					return CanonicalArtifact{}, nil, fmt.Errorf("unmarshal manifest: %w", err)
+					return CanonicalArtifact{}, fmt.Errorf("unmarshal manifest: %w", err)
 				}
 			default:
 				dir := path.Dir(name)
@@ -330,17 +494,41 @@ func Decode(r io.Reader) (CanonicalArtifact, []byte, error) {
 					a.Licenses[base] = data
 				}
 			}
+			if strict {
+				members = append(members, archiveMember{name: name})
+			}
 		case tar.TypeDir:
-			// Directories carry no body; membership is implied by file paths.
+			if strict {
+				switch name {
+				case CanonicalPayloadDir, CanonicalAssetsDir, CanonicalLicensesDir:
+					members = append(members, archiveMember{name: name, dir: true})
+				default:
+					return CanonicalArtifact{}, fmt.Errorf("unexpected tar directory: %s", name)
+				}
+			}
 		case tar.TypeLink, tar.TypeSymlink:
-			return CanonicalArtifact{}, nil, fmt.Errorf("tar entry contains link: %s", hdr.Name)
+			return CanonicalArtifact{}, fmt.Errorf("tar entry contains link: %s", hdr.Name)
 		default:
-			return CanonicalArtifact{}, nil, fmt.Errorf("tar entry type %q not allowed: %s", string(hdr.Typeflag), hdr.Name)
+			return CanonicalArtifact{}, fmt.Errorf("tar entry type %q not allowed: %s", string(hdr.Typeflag), hdr.Name)
 		}
 	}
 
-	a.rawArchive = raw.Bytes()
-	return a, raw.Bytes(), nil
+	if strict {
+		expected, err := a.buildEntries()
+		if err != nil {
+			return CanonicalArtifact{}, err
+		}
+		if len(members) != len(expected) {
+			return CanonicalArtifact{}, fmt.Errorf("archive member count %d does not match canonical count %d", len(members), len(expected))
+		}
+		for i := range expected {
+			if members[i].name != expected[i].path || members[i].dir != expected[i].dir {
+				return CanonicalArtifact{}, fmt.Errorf("archive member %d is %q, want %q", i, members[i].name, expected[i].path)
+			}
+		}
+	}
+	a.rawArchive = raw
+	return a, nil
 }
 
 // validateTarHeaderPath rejects absolute paths, parent traversal, and empty names.
@@ -409,7 +597,7 @@ func (a CanonicalArtifact) VerifyArchiveDigest(raw []byte) error {
 	}
 	got := ArchiveDigest(canonRaw)
 	if got != a.Manifest.ArchiveDigest {
-		return fmt.Errorf("archive digest mismatch: got %s, want %s", got, a.Manifest.ArchiveDigest)
+		return fmt.Errorf("%w: got %s, want %s", ErrArchiveDigestMismatch, got, a.Manifest.ArchiveDigest)
 	}
 
 	// When raw bytes are supplied, confirm they are the canonical final archive.
@@ -419,7 +607,7 @@ func (a CanonicalArtifact) VerifyArchiveDigest(raw []byte) error {
 			return fmt.Errorf("re-encode artifact: %w", err)
 		}
 		if !bytes.Equal(actualRaw, raw) {
-			return errors.New("raw archive bytes do not match canonical archive")
+			return fmt.Errorf("%w: raw archive bytes do not match canonical archive", ErrArchiveBytesMismatch)
 		}
 	}
 

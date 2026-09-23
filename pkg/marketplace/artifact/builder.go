@@ -15,6 +15,10 @@ import (
 type BuildResult struct {
 	Artifact   hccartifact.CanonicalArtifact
 	RawArchive []byte
+	// ProofArchive is the exact placeholder-form v1 archive whose SHA-256 is
+	// ArchiveDigest. Clients can verify these retained bytes without
+	// reproducing the producer's compressor output.
+	ProofArchive []byte
 	// ManifestPayload and ManifestDigest are populated for virtual collection
 	// builds. The standalone manifest is the collection revision identity; the
 	// tar archive remains available for the registry-revision artifact.
@@ -64,7 +68,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 	// separately by Marketplace so re-analysis cannot change resource identity.
 	base.Manifest.Capabilities = caps
 
-	raw, digest, err := hccartifact.Encode(base)
+	raw, proof, digest, err := hccartifact.EncodeWithProof(base)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("encode artifact: %w", err)
 	}
@@ -92,6 +96,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		License:        opts.Registry.License,
 		Description:    description,
 		RawArchive:     raw,
+		ProofArchive:   proof,
 		ContentDigest:  base.Manifest.ContentDigest,
 		ArchiveDigest:  digest,
 		RevisionDigest: revisionDigest,

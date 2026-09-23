@@ -24,6 +24,20 @@ type Cache struct {
 	root string
 }
 
+const (
+	ArtifactFileName        = "artifact.tar.gz"
+	ArtifactProofFileName   = "artifact.proof.tar.gz"
+	VerifiedMarkerName      = "verified.marker"
+	ProofVerifiedMarkerName = "proof-verified.marker"
+)
+
+// ArtifactEvidence is the preferred cached representation for one v1 digest.
+type ArtifactEvidence struct {
+	Raw      []byte
+	Verified bool
+	Proof    bool
+}
+
 // IndexOnlyIdentity is the immutable occurrence identity used for index-only
 // cache entries. The acquisition origin is deliberately absent: it is mutable
 // operator metadata and must never make an old origin reachable.
@@ -244,7 +258,8 @@ func removableArtifactDirectory(path string) (bool, error) {
 		return false, nil
 	}
 	for _, entry := range entries {
-		if entry.Name() != "artifact.tar.gz" && entry.Name() != "verified.marker" {
+		if entry.Name() != ArtifactFileName && entry.Name() != ArtifactProofFileName &&
+			entry.Name() != VerifiedMarkerName && entry.Name() != ProofVerifiedMarkerName {
 			return false, nil
 		}
 		info, err := os.Lstat(filepath.Join(path, entry.Name()))
@@ -256,7 +271,7 @@ func removableArtifactDirectory(path string) (bool, error) {
 		}
 	}
 	for _, entry := range entries {
-		if entry.Name() == "artifact.tar.gz" {
+		if entry.Name() == ArtifactFileName || entry.Name() == ArtifactProofFileName {
 			return true, nil
 		}
 	}
@@ -338,13 +353,28 @@ func removeArtifactDirectory(root, path string) error {
 
 // ArtifactPath returns the path for an artifact archive given its digest.
 func (c *Cache) ArtifactPath(digest string) string {
-	return filepath.Join(c.root, "artifacts", safeDigest(digest), "artifact.tar.gz")
+	return filepath.Join(c.root, "artifacts", safeDigest(digest), ArtifactFileName)
+}
+
+// ArtifactProofPath returns the path for a retained placeholder-form proof.
+func (c *Cache) ArtifactProofPath(digest string) string {
+	return filepath.Join(c.root, "artifacts", safeDigest(digest), ArtifactProofFileName)
 }
 
 // IndexOnlyArtifactPath returns the cache path for an artifact reconstructed
 // from one exact registry occurrence.
 func (c *Cache) IndexOnlyArtifactPath(identity IndexOnlyIdentity, digest string) string {
-	return filepath.Join(c.root, "index-only", IndexOnlyKey(identity), "artifacts", safeDigest(digest), "artifact.tar.gz")
+	return filepath.Join(c.root, "index-only", IndexOnlyKey(identity), "artifacts", safeDigest(digest), ArtifactFileName)
+}
+
+// ArtifactDigestFromCachePath maps a cache-owned artifact path back to its
+// canonical digest.
+func ArtifactDigestFromCachePath(path string) (string, bool) {
+	dir := filepath.Base(filepath.Dir(path))
+	if !validArchiveDigestKey(dir) {
+		return "", false
+	}
+	return "sha256:" + strings.TrimPrefix(dir, "sha256-"), true
 }
 
 func (c *Cache) WriteIndexOnlyArtifact(identity IndexOnlyIdentity, digest string, raw []byte) (string, error) {
@@ -412,6 +442,92 @@ func (c *Cache) ReadArtifact(digest string) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("read artifact cache %q: %w", p, err)
 	}
 	return raw, verified, nil
+}
+
+// WriteArtifactProof writes proof bytes without changing the verification
+// evidence for a separately cached final archive.
+func (c *Cache) WriteArtifactProof(digest string, raw []byte) (string, error) {
+	return cache.WithCacheMutationLock(func() (string, error) {
+		p := c.ArtifactProofPath(digest)
+		if err := ensureCacheDirectory(c.root, filepath.Dir(p)); err != nil {
+			return "", fmt.Errorf("prepare artifact proof cache %q: %w", p, err)
+		}
+		if err := writeAtomic(c.root, p, raw, 0o644, proofVerifiedMarkerPath(filepath.Dir(p))); err != nil {
+			return "", fmt.Errorf("write artifact proof cache %q: %w", p, err)
+		}
+		return p, nil
+	})
+}
+
+// ReadArtifactProof reads cached proof bytes and their independent verification
+// marker.
+func (c *Cache) ReadArtifactProof(digest string) ([]byte, bool, error) {
+	p := c.ArtifactProofPath(digest)
+	raw, verified, err := readVerifiedCacheFileWithMarker(c.root, p, proofVerifiedMarkerPath(filepath.Dir(p)))
+	if err != nil {
+		return nil, false, fmt.Errorf("read artifact proof cache %q: %w", p, err)
+	}
+	return raw, verified, nil
+}
+
+// ReadArtifactEvidence prefers a verified proof and otherwise returns the
+// legacy final archive. It reads the final archive only when the proof is not
+// usable.
+func (c *Cache) ReadArtifactEvidence(digest string) (ArtifactEvidence, error) {
+	proofRaw, proofVerified, err := c.ReadArtifactProof(digest)
+	if err != nil {
+		return ArtifactEvidence{}, err
+	}
+	if proofRaw != nil && proofVerified {
+		return ArtifactEvidence{Raw: proofRaw, Verified: true, Proof: true}, nil
+	}
+	finalRaw, finalVerified, err := c.ReadArtifact(digest)
+	if err != nil {
+		return ArtifactEvidence{}, err
+	}
+	if finalRaw != nil {
+		return ArtifactEvidence{Raw: finalRaw, Verified: finalVerified}, nil
+	}
+	return ArtifactEvidence{Raw: proofRaw, Verified: proofVerified, Proof: proofRaw != nil}, nil
+}
+
+// InspectArtifactEvidence reports mirror cache presence and verification
+// without reading archive bytes.
+func (c *Cache) InspectArtifactEvidence(digest string) (present, verified bool, err error) {
+	proofPath := c.ArtifactProofPath(digest)
+	proofPresent, proofVerified, err := inspectVerifiedCacheFile(
+		c.root,
+		proofPath,
+		proofVerifiedMarkerPath(filepath.Dir(proofPath)),
+	)
+	if err != nil || proofVerified {
+		return proofPresent, proofVerified, err
+	}
+	finalPath := c.ArtifactPath(digest)
+	finalPresent, finalVerified, err := inspectVerifiedCacheFile(
+		c.root,
+		finalPath,
+		verifiedMarkerPath(filepath.Dir(finalPath)),
+	)
+	return proofPresent || finalPresent, finalVerified, err
+}
+
+// MarkArtifactProofVerified records successful exact-byte proof validation.
+func (c *Cache) MarkArtifactProofVerified(digest string) error {
+	return cache.WithCacheMutation(func() error {
+		return writeMarker(c.root, proofVerifiedMarkerPath(filepath.Dir(c.ArtifactProofPath(digest))))
+	})
+}
+
+// InvalidateArtifactProofVerified removes proof verification evidence.
+func (c *Cache) InvalidateArtifactProofVerified(digest string) {
+	_ = cache.WithCacheMutation(func() error {
+		dir := filepath.Dir(c.ArtifactProofPath(digest))
+		if err := validateCacheDirectory(c.root, dir); err != nil {
+			return err
+		}
+		return os.Remove(proofVerifiedMarkerPath(dir))
+	})
 }
 
 // MarkArtifactVerified writes a marker indicating the artifact has been
@@ -579,40 +695,57 @@ func (c *Cache) ReadResourceRevision(baseURL, registryID, kind, name, revision s
 	return rev, true, nil
 }
 
-func safeDigest(digest string) string {
-	return strings.NewReplacer(":", "-", "/", "_", "\\", "_").Replace(digest)
-}
+var cacheDigestReplacer = strings.NewReplacer(":", "-", "/", "_", "\\", "_")
+
+func safeDigest(digest string) string { return cacheDigestReplacer.Replace(digest) }
 
 func safePathSegment(s string) string {
 	return url.PathEscape(strings.NewReplacer(string(filepath.Separator), "_").Replace(s))
 }
 
 func verifiedMarkerPath(dir string) string {
-	return filepath.Join(dir, "verified.marker")
+	return filepath.Join(dir, VerifiedMarkerName)
+}
+
+func proofVerifiedMarkerPath(dir string) string {
+	return filepath.Join(dir, ProofVerifiedMarkerName)
 }
 
 // readVerifiedCacheFile validates the cache file and its optional marker before
 // reading. The path checks are intentionally best-effort process-local guards;
 // they are not cross-process or openat-style atomic guarantees.
 func readVerifiedCacheFile(root, path string) ([]byte, bool, error) {
-	exists, err := validateCacheRegularFile(root, path)
+	return readVerifiedCacheFileWithMarker(root, path, verifiedMarkerPath(filepath.Dir(path)))
+}
+
+func readVerifiedCacheFileWithMarker(root, path, marker string) ([]byte, bool, error) {
+	exists, verified, err := inspectVerifiedCacheFile(root, path, marker)
 	if err != nil {
-		return nil, false, fmt.Errorf("validate cache file: %w", err)
+		return nil, false, err
 	}
 	if !exists {
 		return nil, false, nil
-	}
-
-	marker := verifiedMarkerPath(filepath.Dir(path))
-	verified, err := validateCacheRegularFile(root, marker)
-	if err != nil {
-		return nil, false, fmt.Errorf("validate verification marker %q: %w", marker, err)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false, err
 	}
 	return raw, verified, nil
+}
+
+func inspectVerifiedCacheFile(root, path, marker string) (exists, verified bool, err error) {
+	exists, err = validateCacheRegularFile(root, path)
+	if err != nil {
+		return false, false, fmt.Errorf("validate cache file: %w", err)
+	}
+	if !exists {
+		return false, false, nil
+	}
+	verified, err = validateCacheRegularFile(root, marker)
+	if err != nil {
+		return false, false, fmt.Errorf("validate verification marker %q: %w", marker, err)
+	}
+	return true, verified, nil
 }
 
 // validateCacheRegularFile checks a cache file without following symlinks.

@@ -117,11 +117,11 @@ func TestInspectCachedModeReportsVerifiedArtifact(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("write metadata: %v", err)
 	}
-	if _, err := cache.WriteArtifact(archiveDigest, []byte("artifact")); err != nil {
-		t.Fatalf("write artifact: %v", err)
+	if _, err := cache.WriteArtifactProof(archiveDigest, []byte("proof")); err != nil {
+		t.Fatalf("write artifact proof: %v", err)
 	}
-	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
-		t.Fatalf("mark artifact verified: %v", err)
+	if err := cache.MarkArtifactProofVerified(archiveDigest); err != nil {
+		t.Fatalf("mark artifact proof verified: %v", err)
 	}
 
 	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeCached)

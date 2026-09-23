@@ -13,6 +13,7 @@ const (
 	AcquisitionMirror                = "mirror"
 	AcquisitionIndexOnly             = "index-only"
 	CatalogProjectionV1Alpha1Feature = "catalog-projection-v1alpha1"
+	ArtifactProofV1Feature           = "artifact-proof-v1"
 )
 
 // DefaultCapabilities returns the capability block advertised by this version
@@ -24,7 +25,7 @@ func DefaultCapabilities() Capabilities {
 		ArtifactSchemaVersions: []string{ArtifactSchemaVersionV1},
 		ResourceKinds:          SupportedResourceKinds,
 		AcquisitionModes:       []string{AcquisitionIndexOnly, AcquisitionMirror},
-		Features:               []string{"inspection", CatalogProjectionV1Alpha1Feature},
+		Features:               []string{"inspection", CatalogProjectionV1Alpha1Feature, ArtifactProofV1Feature},
 	}
 }
 

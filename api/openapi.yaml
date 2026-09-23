@@ -864,6 +864,33 @@ paths:
                 type: string
                 format: binary
 
+  /api/v1/artifact-proofs/sha256/{digest}:
+    get:
+      operationId: getArtifactProof
+      summary: Download the retained placeholder-form proof for a v1 artifact digest
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          description: Exactly 64 lowercase hexadecimal characters (the sha256 prefix is part of the path).
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Canonical v1 artifact proof tar.gz
+          content:
+            application/vnd.agent-marketplace.artifact-proof.v1.tar+gzip:
+              schema:
+                type: string
+                format: binary
+        "400": { description: Invalid artifact digest path }
+        "403": { description: Artifact is blocked by assessment }
+        "404": { description: Artifact proof not found }
+        "410": { description: Artifact is revoked }
+        "413": { description: Artifact proof exceeds the configured size limit }
+        "500": { description: Artifact proof exists but cannot be validated }
+
   /r/{registry}/{kind}/{name}:
     get:
       operationId: getBrowserResourceLatest

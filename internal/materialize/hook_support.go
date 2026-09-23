@@ -42,7 +42,11 @@ func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[in
 		if w.skill.Resource == nil || w.skill.Resource.Kind() != ir.KindHook {
 			continue
 		}
-		source := hookSupportSource{path: materializationSourcePath(w.skill), target: w.target, harness: w.skill.SourceHarness}
+		sourcePath := materializationSourcePath(w.skill)
+		if isMarketplaceCacheArchive(w.skill) {
+			sourcePath = ""
+		}
+		source := hookSupportSource{path: sourcePath, target: w.target, harness: w.skill.SourceHarness}
 		files, exists := cached[source]
 		if !exists {
 			files = collectHookSupportFiles(source.path, w.target, source.harness)

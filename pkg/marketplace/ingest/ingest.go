@@ -550,7 +550,9 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 
 		if kind != "collection" && registry.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
-			extraBlobs = appendUpload(extraBlobs, store.ArchiveDigest(p.result.ArchiveDigest), p.result.RawArchive)
+			archiveDigest := store.ArchiveDigest(p.result.ArchiveDigest)
+			extraBlobs = appendUpload(extraBlobs, archiveDigest, p.result.RawArchive)
+			extraBlobs = appendUpload(extraBlobs, store.ArtifactProofBlobKey(archiveDigest), p.result.ProofArchive)
 		}
 	}
 
@@ -1133,6 +1135,7 @@ const defaultMaxFindings = 1000
 
 func stripArchive(r *artifact.BuildResult) {
 	r.RawArchive = nil
+	r.ProofArchive = nil
 	r.ArchiveDigest = ""
 }
 
@@ -1253,8 +1256,8 @@ func applyPolicyToResult(r artifact.BuildResult, registryID store.RegistryID, li
 	if !r.Rejected {
 		var stop bool
 		r, stop = applyLicensePolicy(r, registryID, license)
-		if !stop && limits.ArtifactBytes > 0 && len(r.RawArchive) > int(limits.ArtifactBytes) {
-			artifactSize := len(r.RawArchive)
+		artifactSize := max(len(r.RawArchive), len(r.ProofArchive))
+		if !stop && limits.ArtifactBytes > 0 && artifactSize > int(limits.ArtifactBytes) {
 			r.Rejected = true
 			r.Findings = append(r.Findings, analyze.Finding{
 				Code:     analyze.PolicyArtifactTooLarge,

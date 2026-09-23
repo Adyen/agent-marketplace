@@ -23,3 +23,10 @@ func TestMaterializationSourcePathLocalUsesResourceSource(t *testing.T) {
 		t.Fatalf("local source = %q, want %q", got, source)
 	}
 }
+
+func TestSkillSupportSourceDirDoesNotExposeMarketplaceCacheFiles(t *testing.T) {
+	resolved := resolver.ResolvedArtifact{Entry: catalog.Entry{Path: filepath.Join(t.TempDir(), "artifact.proof.tar.gz")}, IsMarketplace: true}
+	if got := skillSupportSourceDir(resolved); got != "" {
+		t.Fatalf("marketplace support source = %q, want empty", got)
+	}
+}

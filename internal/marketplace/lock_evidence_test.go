@@ -33,6 +33,23 @@ func evidenceArtifact(t *testing.T, kind, name string) (raw []byte, archiveDiges
 	return raw, archiveDigest, contentDigest
 }
 
+func evidenceProofArtifact(t *testing.T, kind, name string) (proof []byte, archiveDigest, contentDigest string) {
+	t.Helper()
+	canonical, err := hccartifact.FromIR(ir.NewSkill(name, "Title", "body", nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical.Manifest.Kind = kind
+	contentDigest = canonical.Manifest.ContentDigest
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.Revision = contentDigest
+	_, proof, archiveDigest, err = hccartifact.EncodeWithProof(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proof, archiveDigest, contentDigest
+}
+
 func evidenceRevision(coord store.ResourceCoordinate, contentDigest, archiveDigest string) store.AssessedResourceRevision {
 	return assessedRevision(store.ResourceRevision{
 		Coordinate:    coord,
@@ -44,15 +61,15 @@ func evidenceRevision(coord store.ResourceCoordinate, contentDigest, archiveDige
 func TestVerifiedMarketplaceLockResourceMirror(t *testing.T) {
 	cache := NewCache(t.TempDir())
 	entry := evidenceEntry()
-	raw, archiveDigest, contentDigest := evidenceArtifact(t, "skill", "review")
+	proof, archiveDigest, contentDigest := evidenceProofArtifact(t, "skill", "review")
 	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}
 	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "review", contentDigest, evidenceRevision(coord, contentDigest, archiveDigest)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
+	if _, err := cache.WriteArtifactProof(archiveDigest, proof); err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+	if err := cache.MarkArtifactProofVerified(archiveDigest); err != nil {
 		t.Fatal(err)
 	}
 	pin := config.MarketplaceResourcePin{

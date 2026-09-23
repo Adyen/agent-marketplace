@@ -47,6 +47,17 @@ func BenchmarkCanonicalArtifactEncode(b *testing.B) {
 	}
 }
 
+func BenchmarkCanonicalArtifactEncodeWithProof(b *testing.B) {
+	a := makeBenchmarkArtifact()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, _, err := EncodeWithProof(a); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkCanonicalArtifactDecode(b *testing.B) {
 	a := makeBenchmarkArtifact()
 	raw := a.rawArchive
@@ -54,6 +65,46 @@ func BenchmarkCanonicalArtifactDecode(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, _, err := Decode(bytes.NewReader(raw)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCanonicalArtifactDecodeProof(b *testing.B) {
+	a := makeBenchmarkArtifact()
+	_, proof, digest, err := EncodeWithProof(a)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := DecodeProof(proof, digest, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCanonicalArtifactDecodeCanonical(b *testing.B) {
+	a := makeBenchmarkArtifact()
+	raw := a.rawArchive
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := DecodeCanonical(raw, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCanonicalArtifactReproduceProof(b *testing.B) {
+	a := makeBenchmarkArtifact()
+	raw := a.rawArchive
+	digest := a.Manifest.ArchiveDigest
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ReproduceProof(raw, digest, nil); err != nil {
 			b.Fatal(err)
 		}
 	}

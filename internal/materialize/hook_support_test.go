@@ -64,6 +64,22 @@ func resolverHook(path, name string) resolver.ResolvedArtifact {
 	return resolver.ResolvedArtifact{Entry: catalog.Entry{Name: name, Kind: ir.KindHook, Path: path, Resource: hook}, Source: config.RepoCommitted}
 }
 
+func TestPrepareHookSupportDoesNotExposeMarketplaceCacheFiles(t *testing.T) {
+	dir := t.TempDir()
+	proofPath := filepath.Join(dir, "artifact.proof.tar.gz")
+	for _, name := range []string{"artifact.proof.tar.gz", "artifact.tar.gz", "verified.marker", "proof-verified.marker"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolved := resolverHook(proofPath, "marketplace-hook")
+	resolved.IsMarketplace = true
+	support, conflicts := prepareHookSupport([]skillTarget{{skill: resolved, target: hcc.TargetFactory}})
+	if len(support[0]) != 0 || len(conflicts) != 0 {
+		t.Fatalf("marketplace hook support = %#v, conflicts = %#v", support, conflicts)
+	}
+}
+
 func TestHookSupportExclusions(t *testing.T) {
 	tests := []struct {
 		name          string

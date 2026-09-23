@@ -39,6 +39,13 @@ func TestDefaultCapabilitiesAdvertisesCatalogProjectionV1Alpha1(t *testing.T) {
 	}
 }
 
+func TestDefaultCapabilitiesAdvertisesArtifactProofV1(t *testing.T) {
+	caps := DefaultCapabilities()
+	if !slices.Contains(caps.Features, ArtifactProofV1Feature) {
+		t.Fatalf("Features %v does not advertise artifact proof support", caps.Features)
+	}
+}
+
 func TestDefaultWellKnownAdvertisesBrowserTemplatesOnlyWhenConfigured(t *testing.T) {
 	withoutBrowser := DefaultWellKnown("mp", "https://api.example")
 	if withoutBrowser.BrowserBase != "" || withoutBrowser.BrowserLatestRoute != "" || withoutBrowser.BrowserExactRoute != "" {

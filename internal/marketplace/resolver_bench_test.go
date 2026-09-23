@@ -31,6 +31,19 @@ func BenchmarkValidateResourceRevision(b *testing.B) {
 }
 
 func BenchmarkResolveCachedNoFetch(b *testing.B) {
+	benchmarkResolveCachedNoFetch(b, true, false)
+}
+
+func BenchmarkResolveCachedNoFetchLegacyArchive(b *testing.B) {
+	benchmarkResolveCachedNoFetch(b, false, true)
+}
+
+func BenchmarkResolveCachedNoFetchBothEvidence(b *testing.B) {
+	benchmarkResolveCachedNoFetch(b, true, true)
+}
+
+func benchmarkResolveCachedNoFetch(b *testing.B, cacheProof, cacheLegacy bool) {
+	b.Helper()
 	cache := NewCache(b.TempDir())
 	resource := ir.NewSkill("review", "Review code", "Review the code carefully.", nil, nil, ir.SourceRef{})
 	artifact, err := hccartifact.FromIR(resource)
@@ -40,15 +53,25 @@ func BenchmarkResolveCachedNoFetch(b *testing.B) {
 	contentDigest := artifact.Manifest.ContentDigest
 	artifact.Manifest.RegistryID = "src"
 	artifact.Manifest.Revision = contentDigest
-	raw, archiveDigest, err := hccartifact.Encode(artifact)
+	raw, proof, archiveDigest, err := hccartifact.EncodeWithProof(artifact)
 	if err != nil {
 		b.Fatal(err)
 	}
-	if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
-		b.Fatal(err)
+	if cacheProof {
+		if _, err := cache.WriteArtifactProof(archiveDigest, proof); err != nil {
+			b.Fatal(err)
+		}
+		if err := cache.MarkArtifactProofVerified(archiveDigest); err != nil {
+			b.Fatal(err)
+		}
 	}
-	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
-		b.Fatal(err)
+	if cacheLegacy {
+		if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
+			b.Fatal(err)
+		}
+		if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+			b.Fatal(err)
+		}
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}
 	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest}

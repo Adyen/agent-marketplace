@@ -252,6 +252,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifact-proofs/sha256/{digest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download the retained placeholder-form proof for a v1 artifact digest */
+        get: operations["getArtifactProof"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/sha256/{digest}": {
         parameters: {
             query?: never;
@@ -1624,6 +1641,71 @@ export interface operations {
                 };
             };
             default: components["responses"]["AdminError"];
+        };
+    };
+    getArtifactProof: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Exactly 64 lowercase hexadecimal characters (the sha256 prefix is part of the path). */
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Canonical v1 artifact proof tar.gz */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.agent-marketplace.artifact-proof.v1.tar+gzip": string;
+                };
+            };
+            /** @description Invalid artifact digest path */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Artifact is blocked by assessment */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Artifact proof not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Artifact is revoked */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Artifact proof exceeds the configured size limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Artifact proof exists but cannot be validated */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getArtifact: {

@@ -110,9 +110,10 @@ curl -fsS "$BASE/api/v1/registries" | python3 -m json.tool | head    # registrie
 curl -fsS "$BASE/api/v1/resources/<registry>/skill/<name>" -o rev.json
 hex=$(python3 -c 'import json;print(json.load(open("rev.json"))["archive_digest"].split(":")[1])')
 curl -fsS "$BASE/api/v1/artifacts/sha256/${hex}" -o /dev/null        # blob readable
+curl -fsS "$BASE/api/v1/artifact-proofs/sha256/${hex}" -o /dev/null # proof readable
 ```
 
-A `404` on the artifact fetch means the blob backup is older than the metadata backup. Restore both from the same point rather than letting the worker reindex over an inconsistent store.
+A `404` on either fetch after proof rollout means the blob backup is older than the metadata backup. Restore both from the same point rather than letting the worker reindex over an inconsistent store.
 
 ## Drills
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -77,7 +78,7 @@ func TestServerRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build canonical artifact: %v", err)
 	}
-	artifactData, artifactDigest, err := hccartifact.Encode(canonicalArtifact)
+	artifactData, proofData, artifactDigest, err := hccartifact.EncodeWithProof(canonicalArtifact)
 	if err != nil {
 		t.Fatalf("encode canonical artifact: %v", err)
 	}
@@ -113,6 +114,9 @@ func TestServerRoutes(t *testing.T) {
 
 	if err := blobs.Put(ctx, rev.ArchiveDigest, artifactData); err != nil {
 		t.Fatalf("put artifact blob: %v", err)
+	}
+	if err := blobs.Put(ctx, store.ArtifactProofBlobKey(rev.ArchiveDigest), proofData); err != nil {
+		t.Fatalf("put artifact proof blob: %v", err)
 	}
 
 	if err := blobs.Put(ctx, store.ArchiveDigest(manifest), manifestData); err != nil {
@@ -378,6 +382,61 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("artifact content-type = %q", ct)
 	}
 
+	// artifact proof
+	resp = mustGet(t, public.URL+"/api/v1/artifact-proofs/"+strings.Replace(string(rev.ArchiveDigest), ":", "/", 1))
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("artifact proof status %d: %s", resp.StatusCode, body)
+	}
+	if body != string(proofData) {
+		t.Fatal("artifact proof body does not match the canonical placeholder archive")
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.agent-marketplace.artifact-proof.v1.tar+gzip" {
+		t.Fatalf("artifact proof content-type = %q", ct)
+	}
+
+	// A byte-different gzip stream remains valid when its decoded content is
+	// bound to the proof. This models a final archive produced by another Go
+	// compressor implementation.
+	alternateArtifactData := bytes.Clone(artifactData)
+	if len(alternateArtifactData) < 10 {
+		t.Fatal("artifact fixture is shorter than a gzip header")
+	}
+	alternateArtifactData[9] ^= 1
+	if err := blobs.Put(ctx, rev.ArchiveDigest, alternateArtifactData); err != nil {
+		t.Fatalf("put alternate artifact blob: %v", err)
+	}
+	resp = mustGet(t, public.URL+"/api/v1/artifacts/"+strings.Replace(string(rev.ArchiveDigest), ":", "/", 1))
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("alternate artifact status %d: %s", resp.StatusCode, body)
+	}
+	if body != string(alternateArtifactData) {
+		t.Fatal("alternate artifact body was not served byte-for-byte")
+	}
+
+	// A valid final archive stored under the wrong digest must not borrow a
+	// valid proof for different content.
+	tamperedArtifact := canonicalArtifact
+	tamperedArtifact.Payload = bytes.Clone(canonicalArtifact.Payload)
+	tamperedArtifact.Payload[len(tamperedArtifact.Payload)-1] ^= 1
+	tamperedArtifact.Manifest.ContentDigest = hccartifact.ContentDigest(tamperedArtifact.Payload)
+	tamperedData, _, err := hccartifact.Encode(tamperedArtifact)
+	if err != nil {
+		t.Fatalf("encode tampered artifact: %v", err)
+	}
+	if err := blobs.Put(ctx, rev.ArchiveDigest, tamperedData); err != nil {
+		t.Fatalf("put tampered artifact blob: %v", err)
+	}
+	resp = mustGet(t, public.URL+"/api/v1/artifacts/"+strings.Replace(string(rev.ArchiveDigest), ":", "/", 1))
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("tampered artifact status %d: %s", resp.StatusCode, body)
+	}
+	if err := blobs.Put(ctx, rev.ArchiveDigest, artifactData); err != nil {
+		t.Fatalf("restore artifact blob: %v", err)
+	}
+
 	// Digest route parameters reject malformed, uppercase, and traversal-shaped
 	// values before consulting the blob store.
 	invalidDigestURLs := []string{
@@ -386,6 +445,9 @@ func TestServerRoutes(t *testing.T) {
 		public.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("a", 63),
 		public.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("A", 64),
 		public.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("a", 64) + "/extra",
+		public.URL + "/api/v1/artifact-proofs/sha256/" + strings.Repeat("a", 63),
+		public.URL + "/api/v1/artifact-proofs/sha256/" + strings.Repeat("A", 64),
+		public.URL + "/api/v1/artifact-proofs/sha256/" + strings.Repeat("a", 64) + "/extra",
 		public.URL + "/api/v1/resources/test-source/skill/review/revisions/sha256:" + strings.Repeat("A", 64),
 	}
 	for _, url := range invalidDigestURLs {

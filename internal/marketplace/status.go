@@ -400,13 +400,15 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 		return
 	}
 	var raw []byte
+	var present bool
 	var verified bool
 	var err error
 	if status.Acquisition == AcquisitionIndexOnly {
 		identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, RegistryID: pin.RegistryID, Commit: pin.RegistryCommit, ManifestDigest: pin.RegistryManifestDigest}
 		raw, verified, err = cache.ReadIndexOnlyArtifact(identity, pin.Digest)
+		present = raw != nil
 	} else {
-		raw, verified, err = cache.ReadArtifact(string(rev.ArchiveDigest))
+		present, verified, err = cache.InspectArtifactEvidence(string(rev.ArchiveDigest))
 	}
 	if err != nil {
 		status.Cache = CacheStateError
@@ -420,11 +422,11 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 			return
 		}
 	}
-	status.ArtifactPresent = raw != nil
+	status.ArtifactPresent = present
 	status.ArtifactVerified = verified
 	if verified {
 		status.Cache = CacheStateArtifactVerified
-	} else if raw != nil {
+	} else if present {
 		status.Cache = CacheStateArtifactUnverified
 	} else {
 		status.Cache = CacheStateMissing

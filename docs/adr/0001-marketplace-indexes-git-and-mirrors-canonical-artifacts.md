@@ -14,4 +14,4 @@ Git repositories remain the publishing source of truth, while a Marketplace inde
 
 ## Consequences
 
-Mirroring requires a stable canonical artifact schema, digest verification, redistribution-license policy, durable metadata and blob storage, and a stronger threat model than direct Git discovery. Index-only mode remains available for registries that cannot legally or practically be mirrored.
+Mirroring requires a stable canonical artifact schema, digest verification, redistribution-license policy, durable metadata and blob storage, and a stronger threat model than direct Git discovery. The v1 `archive_digest` remains the digest of the original final gzip bytes. Because standard-library gzip output may change across Go releases, publishers also retain the placeholder-form archive used to derive that digest. Clients can verify those exact proof bytes directly without recreating the final gzip stream; the lock schema and legacy artifact endpoint remain unchanged. Index-only mode remains available for registries that cannot legally or practically be mirrored.

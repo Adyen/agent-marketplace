@@ -113,6 +113,11 @@ resources:
 	if response.StatusCode != http.StatusGone {
 		t.Fatalf("revoked artifact status = %d, want %d", response.StatusCode, http.StatusGone)
 	}
+	proofResponse := getPublicGateResponse(t, revokedServer.URL+"/api/v1/artifact-proofs/"+artifactURL)
+	defer proofResponse.Body.Close()
+	if proofResponse.StatusCode != http.StatusGone {
+		t.Fatalf("revoked artifact proof status = %d, want %d", proofResponse.StatusCode, http.StatusGone)
+	}
 	inspection := getPublicGateResponse(t, revokedServer.URL+"/api/v1/resources/public-registry/skill/skill-one/revisions/"+skillDigest+"/inspection")
 	defer inspection.Body.Close()
 	if inspection.StatusCode != http.StatusOK {

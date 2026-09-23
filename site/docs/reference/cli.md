@@ -466,6 +466,22 @@ agent-marketplace serve reindex [registry-slug-or-id] --config <path>
 
 With no registry argument, the command reindexes every configured registry. With one slug or ID, it reindexes only that registry. It applies revocations before acquisition and performs a store readiness check after processing.
 
+### `serve backfill-artifact-proofs`
+
+Creates one bounded, resumable page of retained proofs for existing v1 mirror artifacts. Run this proof-capable release built with Go 1.26.6 before upgrading Marketplace servers to Go 1.27 or later.
+
+```text
+agent-marketplace serve backfill-artifact-proofs --config <path> [--after <archive-digest>] [--limit <n>]
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--config` | path | yes | none | Marketplace operator YAML file. |
+| `--after` | digest | no | empty | Resume after this `sha256:<64-hex>` archive digest. |
+| `--limit` | integer | no | `100` | Maximum artifacts to process, from 1 through 100. |
+
+The command prints `processed`, `created`, `existing`, `next_after`, and `remaining` as JSON. Repeat it with the returned cursor while `remaining` is true. Existing proofs are validated and never replaced. The operation fails closed if the active Go compressor cannot reproduce a published archive exactly.
+
 ### `serve adopt`
 
 Adopts catalog settings during a controlled maintenance window, establishing database configuration authority.

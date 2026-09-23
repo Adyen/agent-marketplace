@@ -410,6 +410,9 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Verify artifact proofs on Go 1.27
+        run: GOTOOLCHAIN=go1.27.1 go test ./pkg/harness-compilation/artifact/... ./pkg/marketplace/store/... -run 'Proof|ArtifactProof' -count=1
+
   tui-qa:
     name: TUI QA (${{ matrix.os }})
     needs: changes

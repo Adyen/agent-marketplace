@@ -515,16 +515,22 @@ func prepareUploads(req RegistryRevisionPublication) ([]BlobUpload, error) {
 		if b.Digest == "" {
 			return errors.New("blob upload with empty digest")
 		}
-		// Collection manifest addresses use the manifest's content_digest,
-		// which intentionally hashes the canonical payload with that field
-		// cleared rather than the complete self-referential blob bytes.
-		if _, isCollectionManifest := collectionDigests[b.Digest]; !isCollectionManifest {
-			if got := contentDigest(b.Data); got != string(b.Digest) {
-				// Canonical artifact archives use a placeholder digest to break
-				// their self-reference, so their address is verified by the
-				// artifact verifier rather than by hashing the final bytes.
-				if _, isArchive := archiveDigests[b.Digest]; !isArchive || !verifyArchiveBlob(b) {
-					return fmt.Errorf("blob %s data digest mismatch: got %s", b.Digest, got)
+		if proofDigest, isProof := archiveDigestFromProofBlobKey(b.Digest); isProof {
+			if _, belongsToPublishedArtifact := archiveDigests[proofDigest]; !belongsToPublishedArtifact || !verifyArtifactProofBlob(b, proofDigest) {
+				return fmt.Errorf("artifact proof %s does not match a published archive", b.Digest)
+			}
+		} else {
+			// Collection manifest addresses use the manifest's content_digest,
+			// which intentionally hashes the canonical payload with that field
+			// cleared rather than the complete self-referential blob bytes.
+			if _, isCollectionManifest := collectionDigests[b.Digest]; !isCollectionManifest {
+				if got := contentDigest(b.Data); got != string(b.Digest) {
+					// Canonical artifact archives use a placeholder digest to break
+					// their self-reference, so their address is verified by the
+					// artifact verifier rather than by hashing the final bytes.
+					if _, isArchive := archiveDigests[b.Digest]; !isArchive || !verifyArchiveBlob(b) {
+						return fmt.Errorf("blob %s data digest mismatch: got %s", b.Digest, got)
+					}
 				}
 			}
 		}
@@ -774,12 +780,31 @@ type immutableBlobStore interface {
 }
 
 func putImmutableBlob(ctx context.Context, blobs BlobStore, upload BlobUpload) error {
-	if existing, err := blobs.Get(ctx, upload.Digest); err == nil {
+	return putImmutableBlobBounded(ctx, blobs, upload, 0)
+}
+
+func putImmutableBlobBounded(ctx context.Context, blobs BlobStore, upload BlobUpload, limit int64) error {
+	var existing []byte
+	var err error
+	if limit > 0 {
+		if bounded, ok := blobs.(BoundedBlobStore); ok {
+			existing, err = bounded.GetBounded(ctx, upload.Digest, limit)
+		} else {
+			existing, err = blobs.Get(ctx, upload.Digest)
+			if err == nil && int64(len(existing)) > limit {
+				err = ErrBlobTooLarge
+			}
+		}
+	} else {
+		existing, err = blobs.Get(ctx, upload.Digest)
+	}
+	if err == nil {
 		if !bytes.Equal(existing, upload.Data) {
 			return fmt.Errorf("%w: blob %s already contains different data", ErrConflict, upload.Digest)
 		}
 		return nil
-	} else if !errors.Is(err, ErrNotFound) {
+	}
+	if !errors.Is(err, ErrNotFound) {
 		return err
 	}
 	if immutable, ok := blobs.(immutableBlobStore); ok {

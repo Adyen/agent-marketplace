@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/worker"
 )
 
@@ -112,7 +114,59 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 	cmd.Flags().StringVar(&role, "role", "all", "Server role (worker|api|all)")
 	_ = cmd.MarkFlagRequired("config")
 
-	cmd.AddCommand(newServeReindexCmd(), newServeAdoptCmd())
+	cmd.AddCommand(newServeReindexCmd(), newServeAdoptCmd(), newServeBackfillArtifactProofsCmd())
+	return cmd
+}
+
+func newServeBackfillArtifactProofsCmd() *cobra.Command {
+	var cfgPath string
+	var after string
+	var limit int
+
+	cmd := &cobra.Command{
+		Use:   "backfill-artifact-proofs",
+		Short: "Backfill one bounded page of v1 artifact proofs",
+		Long: `backfill-artifact-proofs creates placeholder-form proof archives for one
+bounded page of existing v1 artifacts. Run it with the same Go toolchain that
+created the published archives, before upgrading Marketplace servers. Repeat
+with the returned next_after cursor while remaining is true.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cfgPath == "" {
+				return fmt.Errorf("--config is required")
+			}
+			slog.Info("artifact proof backfill starting", "config", cfgPath, "after", after, "limit", limit)
+			cfg, err := mpconfig.LoadConfig(cfgPath)
+			if err != nil {
+				return fmt.Errorf("load operator config: %w", err)
+			}
+			meta, blobs, err := mpconfig.OpenStores(cmd.Context(), cfg)
+			if err != nil {
+				return fmt.Errorf("open stores: %w", err)
+			}
+			defer func() { _ = meta.Close() }()
+
+			result, err := store.BackfillArtifactProofs(cmd.Context(), meta, blobs, store.ArtifactProofBackfillRequest{
+				Marketplace: store.MarketplaceID(cfg.Instance.ID),
+				After:       store.ArchiveDigest(after),
+				Limit:       limit,
+				BlobLimit:   cfg.Policy.Limits.ArtifactBytes,
+			})
+			if encodeErr := json.NewEncoder(cmd.OutOrStdout()).Encode(result); encodeErr != nil {
+				return fmt.Errorf("encode artifact proof backfill result: %w", encodeErr)
+			}
+			if err != nil {
+				slog.Error("artifact proof backfill failed", "after", after, "limit", limit, "processed", result.Processed, "created", result.Created, "existing", result.Existing, "next_after", result.NextAfter, "error", err)
+				return err
+			}
+			slog.Info("artifact proof backfill complete", "processed", result.Processed, "created", result.Created, "existing", result.Existing, "remaining", result.Remaining, "next_after", result.NextAfter)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cfgPath, "config", "", "Path to the Marketplace operator config file")
+	cmd.Flags().StringVar(&after, "after", "", "Resume after this archive digest")
+	cmd.Flags().IntVar(&limit, "limit", store.ArtifactProofBackfillMaxPage, "Maximum artifacts to process")
+	_ = cmd.MarkFlagRequired("config")
 	return cmd
 }
 

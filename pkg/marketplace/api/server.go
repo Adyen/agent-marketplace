@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -104,6 +105,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.Handle("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
 	publicMux.Handle("/api/v1/content/", s.methodGet(s.handleContentDigest))
 	publicMux.Handle("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
+	publicMux.Handle("/api/v1/artifact-proofs/", s.methodGet(s.handleArtifactProofs))
 	publicMux.Handle("/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
 	// listener directly; the operations listener remains the only route.
@@ -1398,64 +1400,37 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/")
-	parts := strings.Split(path, "/")
-	if len(parts) != 2 || parts[0] != "sha256" || !isLowerHexDigest(parts[1]) {
+	rawDigest, ok := digestPath(r.URL.Path, "/api/v1/artifacts/")
+	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid artifact digest")
 		return
 	}
-
-	digest := store.ArchiveDigest("sha256:" + parts[1])
-	revisions, err := s.meta.ListResourceRevisionsByArchiveDigest(r.Context(), s.mpID, digest)
-	if err != nil {
-		slog.Error("artifact ownership lookup failed", "digest", digest, "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
+	digest := store.ArchiveDigest(rawDigest)
+	if !s.authorizeArtifactDigest(w, r, digest) {
 		return
 	}
-	// The digest address is not itself authorization to read a blob. Refuse an
-	// unowned digest before touching blob storage, including when an orphaned
-	// blob happens to exist at the requested address.
-	if len(revisions) == 0 {
-		writeError(w, http.StatusNotFound, "artifact not found")
+	data, ok := s.readArtifactBlob(w, r, digest, digest, "artifact")
+	if !ok {
 		return
 	}
-	restriction, err := s.managedOwnerRestriction(r.Context(), revisions)
-	if err != nil {
-		writeAvailabilityRestriction(w, restriction, err)
-		return
-	}
-	switch restriction {
-	case AvailabilityRevoked:
-		writeError(w, http.StatusGone, "artifact is revoked")
-		return
-	case AvailabilityBlocked:
-		writeError(w, http.StatusForbidden, "artifact is blocked by assessment")
-		return
-	}
-	data, err := s.blobs.Get(r.Context(), digest)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "artifact not found")
-			return
+	proof, proofErr := s.getArtifactBlob(r.Context(), store.ArtifactProofBlobKey(digest))
+	var err error
+	if proofErr == nil {
+		var artifact, proofArtifact hccartifact.CanonicalArtifact
+		artifact, err = hccartifact.DecodeCanonical(data, nil)
+		if err == nil {
+			proofArtifact, err = hccartifact.DecodeProof(proof, string(digest), nil)
 		}
-		slog.Error("artifact fetch failed", "digest", digest, "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
+		if err == nil && !sameCanonicalArtifact(artifact, proofArtifact) {
+			err = fmt.Errorf("final artifact content does not match retained proof")
+		}
+	} else if errors.Is(proofErr, store.ErrNotFound) {
+		_, err = hccartifact.DecodeVerified(data, string(digest), false, nil)
+	} else if errors.Is(proofErr, store.ErrBlobTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "artifact proof exceeds size limit")
 		return
-	}
-	artifactLimit := s.cfg.Policy.Limits.ArtifactBytes
-	if artifactLimit <= 0 {
-		artifactLimit = config.DefaultArtifactBytes
-	}
-	if int64(len(data)) > artifactLimit {
-		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
-		return
-	}
-	artifact, rawArchive, err := hccartifact.Decode(bytes.NewReader(data))
-	if err == nil && artifact.Manifest.ArchiveDigest != string(digest) {
-		err = fmt.Errorf("manifest archive digest %q does not match requested %q", artifact.Manifest.ArchiveDigest, digest)
-	}
-	if err == nil {
-		err = artifact.VerifyArchiveDigest(rawArchive)
+	} else {
+		err = fmt.Errorf("read artifact proof: %w", proofErr)
 	}
 	if err != nil {
 		slog.Error("artifact blob digest mismatch", "digest", digest, "error", err)
@@ -1464,6 +1439,98 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeImmutable(w, "application/vnd.agent-marketplace.artifact.v1.tar+gzip", data)
+}
+
+func (s *Server) handleArtifactProofs(w http.ResponseWriter, r *http.Request) {
+	rawDigest, ok := digestPath(r.URL.Path, "/api/v1/artifact-proofs/")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid artifact digest")
+		return
+	}
+	digest := store.ArchiveDigest(rawDigest)
+	if !s.authorizeArtifactDigest(w, r, digest) {
+		return
+	}
+	data, ok := s.readArtifactBlob(w, r, store.ArtifactProofBlobKey(digest), digest, "artifact proof")
+	if !ok {
+		return
+	}
+	if _, err := hccartifact.DecodeProof(data, string(digest), nil); err != nil {
+		slog.Error("artifact proof digest mismatch", "digest", digest, "error", err)
+		writeError(w, http.StatusInternalServerError, "artifact proof digest mismatch")
+		return
+	}
+	writeImmutable(w, "application/vnd.agent-marketplace.artifact-proof.v1.tar+gzip", data)
+}
+
+func sameCanonicalArtifact(a, b hccartifact.CanonicalArtifact) bool {
+	return reflect.DeepEqual(a.Manifest, b.Manifest) &&
+		bytes.Equal(a.Payload, b.Payload) &&
+		reflect.DeepEqual(a.Assets, b.Assets) &&
+		reflect.DeepEqual(a.Licenses, b.Licenses)
+}
+
+func (s *Server) authorizeArtifactDigest(w http.ResponseWriter, r *http.Request, digest store.ArchiveDigest) bool {
+	revisions, err := s.meta.ListResourceRevisionsByArchiveDigest(r.Context(), s.mpID, digest)
+	if err != nil {
+		slog.Error("artifact ownership lookup failed", "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
+		return false
+	}
+	// The digest address is not itself authorization to read a blob. Refuse an
+	// unowned digest before touching blob storage, including when an orphaned
+	// blob happens to exist at the requested address.
+	if len(revisions) == 0 {
+		writeError(w, http.StatusNotFound, "artifact not found")
+		return false
+	}
+	restriction, err := s.managedOwnerRestriction(r.Context(), revisions)
+	if err != nil {
+		writeAvailabilityRestriction(w, restriction, err)
+		return false
+	}
+	switch restriction {
+	case AvailabilityRevoked:
+		writeError(w, http.StatusGone, "artifact is revoked")
+		return false
+	case AvailabilityBlocked:
+		writeError(w, http.StatusForbidden, "artifact is blocked by assessment")
+		return false
+	}
+	return true
+}
+
+func (s *Server) readArtifactBlob(w http.ResponseWriter, r *http.Request, key, digest store.ArchiveDigest, label string) ([]byte, bool) {
+	data, err := s.getArtifactBlob(r.Context(), key)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, label+" not found")
+			return nil, false
+		}
+		if errors.Is(err, store.ErrBlobTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, label+" exceeds size limit")
+			return nil, false
+		}
+		slog.Error(label+" fetch failed", "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch "+label)
+		return nil, false
+	}
+	return data, true
+}
+
+func (s *Server) getArtifactBlob(ctx context.Context, key store.ArchiveDigest) ([]byte, error) {
+	artifactLimit := manifestPayloadLimit(s.cfg)
+	if bounded, ok := s.blobs.(store.BoundedBlobStore); ok {
+		return bounded.GetBounded(ctx, key, artifactLimit)
+	}
+	data, err := s.blobs.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > artifactLimit {
+		return nil, store.ErrBlobTooLarge
+	}
+	return data, nil
 }
 
 var errManifestUnsupported = errors.New("unsupported manifest payload")

@@ -72,6 +72,20 @@ registries:
 
 For upgrades, use a rolling strategy for the API and `Recreate` for the worker (the Helm chart's README shows the values).
 
+### Backfill v1 artifact proofs before changing Go toolchains
+
+Before upgrading a Marketplace built with Go 1.26 to Go 1.27 or later, deploy this proof-capable release built with Go 1.26.6. Stop the worker so the artifact set is stable, then run that binary against the production stores:
+
+```bash
+agent-marketplace serve backfill-artifact-proofs \
+  --config /app/marketplace.yaml \
+  --limit 100
+```
+
+The command processes one bounded page and prints JSON. While `remaining` is `true`, rerun it with `--after` set to the returned `next_after`. Existing valid proofs are checked and counted without being replaced, so retrying a page is safe. A compressor mismatch fails closed with an error requiring the original Go compression toolchain. Keep the worker stopped until every page reports `remaining: false`; the API may remain available because the operation only adds immutable proof blobs.
+
+Back up metadata and blobs together after the backfill. You may then deploy API and consumer binaries built with Go 1.27 or later. Keep workers that publish v1 artifacts on Go 1.26.6 until a compressor-independent publication protocol is deployed; otherwise unchanged logical content can produce a different `archive_digest` and conflict with immutable revision metadata. New publications retain both the legacy final archive and its proof automatically, so plan blob capacity for roughly twice the compressed artifact storage.
+
 ## 5. Verify
 
 ```bash

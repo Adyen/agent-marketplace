@@ -79,6 +79,21 @@ func TestBuildRegistryRevision(t *testing.T) {
 	if skill.License != "MIT" {
 		t.Fatalf("skill license = %q, want MIT", skill.License)
 	}
+	var finalArchive, proofArchive []byte
+	for _, blob := range rev.ExtraBlobs {
+		switch blob.Digest {
+		case skill.ArchiveDigest:
+			finalArchive = blob.Data
+		case store.ArtifactProofBlobKey(skill.ArchiveDigest):
+			proofArchive = blob.Data
+		}
+	}
+	if len(finalArchive) == 0 || len(proofArchive) == 0 {
+		t.Fatalf("mirror publication final/proof bytes = %d/%d", len(finalArchive), len(proofArchive))
+	}
+	if _, err := hccartifact.DecodeProof(proofArchive, string(skill.ArchiveDigest), nil); err != nil {
+		t.Fatalf("published proof: %v", err)
+	}
 
 	if rev.Occurrence.RegistryRevisionManifestDigest != rev.ManifestDigest {
 		t.Fatalf("occurrence manifest digest mismatch")
@@ -595,8 +610,15 @@ func TestBuildRegistryRevisionCollection(t *testing.T) {
 	if collection.ContentDigest == "" || len(rev.CollectionManifests) != 1 {
 		t.Fatalf("collection standalone publication = digest %q/archive %q, manifests %d", collection.ContentDigest, collection.ArchiveDigest, len(rev.CollectionManifests))
 	}
-	if len(rev.ExtraBlobs) != 2 || rev.ExtraBlobs[0].Digest == rev.CollectionManifests[0].Digest {
-		t.Fatalf("collection publication should contain one leaf archive and one standalone manifest: %#v", rev.ExtraBlobs)
+	blobDigests := make(map[store.ArchiveDigest]bool, len(rev.ExtraBlobs))
+	for _, blob := range rev.ExtraBlobs {
+		blobDigests[blob.Digest] = true
+	}
+	if len(rev.ExtraBlobs) != 3 ||
+		!blobDigests[skill.ArchiveDigest] ||
+		!blobDigests[store.ArtifactProofBlobKey(skill.ArchiveDigest)] ||
+		!blobDigests[rev.CollectionManifests[0].Digest] {
+		t.Fatalf("collection publication should contain one leaf archive, its proof, and one standalone manifest: %#v", rev.ExtraBlobs)
 	}
 	if len(rev.CollectionManifests[0].Data) == 0 || rev.CollectionManifests[0].Data[0] != '{' || string(rev.CollectionManifests[0].Digest) != string(collection.ContentDigest) {
 		t.Fatalf("collection manifest upload = digest %q/data prefix %q", rev.CollectionManifests[0].Digest, rev.CollectionManifests[0].Data)

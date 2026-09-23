@@ -127,10 +127,15 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 		}
 		var raw []byte
 		var verified bool
+		var proof bool
 		if acquisition == config.MarketplaceAcquisitionIndexOnly {
 			raw, verified, err = c.ReadIndexOnlyArtifact(identity, pin.Digest)
 		} else {
-			raw, verified, err = c.ReadArtifact(string(rev.ArchiveDigest))
+			var evidence ArtifactEvidence
+			evidence, err = c.ReadArtifactEvidence(string(rev.ArchiveDigest))
+			if err == nil {
+				raw, verified, proof = evidence.Raw, evidence.Verified, evidence.Proof
+			}
 		}
 		if err != nil {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("read cached artifact: %w", err)
@@ -138,15 +143,9 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 		if raw == nil || !verified {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("verified artifact is missing from cache")
 		}
-		ca, caRaw, err := hccartifact.Decode(bytes.NewReader(raw))
+		ca, err := hccartifact.DecodeVerified(raw, string(rev.ArchiveDigest), proof, nil)
 		if err != nil {
-			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("decode artifact: %w", err)
-		}
-		if err := ca.VerifyArchiveDigest(caRaw); err != nil {
-			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("verify archive digest: %w", err)
-		}
-		if err := ca.VerifyContentDigest(); err != nil {
-			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("verify content digest: %w", err)
+			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("verify artifact evidence: %w", err)
 		}
 		if err := validateArtifactManifest(entry, pin, rev, ca); err != nil {
 			return lockfile.MarketplaceResourceLock{}, err

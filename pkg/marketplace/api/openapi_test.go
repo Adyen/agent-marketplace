@@ -63,6 +63,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content",
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
 		"/api/v1/artifacts/sha256/{digest}",
+		"/api/v1/artifact-proofs/sha256/{digest}",
 		"/r/{registry}/{kind}/{name}",
 		"/r/{registry}/{kind}/{name}/revisions/{revision}",
 		"/healthz",

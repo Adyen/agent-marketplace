@@ -520,11 +520,21 @@ func (c *Client) GetCollectionManifest(ctx context.Context, manifestDigest strin
 
 // GetArtifact downloads an artifact archive by its archive digest.
 func (c *Client) GetArtifact(ctx context.Context, archiveDigest string) ([]byte, error) {
+	return c.getArtifactBytes(ctx, "artifacts", archiveDigest)
+}
+
+// GetArtifactProof downloads the exact placeholder-form archive whose bytes
+// hash to the existing v1 archive digest.
+func (c *Client) GetArtifactProof(ctx context.Context, archiveDigest string) ([]byte, error) {
+	return c.getArtifactBytes(ctx, "artifact-proofs", archiveDigest)
+}
+
+func (c *Client) getArtifactBytes(ctx context.Context, route, archiveDigest string) ([]byte, error) {
 	if err := validateSHA256Digest(archiveDigest); err != nil {
 		return nil, fmt.Errorf("archive digest %q: %w", archiveDigest, err)
 	}
 	hexDigest := strings.TrimPrefix(archiveDigest, "sha256:")
-	path := c.requestURL([]string{"api", "v1", "artifacts", "sha256", hexDigest}, nil)
+	path := c.requestURL([]string{"api", "v1", route, "sha256", hexDigest}, nil)
 	return c.getRaw(ctx, path)
 }
 

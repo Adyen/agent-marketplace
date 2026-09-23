@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -67,13 +67,7 @@ type bundleTree struct {
 	files map[string][]byte
 }
 
-// marketplaceArtifactName is the canonical archive filename produced by the
-// verified Marketplace mirror cache. Its sibling marker records that the
-// archive content was cryptographically verified.
 const (
-	marketplaceArtifactName   = "artifact.tar.gz"
-	marketplaceVerifiedMarker = "verified.marker"
-
 	// maxMarketplaceArtifactBytes bounds the compressed archive read for a
 	// detail preview. It matches the canonical artifact total-size budget so
 	// a corrupt or hostile cache object cannot exhaust TUI memory.
@@ -92,7 +86,8 @@ func isMarketplaceDetailOnly(r row) bool {
 // Marketplace artifact archive rather than a browsable source directory.
 // Callers must already have established that the row is Marketplace-owned.
 func isMarketplaceArtifactPath(path string) bool {
-	return filepath.Base(path) == marketplaceArtifactName
+	name := filepath.Base(path)
+	return name == marketplace.ArtifactFileName || name == marketplace.ArtifactProofFileName
 }
 
 func bundleRootForRow(r row) (root, onlyFile string, err error) {
@@ -453,6 +448,7 @@ func bundleTreeForRow(r row) (*bundleTree, error) {
 // decoded, size-bounded, and cryptographically re-verified before any member
 // reaches the browser; missing or corrupt content fails closed.
 func newMarketplaceArtifactTree(artifactPath string) (*bundleTree, error) {
+	proof := filepath.Base(artifactPath) == marketplace.ArtifactProofFileName
 	info, err := os.Lstat(artifactPath)
 	if err != nil {
 		return nil, err
@@ -460,7 +456,11 @@ func newMarketplaceArtifactTree(artifactPath string) (*bundleTree, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("marketplace artifact is not a regular file")
 	}
-	marker, err := os.Lstat(filepath.Join(filepath.Dir(artifactPath), marketplaceVerifiedMarker))
+	markerName := marketplace.VerifiedMarkerName
+	if proof {
+		markerName = marketplace.ProofVerifiedMarkerName
+	}
+	marker, err := os.Lstat(filepath.Join(filepath.Dir(artifactPath), markerName))
 	if err != nil {
 		return nil, fmt.Errorf("marketplace artifact is not verified: %w", err)
 	}
@@ -486,12 +486,13 @@ func newMarketplaceArtifactTree(artifactPath string) (*bundleTree, error) {
 	if len(raw) > maxMarketplaceArtifactBytes {
 		return nil, fmt.Errorf("marketplace artifact exceeds %d MiB", maxMarketplaceArtifactBytes>>20)
 	}
-	ca, _, err := hccartifact.Decode(bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("decode marketplace artifact: %w", err)
+	expectedDigest, ok := marketplace.ArtifactDigestFromCachePath(artifactPath)
+	if !ok {
+		return nil, fmt.Errorf("marketplace artifact has invalid cache directory")
 	}
-	if err := ca.ValidateArchive(nil); err != nil {
-		return nil, fmt.Errorf("validate marketplace artifact: %w", err)
+	ca, err := hccartifact.DecodeVerified(raw, expectedDigest, proof, nil)
+	if err != nil {
+		return nil, fmt.Errorf("verify marketplace artifact: %w", err)
 	}
 	manifest, err := json.MarshalIndent(ca.Manifest, "", "  ")
 	if err != nil {
