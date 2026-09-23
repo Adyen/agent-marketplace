@@ -181,3 +181,27 @@ func TestSourceCanConfigureTelemetry(t *testing.T) {
 		})
 	}
 }
+
+func TestOrganizationTelemetryPolicyToleratesOnlyAbsentMarketplaceLock(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(root, []byte("apiVersion: agent-marketplace/v4\ntelemetry: {level: basic}\nsources:\n  hosted: {marketplace: https://market.example}\n  shared: {git: https://example.com/shared.git, ref: main}\nresources:\n  hosted: {include: [tools/skill/review]}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	SetTestOrganizationConfigPath(t, root)
+
+	cfg, err := LoadOrganizationConfig()
+	if err != nil {
+		t.Fatalf("absent organization lock: %v", err)
+	}
+	if cfg.Telemetry == nil || cfg.Telemetry.Level != telemetryconfig.LevelBasic || len(cfg.Registries) != 0 || len(cfg.Marketplaces) != 0 {
+		t.Fatalf("policy view = %#v, want telemetry without sources", cfg)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "lock.yaml"), []byte("apiVersion: agent-marketplace-lock/v1\nscope: organization\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrganizationConfig(); err == nil || !strings.Contains(err.Error(), "v4.marketplace-lock-required") {
+		t.Fatalf("present v1 organization lock error = %v, want fail-closed lock requirement", err)
+	}
+}

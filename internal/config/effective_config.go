@@ -360,14 +360,41 @@ func loadEffectiveOrganizationWithRuntimeLock(path string, runtimeLock []byte) (
 // LoadOrganizationConfig reads the externally managed organization config at
 // the default path. It returns nil when the file is missing. It returns an
 // error when the file is present but cannot be read or declares an unsupported
-// apiVersion.
+// apiVersion. A v4 config whose Marketplace lock is intentionally absent
+// yields only its policy fields, without sources, so offline policy readers
+// such as telemetry never need runtime acquisition.
 func LoadOrganizationConfig() (*Config, error) {
 	path := organizationConfigPath("")
 	lr, _ := loadEffectiveOrganization(path)
-	if len(lr.Errors) > 0 {
-		return nil, errors.Join(lr.Errors...)
+	if len(lr.Errors) == 0 {
+		return lr.Config, nil
 	}
-	return lr.Config, nil
+	if cfg := organizationPolicyWithoutLock(path, lr.Errors); cfg != nil {
+		return cfg, nil
+	}
+	return nil, errors.Join(lr.Errors...)
+}
+
+func organizationPolicyWithoutLock(path string, errs []error) *Config {
+	var validation *V4ValidationError
+	if !errors.As(errors.Join(errs...), &validation) || validation.Code != "v4.marketplace-lock-required" {
+		return nil
+	}
+	if ValidateOrganizationTrustUnit(path, true, true) != nil {
+		return nil
+	}
+	if _, err := os.Lstat(OrganizationLockPath(path)); !errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	v4, err := LoadV4ConfigIfPresent(path, Organization)
+	if err != nil || v4 == nil {
+		return nil
+	}
+	cfg, err := v4.policyConfig(organizationLayer)
+	if err != nil {
+		return nil
+	}
+	return cfg
 }
 
 func organizationHasRemoteRequirements(cfg *Config) bool {

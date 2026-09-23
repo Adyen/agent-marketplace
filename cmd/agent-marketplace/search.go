@@ -14,6 +14,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
@@ -45,7 +46,7 @@ func newSearchCmd() *cobra.Command {
 func runSearchContext(ctx context.Context, out io.Writer, errOut io.Writer, args []string, marketplaceFlag, kindFilter, output string, limit, offset int) error {
 	query := strings.Join(args, " ")
 
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{})
+	ec := pipeline.LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{}, nil)
 	config.LogManagedDiagnostics(ec.Diagnostics)
 	for _, w := range ec.Warnings {
 		slog.Warn("config warning during search", "warning", w)

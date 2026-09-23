@@ -1726,7 +1726,9 @@ func (c *V4Config) validateLayerFields(kind layerKind) error {
 	return nil
 }
 
-func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*Config, error) {
+// policyConfig adapts the layer policy fields, which never depend on
+// Marketplace acquisition state, without any sources.
+func (c *V4Config) policyConfig(kind layerKind) (*Config, error) {
 	if c == nil {
 		return nil, v4err("v4.runtime", "", 0, "nil configuration")
 	}
@@ -1741,6 +1743,14 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 	if c.AllowedMarketplaces != nil {
 		values := cloneV4StringList(*c.AllowedMarketplaces)
 		out.AllowedMarketplaces = &values
+	}
+	return out, nil
+}
+
+func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*Config, error) {
+	out, err := c.policyConfig(kind)
+	if err != nil {
+		return nil, err
 	}
 
 	names := make([]string, 0, len(c.Sources))

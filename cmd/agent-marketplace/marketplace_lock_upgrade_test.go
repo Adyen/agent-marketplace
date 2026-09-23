@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -64,7 +65,7 @@ func TestSyncUpgradesGitOnlyLockWhenMarketplaceSourceIsAdded(t *testing.T) {
 	}
 }
 
-func TestGcAcceptsMissingOrganizationMarketplaceLock(t *testing.T) {
+func TestCommandsAcceptMissingOrganizationMarketplaceLock(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -78,6 +79,7 @@ func TestGcAcceptsMissingOrganizationMarketplaceLock(t *testing.T) {
 	authority := t.TempDir()
 	orgPath := filepath.Join(authority, "config.yaml")
 	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+telemetry: {level: "off"}
 sources:
   hosted: {marketplace: `+server.URL+`}
 resources:
@@ -90,13 +92,36 @@ resources:
 		t.Fatalf("sync: %v\n%s", err, output)
 	}
 
-	if output, err := executeCommand("gc"); err != nil {
-		t.Fatalf("gc rejected missing organization Marketplace lock: %v\n%s", err, output)
+	for _, tc := range []struct {
+		args []string
+		// want is required output on success; wantErr is a required error
+		// for commands whose correct outcome after loading config is a failure.
+		want, wantErr string
+	}{
+		{args: []string{"gc"}},
+		{args: []string{"doctor"}, want: "org managed:"},
+		{args: []string{"telemetry", "status"}, want: "off (org)"},
+		{args: []string{"search", "review"}, wantErr: "marketplace error 404"},
+		{args: []string{"remove", "not-installed"}, wantErr: "is not currently enabled"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			output, err := executeCommand(tc.args...)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q\n%s", err, tc.wantErr, output)
+				}
+			} else if err != nil || !strings.Contains(output, tc.want) {
+				t.Fatalf("rejected missing organization Marketplace lock: %v\n%s", err, output)
+			}
+			if strings.Contains(output, "marketplace-lock-required") {
+				t.Fatalf("reported missing organization Marketplace lock:\n%s", output)
+			}
+			if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("created organization lock: %v", err)
+			}
+		})
 	}
 	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
 		t.Fatalf("gc removed reachable organization Marketplace artifact: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("gc created organization lock: %v", err)
 	}
 }

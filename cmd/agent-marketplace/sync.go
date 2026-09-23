@@ -324,9 +324,9 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 }
 
 func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
-	effective := config.LoadEffective(ctx, config.LoadEffectiveOptions{
+	effective := pipeline.LoadEffectiveOnlineCached(ctx, config.LoadEffectiveOptions{
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
-	})
+	}, nil)
 	seen := make(map[string]struct{})
 	for _, layer := range effective.PresentLayers() {
 		var entries []config.RegistryEntry

@@ -445,6 +445,7 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 		return err
 	}
 
+	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	repoRoot := config.FindRepoRoot()
 	result, err := pipeline.Remove(ctx, pipeline.RemoveOptions{
 		RepoRoot:            repoRoot,
