@@ -570,7 +570,7 @@ func removeOrExcludeCollection(configPath, name string) error {
 }
 
 func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg, repoCfg, orgCfg *config.Config, err error) {
-	ec := LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
 		return nil, nil, nil, errors.Join(ec.Errors...)
 	}
@@ -1132,7 +1132,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// ignored on remove: a registry that was previously allowed and is now
 	// blocked by a tightened allowed_registries policy must still be removable.
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
-	ec := LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
 		return nil, errors.Join(ec.Errors...)
 	}

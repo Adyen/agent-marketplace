@@ -184,7 +184,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	// Validate the ad-hoc URL against the effective allowlist before any
 	// network access. LoadEffective also validates the existing configured
 	// layers and returns their resolved allowlist.
-	ec := pipeline.LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{}, nil)
+	ec := pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{}, nil)
 	config.LogManagedDiagnostics(ec.Diagnostics)
 	for _, w := range ec.Warnings {
 		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))) //nolint:errcheck // best-effort warning on stderr

@@ -57,8 +57,7 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 		RepoRoot:       config.FindRepoRoot(),
 		LocalConfigDir: config.FindLocalConfigDir(),
 	}
-	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
-	effective := pipeline.LoadEffectiveOnline(ctx, loadOptions, nil)
+	effective := pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, loadOptions, nil)
 	if len(effective.Errors) > 0 {
 		return errors.Join(effective.Errors...)
 	}
@@ -67,7 +66,7 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	}
 	marketplaceCache := marketplace.DefaultCache()
 	readReachability := func(readCtx context.Context) (cache.GCReachability, error) {
-		effective := pipeline.LoadEffectiveOnlineCached(readCtx, loadOptions, nil)
+		effective := pipeline.LoadEffective(readCtx, pipeline.ConfigLoadCached, loadOptions, nil)
 		if len(effective.Errors) > 0 {
 			return cache.GCReachability{}, errors.Join(effective.Errors...)
 		}

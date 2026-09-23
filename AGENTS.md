@@ -102,6 +102,10 @@ Run direct real-terminal test typechecking with `make tui-qa-check` and all elev
 - `VALIDATE_JOBS` bounds concurrent make tasks (default 2). `E2E_PARALLEL` bounds E2E parallel tests (default 4); an explicit Go `-parallel` overrides the runner default, while the declarative table retains its own `E2E_PARALLEL` cap. Tests that mutate process-global environment/cwd remain serial; do not blanket-add `t.Parallel()`.
 - Run focused checks after edits and the appropriate full gates once before handoff, not after every intermediate edit. Do not run mutating `make lint` concurrently with readers; validation uses `ci-lint` instead. TUI package-manager preflight resolves pnpm from `tools/tui-qa`, where its exact version is pinned.
 
+## Effective config loading
+
+Production consumers use `pipeline.LoadEffective` with an explicit `ConfigLoadOnline`, `ConfigLoadStrict`, or `ConfigLoadCached` mode. Strict ignores transient evidence; cached reuses verified invocation evidence without acquiring it. `ResolveOptions.ConfigLoadMode` defaults to online, but offline and cached-only catalog resolution force strict loading. Cobra initializes the shared cache in its root pre-run; standalone TUI lifecycle entry points retain their own initialization. `TestRawEffectiveLoaderBoundary` confines the raw config loader to `internal/config` and the pipeline loader implementation. Telemetry/init retain the offline organization policy reader.
+
 ## Command test isolation
 
 Command tests in `cmd/agent-marketplace` are ordinary top-level `Test<Name>(t *testing.T)` functions, each run in its own sandboxed child process. Every such test opens with exactly `if isolateCommandTest(t) { return }` as its first statement; in the parent that call marks the test parallel, spawns the child, relays its result, and returns true. In the child it returns false and the body runs. Matrices stay together in one child. `TestCommandIsolationGuard` parses the package's test sources and fails on any top-level test that does not start with the guard, except tests in the runner/pure-unit files (`inProcessTestFiles`) and the explicit `inProcessTests` allowlist in `command_integration_test.go`.

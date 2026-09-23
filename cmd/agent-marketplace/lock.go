@@ -633,10 +633,6 @@ func sameConfigSnapshots(left, right map[config.Source]configTransactionSnapshot
 	return true
 }
 
-func loadStableEffective(ctx context.Context, options config.LoadEffectiveOptions) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
-	return loadStableEffectiveWith(ctx, options, config.LoadEffective)
-}
-
 func loadStableEffectiveWith(ctx context.Context, options config.LoadEffectiveOptions, load func(context.Context, config.LoadEffectiveOptions) config.EffectiveConfig) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
 	probe := load(ctx, options)
 	before, err := snapshotEffectiveConfigs(probe, options.FileOverlays)
@@ -657,9 +653,6 @@ func loadStableEffectiveWith(ctx context.Context, options config.LoadEffectiveOp
 type exactLockLeaseFunc func(context.Context) (func(), error)
 
 func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (resultOption catalog.LoadOption, changed int, resultLease exactLockLeaseFunc, resultErr error) {
-	if !mode.check && !mode.offline && !mode.locked {
-		ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
-	}
 	started := time.Now()
 	modeName := lockModeName(mode)
 	scopes := selectedLockScopes(mode)
@@ -702,15 +695,14 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
 		FileOverlays: overlays,
 	}
-	loadEffective := config.LoadEffective
+	loadMode := pipeline.ConfigLoadStrict
 	if !mode.check && mode.reuseInstall != nil {
-		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
-			return pipeline.LoadEffectiveOnlineCached(ctx, opts, mode.marketplacePolicy)
-		}
+		loadMode = pipeline.ConfigLoadCached
 	} else if !mode.check && !mode.offline && !mode.locked {
-		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
-			return pipeline.LoadEffectiveOnline(ctx, opts, mode.marketplacePolicy)
-		}
+		loadMode = pipeline.ConfigLoadOnline
+	}
+	loadEffective := func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+		return pipeline.LoadEffective(ctx, loadMode, opts, mode.marketplacePolicy)
 	}
 	ec, configSnapshots, err := loadStableEffectiveWith(ctx, loadOptions, loadEffective)
 	if err != nil {

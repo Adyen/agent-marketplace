@@ -129,7 +129,6 @@ func newInstallCmd() *cobra.Command {
 }
 
 func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, verbose bool, args []string, tag string, installAll bool, registry string, scope pipeline.Scope, scopeSpecified bool, kindFilter, fromURL, fromRef, fromPath, installedName string, acceptRisk bool, marketplace string) error {
-	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err

@@ -255,7 +255,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 	// Load the effective configuration once to validate config versions and resolve
 	// the registry allowlist before mutating any config files.
-	ec := LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
 		RepoRoot:       repoRoot,
 		LocalConfigDir: opts.LocalConfigDir,
 	}, nil)
@@ -302,7 +302,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				return nil, err
 			}
 		}
-		ec = LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
+		ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
 			RepoRoot:       repoRoot,
 			LocalConfigDir: opts.LocalConfigDir,
 			FileOverlays:   overlays,
@@ -672,7 +672,7 @@ func prepareInstallDiscovery(ctx context.Context, opts *InstallOptions) (Prepare
 func loadInstallDiscoveryConfig(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig) (*config.Config, error) {
 	if ec == nil {
 		ec = new(config.EffectiveConfig)
-		*ec = LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
+		*ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
 			RepoRoot:       opts.RepoRoot,
 			LocalConfigDir: opts.LocalConfigDir,
 		}, nil)
@@ -992,7 +992,7 @@ func pathBase(p string) string {
 func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, kind ir.ResourceKind, hasKind bool, ec *config.EffectiveConfig) (result *InstallResult, retErr error) {
 	if ec == nil {
 		ec = new(config.EffectiveConfig)
-		*ec = LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
+		*ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
 			RepoRoot:       opts.RepoRoot,
 			LocalConfigDir: opts.LocalConfigDir,
 		}, nil)
@@ -1087,7 +1087,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			return nil, err
 		}
 	}
-	*ec = LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{
+	*ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
 		RepoRoot:       repoRoot,
 		LocalConfigDir: opts.LocalConfigDir,
 		FileOverlays:   overlays,

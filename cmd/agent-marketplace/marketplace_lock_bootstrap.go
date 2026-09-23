@@ -22,7 +22,7 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	if err != nil || len(layers) == 0 {
 		return 0, err
 	}
-	ec := pipeline.LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir, FileOverlays: overlays}, policy)
+	ec := pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir, FileOverlays: overlays}, policy)
 	if len(ec.Errors) > 0 {
 		return 0, errors.Join(ec.Errors...)
 	}
