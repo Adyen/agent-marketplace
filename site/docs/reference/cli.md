@@ -264,13 +264,17 @@ agent-marketplace update [flags]
 | `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
 | `--path` | string | no | none | Narrows `--registry` to a locked source root. |
 | `--kind` | string | conditionally | none | Resource kind for named registry targets. |
+| `-v`, `--verbose` | boolean | no | `false` | Lists individual organization-managed Marketplace pins. |
 
-Output reports the number of refreshed Git registries and, with `--bump`, the number of rewritten refs. Marketplace mirror pins are independently checked for newer usable revisions; index-only pins and organization-required pins are reported as skipped when the consumer cannot rewrite them.
+Output reports the number of effective configured registry entries (Git or local directory), not the number whose revision changed. With `--bump`, it also reports rewritten refs. Legacy writable Marketplace mirror pins are independently checked for newer usable revisions. Organization-managed pins are **not checked** for newer revisions or rewritten by `update`; the default output groups them instead of repeating a line for each pin. The owner of the organization configuration must update the pins (and its deployed lock, if present), then consumers can run `sync`. Pass `--verbose` to list those pins. Other skipped pins retain their per-pin reasons.
 
 ```text
-Updated 2 registries, bumped 1 refs
-Marketplace pins: updated 1, skipped 1
-Marketplace https://marketplace.example.com source/skill/review: updated sha256:... -> sha256:...
+Configured registry entries: 2, refs bumped: 1
+Marketplace pins updated: 1
+Organization-managed Marketplace pins: 15 (not checked for newer revisions; pins unchanged)
+Ask your organization config owner to update these pins, then run `agent-marketplace sync`.
+Use `agent-marketplace update --verbose` to list organization-managed pins.
+Marketplace "https://marketplace.example.com" "source"/"skill"/"review": updated "sha256:..." -> "sha256:..."
 ```
 
 ## `status`

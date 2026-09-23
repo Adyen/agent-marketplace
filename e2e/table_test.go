@@ -180,6 +180,16 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:       "update/verbose_registry_summary",
+		Desc:       "Given an unchanged Git registry, When updating with verbose output, Then the CLI reports the configured entry without claiming its revision changed",
+		Registries: []RegistryDef{{Name: "update-output", Skills: []Skill{{Name: "review"}}}},
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:update-output}}\n    ref: main\n    skills: [review]\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/workspace/.factory/skills/review"}},
+			{Args: []string{"update", "--verbose"}, MustPass: true, OutContains: []string{"Configured registry entries: 1", "Marketplace pins updated: 0"}, OutNotContains: []string{"Organization-managed Marketplace pins:"}, Symlinks: []string{"/workspace/.factory/skills/review"}},
+		},
+	},
+	{
 		Name:      "migration/startup_preserves_legacy_repo_layers",
 		Desc:      "Given a v4 user config and legacy repo/local configs, When listing and explicitly migrating the repo, Then startup preserves both legacy layers and only explicit migration upgrades the repo",
 		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
