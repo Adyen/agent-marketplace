@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -235,6 +236,43 @@ marketplaces:
 	}
 	if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("install wrote organization lock: %v", err)
+	}
+}
+
+func TestInstallCommitReuseDoesNotAcquireTransientOrganizationMarketplaceLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
+	defer server.Close()
+
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  organization: {marketplace: `+server.URL+`}
+resources:
+  organization: {include: [tools/skill/review]}
+`)
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+
+	reuse := &preparedInstallLocks{
+		documents: make(map[string]lockfile.Document),
+		lockPaths: make(map[config.Source]string),
+		bindings:  make(map[string][]lockfile.GitRegistry),
+	}
+	_, _, _, err := prepareRuntimeLocks(context.Background(), t.TempDir(), "", lockMode{reuseInstall: reuse})
+	if err == nil || !marketplacelock.HasRequiredError([]error{err}) {
+		t.Fatalf("install commit without prepared transient state error = %v, want v4 Marketplace lock requirement", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("install commit cache-only revalidation made %d Marketplace requests", got)
 	}
 }
 

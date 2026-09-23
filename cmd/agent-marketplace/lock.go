@@ -703,13 +703,13 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		FileOverlays: overlays,
 	}
 	loadEffective := config.LoadEffective
-	if !mode.check && !mode.offline && !mode.locked {
-		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
-			return pipeline.LoadEffectiveOnline(ctx, opts, mode.marketplacePolicy)
-		}
-	} else if !mode.check && mode.reuseInstall != nil {
+	if !mode.check && mode.reuseInstall != nil {
 		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
 			return pipeline.LoadEffectiveOnlineCached(ctx, opts, mode.marketplacePolicy)
+		}
+	} else if !mode.check && !mode.offline && !mode.locked {
+		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+			return pipeline.LoadEffectiveOnline(ctx, opts, mode.marketplacePolicy)
 		}
 	}
 	ec, configSnapshots, err := loadStableEffectiveWith(ctx, loadOptions, loadEffective)
