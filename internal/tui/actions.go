@@ -736,14 +736,9 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 				key := skill.ResourceKey(kind, name)
 				catalogKey := marketplaceCatalogKey(entry, pin)
 				seenKey := key + "\x01" + catalogKey
-				excluded := false
-				for _, exclusion := range cfg.MarketplaceExclusions {
-					if exclusion.Matches(entry, pin) {
-						excluded = true
-						break
-					}
-				}
-				if !excluded {
+				if !slices.ContainsFunc(cfg.MarketplaceExclusions, func(exclusion config.MarketplaceExclusion) bool {
+					return exclusion.Source == config.UserPersonal && exclusion.Matches(entry, pin)
+				}) {
 					continue
 				}
 				if _, exists := seen[seenKey]; exists {

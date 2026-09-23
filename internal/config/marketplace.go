@@ -16,8 +16,17 @@ type MarketplaceExclusion struct {
 	Source  Source `yaml:"-"`
 }
 
+// Matches reports whether the exclusion suppresses pin. A user exclusion
+// overrides an optional organization pin; any exclusion also removes a
+// collection-selected member of its own layer's selection, because an exclude
+// takes precedence over the collection include. Required entries are immune.
 func (x MarketplaceExclusion) Matches(entry MarketplaceEntry, pin MarketplaceResourcePin) bool {
-	if x.Source != UserPersonal || entry.Source != Organization || entry.Required {
+	if entry.Required {
+		return false
+	}
+	organizationOverride := x.Source == UserPersonal && entry.Source == Organization
+	ownCollectionMember := x.Source == entry.Source && !pin.Direct
+	if !organizationOverride && !ownCollectionMember {
 		return false
 	}
 	if x.URL != entry.URL {
@@ -31,6 +40,20 @@ func (x MarketplaceExclusion) Matches(entry MarketplaceEntry, pin MarketplaceRes
 		kind = "mcp"
 	}
 	return x.Locator == pin.RegistrySlug+"/"+kind+"/"+pin.Name
+}
+
+// MarketplacePinExcluded reports whether any configured exclusion suppresses
+// pin of entry.
+func (c *Config) MarketplacePinExcluded(entry MarketplaceEntry, pin MarketplaceResourcePin) bool {
+	if c == nil {
+		return false
+	}
+	for _, exclusion := range c.MarketplaceExclusions {
+		if exclusion.Matches(entry, pin) {
+			return true
+		}
+	}
+	return false
 }
 
 // MarketplaceEntry is one configured marketplace endpoint and optional exact pins.

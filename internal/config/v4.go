@@ -1731,6 +1731,14 @@ func (c *V4Config) marketplaceExcludeOnly(name string) bool {
 	return group.Exclude != nil && len(group.Include) == 0 && !group.HasAll && !group.HasTags && !group.HasRegistries && !group.HasRequired && !group.HasHarnesses
 }
 
+// AcquiresMarketplace reports whether source name is a Marketplace source that
+// acquires resources and therefore owns a lock record. An exclusion-only
+// source only suppresses pins selected elsewhere and never participates in a
+// lock.
+func (c *V4Config) AcquiresMarketplace(name string) bool {
+	return c.Sources[name].Kind == V4SourceMarketplace && !c.marketplaceExcludeOnly(name)
+}
+
 // policyConfig adapts the layer policy fields, which never depend on
 // Marketplace acquisition state, without any sources.
 func (c *V4Config) policyConfig(kind layerKind) (*Config, error) {
@@ -1766,9 +1774,13 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 
 	var lockByEndpoint map[string]lockfile.MarketplaceLock
 	marketplaceEndpoints := map[string]string{}
+	exclusionOnlyEndpoints := map[string]bool{}
 	for _, name := range names {
 		src := c.Sources[name]
-		if src.Kind != V4SourceMarketplace || c.marketplaceExcludeOnly(name) {
+		if !c.AcquiresMarketplace(name) {
+			if src.Kind == V4SourceMarketplace {
+				exclusionOnlyEndpoints[src.CanonicalURL] = true
+			}
 			continue
 		}
 		if lockDoc == nil || lockDoc.APIVersion != lockfile.APIVersionV2 {
@@ -1786,14 +1798,19 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 		}
 		lockByEndpoint = make(map[string]lockfile.MarketplaceLock, len(lockDoc.Marketplaces))
 		for _, mp := range lockDoc.Marketplaces {
-			lockByEndpoint[mp.URL] = mp
 			if _, ok := marketplaceEndpoints[mp.URL]; !ok {
+				// A record left over from before the source became exclusion-only
+				// is stale, not a mismatch; the next lock refresh drops it.
+				if exclusionOnlyEndpoints[mp.URL] {
+					continue
+				}
 				return nil, v4err("v4.marketplace-lock-mismatch", "", 0, "lock endpoint %q has no matching Marketplace source", mp.URL)
 			}
+			lockByEndpoint[mp.URL] = mp
 		}
 		for _, name := range names {
 			src := c.Sources[name]
-			if src.Kind != V4SourceMarketplace || c.marketplaceExcludeOnly(name) {
+			if !c.AcquiresMarketplace(name) {
 				continue
 			}
 			if _, ok := lockByEndpoint[src.CanonicalURL]; !ok {
@@ -1807,15 +1824,15 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 		if src.Kind == V4SourceMarketplace {
 			group := c.Groups[name]
 			for _, exclusion := range effectiveV4Exclusions(group) {
-				if kind != userLayer {
+				if kind != userLayer && !c.AcquiresMarketplace(name) {
 					return nil, v4err("v4.layer-field", "resources."+name+".exclude", src.Line, "Marketplace overrides are only supported in the user configuration")
 				}
 				if parts := strings.Split(exclusion, "/"); len(parts) != 3 || parts[1] == "collection" || parts[2] == "*" {
-					return nil, v4err("v4.marketplace-runtime-unsupported", "resources."+name+".exclude", src.Line, "Marketplace overrides require an exact non-collection registry/kind/name locator")
+					return nil, v4err("v4.marketplace-runtime-unsupported", "resources."+name+".exclude", src.Line, "Marketplace exclusions require an exact non-collection registry/kind/name locator")
 				}
 				out.MarketplaceExclusions = append(out.MarketplaceExclusions, MarketplaceExclusion{URL: src.CanonicalURL, Locator: exclusion, Source: sourceForLayer(kind)})
 			}
-			if c.marketplaceExcludeOnly(name) {
+			if !c.AcquiresMarketplace(name) {
 				continue
 			}
 			entry, err := c.marketplaceEntryForLock(name, src, group, lockByEndpoint[src.CanonicalURL], kind)

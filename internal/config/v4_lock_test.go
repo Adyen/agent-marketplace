@@ -213,6 +213,57 @@ func TestV4MarketplaceUserSelectionsAndOrganizationOverrideShareSource(t *testin
 	}
 }
 
+// An exclusion removes a collection-selected member of the layer's own
+// selection: exclude takes precedence over include in every writable layer,
+// including a resource that is also requested directly.
+func TestV4MarketplaceExclusionRemovesOwnCollectionMember(t *testing.T) {
+	for _, tc := range []struct {
+		kind  layerKind
+		scope lockfile.Scope
+	}{{userLayer, lockfile.ScopeUser}, {repoLayer, lockfile.ScopeRepo}, {localLayer, lockfile.ScopeLocal}} {
+		t.Run(string(tc.scope), func(t *testing.T) {
+			cfg, err := ParseV4([]byte(v4MarketplaceConfigYAML + "    exclude: [tools-alias/skill/leaf, tools/skill/review]\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc := v4LockFixture(t, tc.scope)
+			out, err := cfg.ToLegacyConfigWithLock(tc.kind, &doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			excluded := map[string]bool{}
+			for _, pin := range out.Marketplaces[0].Resources {
+				excluded[pin.Name] = out.MarketplacePinExcluded(out.Marketplaces[0], pin)
+			}
+			want := map[string]bool{"onboarding": false, "review": true, "leaf": true, "idx": false}
+			if fmt.Sprint(excluded) != fmt.Sprint(want) {
+				t.Fatalf("excluded pins = %v, want %v", excluded, want)
+			}
+		})
+	}
+}
+
+func TestV4MarketplaceStaleLockRecordForExclusionOnlySourceIsIgnored(t *testing.T) {
+	cfg, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources:\n  company: {marketplace: https://market.example}\n  other: {marketplace: https://other.example}\nresources:\n  company: {exclude: [tools/skill/review]}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := lockfile.Normalize(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeUser,
+		Marketplaces: []lockfile.MarketplaceLock{{URL: "https://market.example", InstanceID: "market-id"}, {URL: "https://other.example", InstanceID: "other-id"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := cfg.ToLegacyConfigWithLock(userLayer, &doc)
+	if err != nil {
+		t.Fatalf("stale record of an exclusion-only source must not fail the load: %v", err)
+	}
+	if len(out.Marketplaces) != 1 || out.Marketplaces[0].URL != "https://other.example" || len(out.MarketplaceExclusions) != 1 {
+		t.Fatalf("marketplaces = %#v, exclusions = %#v", out.Marketplaces, out.MarketplaceExclusions)
+	}
+}
+
 func TestV4MarketplaceEndpointOnlyHydration(t *testing.T) {
 	cfg, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources: {m: {marketplace: https://market.example}}\n"))
 	if err != nil {
@@ -345,12 +396,11 @@ resources:
     include: [tools/skill/review]
     registries: [tools]
 `, &repo, "v4.marketplace-runtime-unsupported"},
-		"exclude policy": {
+		"exclusion-only override outside user layer": {
 			`apiVersion: agent-marketplace/v4
 sources: {m: {marketplace: https://market.example}}
 resources:
   m:
-    include: [tools/skill/review]
     exclude: [tools/skill/leaf]
 `, &repo, "v4.layer-field"},
 		"harnesses policy": {

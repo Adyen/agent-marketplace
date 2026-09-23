@@ -243,7 +243,7 @@ resources:
           revision: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-Marketplace installation and runtime resolution require an exact, verified layer lock for the requested endpoint, registry, resource, and revision. Missing or mismatched lock evidence fails closed. A user configuration may instead declare an exclusion-only Marketplace source without a lock, using an exact `registry-slug/kind/name` entry under `resources.<source>.exclude`. This suppresses only an optional organization pin from the same endpoint; `required: true` pins and other user/repository selections remain untouched. Marketplace overrides are machine-wide, not repository-local. For example, a user config can declare:
+Marketplace installation and runtime resolution require an exact, verified layer lock for the requested endpoint, registry, resource, and revision. Missing or mismatched lock evidence fails closed. Marketplace exclusions are exact `registry-slug/kind/name` entries under `resources.<source>.exclude`, and they take precedence over includes: a group that includes a collection and excludes one of its members installs only the remaining members. The excluded resource is not acquired, so it cannot fail a sync. A user configuration may also declare an exclusion-only Marketplace source. Such a source needs no lock and never gets a lock record. It suppresses optional organization pins from the same endpoint. Exclusions never suppress `required: true` pins or another layer's selections, apart from these user overrides of organization pins. Marketplace overrides are machine-wide, not repository-local. For example, a user config can declare:
 
 ```yaml
 apiVersion: agent-marketplace/v4

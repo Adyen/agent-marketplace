@@ -132,6 +132,11 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 			if pin.Kind == "collection" && hasExpandedCollectionLeaves(entry, pin) {
 				continue
 			}
+			// Excluded pins are not acquired, so an unavailable or revoked
+			// resource the user opted out of cannot fail the run.
+			if cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
 			if blocked, ok := blockedCollectionForPin(pin, blockedCollections); ok {
 				slog.Warn("marketplace leaf materialization blocked by revoked collection graph", "url", entry.URL, "registry_id", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "error", blocked)
 				continue

@@ -515,8 +515,8 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 // the lock so callers can add it to their read assertions.
 func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overlays map[string][]byte) (*Config, *ConfigRead, error) {
 	hasMarketplace := false
-	for name, src := range v4.Sources {
-		if src.Kind == V4SourceMarketplace && !v4.marketplaceExcludeOnly(name) {
+	for name := range v4.Sources {
+		if v4.AcquiresMarketplace(name) {
 			hasMarketplace = true
 			break
 		}
