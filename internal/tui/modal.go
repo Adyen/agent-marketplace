@@ -37,6 +37,8 @@ type toggleAction struct {
 	registryURL             string // for project/global scopes: which registry entry to target
 	registryRef             string // ref of the source registry (for EnsureRegistryInConfig fallback)
 	registryPath            string // path subdirectory of the source registry (for EnsureRegistryWithPathsInConfig fallback)
+	registryKind            config.V4SourceKind
+	sourceHarness           string
 	isMarketplace           bool
 	marketplaceSelection    marketplaceSelection
 	hasMarketplaceSelection bool
@@ -86,6 +88,8 @@ func scopedToggleAction(r row, s scope) toggleAction {
 		registryURL:   r.RegistryURL,
 		registryRef:   r.RegistryRef,
 		registryPath:  r.RegistryPath,
+		registryKind:  r.Artifact.V4Kind,
+		sourceHarness: r.Artifact.SourceHarness,
 		isMarketplace: r.Artifact.IsMarketplace,
 	}
 	if act.isMarketplace {
@@ -133,6 +137,13 @@ func marketplaceToggleConfigPath(repoRoot string, s scope) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported Marketplace toggle scope")
 	}
+}
+
+func scopedToggleConfigPath(repoRoot string, s scope) (string, error) {
+	if s == scopeLocalExclude {
+		return config.LocalConfigPath(repoRoot), nil
+	}
+	return marketplaceToggleConfigPath(repoRoot, s)
 }
 
 func runMarketplaceScopedToggle(repoRoot string, act toggleAction, mapper pipeline.ConfigPathMapper) error {
@@ -184,6 +195,34 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 				slog.Info("TUI Marketplace toggle completed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable)
 			}
 			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, err: err}
+		}
+		originalPath, pathErr := scopedToggleConfigPath(repoRoot, act.scope)
+		if pathErr != nil {
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: pathErr}
+		}
+		mappedPath, pathErr := mapPath(originalPath)
+		if pathErr != nil {
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: pathErr}
+		}
+		entry := config.RegistryEntry{URL: act.registryURL, Ref: act.registryRef, Path: act.registryPath, V4Kind: act.registryKind, SourceHarness: act.sourceHarness}
+		editAction := config.V4SelectionDisable
+		if act.enable {
+			editAction = config.V4SelectionEnable
+		}
+		if act.scope == scopeLocalExclude {
+			editAction = config.V4SelectionClearExclude
+			if act.enable {
+				editAction = config.V4SelectionDisable
+			}
+		}
+		handled, editErr := config.EditV4ResourceSelection(mappedPath, originalPath, entry, act.kind, act.skillName, editAction)
+		if handled || editErr != nil {
+			if editErr != nil {
+				slog.Error("TUI v4 toggle failed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable, "error", editErr)
+			} else {
+				slog.Info("TUI v4 toggle completed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable)
+			}
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: editErr}
 		}
 		var err error
 		switch act.scope {
@@ -365,7 +404,11 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 	// the registry entry exists in the target config file before adding the
 	// exclude. Without this, the exclude write silently fails when the
 	// competing registry only exists in a different scope's config file.
-	competingMeta := make(map[string]struct{ ref, path string })
+	type competingRegistryMeta struct {
+		ref, path, harness string
+		kind               config.V4SourceKind
+	}
+	competingMeta := make(map[string]competingRegistryMeta)
 	for _, r := range rows {
 		if r.Artifact.Kind != act.kind || r.Artifact.Name != act.skillName || r.RegistryURL == act.registryURL {
 			continue
@@ -373,7 +416,7 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 		if _, dup := competingMeta[r.RegistryURL]; dup {
 			continue
 		}
-		competingMeta[r.RegistryURL] = struct{ ref, path string }{ref: r.RegistryRef, path: r.RegistryPath}
+		competingMeta[r.RegistryURL] = competingRegistryMeta{ref: r.RegistryRef, path: r.RegistryPath, kind: r.Artifact.V4Kind, harness: r.Artifact.SourceHarness}
 	}
 
 	return func() tea.Msg {
@@ -405,6 +448,14 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 		for _, url := range competing {
 			meta, ok := competingMeta[url]
 			if ok {
+				entry := config.RegistryEntry{URL: url, Ref: meta.ref, Path: meta.path, V4Kind: meta.kind, SourceHarness: meta.harness}
+				handled, err := config.EditV4ResourceSelection(configPath, configPath, entry, act.kind, act.skillName, config.V4SelectionDisable)
+				if handled || err != nil {
+					if err != nil {
+						return configWrittenMsg{skillName: act.skillName, enabled: false, err: fmt.Errorf("exclude competing registry %q: %w", url, err)}
+					}
+					continue
+				}
 				// Ensure the competing registry entry exists in the target
 				// config file so the exclude write finds a matching entry.
 				if err := config.EnsureRegistryWithPathsInConfig(configPath, url, meta.ref, meta.path); err != nil {

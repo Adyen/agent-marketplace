@@ -27,8 +27,8 @@ func TestHardSnapshotFailureNeverRendersInSync(t *testing.T) {
 	})
 	m = updated.(Model)
 	footer := renderFooter(m)
-	if strings.Contains(footer, "in sync") || !strings.Contains(footer, "drift unavailable") {
-		t.Fatalf("hard failure rendered a clean drift verdict: %q", footer)
+	if strings.Contains(footer, "in sync") || !strings.Contains(footer, "! 1 errors") {
+		t.Fatalf("hard failure did not prioritize the persistent error: %q", footer)
 	}
 	if !m.rowsStale {
 		t.Fatal("hard snapshot failure did not mark rows stale")

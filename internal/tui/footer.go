@@ -8,6 +8,9 @@ import (
 )
 
 func renderFooter(m Model) string {
+	if len(m.errs) > 0 {
+		return renderErrorFooter(m)
+	}
 	var leftParts []string
 
 	// Animated spinner + status indicator for in-flight work.
@@ -76,6 +79,35 @@ func renderFooter(m Model) string {
 		right += " · " + styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
 	}
 	return footerWithRight(strings.Join(leftParts, "  "), right, m.width)
+}
+
+func renderErrorFooter(m Model) string {
+	actions := "e:errors · r:reload · q:quit"
+	if m.filterActive {
+		actions = "enter apply · esc cancel · q quit"
+	}
+	budget := m.width - ansi.StringWidth(actions) - 1
+	status := fmt.Sprintf("! %d errors", len(m.errs))
+	if budget > ansi.StringWidth(status)+2 {
+		latest := ""
+		if err := m.errs[len(m.errs)-1]; err != nil {
+			latest = sanitizeTerminalData(fmt.Sprint(err), terminalSingleLine)
+		}
+		if latest != "" {
+			status += ": " + latest
+		}
+	}
+	if m.width < 1 {
+		return ""
+	}
+	if budget < 0 {
+		budget = 0
+	}
+	status = ansi.Truncate(status, budget, "…")
+	if ansi.StringWidth(actions) >= m.width {
+		return ansi.Truncate(actions, m.width, "…")
+	}
+	return styleFooterError.Render(status) + " " + actions
 }
 
 func (m Model) failuresOrDrift() bool {

@@ -13,6 +13,7 @@ const betaSkillContent = "---\nname: beta-skill\ndescription: Synced beta fixtur
 export type OrganizationFixtureMode = "missing-lock" | "published-lock";
 
 export interface FixtureOptions {
+  directorySource?: boolean;
   // Installs a v4 organization layer at <root>/etc/agent-marketplace that
   // declares one exact Marketplace skill:
   //  - "missing-lock" leaves the organization acquisition lock absent, so a
@@ -100,16 +101,23 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     const source = path.join(registries, "source");
     write(path.join(source, "skills", "alpha-skill", "SKILL.md"), alphaSkillContent);
     write(path.join(source, "skills", "beta-skill", "SKILL.md"), betaSkillContent);
-    git(source, env, ["init", "--quiet", "--initial-branch=main"]);
-    git(source, env, ["add", "."]);
-    git(source, env, ["-c", "user.name=TUI QA", "-c", "user.email=tui-qa@example.invalid", "commit", "--quiet", "-m", "Seed TUI fixture"]);
-    const bareRegistry = path.join(registries, "fixture.git");
-    git(registries, env, ["clone", "--quiet", "--bare", source, bareRegistry]);
-    const registryURL = pathToFileURL(bareRegistry).href;
-
-    const expectedRepoConfig = `apiVersion: agent-marketplace/v2\nregistries:\n  - url: ${registryURL}\n    ref: main\n    path: skills\n    skills:\n      include:\n        - beta-skill\n`;
-    write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n");
-    write(path.join(repo, ".agents", "config.yaml"), expectedRepoConfig);
+    let registryURL: string;
+    let expectedRepoConfig: string;
+    if (options.directorySource) {
+      registryURL = source;
+      expectedRepoConfig = "";
+      write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses: [factory, gemini, devin]\nsources:\n  local:\n    directory: ${source}\n`);
+    } else {
+      git(source, env, ["init", "--quiet", "--initial-branch=main"]);
+      git(source, env, ["add", "."]);
+      git(source, env, ["-c", "user.name=TUI QA", "-c", "user.email=tui-qa@example.invalid", "commit", "--quiet", "-m", "Seed TUI fixture"]);
+      const bareRegistry = path.join(registries, "fixture.git");
+      git(registries, env, ["clone", "--quiet", "--bare", source, bareRegistry]);
+      registryURL = pathToFileURL(bareRegistry).href;
+      expectedRepoConfig = `apiVersion: agent-marketplace/v2\nregistries:\n  - url: ${registryURL}\n    ref: main\n    path: skills\n    skills:\n      include:\n        - beta-skill\n`;
+      write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n");
+      write(path.join(repo, ".agents", "config.yaml"), expectedRepoConfig);
+    }
     git(repo, env, ["init", "--quiet", "--initial-branch=main"]);
 
     // Keep the missing-lock fixture cold so the TUI's first real-terminal load
@@ -122,9 +130,17 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         throw new Error(`fixture sync failed (exit ${initialSync.status}):\n${initialSync.stdout}\n${initialSync.stderr}`);
       }
 
-      const betaSkill = path.join(repo, ".factory", "skills", "beta-skill");
-      if (!fs.lstatSync(betaSkill).isSymbolicLink()) throw new Error("fixture beta-skill is not a symlink");
-      if (fs.lstatSync(path.join(repo, ".factory", "skills", "alpha-skill"), { throwIfNoEntry: false })) throw new Error("fixture alpha-skill was unexpectedly materialized");
+      if (options.directorySource) {
+        for (const skill of ["alpha-skill", "beta-skill"]) {
+          for (const rootPath of [path.join(home, ".factory", "skills"), path.join(home, ".gemini", "skills"), path.join(home, ".config", "devin", "skills")]) {
+            if (fs.lstatSync(path.join(rootPath, skill), { throwIfNoEntry: false })) throw new Error(`fixture ${skill} was unexpectedly materialized`);
+          }
+        }
+      } else {
+        const betaSkill = path.join(repo, ".factory", "skills", "beta-skill");
+        if (!fs.lstatSync(betaSkill).isSymbolicLink()) throw new Error("fixture beta-skill is not a symlink");
+        if (fs.lstatSync(path.join(repo, ".factory", "skills", "alpha-skill"), { throwIfNoEntry: false })) throw new Error("fixture alpha-skill was unexpectedly materialized");
+      }
     }
 
     const launcher = path.join(root, "launch-agent-marketplace");
@@ -174,9 +190,11 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         fs.rmSync(path.join(repo, ".devin"), { recursive: true, force: true });
         fs.rmSync(path.join(repo, ".codex"), { recursive: true, force: true });
         fs.rmSync(path.join(xdg, "state", "agent-marketplace"), { recursive: true, force: true });
-        const repoConfigPath = path.join(repo, ".agents", "config.yaml");
-        fs.mkdirSync(path.dirname(repoConfigPath), { recursive: true, mode: 0o700 });
-        fs.writeFileSync(repoConfigPath, expectedRepoConfig, { encoding: "utf8", mode: 0o600 });
+        if (!options.directorySource) {
+          const repoConfigPath = path.join(repo, ".agents", "config.yaml");
+          fs.mkdirSync(path.dirname(repoConfigPath), { recursive: true, mode: 0o700 });
+          fs.writeFileSync(repoConfigPath, expectedRepoConfig, { encoding: "utf8", mode: 0o600 });
+        }
       },
       cleanup: () => {
         stub?.close();
