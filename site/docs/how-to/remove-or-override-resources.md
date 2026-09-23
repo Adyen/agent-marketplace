@@ -35,7 +35,7 @@ Excluded legacy-review (provided by example-resources)
 
 ## 3. `remove` refuses required resources
 
-A `required: true` resource is never converted to an exclusion. `remove` refuses it and reports the source that requires it. Change the organization or user configuration that declares `required: true` if you need to stop materializing it.
+A `required: true` resource is never converted to an exclusion. `remove` refuses it and reports the source that requires it. Change the organization or user configuration that declares `required: true` if you need to stop materializing it. An organization Marketplace collection without `required: true` is optional: in the TUI, select an individual member and press `e` in the scope modal to add a machine-wide user exclusion to a v4 user config. The collection remains selected and other members remain enabled. The CLI cannot remove a pin from the externally managed organization file. If the user config is still v2/v3, migrate it to v4 before using this TUI override.
 
 ## 4. Target a specific scope
 

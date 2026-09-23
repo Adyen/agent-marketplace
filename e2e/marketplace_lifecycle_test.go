@@ -180,6 +180,46 @@ func (f *marketplaceBehaviorFixture) reindex(t *testing.T, cfg mpconfig.Config) 
 	}
 }
 
+func TestOrganizationMarketplaceCollectionMemberUserOverride(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("organization member", true))
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	organization := fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  org: {marketplace: %s}
+resources:
+  org:
+    include: [behavior-source/collection/behavior-bundle]
+`, fixture.server.URL)
+	consumer.WriteOrgConfig(organization)
+	result := consumer.RunAM("sync")
+	if result.ExitCode != 0 {
+		t.Fatalf("optional organization collection sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "organization member")
+	consumer.WriteGlobalConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  company: {marketplace: %s}
+resources:
+  company:
+    exclude: [behavior-source/skill/skill-one]
+`, fixture.server.URL))
+	result = consumer.RunAM("sync")
+	if result.ExitCode != 0 {
+		t.Fatalf("user override sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertFileAbsent("/root/.factory/skills/skill-one")
+	consumer.AssertFileContains("/root/.factory/commands/command-one.md", "echo behavior")
+	consumer.WriteOrgConfig(organization + "    required: true\n")
+	result = consumer.RunAM("sync")
+	if result.ExitCode != 0 {
+		t.Fatalf("required organization collection sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "organization member")
+}
+
 func TestMarketplacePinRemainsExactUntilUpdateAndWorksOffline(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("version one", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)

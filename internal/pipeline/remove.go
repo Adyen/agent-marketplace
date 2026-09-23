@@ -133,7 +133,10 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 
 	if collection, entry, ok := marketplaceCollectionByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
 		if entry.Source == config.Organization {
-			return nil, fmt.Errorf("collection %q is required and managed externally", name)
+			if entry.Required {
+				return nil, fmt.Errorf("collection %q is required and managed externally", name)
+			}
+			return nil, fmt.Errorf("collection %q is managed externally", name)
 		}
 		effective := opts.Scope
 		if !opts.ScopeSpecified {
@@ -153,7 +156,10 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 
 	if pin, entry, ok := marketplaceDirectPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
 		if entry.Source == config.Organization {
-			return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
+			if entry.Required {
+				return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
+			}
+			return nil, fmt.Errorf("%s %q is managed externally", skill.KindLabel(opts.Kind), name)
 		}
 		effective := opts.Scope
 		if !opts.ScopeSpecified {

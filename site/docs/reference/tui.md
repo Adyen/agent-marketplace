@@ -55,7 +55,7 @@ If a layer has no lock, the TUI may browse its current source content and show a
 
 ## Modals
 
-- `space` opens the resource's scope modal. Use `g` for user/global selection, `p` for project, `l` for local, or `e` for a local exclusion. Press `esc` to cancel. A local exclusion cannot suppress a machine-wide or required resource.
+- `space` opens the resource's scope modal. Use `g` for user/global selection, `p` for project, `l` for local, or `e` for a local exclusion. Press `esc` to cancel. A local exclusion cannot suppress a machine-wide or required resource. For an optional organization Marketplace resource, `e` instead edits an exact exclusion in the machine-wide v4 user config; required resources remain protected.
 - `H` opens harness selection. Choose user/global with `g` or project with `p`, toggle harnesses with `space`, then save with `enter`. The project list overrides the user list. Local scope has no harness list.
 - `E` opens the config picker: `g` for user/global, `p` for project, or `l` for local. These keys have different meanings outside the modals: in the resource list, `g` jumps to the top and `e` opens diagnostics.
 

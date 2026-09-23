@@ -985,8 +985,27 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	} else {
 		artifacts, errs = mpResolver.Resolve(ctx, cfg, targetSet, mode)
 	}
+	var suppressed map[string]bool
+	if len(cfg.MarketplaceExclusions) > 0 {
+		suppressed = make(map[string]bool)
+		for _, entry := range cfg.Marketplaces {
+			if entry.Source != config.Organization || entry.Required {
+				continue
+			}
+			for _, pin := range entry.Resources {
+				for _, exclusion := range cfg.MarketplaceExclusions {
+					if exclusion.Matches(entry, pin) {
+						suppressed[config.MarketplaceCatalogKey(entry, pin)] = true
+					}
+				}
+			}
+		}
+	}
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
 	for i, a := range artifacts {
+		if a.IsMarketplace && a.Source == config.Organization && !a.Required && suppressed[a.CatalogKey] {
+			continue
+		}
 		sel := resourceSelection{kind: a.Kind, name: a.Name}
 		source := a.MarketplaceURL
 		if a.MarketplaceRegistryID != "" {

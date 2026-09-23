@@ -131,6 +131,88 @@ func TestV4MarketplaceLockHydration(t *testing.T) {
 	}
 }
 
+func TestV4MarketplaceExplicitRequiredPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, policy string
+		required     bool
+	}{
+		{name: "omitted", policy: "", required: false},
+		{name: "explicit false", policy: "    required: false\n", required: false},
+		{name: "explicit true", policy: "    required: true\n", required: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := ParseV4([]byte(v4MarketplaceConfigYAML + tc.policy))
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc := v4LockFixture(t, lockfile.ScopeOrganization)
+			out, err := cfg.ToLegacyConfigWithLock(organizationLayer, &doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out.Marketplaces) != 1 || out.Marketplaces[0].Required != tc.required {
+				t.Fatalf("Marketplace required policy = %#v, want %t", out.Marketplaces, tc.required)
+			}
+		})
+	}
+}
+
+func TestV4MarketplaceExcludeOnlyUserConfigNeedsNoAcquisitionLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".agents")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, UserConfigShadowMarker), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  company: {marketplace: https://market.example}
+resources:
+  company:
+    exclude: [tools/skill/review]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfigFromPath(path)
+	if err != nil {
+		t.Fatalf("exclusion-only Marketplace source must not require acquisition: %v", err)
+	}
+	if len(cfg.Marketplaces) != 0 || len(cfg.MarketplaceExclusions) != 1 || cfg.MarketplaceExclusions[0].Locator != "tools/skill/review" {
+		t.Fatalf("user Marketplace exclusions = %#v, marketplaces = %#v", cfg.MarketplaceExclusions, cfg.Marketplaces)
+	}
+}
+
+func TestV4MarketplaceUserOverrideRejectsBroadSelection(t *testing.T) {
+	for _, locator := range []string{"tools/*", "tools/collection/bundle"} {
+		cfg, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources: {m: {marketplace: https://market.example}}\nresources: {m: {exclude: [" + locator + "]}}\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code := v4LockErrorCode(t, cfg, userLayer, nil); code != "v4.marketplace-runtime-unsupported" {
+			t.Fatalf("locator %q: code = %q", locator, code)
+		}
+	}
+}
+
+func TestV4MarketplaceUserSelectionsAndOrganizationOverrideShareSource(t *testing.T) {
+	cfg, err := ParseV4([]byte(v4MarketplaceConfigYAML + "    exclude: [tools/skill/other]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := v4LockFixture(t, lockfile.ScopeUser)
+	out, err := cfg.ToLegacyConfigWithLock(userLayer, &doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Marketplaces) != 1 || len(out.Marketplaces[0].Resources) != 4 || len(out.MarketplaceExclusions) != 1 || out.MarketplaceExclusions[0].Locator != "tools/skill/other" {
+		t.Fatalf("user Marketplace selections/exclusion = %#v", out)
+	}
+}
+
 func TestV4MarketplaceEndpointOnlyHydration(t *testing.T) {
 	cfg, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources: {m: {marketplace: https://market.example}}\n"))
 	if err != nil {
@@ -270,15 +352,7 @@ resources:
   m:
     include: [tools/skill/review]
     exclude: [tools/skill/leaf]
-`, &repo, "v4.marketplace-runtime-unsupported"},
-		"required policy": {
-			`apiVersion: agent-marketplace/v4
-sources: {m: {marketplace: https://market.example}}
-resources:
-  m:
-    include: [tools/skill/review]
-    required: true
-`, &repo, "v4.marketplace-runtime-unsupported"},
+`, &repo, "v4.layer-field"},
 		"harnesses policy": {
 			`apiVersion: agent-marketplace/v4
 sources: {m: {marketplace: https://market.example}}

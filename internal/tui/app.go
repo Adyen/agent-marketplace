@@ -997,14 +997,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return toastMsg{text: "this Marketplace resource is not installable", duration: 2 * time.Second}
 			}
 		}
-		if r.MarketplaceCollectionOnly {
-			return m, func() tea.Msg {
-				return toastMsg{text: "collection-selected Marketplace items must be toggled through their collection", duration: 2 * time.Second}
-			}
-		}
 		if r.Artifact.Required {
 			return m, func() tea.Msg {
 				return toastMsg{text: "required items cannot be toggled", duration: 2 * time.Second}
+			}
+		}
+		if r.MarketplaceCollectionOnly && !r.canOverrideMarketplace() {
+			return m, func() tea.Msg {
+				return toastMsg{text: "collection-selected Marketplace items must be toggled through their collection", duration: 2 * time.Second}
 			}
 		}
 		m.pane = paneToggleModal

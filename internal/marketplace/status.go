@@ -339,7 +339,7 @@ func newPinStatus(entry config.MarketplaceEntry, pin config.MarketplaceResourceP
 	if acquisition == "" {
 		acquisition = AcquisitionMirror
 	}
-	required := marketplacePinRequired(entry.Source)
+	required := marketplacePinRequired(entry)
 	name := pin.Name
 	if pin.InstalledName != "" {
 		name = pin.InstalledName

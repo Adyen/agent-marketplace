@@ -235,9 +235,9 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			if pin.Kind != "collection" {
 				continue
 			}
-			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Source == config.Organization, Skipped: true}
+			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true}
 			if entry.Source == config.Organization {
-				item.Reason = "organization pin is required and managed externally"
+				item.Reason = "organization pin is managed externally"
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
@@ -288,7 +288,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				continue
 			}
 			if entry.Source == config.Organization {
-				item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"}
+				item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true, Reason: "organization pin is managed externally"}
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}

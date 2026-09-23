@@ -10,6 +10,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type MarketplaceExclusion struct {
+	URL     string `yaml:"-"`
+	Locator string `yaml:"-"`
+	Source  Source `yaml:"-"`
+}
+
+func (x MarketplaceExclusion) Matches(entry MarketplaceEntry, pin MarketplaceResourcePin) bool {
+	if x.Source != UserPersonal || entry.Source != Organization || entry.Required {
+		return false
+	}
+	if x.URL != entry.URL {
+		canonical, err := NormalizeMarketplaceURL(entry.URL)
+		if err != nil || x.URL != canonical {
+			return false
+		}
+	}
+	kind := pin.Kind
+	if kind == api.KindMcpServer {
+		kind = "mcp"
+	}
+	return x.Locator == pin.RegistrySlug+"/"+kind+"/"+pin.Name
+}
+
 // MarketplaceEntry is one configured marketplace endpoint and optional exact pins.
 type MarketplaceEntry struct {
 	URL        string                   `yaml:"url"`
@@ -17,6 +40,7 @@ type MarketplaceEntry struct {
 	Alias      string                   `yaml:"alias,omitempty"`
 	Resources  []MarketplaceResourcePin `yaml:"resources,omitempty"`
 	Source     Source                   `yaml:"-"`
+	Required   bool                     `yaml:"-"`
 }
 
 // MarketplaceResourcePin is an exact Marketplace resource coordinate and digest.
