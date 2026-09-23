@@ -138,7 +138,7 @@ func runDoctor(opts doctorOptions) error {
 	if _, err := fmt.Fprintf(out, "detected harness: %s\n", detected); err != nil {
 		return err
 	}
-	ec := config.LoadEffective(opts.ctx, config.LoadEffectiveOptions{})
+	ec := pipeline.LoadEffective(opts.ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{}, nil)
 	config.LogManagedDiagnostics(ec.Diagnostics)
 
 	managed := "false"

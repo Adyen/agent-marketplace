@@ -985,8 +985,29 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	} else {
 		artifacts, errs = mpResolver.Resolve(ctx, cfg, targetSet, mode)
 	}
+	// Resolvers that cannot see exclusions (for example inspection results)
+	// still return excluded pins; drop them per owning layer so an exclusion
+	// of one layer's pin never hides another layer's pin of the same resource.
+	type ownedPin struct {
+		source     config.Source
+		catalogKey string
+	}
+	var suppressed map[ownedPin]bool
+	if len(cfg.MarketplaceExclusions) > 0 {
+		suppressed = make(map[ownedPin]bool)
+		for _, entry := range cfg.Marketplaces {
+			for _, pin := range entry.Resources {
+				if cfg.MarketplacePinExcluded(entry, pin) {
+					suppressed[ownedPin{entry.Source, config.MarketplaceCatalogKey(entry, pin)}] = true
+				}
+			}
+		}
+	}
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
 	for i, a := range artifacts {
+		if a.IsMarketplace && !a.Required && suppressed[ownedPin{a.Source, a.CatalogKey}] {
+			continue
+		}
 		sel := resourceSelection{kind: a.Kind, name: a.Name}
 		source := a.MarketplaceURL
 		if a.MarketplaceRegistryID != "" {

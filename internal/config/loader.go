@@ -510,13 +510,13 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 }
 
 // loadV4RuntimeConfig adapts a parsed v4 tree to the legacy runtime model.
-// Marketplace sources require the owning layer lock; Git/directory-only trees
-// never touch a lock. The returned ConfigRead covers the lock so callers can
-// add it to their read assertions.
+// Marketplace acquisition sources require the owning layer lock; Git/directory
+// and user exclusion-only trees never touch one. The returned ConfigRead covers
+// the lock so callers can add it to their read assertions.
 func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overlays map[string][]byte) (*Config, *ConfigRead, error) {
 	hasMarketplace := false
-	for _, src := range v4.Sources {
-		if src.Kind == V4SourceMarketplace {
+	for name := range v4.Sources {
+		if v4.AcquiresMarketplace(name) {
 			hasMarketplace = true
 			break
 		}

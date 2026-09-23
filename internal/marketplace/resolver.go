@@ -132,6 +132,11 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 			if pin.Kind == "collection" && hasExpandedCollectionLeaves(entry, pin) {
 				continue
 			}
+			// Excluded pins are not acquired, so an unavailable or revoked
+			// resource the user opted out of cannot fail the run.
+			if cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
 			if blocked, ok := blockedCollectionForPin(pin, blockedCollections); ok {
 				slog.Warn("marketplace leaf materialization blocked by revoked collection graph", "url", entry.URL, "registry_id", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "error", blocked)
 				continue
@@ -299,10 +304,10 @@ func marketplaceCatalogKey(entry config.MarketplaceEntry, pin config.Marketplace
 }
 
 // marketplacePinRequired derives the resolver policy for an exact pin from the
-// configuration layer that owns it. Organization pins are mandatory policy;
-// pins from writable user/repo layers remain optional and can be excluded.
-func marketplacePinRequired(source config.Source) bool {
-	return source == config.Organization
+// explicit required policy of its configuration entry. Organization ownership
+// alone does not make a Marketplace pin mandatory.
+func marketplacePinRequired(entry config.MarketplaceEntry) bool {
+	return entry.Required
 }
 
 func enforceMarketplaceAssessment(rev store.AssessedResourceRevision) error {
@@ -407,7 +412,7 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	if pin.InstalledName != "" {
 		name = pin.InstalledName
 	}
-	required := marketplacePinRequired(entry.Source)
+	required := marketplacePinRequired(entry)
 	slog.Debug("marketplace pin required decision",
 		"url", entry.URL,
 		"instance_id", entry.InstanceID,
@@ -554,7 +559,7 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	artifact = resolver.ResolvedArtifact{
 		Entry:       catalog.Entry{Kind: mustIRKind(pin.Kind), Name: name},
 		RegistryURL: entry.URL, RegistryPath: pin.RegistryID, Ref: pin.Revision,
-		Source: entry.Source, Required: marketplacePinRequired(entry.Source),
+		Source: entry.Source, Required: marketplacePinRequired(entry),
 		CatalogKey: marketplaceCatalogKey(entry, pin), Harnesses: targetSet,
 		IsMarketplace: true, MarketplaceURL: entry.URL, MarketplaceInstanceID: entry.InstanceID,
 		MarketplaceAlias: entry.Alias, MarketplaceRegistryID: pin.RegistryID,

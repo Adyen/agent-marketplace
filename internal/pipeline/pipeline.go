@@ -71,10 +71,10 @@ type ResolveOptions struct {
 	// except that Offline always forces CachedNoFetch.
 	MarketplaceMode    *resolver.MarketplaceResolveMode
 	marketplaceInstall *marketplace.PreparedInstall
-	// DisableTransientOrganizationMarketplaceLock preserves strictly
-	// read-only/check-only command semantics when an organization lock is
-	// absent. Normal online consumer paths acquire a verified in-memory lock.
-	DisableTransientOrganizationMarketplaceLock bool
+	// ConfigLoadMode selects organization-lock loading semantics; the default
+	// is online. Offline and cached-only catalog operations always force strict
+	// loading, preserving their existing requirement for on-disk evidence.
+	ConfigLoadMode ConfigLoadMode
 	// MarketplaceSourceFilter limits Marketplace resolution to entries owned by
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
@@ -343,7 +343,10 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	if effectiveOpts.LocalConfigDir == "" {
 		effectiveOpts.LocalConfigDir = opts.LocalConfigDir
 	}
-	allowTransientOrganizationLock := !opts.DisableTransientOrganizationMarketplaceLock && !opts.Offline && opts.CatalogMode != catalog.LoadModeCachedNoFetch
+	loadMode := opts.ConfigLoadMode
+	if opts.Offline || opts.CatalogMode == catalog.LoadModeCachedNoFetch {
+		loadMode = ConfigLoadStrict
+	}
 	useLoaders := opts.Loaders.Org != nil || opts.Loaders.Global != nil || opts.Loaders.Repo != nil || opts.Loaders.Local != nil
 	if useLoaders {
 		loaders := opts.Loaders
@@ -384,15 +387,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			Local:        localCfg,
 			Errors:       errs,
 		}
-		if allowTransientOrganizationLock && marketplacelock.HasRequiredError(ec.Errors) {
-			ec, transientOrganizationMarketplaceLock = loadEffectiveWithTransientOrganizationLock(ctx, effectiveOpts, opts.MarketplaceRevocationPolicy, true)
+		if loadMode != ConfigLoadStrict && marketplacelock.HasRequiredError(ec.Errors) {
+			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy)
 		}
 	} else {
-		if allowTransientOrganizationLock {
-			ec, transientOrganizationMarketplaceLock = loadEffectiveWithTransientOrganizationLock(ctx, effectiveOpts, opts.MarketplaceRevocationPolicy, true)
-		} else {
-			ec = config.LoadEffective(ctx, effectiveOpts)
-		}
+		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy)
 	}
 
 	result.Diagnostics = ec.Diagnostics

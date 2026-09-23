@@ -29,6 +29,10 @@ func MergeLayers(layers []Layer) *Config {
 			entry.Source = layer.Source
 			merged.Marketplaces = append(merged.Marketplaces, entry)
 		}
+		for _, exclusion := range layer.Config.MarketplaceExclusions {
+			exclusion.Source = layer.Source
+			merged.MarketplaceExclusions = append(merged.MarketplaceExclusions, exclusion)
+		}
 
 		// Collections are cumulative across layers (include from all layers
 		// is unioned; exclude from higher-precedence layers overrides, but

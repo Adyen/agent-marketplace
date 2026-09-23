@@ -48,19 +48,33 @@ func WithTransientOrganizationMarketplaceLockCache(ctx context.Context) context.
 	return context.WithValue(ctx, transientOrganizationMarketplaceLockCacheKey{}, cache)
 }
 
-// LoadEffectiveOnline loads effective configuration for an online consumer,
-// resolving an intentionally absent organization Marketplace lock in memory.
-func LoadEffectiveOnline(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
-	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, true)
+type ConfigLoadMode uint8
+
+const (
+	ConfigLoadOnline ConfigLoadMode = iota
+	ConfigLoadStrict
+	ConfigLoadCached
+)
+
+// LoadEffective loads configuration with explicit organization-lock semantics:
+// online acquisition, strict on-disk evidence, or reuse of verified cached evidence.
+func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
+	ec, _ := loadEffective(ctx, mode, opts, policy)
 	return ec
 }
 
-// LoadEffectiveOnlineCached reloads effective configuration with organization
-// Marketplace state acquired earlier in the same online operation, without
-// contacting the Marketplace again.
-func LoadEffectiveOnlineCached(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
-	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, false)
-	return ec
+// loadEffective also reports whether organization Marketplace state was acquired
+// or reused. Strict loads never consult the transient cache; cached loads never
+// contact the Marketplace.
+func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+	switch mode {
+	case ConfigLoadOnline, ConfigLoadCached:
+		return loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, mode == ConfigLoadOnline)
+	case ConfigLoadStrict:
+		return config.LoadEffective(ctx, opts), transientOrganizationMarketplaceLockUnused
+	default:
+		return effectiveConfigError(config.EffectiveConfig{}, fmt.Errorf("invalid config load mode: %d", mode)), transientOrganizationMarketplaceLockUnused
+	}
 }
 
 func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, allowAcquire bool) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {

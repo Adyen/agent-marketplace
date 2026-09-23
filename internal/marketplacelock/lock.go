@@ -93,12 +93,7 @@ func OrganizationProvisional(configPath string) (Layer, []byte, bool, error) {
 // HasMarketplaceSource reports whether a v4 tree needs Marketplace lock
 // hydration.
 func HasMarketplaceSource(v4 *config.V4Config) bool {
-	for _, source := range v4.Sources {
-		if source.Kind == config.V4SourceMarketplace {
-			return true
-		}
-	}
-	return false
+	return len(sortedMarketplaceSources(v4)) > 0
 }
 
 // Provisional returns a structurally valid placeholder lock. It is used only
@@ -230,8 +225,8 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 
 func sortedMarketplaceSources(v4 *config.V4Config) []string {
 	names := make([]string, 0, len(v4.Sources))
-	for name, source := range v4.Sources {
-		if source.Kind == config.V4SourceMarketplace {
+	for name := range v4.Sources {
+		if v4.AcquiresMarketplace(name) {
 			names = append(names, name)
 		}
 	}

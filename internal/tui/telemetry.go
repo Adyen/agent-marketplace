@@ -207,6 +207,8 @@ func scopeName(s scope) string {
 		return "local"
 	case scopeLocalExclude:
 		return "local_exclude"
+	case scopeUserExclude:
+		return "user_exclude"
 	}
 	return "unknown"
 }

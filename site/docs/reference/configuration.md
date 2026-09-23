@@ -224,7 +224,7 @@ Duplicate locators within one include list are rejected, even when their options
 
 Selection candidates are the union of explicit requests, tag matches, and `all` selection, followed by collection expansion and exclusions. An explicit request supplies its options when a resource is also selected dynamically. A later explicit include can re-enable a resource suppressed by an earlier exclusion, except for required-policy protections.
 
-A `required: true` group protects its selections but is not itself a selection expression. A required-only group therefore selects zero catalog resources.
+A `required: true` group protects its selections but is not itself a selection expression. A required-only group therefore selects zero catalog resources. Marketplace resources selected by an organization group are not implicitly required; set `required: true` on that group to protect its direct pins and collection-selected members.
 
 Collections expand to their members before resources are resolved. Collections themselves are not materialized into harness directories. See the [collections reference](collections.md) for the registry-side collection file format.
 
@@ -243,7 +243,19 @@ resources:
           revision: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-Marketplace installation and runtime resolution require an exact, verified layer lock for the requested endpoint, registry, resource, and revision. Missing or mismatched lock evidence fails closed. Use [How to install a resource from a hosted Marketplace](../how-to/install-from-a-marketplace.md) for the end-to-end workflow.
+Marketplace installation and runtime resolution require an exact, verified layer lock for the requested endpoint, registry, resource, and revision. Missing or mismatched lock evidence fails closed. Marketplace exclusions are exact `registry-slug/kind/name` entries under `resources.<source>.exclude`, and they take precedence over includes: a group that includes a collection and excludes one of its members installs only the remaining members. The excluded resource is not acquired, so it cannot fail a sync. A user configuration may also declare an exclusion-only Marketplace source. Such a source needs no lock and never gets a lock record. It suppresses optional organization pins from the same endpoint. Exclusions never suppress `required: true` pins or another layer's selections, apart from these user overrides of organization pins. Marketplace overrides are machine-wide, not repository-local. For example, a user config can declare:
+
+```yaml
+apiVersion: agent-marketplace/v4
+sources:
+  company:
+    marketplace: https://marketplace.example.com
+resources:
+  company:
+    exclude: [shared-agents/skill/review]
+```
+
+Use [How to install a resource from a hosted Marketplace](../how-to/install-from-a-marketplace.md) for the end-to-end workflow.
 
 `allowed_marketplaces` contains regular expressions matched against normalized Marketplace endpoint URLs. The first layer that declares it, in organization-to-repository authority order, controls the policy; the personal-local layer cannot declare it.
 

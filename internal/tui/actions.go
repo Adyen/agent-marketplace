@@ -20,6 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -719,6 +720,45 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 			MarketplaceSelections:     marketplaceSelections,
 			MarketplaceCollectionOnly: marketplaceCollectionOnly(marketplaceSelections),
 		})
+	}
+
+	if cfg != nil && len(cfg.MarketplaceExclusions) > 0 {
+		for _, entry := range cfg.Marketplaces {
+			if entry.Source != config.Organization || entry.Required {
+				continue
+			}
+			for _, pin := range entry.Resources {
+				kind, ok := mpapi.ToIR(pin.Kind)
+				if !ok || kind == ir.KindCollection {
+					continue
+				}
+				name := marketplaceInstalledName(pin)
+				key := skill.ResourceKey(kind, name)
+				catalogKey := marketplaceCatalogKey(entry, pin)
+				seenKey := key + "\x01" + catalogKey
+				if !slices.ContainsFunc(cfg.MarketplaceExclusions, func(exclusion config.MarketplaceExclusion) bool {
+					return exclusion.Source == config.UserPersonal && exclusion.Matches(entry, pin)
+				}) {
+					continue
+				}
+				if _, exists := seen[seenKey]; exists {
+					continue
+				}
+				seen[seenKey] = struct{}{}
+				selections := marketplaceSelectionsByArtifact[marketplaceSelectionKey(catalogKey, pin.Kind, name)]
+				rows = append(rows, row{
+					Artifact: resolver.ResolvedArtifact{
+						Entry: catalog.Entry{Kind: kind, Name: name}, RegistryURL: entry.URL,
+						RegistryPath: pin.RegistryID, Ref: pin.Revision, Source: entry.Source,
+						CatalogKey: catalogKey, IsMarketplace: true, MarketplaceURL: entry.URL,
+						MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID,
+					},
+					IsAvailable: true, IsExcluded: true, ExcludedByUser: true, EnabledGlobal: true,
+					RegistryURL: entry.URL, RegistryName: registryDisplayName(entry.URL),
+					MarketplaceSelections: selections, MarketplaceCollectionOnly: marketplaceCollectionOnly(selections),
+				})
+			}
+		}
 	}
 
 	// Add available skills not in resolved, using the resolver's collision

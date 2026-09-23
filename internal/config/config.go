@@ -452,10 +452,11 @@ type Config struct {
 	// Harnesses lists the target harnesses to materialize into (e.g.
 	// "factory", "cursor", "claude"). Required at v2; the loader errors
 	// hard if absent.
-	Harnesses    []string           `yaml:"harnesses,omitempty"`
-	Registries   []RegistryEntry    `yaml:"registries,omitempty"`
-	Marketplaces []MarketplaceEntry `yaml:"marketplaces,omitempty"`
-	Collections  KindSelector       `yaml:"collections,omitempty"`
+	Harnesses             []string               `yaml:"harnesses,omitempty"`
+	Registries            []RegistryEntry        `yaml:"registries,omitempty"`
+	Marketplaces          []MarketplaceEntry     `yaml:"marketplaces,omitempty"`
+	MarketplaceExclusions []MarketplaceExclusion `yaml:"-"`
+	Collections           KindSelector           `yaml:"collections,omitempty"`
 
 	// Top-level per-kind defaults. During merge, each registry entry inherits
 	// these selectors unless it provides its own per-entry selectors.

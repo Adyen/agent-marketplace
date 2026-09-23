@@ -47,6 +47,30 @@ sources:
 	}
 }
 
+func TestExclusionOnlyMarketplaceSourceIsNotLocked(t *testing.T) {
+	v4, err := config.ParseV4([]byte(`apiVersion: agent-marketplace/v4
+sources:
+  company: {marketplace: https://company.example}
+  hosted: {marketplace: https://hosted.example}
+resources:
+  company: {exclude: [tools/skill/review]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := Provisional(v4, lockfile.ScopeUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Marketplaces) != 1 || doc.Marketplaces[0].URL != "https://hosted.example" {
+		t.Fatalf("provisional lock = %#v, want only the acquiring source", doc.Marketplaces)
+	}
+	delete(v4.Sources, "hosted")
+	if HasMarketplaceSource(v4) {
+		t.Fatal("exclusion-only source must not require a Marketplace lock")
+	}
+}
+
 func TestHasRequiredError(t *testing.T) {
 	required := &config.V4ValidationError{Code: "v4.marketplace-lock-required"}
 	if !HasRequiredError([]error{errors.New("other"), errors.Join(errors.New("wrapped"), required)}) {

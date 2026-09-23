@@ -198,7 +198,7 @@ func mergeInstallBindings(base lockfile.Document, scope lockfile.Scope, bindings
 			byIdentity[identity] = merged
 		}
 	}
-	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
+	doc := gitReconciliationDocument(scope, &base)
 	for _, registry := range byIdentity {
 		doc.Registries = append(doc.Registries, registry)
 	}

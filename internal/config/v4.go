@@ -1726,7 +1726,22 @@ func (c *V4Config) validateLayerFields(kind layerKind) error {
 	return nil
 }
 
-func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*Config, error) {
+func (c *V4Config) marketplaceExcludeOnly(name string) bool {
+	group := c.Groups[name]
+	return group.Exclude != nil && len(group.Include) == 0 && !group.HasAll && !group.HasTags && !group.HasRegistries && !group.HasRequired && !group.HasHarnesses
+}
+
+// AcquiresMarketplace reports whether source name is a Marketplace source that
+// acquires resources and therefore owns a lock record. An exclusion-only
+// source only suppresses pins selected elsewhere and never participates in a
+// lock.
+func (c *V4Config) AcquiresMarketplace(name string) bool {
+	return c.Sources[name].Kind == V4SourceMarketplace && !c.marketplaceExcludeOnly(name)
+}
+
+// policyConfig adapts the layer policy fields, which never depend on
+// Marketplace acquisition state, without any sources.
+func (c *V4Config) policyConfig(kind layerKind) (*Config, error) {
 	if c == nil {
 		return nil, v4err("v4.runtime", "", 0, "nil configuration")
 	}
@@ -1742,6 +1757,14 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 		values := cloneV4StringList(*c.AllowedMarketplaces)
 		out.AllowedMarketplaces = &values
 	}
+	return out, nil
+}
+
+func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*Config, error) {
+	out, err := c.policyConfig(kind)
+	if err != nil {
+		return nil, err
+	}
 
 	names := make([]string, 0, len(c.Sources))
 	for name := range c.Sources {
@@ -1751,9 +1774,13 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 
 	var lockByEndpoint map[string]lockfile.MarketplaceLock
 	marketplaceEndpoints := map[string]string{}
+	exclusionOnlyEndpoints := map[string]bool{}
 	for _, name := range names {
 		src := c.Sources[name]
-		if src.Kind != V4SourceMarketplace {
+		if !c.AcquiresMarketplace(name) {
+			if src.Kind == V4SourceMarketplace {
+				exclusionOnlyEndpoints[src.CanonicalURL] = true
+			}
 			continue
 		}
 		if lockDoc == nil || lockDoc.APIVersion != lockfile.APIVersionV2 {
@@ -1771,14 +1798,19 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 		}
 		lockByEndpoint = make(map[string]lockfile.MarketplaceLock, len(lockDoc.Marketplaces))
 		for _, mp := range lockDoc.Marketplaces {
-			lockByEndpoint[mp.URL] = mp
 			if _, ok := marketplaceEndpoints[mp.URL]; !ok {
+				// A record left over from before the source became exclusion-only
+				// is stale, not a mismatch; the next lock refresh drops it.
+				if exclusionOnlyEndpoints[mp.URL] {
+					continue
+				}
 				return nil, v4err("v4.marketplace-lock-mismatch", "", 0, "lock endpoint %q has no matching Marketplace source", mp.URL)
 			}
+			lockByEndpoint[mp.URL] = mp
 		}
 		for _, name := range names {
 			src := c.Sources[name]
-			if src.Kind != V4SourceMarketplace {
+			if !c.AcquiresMarketplace(name) {
 				continue
 			}
 			if _, ok := lockByEndpoint[src.CanonicalURL]; !ok {
@@ -1790,7 +1822,20 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 	for _, name := range names {
 		src := c.Sources[name]
 		if src.Kind == V4SourceMarketplace {
-			entry, err := c.marketplaceEntryForLock(name, src, c.Groups[name], lockByEndpoint[src.CanonicalURL], kind)
+			group := c.Groups[name]
+			for _, exclusion := range effectiveV4Exclusions(group) {
+				if kind != userLayer && !c.AcquiresMarketplace(name) {
+					return nil, v4err("v4.layer-field", "resources."+name+".exclude", src.Line, "Marketplace overrides are only supported in the user configuration")
+				}
+				if parts := strings.Split(exclusion, "/"); len(parts) != 3 || parts[1] == "collection" || parts[2] == "*" {
+					return nil, v4err("v4.marketplace-runtime-unsupported", "resources."+name+".exclude", src.Line, "Marketplace exclusions require an exact non-collection registry/kind/name locator")
+				}
+				out.MarketplaceExclusions = append(out.MarketplaceExclusions, MarketplaceExclusion{URL: src.CanonicalURL, Locator: exclusion, Source: sourceForLayer(kind)})
+			}
+			if !c.AcquiresMarketplace(name) {
+				continue
+			}
+			entry, err := c.marketplaceEntryForLock(name, src, group, lockByEndpoint[src.CanonicalURL], kind)
 			if err != nil {
 				return nil, err
 			}
@@ -1875,7 +1920,7 @@ func effectiveV4GroupPrecedence(group V4ResourceGroup) int {
 // lock's deterministic resource order is retained.
 func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4ResourceGroup, mp lockfile.MarketplaceLock, kind layerKind) (*MarketplaceEntry, error) {
 	sourcePath := "resources." + name
-	if group.HasAll || group.HasTags || group.HasRegistries || group.HasRequired || group.HasHarnesses || len(group.Exclude) > 0 || len(effectiveV4Exclusions(group)) > 0 {
+	if group.HasAll || group.HasTags || group.HasRegistries || group.HasHarnesses {
 		return nil, v4err("v4.marketplace-runtime-unsupported", sourcePath, src.Line, "Marketplace sources support only explicit include requests in this slice")
 	}
 	bindings := make(map[string]string, len(mp.RegistryBindings))
@@ -1889,8 +1934,8 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 	}
 	direct := make(map[int]V4ResourceRequest)
 	for _, request := range effectiveV4Requests(group) {
-		if request.Required || request.HasHarnesses {
-			return nil, v4err("v4.marketplace-runtime-unsupported", request.Locator, src.Line, "Marketplace requests do not support required or harnesses options")
+		if request.HasHarnesses {
+			return nil, v4err("v4.marketplace-runtime-unsupported", request.Locator, src.Line, "Marketplace requests do not support harnesses options")
 		}
 		registryID, ok := bindings[request.Registry]
 		if !ok {
@@ -1937,7 +1982,7 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 			}
 		}
 	}
-	entry := &MarketplaceEntry{URL: mp.URL, InstanceID: mp.InstanceID, Alias: name, Source: sourceForLayer(kind)}
+	entry := &MarketplaceEntry{URL: mp.URL, InstanceID: mp.InstanceID, Alias: name, Source: sourceForLayer(kind), Required: group.Required != nil && *group.Required}
 	for i := range mp.Resources {
 		if !reachable[i] {
 			r := &mp.Resources[i]

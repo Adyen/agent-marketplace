@@ -10,6 +10,46 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestMarketplaceExclusionMatchesExactOptionalPins(t *testing.T) {
+	entry := MarketplaceEntry{URL: "https://market.example", Source: Organization}
+	pin := MarketplaceResourcePin{RegistrySlug: "tools", RegistryID: "source-id", Kind: "skill", Name: "review"}
+	exclude := MarketplaceExclusion{URL: entry.URL, Locator: "tools/skill/review", Source: UserPersonal}
+	if !exclude.Matches(entry, pin) || !exclude.Matches(MarketplaceEntry{URL: "https://MARKET.example/", Source: Organization}, pin) {
+		t.Fatal("matching optional organization pin was not excluded")
+	}
+	for _, source := range []Source{UserPersonal, RepoCommitted, RepoPersonal} {
+		own := MarketplaceEntry{URL: entry.URL, Source: source}
+		if !(MarketplaceExclusion{URL: entry.URL, Locator: exclude.Locator, Source: source}).Matches(own, pin) {
+			t.Fatalf("%v exclusion did not remove its own collection member", source)
+		}
+	}
+	if !(MarketplaceExclusion{URL: entry.URL, Locator: "tools/mcp/hub", Source: UserPersonal}).Matches(entry, MarketplaceResourcePin{RegistrySlug: "tools", Kind: "mcpserver", Name: "hub", InstalledName: "renamed-hub"}) {
+		t.Fatal("MCP exclusion must use the v4 kind and original Marketplace name")
+	}
+	for _, tc := range []struct {
+		name    string
+		entry   MarketplaceEntry
+		pin     MarketplaceResourcePin
+		exclude MarketplaceExclusion
+	}{
+		{name: "required", entry: MarketplaceEntry{URL: entry.URL, Source: Organization, Required: true}, pin: pin, exclude: exclude},
+		{name: "other endpoint", entry: MarketplaceEntry{URL: "https://other.example", Source: Organization}, pin: pin, exclude: exclude},
+		{name: "other registry", entry: entry, pin: MarketplaceResourcePin{RegistrySlug: "other", Kind: "skill", Name: "review"}, exclude: exclude},
+		{name: "other kind", entry: entry, pin: MarketplaceResourcePin{RegistrySlug: "tools", Kind: "command", Name: "review"}, exclude: exclude},
+		{name: "other name", entry: entry, pin: MarketplaceResourcePin{RegistrySlug: "tools", Kind: "skill", Name: "audit"}, exclude: exclude},
+		{name: "repo override", entry: entry, pin: pin, exclude: MarketplaceExclusion{URL: entry.URL, Locator: exclude.Locator, Source: RepoCommitted}},
+		{name: "direct user pin", entry: MarketplaceEntry{URL: entry.URL, Source: UserPersonal}, pin: MarketplaceResourcePin{RegistrySlug: "tools", Kind: "skill", Name: "review", Direct: true}, exclude: exclude},
+		{name: "other layer collection member", entry: MarketplaceEntry{URL: entry.URL, Source: RepoCommitted}, pin: pin, exclude: exclude},
+		{name: "required own collection member", entry: MarketplaceEntry{URL: entry.URL, Source: UserPersonal, Required: true}, pin: pin, exclude: exclude},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.exclude.Matches(tc.entry, tc.pin) {
+				t.Fatal("exclusion escaped its exact optional pin")
+			}
+		})
+	}
+}
+
 func TestValidateMarketplaceEntries(t *testing.T) {
 	tests := []struct {
 		name    string

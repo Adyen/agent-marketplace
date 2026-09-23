@@ -633,10 +633,6 @@ func sameConfigSnapshots(left, right map[config.Source]configTransactionSnapshot
 	return true
 }
 
-func loadStableEffective(ctx context.Context, options config.LoadEffectiveOptions) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
-	return loadStableEffectiveWith(ctx, options, config.LoadEffective)
-}
-
 func loadStableEffectiveWith(ctx context.Context, options config.LoadEffectiveOptions, load func(context.Context, config.LoadEffectiveOptions) config.EffectiveConfig) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
 	probe := load(ctx, options)
 	before, err := snapshotEffectiveConfigs(probe, options.FileOverlays)
@@ -657,9 +653,6 @@ func loadStableEffectiveWith(ctx context.Context, options config.LoadEffectiveOp
 type exactLockLeaseFunc func(context.Context) (func(), error)
 
 func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (resultOption catalog.LoadOption, changed int, resultLease exactLockLeaseFunc, resultErr error) {
-	if !mode.check && !mode.offline && !mode.locked {
-		ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
-	}
 	started := time.Now()
 	modeName := lockModeName(mode)
 	scopes := selectedLockScopes(mode)
@@ -702,15 +695,14 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
 		FileOverlays: overlays,
 	}
-	loadEffective := config.LoadEffective
+	loadMode := pipeline.ConfigLoadStrict
 	if !mode.check && mode.reuseInstall != nil {
-		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
-			return pipeline.LoadEffectiveOnlineCached(ctx, opts, mode.marketplacePolicy)
-		}
+		loadMode = pipeline.ConfigLoadCached
 	} else if !mode.check && !mode.offline && !mode.locked {
-		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
-			return pipeline.LoadEffectiveOnline(ctx, opts, mode.marketplacePolicy)
-		}
+		loadMode = pipeline.ConfigLoadOnline
+	}
+	loadEffective := func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+		return pipeline.LoadEffective(ctx, loadMode, opts, mode.marketplacePolicy)
 	}
 	ec, configSnapshots, err := loadStableEffectiveWith(ctx, loadOptions, loadEffective)
 	if err != nil {
@@ -858,7 +850,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			return nil, changed, nil, loadErr
 		}
-		if len(remote) > 0 {
+		if len(remote) > 0 || exists {
 			lockExpectations[lockPath] = generation
 			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
 			if stateErr != nil {
@@ -943,7 +935,11 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 					return nil, changed, nil, err
 				}
 				lockDesired[lockPath] = data
-				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: 0o644})
+				fileMode := lockModes[lockPath]
+				if !generation.Exists {
+					fileMode = 0o644
+				}
+				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: fileMode})
 			}
 		}
 		layerChangedCount := 0
@@ -1135,8 +1131,16 @@ func runRegistryJobs(count int, run func(int) error) error {
 	return err
 }
 
-func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
+func gitReconciliationDocument(scope lockfile.Scope, current *lockfile.Document) lockfile.Document {
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
+	if current != nil && current.APIVersion == lockfile.APIVersionV2 {
+		doc.APIVersion, doc.Marketplaces = current.APIVersion, current.Marketplaces
+	}
+	return doc
+}
+
+func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
+	doc := gitReconciliationDocument(scope, current)
 	stats := lockReconcileStats{}
 	old := map[string]lockfile.GitRegistry{}
 	if current != nil {

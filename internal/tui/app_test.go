@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	tea "github.com/charmbracelet/bubbletea"
@@ -85,7 +86,8 @@ func TestRowStatusText(t *testing.T) {
 		{"enabled", row{}, "enabled"},
 		{"available", row{IsAvailable: true}, "available"},
 		{"excluded", row{IsAvailable: true, IsExcluded: true}, "excluded"},
-		{"required", row{Artifact: resolver.ResolvedArtifact{Required: true}}, "required (org)"},
+		{"required org", row{Artifact: resolver.ResolvedArtifact{Required: true, Source: config.Organization}}, "required (org)"},
+		{"required user", row{Artifact: resolver.ResolvedArtifact{Required: true, Source: config.UserPersonal}}, "required"},
 		{"malformed", row{IsMalformed: true, MalformedMsg: "bad"}, "malformed: bad"},
 		{"pending", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftMissing}}, "enabled (pending sync)"},
 		{"orphaned", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftOrphaned}}, "orphaned"},

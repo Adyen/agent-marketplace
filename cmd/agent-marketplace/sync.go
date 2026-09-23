@@ -85,9 +85,6 @@ type lockRunOptions struct {
 
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
-	if !offline && !locked {
-		ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
-	}
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
 	if len(lockOpts) > 0 {
 		marketplacePolicy = lockOpts[0].marketplacePolicy
@@ -324,9 +321,9 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 }
 
 func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
-	effective := config.LoadEffective(ctx, config.LoadEffectiveOptions{
+	effective := pipeline.LoadEffective(ctx, pipeline.ConfigLoadCached, config.LoadEffectiveOptions{
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
-	})
+	}, nil)
 	seen := make(map[string]struct{})
 	for _, layer := range effective.PresentLayers() {
 		var entries []config.RegistryEntry
@@ -430,7 +427,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	resolveOpts := pipeline.ResolveOptions{
 		RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
-		DisableTransientOrganizationMarketplaceLock: true,
+		ConfigLoadMode: pipeline.ConfigLoadStrict,
 	}
 	resolveOpts.RequireTargetSet = true
 	if localDir != "" && localDir != repoRoot {

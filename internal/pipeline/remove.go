@@ -126,14 +126,17 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, fmt.Errorf("resource name is required")
 	}
 
-	mergedCfg, repoCfg, err := loadRemoveConfig(ctx, opts.RepoRoot)
+	mergedCfg, repoCfg, orgCfg, err := loadRemoveConfig(ctx, opts.RepoRoot)
 	if err != nil {
 		return nil, err
 	}
 
 	if collection, entry, ok := marketplaceCollectionByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
 		if entry.Source == config.Organization {
-			return nil, fmt.Errorf("collection %q is required and managed externally", name)
+			if entry.Required {
+				return nil, fmt.Errorf("collection %q is required and managed externally", name)
+			}
+			return nil, fmt.Errorf("collection %q is managed externally", name)
 		}
 		effective := opts.Scope
 		if !opts.ScopeSpecified {
@@ -153,7 +156,10 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 
 	if pin, entry, ok := marketplaceDirectPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
 		if entry.Source == config.Organization {
-			return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
+			if entry.Required {
+				return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
+			}
+			return nil, fmt.Errorf("%s %q is managed externally", skill.KindLabel(opts.Kind), name)
 		}
 		effective := opts.Scope
 		if !opts.ScopeSpecified {
@@ -185,7 +191,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	// Collections disappear during expansion, so locate their owning selection
 	// before resolving ordinary resources.
 	if !opts.HasKind || opts.Kind == ir.KindCollection {
-		selection, effective, err := findCollectionRemovalSelection(opts.RepoRoot, mergedCfg, name, opts.Scope, opts.ScopeSpecified)
+		selection, effective, err := findCollectionRemovalSelection(opts.RepoRoot, mergedCfg, orgCfg, name, opts.Scope, opts.ScopeSpecified)
 
 		if err != nil {
 			return nil, err
@@ -318,7 +324,7 @@ type collectionRemovalSelection struct {
 
 // findCollectionRemovalSelection finds the collection occurrence owned by the
 // requested scope. Merged config is used for policy, not file selection.
-func findCollectionRemovalSelection(repoRoot string, mergedCfg *config.Config, name string, requested Scope, specified bool) (*collectionRemovalSelection, Scope, error) {
+func findCollectionRemovalSelection(repoRoot string, mergedCfg, orgCfg *config.Config, name string, requested Scope, specified bool) (*collectionRemovalSelection, Scope, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, "", nil
@@ -355,9 +361,7 @@ func findCollectionRemovalSelection(repoRoot string, mergedCfg *config.Config, n
 
 	// Preserve organization ownership so unscoped removal can infer user scope
 	// and explicit repo/local removal can enforce the boundary.
-	if selection, err := collectionSelectionAtPath(config.OrganizationConfigPath(), config.Organization, name, mergedCfg); err != nil {
-		return nil, "", err
-	} else if selection != nil {
+	if selection := collectionSelectionInConfig(orgCfg, config.Organization, name, mergedCfg); selection != nil {
 		if specified {
 			return selection, requested, nil
 		}
@@ -397,8 +401,12 @@ func collectionSelectionAtPath(configPath string, source config.Source, name str
 	if err != nil {
 		return nil, fmt.Errorf("load config %q: %w", configPath, err)
 	}
+	return collectionSelectionInConfig(cfg, source, name, mergedCfg), nil
+}
+
+func collectionSelectionInConfig(cfg *config.Config, source config.Source, name string, mergedCfg *config.Config) *collectionRemovalSelection {
 	if cfg == nil {
-		return nil, nil
+		return nil
 	}
 
 	if hasTopLevelCollectionSelection(cfg, name) {
@@ -407,7 +415,7 @@ func collectionSelectionAtPath(configPath string, source config.Source, name str
 			// A top-level selection has no provider identity, so only explicit
 			// required collection selections can be attributed safely.
 			Required: collectionRequiredInConfig(mergedCfg, name),
-		}, nil
+		}
 	}
 	for _, entry := range cfg.Registries {
 		if !collectionSelectedInEntry(entry, name) {
@@ -426,9 +434,9 @@ func collectionSelectionAtPath(configPath string, source config.Source, name str
 			RegistryURL:    entry.URL,
 			RegistryPath:   entry.Path,
 			Ref:            entry.Ref,
-		}, nil
+		}
 	}
-	return nil, nil
+	return nil
 }
 
 func inferCollectionRemoveScope(selection *collectionRemovalSelection) Scope {
@@ -561,12 +569,12 @@ func removeOrExcludeCollection(configPath, name string) error {
 	return config.AddKindExcludeToConfig(configPath, ir.KindCollection, name)
 }
 
-func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg *config.Config, repoCfg *config.Config, err error) {
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot})
+func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg, repoCfg, orgCfg *config.Config, err error) {
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
-		return nil, nil, errors.Join(ec.Errors...)
+		return nil, nil, nil, errors.Join(ec.Errors...)
 	}
-	return ec.Merged, ec.Repo.Config, nil
+	return ec.Merged, ec.Repo.Config, ec.Organization.Config, nil
 }
 
 func excludeCollectionMember(repoRoot string, scope Scope, staging *configStagingManager, target *resolver.ResolvedArtifact, name string) error {
@@ -1124,7 +1132,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// ignored on remove: a registry that was previously allowed and is now
 	// blocked by a tightened allowed_registries policy must still be removable.
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot})
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
 		return nil, errors.Join(ec.Errors...)
 	}
@@ -1147,7 +1155,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// The merged config finds entries defined by includes or lower layers. A
 	// missing --path/--ref may identify one entry, but never silently selects
 	// among distinct paths or refs.
-	mergedCfg, _, err := loadRemoveConfig(ctx, repoRoot)
+	mergedCfg, _, _, err := loadRemoveConfig(ctx, repoRoot)
 	if err != nil {
 		return nil, err
 	}

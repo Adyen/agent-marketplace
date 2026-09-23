@@ -98,7 +98,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 
 	repoRoot := opts.RepoRoot
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
-	ec := LoadEffectiveOnline(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}
@@ -235,9 +235,9 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			if pin.Kind != "collection" {
 				continue
 			}
-			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Source == config.Organization, Skipped: true}
+			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true}
 			if entry.Source == config.Organization {
-				item.Reason = "organization pin is required and managed externally"
+				item.Reason = "organization pin is managed externally"
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
@@ -288,7 +288,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				continue
 			}
 			if entry.Source == config.Organization {
-				item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"}
+				item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true, Reason: "organization pin is managed externally"}
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}

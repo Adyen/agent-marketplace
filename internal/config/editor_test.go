@@ -1103,6 +1103,68 @@ func TestSetHarnessesInConfigCanonicalizesAndValidatesTargets(t *testing.T) {
 	})
 }
 
+func TestSetUserMarketplaceExclusionCreatesV4UserConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".agents", "config.yaml")
+	if err := SetUserMarketplaceExclusion(path, "https://market.example", "tools", ir.KindSkill, "review", true); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfigFromPath(path)
+	if err != nil || cfg == nil || cfg.APIVersion != APIVersionV4 || len(cfg.MarketplaceExclusions) != 1 {
+		t.Fatalf("new user config = %#v, %v", cfg, err)
+	}
+}
+
+func TestSetUserMarketplaceExclusionRejectsLegacyConfigWithoutWriting(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(path))
+	original := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	mustWriteFile(t, path, original)
+	err := SetUserMarketplaceExclusion(path, "https://market.example", "tools", ir.KindSkill, "review", true)
+	var v4Err *V4ValidationError
+	if !errors.As(err, &v4Err) || v4Err.Code != "v4.writer-opt-in" {
+		t.Fatalf("legacy config rejection = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != string(original) {
+		t.Fatalf("legacy config mutated: %s, %v", data, err)
+	}
+}
+
+func TestSetUserMarketplaceExclusionEditsV4AndPreservesSelections(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(path))
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  company: {marketplace: https://market.example}
+resources:
+  company:
+    include: [tools/skill/audit]
+`))
+	if err := SetUserMarketplaceExclusion(path, "https://market.example", "tools", ir.KindSkill, "review", true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "include: [tools/skill/audit]") || !strings.Contains(string(data), "tools/skill/review") {
+		t.Fatalf("edited config lost original selection or exclusion: %s", data)
+	}
+	if err := SetUserMarketplaceExclusion(path, "https://market.example", "tools", ir.KindSkill, "review", false); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil || strings.Contains(string(data), "tools/skill/review") {
+		t.Fatalf("exclusion not removed: %s, %v", data, err)
+	}
+}
+
 // TestSetHarnessesInConfigEditsV4Roots pins the TUI harness-modal save path
 // against the v4.writer-opt-in regression: init writes the user-personal
 // root as v4 directly and the TUI startup offers migration, so harness

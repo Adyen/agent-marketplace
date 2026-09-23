@@ -44,7 +44,6 @@ func newUpdateCmd() *cobra.Command {
 }
 
 func runUpdate(ctx context.Context, out io.Writer, bump bool, selected map[lockfile.Scope]bool, targets *upgradeTargetSpec) error {
-	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	repoRoot := config.FindRepoRoot()
 	localDir := config.FindLocalConfigDir()
 	if err := prepareDependencyTransactions(ctx, false); err != nil {

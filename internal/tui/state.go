@@ -69,6 +69,7 @@ type row struct {
 	EnabledProject  bool
 	EnabledLocal    bool
 	ExcludedLocally bool
+	ExcludedByUser  bool
 
 	// Source registry of the skill. For available (non-enabled) skills, set
 	// to the first registry whose catalog contained the skill, in cfg order.
@@ -138,6 +139,10 @@ func (r *row) ensureSearchable() {
 	}
 }
 
+func (r row) canOverrideMarketplace() bool {
+	return r.Artifact.IsMarketplace && r.Artifact.Source == config.Organization && !r.Artifact.Required
+}
+
 func (r row) Glyph() string {
 	if r.IsMalformed {
 		return "[!]"
@@ -182,7 +187,10 @@ func (r row) StatusText() string {
 		return "available"
 	}
 	if r.Artifact.Required {
-		return "required (org)"
+		if r.Artifact.Source == config.Organization {
+			return "required (org)"
+		}
+		return "required"
 	}
 	if r.DriftItem != nil {
 		switch r.DriftItem.Reason {

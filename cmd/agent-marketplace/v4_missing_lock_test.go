@@ -394,6 +394,7 @@ resources:
 `)
 	userPath := filepath.Join(home, ".agents", "config.yaml")
 	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := t.TempDir()
 	opts := pipeline.ResolveOptions{
 		RepoRoot: repo,
@@ -402,6 +403,12 @@ resources:
 			GlobalPath:       userPath,
 			RepoPath:         filepath.Join(repo, ".agents", "config.yaml"),
 			LocalPath:        filepath.Join(repo, ".agents", "config.local.yaml"),
+		},
+		Loaders: pipeline.Loaders{
+			Org:    config.LoadOrganizationConfig,
+			Global: func() (*config.Config, error) { return config.LoadConfigFromPath(userPath) },
+			Repo:   func() (*config.Config, error) { return nil, nil },
+			Local:  func() (*config.LocalConfig, error) { return nil, nil },
 		},
 	}
 	ctx := pipeline.WithTransientOrganizationMarketplaceLockCache(context.Background())

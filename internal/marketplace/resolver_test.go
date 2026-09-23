@@ -487,7 +487,7 @@ func TestResolverInspect(t *testing.T) {
 	}
 }
 
-func TestResolverInfersRequiredFromMarketplaceOwner(t *testing.T) {
+func TestResolverDoesNotInferRequiredFromMarketplaceOwner(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	rev := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
@@ -507,13 +507,15 @@ func TestResolverInfersRequiredFromMarketplaceOwner(t *testing.T) {
 		source   config.Source
 		required bool
 	}{
-		{name: "organization", source: config.Organization, required: true},
+		{name: "organization", source: config.Organization, required: false},
+		{name: "organization explicit", source: config.Organization, required: true},
 		{name: "user", source: config.UserPersonal, required: false},
+		{name: "user explicit", source: config.UserPersonal, required: true},
 		{name: "repo", source: config.RepoCommitted, required: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
-				URL: server.URL, InstanceID: "mp", Source: tt.source,
+				URL: server.URL, InstanceID: "mp", Source: tt.source, Required: tt.required,
 				Resources: []config.MarketplaceResourcePin{{
 					RegistryID: "src", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: digest,
 				}},
@@ -535,7 +537,7 @@ func TestResolverInfersRequiredFromMarketplaceOwner(t *testing.T) {
 	}
 }
 
-func TestMergeLayersStampsOrganizationMarketplaceRequired(t *testing.T) {
+func TestMergeLayersDoesNotRequireOrganizationMarketplace(t *testing.T) {
 	const instanceID = "org-marketplace"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	revision := assessedRevision(store.ResourceRevision{
@@ -586,8 +588,8 @@ func TestMergeLayersStampsOrganizationMarketplaceRequired(t *testing.T) {
 	if len(resolved) != 1 {
 		t.Fatalf("resolved %d artifacts, want one", len(resolved))
 	}
-	if !resolved[0].Required {
-		t.Fatalf("resolved Marketplace artifact Required = false, want true")
+	if resolved[0].Required {
+		t.Fatalf("resolved Marketplace artifact Required = true without explicit policy")
 	}
 	if resolved[0].Source != config.Organization {
 		t.Fatalf("resolved Marketplace Source = %s, want Organization", resolved[0].Source)
