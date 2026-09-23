@@ -55,6 +55,7 @@ func runTUIConfigMutation(ctx context.Context, repoRoot string, mutation func(pi
 }
 
 func runTUIDependencyLifecycle(ctx context.Context, repoRoot string, upgrade bool) error {
+	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	localDir := config.FindLocalConfigDir()
 	mode := lockMode{upgrade: upgrade}
 	if upgrade {

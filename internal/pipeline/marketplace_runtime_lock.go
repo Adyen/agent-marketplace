@@ -48,7 +48,22 @@ func WithTransientOrganizationMarketplaceLockCache(ctx context.Context) context.
 	return context.WithValue(ctx, transientOrganizationMarketplaceLockCacheKey{}, cache)
 }
 
-func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+// LoadEffectiveOnline loads effective configuration for an online consumer,
+// resolving an intentionally absent organization Marketplace lock in memory.
+func LoadEffectiveOnline(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
+	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, true)
+	return ec
+}
+
+// LoadEffectiveOnlineCached reloads effective configuration with organization
+// Marketplace state acquired earlier in the same online operation, without
+// contacting the Marketplace again.
+func LoadEffectiveOnlineCached(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
+	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, false)
+	return ec
+}
+
+func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, allowAcquire bool) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
 	initial := config.LoadEffective(ctx, opts)
 	if !marketplacelock.HasRequiredError(initial.Errors) {
 		return initial, transientOrganizationMarketplaceLockUnused
@@ -84,6 +99,9 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 			}
 			cache.delete(layer.LockPath)
 		}
+	}
+	if !allowAcquire {
+		return initial, transientOrganizationMarketplaceLockUnused
 	}
 
 	provisionalOpts := opts

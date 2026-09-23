@@ -72,6 +72,100 @@ registries:
 	}
 }
 
+func TestUpdateSupportsV4GitSourcesWithTransientOrganizationMarketplace(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	server := newV4MarketplaceLockServer(t)
+	defer server.Close()
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	if err := os.Chmod(authority, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(authority, 0o700) })
+	config.SetTestOrganizationConfigPath(t, orgPath)
+
+	origin, working := createBareRepoWithWorkingClone(t, "awesome-ai.git")
+	gitOrigin := "file://" + origin
+	writeSkillAt(t, working, "teams/development/plugins/dev-engineering", "caveman", "Caveman")
+	writeSkillAt(t, working, "teams/common/genai", "genai-architect", "Architect")
+	writeSkillAt(t, working, "teams/platform-excellence/plugins/platform-monitoring", "adyen-runbook-builder", "Runbook")
+	commitAndPushAll(t, working, "seed v4 sources")
+
+	repo := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  awesome-ai:
+    git: `+gitOrigin+`
+    ref: main
+    path: teams/development/plugins/dev-engineering
+  awesome-ai-2:
+    git: `+gitOrigin+`
+    ref: main
+    path: teams/common/genai
+  awesome-ai-3:
+    git: `+gitOrigin+`
+    ref: main
+    path: teams/platform-excellence/plugins/platform-monitoring/skills/adyen-runbook-builder
+resources:
+  awesome-ai:
+    exclude: [skill/caveman]
+  awesome-ai-2:
+    include: [skill/genai-architect]
+  awesome-ai-3:
+    include: [skill/adyen-runbook-builder]
+harnesses: [factory, windsurf]
+`)
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	beforeConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	beforeLock := readLockDocument(t, lockPath)
+	if len(beforeLock.Registries) != 1 || len(beforeLock.Registries[0].Roots) != 3 {
+		t.Fatalf("initial lock does not represent all v4 sources: %#v", beforeLock.Registries)
+	}
+
+	writeSkillAt(t, working, "teams/common/genai", "genai-architect", "Architect v2")
+	commitAndPushAll(t, working, "advance v4 sources")
+
+	output, err := executeCommand("update")
+	if err != nil {
+		t.Fatalf("update: %v\n%s", err, output)
+	}
+	afterConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterConfig, beforeConfig) {
+		t.Fatalf("update changed authored v4 config:\nbefore:\n%s\nafter:\n%s", beforeConfig, afterConfig)
+	}
+	afterLock := readLockDocument(t, lockPath)
+	if len(afterLock.Registries) != 1 || afterLock.Registries[0].Commit == beforeLock.Registries[0].Commit || len(afterLock.Registries[0].Roots) != 3 {
+		t.Fatalf("update did not advance the shared repository while retaining all roots: before=%#v after=%#v", beforeLock.Registries, afterLock.Registries)
+	}
+	if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("update wrote organization lock: %v", err)
+	}
+}
+
 func TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

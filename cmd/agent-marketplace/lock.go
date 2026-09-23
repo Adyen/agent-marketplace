@@ -583,6 +583,11 @@ func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeli
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
 			if read.RuntimeLock {
+				assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath}
+				if previous, exists := byAlias[read.RequestedPath]; exists && previous != assertion {
+					return nil, fmt.Errorf("%w: config alias changed at %s", dependencytxn.ErrGenerationConflict, read.RequestedPath)
+				}
+				byAlias[read.RequestedPath] = assertion
 				continue
 			}
 			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
@@ -629,12 +634,16 @@ func sameConfigSnapshots(left, right map[config.Source]configTransactionSnapshot
 }
 
 func loadStableEffective(ctx context.Context, options config.LoadEffectiveOptions) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
-	probe := config.LoadEffective(ctx, options)
+	return loadStableEffectiveWith(ctx, options, config.LoadEffective)
+}
+
+func loadStableEffectiveWith(ctx context.Context, options config.LoadEffectiveOptions, load func(context.Context, config.LoadEffectiveOptions) config.EffectiveConfig) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
+	probe := load(ctx, options)
 	before, err := snapshotEffectiveConfigs(probe, options.FileOverlays)
 	if err != nil {
 		return probe, nil, err
 	}
-	fresh := config.LoadEffective(ctx, options)
+	fresh := load(ctx, options)
 	after, err := snapshotEffectiveConfigs(fresh, options.FileOverlays)
 	if err != nil {
 		return fresh, nil, err
@@ -648,6 +657,9 @@ func loadStableEffective(ctx context.Context, options config.LoadEffectiveOption
 type exactLockLeaseFunc func(context.Context) (func(), error)
 
 func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (resultOption catalog.LoadOption, changed int, resultLease exactLockLeaseFunc, resultErr error) {
+	if !mode.check && !mode.offline && !mode.locked {
+		ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
+	}
 	started := time.Now()
 	modeName := lockModeName(mode)
 	scopes := selectedLockScopes(mode)
@@ -690,30 +702,19 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
 		FileOverlays: overlays,
 	}
-	ec, configSnapshots, err := loadStableEffective(ctx, loadOptions)
+	loadEffective := config.LoadEffective
+	if !mode.check && mode.reuseInstall != nil {
+		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+			return pipeline.LoadEffectiveOnlineCached(ctx, opts, mode.marketplacePolicy)
+		}
+	} else if !mode.check && !mode.offline && !mode.locked {
+		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+			return pipeline.LoadEffectiveOnline(ctx, opts, mode.marketplacePolicy)
+		}
+	}
+	ec, configSnapshots, err := loadStableEffectiveWith(ctx, loadOptions, loadEffective)
 	if err != nil {
 		return nil, 0, nil, err
-	}
-	transientOrganizationLockPath := ""
-	if !mode.check && marketplacelock.HasRequiredError(ec.Errors) {
-		lockPath, added, err := addTransientOrganizationMarketplaceProvisional(&loadOptions)
-		if err != nil {
-			return nil, 0, nil, err
-		}
-		if added {
-			transientOrganizationLockPath = lockPath
-			ec, configSnapshots, err = loadStableEffective(ctx, loadOptions)
-			if err != nil {
-				return nil, 0, nil, err
-			}
-			generation, err := dependencytxn.ReadGeneration(transientOrganizationLockPath)
-			if err != nil {
-				return nil, 0, nil, err
-			}
-			if generation.Exists {
-				return nil, 0, nil, fmt.Errorf("%w: organization Marketplace lock appeared while loading", dependencytxn.ErrGenerationConflict)
-			}
-		}
 	}
 	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && mode.commitScope == nil
 	if canBootstrapMarketplace && marketplacelock.HasRequiredError(ec.Errors) {
@@ -722,7 +723,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, 0, nil, err
 		}
 		changed += bootstrapChanged
-		ec, configSnapshots, err = loadStableEffective(ctx, loadOptions)
+		ec, configSnapshots, err = loadStableEffectiveWith(ctx, loadOptions, loadEffective)
 		if err != nil {
 			return nil, 0, nil, err
 		}
@@ -998,12 +999,6 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		reads, err := effectiveReadAssertions(ec, stagedEdits)
 		if err != nil {
 			return nil, changed, nil, err
-		}
-		if transientOrganizationLockPath != "" {
-			reads = append(reads, dependencytxn.ReadAssertion{
-				Path:          transientOrganizationLockPath,
-				RequestedPath: transientOrganizationLockPath,
-			})
 		}
 		reads = append(reads, mode.commitReads...)
 		if mode.commitScope != nil && len(desiredFiles) == 0 {
