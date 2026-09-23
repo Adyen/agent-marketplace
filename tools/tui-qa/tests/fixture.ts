@@ -54,7 +54,7 @@ const git = (cwd: string, env: Record<string, string>, args: string[]): void => 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
 
 const orgConfigContent = (marketplaceURL: string): string =>
-  `apiVersion: agent-marketplace/v4\nsources:\n  org-market:\n    marketplace: ${marketplaceURL}\nresources:\n  org-market:\n    include:\n      - tools/skill/org-review\n`;
+  `apiVersion: agent-marketplace/v4\nsources:\n  org-market:\n    marketplace: ${marketplaceURL}\nresources:\n  org-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`;
 
 const orgLockContent = (stub: MarketplaceStub): string =>
   `apiVersion: agent-marketplace-lock/v2\nscope: organization\nmarketplaces:\n  - url: ${stub.url}\n    instance_id: ${stub.instanceID}\n    registry_bindings:\n      - name: ${stub.registrySlug}\n        registry_id: ${stub.registryID}\n    resources:\n      - registry_name: ${stub.registrySlug}\n        registry_id: ${stub.registryID}\n        kind: skill\n        name: ${stub.resourceName}\n        revision: ${stub.contentDigest}\n        content_digest: ${stub.contentDigest}\n        archive_digest: ${stub.archiveDigest}\n        acquisition: mirror\n`;
