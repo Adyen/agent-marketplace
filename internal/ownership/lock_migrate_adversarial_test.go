@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -195,9 +196,15 @@ func TestAdversarialMeasureResidualLostUpdateRate(t *testing.T) {
 	// goroutines with their OWN Store, so they hold two open file descriptions and
 	// genuinely contend in the kernel.
 	trials := testutil.Trials(testutil.FullTrials, testing.Short())
-	lost := 0
+	var lost atomic.Int32
+	t.Cleanup(func() {
+		t.Logf("LOST-UPDATE RATE with the widened session: %d/%d trials lost an entry "+
+			"(the record described the file in every trial). B2 alone measured 60/60 lost.",
+			lost.Load(), trials)
+	})
 	for trial := 0; trial < trials; trial++ {
 		t.Run(fmt.Sprintf("trial-%d", trial), func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t)
 			f.writeAggregate("{}\n")
 
@@ -236,16 +243,13 @@ func TestAdversarialMeasureResidualLostUpdateRate(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(content) != 2 {
-				lost++
+				lost.Add(1)
 				t.Errorf("trial %d lost an entry: %v.\n"+
 					"With B2 alone this happened in 60/60 trials because the caller's read was outside the "+
 					"section; with the widened session it must never happen.", trial, content)
 			}
 		})
 	}
-	t.Logf("LOST-UPDATE RATE with the widened session: %d/%d trials lost an entry "+
-		"(the record described the file in every trial). B2 alone measured 60/60 lost.",
-		lost, trials)
 }
 
 // ---------------------------------------------------------------------------

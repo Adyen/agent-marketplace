@@ -4,6 +4,11 @@ RELEASE_BINARY := $(BINARY)-$(VERSION)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 GO := go
 CMD := ./cmd/agent-marketplace
+TEST_PACKAGES ?= ./...
+TEST_FLAGS ?=
+VALIDATE_JOBS ?= 2
+
+.PHONY: test-fast validate validate-fast validate-full validate-e2e
 
 # Public container defaults. Override these generic variables in the environment
 # when builds must use a registry mirror.
@@ -48,7 +53,25 @@ test:
 	unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
 		GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_COMMON_DIR GIT_CONFIG_PARAMETERS; \
 	GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=1 \
-		GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=0 CGO_ENABLED=0 $(GO) test ./...
+		GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=0 CGO_ENABLED=0 $(GO) test $(TEST_FLAGS) $(TEST_PACKAGES)
+
+test-fast:
+	+$(MAKE) test TEST_FLAGS="$(TEST_FLAGS) -short"
+
+validate:
+	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build
+
+validate-fast:
+	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build TEST_FLAGS="$(TEST_FLAGS) -short"
+
+validate-full:
+	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build validate-e2e tui-qa TEST_PACKAGES=./... TEST_FLAGS=-count=1
+
+validate-e2e:
+	CGO_ENABLED=0 HARNESS_COMPAT_TARGET=all HARNESS_COMPAT_NATIVE_MODE=unavailable \
+		HARNESS_COMPAT_NATIVE_REASON="Configuration-only verification; native probes run in CI" \
+		$(GO) -C e2e test -count=1 -timeout 20m ./...
+	shellcheck tools/harness-compat/*.sh
 
 lint: LINT_MODE=fix
 lint: lint-common
@@ -252,7 +275,7 @@ TUI_QA_BINARY := $(CURDIR)/.local/agent-marketplace/bin/agent-marketplace-tui-qa
 
 tui-qa-check:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm $(TUI_QA_PNPM_VERSION) is required for TUI QA" >&2; exit 1; }
-	@actual="$$(pnpm --version)"; [ "$$actual" = "$(TUI_QA_PNPM_VERSION)" ] || { echo "ERROR: pnpm $(TUI_QA_PNPM_VERSION) is required for TUI QA; found $$actual" >&2; exit 1; }
+	@actual="$$(cd tools/tui-qa && pnpm --version)"; [ "$$actual" = "$(TUI_QA_PNPM_VERSION)" ] || { echo "ERROR: pnpm $(TUI_QA_PNPM_VERSION) is required for TUI QA; found $$actual" >&2; exit 1; }
 	cd tools/tui-qa && pnpm check
 
 tui-qa: tui-qa-check

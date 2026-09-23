@@ -65,6 +65,9 @@ func TestHarnessCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		if report.failed() {
+			t.Error("compatibility has failed assertions or blocked native setup; see structured report")
+		}
 		if mode == "unavailable" {
 			report.Results = slices.DeleteFunc(report.Results, func(result compatibilityResult) bool { return result.Resource == "native-cli" })
 		}
@@ -80,11 +83,11 @@ func TestHarnessCompatibility(t *testing.T) {
 		results := report.Results[offset : offset+len(compatibilityResources)]
 		first := results[0]
 		t.Run(first.Harness+"/"+first.Scope+"/"+first.Mode, func(t *testing.T) {
+			if mode != "probe" {
+				t.Parallel()
+			}
 			runCompatibilityScenario(t, results, mode, reason, report.ExpectedVersion, server, rules)
 		})
-	}
-	if report.failed() {
-		t.Error("compatibility has failed assertions or blocked native setup; see structured report")
 	}
 }
 
