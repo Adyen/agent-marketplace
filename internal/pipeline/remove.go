@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -1187,6 +1188,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if entryInMerged && strings.TrimSpace(mergedEntry.Ref) != "" {
 		shadowRef = mergedEntry.Ref
 	}
+	declaringPath := configPath
 	configPath, err = stageConfigPath(opts.configStaging, configPath)
 	if err != nil {
 		return nil, err
@@ -1325,11 +1327,19 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// Remove the resource from the specific registry entry. shadowRef ensures a
 	// newly created shadow entry (cross-layer case) passes ref-required
 	// validation for git registries.
-	var disableErr error
-	if strings.TrimSpace(shadowRef) != "" {
-		disableErr = config.DisableResourceWithShadowFallbackAtRef(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
-	} else {
-		disableErr = config.DisableResourceWithShadowFallback(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
+	editEntry := mergedEntry
+	if entryInTarget {
+		editEntry = targetEntry
+	}
+	handled, disableErr := config.EditV4ResourceSelection(configPath, declaringPath, editEntry, resolvedKind, name, config.V4SelectionDisable)
+	if handled {
+		slog.Debug("remove v4 selection staged", "kind", resolvedKind.String(), "scope", opts.Scope, "error", disableErr)
+	} else if disableErr == nil {
+		if strings.TrimSpace(shadowRef) != "" {
+			disableErr = config.DisableResourceWithShadowFallbackAtRef(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
+		} else {
+			disableErr = config.DisableResourceWithShadowFallback(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
+		}
 	}
 	if err := disableErr; err != nil {
 		return nil, err

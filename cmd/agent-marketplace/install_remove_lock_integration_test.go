@@ -12,6 +12,104 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
+func TestRemoveFromV4PreservesMarketplaceLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name, scope   string
+		git, included bool
+	}{
+		{name: "user directory", scope: "user"},
+		{name: "repo included relative directory", scope: "repo", included: true},
+		{name: "repo git", scope: "repo", git: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			t.Setenv("TMPDIR", t.TempDir())
+			server := newV4MarketplaceLockServer(t)
+			defer server.Close()
+			repo := t.TempDir()
+			root := repo
+			if tc.scope == "user" {
+				root = home
+			}
+			configPath := filepath.Join(root, ".agents", "config.yaml")
+			lockPath := filepath.Join(root, ".agents", "lock.yaml")
+			source := filepath.Join(root, "resources")
+			working := source
+			sourceYAML := "directory: " + source
+			if tc.git {
+				origin, clone := createBareRepoWithWorkingClone(t, "v4-remove.git")
+				source, working = "file://"+origin, clone
+				sourceYAML = "git: " + source + ", ref: main"
+			} else if tc.included {
+				source = filepath.Join(root, ".agents", "resources")
+				working = source
+				sourceYAML = "directory: resources"
+			}
+			writeSubagent(t, working, "scrutiny-feature-reviewer", "Review features", []string{"Read"})
+			writeSubagent(t, working, "keep", "Keep sibling", []string{"Read"})
+			if tc.git {
+				commitAndPushAll(t, working, "seed subagents")
+			}
+			selection := "sources:\n  local: {" + sourceYAML + "}\nresources:\n  local: {include: [subagent/scrutiny-feature-reviewer, subagent/keep]}\n"
+			body := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
+			fragment := filepath.Join(root, ".agents", "selections.yaml")
+			if tc.included {
+				writeFile(t, fragment, selection)
+				body += "include: [selections.yaml]\nsources:\n  hosted: {marketplace: " + server.URL + "}\nresources:\n"
+			} else {
+				body += "sources:\n  local: {" + sourceYAML + "}\n  hosted: {marketplace: " + server.URL + "}\nresources:\n  local: {include: [subagent/scrutiny-feature-reviewer, subagent/keep]}\n"
+			}
+			writeConfig(t, configPath, body+"  hosted: {include: [tools/skill/review]}\n")
+			withWorkingDir(t, repo)
+			if output, err := executeCommand("sync"); err != nil {
+				t.Fatalf("seed sync: %v\n%s", err, output)
+			}
+			target := filepath.Join(root, ".factory", "droids", "scrutiny-feature-reviewer.md")
+			assertFileExists(t, target)
+			preserved := make(map[string][]byte)
+			paths := []string{lockPath, filepath.Join(root, ".factory", "droids", "keep.md"), filepath.Join(root, ".factory", "skills", "review", "SKILL.md")}
+			if tc.included {
+				paths = append(paths, fragment)
+			}
+			for _, path := range paths {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				preserved[path] = data
+			}
+			if err := os.Chmod(lockPath, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"remove", "--kind", "subagent", "--scope", tc.scope, "--from", source, "scrutiny-feature-reviewer"}
+			if output, err := executeCommand(args...); err != nil {
+				t.Fatalf("remove: %v\n%s", err, output)
+			}
+			if _, err := os.Lstat(target); !os.IsNotExist(err) {
+				t.Fatalf("removed subagent remains: %v", err)
+			}
+			for path, before := range preserved {
+				after, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Errorf("remove changed %s: %v", path, err)
+				}
+			}
+			if info, err := os.Stat(lockPath); err != nil || info.Mode().Perm() != 0o600 {
+				t.Fatalf("lock permissions changed: %v", err)
+			}
+			if residue, err := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
+				t.Fatalf("staging residue = %v err=%v", residue, err)
+			}
+		})
+	}
+}
+
 func TestInstallAndRemoveReconcileOwningGitLock(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

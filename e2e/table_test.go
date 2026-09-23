@@ -2055,6 +2055,32 @@ registries: []
 		},
 	},
 	{
+		Name: "subagent/remove_from_v4",
+		Desc: "Given v4 user Git selections, When a named subagent is removed with --from, Then only that subagent is removed and the exact lock survives",
+		Registries: []RegistryDef{{Name: "v4-sub-remove", Subagents: []Subagent{
+			{Name: "removable-agent", Tools: []string{"Read"}},
+			{Name: "keep-agent", Tools: []string{"Read"}},
+		}}},
+		GlobalCfg: `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  agents: {git: "{{REG:v4-sub-remove}}", ref: main}
+resources:
+  agents: {include: [subagent/removable-agent, subagent/keep-agent]}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{"/root/.factory/droids/removable-agent.md", "/root/.factory/droids/keep-agent.md"}},
+			{Args: []string{"remove", "--kind", "subagent", "--scope", "user", "--from", "{{REG:v4-sub-remove}}", "removable-agent"}, MustPass: true,
+				FilesAbsent:    []string{"/root/.factory/droids/removable-agent.md"},
+				PathsUnchanged: []string{"/root/.agents/lock.yaml", "/root/.factory/droids/keep-agent.md"}},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesAbsent: []string{"/root/.factory/droids/removable-agent.md"},
+				FilesExist:  []string{"/root/.factory/droids/keep-agent.md"}},
+		},
+	},
+	{
 		Name: "subagent/remove_from_no_name_removes_entry",
 		Desc: "Given a registry entry in global config with a subagent, When remove --scope user --from removes the entire entry and re-syncs, Then the subagent is gone",
 		Registries: []RegistryDef{
