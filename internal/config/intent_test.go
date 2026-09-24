@@ -2,7 +2,11 @@ package config
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -174,5 +178,135 @@ func TestIntentViews(t *testing.T) {
 	intent.Layers[Organization] = LayerIntent{Source: Organization}
 	if harnesses, source := intent.TargetHarnesses(); harnesses != nil || source != SourceUnset {
 		t.Fatalf("target harnesses = %v from %v, want unset", harnesses, source)
+	}
+}
+
+func writeIntentV4Files(t *testing.T, dir string) (rootPath, includePath string, rootBytes, includeBytes []byte) {
+	t.Helper()
+	includePath = filepath.Join(dir, "fragment.yaml")
+	rootPath = filepath.Join(dir, "config.yaml")
+	includeBytes = []byte(`apiVersion: agent-marketplace/v4
+sources:
+  frag: {directory: ./frag-regs}
+resources:
+  frag: {all: true}
+`)
+	rootBytes = []byte(`apiVersion: agent-marketplace/v4
+include: [fragment.yaml]
+sources:
+  main: {directory: ./regs}
+resources:
+  main: {all: true}
+`)
+	if err := os.WriteFile(includePath, includeBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rootPath, rootBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return rootPath, includePath, rootBytes, includeBytes
+}
+
+func TestReadLayerIntentV4CapturesReadsAtParse(t *testing.T) {
+	dir := t.TempDir()
+	rootPath, includePath, rootBytes, includeBytes := writeIntentV4Files(t, dir)
+	rootCanonical, err := canonicalConfigPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	includeCanonical, err := canonicalConfigPath(includePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	includeReads := 0
+	original := v4ReadConfigFile
+	v4ReadConfigFile = func(path string) ([]byte, error) {
+		if path == includeCanonical {
+			includeReads++
+			if includeReads > 1 {
+				return nil, errors.New("v4 include reread after parse")
+			}
+		}
+		return original(path)
+	}
+	t.Cleanup(func() { v4ReadConfigFile = original })
+
+	li, err := readLayerIntent(rootPath, rootCanonical, rootBytes, repoLayer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if includeReads != 1 {
+		t.Fatalf("include read count = %d, want exactly 1", includeReads)
+	}
+	if len(li.Reads) != len(li.v4.Files) {
+		t.Fatalf("reads = %#v not parallel to files = %#v", li.Reads, li.v4.Files)
+	}
+	for i := range li.v4.Files {
+		if li.Reads[i].Path != li.v4.Files[i] {
+			t.Fatalf("read %d path %q does not match file %q", i, li.Reads[i].Path, li.v4.Files[i])
+		}
+	}
+	byPath := make(map[string]ConfigRead, len(li.Reads))
+	for _, read := range li.Reads {
+		byPath[read.Path] = read
+	}
+	rootAbs, err := filepath.Abs(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Includes are requested relative to the canonical root directory.
+	includeAbs := filepath.Join(filepath.Dir(rootCanonical), "fragment.yaml")
+	rootRead, ok := byPath[rootCanonical]
+	if !ok {
+		t.Fatalf("missing root read in %#v", li.Reads)
+	}
+	if rootRead.RequestedPath != rootAbs || rootRead.Digest != fmt.Sprintf("%x", sha256.Sum256(rootBytes)) || rootRead.Overlay {
+		t.Fatalf("root read = %#v, want requested %q digest of parsed bytes without overlay", rootRead, rootAbs)
+	}
+	includeRead, ok := byPath[includeCanonical]
+	if !ok {
+		t.Fatalf("missing include read in %#v", li.Reads)
+	}
+	if includeRead.RequestedPath != includeAbs || includeRead.Digest != fmt.Sprintf("%x", sha256.Sum256(includeBytes)) || includeRead.Overlay {
+		t.Fatalf("include read = %#v, want requested %q digest of parsed bytes without overlay", includeRead, includeAbs)
+	}
+}
+
+func TestReadLayerIntentV4OverlayIncludeRead(t *testing.T) {
+	dir := t.TempDir()
+	rootPath, includePath, rootBytes, includeBytes := writeIntentV4Files(t, dir)
+	rootCanonical, err := canonicalConfigPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	includeCanonical, err := canonicalConfigPath(includePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	diskReads := 0
+	original := v4ReadConfigFile
+	v4ReadConfigFile = func(path string) ([]byte, error) {
+		diskReads++
+		return original(path)
+	}
+	t.Cleanup(func() { v4ReadConfigFile = original })
+
+	li, err := readLayerIntent(rootPath, rootCanonical, rootBytes, repoLayer, map[string][]byte{includeCanonical: includeBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diskReads != 0 {
+		t.Fatalf("overlaid include hit disk %d times", diskReads)
+	}
+	var includeRead *ConfigRead
+	for i := range li.Reads {
+		if li.Reads[i].Path == includeCanonical {
+			includeRead = &li.Reads[i]
+		}
+	}
+	if includeRead == nil || !includeRead.Overlay || includeRead.Digest != fmt.Sprintf("%x", sha256.Sum256(includeBytes)) {
+		t.Fatalf("overlaid include read = %#v in %#v", includeRead, li.Reads)
 	}
 }

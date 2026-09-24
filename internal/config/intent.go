@@ -250,16 +250,8 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 		if err != nil {
 			return li, err
 		}
-		reads := make([]ConfigRead, 0, len(v4.Files))
-		for _, file := range v4.Files {
-			contents, overlaid, readErr := v4ConfigData(file, file, false, nil, overlays)
-			if readErr != nil {
-				return li, fmt.Errorf("read v4 config %q: %w", file, readErr)
-			}
-			reads = append(reads, ConfigRead{Path: file, RequestedPath: file, Digest: fmt.Sprintf("%x", sha256.Sum256(contents)), Overlay: overlaid})
-		}
 		li.v4 = v4
-		li.Reads = reads
+		li.Reads = append([]ConfigRead(nil), v4.reads...)
 		return li, nil
 	}
 	loader := newConfigIncludeLoader(kind)
