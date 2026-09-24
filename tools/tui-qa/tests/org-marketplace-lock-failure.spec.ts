@@ -38,6 +38,33 @@ test("a missing organization marketplace lock is acquired transiently without po
     assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined, "TUI load must not create the organization lock");
   });
 
+  const beforeToggle = fixture.marketplaceAcquisitionDataRequestCount?.();
+  assert.equal(beforeToggle, 4, "cold startup must acquire organization Marketplace evidence");
+  await step("select available alpha-skill", () => terminal.write("G"), async () => {
+    await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
+    await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
+  });
+  await step("open local toggle", () => terminal.write(" "), async () => {
+    await expect(terminal.getByText('"alpha-skill"', { strict: false })).toBeVisible();
+    await expect(terminal.getByText("toggle local")).toBeVisible();
+  });
+  await step("toggle local without reacquiring organization evidence", () => terminal.write("l"), async () => {
+    await expect(terminal.getByText(/Local\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
+  });
+  assert.equal(
+    fs.readFileSync(path.join(fixture.repo, ".agents", "config.local.yaml"), "utf8"),
+    fixture.expectedLocalConfig,
+    "the TUI must persist the selection before reporting the new state"
+  );
+  assert.equal(
+    fixture.marketplaceAcquisitionDataRequestCount?.(),
+    beforeToggle,
+    `selection-only edits must not reacquire organization Marketplace evidence: ${JSON.stringify(fixture.marketplaceAcquisitionDataRequestPaths?.())}`
+  );
+  assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined, "toggle must not create the organization lock");
+  assert.equal(fs.readFileSync(orgConfigPath, "utf8"), fixture.expectedOrgConfig, "toggle must not rewrite organization policy");
+
   await step("sync from the TUI materializes transient resources", () => terminal.write("s"), async () => {
     await expect(terminal.getByText(/~ in sync/g)).toBeVisible({ timeout: 30_000 });
   });
@@ -52,8 +79,11 @@ test("a missing organization marketplace lock is acquired transiently without po
   });
 
   const betaSkill = path.join(fixture.repo, ".factory", "skills", "beta-skill");
+  const alphaSkill = path.join(fixture.repo, ".factory", "skills", "alpha-skill");
   const orgSkill = path.join(fixture.home, ".factory", "skills", "org-review");
   assert.equal(fs.lstatSync(betaSkill).isSymbolicLink(), true, "TUI sync must materialize beta-skill");
+  assert.equal(fs.lstatSync(alphaSkill).isSymbolicLink(), true, "TUI sync must materialize selected alpha-skill");
+  assert.equal(fs.readFileSync(path.join(alphaSkill, "SKILL.md"), "utf8"), fixture.expectedAlphaSkillContent);
   assert.equal(fs.lstatSync(orgSkill).isSymbolicLink(), true, "TUI sync must materialize org-review");
   assert.equal(fs.readFileSync(path.join(orgSkill, "SKILL.md"), "utf8"), fixture.expectedOrgSkillContent);
   assert.equal(

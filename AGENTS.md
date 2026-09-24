@@ -90,7 +90,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - No resource dependency mechanism (tags and collections are partial workarounds)
 - Locking covers Git registries plus exact v2 Marketplace records, writable-layer generation, and online transient acquisition for an intentionally absent organization lock; offline transient acquisition, hosted update/rebind, dynamic-selector snapshots, editor writes, and GC integration remain unimplemented
 
-Run direct real-terminal test typechecking with `make tui-qa-check` and all eleven deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
+Run direct real-terminal test typechecking with `make tui-qa-check` and all twelve deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
 
 ## Local validation workflow
 
