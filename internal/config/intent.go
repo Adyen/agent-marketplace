@@ -344,14 +344,26 @@ func loadLayerIntent(source Source, path string, kind layerKind, overlays map[st
 	return parsed
 }
 
+func settingsForLayer(li LayerIntent, kind layerKind) (Settings, error) {
+	if err := errors.Join(li.errors...); err != nil {
+		return Settings{}, err
+	}
+	if li.v4 != nil {
+		if err := li.v4.validateLayerFields(kind); err != nil {
+			return Settings{}, err
+		}
+	}
+	return li.Settings(), nil
+}
+
 func loadSettings(path string, kind layerKind) (Settings, error) {
 	li := loadLayerIntent(sourceForLayer(kind), path, kind, nil)
-	return li.Settings(), errors.Join(li.errors...)
+	return settingsForLayer(li, kind)
 }
 
 func LoadOrganizationSettings() (Settings, error) {
 	li, _ := readOrganizationIntent(organizationConfigPath(""))
-	return li.Settings(), errors.Join(li.errors...)
+	return settingsForLayer(li, organizationLayer)
 }
 
 func LoadUserSettings() (Settings, error) {
