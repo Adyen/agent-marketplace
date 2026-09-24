@@ -285,6 +285,94 @@ func TestLayerEditorV4IncludedSourceRootOverrideAndIncludeOwned(t *testing.T) {
 	}
 }
 
+func TestLayerEditorV4RemoveIncludeOwnership(t *testing.T) {
+	entry := RegistryEntry{URL: "https://example.test/repo.git", Ref: "main"}
+
+	t.Run("fragment group refusal is byte-stable", func(t *testing.T) {
+		dir := t.TempDir()
+		declaring := filepath.Join(dir, "config.yaml")
+		fragment := filepath.Join(dir, "fragment.yaml")
+		fragmentData := "resources:\n  main: [skill/gone]\n"
+		layerEditorWrite(t, fragment, fragmentData)
+		rootData := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nsources:\n  main: {git: https://example.test/repo.git, ref: main}\n"
+		layerEditorWrite(t, declaring, rootData)
+		staged := filepath.Join(t.TempDir(), "config.yaml")
+		layerEditorWrite(t, staged, rootData)
+
+		editor := openTestEditor(t, RepoCommitted, staged, declaring)
+		binding, err := editor.EnsureRegistry(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = editor.Apply(binding, SelectionChange{Operation: SelectionRemoveInclude, Locators: []ResourceLocator{loc(ir.KindSkill, "gone")}})
+		if layerEditorErrCode(err) != "config.edit.include-owned" {
+			t.Fatalf("remove = %v, want include-owned", err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if candidate.Changed || string(candidate.Bytes) != rootData {
+			t.Fatalf("refusal changed bytes:\n%s", candidate.Bytes)
+		}
+	})
+
+	t.Run("root and fragment provenance refuses", func(t *testing.T) {
+		dir := t.TempDir()
+		declaring := filepath.Join(dir, "config.yaml")
+		fragment := filepath.Join(dir, "fragment.yaml")
+		fragmentData := "resources:\n  main: [skill/gone]\n"
+		layerEditorWrite(t, fragment, fragmentData)
+		rootData := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nsources:\n  main: {git: https://example.test/repo.git, ref: main}\nresources:\n  main: [skill/gone]\n"
+		layerEditorWrite(t, declaring, rootData)
+		staged := filepath.Join(t.TempDir(), "config.yaml")
+		layerEditorWrite(t, staged, rootData)
+
+		editor := openTestEditor(t, RepoCommitted, staged, declaring)
+		binding, err := editor.EnsureRegistry(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = editor.Apply(binding, SelectionChange{Operation: SelectionRemoveInclude, Locators: []ResourceLocator{loc(ir.KindSkill, "gone")}})
+		if layerEditorErrCode(err) != "config.edit.include-owned" {
+			t.Fatalf("remove = %v, want include-owned", err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if candidate.Changed || string(candidate.Bytes) != rootData {
+			t.Fatalf("refusal changed bytes:\n%s", candidate.Bytes)
+		}
+		gotFragment, err := os.ReadFile(fragment)
+		if err != nil || string(gotFragment) != fragmentData {
+			t.Fatalf("fragment changed:\n%s", gotFragment)
+		}
+	})
+
+	t.Run("absent locator is a no-op", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		data := "apiVersion: agent-marketplace/v4\nsources:\n  main: {git: https://example.test/repo.git, ref: main}\nresources:\n  main: [skill/keep]\n"
+		layerEditorWrite(t, path, data)
+		editor := openTestEditor(t, RepoCommitted, path, path)
+		binding, err := editor.EnsureRegistry(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := editor.Apply(binding, SelectionChange{Operation: SelectionRemoveInclude, Locators: []ResourceLocator{loc(ir.KindSkill, "gone")}}); err != nil {
+			t.Fatal(err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if candidate.Changed || string(candidate.Bytes) != data {
+			t.Fatalf("absent removal changed bytes:\n%s", candidate.Bytes)
+		}
+	})
+}
+
 func TestLayerEditorV4DirectorySourceStagingAndUnsafe(t *testing.T) {
 	repo := t.TempDir()
 	declaring := filepath.Join(repo, ".agents", "config.yaml")

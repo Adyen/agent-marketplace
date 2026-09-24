@@ -35,6 +35,13 @@ func (m *LayerMutation) Apply(binding config.SourceBinding, change config.Select
 	return m.editor.Apply(binding, change)
 }
 
+func (m *LayerMutation) LookupRegistry(entry config.RegistryEntry) (config.SourceBinding, bool, error) {
+	if m == nil || m.editor == nil {
+		return config.SourceBinding{}, false, errors.New("layer mutation has no open editor")
+	}
+	return m.editor.LookupRegistry(entry)
+}
+
 func (m *LayerMutation) RemoveSource(binding config.SourceBinding) error {
 	if m == nil || m.editor == nil {
 		return errors.New("layer mutation has no open editor")
