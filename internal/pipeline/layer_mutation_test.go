@@ -48,6 +48,24 @@ func TestAddResourcesToAllRegistriesIncludesOnlyMatchingProviders(t *testing.T) 
 	assertNoStagingResidue(t)
 }
 
+func TestRemovalEditEntry(t *testing.T) {
+	base := config.RegistryEntry{Ref: "main", Path: "skills", V4Kind: config.V4SourceDirectory, SourceHarness: "claude", CatalogKey: "cat"}
+	got := removalEditEntry(base, "file:///tmp/bundle", "sub/dir", "dev")
+	if got.URL != "file:///tmp/bundle" || got.Path != "sub/dir" || got.Ref != "dev" {
+		t.Fatalf("fill = %#v", got)
+	}
+	if got.V4Kind != config.V4SourceDirectory || got.SourceHarness != "claude" || got.CatalogKey != "cat" {
+		t.Fatalf("identity fields lost: %#v", got)
+	}
+	if base.URL != "" || base.Path != "skills" || base.Ref != "main" {
+		t.Fatalf("input mutated: %#v", base)
+	}
+	got = removalEditEntry(config.RegistryEntry{URL: "https://example.test/repo.git", Ref: "main"}, "https://other.test/x.git", "", "")
+	if got.URL != "https://example.test/repo.git" || got.Ref != "main" || got.Path != "" {
+		t.Fatalf("explicit fields overwritten: %#v", got)
+	}
+}
+
 func mutateLayerFixture(t *testing.T) (repoRoot, configPath, stateDir string) {
 	t.Helper()
 	t.Setenv("TMPDIR", t.TempDir())

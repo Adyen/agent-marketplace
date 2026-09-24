@@ -453,6 +453,205 @@ func TestInstallFromV4UserRefPathUsesCanonicalEditor(t *testing.T) {
 	}
 }
 
+func TestRemoveFromV4AdHocSourceOperations(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Run("target-owned no-name removes only selected source", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+		t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+		tmp := t.TempDir()
+		t.Setenv("TMPDIR", tmp)
+
+		originPath, working := createBareRepoWithWorkingClone(t, "v4-remove-source.git")
+		writeSkill(t, working, "alpha", "Alpha", nil)
+		commitAndPushAll(t, working, "main seed")
+		runGit(t, working, "checkout", "-b", "dev")
+		writeSkill(t, working, "beta", "Beta", nil)
+		commitAndPushAllToBranch(t, working, "dev seed", "dev")
+		runGit(t, working, "checkout", "main")
+		origin := "file://" + originPath
+
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+		writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  main: {git: "+origin+", ref: main}\n  dev: {git: "+origin+", ref: dev}\nresources:\n  main: [skill/alpha]\n  dev: [skill/beta]\n")
+		withWorkingDir(t, repoRoot)
+		if output, err := executeCommand("sync"); err != nil {
+			t.Fatalf("seed sync: %v\n%s", err, output)
+		}
+		assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "alpha", "SKILL.md"))
+		assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "beta", "SKILL.md"))
+
+		output, err := executeCommand("remove", "--from", origin, "--ref", "dev")
+		if err != nil {
+			t.Fatalf("remove source: %v\n%s", err, output)
+		}
+		raw, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "registries:") || strings.Contains(string(raw), "ref: dev") {
+			t.Fatalf("dev source survived or schema drifted:\n%s", raw)
+		}
+		cfg, err := config.LoadV4ConfigFromPath(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.Sources) != 1 || cfg.Sources["main"].Kind != config.V4SourceGit {
+			t.Fatalf("sources = %#v", cfg.Sources)
+		}
+		if len(cfg.Groups) != 1 {
+			t.Fatalf("groups = %#v", cfg.Groups)
+		}
+		lock := readExactManifestLock(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
+		if lock.APIVersion != lockfile.APIVersionV2 || lock.Scope != lockfile.ScopeRepo {
+			t.Fatalf("lock = %v %v", lock.APIVersion, lock.Scope)
+		}
+		for _, registry := range lock.Registries {
+			if registry.Ref == "dev" {
+				t.Fatalf("dev ref retained in lock: %#v", lock.Registries)
+			}
+		}
+		assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "alpha", "SKILL.md"))
+		if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "beta")); !os.IsNotExist(err) {
+			t.Fatalf("beta materialization retained: %v", err)
+		}
+		if residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
+			t.Fatalf("staging residue = %v err=%v", residue, err)
+		}
+	})
+
+	t.Run("inherited repo source local scope writes v4 shadow exclusion", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+		t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+		tmp := t.TempDir()
+		t.Setenv("TMPDIR", tmp)
+
+		originPath, working := createBareRepoWithWorkingClone(t, "v4-shadow-source.git")
+		writeSkill(t, working, "alpha", "Alpha", nil)
+		commitAndPushAll(t, working, "seed")
+		origin := "file://" + originPath
+
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		repoConfigPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+		writeConfig(t, repoConfigPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  main: {git: "+origin+", ref: main}\nresources:\n  main: [skill/alpha]\n")
+		localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+		writeConfig(t, localPath, "apiVersion: agent-marketplace/v4\n")
+		withWorkingDir(t, repoRoot)
+		if output, err := executeCommand("sync"); err != nil {
+			t.Fatalf("seed sync: %v\n%s", err, output)
+		}
+		assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "alpha", "SKILL.md"))
+		repoBefore, err := os.ReadFile(repoConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		output, err := executeCommand("remove", "--from", origin, "--scope", "local")
+		if err != nil {
+			t.Fatalf("remove shadow: %v\n%s", err, output)
+		}
+		repoAfter, err := os.ReadFile(repoConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(repoBefore, repoAfter) {
+			t.Fatalf("shadow exclusion rewrote repo config:\n%s", repoAfter)
+		}
+		localRaw, err := os.ReadFile(localPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(localRaw), "registries:") {
+			t.Fatalf("v4 local gained legacy registries:\n%s", localRaw)
+		}
+		localCfg, err := config.LoadV4ConfigFromPath(localPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(localCfg.Sources) != 1 || len(localCfg.Groups) != 1 {
+			t.Fatalf("local shadow sources/groups = %#v %#v", localCfg.Sources, localCfg.Groups)
+		}
+		var group config.V4ResourceGroup
+		for _, g := range localCfg.Groups {
+			group = g
+		}
+		if len(group.Exclude) != 1 || group.Exclude[0] != "*" {
+			t.Fatalf("shadow exclusion = %#v", group)
+		}
+		if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "alpha")); !os.IsNotExist(err) {
+			t.Fatalf("excluded skill still materialized: %v", err)
+		}
+		if residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
+			t.Fatalf("staging residue = %v err=%v", residue, err)
+		}
+	})
+
+	t.Run("named collection writes exact exclusion", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+		t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+		tmp := t.TempDir()
+		t.Setenv("TMPDIR", tmp)
+
+		originPath, working := createBareRepoWithWorkingClone(t, "v4-remove-collection.git")
+		writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"infra"})
+		writeCollection(t, working, "platform-bundle", `
+apiVersion: agent-marketplace/v1
+kind: Collection
+name: platform-bundle
+version: 1.0.0
+skills:
+  - name: vm-lifecycle
+`)
+		commitAndPushAll(t, working, "seed")
+		origin := "file://" + originPath
+
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+		writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  main: {git: "+origin+", ref: main}\nresources:\n  main: {include: [collection/platform-bundle]}\n")
+		withWorkingDir(t, repoRoot)
+		if output, err := executeCommand("sync"); err != nil {
+			t.Fatalf("seed sync: %v\n%s", err, output)
+		}
+		assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle", "SKILL.md"))
+
+		output, err := executeCommand("remove", "platform-bundle", "--from", origin)
+		if err != nil {
+			t.Fatalf("remove collection: %v\n%s", err, output)
+		}
+		raw, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "registries:") {
+			t.Fatalf("v4 config gained legacy registries:\n%s", raw)
+		}
+		cfg, err := config.LoadV4ConfigFromPath(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		group := cfg.Groups["main"]
+		if len(group.Include) != 0 {
+			t.Fatalf("collection include retained: %#v", group.Include)
+		}
+		if len(group.Exclude) != 1 || group.Exclude[0] != "collection/platform-bundle" {
+			t.Fatalf("collection exclusion = %#v", group.Exclude)
+		}
+		if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle")); !os.IsNotExist(err) {
+			t.Fatalf("collection member still materialized: %v", err)
+		}
+		if residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
+			t.Fatalf("staging residue = %v err=%v", residue, err)
+		}
+	})
+}
+
 func TestConfiguredInstallV4UsesCanonicalEditor(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
