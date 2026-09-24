@@ -10,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func enterUnavailableDetail(t *testing.T, r row) Model {
+func enterMetadataDetail(t *testing.T, r row) Model {
 	t.Helper()
 	m := modelWithSelectedRow(t, r)
 	m.width = 120
@@ -28,7 +28,7 @@ func enterUnavailableDetail(t *testing.T, r row) Model {
 func TestUnavailableRecoveryDetailSpaceOpensToggleModal(t *testing.T) {
 	r := mkRow("missing", withProject, withRegistry("https://example.com/reg.git", "reg"))
 	r.UnavailableReason = unavailableCatalogReason
-	m := enterUnavailableDetail(t, r)
+	m := enterMetadataDetail(t, r)
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
 	m = updated.(Model)
@@ -47,7 +47,7 @@ func TestMarketplaceDiscoveryDetailSpaceOpensScopeModal(t *testing.T) {
 	for _, availability := range []mpapi.Availability{mpapi.AvailabilityAvailable, mpapi.AvailabilityOperatorExposed} {
 		t.Run(string(availability), func(t *testing.T) {
 			r := marketplaceDiscoveryRow("skill", "review", availability)
-			m := enterUnavailableDetail(t, r)
+			m := enterMetadataDetail(t, r)
 
 			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
 			m = updated.(Model)
@@ -67,7 +67,7 @@ func TestMarketplaceDiscoveryDetailSpaceOpensScopeModal(t *testing.T) {
 func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 	t.Run("config-invalid keeps editor guidance", func(t *testing.T) {
 		r := marketplaceDiscoveryRow("skill", "review", mpapi.AvailabilityAvailable)
-		m := enterUnavailableDetail(t, r)
+		m := enterMetadataDetail(t, r)
 		m.configInvalid = true
 
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
@@ -86,7 +86,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 	t.Run("required recovery row keeps required restriction", func(t *testing.T) {
 		r := mkRow("missing", withProject, withRequired)
 		r.UnavailableReason = unavailableCatalogReason
-		m := enterUnavailableDetail(t, r)
+		m := enterMetadataDetail(t, r)
 
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
 		m = updated.(Model)
@@ -106,7 +106,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 		r.UnavailableReason = unavailableCatalogReason
 		r.Artifact.IsMarketplace = true
 		r.MarketplaceCollectionOnly = true
-		m := enterUnavailableDetail(t, r)
+		m := enterMetadataDetail(t, r)
 
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
 		m = updated.(Model)
@@ -124,7 +124,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 	t.Run("syncing blocks the detail recovery action", func(t *testing.T) {
 		r := mkRow("missing", withProject)
 		r.UnavailableReason = unavailableCatalogReason
-		m := enterUnavailableDetail(t, r)
+		m := enterMetadataDetail(t, r)
 		m.syncing = true
 
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
@@ -140,7 +140,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 	for _, availability := range []mpapi.Availability{mpapi.AvailabilityBlocked, mpapi.AvailabilityRevoked, "unknown"} {
 		t.Run("non-installable discovery "+string(availability), func(t *testing.T) {
 			r := marketplaceDiscoveryRow("skill", "review", availability)
-			m := enterUnavailableDetail(t, r)
+			m := enterMetadataDetail(t, r)
 
 			updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
 			m = updated.(Model)

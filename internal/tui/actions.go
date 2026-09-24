@@ -907,7 +907,7 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 		if meta == nil {
 			meta = first
 		}
-		if !direct || meta == nil {
+		if !direct {
 			return
 		}
 		seen[seenKey] = struct{}{}
