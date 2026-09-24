@@ -311,6 +311,26 @@ func TestUserLoggingLoaderResolvesIncludes(t *testing.T) {
 	}
 }
 
+func TestLoadUserLoggingConfigIgnoresUnreadableLock(t *testing.T) {
+	t.Skip("known gap: awaits WP2 settings readers that hydrate acquisition locks")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIncludeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+logging: {level: debug}
+sources: {hosted: {marketplace: https://marketplace.invalid}}
+`)
+	if err := os.MkdirAll(filepath.Join(home, ".agents", "lock.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logging, err := LoadUserLoggingConfig()
+	if err != nil {
+		t.Fatalf("LoadUserLoggingConfig: %v", err)
+	}
+	if logging == nil || logging.Level == nil || *logging.Level != "debug" {
+		t.Fatalf("logging = %#v", logging)
+	}
+}
+
 func TestLoadRootConfigFromPathDoesNotExposeIncludedEntries(t *testing.T) {
 	dir := t.TempDir()
 	writeIncludeConfig(t, filepath.Join(dir, "child.yaml"), "registries:\n  - path: /child\n")
