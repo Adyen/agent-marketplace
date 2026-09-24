@@ -187,6 +187,7 @@ func marketplaceInstallSnapshotError(msg snapshotLoadedMsg) error {
 
 func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	selection := m.selectionKeyForRebuild()
+	listOffset := m.listOffset
 	selectionAfterDisable := m.selectionAfterDisable
 	m.selectionAfterDisable = ""
 	m.authoritativeRows = msg.rows
@@ -198,9 +199,14 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	m.globalHarnesses = msg.globalHarnesses
 	m.projectHarnesses = msg.projectHarnesses
 	m.mergeDiscoveryRows()
+	// The rebuild may have scrolled to where a toggled row moved (for example
+	// a disabled row now in Available); keep the previous viewport and scroll
+	// only as far as the final selection needs.
+	m.listOffset = listOffset
 	if !m.restoreSelectionKey(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
+	m.clampListOffset()
 	m.rebuildOpenBundle()
 	if msg.inventoryResult != nil {
 		pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)

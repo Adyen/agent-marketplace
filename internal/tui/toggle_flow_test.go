@@ -673,6 +673,57 @@ func TestDisableSelectsAdjacentResourceAfterSnapshot(t *testing.T) {
 	}
 }
 
+// A disabled row moves to a different Status bucket, so the snapshot rebuild
+// must not scroll to its new position before selecting the neighbouring row.
+func TestDisableInStatusTabKeepsListScrollPosition(t *testing.T) {
+	names := make([]string, 30)
+	enabled := make([]row, len(names))
+	for i := range names {
+		names[i] = fmt.Sprintf("skill-%02d", i)
+		enabled[i] = mkRow(names[i], withProject)
+	}
+	m := NewModel("/repo", "/home")
+	m.loading = false
+	m.width, m.height = 120, 20
+	m.rows = enabled
+	m.authoritativeRows = enabled
+	m.switchTab(tabStatus)
+	if m.listVisibleHeight() >= len(m.flatItems) {
+		t.Fatalf("fixture must overflow the list: visible=%d items=%d", m.listVisibleHeight(), len(m.flatItems))
+	}
+	disabled := names[1]
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == disabled {
+			m.cursor = i
+			break
+		}
+	}
+	m.listOffset = 0
+	m.clampListOffset()
+	if m.listOffset != 0 {
+		t.Fatalf("fixture listOffset = %d, want 0", m.listOffset)
+	}
+
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("mutation operation was not accepted")
+	}
+	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: disabled, selectNext: true})
+	m = updated.(Model)
+	after := append([]row(nil), enabled...)
+	after[1] = mkRow(disabled, withAvailable)
+	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: after})
+	m = updated.(Model)
+
+	selected, ok := m.selectedRow()
+	if !ok || selected.Artifact.Name != names[2] {
+		t.Fatalf("selection after disabling %s = %q, ok=%v; want %s", disabled, selected.Artifact.Name, ok, names[2])
+	}
+	if m.listOffset != 0 {
+		t.Fatalf("listOffset after disable = %d, want 0 so the section headers stay visible", m.listOffset)
+	}
+}
+
 // TestReadSnapshotExpandsCollections verifies that the TUI's readSnapshot
 // expands collection references into synthetic registry entries before
 // resolving skills. Without this step, skills selected via collections
