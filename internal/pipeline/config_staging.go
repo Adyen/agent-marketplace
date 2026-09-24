@@ -22,6 +22,14 @@ type StagedConfigEdit struct {
 	Mode          fs.FileMode
 }
 
+type StagedLockEdit struct {
+	Path         string
+	Expected     dependencytxn.Generation
+	ExpectedMode fs.FileMode
+	Bytes        []byte
+	Mode         fs.FileMode
+}
+
 type ConfigPathMapper func(string) (string, error)
 
 func MutateConfigWithDependencies(ctx context.Context, repoRoot, localDir string, mutation func(ConfigPathMapper) error, reconcile DependencyReconciler) (retErr error) {
