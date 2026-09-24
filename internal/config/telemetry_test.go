@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -216,5 +217,20 @@ func TestOrganizationSettingsIgnoreMarketplaceLock(t *testing.T) {
 	}
 	if len(settings.Harnesses) != 1 || settings.Harnesses[0] != "factory" {
 		t.Fatalf("settings harnesses = %v, want [factory]", settings.Harnesses)
+	}
+}
+
+func TestOrganizationSettingsRejectLayerInvalidV4(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(root, []byte("apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\ntelemetry: {level: basic}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	SetTestOrganizationConfigPath(t, root)
+
+	_, err := LoadOrganizationSettings()
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.layer-field" {
+		t.Fatalf("error = %v, want v4.layer-field", err)
 	}
 }
