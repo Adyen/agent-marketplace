@@ -51,10 +51,11 @@ type SourceDecl struct {
 }
 
 type Evidence struct {
-	Locks  [5]*lockfile.Document
-	Reads  []ConfigRead
-	errors [5][]error
-	reads  [5][]ConfigRead
+	Locks             [5]*lockfile.Document
+	Reads             []ConfigRead
+	errors            [5][]error
+	reads             [5][]ConfigRead
+	runtimeSetupError [5]bool
 }
 
 var intentLayerOrder = []Source{Organization, UserPersonal, RepoCommitted, RepoPersonal}
@@ -194,13 +195,6 @@ func (l LayerIntent) NeedsMarketplaceLock() bool {
 		}
 	}
 	return false
-}
-
-func (l LayerIntent) remoteRequirements() bool {
-	if l.v4 != nil {
-		return l.NeedsLock()
-	}
-	return organizationHasRemoteRequirements(l.legacy)
 }
 
 func (l LayerIntent) probeConfig() *Config {
@@ -377,18 +371,11 @@ func readOrganizationIntent(path string) (LayerIntent, ManagedInstallationDiagno
 	return li, inspectManagedConfig(path, nil, probe, li.Source, li.errors)
 }
 
-func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOptions) (*lockfile.Document, []ConfigRead, []error) {
+func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOptions) (*lockfile.Document, []ConfigRead, []error, bool) {
 	if !li.Present() || len(li.errors) > 0 {
-		return nil, nil, nil
+		return nil, nil, nil, false
 	}
-	if source == Organization && li.remoteRequirements() {
-		if err := ValidateOrganizationTrustUnit(li.Path, true, true); err != nil {
-			return nil, nil, []error{err}
-		}
-	}
-	if !li.NeedsMarketplaceLock() {
-		return nil, nil, nil
-	}
+
 	overlays := opts.FileOverlays
 	runtimeLock := false
 	if source == Organization {
@@ -396,39 +383,46 @@ func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOpti
 		if len(opts.OrganizationRuntimeLock) > 0 {
 			canonical, err := canonicalConfigPath(li.Path)
 			if err != nil {
-				return nil, nil, []error{err}
+				return nil, nil, []error{err}, true
 			}
 			paths, err := configLockPaths(li.Path, canonical)
 			if err != nil {
-				return nil, nil, []error{err}
+				return nil, nil, []error{err}, true
 			}
 			lockOverlays, err := organizationRuntimeLockOverlay(paths.CanonicalLock, opts.OrganizationRuntimeLock)
 			if err != nil {
-				return nil, nil, []error{err}
+				return nil, nil, []error{err}, true
 			}
 			overlays = lockOverlays
 			runtimeLock = true
 		}
 	}
-	doc, read, err := readDeployedLock(li.Path, overlays)
-	if err != nil {
-		return nil, nil, []error{err}
+
+	var doc *lockfile.Document
+	var read *ConfigRead
+	if li.NeedsMarketplaceLock() {
+		var err error
+		doc, read, err = readDeployedLock(li.Path, overlays)
+		if err != nil {
+			return nil, nil, []error{err}, false
+		}
 	}
 	var reads []ConfigRead
 	if read != nil {
 		read.RuntimeLock = runtimeLock
-		reads = append(reads, *read)
+		reads = []ConfigRead{*read}
 	}
-	return doc, reads, nil
+	return doc, reads, nil, false
 }
 
 func deployedLocks(intent Intent, opts LoadEffectiveOptions) Evidence {
 	ev := Evidence{}
 	for _, source := range intentLayerOrder {
-		doc, reads, errs := deployedLayerEvidence(intent.Layers[source], source, opts)
+		doc, reads, errs, setupErr := deployedLayerEvidence(intent.Layers[source], source, opts)
 		ev.Locks[source] = doc
 		ev.errors[source] = errs
 		ev.reads[source] = reads
+		ev.runtimeSetupError[source] = setupErr
 		ev.Reads = append(ev.Reads, reads...)
 	}
 	return ev
@@ -514,10 +508,7 @@ func bindLayerResult(li LayerIntent, ev Evidence, source Source) LayerResult {
 	return lr
 }
 
-func Bind(intent Intent, ev Evidence) EffectiveConfig {
-	if intent.aborted {
-		return EffectiveConfig{Errors: intent.Errors[:len(intent.Errors):len(intent.Errors)]}
-	}
+func bindLayers(intent Intent, ev Evidence) EffectiveConfig {
 	ec := EffectiveConfig{Diagnostics: intent.Diagnostics}
 	ec.Errors = intent.Errors[:len(intent.Errors):len(intent.Errors)]
 	ec.Warnings = intent.Warnings[:len(intent.Warnings):len(intent.Warnings)]
@@ -527,7 +518,13 @@ func Bind(intent Intent, ev Evidence) EffectiveConfig {
 	ec.Repo = bindLayerResult(intent.Layers[RepoCommitted], ev, RepoCommitted)
 	ec.LocalLayer = bindLayerResult(intent.Layers[RepoPersonal], ev, RepoPersonal)
 	ec.Local = ec.LocalLayer.Local
+	return ec
+}
 
+func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig {
+	if intent.aborted {
+		return ec
+	}
 	for _, source := range intentLayerOrder {
 		ec.Errors = append(ec.Errors, ev.errors[source]...)
 	}
@@ -539,7 +536,10 @@ func Bind(intent Intent, ev Evidence) EffectiveConfig {
 		}
 	}
 
-	if len(intent.Layers[Organization].errors) == 0 && len(ec.Organization.Errors) > 0 {
+	if ev.runtimeSetupError[Organization] {
+		ec.Diagnostics.State = ManagedInstallationUnmanaged
+		ec.Diagnostics.Validation = "unreadable"
+	} else if len(intent.Layers[Organization].errors) == 0 && len(ec.Organization.Errors) > 0 {
 		var trustErr *OrganizationTrustError
 		if errors.As(errors.Join(ev.errors[Organization]...), &trustErr) {
 			ec.Diagnostics.State = ManagedInstallationUnmanaged
@@ -637,6 +637,22 @@ func Bind(intent Intent, ev Evidence) EffectiveConfig {
 	}
 
 	return ec
+}
+
+func Bind(intent Intent, ev Evidence) EffectiveConfig {
+	return finishBind(intent, ev, bindLayers(intent, ev))
+}
+
+func bindDeployed(intent Intent, ev Evidence) EffectiveConfig {
+	ec := bindLayers(intent, ev)
+	if ec.Organization.Config != nil && len(ec.Organization.Errors) == 0 && organizationHasRemoteRequirements(ec.Organization.Config) {
+		if trustErr := ValidateOrganizationTrustUnit(ec.Organization.Path, true, true); trustErr != nil {
+			ev.errors[Organization] = append(ev.errors[Organization], trustErr)
+			ec.Organization.Config = nil
+			ec.Organization.Errors = append(ec.Organization.Errors, trustErr)
+		}
+	}
+	return finishBind(intent, ev, ec)
 }
 
 func containsError(list []error, target error) bool {

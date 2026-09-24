@@ -7,7 +7,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 const remoteOrganizationFixture = `apiVersion: agent-marketplace/v2
@@ -461,6 +464,131 @@ func TestOrganizationIncludeCannotEnableTestTrustFromFragmentPath(t *testing.T) 
 	if !errors.As(err, &trustErr) || trustErr.Code != "organization.trust.ancestor.owner" || trustErr.Path != dir {
 		t.Fatalf("production authority accepted fixture owner: %v", err)
 	}
+}
+
+func TestLoadEffectiveValidatesUnusedOrganizationRuntimeLock(t *testing.T) {
+	oversized := make([]byte, lockfile.MaxFileSize+1)
+	for _, test := range []struct {
+		name    string
+		fixture string
+	}{
+		{name: "legacy remote git", fixture: remoteOrganizationFixture},
+		{name: "v4 git only", fixture: "apiVersion: agent-marketplace/v4\nsources: {org: {git: https://example.com/org.git, ref: main}}\n"},
+	} {
+		t.Run(test.name+" oversized", func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			writeFile(t, configPath, test.fixture)
+			opts := isolatedEffectiveOptions(configPath)
+			opts.OrganizationRuntimeLock = oversized
+			ec := LoadEffective(context.Background(), opts)
+			if !errors.Is(errors.Join(ec.Errors...), lockfile.ErrFileTooLarge) {
+				t.Fatalf("errors = %v, want lockfile.ErrFileTooLarge", ec.Errors)
+			}
+			if ec.Organization.Config != nil || ec.Managed {
+				t.Fatalf("oversized runtime lock applied: managed=%v config=%v", ec.Managed, ec.Organization.Config != nil)
+			}
+			if ec.Diagnostics.Validation != "unreadable" {
+				t.Fatalf("diagnostics validation = %q, want unreadable", ec.Diagnostics.Validation)
+			}
+		})
+	}
+
+	t.Run("small unused lock ignored", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		writeFile(t, configPath, remoteOrganizationFixture)
+		opts := isolatedEffectiveOptions(configPath)
+		opts.OrganizationRuntimeLock = []byte("apiVersion: agent-marketplace-lock/v1\nscope: organization\n")
+		ec := LoadEffective(context.Background(), opts)
+		if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
+			t.Fatalf("unused runtime lock was not ignored: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
+		}
+		for _, read := range ec.Organization.Reads {
+			if read.AcquisitionLock {
+				t.Fatalf("unused runtime lock recorded an acquisition read: %#v", read)
+			}
+		}
+	})
+}
+
+func TestLoadEffectivePreservesOrganizationLockErrorPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		lock     string
+		code     string
+		contains string
+	}{
+		{name: "malformed lock", lock: "not: [yaml", contains: "decode lock"},
+		{name: "wrong scope", lock: "apiVersion: agent-marketplace-lock/v2\nscope: user\nmarketplaces:\n  - url: https://marketplace.example\n    instance_id: marketplace\n", code: "v4.marketplace-lock-mismatch"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			lockPath := filepath.Join(dir, "lock.yaml")
+			writeFile(t, configPath, v4MarketplaceOrganizationFixture)
+			writeFile(t, lockPath, test.lock)
+			if err := os.Chmod(lockPath, 0o666); err != nil {
+				t.Fatal(err)
+			}
+
+			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+			if len(ec.Errors) == 0 {
+				t.Fatal("expected a lock error, got none")
+			}
+			joined := errors.Join(ec.Errors...)
+			var trustErr *OrganizationTrustError
+			if errors.As(joined, &trustErr) {
+				t.Fatalf("trust error %v masked the lock failure in %v", trustErr, ec.Errors)
+			}
+			if test.contains != "" && !strings.Contains(joined.Error(), test.contains) {
+				t.Fatalf("errors = %v, want substring %q", ec.Errors, test.contains)
+			}
+			if test.code != "" {
+				var validation *V4ValidationError
+				if !errors.As(errors.Join(ec.Errors...), &validation) || validation.Code != test.code {
+					t.Fatalf("errors = %v, want V4ValidationError %q", ec.Errors, test.code)
+				}
+			}
+			if ec.Diagnostics.Validation != "invalid" {
+				t.Fatalf("diagnostics validation = %q, want invalid", ec.Diagnostics.Validation)
+			}
+			for _, warning := range ec.Warnings {
+				if errors.As(warning, &trustErr) {
+					t.Fatalf("trust warning %v added for a lock failure", warning)
+				}
+			}
+		})
+	}
+
+	t.Run("untrusted valid lock still blocked", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		lockPath := filepath.Join(dir, "lock.yaml")
+		writeFile(t, configPath, v4MarketplaceOrganizationFixture)
+		writeFile(t, lockPath, v4MarketplaceOrganizationLock)
+		if err := os.Chmod(lockPath, 0o666); err != nil {
+			t.Fatal(err)
+		}
+
+		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		var trustErr *OrganizationTrustError
+		if !errors.As(errors.Join(ec.Errors...), &trustErr) {
+			t.Fatalf("errors = %v, want OrganizationTrustError", ec.Errors)
+		}
+		if ec.Diagnostics.Validation != "blocked" {
+			t.Fatalf("diagnostics validation = %q, want blocked", ec.Diagnostics.Validation)
+		}
+		warned := false
+		for _, warning := range ec.Warnings {
+			if errors.As(warning, &trustErr) {
+				warned = true
+			}
+		}
+		if !warned {
+			t.Fatalf("warnings = %v, want an OrganizationTrustError warning", ec.Warnings)
+		}
+	})
 }
 
 func isolatedEffectiveOptions(configPath string) LoadEffectiveOptions {
