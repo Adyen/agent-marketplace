@@ -78,12 +78,17 @@ test("a missing organization marketplace lock is acquired transiently without po
   assert.match(syncOutput, /Errors\s+0/);
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined, "CLI sync must not create the organization lock");
 
-  // Check-only mode stays strictly read-only. It must not fetch or create
-  // transient dependency state, so the absent fleet lock remains diagnostic.
+  // CLI check independently reacquires transient evidence without publishing
+  // organization policy.
+  const requestsBeforeCheck = fixture.marketplaceAcquisitionDataRequestCount?.() ?? 0;
   const check = await runAM(fixture, ["sync", "--check"]);
   const checkOutput = `${check.stdout}\n${check.stderr}`;
-  assert.equal(check.status, 1, checkOutput);
-  assert.match(checkOutput, /v4\.marketplace-lock-required/);
+  assert.equal(check.status, 0, checkOutput);
+  assert.doesNotMatch(checkOutput, /v4\.marketplace-lock-required/);
+  assert.ok(
+    (fixture.marketplaceAcquisitionDataRequestCount?.() ?? 0) > requestsBeforeCheck,
+    "sync --check must acquire transient organization evidence"
+  );
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined, "sync --check must not create the organization lock");
 
   // The reported self-help attempt: delete every personal layer, re-init, and

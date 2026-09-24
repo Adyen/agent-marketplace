@@ -410,7 +410,15 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	isOffline := len(offline) > 0 && offline[0]
 	localDir := config.FindLocalConfigDir()
 	var lockWarnings []error
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true, offline: isOffline, check: true, warningSink: &lockWarnings})
+	configLoadMode := pipeline.ConfigLoadStrict
+	if !isOffline {
+		configLoadMode = pipeline.ConfigLoadCached
+	}
+	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{
+		locked: true, offline: isOffline, check: true,
+		allowTransientOrganization: !isOffline,
+		warningSink:                &lockWarnings,
+	})
 	if err != nil {
 		return err
 	}
@@ -427,7 +435,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	resolveOpts := pipeline.ResolveOptions{
 		RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
-		ConfigLoadMode: pipeline.ConfigLoadStrict,
+		ConfigLoadMode: configLoadMode,
 	}
 	resolveOpts.RequireTargetSet = true
 	if localDir != "" && localDir != repoRoot {

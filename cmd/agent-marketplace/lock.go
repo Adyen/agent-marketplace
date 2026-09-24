@@ -62,6 +62,8 @@ type lockMode struct {
 	reuseInstall         *preparedInstallLocks
 	warningSink          *[]error
 	marketplacePolicy    resolver.MarketplaceRevocationPolicy
+
+	allowTransientOrganization bool
 }
 
 type lockReconcileStats struct {
@@ -727,7 +729,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		FileOverlays: overlays,
 	}
 	loadMode := pipeline.ConfigLoadStrict
-	if !mode.check && mode.reuseInstall != nil {
+	if mode.allowTransientOrganization && !mode.offline {
+		loadMode = pipeline.ConfigLoadOnline
+	} else if !mode.check && mode.reuseInstall != nil {
 		loadMode = pipeline.ConfigLoadCached
 	} else if !mode.check && !mode.offline && !mode.locked {
 		loadMode = pipeline.ConfigLoadOnline
