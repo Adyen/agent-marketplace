@@ -533,7 +533,7 @@ func TestEditV4ResourceSelectionCreatesLexicalDirectoryBindingAndChecksRelativeC
 	if !handled || err != nil {
 		t.Fatalf("inside symlink handled %v err %v", handled, err)
 	}
-	if got, readErr := os.ReadFile(repoConfig); readErr != nil || !strings.Contains(string(got), "directory: "+filepath.Join(repo, "inside")) {
+	if got, readErr := os.ReadFile(repoConfig); readErr != nil || !strings.Contains(string(got), "directory: ./inside") {
 		t.Fatalf("inside symlink binding = %v %s", readErr, got)
 	}
 }
