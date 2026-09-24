@@ -956,3 +956,98 @@ func TestLayerEditorSourceHarnessIdentity(t *testing.T) {
 		}
 	})
 }
+
+func TestLayerEditorClearUnboundExclude(t *testing.T) {
+	t.Run("legacy clears only the top-level exclude", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		fixture := "apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.test/repo.git\n    ref: main\n    skills: {exclude: [entry-ex]}\nskills: {exclude: [alpha, keep]}\ncommands: {exclude: [c1]}\n"
+		layerEditorWrite(t, path, fixture)
+		editor := openTestEditor(t, RepoPersonal, path, path)
+		if err := editor.ClearUnboundExclude(loc(ir.KindSkill, "alpha")); err != nil {
+			t.Fatalf("clear: %v", err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !candidate.Changed {
+			t.Fatal("clear reported no change")
+		}
+		cfg, errs := loadV3ConfigWithAPIVersion(candidate.Bytes, localLayer, false, true)
+		if len(errs) > 0 {
+			t.Fatalf("candidate invalid: %v\n%s", errs, candidate.Bytes)
+		}
+		if len(cfg.Skills.Exclude) != 1 || cfg.Skills.Exclude[0] != "keep" {
+			t.Fatalf("top-level excludes = %#v", cfg.Skills)
+		}
+		if len(cfg.Commands.Exclude) != 1 || cfg.Commands.Exclude[0] != "c1" {
+			t.Fatalf("unrelated kind touched: %#v", cfg.Commands)
+		}
+		if len(cfg.Registries) != 1 || len(cfg.Registries[0].Skills.Exclude) != 1 || cfg.Registries[0].Skills.Exclude[0] != "entry-ex" {
+			t.Fatalf("registry entry touched: %#v", cfg.Registries)
+		}
+		firstBytes := candidate.Bytes
+		if err := editor.ClearUnboundExclude(loc(ir.KindSkill, "alpha")); err != nil {
+			t.Fatalf("reapply: %v", err)
+		}
+		candidate, err = editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(candidate.Bytes) != string(firstBytes) {
+			t.Fatal("reapply changed bytes")
+		}
+	})
+
+	t.Run("legacy drops emptied nested keys", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		layerEditorWrite(t, path, "apiVersion: agent-marketplace/v2\nskills: {exclude: [alpha]}\n")
+		editor := openTestEditor(t, RepoPersonal, path, path)
+		if err := editor.ClearUnboundExclude(loc(ir.KindSkill, "alpha")); err != nil {
+			t.Fatal(err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(candidate.Bytes), "skills") {
+			t.Fatalf("empty skills key retained:\n%s", candidate.Bytes)
+		}
+	})
+
+	t.Run("v4 is a byte-stable no-op", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		fixture := "apiVersion: agent-marketplace/v4\nsources:\n  one: {git: https://example.test/repo.git, ref: main}\nresources:\n  one: {exclude: [skill/alpha]}\n"
+		layerEditorWrite(t, path, fixture)
+		editor := openTestEditor(t, RepoPersonal, path, path)
+		if err := editor.ClearUnboundExclude(loc(ir.KindSkill, "alpha")); err != nil {
+			t.Fatalf("clear: %v", err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if candidate.Changed || string(candidate.Bytes) != fixture {
+			t.Fatalf("v4 clear mutated:\n%s", candidate.Bytes)
+		}
+	})
+
+	t.Run("invalid locators", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		fixture := "apiVersion: agent-marketplace/v2\nskills: {exclude: [alpha]}\n"
+		layerEditorWrite(t, path, fixture)
+		editor := openTestEditor(t, RepoPersonal, path, path)
+		for _, l := range []ResourceLocator{loc(ir.KindSkill, "  "), loc(ir.ResourceKind(99), "alpha")} {
+			if err := editor.ClearUnboundExclude(l); err == nil {
+				t.Fatalf("accepted locator %#v", l)
+			}
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if candidate.Changed || string(candidate.Bytes) != fixture {
+			t.Fatal("invalid locator mutated bytes")
+		}
+	})
+}

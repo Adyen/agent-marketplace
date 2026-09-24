@@ -42,6 +42,13 @@ func (m *LayerMutation) RemoveSource(binding config.SourceBinding) error {
 	return m.editor.RemoveSource(binding)
 }
 
+func (m *LayerMutation) ClearUnboundExclude(locator config.ResourceLocator) error {
+	if m == nil || m.editor == nil {
+		return errors.New("layer mutation has no open editor")
+	}
+	return m.editor.ClearUnboundExclude(locator)
+}
+
 func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*LayerMutation) error) error {
 	if mutate == nil {
 		return errors.New("layer mutation callback is required")

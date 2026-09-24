@@ -284,6 +284,54 @@ skills:
 	}
 }
 
+func TestInstallV4PreservesSourceBoundLocalExclusion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("TMPDIR", t.TempDir())
+
+	origin, working := createBareRepoWithWorkingClone(t, "v4-local-exclude.git")
+	writeSkill(t, working, "resurrect-skill", "Resurrect skill", []string{"scope"})
+	commitAndPushAll(t, working, "Add resurrect-skill")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  main: {git: file://"+origin+", ref: main}\n")
+	localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+	writeConfig(t, localPath, "apiVersion: agent-marketplace/v4\nsources:\n  main: {git: file://"+origin+", ref: main}\nresources:\n  main: {exclude: [skill/resurrect-skill]}\n")
+	localBefore, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--scope", "repo", "resurrect-skill")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, output)
+	}
+	localAfter, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(localAfter) != string(localBefore) {
+		t.Fatalf("install rewrote v4 local source-bound exclusion:\nbefore:\n%s\nafter:\n%s", localBefore, localAfter)
+	}
+	cfg, err := config.LoadV4ConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var locators []string
+	for _, group := range cfg.Groups {
+		for _, req := range group.Include {
+			locators = append(locators, req.Locator)
+		}
+	}
+	if len(locators) != 1 || locators[0] != "skill/resurrect-skill" {
+		t.Fatalf("repo locators = %v", locators)
+	}
+}
+
 func TestInstallScopeRepoRemovesRepoExclude(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

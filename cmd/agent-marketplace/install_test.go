@@ -739,8 +739,11 @@ registries:
 		t.Fatalf("expected repo config to load after tag install: %v", err)
 	}
 
-	if !reflect.DeepEqual(cfg.Tags, []string{"k8s"}) {
-		t.Fatalf("expected repo config to include installed tag, got %#v", cfg.Tags)
+	if len(cfg.Tags) != 0 {
+		t.Fatalf("expected no top-level tag, got %#v", cfg.Tags)
+	}
+	if len(cfg.Registries) != 1 || !reflect.DeepEqual(cfg.Registries[0].Tags, []string{"k8s"}) {
+		t.Fatalf("expected registry-scoped tag, got %#v", cfg.Registries)
 	}
 
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "k8s-app-onboarding"), filepath.Join(cache.RegistryCachePath(origin, "main"), "k8s-app-onboarding"))
