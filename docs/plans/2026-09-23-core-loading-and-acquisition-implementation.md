@@ -2,7 +2,7 @@
 
 Date: 2026-09-23
 
-Status: **Implementation in progress.** WP0 is complete at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`; WP1 is implemented by `agent-marketplace-cgxc.8.2`. WP2-WP5 remain planned.
+Status: **Implementation in progress.** WP0 is complete at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`; WP1 is implemented by `agent-marketplace-cgxc.8.2`; WP2 is implemented by `agent-marketplace-cgxc.8.3`. WP3-WP5 remain planned.
 
 Baseline: WP1 is based on `agent-marketplace-cgxc.8.1` at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`, which is based on main `1d092d7d13a8a2340973f3e13d5980a137b7b4ee`. PR291 was closed unmerged and contributes nothing.
 
@@ -160,12 +160,14 @@ Tests: existing `internal/config` suite must pass unchanged except for tests tha
 - `LoadUserLoggingConfig()` = `ReadIntent` for the user layer only, return `Settings().Logging`. Keep the single-layer scope: call `readLayerIntent` for one path, not the four-layer reader.
 - `internal/telemetry/resolve.go:106-116` currently loads two full `*Config` trees via `LoadOrganizationConfig` and `LoadConfigFromPath`. Change `ResolveTelemetryConfig(organization, user *amconfig.Config, ...)` to take `organization, user amconfig.Settings`. `telemetryFromConfig` and `resolveHarnesses` read only `Telemetry` and `Harnesses`, so this is a type change, not a behavior change.
 
-Delete in this PR:
-- `LoadOrganizationConfig` if telemetry was its last non-test caller (check `rg` at implementation time; the count today is 1 production call);
-- `LoadConfigFromPath` and `LoadRootConfigFromPath` if the same holds — editors and tests use them; if a production editor caller remains, leave the function but make it `bind(readDeployedLock(...))` so it has no private parser path;
-- `LoadGlobalConfig` if unused after this (it duplicates `validateLogging`, which the parser already runs at `loader.go:413`).
+Deletion audit as implemented on `agent-marketplace-cgxc.8.3`:
+- `LoadOrganizationPolicyConfig` and `organizationPolicyWithoutLock` are deleted together with the now-unreferenced `V4Config.policyConfig`; telemetry no longer needs a runtime-policy loader that tolerates an absent lock, because `LoadOrganizationSettings` never reads the lock.
+- `LoadOrganizationConfig` survives: `internal/tui/actions.go` still binds the full organization layer.
+- `LoadConfigFromPath` survives: production editors, pipeline, and cmd callers load explicit paths with includes.
+- `LoadRootConfigFromPath` survives: mutation code needs root-only ownership. It no longer carries its own v4/legacy parsing branches; it delegates to the shared `readRootLayerIntent`, which preserves root-only semantics (ParseV4Config for v4, `loadV3ConfigWithAPIVersion` with apiVersion optional only for local, logging validation, path-bearing errors) and then runs `li.deployedLock(nil)` plus `li.bind(doc)`.
+- `LoadGlobalConfig` survives: deinit, TUI, and other production callers still use it. All four survivors reach the shared intent-plus-deployed-evidence binding path; none keeps a private parser.
 
-WP0 fixtures 3 and 4 go green here.
+WP0 fixtures 3 and 4 are enabled and green here: `TestLoadUserLoggingConfigIgnoresUnreadableLock` in `internal/config/include_test.go` and `TestLoadAndResolveSettingsIgnoresUnreadableLock` in the new `internal/telemetry/resolve_lock_test.go`.
 
 ### WP3. Acquisition without provisional locks
 

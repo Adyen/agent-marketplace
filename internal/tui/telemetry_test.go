@@ -148,14 +148,14 @@ func setupTuiTelemetry(t *testing.T, e *testSpanExporter) (context.Context, *tel
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: e.server.URL,
 		},
 	}
 
-	state, err := telemetry.ResolveTelemetryConfig(nil, user, "", "")
+	state, err := telemetry.ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry config: %v", err)
 	}

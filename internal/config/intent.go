@@ -265,6 +265,27 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 	return li, err
 }
 
+func readRootLayerIntent(path string, data []byte, kind layerKind) (LayerIntent, error) {
+	li := LayerIntent{Source: sourceForLayer(kind), Path: path}
+	if PeekAPIVersion(data) == APIVersionV4 {
+		v4, err := ParseV4Config(data, path, true)
+		if err != nil {
+			return li, err
+		}
+		li.v4 = v4
+		return li, nil
+	}
+	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, kind != localLayer)
+	if len(errs) > 0 {
+		return li, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
+	}
+	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
+		return li, fmt.Errorf("validate logging config %q: %w", path, errors.Join(logErrs...))
+	}
+	li.legacy = cfg
+	return li, nil
+}
+
 func readDeployedLock(path string, overlays map[string][]byte) (*lockfile.Document, *ConfigRead, error) {
 	canonical, err := canonicalEffectiveLayerPath(path)
 	if err != nil {
@@ -321,6 +342,24 @@ func loadLayerIntent(source Source, path string, kind layerKind, overlays map[st
 		parsed.errors = []error{err}
 	}
 	return parsed
+}
+
+func loadSettings(path string, kind layerKind) (Settings, error) {
+	li := loadLayerIntent(sourceForLayer(kind), path, kind, nil)
+	return li.Settings(), errors.Join(li.errors...)
+}
+
+func LoadOrganizationSettings() (Settings, error) {
+	li, _ := readOrganizationIntent(organizationConfigPath(""))
+	return li.Settings(), errors.Join(li.errors...)
+}
+
+func LoadUserSettings() (Settings, error) {
+	path, err := globalConfigPath()
+	if err != nil {
+		return Settings{}, err
+	}
+	return loadSettings(path, userLayer)
 }
 
 func readOrganizationIntent(path string) (LayerIntent, ManagedInstallationDiagnostics) {

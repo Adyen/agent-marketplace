@@ -316,7 +316,6 @@ func TestUserLoggingLoaderResolvesIncludes(t *testing.T) {
 }
 
 func TestLoadUserLoggingConfigIgnoresUnreadableLock(t *testing.T) {
-	t.Skip("known gap: awaits WP2 settings readers that hydrate acquisition locks")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeIncludeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4

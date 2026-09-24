@@ -129,12 +129,12 @@ func runTelemetryEnable(out io.Writer, level, endpoint string) error {
 		return err
 	}
 
-	org, err := config.LoadOrganizationPolicyConfig()
+	org, err := config.LoadOrganizationSettings()
 	if err != nil {
 		return fmt.Errorf("load organization config: %w", err)
 	}
 	orgLevel := tmcfg.LevelOff
-	if org != nil && org.Telemetry != nil {
+	if org.Telemetry != nil {
 		var normErr error
 		orgLevel, normErr = tmcfg.NormalizeLevel(org.Telemetry.Level)
 		if normErr != nil {

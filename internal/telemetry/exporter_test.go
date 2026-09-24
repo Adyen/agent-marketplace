@@ -45,7 +45,7 @@ func TestAuthHeaderResolution(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
@@ -56,7 +56,7 @@ func TestAuthHeaderResolution(t *testing.T) {
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRouteFolding(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			Endpoint:           srv.URL,
@@ -179,7 +179,7 @@ func TestRouteFolding(t *testing.T) {
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, srv.URL, "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, srv.URL, "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestCommunityNotFolded(t *testing.T) {
 	}))
 	defer communitySrv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			Endpoint:           primarySrv.URL,
@@ -234,7 +234,7 @@ func TestCommunityNotFolded(t *testing.T) {
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, communitySrv.URL, "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, communitySrv.URL, "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -285,12 +285,12 @@ func TestShutdownGivesStalledPrimaryAndCommunityFairOpportunity(t *testing.T) {
 	}))
 	defer communitySrv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{
 		Level:              tmcfg.LevelBasic,
 		Endpoint:           primarySrv.URL,
 		CommunityReporting: boolPtr(true),
 	}}
-	state, err := ResolveTelemetryConfig(nil, user, communitySrv.URL, "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, communitySrv.URL, "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestTLSWithCAFile(t *testing.T) {
 
 	caFile := writeServerCert(t, dir, srv)
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
@@ -344,7 +344,7 @@ func TestTLSWithCAFile(t *testing.T) {
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -375,14 +375,14 @@ func TestInsecureHTTPForLoopback(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -414,14 +414,14 @@ func TestOtelEndpointEnvDoesNotOverride(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -452,14 +452,14 @@ func TestQueueOnExportFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

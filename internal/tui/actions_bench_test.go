@@ -424,14 +424,14 @@ func BenchmarkRecordActionSpan(b *testing.B) {
 	b.Setenv("XDG_STATE_HOME", dir)
 
 	srv := benchTuiServer()
-	user := &config.Config{
+	user := config.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := telemetry.ResolveTelemetryConfig(nil, user, "", "")
+	state, err := telemetry.ResolveTelemetryConfig(config.Settings{}, user, "", "")
 	if err != nil {
 		b.Fatal(err)
 	}
