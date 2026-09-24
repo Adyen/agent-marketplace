@@ -1776,18 +1776,6 @@ func (c *V4Config) AcquiresMarketplace(name string) bool {
 	return c.Sources[name].Kind == V4SourceMarketplace && !c.marketplaceExcludeOnly(name)
 }
 
-// policyConfig adapts the layer policy fields, which never depend on
-// Marketplace acquisition state, without any sources.
-func (c *V4Config) policyConfig(kind layerKind) (*Config, error) {
-	if c == nil {
-		return nil, v4err("v4.runtime", "", 0, "nil configuration")
-	}
-	if err := c.validateLayerFields(kind); err != nil {
-		return nil, err
-	}
-	return (LayerIntent{Source: sourceForLayer(kind), v4: c}).Settings().config(), nil
-}
-
 func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*Config, error) {
 	if c == nil {
 		return nil, v4err("v4.runtime", "", 0, "nil configuration")

@@ -684,22 +684,17 @@ func LoadUserLoggingConfig() (*LoggingConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := loadIntentConfig(configPath, userLayer, nil)
+	settings, err := loadSettings(configPath, userLayer)
 	if err != nil {
-		if rootConfigNotExist(configPath, err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("load user logging config %q: %w", configPath, err)
 	}
-	return cfg.Logging, nil
+	return settings.Logging, nil
 }
 
 func LoadRootConfigFromPath(path string) (*Config, error) {
 	kind := repoLayer
-	requireAPIVersion := true
 	if isLocalConfigPath(path) {
 		kind = localLayer
-		requireAPIVersion = false
 	} else if isGlobalConfigPath(path) {
 		kind = userLayer
 	}
@@ -710,26 +705,15 @@ func LoadRootConfigFromPath(path string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
-	if PeekAPIVersion(data) == APIVersionV4 {
-		v4, err := ParseV4Config(data, path, true)
-		if err != nil {
-			return nil, err
-		}
-		li := LayerIntent{Source: sourceForLayer(kind), Path: path, v4: v4}
-		doc, err := li.deployedLock(nil)
-		if err != nil {
-			return nil, err
-		}
-		return li.bind(doc)
+	li, err := readRootLayerIntent(path, data, kind)
+	if err != nil {
+		return nil, err
 	}
-	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, requireAPIVersion)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
+	doc, err := li.deployedLock(nil)
+	if err != nil {
+		return nil, err
 	}
-	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
-		return nil, fmt.Errorf("validate logging config %q: %w", path, errors.Join(logErrs...))
-	}
-	return cfg, nil
+	return li.bind(doc)
 }
 
 // LoadConfigFromPath loads an explicit config and its includes.

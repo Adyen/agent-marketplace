@@ -64,7 +64,7 @@ func BenchmarkResolveInventoryWithLocalDiskAndHTTPExport(b *testing.B) {
 	}))
 	b.Cleanup(server.Close)
 	b.Setenv("XDG_STATE_HOME", b.TempDir())
-	state, err := telemetry.ResolveTelemetryConfig(nil, &config.Config{Telemetry: &tmcfg.TelemetryConfig{
+	state, err := telemetry.ResolveTelemetryConfig(config.Settings{}, config.Settings{Telemetry: &tmcfg.TelemetryConfig{
 		Level: tmcfg.LevelDetailed, Endpoint: server.URL,
 	}}, "", "")
 	if err != nil {

@@ -21,14 +21,14 @@ import (
 func TestDiagnosticContextFlag(t *testing.T) {
 	_ = setupDiagnosticTest(t)
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Harnesses: []string{"factory"},
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: "http://127.0.0.1:1",
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry config: %v", err)
 	}
@@ -53,14 +53,14 @@ func TestDiagnosticRequiresDetailedLevel(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Harnesses: []string{"factory"},
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: "http://127.0.0.1:1",
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry config: %v", err)
 	}
@@ -276,7 +276,7 @@ func setupDiagnosticTest(t *testing.T) string {
 func newDiagnosticTelemetry(t *testing.T, endpoint string) (*Telemetry, TelemetryState) {
 	t.Helper()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Harnesses: []string{"factory"},
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
@@ -284,7 +284,7 @@ func newDiagnosticTelemetry(t *testing.T, endpoint string) (*Telemetry, Telemetr
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry config: %v", err)
 	}
