@@ -1759,23 +1759,17 @@ func (c *V4Config) policyConfig(kind layerKind) (*Config, error) {
 	if err := c.validateLayerFields(kind); err != nil {
 		return nil, err
 	}
-	out := &Config{APIVersion: APIVersionV4, Harnesses: cloneV4StringList(c.Harnesses), Backup: c.Backup, Logging: c.Logging, Telemetry: c.Telemetry, Materialization: c.Materialization}
-	if c.AllowedRegistries != nil {
-		values := cloneV4StringList(*c.AllowedRegistries)
-		out.AllowedRegistries = &values
-	}
-	if c.AllowedMarketplaces != nil {
-		values := cloneV4StringList(*c.AllowedMarketplaces)
-		out.AllowedMarketplaces = &values
-	}
-	return out, nil
+	return (LayerIntent{Source: sourceForLayer(kind), v4: c}).Settings().config(), nil
 }
 
 func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*Config, error) {
-	out, err := c.policyConfig(kind)
-	if err != nil {
+	if c == nil {
+		return nil, v4err("v4.runtime", "", 0, "nil configuration")
+	}
+	if err := c.validateLayerFields(kind); err != nil {
 		return nil, err
 	}
+	out := (LayerIntent{Source: sourceForLayer(kind), v4: c}).Settings().config()
 
 	names := make([]string, 0, len(c.Sources))
 	for name := range c.Sources {

@@ -2,9 +2,9 @@
 
 Date: 2026-09-23
 
-Status: **Plan for review.** Implements the first slice of [the design](./2026-09-23-core-loading-and-acquisition-design.md). Nothing here is implemented, dispatched, or merged.
+Status: **Implementation in progress.** WP0 is complete at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`; WP1 is implemented by `agent-marketplace-cgxc.8.2`. WP2-WP5 remain planned.
 
-Baseline: current main `1d092d7d13a8a2340973f3e13d5980a137b7b4ee`. PR291 was closed unmerged and is no longer an input; WP0 is based directly on that main commit.
+Baseline: WP1 is based on `agent-marketplace-cgxc.8.1` at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`, which is based on main `1d092d7d13a8a2340973f3e13d5980a137b7b4ee`. PR291 was closed unmerged and contributes nothing.
 
 Governing rule for every work package: **the diff removes more decision points than it adds.** A package that lands a new seam and leaves the old path alive "for compatibility" is not done. Each package lists the code it must delete; reviewers check the deletions before the additions.
 

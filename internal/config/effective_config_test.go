@@ -691,3 +691,41 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatalf("write file: %v", err)
 	}
 }
+
+func TestReadIntentPerformsNoLockIO(t *testing.T) {
+	dir := t.TempDir()
+	userDir := filepath.Join(dir, "user")
+	userPath := filepath.Join(userDir, "config.yaml")
+	writeFile(t, userPath, `apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [main/collection/onboarding]
+`)
+	if err := os.MkdirAll(filepath.Join(userDir, "lock.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	opts := LoadEffectiveOptions{
+		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
+		GlobalPath:       userPath,
+		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
+		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
+	}
+	intent := ReadIntent(context.Background(), opts)
+	if len(intent.Errors) != 0 {
+		t.Fatalf("intent errors = %v", intent.Errors)
+	}
+	if !intent.Layers[UserPersonal].NeedsMarketplaceLock() {
+		t.Fatal("expected user layer to need a Marketplace lock")
+	}
+	for _, read := range intent.Layers[UserPersonal].Reads {
+		if read.AcquisitionLock {
+			t.Fatalf("ReadIntent recorded acquisition lock read %#v", read)
+		}
+	}
+	effective := Bind(intent, Evidence{})
+	var validation *V4ValidationError
+	if !errors.As(errors.Join(effective.Errors...), &validation) || validation.Code != "v4.marketplace-lock-required" {
+		t.Fatalf("errors = %v, want v4.marketplace-lock-required", effective.Errors)
+	}
+}

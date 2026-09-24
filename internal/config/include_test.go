@@ -65,7 +65,11 @@ func TestLoadConfigTreeFromRootDataUsesSuppliedBytes(t *testing.T) {
 	if err := os.Remove(root); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadConfigTreeFromRootData(canonical, data, repoLayer)
+	li, err := readLayerIntent(canonical, canonical, data, repoLayer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := li.bind(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
