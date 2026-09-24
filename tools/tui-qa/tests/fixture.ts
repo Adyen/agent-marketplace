@@ -44,6 +44,8 @@ export interface Fixture {
   expectedOrgSkillContent?: string;
   marketplaceAcquisitionDataRequestCount?: () => number;
   marketplaceAcquisitionDataRequestPaths?: () => string[];
+  marketplaceDelayNextAcquisition?: (ms: number) => void;
+  marketplaceDelayedAcquisitionCount?: () => number;
   resetPersonalState(): void;
   cleanup(): void;
 }
@@ -79,6 +81,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let expectedOrgSkillContent: string | undefined;
     let marketplaceAcquisitionDataRequestCount: (() => number) | undefined;
     let marketplaceAcquisitionDataRequestPaths: (() => string[]) | undefined;
+    let marketplaceDelayNextAcquisition: ((ms: number) => void) | undefined;
+    let marketplaceDelayedAcquisitionCount: (() => number) | undefined;
     if (options.organization) {
       stub = await createMarketplaceStub();
       const configPath = path.join(root, "etc", "agent-marketplace", "config.yaml");
@@ -96,6 +100,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       expectedOrgSkillContent = stub.materializedSkillContent;
       marketplaceAcquisitionDataRequestCount = stub.acquisitionDataRequestCount;
       marketplaceAcquisitionDataRequestPaths = stub.acquisitionDataRequestPaths;
+      marketplaceDelayNextAcquisition = stub.delayNextAcquisition;
+      marketplaceDelayedAcquisitionCount = stub.delayedAcquisitionCount;
     }
 
     const env = isolatedEnvironment(root, home, tmp, xdg, orgConfigPath);
@@ -175,6 +181,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       expectedOrgSkillContent,
       marketplaceAcquisitionDataRequestCount,
       marketplaceAcquisitionDataRequestPaths,
+      marketplaceDelayNextAcquisition,
+      marketplaceDelayedAcquisitionCount,
       resetPersonalState: () => {
         fs.rmSync(path.join(home, ".agents"), { recursive: true, force: true });
         fs.rmSync(path.join(home, ".factory"), { recursive: true, force: true });

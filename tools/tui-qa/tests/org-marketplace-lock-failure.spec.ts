@@ -12,6 +12,9 @@ import { runAM } from "./process-helpers.js";
 // shipped. Consumer paths must acquire verified evidence transiently, keep the
 // managed layer untouched, and remain recoverable after personal state is
 // deleted.
+const navigationCeilingMs = 1_000;
+const acknowledgementCeilingMs = 3_500;
+const warmToggleCeilingMs = 4_500;
 const journey = defineFixture("org-marketplace-lock-failure", ["tui"], 80, 24, { organization: "missing-lock" });
 test.use(journey.options);
 test.beforeAll(journey.setup);
@@ -40,18 +43,29 @@ test("a missing organization marketplace lock is acquired transiently without po
 
   const beforeToggle = fixture.marketplaceAcquisitionDataRequestCount?.();
   assert.equal(beforeToggle, 4, "cold startup must acquire organization Marketplace evidence");
+  const navigationStarted = performance.now();
   await step("select available alpha-skill", () => terminal.write("G"), async () => {
     await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
     await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
   });
+  const navigationMs = performance.now() - navigationStarted;
   await step("open local toggle", () => terminal.write(" "), async () => {
     await expect(terminal.getByText('"alpha-skill"', { strict: false })).toBeVisible();
     await expect(terminal.getByText("toggle local")).toBeVisible();
   });
+  fixture.marketplaceDelayNextAcquisition?.(3_000);
+  const toggleStarted = performance.now();
+  let acknowledgementMs = Infinity;
   await step("toggle local without reacquiring organization evidence", () => terminal.write("l"), async () => {
+    await expect(terminal.getByText("Enabled alpha-skill", { strict: false })).toBeVisible();
+    acknowledgementMs = performance.now() - toggleStarted;
     await expect(terminal.getByText(/Local\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
   });
+  const toggleMs = performance.now() - toggleStarted;
+  assert.ok(navigationMs < navigationCeilingMs, `local navigation took ${navigationMs.toFixed(0)}ms, ceiling ${navigationCeilingMs}ms`);
+  assert.ok(acknowledgementMs < acknowledgementCeilingMs, `toggle acknowledgement took ${acknowledgementMs.toFixed(0)}ms, ceiling ${acknowledgementCeilingMs}ms`);
+  assert.ok(toggleMs < warmToggleCeilingMs, `settled toggle took ${toggleMs.toFixed(0)}ms, ceiling ${warmToggleCeilingMs}ms`);
   assert.equal(
     fs.readFileSync(path.join(fixture.repo, ".agents", "config.local.yaml"), "utf8"),
     fixture.expectedLocalConfig,
@@ -106,6 +120,7 @@ test("a missing organization marketplace lock is acquired transiently without po
   const syncOutput = `${sync.stdout}\n${sync.stderr}`;
   assert.equal(sync.status, 0, syncOutput);
   assert.match(syncOutput, /Errors\s+0/);
+  assert.equal(fixture.marketplaceDelayedAcquisitionCount?.(), 1, "fresh CLI invocation must consume the delayed acquisition control");
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined, "CLI sync must not create the organization lock");
 
   // Check-only mode stays strictly read-only. It must not fetch or create

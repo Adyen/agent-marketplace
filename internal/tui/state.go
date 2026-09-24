@@ -279,6 +279,8 @@ type Model struct {
 	migrationPrompt             migrationPrompt
 	migrationDismissed          bool
 	operations                  operationState
+	pendingToggleOperation      operationID
+	pendingToggleReload         requestGeneration
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.

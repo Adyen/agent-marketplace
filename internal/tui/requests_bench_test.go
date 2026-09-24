@@ -13,3 +13,13 @@ func BenchmarkRequestGeneration(b *testing.B) {
 		requests.cancel(requestSnapshot)
 	}
 }
+
+func BenchmarkApplySnapshotStatusWithoutPendingMutation(b *testing.B) {
+	m := NewModel(b.TempDir(), b.TempDir())
+	msg := snapshotLoadedMsg{generation: 1, driftAssessment: driftReady}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		m.applySnapshotStatus(msg)
+	}
+}
