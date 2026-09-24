@@ -463,6 +463,9 @@ func TestMutateLayerRejectsInvalidInputs(t *testing.T) {
 		if _, _, err := m.LookupRegistry(config.RegistryEntry{URL: "https://example.test/repo.git", Ref: "main"}); err == nil {
 			t.Fatal("nil receiver LookupRegistry accepted")
 		}
+		if err := m.SetLayerExclude(config.ResourceLocator{Kind: ir.KindCollection, Name: "x"}, nil, true); err == nil {
+			t.Fatal("nil receiver SetLayerExclude accepted")
+		}
 	})
 
 	data, err := os.ReadFile(configPath)

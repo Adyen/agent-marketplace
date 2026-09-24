@@ -573,8 +573,8 @@ registries: []
 	if err != nil {
 		t.Fatalf("read config.local.yaml: %v", err)
 	}
-	if strings.Contains(string(localBytes), "apiVersion") {
-		t.Fatalf("precondition: generated local config should not carry apiVersion, got:\n%s", localBytes)
+	if !strings.Contains(string(localBytes), "apiVersion: agent-marketplace/v4") {
+		t.Fatalf("precondition: generated local config should be canonical v4, got:\n%s", localBytes)
 	}
 
 	// Remove via --from at local scope — previously failed on missing apiVersion.

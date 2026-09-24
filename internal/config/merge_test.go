@@ -254,6 +254,10 @@ func TestNormalizeGitURL(t *testing.T) {
 		{"https://host/repo.git", "https://host/repo"},
 		{"https://host/repo", "https://host/repo"},
 		{"https://host/repo/", "https://host/repo"},
+		{"file:///tmp/repo.git", "/tmp/repo"},
+		{"file:///tmp/repo", "/tmp/repo"},
+		{"FILE:///tmp/repo.git", "/tmp/repo"},
+		{"file://host/tmp/repo.git", "file://host/tmp/repo"},
 	}
 	for _, tc := range tests {
 		got := NormalizeGitURL(tc.input)

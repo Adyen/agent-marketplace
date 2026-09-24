@@ -984,10 +984,11 @@ func TestRunScopedToggleGlobalRejectsRepoRelativeRegistry(t *testing.T) {
 		t.Fatalf("expected error URL %q, got %q", act.registryURL, gre.URL)
 	}
 
-	// The global config must not have been created.
+	// The registry entry must not have been written, and no global config may
+	// have been created.
 	globalConfig := filepath.Join(homeDir, ".agents", "config.yaml")
-	if _, err := os.Stat(globalConfig); !os.IsNotExist(err) {
-		t.Fatalf("expected no global config written, got %v", err)
+	if _, err := os.Stat(globalConfig); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no global config after rejected toggle, got err=%v", err)
 	}
 }
 
