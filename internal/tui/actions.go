@@ -255,8 +255,12 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	if rowCfg == nil {
 		rowCfg = resolvedResult.MergedCfg
 	}
+	recoveryCfg := rowCfg
+	if hardCatalogFailure && resolvedResult.MergedCfg != nil {
+		recoveryCfg = resolvedResult.MergedCfg
+	}
 	base.rows = buildRows(rowCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
-	base.rows = appendUnavailableSelectionRows(base.rows, rowCfg, resolvedResult.LocalCfg, resolvedResult.ResolveErrors, resolvedResult.CatalogLoad.Catalogs)
+	base.rows = appendUnavailableSelectionRows(base.rows, recoveryCfg, resolvedResult.LocalCfg, resolvedResult.ResolveErrors, resolvedResult.CatalogLoad.Catalogs)
 	attachDetailSources(base.rows, detailSources)
 	base.driftReport = driftReport
 	base.driftAssessment = driftState
@@ -939,11 +943,10 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 	if cfg != nil {
 		for i := range cfg.Registries {
 			entry := &cfg.Registries[i]
-			if entry.CatalogKey == "" {
-				continue
-			}
-			if _, loaded := catalogs[entry.CatalogKey]; loaded {
-				continue
+			if entry.CatalogKey != "" {
+				if _, loaded := catalogs[entry.CatalogKey]; loaded {
+					continue
+				}
 			}
 			for _, kind := range config.AllKinds {
 				for _, name := range entry.SelectorForKind(kind).Include {

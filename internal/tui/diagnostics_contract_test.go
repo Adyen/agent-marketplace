@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestHardSnapshotFailureNeverRendersInSync(t *testing.T) {
@@ -165,7 +166,8 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	healthyRoot := t.TempDir()
-	failedRoot := t.TempDir()
+	failedURL := "https://example.com/failed-registry.git"
+	failedRef := "v1.2.3"
 	induced := errors.New("induced catalog failure")
 
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
@@ -175,7 +177,7 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 		Harnesses:  []string{"factory"},
 		Registries: []config.RegistryEntry{
 			{URL: healthyRoot, Skills: config.KindSelector{Include: []string{"healthy"}}},
-			{URL: failedRoot, Skills: config.KindSelector{Include: []string{"missing"}}},
+			{URL: failedURL, Ref: failedRef, Skills: config.KindSelector{Include: []string{"missing"}}},
 		},
 	}
 	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) { return globalCfg, nil })
@@ -189,10 +191,18 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 		return &materialize.Report{}, nil
 	}
 	t.Cleanup(func() { runMaterialize = previousMaterialize })
+	previousClone := cloneOrPull
+	cloneOrPull = func(url, ref string) (string, error) {
+		if url == failedURL {
+			return "", induced
+		}
+		return "", errors.New("unexpected fetch for " + url)
+	}
+	t.Cleanup(func() { cloneOrPull = previousClone })
 	previousDiscover := discoverCatalog
 	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
-		if dir == failedRoot {
-			return catalogInfo{}, induced
+		if dir != healthyRoot {
+			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
 		}
 		return catalogInfo{Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}}}, nil
 	}
@@ -223,28 +233,21 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	if !healthy.EnabledGlobal {
 		t.Fatal("healthy row lost its global enablement")
 	}
-	var failedEntry *config.RegistryEntry
-	for i := range snapshot.mergedCfg.Registries {
-		if snapshot.mergedCfg.Registries[i].URL == failedRoot {
-			failedEntry = &snapshot.mergedCfg.Registries[i]
-			break
-		}
-	}
-	if failedEntry == nil {
-		t.Fatal("loaded config lost the failed registry entry")
-	}
 	if !missing.EnabledGlobal {
 		t.Fatal("missing row lost its global enablement")
+	}
+	if missing.EnabledProject || missing.EnabledLocal {
+		t.Fatalf("missing row scope flags = project:%v local:%v, want global only", missing.EnabledProject, missing.EnabledLocal)
 	}
 	if missing.Artifact.Kind != ir.KindSkill {
 		t.Fatalf("missing row kind = %v, want skill", missing.Artifact.Kind)
 	}
-	if missing.RegistryURL != failedEntry.URL || missing.RegistryPath != failedEntry.Path || missing.RegistryRef != failedEntry.Ref {
-		t.Fatalf("missing row registry identity = %q/%q/%q, want %q/%q/%q",
-			missing.RegistryURL, missing.RegistryPath, missing.RegistryRef, failedEntry.URL, failedEntry.Path, failedEntry.Ref)
+	if missing.RegistryURL != failedURL || missing.RegistryPath != "" || missing.RegistryRef != failedRef {
+		t.Fatalf("missing row registry identity = %q/%q/%q, want %q//%q",
+			missing.RegistryURL, missing.RegistryPath, missing.RegistryRef, failedURL, failedRef)
 	}
-	if missing.Artifact.Source != failedEntry.Source || missing.Artifact.V4Kind != failedEntry.V4Kind || missing.Artifact.CatalogKey != failedEntry.CatalogKey {
-		t.Fatalf("missing row lost source/v4 identity: %+v vs %+v", missing.Artifact, *failedEntry)
+	if missing.Artifact.Source != config.UserPersonal || missing.Artifact.V4Kind != "" {
+		t.Fatalf("missing row lost source/v4 identity: source=%v v4kind=%v", missing.Artifact.Source, missing.Artifact.V4Kind)
 	}
 	if missing.UnavailableReason != unavailableCatalogReason {
 		t.Fatalf("missing row unavailable reason = %q, want %q", missing.UnavailableReason, unavailableCatalogReason)
@@ -265,21 +268,41 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	if !strings.Contains(detail, "Press space") {
 		t.Fatalf("missing row detail omits the toggle-modal recovery action: %q", detail)
 	}
+
+	m := modelWithSelectedRow(t, *missing)
+	m.width = 120
+	m.height = 30
+	m.enterDetailPane()
+	if m.pane != paneDetail {
+		t.Fatalf("unavailable row did not open the detail pane: pane %v", m.pane)
+	}
+	if m.bundle != nil {
+		t.Fatal("unavailable row opened a filesystem bundle")
+	}
+	view := ansi.Strip(m.detailViewport.View())
+	if !strings.Contains(view, "No verified content is available") {
+		t.Fatalf("unavailable row detail pane = %q", view)
+	}
+	if !strings.Contains(view, "Press space") {
+		t.Fatalf("unavailable row detail pane omits the toggle-modal recovery action: %q", view)
+	}
 }
 
 func TestAppendUnavailableSelectionRows(t *testing.T) {
+	loadedCatalogs := map[string]catalogInfo{"k1": {}}
 	cfg := &config.Config{Registries: []config.RegistryEntry{{
-		URL:    "/reg",
-		Source: config.UserPersonal,
-		Skills: config.KindSelector{Include: []string{"missing"}},
+		URL:        "/reg",
+		Source:     config.UserPersonal,
+		CatalogKey: "k1",
+		Skills:     config.KindSelector{Include: []string{"missing"}},
 	}}}
 	via := &resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: "missing", URL: "/reg", Via: "collection:tools"}
-	if rows := appendUnavailableSelectionRows(nil, cfg, nil, []error{via}, nil); len(rows) != 0 {
+	if rows := appendUnavailableSelectionRows(nil, cfg, nil, []error{via}, loadedCatalogs); len(rows) != 0 {
 		t.Fatalf("collection-derived error synthesized %d rows", len(rows))
 	}
 	unmatched := &resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: "unselected", URL: "/reg"}
 	direct := &resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: "missing", URL: "/reg"}
-	rows := appendUnavailableSelectionRows(nil, cfg, nil, []error{direct, direct, unmatched}, nil)
+	rows := appendUnavailableSelectionRows(nil, cfg, nil, []error{direct, direct, unmatched}, loadedCatalogs)
 	if len(rows) != 1 {
 		t.Fatalf("synthesized %d rows, want exactly one for the duplicate direct error", len(rows))
 	}
@@ -288,10 +311,10 @@ func TestAppendUnavailableSelectionRows(t *testing.T) {
 	}
 
 	sameIdentity := &config.Config{Registries: []config.RegistryEntry{
-		{URL: "/reg", Source: config.UserPersonal},
-		{URL: "/reg", Source: config.RepoCommitted, Required: true, Skills: config.KindSelector{Include: []string{"missing"}}},
+		{URL: "/reg", Source: config.UserPersonal, CatalogKey: "k1"},
+		{URL: "/reg", Source: config.RepoCommitted, Required: true, CatalogKey: "k1", Skills: config.KindSelector{Include: []string{"missing"}}},
 	}}
-	rows = appendUnavailableSelectionRows(nil, sameIdentity, nil, []error{direct}, nil)
+	rows = appendUnavailableSelectionRows(nil, sameIdentity, nil, []error{direct}, loadedCatalogs)
 	if len(rows) != 1 {
 		t.Fatalf("synthesized %d rows for same-identity entries, want 1", len(rows))
 	}
@@ -306,9 +329,10 @@ func TestAppendUnavailableSelectionRows(t *testing.T) {
 	}
 
 	exclCfg := &config.Config{Registries: []config.RegistryEntry{{
-		URL:    "/reg",
-		Source: config.UserPersonal,
-		Skills: config.KindSelector{Include: []string{"top-excluded", "scoped-excluded", "kept"}},
+		URL:        "/reg",
+		Source:     config.UserPersonal,
+		CatalogKey: "k1",
+		Skills:     config.KindSelector{Include: []string{"top-excluded", "scoped-excluded", "kept"}},
 	}}}
 	localCfg := &config.LocalConfig{
 		Skills: config.KindSelector{Exclude: []string{"top-excluded"}},
@@ -322,7 +346,7 @@ func TestAppendUnavailableSelectionRows(t *testing.T) {
 		&resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: "scoped-excluded", URL: "/reg"},
 		&resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: "kept", URL: "/reg"},
 	}
-	exclRows := appendUnavailableSelectionRows(nil, exclCfg, localCfg, exclErrs, nil)
+	exclRows := appendUnavailableSelectionRows(nil, exclCfg, localCfg, exclErrs, loadedCatalogs)
 	if len(exclRows) != 3 {
 		t.Fatalf("synthesized %d rows, want 3", len(exclRows))
 	}

@@ -1258,7 +1258,10 @@ func (m *Model) enterDetailPane() {
 	m.detailSelectedPath = ""
 	if r, ok := m.selectedRow(); ok {
 		m.detailKey = rowKey(r)
-		if isMarketplaceDetailOnly(r) {
+		if r.UnavailableReason != "" {
+			m.bundle = nil
+			m.detailViewport.SetContent(renderDetailFullContent(r, m.previewWidth()))
+		} else if isMarketplaceDetailOnly(r) {
 			m.bundle = nil
 			m.detailViewport.SetContent(renderMarketplaceDetailContent(r))
 		} else if bundle, err := bundleTreeForRow(r); err != nil {
