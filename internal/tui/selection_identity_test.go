@@ -38,7 +38,7 @@ func TestCompetingRegistryCleanupIsScopeBound(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	initial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nhooks: {include: [startup]}\nregistries:\n  - url: https://trusted.example/repo.git\n  - url: https://user-rival.example/repo.git\n    skills: {include: [review]}\n"
+	initial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nhooks: {include: [startup]}\nregistries:\n  - url: https://trusted.example/repo.git\n    ref: main\n  - url: https://user-rival.example/repo.git\n    ref: main\n    skills: {include: [review]}\n"
 	if err := os.WriteFile(configPath, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestCompetingRegistryCleanupIsScopeBound(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	userRows := []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal}, RegistryURL: "https://user-rival.example/repo.git"}}
+	userRows := []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal}, RegistryURL: "https://user-rival.example/repo.git", RegistryRef: "main"}}
 	if cmd := excludeCompetingRegistriesCmd(repo, userRows, act); cmd == nil {
 		t.Fatal("same-scope cleanup returned nil")
 	} else if msg, ok := cmd().(configWrittenMsg); !ok || msg.err != nil {
@@ -81,14 +81,14 @@ func TestCompetingRegistryCleanupIsScopeBound(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(projectConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	projectInitial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://project-rival.example/repo.git\n    skills: {include: [review]}\n"
+	projectInitial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://project-rival.example/repo.git\n    ref: main\n    skills: {include: [review]}\n"
 	if err := os.WriteFile(projectConfig, []byte(projectInitial), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	projectAct := toggleAction{scope: scopeProject, enable: true, kind: ir.KindSkill, skillName: "review", registryURL: "https://trusted.example/repo.git"}
 	projectRows := []row{
-		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.RepoCommitted}, RegistryURL: "https://project-rival.example/repo.git"},
-		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal}, RegistryURL: "https://user-not-added.example/repo.git"},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.RepoCommitted}, RegistryURL: "https://project-rival.example/repo.git", RegistryRef: "main"},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal}, RegistryURL: "https://user-not-added.example/repo.git", RegistryRef: "main"},
 	}
 	if cmd := excludeCompetingRegistriesCmd(repo, projectRows, projectAct); cmd == nil {
 		t.Fatal("project cleanup returned nil")
@@ -101,6 +101,81 @@ func TestCompetingRegistryCleanupIsScopeBound(t *testing.T) {
 	}
 	if strings.Contains(string(projectUpdated), "user-not-added.example") {
 		t.Fatalf("user rival promoted into project config: %q", projectUpdated)
+	}
+}
+
+func TestCompetingRegistryCleanupV4(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := "apiVersion: agent-marketplace/v4\nsources:\n  trusted: {git: https://trusted.example/repo.git, ref: main}\n  rival: {git: https://user-rival.example/repo.git, ref: main}\nresources:\n  rival: {include: [skill/review]}\n"
+	if err := os.WriteFile(configPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows := []row{
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal}, RegistryURL: "https://user-rival.example/repo.git", RegistryRef: "main"},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.RepoCommitted}, RegistryURL: "https://project-rival.example/repo.git", RegistryRef: "main"},
+	}
+	act := toggleAction{scope: scopeGlobal, enable: true, kind: ir.KindSkill, skillName: "review", registryURL: "https://trusted.example/repo.git"}
+	cmd := excludeCompetingRegistriesCmd(repo, rows, act)
+	if cmd == nil {
+		t.Fatal("v4 cleanup returned nil")
+	}
+	msg, ok := cmd().(configWrittenMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("v4 cleanup = %#v", msg)
+	}
+	updated, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "skill/review") || !strings.Contains(string(updated), "exclude") {
+		t.Fatalf("v4 source-bound exclusion missing:\n%s", updated)
+	}
+	if strings.Contains(string(updated), "registries:") || strings.Contains(string(updated), "skills:") {
+		t.Fatalf("v4 cleanup wrote legacy keys:\n%s", updated)
+	}
+	if strings.Contains(string(updated), "project-rival.example") {
+		t.Fatalf("cross-scope rival promoted into user config:\n%s", updated)
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode changed: %v", info.Mode().Perm())
+	}
+}
+
+func TestCompetingRegistryCleanupStaleBindingRefuses(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := "apiVersion: agent-marketplace/v4\nsources:\n  trusted: {git: https://trusted.example/repo.git, ref: main}\nresources:\n  trusted: {include: [skill/review]}\n"
+	if err := os.WriteFile(configPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows := []row{
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.UserPersonal}, RegistryURL: "https://vanished.example/repo.git", RegistryRef: "main"},
+	}
+	act := toggleAction{scope: scopeGlobal, enable: true, kind: ir.KindSkill, skillName: "review", registryURL: "https://trusted.example/repo.git"}
+	cmd := excludeCompetingRegistriesCmd(repo, rows, act)
+	if cmd == nil {
+		t.Fatal("stale cleanup returned nil")
+	}
+	msg, ok := cmd().(configWrittenMsg)
+	if !ok || msg.err == nil {
+		t.Fatalf("stale competitor binding did not error: %#v", msg)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil || string(after) != initial {
+		t.Fatalf("stale cleanup changed config: %q err=%v", after, err)
 	}
 }
 

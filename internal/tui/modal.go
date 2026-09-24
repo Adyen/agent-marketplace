@@ -335,10 +335,9 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 	if len(competing) == 0 {
 		return nil
 	}
-	// Also collect per-competing-URL metadata (ref, path) so we can ensure
-	// the registry entry exists in the target config file before adding the
-	// exclude. Without this, the exclude write silently fails when the
-	// competing registry only exists in a different scope's config file.
+	// Also collect per-competing-URL metadata (ref, path) so the competing
+	// source binding resolves to the exact entry declared in the target
+	// config file rather than a same-URL sibling.
 	type competingRegistryMeta struct {
 		ref, path, harness string
 		kind               config.V4SourceKind
@@ -380,38 +379,30 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 				return configWrittenMsg{skillName: act.skillName, enabled: false, err: err}
 			}
 		}
-		for _, url := range competing {
-			meta, ok := competingMeta[url]
-			if ok {
+		source := config.UserPersonal
+		if act.scope == scopeProject {
+			source = config.RepoCommitted
+		}
+		locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
+		err := pipeline.EditLayerAtPath(config.LayerTarget{Source: source, StagedPath: configPath, DeclaringPath: configPath}, func(m *pipeline.LayerMutation) error {
+			for _, url := range competing {
+				meta := competingMeta[url]
 				entry := config.RegistryEntry{URL: url, Ref: meta.ref, Path: meta.path, V4Kind: meta.kind, SourceHarness: meta.harness}
-				handled, err := config.EditV4ResourceSelection(configPath, configPath, entry, act.kind, act.skillName, config.V4SelectionDisable)
-				if handled || err != nil {
-					if err != nil {
-						return configWrittenMsg{skillName: act.skillName, enabled: false, err: fmt.Errorf("exclude competing registry %q: %w", url, err)}
-					}
-					continue
+				binding, found, err := m.LookupRegistry(entry)
+				if err != nil {
+					return fmt.Errorf("exclude competing registry %q: %w", url, err)
 				}
-				// Ensure the competing registry entry exists in the target
-				// config file so the exclude write finds a matching entry.
-				if err := config.EnsureRegistryWithPathsInConfig(configPath, url, meta.ref, meta.path); err != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure competing registry %q: %w", url, err),
-					}
+				if !found {
+					return fmt.Errorf("exclude competing registry %q: source is not declared in %s", url, configPath)
+				}
+				if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+					return fmt.Errorf("exclude %s %q in competing registry %q: %w", skill.KindLabel(act.kind), act.skillName, url, err)
 				}
 			}
-			competingPath := ""
-			if ok {
-				competingPath = meta.path
-			}
-			if err := config.AddKindExcludeToRegistryInConfig(configPath, url, competingPath, act.kind, act.skillName); err != nil {
-				return configWrittenMsg{
-					skillName: act.skillName,
-					enabled:   false,
-					err:       fmt.Errorf("exclude %s %q in competing registry %q: %w", skill.KindLabel(act.kind), act.skillName, url, err),
-				}
-			}
+			return nil
+		})
+		if err != nil {
+			return configWrittenMsg{skillName: act.skillName, enabled: false, err: err}
 		}
 		return configWrittenMsg{skillName: act.skillName, enabled: true}
 	}
