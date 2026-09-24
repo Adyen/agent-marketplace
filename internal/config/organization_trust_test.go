@@ -494,6 +494,43 @@ func TestLoadEffectiveValidatesUnusedOrganizationRuntimeLock(t *testing.T) {
 		})
 	}
 
+	t.Run("runtime lock setup error masks parse error", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		writeFile(t, configPath, "not: [yaml")
+		opts := isolatedEffectiveOptions(configPath)
+		opts.OrganizationRuntimeLock = oversized
+		ec := LoadEffective(context.Background(), opts)
+		if len(ec.Errors) != 1 || !errors.Is(ec.Errors[0], lockfile.ErrFileTooLarge) {
+			t.Fatalf("errors = %v, want a sole lockfile.ErrFileTooLarge", ec.Errors)
+		}
+		if ec.Organization.Config != nil || ec.Managed {
+			t.Fatalf("malformed organization pair applied: managed=%v config=%v", ec.Managed, ec.Organization.Config != nil)
+		}
+		if ec.Diagnostics.Validation != "unreadable" {
+			t.Fatalf("diagnostics validation = %q, want unreadable", ec.Diagnostics.Validation)
+		}
+	})
+
+	t.Run("malformed config without runtime lock is invalid", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		writeFile(t, configPath, "not: [yaml")
+		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		if len(ec.Errors) == 0 {
+			t.Fatal("expected a parse error, got none")
+		}
+		if errors.Is(errors.Join(ec.Errors...), lockfile.ErrFileTooLarge) {
+			t.Fatalf("errors = %v, want a parse error, not lockfile.ErrFileTooLarge", ec.Errors)
+		}
+		if ec.Organization.Config != nil || ec.Managed {
+			t.Fatalf("malformed organization pair applied: managed=%v config=%v", ec.Managed, ec.Organization.Config != nil)
+		}
+		if ec.Diagnostics.Validation != "invalid" {
+			t.Fatalf("diagnostics validation = %q, want invalid", ec.Diagnostics.Validation)
+		}
+	})
+
 	t.Run("small unused lock ignored", func(t *testing.T) {
 		dir := t.TempDir()
 		configPath := filepath.Join(dir, "config.yaml")
