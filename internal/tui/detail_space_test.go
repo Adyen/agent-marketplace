@@ -235,7 +235,7 @@ func TestListSpaceDiscoveryEligibility(t *testing.T) {
 		}
 	})
 
-	t.Run("organization override keeps collection restriction", func(t *testing.T) {
+	t.Run("organization override opens scope modal", func(t *testing.T) {
 		r := mkRow("org-item", withGlobal)
 		r.Artifact.IsMarketplace = true
 		r.Artifact.Source = config.Organization
