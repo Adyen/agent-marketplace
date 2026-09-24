@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -363,5 +364,158 @@ func TestInstallMaterializationFailureKeepsCommittedConfigAndLock(t *testing.T) 
 	}
 	if _, statErr := os.Stat(filepath.Join(repo, ".agents", "lock.yaml")); statErr != nil {
 		t.Fatalf("committed lock missing after materialization failure: %v", statErr)
+	}
+}
+
+func TestInstallFromV4UserRefPathUsesCanonicalEditor(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	originPath, working := createBareRepoWithWorkingCloneOnBranch(t, "user-v4-skills.git", "add-skill-daily-sync")
+	writeSkill(t, filepath.Join(working, "teams", "unified_platform", "plugins", "identity_platform", "skills", "daily-sync"), "daily-sync", "Daily sync", []string{"sync"})
+	commitAndPushAllToBranch(t, working, "Add daily-sync skill", "add-skill-daily-sync")
+	origin := "file://" + originPath
+
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []\n")
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "daily-sync", "--from", origin, "--ref", "add-skill-daily-sync", "--path", "teams/unified_platform/plugins/identity_platform/skills/daily-sync", "--scope", "user")
+	if err != nil {
+		t.Fatalf("install --from failed: %v\n%s", err, output)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"apiVersion: agent-marketplace/v4", "git:", "ref: add-skill-daily-sync", "path: teams/unified_platform/plugins/identity_platform/skills/daily-sync", "skill/daily-sync"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("user config missing %q:\n%s", want, data)
+		}
+	}
+	if strings.Contains(string(data), "registries:") {
+		t.Fatalf("v4 config gained legacy registries:\n%s", data)
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %o", info.Mode().Perm())
+	}
+
+	lockData, err := lockfile.ReadBytes(filepath.Join(home, ".agents", "lock.yaml"))
+	if err != nil {
+		t.Fatalf("user lock: %v", err)
+	}
+	lock, err := lockfile.Decode(lockData)
+	if err != nil {
+		t.Fatalf("user lock decode: %v", err)
+	}
+	if lock.APIVersion != lockfile.APIVersionV2 || lock.Scope != lockfile.ScopeUser {
+		t.Fatalf("lock = %v %v", lock.APIVersion, lock.Scope)
+	}
+	if len(lock.Registries) != 1 || lock.Registries[0].Ref != "add-skill-daily-sync" || !strings.Contains(lock.Registries[0].URL, "user-v4-skills") {
+		t.Fatalf("lock registries = %#v", lock.Registries)
+	}
+	if len(lock.Registries[0].Roots) != 1 || lock.Registries[0].Roots[0].Path != "teams/unified_platform/plugins/identity_platform/skills/daily-sync" {
+		t.Fatalf("lock roots = %#v", lock.Registries[0].Roots)
+	}
+
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "daily-sync", "SKILL.md")); err != nil {
+		t.Fatalf("machine factory skill missing: %v", err)
+	}
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".agent-marketplace-config-") {
+			t.Fatalf("staging residue %s", entry.Name())
+		}
+	}
+}
+
+func TestInstallFromV4AdHocCollectionAndBundle(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "named collection", args: []string{"platform-bundle", "--from", "%s", "--ref", "main"}, want: "collection/platform-bundle"},
+		{name: "bundle", args: []string{"--from", "%s", "--ref", "main"}, want: "all: true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			t.Setenv("TMPDIR", t.TempDir())
+
+			originPath, working := createBareRepoWithWorkingClone(t, "v4-adhoc.git")
+			writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"infra"})
+			writeCollection(t, working, "platform-bundle", `
+apiVersion: agent-marketplace/v1
+kind: Collection
+name: platform-bundle
+version: 1.0.0
+skills:
+  - name: vm-lifecycle
+`)
+			commitAndPushAll(t, working, "Add skill and collection")
+			origin := "file://" + originPath
+
+			repoRoot := filepath.Join(t.TempDir(), "repo")
+			configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			withWorkingDir(t, repoRoot)
+
+			args := []string{"install"}
+			for _, arg := range tc.args {
+				if arg == "%s" {
+					arg = origin
+				}
+				args = append(args, arg)
+			}
+			output, err := executeCommand(args...)
+			if err != nil {
+				t.Fatalf("install failed: %v\n%s", err, output)
+			}
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), "apiVersion: agent-marketplace/v4") || strings.Contains(string(data), "registries:") {
+				t.Fatalf("schema drifted:\n%s", data)
+			}
+			if !strings.Contains(string(data), tc.want) {
+				t.Fatalf("config missing %q:\n%s", tc.want, data)
+			}
+			assertFactorySkillExists(t, repoRoot, "vm-lifecycle")
+		})
 	}
 }
