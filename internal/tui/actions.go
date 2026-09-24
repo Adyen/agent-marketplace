@@ -67,6 +67,12 @@ func toastExpiryCmd(d time.Duration) tea.Cmd {
 	})
 }
 
+func invalidConfigToastCmd() tea.Cmd {
+	return func() tea.Msg {
+		return toastMsg{text: "configuration is invalid; press E to edit config", duration: 3 * time.Second}
+	}
+}
+
 type configWrittenMsg struct {
 	operation  operationID
 	followUp   bool
@@ -258,6 +264,12 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 	base.rows = buildRows(rowCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
 	base.rows = appendUnavailableSelectionRows(base.rows, recoveryCfg, resolvedResult.LocalCfg, resolvedResult.ResolveErrors, resolvedResult.CatalogLoad.Catalogs)
+	for _, r := range base.rows {
+		if r.UnavailableReason != "" {
+			driftState = driftFailed
+			break
+		}
+	}
 	attachDetailSources(base.rows, detailSources)
 	base.driftReport = driftReport
 	base.driftAssessment = driftState
@@ -378,7 +390,7 @@ func addLocalKindSelections(dst map[string]struct{}, kind ir.ResourceKind, names
 // (normalized URL + ref + path) so entries that share a URL/path but differ by
 // ref are not collapsed onto the same catalog key.
 func registryIdentityKey(url, ref, path string) string {
-	return config.NormalizeGitURL(strings.TrimSpace(url)) + "\x01" + strings.TrimSpace(ref) + "\x01" + strings.TrimSpace(path)
+	return config.NormalizeGitURL(strings.TrimSpace(url)) + "\x01" + strings.TrimSpace(ref) + "\x01" + config.NormalizeRegistryPath(path)
 }
 
 // addScopedLocalSelection records a single registry-scoped local selection,

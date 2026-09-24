@@ -170,6 +170,13 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	}
 	m.driftAssessment = assessment
 	m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
+	m.configInvalid = false
+	for _, d := range m.diagnostics.snapshot {
+		if d.severity == diagnosticError && d.category == diagnosticConfig {
+			m.configInvalid = true
+			break
+		}
+	}
 	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
 }
 
@@ -189,6 +196,16 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	selection := m.selectionKeyForRebuild()
 	selectionAfterDisable := m.selectionAfterDisable
 	m.selectionAfterDisable = ""
+	var previousDetail row
+	hadPreviousDetail := false
+	if m.pane == paneDetail && m.detailKey != "" {
+		for _, r := range m.rows {
+			if rowKey(r) == m.detailKey {
+				previousDetail, hadPreviousDetail = r, true
+				break
+			}
+		}
+	}
 	m.authoritativeRows = msg.rows
 	m.rows = msg.rows
 	m.driftReport = msg.driftReport
@@ -201,7 +218,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	if !m.restoreSelectionKey(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
-	m.rebuildOpenBundle()
+	m.rebuildOpenBundle(previousDetail, hadPreviousDetail)
 	if msg.inventoryResult != nil {
 		pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
 	}
@@ -893,6 +910,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Harness):
+		if m.configInvalid {
+			return m, invalidConfigToastCmd()
+		}
 		m.openHarnessModal()
 		return m, nil
 
@@ -983,6 +1003,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		r, ok := m.selectedRow()
 		if !ok {
 			return m, nil
+		}
+		if m.configInvalid {
+			return m, invalidConfigToastCmd()
 		}
 		if r.IsMalformed {
 			return m, nil
@@ -1082,7 +1105,7 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *Model) rebuildOpenBundle() {
+func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	if m.pane != paneDetail || m.detailKey == "" {
 		return
 	}
@@ -1094,7 +1117,36 @@ func (m *Model) rebuildOpenBundle() {
 			break
 		}
 	}
+	if !found && hadPrevious {
+		identity := registryIdentityKey(previous.RegistryURL, previous.RegistryRef, previous.RegistryPath)
+		for _, r := range m.rows {
+			if r.UnavailableReason == "" {
+				continue
+			}
+			if r.Artifact.Kind != previous.Artifact.Kind || r.Artifact.Name != previous.Artifact.Name {
+				continue
+			}
+			if registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath) != identity {
+				continue
+			}
+			current, found = r, true
+			break
+		}
+	}
 	if !found {
+		m.detailKey = ""
+		m.bundle = nil
+		m.detailSelectedPath = ""
+		m.cancelRequest(requestDetail)
+		m.detailViewport.SetContent("")
+		return
+	}
+	m.detailKey = rowKey(current)
+	if current.UnavailableReason != "" {
+		m.bundle = nil
+		m.detailSelectedPath = ""
+		m.cancelRequest(requestDetail)
+		m.detailViewport.SetContent(renderDetailFullContent(current, m.previewWidth()))
 		return
 	}
 	if isMarketplaceDetailOnly(current) {

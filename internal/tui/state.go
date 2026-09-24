@@ -242,6 +242,7 @@ type Model struct {
 	refreshing          bool
 	requests            requestState
 	rowsStale           bool
+	configInvalid       bool
 	dependencyLifecycle DependencyLifecycle
 
 	// Cached config state for toggle/sync
