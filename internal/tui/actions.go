@@ -252,9 +252,6 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 
 	rowCfg := resolvedResult.LoadedCfg
-	if rowCfg == nil {
-		rowCfg = resolvedResult.MergedCfg
-	}
 	recoveryCfg := rowCfg
 	if hardCatalogFailure && resolvedResult.MergedCfg != nil {
 		recoveryCfg = resolvedResult.MergedCfg
@@ -943,10 +940,8 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 	if cfg != nil {
 		for i := range cfg.Registries {
 			entry := &cfg.Registries[i]
-			if entry.CatalogKey != "" {
-				if _, loaded := catalogs[entry.CatalogKey]; loaded {
-					continue
-				}
+			if _, loaded := catalogs[entry.CatalogKey]; loaded {
+				continue
 			}
 			for _, kind := range config.AllKinds {
 				for _, name := range entry.SelectorForKind(kind).Include {
