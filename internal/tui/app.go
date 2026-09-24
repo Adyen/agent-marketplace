@@ -177,6 +177,23 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 			break
 		}
 	}
+	m.dismissInvalidConfigMutationPane()
+}
+
+func (m *Model) dismissInvalidConfigMutationPane() bool {
+	if !m.configInvalid {
+		return false
+	}
+	switch m.pane {
+	case paneToggleModal, paneHarnessModal, paneMigrationModal, paneInitModal:
+		m.pane = paneList
+		return true
+	case paneMarketplaceConsent:
+		m.pane = paneList
+		m.clearMarketplaceConsent()
+		return true
+	}
+	return false
 }
 
 func marketplaceInstallSnapshotError(msg snapshotLoadedMsg) error {
@@ -737,6 +754,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, nil
+	}
+
+	if m.dismissInvalidConfigMutationPane() {
+		return m, invalidConfigToastCmd()
 	}
 
 	// Overlays take priority

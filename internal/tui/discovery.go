@@ -154,6 +154,15 @@ func (m *Model) setMarketplaceConsentPreview(preview string) {
 	m.resizeMarketplaceConsentViewport(true)
 }
 
+func (m *Model) clearMarketplaceConsent() {
+	m.finishOperation(m.marketplaceInstallOperation)
+	m.marketplaceInstallOperation = 0
+	m.marketplacePreparedInstall = nil
+	m.marketplaceInstallPreview = ""
+	m.marketplaceConsentViewport.SetContent("")
+	m.marketplaceConsentViewport.GotoTop()
+}
+
 func renderMarketplaceConsent(m Model) string {
 	return styleConfirmTitle.Render("Verified Marketplace install") + "\nInstall this exact verified revision?\n" + m.marketplaceConsentViewport.View()
 }
@@ -165,12 +174,7 @@ func (m Model) handleMarketplaceConsentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		return m, commitDiscoveryInstall(ctxOrBackground(m.ctx), m.marketplaceInstallOperation, m.marketplaceInstallOptions, m.marketplacePreparedInstall)
 	case "n", "N", "esc":
 		m.pane = paneList
-		m.finishOperation(m.marketplaceInstallOperation)
-		m.marketplaceInstallOperation = 0
-		m.marketplacePreparedInstall = nil
-		m.marketplaceInstallPreview = ""
-		m.marketplaceConsentViewport.SetContent("")
-		m.marketplaceConsentViewport.GotoTop()
+		m.clearMarketplaceConsent()
 		return m, nil
 	}
 	if key.Matches(msg, m.keys.Top) {
