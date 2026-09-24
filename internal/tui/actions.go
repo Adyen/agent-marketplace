@@ -842,9 +842,13 @@ const unavailableCatalogReason = "selection is unavailable because its catalog f
 
 func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *config.LocalConfig, resolveErrs []error, catalogs map[string]catalogInfo) []row {
 	seen := make(map[string]struct{}, len(rows)+len(resolveErrs))
+	available := make(map[string]struct{}, len(rows))
 	for i := range rows {
 		key := skill.ResourceKey(rows[i].Artifact.Kind, rows[i].Artifact.Name)
 		seen[key+"\x01"+registryIdentityKey(rows[i].RegistryURL, rows[i].RegistryRef, rows[i].RegistryPath)] = struct{}{}
+		if rows[i].IsAvailable {
+			available[key] = struct{}{}
+		}
 	}
 	layerHarnesses := layerHarnessDefaults(cfg)
 	appendCandidate := func(kind ir.ResourceKind, name, url, ref, path string, required bool, reason string) {
@@ -961,6 +965,9 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 			if localCfg != nil {
 				for _, kind := range config.AllKinds {
 					for _, name := range localCfg.SelectorForKind(kind).Include {
+						if _, covered := available[skill.ResourceKey(kind, name)]; covered {
+							continue
+						}
 						appendCandidate(kind, name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
 					}
 				}

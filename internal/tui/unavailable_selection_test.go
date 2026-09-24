@@ -3,6 +3,7 @@ package tui
 import (
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -124,6 +125,42 @@ func TestAppendUnavailableSelectionRowsFailedCatalogTopLevelLocal(t *testing.T) 
 	rows = appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
 	if len(rows) != 0 {
 		t.Fatalf("local include+exclude synthesized %d rows, want 0", len(rows))
+	}
+}
+
+func TestAppendUnavailableSelectionRowsFailedCatalogLocalIncludeCoveredByAvailableRow(t *testing.T) {
+	failedEntry := unavailableEntry(func(e *config.RegistryEntry) {
+		e.URL = "/regA"
+		e.CatalogKey = "kA"
+		e.Skills.Include = nil
+	})
+	healthyEntry := config.RegistryEntry{URL: "/regB", Source: config.RepoCommitted, CatalogKey: "kB"}
+	cfg := &config.Config{Registries: []config.RegistryEntry{failedEntry, healthyEntry}}
+	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"shared"}}}
+	initial := []row{{
+		IsAvailable: true,
+		Artifact:    resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "/regB"},
+	}}
+	rows := appendUnavailableSelectionRows(initial, cfg, localCfg, nil, map[string]catalogInfo{"kB": {}})
+	if len(rows) != 1 {
+		t.Fatalf("available-covered local include synthesized %d rows, want 0", len(rows)-1)
+	}
+}
+
+func TestAppendUnavailableSelectionRowsFailedCatalogLocalIncludeEntrySelectionStillRecovered(t *testing.T) {
+	failedEntry := unavailableEntry(func(e *config.RegistryEntry) {
+		e.URL = "/regA"
+		e.CatalogKey = "kA"
+		e.Skills.Include = []string{"shared"}
+	})
+	cfg := &config.Config{Registries: []config.RegistryEntry{failedEntry}}
+	initial := []row{{
+		IsAvailable: true,
+		Artifact:    resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "/regB"},
+	}}
+	rows := appendUnavailableSelectionRows(initial, cfg, nil, nil, map[string]catalogInfo{})
+	if len(rows) != 2 || rows[1].RegistryURL != "/regA" {
+		t.Fatalf("explicit entry selection on failed catalog lost its recovery row: %#v", rows)
 	}
 }
 
