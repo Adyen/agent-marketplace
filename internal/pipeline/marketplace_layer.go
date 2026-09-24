@@ -136,7 +136,7 @@ func MutateMarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, confi
 		return nil, err
 	}
 	if v4 == nil {
-		return mutateLegacyMarketplaceLayer(configPath, mutate, sync)
+		return mutateLegacyMarketplaceLayer(configPath, source, mutate, sync)
 	}
 	return mutateV4MarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, mutate, sync)
 }
@@ -170,23 +170,38 @@ func commitMarketplaceConfigRemoval(configPath string, mutate func() (*config.Fi
 	return warnings, nil
 }
 
-func mutateLegacyMarketplaceLayer(configPath string, mutate func(*MarketplaceLayerMutation) error, sync func() ([]error, error)) ([]error, error) {
+func mutateLegacyMarketplaceLayer(configPath string, source config.Source, mutate func(*MarketplaceLayerMutation) error, sync func() ([]error, error)) ([]error, error) {
 	m := &MarketplaceLayerMutation{legacy: true}
 	if err := mutate(m); err != nil {
 		return nil, err
 	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	warnings, err := runLegacyMarketplaceMutation(configPath, m, sync)
+	if err != nil {
+		return nil, err
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(before, after) {
+		warnLegacyLayerMutation(source, configPath)
+	}
+	return warnings, nil
+}
+
+func runLegacyMarketplaceMutation(configPath string, m *MarketplaceLayerMutation, sync func() ([]error, error)) ([]error, error) {
 	if len(m.removals) > 0 {
 		r := m.removals[0]
-		warnings, err := commitMarketplaceConfigRemoval(configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
+		return commitMarketplaceConfigRemoval(configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
 			if r.collection {
 				return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, r.entry.URL, r.entry.InstanceID, r.pin)
 			}
 			return config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, r.entry.URL, r.entry.InstanceID, r.pin)
 		}, sync)
-		if err != nil {
-			return nil, err
-		}
-		return warnings, nil
 	}
 	if m.pinsS {
 		if sync == nil {

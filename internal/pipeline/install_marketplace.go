@@ -502,17 +502,6 @@ func marketplaceInstallIdentities(plan *marketplace.PreparedInstall) []resourceI
 	return identities
 }
 
-// ensureMarketplacePinAndSync makes the pin mutation transactional with
-// respect to the target config file. Materialization may have partially
-// changed unrelated generated files before returning an error. A cleanup sync
-// is intentionally not attempted: rerunning broad reconciliation here could
-// recurse through install behavior or destructively prune user-visible output,
-// and could also obscure the original sync error. The config rollback remains
-// byte-precise and transactional.
-func ensureMarketplacePinAndSync(configPath string, plan *marketplace.PreparedInstall, sync func() ([]error, error)) (warnings []error, retErr error) {
-	return ensureMarketplacePinsAndSync(configPath, plan.Entry, []config.MarketplaceResourcePin{plan.Pin}, sync)
-}
-
 func ensureMarketplacePinsAndSync(configPath string, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin, sync func() ([]error, error)) (warnings []error, retErr error) {
 	snapshot, commit, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, entry.Alias, pins)
 	if err != nil {

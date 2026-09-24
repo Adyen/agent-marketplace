@@ -133,6 +133,9 @@ func editLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) erro
 	if !candidate.Changed {
 		return nil
 	}
+	if candidate.Legacy {
+		warnLegacyLayerMutation(target.Source, target.DeclaringPath)
+	}
 	if err := os.WriteFile(target.StagedPath, candidate.Bytes, candidate.Mode); err != nil {
 		return fmt.Errorf("write staged config %s: %w", target.StagedPath, err)
 	}
