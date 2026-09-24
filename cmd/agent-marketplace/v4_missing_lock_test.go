@@ -423,6 +423,167 @@ resources:
 	}
 }
 
+func TestTransientOrganizationMarketplaceLockSurvivesSelectionConfigEdits(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	requests, userPath, repoPath, ctx, opts := newTransientOrganizationMarketplaceResolveFixture(t)
+	if result := pipeline.Resolve(ctx, opts); errors.Join(result.Errors...) != nil {
+		t.Fatalf("initial resolve: %v", errors.Join(result.Errors...))
+	}
+	first := requests.Load()
+	if first != 5 {
+		t.Fatalf("initial resolve made %d Marketplace requests, want 5", first)
+	}
+
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n# harmless selection-layer edit\n")
+	writeConfig(t, repoPath, "apiVersion: agent-marketplace/v4\n")
+	result := pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatalf("resolve after selection config edits: %v", err)
+	}
+	if got := requests.Load(); got != first {
+		t.Fatalf("selection config edits changed Marketplace request count from %d to %d, want no new requests", first, got)
+	}
+}
+
+func TestTransientOrganizationMarketplaceLockReacquiresWhenTargetHarnessesChange(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	requests, userPath, _, ctx, opts := newTransientOrganizationMarketplaceResolveFixture(t)
+	if result := pipeline.Resolve(ctx, opts); errors.Join(result.Errors...) != nil {
+		t.Fatalf("initial resolve: %v", errors.Join(result.Errors...))
+	}
+	first := requests.Load()
+	if first != 5 {
+		t.Fatalf("initial resolve made %d Marketplace requests, want 5", first)
+	}
+
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory, claude]\n")
+	result := pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatalf("resolve after target harness change: %v", err)
+	}
+	if got := requests.Load(); got <= first {
+		t.Fatalf("target harness change did not reacquire: Marketplace requests changed from %d to %d", first, got)
+	}
+}
+
+func TestTransientOrganizationMarketplaceLockReacquiresWhenOrganizationConfigChanges(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	requests, _, _, ctx, opts := newTransientOrganizationMarketplaceResolveFixture(t)
+	if result := pipeline.Resolve(ctx, opts); errors.Join(result.Errors...) != nil {
+		t.Fatalf("initial resolve: %v", errors.Join(result.Errors...))
+	}
+	first := requests.Load()
+	if first != 5 {
+		t.Fatalf("initial resolve made %d Marketplace requests, want 5", first)
+	}
+
+	orgPath := opts.EffectiveOpts.OrganizationPath
+	orgConfig, err := os.ReadFile(orgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orgPath, append(orgConfig, []byte("# organization policy edit\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatalf("resolve after organization config change: %v", err)
+	}
+	if got := requests.Load(); got <= first {
+		t.Fatalf("organization config change did not reacquire: Marketplace requests changed from %d to %d", first, got)
+	}
+}
+
+func TestTransientOrganizationMarketplaceLockFailsClosedWhenTargetHarnessesChangeDuringAcquisition(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	mutated := make(chan error, 1)
+	var once atomic.Bool
+	requests, _, _, ctx, opts := newTransientOrganizationMarketplaceResolveFixtureWithHook(t, func(userPath string) {
+		if !once.CompareAndSwap(false, true) {
+			return
+		}
+		mutated <- os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory, claude]\n"), 0o644)
+	})
+
+	result := pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("resolve error = %v, want generation conflict", err)
+	}
+	if mutationErr := <-mutated; mutationErr != nil {
+		t.Fatalf("mutate user config: %v", mutationErr)
+	}
+	raced := requests.Load()
+
+	result = pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatalf("resolve after raced acquisition: %v", err)
+	}
+	if got := requests.Load(); got <= raced {
+		t.Fatalf("resolve after raced acquisition reused its result: Marketplace requests changed from %d to %d", raced, got)
+	}
+}
+
+func newTransientOrganizationMarketplaceResolveFixture(t *testing.T) (*atomic.Int32, string, string, context.Context, pipeline.ResolveOptions) {
+	t.Helper()
+	return newTransientOrganizationMarketplaceResolveFixtureWithHook(t, nil)
+}
+
+// onRequest runs inside each Marketplace request, before the response, so it
+// can edit the user config while an acquisition is in flight.
+func newTransientOrganizationMarketplaceResolveFixtureWithHook(t *testing.T, onRequest func(userPath string)) (*atomic.Int32, string, string, context.Context, pipeline.ResolveOptions) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() {
+		requests.Add(1)
+		if onRequest != nil {
+			onRequest(userPath)
+		}
+	})
+	t.Cleanup(server.Close)
+
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	repo := t.TempDir()
+	repoPath := filepath.Join(repo, ".agents", "config.yaml")
+	opts := pipeline.ResolveOptions{
+		RepoRoot: repo,
+		EffectiveOpts: config.LoadEffectiveOptions{
+			OrganizationPath: orgPath,
+			GlobalPath:       userPath,
+			RepoPath:         repoPath,
+			LocalPath:        filepath.Join(repo, ".agents", "config.local.yaml"),
+		},
+		Loaders: pipeline.Loaders{
+			Org:    config.LoadOrganizationConfig,
+			Global: func() (*config.Config, error) { return config.LoadConfigFromPath(userPath) },
+			Repo:   func() (*config.Config, error) { return nil, nil },
+			Local:  func() (*config.LocalConfig, error) { return nil, nil },
+		},
+	}
+	return &requests, userPath, repoPath, pipeline.WithTransientOrganizationMarketplaceLockCache(context.Background()), opts
+}
+
 func TestSyncNeverReplacesPresentOrganizationMarketplaceLockTransiently(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -798,23 +959,23 @@ func TestLockCreatesMissingEndpointOnlyV4MarketplaceLock(t *testing.T) {
 	}
 }
 
-func newV4MarketplaceLockServer(t *testing.T) *httptest.Server {
+func newV4MarketplaceLockServer(t testing.TB) *httptest.Server {
 	return newV4MarketplaceLockServerWithHook(t, nil)
 }
 
-func newV4MarketplaceLockServerWithHook(t *testing.T, hook func()) *httptest.Server {
+func newV4MarketplaceLockServerWithHook(t testing.TB, hook func()) *httptest.Server {
 	return newV4MarketplaceLockServerWithRevision(t, hook, nil)
 }
 
-func newV4MarketplaceLockServerWithRevision(t *testing.T, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
+func newV4MarketplaceLockServerWithRevision(t testing.TB, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
 	return newV4MarketplaceLockServerWithOptions(t, "mp", "review", hook, mutate)
 }
 
-func newV4MarketplaceLockServerWithIdentity(t *testing.T, instanceID, resourceName string) *httptest.Server {
+func newV4MarketplaceLockServerWithIdentity(t testing.TB, instanceID, resourceName string) *httptest.Server {
 	return newV4MarketplaceLockServerWithOptions(t, instanceID, resourceName, nil, nil)
 }
 
-func newV4MarketplaceLockServerWithOptions(t *testing.T, instanceID, resourceName string, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
+func newV4MarketplaceLockServerWithOptions(t testing.TB, instanceID, resourceName string, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
 	t.Helper()
 	canonical, err := hccartifact.FromIR(ir.NewSkill(resourceName, "Review", "Review carefully.", nil, nil, ir.SourceRef{}))
 	if err != nil {
