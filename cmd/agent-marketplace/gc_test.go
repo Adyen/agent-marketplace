@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
@@ -445,6 +448,114 @@ marketplaces:
 	}
 	if _, err := os.Stat(mpCache.ArtifactPath(orphanArchive)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected marketplace orphan to be removed, stat err=%v", err)
+	}
+}
+
+type dialGuardTransport struct {
+	dialed *atomic.Int32
+}
+
+func (g dialGuardTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	g.dialed.Add(1)
+	return nil, errors.New("gc made an unexpected network request")
+}
+
+func TestGcCommandV4OrganizationMarketplaceWithoutLockCollects(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Skip("known gap: awaits WP4 lock-free local reachability")
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
+
+	var dialed atomic.Int32
+	transport := http.DefaultTransport
+	http.DefaultTransport = dialGuardTransport{dialed: &dialed}
+	t.Cleanup(func() { http.DefaultTransport = transport })
+
+	authority := canonicalTempDir(t)
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeConfig(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  organization: {marketplace: https://marketplace.invalid}
+`)
+	config.SetTestOrganizationConfigPath(t, orgPath)
+
+	beforeEntries, err := os.ReadDir(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var beforeNames []string
+	for _, entry := range beforeEntries {
+		beforeNames = append(beforeNames, entry.Name())
+	}
+	beforeInfo, err := os.Stat(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	contentDigest := "sha256:" + strings.Repeat("1", 64)
+	referencedArchive := "sha256:" + strings.Repeat("2", 64)
+	orphanArchive := "sha256:" + strings.Repeat("3", 64)
+	mpCache := marketplace.DefaultCache()
+	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(referencedArchive),
+	})
+	if _, err := mpCache.WriteResourceRevision("https://marketplace.invalid", "src", "skill", "review", contentDigest, revision); err != nil {
+		t.Fatalf("WriteResourceRevision: %v", err)
+	}
+	if _, err := mpCache.WriteArtifact(referencedArchive, []byte("referenced")); err != nil {
+		t.Fatalf("WriteArtifact referenced: %v", err)
+	}
+	if _, err := mpCache.WriteArtifact(orphanArchive, []byte("orphan")); err != nil {
+		t.Fatalf("WriteArtifact orphan: %v", err)
+	}
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("gc")
+	if err != nil {
+		t.Fatalf("expected gc to collect with a lock-free organization Marketplace source: %v\n%s", err, output)
+	}
+	orphanDir := filepath.Dir(mpCache.ArtifactPath(orphanArchive))
+	if !strings.Contains(output, orphanDir) || !strings.Contains(output, "Removed 1 marketplace artifact directories") {
+		t.Fatalf("expected marketplace orphan removal in output, got:\n%s", output)
+	}
+	if _, err := os.Stat(mpCache.ArtifactPath(referencedArchive)); err != nil {
+		t.Fatalf("active marketplace artifact was removed: %v", err)
+	}
+	if _, err := os.Stat(orphanDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected marketplace orphan to be removed, stat err=%v", err)
+	}
+	if got := dialed.Load(); got != 0 {
+		t.Fatalf("gc made %d network requests", got)
+	}
+
+	afterEntries, err := os.ReadDir(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var afterNames []string
+	for _, entry := range afterEntries {
+		afterNames = append(afterNames, entry.Name())
+	}
+	if !slices.Equal(beforeNames, afterNames) {
+		t.Fatalf("organization directory listing changed: %v -> %v", beforeNames, afterNames)
+	}
+	afterInfo, err := os.Stat(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
+		t.Fatalf("organization directory mtime changed: %v -> %v", beforeInfo.ModTime(), afterInfo.ModTime())
 	}
 }
 
