@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -545,24 +546,30 @@ func TestLoadV4MarketplaceLockOverlayRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
+	opts := LoadEffectiveOptions{
+		RepoRoot:         dir,
+		LocalConfigDir:   dir,
+		OrganizationPath: filepath.Join(dir, "org-config.yaml"),
+		GlobalPath:       filepath.Join(dir, "user-config.yaml"),
+		RepoPath:         configPath,
+		LocalPath:        filepath.Join(dir, "local-config.yaml"),
+		FileOverlays:     map[string][]byte{lockPath: lockData},
+	}
+	ec := LoadEffective(context.Background(), opts)
+	if err := errors.Join(ec.Errors...); err != nil {
 		t.Fatal(err)
 	}
-	cfg, reads, err := loadConfigTreeWithReads(configPath, canonical, data, repoLayer, map[string][]byte{lockPath: lockData})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Marketplaces) != 1 {
-		t.Fatalf("marketplaces = %#v", cfg.Marketplaces)
+	cfg := ec.Repo.Config
+	if cfg == nil || len(cfg.Marketplaces) != 1 {
+		t.Fatalf("repo config = %#v", cfg)
 	}
 	var lockRead *ConfigRead
-	for i := range reads {
-		if reads[i].Path == lockPath {
-			lockRead = &reads[i]
+	for i := range ec.Repo.Reads {
+		if ec.Repo.Reads[i].Path == lockPath {
+			lockRead = &ec.Repo.Reads[i]
 		}
 	}
 	if lockRead == nil || !lockRead.Overlay || lockRead.Digest != fmt.Sprintf("%x", sha256.Sum256(lockData)) {
-		t.Fatalf("lock read = %#v, reads = %#v", lockRead, reads)
+		t.Fatalf("lock read = %#v, reads = %#v", lockRead, ec.Repo.Reads)
 	}
 }

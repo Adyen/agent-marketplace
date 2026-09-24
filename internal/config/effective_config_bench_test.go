@@ -47,7 +47,15 @@ func BenchmarkOrganizationIncludeTreeDiskReads(b *testing.B) {
 	writeBenchFile(b, root, "apiVersion: agent-marketplace/v2\ninclude: "+middle+"\n")
 	b.ReportAllocs()
 	for b.Loop() {
-		cfg, err := loadConfigTree(root, organizationLayer)
+		data, err := readConfigFile(root)
+		if err != nil {
+			b.Fatal(err)
+		}
+		li, err := readLayerIntent(root, "", data, organizationLayer, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		cfg, err := li.bind(nil)
 		if err != nil || len(cfg.Registries) != 1 {
 			b.Fatalf("load organization include tree: %v", err)
 		}
