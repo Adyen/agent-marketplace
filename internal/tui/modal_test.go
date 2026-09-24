@@ -591,6 +591,25 @@ func TestRunScopedToggleStagesUserMarketplaceOverride(t *testing.T) {
 
 func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 	repoRoot := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.LocalConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	digest := "sha256:" + strings.Repeat("b", 64)
 	pin := config.MarketplaceResourcePin{
 		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v2", Digest: digest,
@@ -598,6 +617,7 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "collections", Name: "bundle", Revision: "v1"}}),
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
+	warmMarketplaceSkillPin(t, entry, pin)
 	r := row{
 		Artifact:       resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "team-review"}, IsMarketplace: true, Source: config.RepoCommitted},
 		EnabledProject: true,

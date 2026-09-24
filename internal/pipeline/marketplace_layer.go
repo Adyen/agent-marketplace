@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 type MarketplaceLayerMutation struct {
@@ -23,6 +24,13 @@ type MarketplaceLayerMutation struct {
 	endpointS bool
 	pins      []config.MarketplaceResourcePin
 	pinsS     bool
+	removals  []marketplaceRemoval
+}
+
+type marketplaceRemoval struct {
+	entry      config.MarketplaceEntry
+	pin        config.MarketplaceResourcePin
+	collection bool
 }
 
 func (m *MarketplaceLayerMutation) EnsureEndpoint(entry config.MarketplaceEntry) error {
@@ -76,6 +84,43 @@ func (m *MarketplaceLayerMutation) IncludePins(entry config.MarketplaceEntry, pi
 	return nil
 }
 
+func (m *MarketplaceLayerMutation) RemoveDirectPin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {
+	return m.removeMarketplacePin(entry, pin, false)
+}
+
+func (m *MarketplaceLayerMutation) RemoveCollection(entry config.MarketplaceEntry, collection config.MarketplaceResourcePin) error {
+	return m.removeMarketplacePin(entry, collection, true)
+}
+
+func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, collection bool) error {
+	if m == nil {
+		return errors.New("marketplace layer mutation is nil")
+	}
+	if m.legacy {
+		if len(m.removals) > 0 {
+			return errors.New("marketplace layer mutation supports one legacy removal")
+		}
+		m.removals = append(m.removals, marketplaceRemoval{entry: entry, pin: pin, collection: collection})
+		return nil
+	}
+	if m.editor == nil {
+		return errors.New("marketplace layer mutation has no open editor")
+	}
+	binding, found, err := m.editor.LookupMarketplaceSource(entry.URL)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("marketplace endpoint %q has no v4 source in this layer", entry.URL)
+	}
+	if err := m.editor.RemoveMarketplacePins(binding, []config.MarketplaceResourcePin{pin}); err != nil {
+		return err
+	}
+	m.endpoint = entry
+	m.endpointS = true
+	return nil
+}
+
 func MutateMarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, configPath string, source config.Source, mutate func(*MarketplaceLayerMutation) error, sync func() ([]error, error)) ([]error, error) {
 	if mutate == nil {
 		return nil, errors.New("marketplace layer mutation callback is required")
@@ -96,10 +141,52 @@ func MutateMarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, confi
 	return mutateV4MarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, mutate, sync)
 }
 
+func commitMarketplaceConfigRemoval(configPath string, mutate func() (*config.FileSnapshot, config.ConfigFileCommit, error), sync func() ([]error, error)) (warnings []error, retErr error) {
+	snapshot, commit, err := mutate()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		if rollbackErr := snapshot.RestoreIfCurrent(commit); rollbackErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("rollback Marketplace config: %w", rollbackErr))
+		}
+	}()
+	if sync != nil {
+		warnings, err = sync()
+		if err != nil {
+			return nil, err
+		}
+	}
+	current, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("read Marketplace config after remove: %w", err)
+	}
+	if !bytes.Equal(current, commit.Bytes) {
+		return nil, fmt.Errorf("marketplace config changed concurrently during remove")
+	}
+	return warnings, nil
+}
+
 func mutateLegacyMarketplaceLayer(configPath string, mutate func(*MarketplaceLayerMutation) error, sync func() ([]error, error)) ([]error, error) {
 	m := &MarketplaceLayerMutation{legacy: true}
 	if err := mutate(m); err != nil {
 		return nil, err
+	}
+	if len(m.removals) > 0 {
+		r := m.removals[0]
+		warnings, err := commitMarketplaceConfigRemoval(configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
+			if r.collection {
+				return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, r.entry.URL, r.entry.InstanceID, r.pin)
+			}
+			return config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, r.entry.URL, r.entry.InstanceID, r.pin)
+		}, sync)
+		if err != nil {
+			return nil, err
+		}
+		return warnings, nil
 	}
 	if m.pinsS {
 		if sync == nil {
@@ -349,4 +436,19 @@ func marketplaceLayerReadAssertions(ec config.EffectiveConfig, configEdit Staged
 	}
 	sort.Slice(reads, func(i, j int) bool { return reads[i].RequestedPath < reads[j].RequestedPath })
 	return reads, nil
+}
+
+func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configPath string, source config.Source, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, enable bool) error {
+	_, err := MutateMarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, func(m *MarketplaceLayerMutation) error {
+		if enable {
+			pin := pin
+			pin.Direct = true
+			pin.SelectedBy = ""
+			return m.IncludePins(entry, []config.MarketplaceResourcePin{pin})
+		}
+		return m.RemoveDirectPin(entry, pin)
+	}, func() ([]error, error) {
+		return nil, silentSync(ctx, repoRoot, withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
+	})
+	return err
 }

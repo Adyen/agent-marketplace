@@ -150,15 +150,17 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 	if _, err := terminal.Write([]byte("l")); err != nil {
 		t.Fatal(err)
 	}
-	waitForMarketplaceTUI(t, &output, func(string) bool { return consumer.CheckFileContains("/workspace/.agents/config.local.yaml", digest) })
+	waitForMarketplaceTUI(t, &output, func(string) bool {
+		return consumer.CheckFileContains("/workspace/.agents/config.local.yaml", "behavior-source/skill/skill-one")
+	})
 	config := consumer.ReadFile("/workspace/.agents/config.local.yaml")
-	for _, value := range []string{digest, "registry_id: behavior-source-id", "kind: skill", "name: skill-one", "direct: true"} {
+	for _, value := range []string{"apiVersion: agent-marketplace/v4", "marketplace:", fixture.server.URL, "behavior-source/skill/skill-one"} {
 		if !strings.Contains(config, value) {
 			t.Fatalf("local Marketplace pin missing %q:\n%s", value, config)
 		}
 	}
-	if strings.Contains(config, "selected_by:") {
-		t.Fatalf("direct TUI scope copy retained collection selectors:\n%s", config)
+	if strings.Contains(config, "selected_by:") || strings.Contains(config, "marketplaces:") {
+		t.Fatalf("direct TUI scope copy wrote legacy keys:\n%s", config)
 	}
 	waitForMarketplaceTUI(t, &output, func(value string) bool { return strings.Contains(value, "skill skill-one PL") })
 	for _, key := range []byte(" l") {
@@ -167,7 +169,9 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	waitForMarketplaceTUI(t, &output, func(string) bool { return !consumer.CheckFileContains("/workspace/.agents/config.local.yaml", digest) })
+	waitForMarketplaceTUI(t, &output, func(string) bool {
+		return !consumer.CheckFileContains("/workspace/.agents/config.local.yaml", "behavior-source/skill/skill-one")
+	})
 	if !consumer.CheckFileContains("/workspace/.agents/config.yaml", digest) {
 		t.Fatal("removing the local TUI pin changed the project pin")
 	}

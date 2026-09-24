@@ -8,14 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func (e *LayerEditor) EnsureMarketplaceSource(marketplaceURL string) (SourceBinding, error) {
-	if e.legacy {
-		return SourceBinding{}, v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
-	}
-	canonical, err := NormalizeMarketplaceURL(marketplaceURL)
-	if err != nil {
-		return SourceBinding{}, err
-	}
+func (e *LayerEditor) marketplaceSourceNames(canonical string) []string {
 	var matches []string
 	for name, source := range e.loaded.Sources {
 		if source.Kind == V4SourceMarketplace && source.CanonicalURL == canonical {
@@ -27,6 +20,57 @@ func (e *LayerEditor) EnsureMarketplaceSource(marketplaceURL string) (SourceBind
 			matches = append(matches, name)
 		}
 	}
+	return matches
+}
+
+func (e *LayerEditor) marketplaceSourceBinding(name string) SourceBinding {
+	rootOwned := true
+	if source, ok := e.loaded.Sources[name]; ok {
+		rootOwned = source.File == e.canonical
+	}
+	binding := SourceBinding{Name: name, Entry: RegistryEntry{URL: e.marketplaceBindingURL(name), V4Kind: V4SourceMarketplace}, id: fmt.Sprintf("v4:%p:%s", e, name), root: rootOwned}
+	e.bindings[binding.id] = binding
+	return binding
+}
+
+func (e *LayerEditor) marketplaceBindingURL(name string) string {
+	if source, ok := e.loaded.Sources[name]; ok {
+		return source.CanonicalURL
+	}
+	if added, ok := e.addedV4[name]; ok {
+		return added.url
+	}
+	return ""
+}
+
+func (e *LayerEditor) LookupMarketplaceSource(marketplaceURL string) (SourceBinding, bool, error) {
+	if e.legacy {
+		return SourceBinding{}, false, v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
+	}
+	canonical, err := NormalizeMarketplaceURL(marketplaceURL)
+	if err != nil {
+		return SourceBinding{}, false, err
+	}
+	matches := e.marketplaceSourceNames(canonical)
+	if len(matches) > 1 {
+		sort.Strings(matches)
+		return SourceBinding{}, false, v4err("config.edit.ambiguous-source", e.target.DeclaringPath, 0, "Marketplace endpoint matches multiple sources: %s", strings.Join(matches, ", "))
+	}
+	if len(matches) == 0 {
+		return SourceBinding{}, false, nil
+	}
+	return e.marketplaceSourceBinding(matches[0]), true, nil
+}
+
+func (e *LayerEditor) EnsureMarketplaceSource(marketplaceURL string) (SourceBinding, error) {
+	if e.legacy {
+		return SourceBinding{}, v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
+	}
+	canonical, err := NormalizeMarketplaceURL(marketplaceURL)
+	if err != nil {
+		return SourceBinding{}, err
+	}
+	matches := e.marketplaceSourceNames(canonical)
 	if len(matches) > 1 {
 		sort.Strings(matches)
 		return SourceBinding{}, v4err("config.edit.ambiguous-source", e.target.DeclaringPath, 0, "Marketplace endpoint matches multiple sources: %s", strings.Join(matches, ", "))
@@ -55,13 +99,7 @@ func (e *LayerEditor) EnsureMarketplaceSource(marketplaceURL string) (SourceBind
 		matches = []string{name}
 	}
 	name := matches[0]
-	rootOwned := true
-	if source, ok := e.loaded.Sources[name]; ok {
-		rootOwned = source.File == e.canonical
-	}
-	binding := SourceBinding{Name: name, Entry: RegistryEntry{URL: canonical, V4Kind: V4SourceMarketplace}, id: fmt.Sprintf("v4:%p:%s", e, name), root: rootOwned}
-	e.bindings[binding.id] = binding
-	return binding, nil
+	return e.marketplaceSourceBinding(name), nil
 }
 
 type v4MarketplaceRequest struct {
@@ -74,7 +112,7 @@ func marketplacePinV4Request(pin MarketplaceResourcePin) (v4MarketplaceRequest, 
 	if err := ValidateMarketplaceResourcePin(pin); err != nil {
 		return v4MarketplaceRequest{}, false, err
 	}
-	if len(pin.SelectedBy.List()) > 0 {
+	if !pin.Direct && len(pin.SelectedBy.List()) > 0 {
 		return v4MarketplaceRequest{}, true, nil
 	}
 	if pin.RegistrySlug == "" {
@@ -174,19 +212,9 @@ func (e *LayerEditor) IncludeMarketplacePins(binding SourceBinding, pins []Marke
 		seen[request.locator] = request
 		requests = append(requests, request)
 	}
-	var group *yaml.Node
-	if resources := findMappingValue(e.root, "resources"); resources != nil && resources.Kind == yaml.MappingNode {
-		group = findMappingValue(resources, name)
-	}
-	var includes *yaml.Node
-	switch {
-	case group == nil:
-	case group.Kind == yaml.SequenceNode:
-		includes = group
-	case group.Kind == yaml.MappingNode:
-		includes = findMappingValue(group, "include")
-	default:
-		return v4err("v4.type", "resources."+name, 0, "resource group must be an include list or mapping")
+	group, includes, err := e.v4MarketplaceResourceGroup(name)
+	if err != nil {
+		return err
 	}
 	var adds []v4MarketplaceRequest
 	for _, request := range requests {
@@ -223,6 +251,107 @@ func (e *LayerEditor) IncludeMarketplacePins(binding SourceBinding, pins []Marke
 	}
 	for _, request := range adds {
 		includes.Content = append(includes.Content, v4MarketplaceIncludeItem(request))
+	}
+	e.changed = true
+	return nil
+}
+
+func (e *LayerEditor) v4MarketplaceResourceGroup(name string) (*yaml.Node, *yaml.Node, error) {
+	var group *yaml.Node
+	if resources := findMappingValue(e.root, "resources"); resources != nil && resources.Kind == yaml.MappingNode {
+		group = findMappingValue(resources, name)
+	}
+	var includes *yaml.Node
+	switch {
+	case group == nil:
+	case group.Kind == yaml.SequenceNode:
+		includes = group
+	case group.Kind == yaml.MappingNode:
+		includes = findMappingValue(group, "include")
+	default:
+		return nil, nil, v4err("v4.type", "resources."+name, 0, "resource group must be an include list or mapping")
+	}
+	return group, includes, nil
+}
+
+func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []MarketplaceResourcePin) error {
+	if e.legacy {
+		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
+	}
+	if issued, ok := e.bindings[binding.id]; binding.id == "" || !ok || issued.Name != binding.Name {
+		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")
+	}
+	name := binding.Name
+	source, known := e.loaded.Sources[name]
+	if added, addedSource := e.addedV4[name]; addedSource {
+		if added.kind != V4SourceMarketplace {
+			return v4err("v4.source-kind", "sources."+name, 0, "Marketplace request requires a Marketplace source")
+		}
+	} else if !known || source.Kind != V4SourceMarketplace {
+		return v4err("v4.source-kind", "sources."+name, 0, "Marketplace request requires a Marketplace source")
+	}
+	var requests []v4MarketplaceRequest
+	seen := make(map[string]bool)
+	for _, pin := range pins {
+		request, member, err := marketplacePinV4Request(pin)
+		if err != nil {
+			return err
+		}
+		if member || seen[request.locator] {
+			continue
+		}
+		seen[request.locator] = true
+		requests = append(requests, request)
+	}
+	group, includes, err := e.v4MarketplaceResourceGroup(name)
+	if err != nil {
+		return err
+	}
+	matched := make(map[*yaml.Node]bool)
+	for _, request := range requests {
+		found := false
+		if includes != nil {
+			for _, item := range includes.Content {
+				if same, _ := v4MarketplaceItemMatches(item, request); same {
+					matched[item] = true
+					found = true
+				}
+			}
+		}
+		if found {
+			continue
+		}
+		for i := range e.loaded.Requests {
+			r := &e.loaded.Requests[i]
+			if r.SourceName == name && r.Registry+"/"+r.Kind+"/"+r.Name == request.locator {
+				return v4err("config.edit.include-owned", "resources."+name, 0, "Marketplace request %q is declared by an included file", request.locator)
+			}
+		}
+		return v4err("config.edit.request-missing", "resources."+name, 0, "Marketplace request %q is not present", request.locator)
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+	retained := make([]*yaml.Node, 0, len(includes.Content))
+	for _, item := range includes.Content {
+		if !matched[item] {
+			retained = append(retained, item)
+		}
+	}
+	includes.Content = retained
+	if len(includes.Content) == 0 {
+		resources := findMappingValue(e.root, "resources")
+		if group.Kind == yaml.SequenceNode {
+			removeMappingKeyByName(resources, name)
+		} else {
+			removeMappingKeyByName(group, "include")
+			if len(group.Content) == 0 {
+				removeMappingKeyByName(resources, name)
+			}
+		}
+	}
+	if resources := findMappingValue(e.root, "resources"); resources != nil && resources.Kind == yaml.MappingNode && len(resources.Content) == 0 {
+		removeMappingKeyByName(e.root, "resources")
 	}
 	e.changed = true
 	return nil

@@ -146,8 +146,10 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if err != nil {
 			return nil, fmt.Errorf("resolve config path: %w", err)
 		}
-		if err := removeMarketplaceAndSync(ctx, opts.RepoRoot, configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
-			return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, collection)
+		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
+			return m.RemoveCollection(entry, collection)
+		}, func() ([]error, error) {
+			return nil, silentSync(ctx, opts.RepoRoot)
 		}); err != nil {
 			return nil, err
 		}
@@ -172,8 +174,10 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if err != nil {
 			return nil, fmt.Errorf("resolve config path: %w", err)
 		}
-		if err := removeMarketplaceAndSync(ctx, opts.RepoRoot, configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
-			return config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, pin)
+		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
+			return m.RemoveDirectPin(entry, pin)
+		}, func() ([]error, error) {
+			return nil, silentSync(ctx, opts.RepoRoot)
 		}); err != nil {
 			return nil, err
 		}
