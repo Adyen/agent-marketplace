@@ -159,7 +159,7 @@ func (ec EffectiveConfig) PresentLayers() []LayerResult {
 // operations.
 func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConfig {
 	intent := ReadIntent(ctx, opts)
-	return Bind(intent, deployedLocks(intent, opts))
+	return bindDeployed(intent, deployedLocks(intent, opts))
 }
 
 func globalConfigPath() (string, error) {
@@ -197,13 +197,18 @@ func bindOrganizationLayer(li LayerIntent, runtimeLock []byte) (*Config, []error
 	if !li.Present() || len(li.errors) > 0 {
 		return nil, li.errors
 	}
-	doc, _, evErrs := deployedLayerEvidence(li, Organization, LoadEffectiveOptions{OrganizationRuntimeLock: runtimeLock})
+	doc, _, evErrs, _ := deployedLayerEvidence(li, Organization, LoadEffectiveOptions{OrganizationRuntimeLock: runtimeLock})
 	if len(evErrs) > 0 {
 		return nil, append(append([]error(nil), li.errors...), evErrs...)
 	}
 	cfg, err := li.bind(doc)
 	if err != nil {
 		return nil, []error{err}
+	}
+	if organizationHasRemoteRequirements(cfg) {
+		if trustErr := ValidateOrganizationTrustUnit(li.Path, true, true); trustErr != nil {
+			return nil, []error{trustErr}
+		}
 	}
 	return cfg, nil
 }
