@@ -709,7 +709,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		return nil, 0, nil, err
 	}
 	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && mode.commitScope == nil
-	if canBootstrapMarketplace && marketplacelock.HasRequiredError(ec.Errors) {
+	if canBootstrapMarketplace && (marketplacelock.HasRequiredError(ec.Errors) || marketplacelock.HasMismatchError(ec.Errors)) {
 		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects, mode.marketplacePolicy)
 		if err != nil {
 			return nil, 0, nil, err
@@ -891,6 +891,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		if mode.check {
 			fresh := exists && current != nil && unselectedLayerIsFresh(scope, remote, *current)
+			if fresh && current.APIVersion == lockfile.APIVersionV1 && !implicitOrg && !mode.locked {
+				fresh = false
+			}
 			if !fresh {
 				if mode.locked {
 					return nil, changed, nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
@@ -918,6 +921,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		if gitDesired.err != nil {
 			return nil, changed, nil, gitDesired.err
+		}
+		if exists && current != nil && current.APIVersion == lockfile.APIVersionV1 && writableV1RequiresUpgrade(scope, mode) {
+			gitFresh = false
 		}
 		doc := gitDesired.doc
 		if mode.prepareInstall != nil {
@@ -1132,9 +1138,9 @@ func runRegistryJobs(count int, run func(int) error) error {
 }
 
 func gitReconciliationDocument(scope lockfile.Scope, current *lockfile.Document) lockfile.Document {
-	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
-	if current != nil && current.APIVersion == lockfile.APIVersionV2 {
-		doc.APIVersion, doc.Marketplaces = current.APIVersion, current.Marketplaces
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: scope}
+	if current != nil {
+		doc.Marketplaces = current.Marketplaces
 	}
 	return doc
 }
@@ -1276,6 +1282,13 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 		registry.Roots = append(registry.Roots, root)
 	}
 	return registry, nil
+}
+
+func writableV1RequiresUpgrade(scope lockfile.Scope, mode lockMode) bool {
+	if mode.readOnlyDependencies() {
+		return false
+	}
+	return scope != lockfile.ScopeOrganization || mode.explicitOrganization
 }
 
 func unselectedLayerIsFresh(_ lockfile.Scope, registries []config.RegistryEntry, doc lockfile.Document) bool {

@@ -33,9 +33,17 @@ type Layer struct {
 // HasRequiredError reports whether errs contain a v4 Marketplace lock
 // requirement.
 func HasRequiredError(errs []error) bool {
+	return hasLockErrorCode(errs, "v4.marketplace-lock-required")
+}
+
+func HasMismatchError(errs []error) bool {
+	return hasLockErrorCode(errs, "v4.marketplace-lock-mismatch")
+}
+
+func hasLockErrorCode(errs []error, code string) bool {
 	for _, err := range errs {
 		var validation *config.V4ValidationError
-		if errors.As(err, &validation) && validation.Code == "v4.marketplace-lock-required" {
+		if errors.As(err, &validation) && validation.Code == code {
 			return true
 		}
 	}
