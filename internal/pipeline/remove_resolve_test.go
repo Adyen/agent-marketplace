@@ -699,6 +699,35 @@ func TestRemoveCollectionUsesRequestedScopeAndPreservesOtherRoot(t *testing.T) {
 	}
 }
 
+func TestRemoveCollectionClearsShorthandSelection(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	t.Setenv("HOME", t.TempDir())
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	rootPath := config.ProjectConfigPath(repoRoot)
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ncollections: [shorthand-bundle]\n")
+
+	if _, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot: repoRoot, ResourceName: "shorthand-bundle", Scope: ScopeRepo, ScopeSpecified: true,
+	}); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootCfg.Collections.Include) != 0 || len(rootCfg.Collections.Exclude) != 0 {
+		t.Fatalf("root collections = %#v, want shorthand removed without exclusion", rootCfg.Collections)
+	}
+	rootData, err := os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rootData), "shorthand-bundle") || strings.Contains(string(rootData), "collections") {
+		t.Fatalf("shorthand selection masked rather than removed:\n%s", rootData)
+	}
+}
+
 func TestRemoveTopLevelMachineCollectionRejectsRepoScope(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
@@ -1022,5 +1051,23 @@ func TestRegistryPathOwns(t *testing.T) {
 		if got := registryPathOwns(c.entry, c.artifact); got != c.want {
 			t.Errorf("registryPathOwns(%q, %q) = %v, want %v", c.entry, c.artifact, got, c.want)
 		}
+	}
+}
+
+func TestRegistryEntryForResolved(t *testing.T) {
+	target := resolver.ResolvedArtifact{
+		Entry:        catalog.Entry{Kind: ir.KindSkill, Name: "review", SourceHarness: "claude"},
+		RegistryURL:  " https://example.test/repo.git ",
+		RegistryPath: "plugins/team",
+		Ref:          " release ",
+		V4Kind:       config.V4SourceGit,
+		Source:       config.RepoCommitted,
+	}
+	entry := registryEntryForResolved(&target)
+	if entry.URL != "https://example.test/repo.git" || entry.Ref != "release" || entry.Path != "plugins/team" {
+		t.Fatalf("entry = %#v", entry)
+	}
+	if entry.V4Kind != config.V4SourceGit || entry.SourceHarness != "claude" {
+		t.Fatalf("v4 identity lost: %#v", entry)
 	}
 }

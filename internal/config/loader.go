@@ -587,10 +587,19 @@ func loadConfigTree(path string, kind layerKind) (*Config, error) {
 }
 
 func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKind) (*Config, error) {
+	cfg, _, err := loadConfigTreeFromRootDataWithFiles(canonicalPath, data, kind)
+	return cfg, err
+}
+
+func loadConfigTreeFromRootDataWithFiles(canonicalPath string, data []byte, kind layerKind) (*Config, []*Config, error) {
 	loader := newConfigIncludeLoader(kind)
 	loader.rootPath = canonicalPath
 	loader.rootData = data
-	return loadCollectedConfigTree(canonicalPath, loader)
+	cfg, err := loadCollectedConfigTree(canonicalPath, loader)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cfg, append([]*Config(nil), loader.files...), nil
 }
 
 func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layerKind, overlays map[string][]byte) (*Config, []ConfigRead, error) {

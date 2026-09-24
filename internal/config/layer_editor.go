@@ -74,6 +74,7 @@ type LayerEditor struct {
 	addedV4          map[string]v4EditIdentity
 	bindings         map[string]SourceBinding
 	legacyNodes      map[string]*yaml.Node
+	includedFiles    []*Config
 }
 
 func OpenLayerEditor(target LayerTarget) (*LayerEditor, error) {
@@ -140,8 +141,12 @@ func OpenLayerEditor(target LayerTarget) (*LayerEditor, error) {
 		return editor, nil
 	}
 	editor.legacy = true
-	if _, err := loadConfigTreeFromRootData(canonical, data, kind); err != nil {
+	_, files, err := loadConfigTreeFromRootDataWithFiles(canonical, data, kind)
+	if err != nil {
 		return nil, err
+	}
+	if len(files) > 0 {
+		editor.includedFiles = files[:len(files)-1]
 	}
 	return editor, nil
 }
@@ -935,6 +940,94 @@ func (e *LayerEditor) ClearUnboundExclude(locator ResourceLocator) error {
 		removeMappingKeyByName(e.root, key)
 	}
 	e.changed = true
+	return nil
+}
+
+func (e *LayerEditor) RemoveUnboundInclude(locator ResourceLocator) error {
+	key := skill.ConfigKeyForKind(locator.Kind)
+	name := strings.TrimSpace(locator.Name)
+	if key == "" || name == "" {
+		return v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
+	}
+	if !e.legacy {
+		return nil
+	}
+	kindMap := findMappingValue(e.root, key)
+	if kindMap == nil {
+		return nil
+	}
+	if kindMap.Kind == yaml.SequenceNode {
+		if !legacySeqRemove(kindMap, name) {
+			return nil
+		}
+		if len(kindMap.Content) == 0 {
+			removeMappingKeyByName(e.root, key)
+		}
+		e.changed = true
+		return nil
+	}
+	if kindMap.Kind != yaml.MappingNode {
+		return nil
+	}
+	_, seq := findEntrySequence(kindMap, "include")
+	if seq == nil || seq.Kind != yaml.SequenceNode {
+		return nil
+	}
+	if !legacySeqRemove(seq, name) {
+		return nil
+	}
+	if len(seq.Content) == 0 {
+		removeMappingKeyByName(kindMap, "include")
+	}
+	if len(kindMap.Content) == 0 {
+		removeMappingKeyByName(e.root, key)
+	}
+	e.changed = true
+	return nil
+}
+
+func (e *LayerEditor) UnboundIncludeInherited(locator ResourceLocator) (bool, error) {
+	key := skill.ConfigKeyForKind(locator.Kind)
+	name := strings.TrimSpace(locator.Name)
+	if key == "" || name == "" {
+		return false, v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
+	}
+	if !e.legacy {
+		return false, nil
+	}
+	for _, file := range e.includedFiles {
+		for _, selected := range file.SelectorForKind(locator.Kind).Include {
+			if strings.TrimSpace(selected) == name {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (e *LayerEditor) SetUnboundExclude(locator ResourceLocator, excluded bool) error {
+	key := skill.ConfigKeyForKind(locator.Kind)
+	name := strings.TrimSpace(locator.Name)
+	if key == "" || name == "" {
+		return v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
+	}
+	if !e.legacy {
+		return nil
+	}
+	if !excluded {
+		return e.ClearUnboundExclude(locator)
+	}
+	kindMap := ensureEntryMapping(e.root, key)
+	if kindMap == nil {
+		return fmt.Errorf("update config %q: top-level %q selector has invalid type", e.target.DeclaringPath, key)
+	}
+	seq, err := ensureMappingSequence(kindMap, "exclude")
+	if err != nil {
+		return fmt.Errorf("update config %q: %w", e.target.DeclaringPath, err)
+	}
+	if legacySeqAppend(seq, name) {
+		e.changed = true
+	}
 	return nil
 }
 

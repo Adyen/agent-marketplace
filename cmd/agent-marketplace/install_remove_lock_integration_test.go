@@ -912,3 +912,261 @@ skills:
 		})
 	}
 }
+
+func TestConfiguredRemoveV4UsesCanonicalEditor(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	isolate := func(t *testing.T) (string, string) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+		t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+		tmp := t.TempDir()
+		t.Setenv("TMPDIR", tmp)
+		return home, tmp
+	}
+	assertNoResidue := func(t *testing.T, tmp string) {
+		residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*"))
+		if err != nil || len(residue) != 0 {
+			t.Fatalf("staging residue = %v err=%v", residue, err)
+		}
+	}
+	assertGone := func(t *testing.T, path string) {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected removal of %s: %v", path, err)
+		}
+	}
+	newGitSource := func(t *testing.T, prefix string) string {
+		origin, working := createBareRepoWithWorkingClone(t, prefix)
+		writeSkill(t, working, "review", "Review", nil)
+		writeSkill(t, working, "keep", "Keep", nil)
+		commitAndPushAll(t, working, "seed skills")
+		return "file://" + origin
+	}
+	v4Group := func(t *testing.T, path, source string) config.V4ResourceGroup {
+		cfg, err := config.LoadV4ConfigFromPath(path)
+		if err != nil {
+			t.Fatalf("load v4 config: %v", err)
+		}
+		group, ok := cfg.Groups[source]
+		if !ok {
+			t.Fatalf("missing resource group %q: %#v", source, cfg.Groups)
+		}
+		return group
+	}
+	locators := func(requests []config.V4ResourceRequest) []string {
+		var out []string
+		for _, req := range requests {
+			out = append(out, req.Locator)
+		}
+		slices.Sort(out)
+		return out
+	}
+
+	t.Run("repo direct skill removes include only", func(t *testing.T) {
+		_, tmp := isolate(t)
+		origin := newGitSource(t, "remove-direct.git")
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+		writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: "+origin+", ref: main}\nresources:\n  hosted: {include: [skill/review, skill/keep]}\n")
+		withWorkingDir(t, repoRoot)
+		if output, err := executeCommand("sync"); err != nil {
+			t.Fatalf("seed sync: %v\n%s", err, output)
+		}
+		target := filepath.Join(repoRoot, ".factory", "skills", "review", "SKILL.md")
+		assertFileExists(t, target)
+		output, err := executeCommand("remove", "review")
+		if err != nil {
+			t.Fatalf("remove: %v\n%s", err, output)
+		}
+		assertGone(t, target)
+		assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "keep", "SKILL.md"))
+		raw, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "registries:") {
+			t.Fatalf("v4 config gained legacy registries:\n%s", raw)
+		}
+		group := v4Group(t, configPath, "hosted")
+		if got := locators(group.Include); !slices.Equal(got, []string{"skill/keep"}) {
+			t.Fatalf("include = %v\n%s", got, raw)
+		}
+		if len(group.Exclude) != 0 {
+			t.Fatalf("direct removal wrote an exclusion: %v\n%s", group.Exclude, raw)
+		}
+		lock := readExactManifestLock(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
+		if lock.APIVersion != lockfile.APIVersionV2 || lock.Scope != lockfile.ScopeRepo {
+			t.Fatalf("lock = %v %v", lock.APIVersion, lock.Scope)
+		}
+		assertNoResidue(t, tmp)
+	})
+
+	t.Run("user scope edits only the user root", func(t *testing.T) {
+		home, tmp := isolate(t)
+		origin := newGitSource(t, "remove-user.git")
+		userConfig := filepath.Join(home, ".agents", "config.yaml")
+		writeConfig(t, userConfig, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: "+origin+", ref: main}\nresources:\n  hosted: {include: [skill/review]}\n")
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		repoConfig := filepath.Join(repoRoot, ".agents", "config.yaml")
+		writeConfig(t, repoConfig, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+		repoBefore, err := os.ReadFile(repoConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		withWorkingDir(t, repoRoot)
+		if output, err := executeCommand("sync"); err != nil {
+			t.Fatalf("seed sync: %v\n%s", err, output)
+		}
+		target := filepath.Join(home, ".factory", "skills", "review", "SKILL.md")
+		assertFileExists(t, target)
+		output, err := executeCommand("remove", "review", "--scope", "user")
+		if err != nil {
+			t.Fatalf("remove: %v\n%s", err, output)
+		}
+		assertGone(t, target)
+		group := v4Group(t, userConfig, "hosted")
+		if len(group.Include) != 0 {
+			t.Fatalf("include = %v", group.Include)
+		}
+		repoAfter, err := os.ReadFile(repoConfig)
+		if err != nil || !bytes.Equal(repoBefore, repoAfter) {
+			t.Fatalf("repo config changed: %v\n%s", err, repoAfter)
+		}
+		assertNoResidue(t, tmp)
+	})
+
+	t.Run("collection member writes leaf exclusion", func(t *testing.T) {
+		_, tmp := isolate(t)
+		origin, working := createBareRepoWithWorkingClone(t, "remove-member.git")
+		writeSkill(t, working, "review", "Review", nil)
+		writeSkill(t, working, "audit", "Audit", nil)
+		writeCollection(t, working, "platform-bundle", `
+apiVersion: agent-marketplace/v1
+kind: Collection
+name: platform-bundle
+version: 1.0.0
+skills:
+  - name: review
+  - name: audit
+`)
+		commitAndPushAll(t, working, "seed collection")
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+		writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+origin+", ref: main}\nresources:\n  hosted: {include: [collection/platform-bundle]}\n")
+		withWorkingDir(t, repoRoot)
+		if output, err := executeCommand("sync"); err != nil {
+			t.Fatalf("seed sync: %v\n%s", err, output)
+		}
+		target := filepath.Join(repoRoot, ".factory", "skills", "review", "SKILL.md")
+		assertFileExists(t, target)
+		output, err := executeCommand("remove", "review")
+		if err != nil {
+			t.Fatalf("remove: %v\n%s", err, output)
+		}
+		assertGone(t, target)
+		assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "audit", "SKILL.md"))
+		raw, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "registries:") {
+			t.Fatalf("v4 config gained legacy registries:\n%s", raw)
+		}
+		group := v4Group(t, configPath, "hosted")
+		if got := locators(group.Include); !slices.Equal(got, []string{"collection/platform-bundle"}) {
+			t.Fatalf("collection request lost: %v\n%s", got, raw)
+		}
+		if len(group.Exclude) != 1 || group.Exclude[0] != "skill/review" {
+			t.Fatalf("leaf exclusion = %v\n%s", group.Exclude, raw)
+		}
+		assertNoResidue(t, tmp)
+	})
+
+	t.Run("named collection removes selection and members", func(t *testing.T) {
+		_, tmp := isolate(t)
+		origin, working := createBareRepoWithWorkingClone(t, "remove-collection.git")
+		writeSkill(t, working, "review", "Review", nil)
+		writeCollection(t, working, "platform-bundle", `
+apiVersion: agent-marketplace/v1
+kind: Collection
+name: platform-bundle
+version: 1.0.0
+skills:
+  - name: review
+`)
+		commitAndPushAll(t, working, "seed collection")
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+		writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+origin+", ref: main}\nresources:\n  hosted: {include: [collection/platform-bundle]}\n")
+		withWorkingDir(t, repoRoot)
+		if output, err := executeCommand("sync"); err != nil {
+			t.Fatalf("seed sync: %v\n%s", err, output)
+		}
+		target := filepath.Join(repoRoot, ".factory", "skills", "review", "SKILL.md")
+		assertFileExists(t, target)
+		output, err := executeCommand("remove", "platform-bundle")
+		if err != nil {
+			t.Fatalf("remove: %v\n%s", err, output)
+		}
+		assertGone(t, target)
+		group := v4Group(t, configPath, "hosted")
+		if got := locators(group.Include); len(got) != 0 {
+			t.Fatalf("collection include retained: %v", got)
+		}
+		if len(group.Exclude) != 1 || group.Exclude[0] != "collection/platform-bundle" {
+			t.Fatalf("collection exclusion = %v", group.Exclude)
+		}
+		assertNoResidue(t, tmp)
+	})
+
+	t.Run("local scope shadows repo occurrence", func(t *testing.T) {
+		_, tmp := isolate(t)
+		origin := newGitSource(t, "remove-local.git")
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+		writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: "+origin+", ref: main}\nresources:\n  hosted: {include: [skill/review]}\n")
+		localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+		writeConfig(t, localPath, "apiVersion: agent-marketplace/v4\n")
+		repoBefore, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		withWorkingDir(t, repoRoot)
+		if output, err := executeCommand("sync"); err != nil {
+			t.Fatalf("seed sync: %v\n%s", err, output)
+		}
+		target := filepath.Join(repoRoot, ".factory", "skills", "review", "SKILL.md")
+		assertFileExists(t, target)
+		output, err := executeCommand("remove", "review", "--scope", "local")
+		if err != nil {
+			t.Fatalf("remove: %v\n%s", err, output)
+		}
+		assertGone(t, target)
+		repoAfter, err := os.ReadFile(configPath)
+		if err != nil || !bytes.Equal(repoBefore, repoAfter) {
+			t.Fatalf("repo config changed: %v\n%s", err, repoAfter)
+		}
+		raw, err := os.ReadFile(localPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "registries:") {
+			t.Fatalf("v4 local config gained legacy registries:\n%s", raw)
+		}
+		cfg, err := config.LoadV4ConfigFromPath(localPath)
+		if err != nil {
+			t.Fatalf("load v4 local config: %v", err)
+		}
+		if len(cfg.Groups) != 1 {
+			t.Fatalf("local groups = %#v", cfg.Groups)
+		}
+		for _, group := range cfg.Groups {
+			if len(group.Exclude) != 1 || group.Exclude[0] != "skill/review" {
+				t.Fatalf("local exclusion = %v\n%s", group.Exclude, raw)
+			}
+		}
+		assertNoResidue(t, tmp)
+	})
+}
