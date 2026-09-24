@@ -246,7 +246,7 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 		if kind == organizationLayer {
 			organizationPath = path
 		}
-		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, overlays, data, organizationPath, kind)
+		v4, err := loadV4TreeWithResolvedRoot(path, canonical, true, map[string]bool{}, overlays, data, organizationPath, kind)
 		if err != nil {
 			return li, err
 		}

@@ -1213,6 +1213,10 @@ func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, er
 }
 
 func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, overlays map[string][]byte, rootData []byte, organizationPath string, kinds ...layerKind) (*V4Config, error) {
+	return loadV4TreeWithResolvedRoot(file, "", root, visiting, overlays, rootData, organizationPath, kinds...)
+}
+
+func loadV4TreeWithResolvedRoot(file, resolvedRoot string, root bool, visiting map[string]bool, overlays map[string][]byte, rootData []byte, organizationPath string, kinds ...layerKind) (*V4Config, error) {
 	if organizationPath != "" {
 		if root && !filepath.IsAbs(organizationPath) {
 			wd, err := os.Getwd()
@@ -1228,9 +1232,21 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 			}
 		}
 	}
-	canonical, err := canonicalConfigPathTolerateMissing(file)
-	if err != nil {
-		return nil, err
+	canonical := ""
+	var err error
+	if root && resolvedRoot != "" {
+		canonical = filepath.Clean(resolvedRoot)
+	} else {
+		canonical, err = canonicalConfigPathTolerateMissing(file)
+		if err != nil {
+			if rootData == nil || !errors.Is(err, fs.ErrNotExist) {
+				return nil, err
+			}
+			canonical, err = canonicalEffectiveLayerPath(file)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	if visiting[canonical] {
 		return nil, v4err("v4.include-cycle", canonical, 0, "config include cycle")
@@ -1273,7 +1289,7 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 					childPath = filepath.Join(filepath.Dir(canonical), childPath)
 				}
 			}
-			child, e := loadV4TreeWithOverlays(childPath, false, visiting, overlays, nil, organizationPath, kinds...)
+			child, e := loadV4TreeWithResolvedRoot(childPath, "", false, visiting, overlays, nil, organizationPath, kinds...)
 			if e != nil {
 				return nil, fmt.Errorf("load v4 include %q from %q: %w", childPath, canonical, e)
 			}
