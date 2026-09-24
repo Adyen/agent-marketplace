@@ -525,15 +525,9 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 	if intent.aborted {
 		return ec
 	}
-	for _, source := range intentLayerOrder {
-		ec.Errors = append(ec.Errors, ev.errors[source]...)
-	}
-	for _, lr := range ec.LayerResults() {
-		for _, err := range lr.Errors {
-			if !containsError(intent.Errors, err) && !containsError(ec.Errors, err) {
-				ec.Errors = append(ec.Errors, err)
-			}
-		}
+	ec.Errors = nil
+	for _, layer := range ec.LayerResults() {
+		ec.Errors = append(ec.Errors, layer.Errors...)
 	}
 
 	if ev.runtimeSetupError[Organization] {
@@ -653,13 +647,4 @@ func bindDeployed(intent Intent, ev Evidence) EffectiveConfig {
 		}
 	}
 	return finishBind(intent, ev, ec)
-}
-
-func containsError(list []error, target error) bool {
-	for _, err := range list {
-		if err == target {
-			return true
-		}
-	}
-	return false
 }

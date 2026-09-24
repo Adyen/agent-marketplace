@@ -99,6 +99,51 @@ resources:
 	}
 }
 
+func TestBindPreservesLayerErrorOrder(t *testing.T) {
+	orgEvidenceErr := errors.New("organization evidence error")
+	userReadErr := errors.New("user config read error")
+
+	intent := Intent{
+		Layers: [5]LayerIntent{
+			Organization:  {Source: Organization, legacy: &Config{}},
+			UserPersonal:  {Source: UserPersonal, errors: []error{userReadErr}},
+			RepoCommitted: {Source: RepoCommitted},
+			RepoPersonal:  {Source: RepoPersonal},
+		},
+	}
+	for _, source := range intentLayerOrder {
+		intent.Errors = append(intent.Errors, intent.Layers[source].errors...)
+	}
+
+	ev := Evidence{}
+	ev.errors[Organization] = []error{orgEvidenceErr}
+
+	ec := Bind(intent, ev)
+
+	want := append([]error{}, ec.Organization.Errors...)
+	want = append(want, ec.User.Errors...)
+	want = append(want, ec.Repo.Errors...)
+	want = append(want, ec.LocalLayer.Errors...)
+	if len(ec.Errors) != len(want) {
+		t.Fatalf("errors = %v, want %v", ec.Errors, want)
+	}
+	for i := range want {
+		if ec.Errors[i] != want[i] {
+			t.Fatalf("errors[%d] = %v, want %v (full errors %v)", i, ec.Errors[i], want[i], ec.Errors)
+		}
+	}
+	if len(ec.Errors) != 2 || ec.Errors[0] != orgEvidenceErr || ec.Errors[1] != userReadErr {
+		t.Fatalf("errors = %v, want [organization evidence error, user read error]", ec.Errors)
+	}
+	counts := map[error]int{}
+	for _, err := range ec.Errors {
+		counts[err]++
+	}
+	if counts[orgEvidenceErr] != 1 || counts[userReadErr] != 1 {
+		t.Fatalf("errors = %v, want each error exactly once", ec.Errors)
+	}
+}
+
 func TestIntentViews(t *testing.T) {
 	org := LayerIntent{Source: Organization, legacy: &Config{Harnesses: []string{"cursor"}}}
 	user := LayerIntent{Source: UserPersonal, legacy: &Config{Harnesses: []string{"devin"}}}
