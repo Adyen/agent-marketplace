@@ -255,9 +255,6 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	}
 	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: configDestination}
 	editInstallLayer := func(mutate func(*LayerMutation) error) error {
-		if err := seedMissingLayerConfig(configPath, opts.Scope); err != nil {
-			return err
-		}
 		return editLayerAtPath(layer, mutate)
 	}
 
@@ -1112,9 +1109,6 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		}
 	}
 	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: configDestination}
-	if err := seedMissingLayerConfig(configPath, opts.Scope); err != nil {
-		return nil, err
-	}
 	var binding config.SourceBinding
 	if err := editLayerAtPath(layer, func(m *LayerMutation) error {
 		var bindErr error
@@ -1337,36 +1331,6 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		Installed:           allInstalled,
 		RequirementWarnings: requirementWarnings,
 	}, nil
-}
-
-func seedMissingLayerConfig(configPath string, scope Scope) error {
-	info, err := os.Stat(configPath)
-	if err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("initialize %s config: %s is a directory", scope, configPath)
-		}
-		return nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	var seed strings.Builder
-	if scope != ScopeLocal {
-		seed.WriteString("apiVersion: agent-marketplace/v2\n")
-	}
-	if scope == ScopeUser {
-		seed.WriteString("harnesses: [" + strings.Join(config.DefaultHarnesses(), ", ") + "]\n")
-	}
-	if seed.Len() == 0 {
-		seed.WriteString("{}\n")
-	}
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return fmt.Errorf("initialize %s config: %w", scope, err)
-	}
-	if err := os.WriteFile(configPath, []byte(seed.String()), 0o644); err != nil {
-		return fmt.Errorf("initialize %s config: %w", scope, err)
-	}
-	return nil
 }
 
 func adHocEntryMatchesBinding(candidate, bound config.RegistryEntry) bool {

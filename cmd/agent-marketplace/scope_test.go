@@ -588,7 +588,15 @@ registries:
 	if err != nil {
 		t.Fatalf("load local config: %v", err)
 	}
-	if localCfg == nil || !containsStr(ksExclude(localCfg.Skills), "vm-lifecycle") {
+	excluded := localCfg != nil && containsStr(ksExclude(localCfg.Skills), "vm-lifecycle")
+	if localCfg != nil {
+		for _, reg := range localCfg.Registries {
+			if containsStr(ksExclude(reg.Skills), "vm-lifecycle") {
+				excluded = true
+			}
+		}
+	}
+	if !excluded {
 		t.Fatalf("expected vm-lifecycle in personal exclude, got: %v", localCfg)
 	}
 
@@ -832,7 +840,10 @@ registries:
 			}
 			var localExclude []string
 			if localCfg != nil {
-				localExclude = localCfg.Skills.Exclude
+				localExclude = append(localExclude, localCfg.Skills.Exclude...)
+				for _, reg := range localCfg.Registries {
+					localExclude = append(localExclude, reg.Skills.Exclude...)
+				}
 			}
 
 			if containsStr(repoSkills, "repo-scope-skill") != tc.expectRepoHasSkill {
@@ -932,7 +943,10 @@ registries:
 			}
 			var localExclude []string
 			if localCfg != nil {
-				localExclude = localCfg.Skills.Exclude
+				localExclude = append(localExclude, localCfg.Skills.Exclude...)
+				for _, reg := range localCfg.Registries {
+					localExclude = append(localExclude, reg.Skills.Exclude...)
+				}
 			}
 
 			if containsStr(globalSkills, "user-scope-skill") != tc.expectUserHasSkill {
@@ -994,7 +1008,7 @@ registries: []
 	}
 	foundURL := false
 	for _, entry := range localCfg.Registries {
-		if strings.TrimSpace(entry.URL) == origin {
+		if strings.TrimSpace(entry.URL) == "file://"+origin {
 			foundURL = true
 			if !containsStr(entry.Skills.Include, "local-from-skill") {
 				t.Fatalf("expected local-from-skill in registry entry skills.include, got %v", entry.Skills.Include)
@@ -1002,7 +1016,7 @@ registries: []
 		}
 	}
 	if !foundURL {
-		t.Fatalf("expected registry with URL %q in local config, got entries: %v", origin, localCfg.Registries)
+		t.Fatalf("expected registry with URL %q in local config, got entries: %v", "file://"+origin, localCfg.Registries)
 	}
 
 	// Repo config must NOT have the registry entry.
@@ -1019,7 +1033,7 @@ registries: []
 	// Skill must be materialized after sync.
 	assertSymlinkTarget(t,
 		filepath.Join(repoRoot, ".agents", "skills", "local-from-skill"),
-		filepath.Join(cache.RegistryCachePath(origin, "main"), "local-from-skill"),
+		filepath.Join(cache.RegistryCachePath("file://"+origin, "main"), "local-from-skill"),
 	)
 }
 

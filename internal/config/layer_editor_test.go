@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -449,6 +450,150 @@ func TestLayerEditorV4DirectorySourceStagingAndUnsafe(t *testing.T) {
 	}
 	if _, err := editor.EnsureRegistry(RegistryEntry{URL: "../outside", V4Kind: V4SourceDirectory}); layerEditorErrCode(err) != "config.edit.unsafe-directory" {
 		t.Fatalf("lexical escape error = %v", err)
+	}
+}
+
+func TestLayerEditorSetLayerExclude(t *testing.T) {
+	t.Run("v4 writes exclusions under every provider and dedupes", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		layerEditorWrite(t, path, "apiVersion: agent-marketplace/v4\n")
+		editor := openTestEditor(t, RepoPersonal, path, path)
+		entries := []RegistryEntry{
+			{URL: "https://example.test/one.git", Ref: "main", V4Kind: V4SourceGit},
+			{URL: "https://example.test/two.git", Ref: "main", V4Kind: V4SourceGit},
+			{URL: "https://example.test/one.git", Ref: "main", V4Kind: V4SourceGit},
+		}
+		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries, true); err != nil {
+			t.Fatalf("set layer exclude: %v", err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		layerEditorWrite(t, path, string(candidate.Bytes))
+		cfg, err := LoadConfigFromPath(path)
+		if err != nil {
+			t.Fatalf("reload: %v", err)
+		}
+		if len(cfg.Registries) != 2 {
+			t.Fatalf("expected two deduped sources, got %d:\n%s", len(cfg.Registries), candidate.Bytes)
+		}
+		for _, entry := range cfg.Registries {
+			if !slices.Contains(entry.Collections.Exclude, "bundle") {
+				t.Fatalf("missing source-bound collection exclusion on %#v:\n%s", entry, candidate.Bytes)
+			}
+		}
+	})
+
+	t.Run("v4 without providers refuses without mutation", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		fixture := "apiVersion: agent-marketplace/v4\n"
+		layerEditorWrite(t, path, fixture)
+		editor := openTestEditor(t, RepoPersonal, path, path)
+		err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), nil, true)
+		if layerEditorErrCode(err) != "config.edit.unsupported-operation" {
+			t.Fatalf("error = %v, want unsupported-operation", err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if candidate.Changed || string(candidate.Bytes) != fixture {
+			t.Fatalf("refusal mutated bytes:\n%s", candidate.Bytes)
+		}
+	})
+
+	t.Run("v4 rejects a marketplace provider before mutation", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		fixture := "apiVersion: agent-marketplace/v4\n"
+		layerEditorWrite(t, path, fixture)
+		editor := openTestEditor(t, RepoPersonal, path, path)
+		entries := []RegistryEntry{
+			{URL: "https://example.test/one.git", Ref: "main", V4Kind: V4SourceGit},
+			{URL: "https://mp.example.test", V4Kind: V4SourceMarketplace},
+		}
+		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries, true); err == nil {
+			t.Fatal("marketplace provider accepted")
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if candidate.Changed || string(candidate.Bytes) != fixture {
+			t.Fatalf("partial mutation after invalid provider:\n%s", candidate.Bytes)
+		}
+	})
+
+	t.Run("v4 clear exclusion", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		layerEditorWrite(t, path, "apiVersion: agent-marketplace/v4\nsources:\n  one: {git: https://example.test/one.git, ref: main}\nresources:\n  one: {exclude: [collection/bundle]}\n")
+		editor := openTestEditor(t, RepoPersonal, path, path)
+		entries := []RegistryEntry{{URL: "https://example.test/one.git", Ref: "main", V4Kind: V4SourceGit}}
+		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries, false); err != nil {
+			t.Fatalf("clear layer exclude: %v", err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !candidate.Changed || strings.Contains(string(candidate.Bytes), "collection/bundle") {
+			t.Fatalf("exclusion not cleared:\n%s", candidate.Bytes)
+		}
+	})
+
+	t.Run("legacy delegates to the top-level selector", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		layerEditorWrite(t, path, "apiVersion: agent-marketplace/v2\n")
+		editor := openTestEditor(t, RepoPersonal, path, path)
+		entries := []RegistryEntry{{URL: "https://example.test/one.git", Ref: "main", V4Kind: V4SourceGit}}
+		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries, true); err != nil {
+			t.Fatalf("legacy set layer exclude: %v", err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, errs := loadV3ConfigWithAPIVersion(candidate.Bytes, localLayer, false, true)
+		if len(errs) > 0 || !slices.Contains(cfg.Collections.Exclude, "bundle") {
+			t.Fatalf("legacy top-level exclusion missing: %v %#v\n%s", errs, cfg.Collections, candidate.Bytes)
+		}
+	})
+}
+
+func TestLayerEditorV4KindDistinctGitFileURL(t *testing.T) {
+	repo := t.TempDir()
+	declaring := filepath.Join(repo, ".agents", "config.yaml")
+	dirPath := filepath.Join(t.TempDir(), "registry.git")
+	layerEditorWrite(t, declaring, "apiVersion: agent-marketplace/v4\nsources:\n  dirsrc: {directory: "+filepath.ToSlash(dirPath)+"}\n")
+
+	editor := openTestEditor(t, RepoCommitted, declaring, declaring)
+	binding, err := editor.EnsureRegistry(RegistryEntry{URL: "file://" + filepath.ToSlash(dirPath), Ref: "main", V4Kind: V4SourceGit})
+	if err != nil {
+		t.Fatalf("ensure git file URL: %v", err)
+	}
+	if binding.Name == "dirsrc" {
+		t.Fatal("git file:// entry bound the directory source")
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	layerEditorWrite(t, declaring, string(candidate.Bytes))
+	cfg, err := LoadConfigFromPath(declaring)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	var dirs, gits int
+	for _, entry := range cfg.Registries {
+		switch entry.V4Kind {
+		case V4SourceDirectory:
+			dirs++
+		case V4SourceGit:
+			gits++
+		}
+	}
+	if dirs != 1 || gits != 1 {
+		t.Fatalf("expected one directory and one git source, got %d directory %d git:\n%s", dirs, gits, candidate.Bytes)
 	}
 }
 
@@ -1319,8 +1464,11 @@ func TestLayerEditorUnboundIncludeAndExclude(t *testing.T) {
 		if err := editor.RemoveUnboundInclude(loc(ir.KindSkill, "alpha")); err != nil {
 			t.Fatalf("remove include: %v", err)
 		}
-		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "gamma"), true); err != nil {
-			t.Fatalf("set exclude: %v", err)
+		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "gamma"), true); err == nil || !strings.Contains(err.Error(), "unsupported") {
+			t.Fatalf("expected unsupported-operation for v4 unbound exclude, got %v", err)
+		}
+		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "beta"), false); err != nil {
+			t.Fatalf("clear exclude: %v", err)
 		}
 		candidate, err := editor.Render()
 		if err != nil {

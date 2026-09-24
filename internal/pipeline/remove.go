@@ -233,6 +233,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 					return nil, fmt.Errorf("load root config %q: %w", destination, err)
 				}
 				rootSelected := hasTopLevelCollectionSelection(rootCfg, name)
+				providers := collectionProviderEntries(mergedCfg, name)
 				if err := editRemovalLayer(opts.RepoRoot, effective, opts.configStaging, func(m *LayerMutation) error {
 					locator := config.ResourceLocator{Kind: ir.KindCollection, Name: name}
 					inherited, err := m.UnboundIncludeInherited(locator)
@@ -243,7 +244,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 						return err
 					}
 					if !rootSelected || inherited {
-						return m.SetUnboundExclude(locator, true)
+						return m.SetLayerExclude(locator, providers, true)
 					}
 					return nil
 				}); err != nil {
@@ -325,6 +326,11 @@ func disableCollectionInRegistry(configPath, registryURL, registryPath, ref, nam
 	// Retain an exclusion after removing a root selection so an included or
 	// lower-layer selection cannot re-enable the collection.
 	return config.AddKindExcludeToRegistryInConfig(configPath, registryURL, registryPath, ir.KindCollection, name)
+}
+
+func isEditUnsupported(err error) bool {
+	var validation *config.V4ValidationError
+	return errors.As(err, &validation) && validation.Code == "config.edit.unsupported-operation"
 }
 
 func hasTopLevelCollectionSelection(cfg *config.Config, name string) bool {
@@ -504,6 +510,38 @@ func collectionSelectedInEntry(entry config.RegistryEntry, name string) bool {
 	return false
 }
 
+func collectionProviderEntries(cfg *config.Config, name string) []config.RegistryEntry {
+	if cfg == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var providers []config.RegistryEntry
+	for _, entry := range cfg.Registries {
+		if !collectionSelectedInEntry(entry, name) {
+			continue
+		}
+		kind := entry.V4Kind
+		if kind == "" {
+			if entry.IsLocal() {
+				kind = config.V4SourceDirectory
+			} else {
+				kind = config.V4SourceGit
+			}
+		}
+		if kind != config.V4SourceGit && kind != config.V4SourceDirectory {
+			continue
+		}
+		identity := string(kind) + "|" + config.NormalizeGitURL(entry.URL) + "|" + strings.TrimSpace(entry.Ref) + "|" + config.NormalizeRegistryPath(entry.Path) + "|" + strings.TrimSpace(entry.SourceHarness)
+		if seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		entry.V4Kind = kind
+		providers = append(providers, entry)
+	}
+	return providers
+}
+
 // collectionRequiredInConfig checks only explicit required collection
 // selections. Provider-wide policy needs the selected registry identity and is
 // handled by collectionRequiredInRegistry.
@@ -629,9 +667,6 @@ func editRemovalLayer(repoRoot string, scope Scope, staging *configStagingManage
 	if err != nil {
 		return err
 	}
-	if err := seedMissingLayerConfig(staged, scope); err != nil {
-		return err
-	}
 	return editLayerAtPath(config.LayerTarget{Source: scopeToConfigSource(scope), StagedPath: staged, DeclaringPath: destination}, mutate)
 }
 
@@ -664,7 +699,10 @@ func excludeWithUnboundCompatibility(repoRoot string, scope Scope, staging *conf
 		if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
 			return err
 		}
-		return m.SetUnboundExclude(locator, true)
+		if err := m.SetUnboundExclude(locator, true); err != nil && !isEditUnsupported(err) {
+			return err
+		}
+		return nil
 	})
 }
 
@@ -1299,9 +1337,6 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	}
 	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: declaringPath}
 	editRemoveLayer := func(mutate func(*LayerMutation) error) error {
-		if err := seedMissingLayerConfig(configPath, opts.Scope); err != nil {
-			return err
-		}
 		return editLayerAtPath(layer, mutate)
 	}
 

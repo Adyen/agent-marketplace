@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -77,6 +79,13 @@ func (m *LayerMutation) SetUnboundExclude(locator config.ResourceLocator, exclud
 	return m.editor.SetUnboundExclude(locator, excluded)
 }
 
+func (m *LayerMutation) SetLayerExclude(locator config.ResourceLocator, entries []config.RegistryEntry, excluded bool) error {
+	if m == nil || m.editor == nil {
+		return errors.New("layer mutation has no open editor")
+	}
+	return m.editor.SetLayerExclude(locator, entries, excluded)
+}
+
 func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*LayerMutation) error) error {
 	if mutate == nil {
 		return errors.New("layer mutation callback is required")
@@ -99,9 +108,16 @@ func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*L
 	}, target.Reconcile)
 }
 
+func EditLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) error) error {
+	return editLayerAtPath(target, mutate)
+}
+
 func editLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) error) error {
 	if mutate == nil {
 		return errors.New("layer mutation callback is required")
+	}
+	if err := seedMissingLayerRoot(target); err != nil {
+		return err
 	}
 	editor, err := config.OpenLayerEditor(target)
 	if err != nil {
@@ -119,6 +135,35 @@ func editLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) erro
 	}
 	if err := os.WriteFile(target.StagedPath, candidate.Bytes, candidate.Mode); err != nil {
 		return fmt.Errorf("write staged config %s: %w", target.StagedPath, err)
+	}
+	return nil
+}
+
+func seedMissingLayerRoot(target config.LayerTarget) error {
+	info, err := os.Stat(target.StagedPath)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("config %s is not a regular file", target.StagedPath)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var body string
+	switch target.Source {
+	case config.UserPersonal:
+		body = "apiVersion: agent-marketplace/v4\nharnesses: [" + strings.Join(config.DefaultHarnesses(), ", ") + "]\n"
+	case config.RepoCommitted, config.RepoPersonal:
+		body = "apiVersion: agent-marketplace/v4\n"
+	default:
+		return fmt.Errorf("cannot initialize missing config %s for source %d", target.StagedPath, target.Source)
+	}
+	if err := os.MkdirAll(filepath.Dir(target.StagedPath), 0o755); err != nil {
+		return fmt.Errorf("initialize config %s: %w", target.StagedPath, err)
+	}
+	if err := os.WriteFile(target.StagedPath, []byte(body), 0o644); err != nil {
+		return fmt.Errorf("initialize config %s: %w", target.StagedPath, err)
 	}
 	return nil
 }

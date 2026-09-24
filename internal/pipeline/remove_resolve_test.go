@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+
 	"fmt"
 	"os"
 	"path/filepath"
@@ -768,7 +769,10 @@ func TestRemoveTopLevelOrganizationCollectionInfersUserScope(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
 	config.SetTestV3OrganizationConfigPath(t, orgPath)
-	writeFile(t, orgPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [machine-bundle]\n")
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "machine-skill", "machine skill", nil)
+	orgData := "apiVersion: agent-marketplace/v2\nregistries:\n  - path: \"" + registryRoot + "\"\n    source_harness: factory\n    collections: [machine-bundle]\ncollections:\n  include: [machine-bundle]\n"
+	writeFile(t, orgPath, orgData)
 	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
 
 	result, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "machine-bundle"})
@@ -778,16 +782,45 @@ func TestRemoveTopLevelOrganizationCollectionInfersUserScope(t *testing.T) {
 	if result == nil || !result.IsCollection || !result.InferredUserScope {
 		t.Fatalf("result = %#v, want collection removal inferred to user scope", result)
 	}
-	userPath, err := config.GlobalConfigPath()
-	if err != nil {
-		t.Fatal(err)
+	userPath, pathErr := config.GlobalConfigPath()
+	if pathErr != nil {
+		t.Fatal(pathErr)
 	}
-	userCfg, err := config.LoadRootConfigFromPath(userPath)
-	if err != nil {
-		t.Fatal(err)
+	userData, pathErr := os.ReadFile(userPath)
+	if pathErr != nil {
+		t.Fatal(pathErr)
 	}
-	if !slices.Contains(userCfg.Collections.Exclude, "machine-bundle") {
-		t.Fatalf("user collections = %#v, want machine-bundle excluded", userCfg.Collections)
+	if !strings.Contains(string(userData), "apiVersion: agent-marketplace/v4") {
+		t.Fatalf("missing user root should become canonical v4:\n%s", userData)
+	}
+	if strings.Contains(string(userData), "registries:") || strings.Contains(string(userData), "collections:") {
+		t.Fatalf("v4 user config carries legacy selector keys:\n%s", userData)
+	}
+	userCfg, pathErr := config.LoadRootConfigFromPath(userPath)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
+	if len(userCfg.Registries) == 0 {
+		t.Fatalf("v4 user config has no copied provider source:\n%s", userData)
+	}
+	excluded := false
+	for _, entry := range userCfg.Registries {
+		if entry.V4Kind != config.V4SourceGit && entry.V4Kind != config.V4SourceDirectory {
+			t.Fatalf("copied provider is not a git/directory source: %#v", entry)
+		}
+		if slices.Contains(entry.Collections.Exclude, "machine-bundle") {
+			excluded = true
+		}
+	}
+	if !excluded {
+		t.Fatalf("no source-bound collection exclusion written:\n%s", userData)
+	}
+	gotOrg, pathErr := os.ReadFile(orgPath)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
+	if string(gotOrg) != orgData {
+		t.Fatalf("organization config changed:\n%s", gotOrg)
 	}
 }
 
