@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -70,22 +71,28 @@ func TestPreV4ReleaseUpgrade(t *testing.T) {
 	if image == "" {
 		image = "busybox:1.36.1"
 	}
-	run := func(executable string, args ...string) string {
+	runCommand := func(executable string, args ...string) (string, error) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "docker", append([]string{
 			"run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+			"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
 			"--mount", "type=bind,src=" + root + ",dst=" + root,
 			"--mount", "type=bind,src=" + executable + ",dst=/bin/agent-marketplace,readonly",
 			"--env", "HOME=" + home, "--env", "TMPDIR=" + filepath.Join(root, "tmp"), "--env", "AGENT_MARKETPLACE_LOG_ENABLED=false", "--workdir", workspace,
 			image, "/bin/agent-marketplace",
 		}, args...)...)
 		output, err := cmd.CombinedOutput()
+		return string(output), err
+	}
+	run := func(executable string, args ...string) string {
+		t.Helper()
+		output, err := runCommand(executable, args...)
 		if err != nil {
 			t.Fatalf("run %s with %v: %v\n%s", filepath.Base(executable), args, err, output)
 		}
-		return string(output)
+		return output
 	}
 
 	run(historical, "init", "--harnesses", "factory")
@@ -175,5 +182,39 @@ func TestPreV4ReleaseUpgrade(t *testing.T) {
 	run(candidate, "migrate", "--scope", "repo")
 	if got, err := os.ReadFile(repoConfig); err != nil || string(got) != string(finalConfig) {
 		t.Fatalf("repeated migration rewrote repository config: %q, %v", got, err)
+	}
+
+	fragment := filepath.Join(workspace, ".agents", "fragments", "resources.yaml")
+	if err := os.MkdirAll(filepath.Dir(fragment), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fragmentData := fmt.Sprintf("registries:\n  - path: %q\n    skills: {include: [release-review]}\n", registry)
+	if err := os.WriteFile(fragment, []byte(fragmentData), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacyRoot := "apiVersion: agent-marketplace/v2\ninclude: fragments/resources.yaml\n"
+	if err := os.WriteFile(repoConfig, []byte(legacyRoot), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userConfig, userBefore, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run(historical, "sync", "--check")
+	refusal, err := runCommand(candidate, "migrate", "--scope", "repo")
+	if err == nil || !strings.Contains(refusal, "v4.migration-unsupported") {
+		t.Fatalf("include-owned legacy migration = %v, %q; want safe refusal", err, refusal)
+	}
+	if got, err := os.ReadFile(repoConfig); err != nil || string(got) != legacyRoot {
+		t.Fatalf("refused migration changed legacy root: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(fragment); err != nil || string(got) != fragmentData {
+		t.Fatalf("refused migration changed included fragment: %q, %v", got, err)
+	}
+	if current, err := filepath.Glob(repoConfig + ".pre-v4.*.bak"); err != nil || len(current) != len(backups) {
+		t.Fatalf("refused migration changed backup set: %v, %v", current, err)
+	}
+	run(candidate, "install", "after-upgrade", "--scope", "repo")
+	if got, err := os.ReadFile(extraInstalled); err != nil || string(got) != extraSkill {
+		t.Fatalf("refused migration left legacy installation unusable: %q, %v", got, err)
 	}
 }
