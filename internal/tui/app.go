@@ -1024,30 +1024,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		if m.configInvalid {
-			return m, invalidConfigToastCmd()
-		}
-		if r.IsMalformed {
-			return m, nil
-		}
-		if discovery := r.MarketplaceDiscovery; discovery != nil && discovery.Item.Availability != "available" {
-			return m, func() tea.Msg {
-				return toastMsg{text: "this Marketplace resource is not installable", duration: 2 * time.Second}
-			}
-		}
-		if r.Artifact.Required {
-			return m, func() tea.Msg {
-				return toastMsg{text: "required items cannot be toggled", duration: 2 * time.Second}
-			}
-		}
-		if r.MarketplaceCollectionOnly && !r.canOverrideMarketplace() {
-			return m, func() tea.Msg {
-				return toastMsg{text: "collection-selected Marketplace items must be toggled through their collection", duration: 2 * time.Second}
-			}
-		}
-		m.pane = paneToggleModal
-		m.modalSkill = r
-		return m, nil
+		return m.applyRowSpaceEligibility(r)
 
 	case key.Matches(msg, m.keys.Sync):
 		if m.syncing {
@@ -1199,7 +1176,48 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	m.ensureBundleCursorVisible()
 }
 
+func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
+	if m.syncing {
+		return m, nil
+	}
+	if m.configInvalid {
+		return m, invalidConfigToastCmd()
+	}
+	if r.IsMalformed {
+		return m, nil
+	}
+	if r.MarketplaceDiscovery != nil && !marketplaceDiscoveryInstallable(r) {
+		return m, func() tea.Msg {
+			return toastMsg{text: "this Marketplace resource is not installable", duration: 2 * time.Second}
+		}
+	}
+	if r.Artifact.Required {
+		return m, func() tea.Msg {
+			return toastMsg{text: "required items cannot be toggled", duration: 2 * time.Second}
+		}
+	}
+	if r.MarketplaceCollectionOnly && !r.canOverrideMarketplace() {
+		return m, func() tea.Msg {
+			return toastMsg{text: "collection-selected Marketplace items must be toggled through their collection", duration: 2 * time.Second}
+		}
+	}
+	m.pane = paneToggleModal
+	m.modalSkill = r
+	return m, nil
+}
+
 func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Space) {
+		for _, r := range m.rows {
+			if rowKey(r) != m.detailKey {
+				continue
+			}
+			if r.UnavailableReason != "" || marketplaceDiscoveryInstallable(r) {
+				return m.applyRowSpaceEligibility(r)
+			}
+			break
+		}
+	}
 	switch {
 	case key.Matches(msg, m.keys.DetailBack):
 		m.pane = paneList

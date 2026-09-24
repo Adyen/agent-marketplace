@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -57,9 +58,14 @@ func pipelineScope(s scope) pipeline.Scope {
 	}
 }
 
+func marketplaceDiscoveryInstallable(r row) bool {
+	d := r.MarketplaceDiscovery
+	return d != nil && (d.Item.Availability == mpapi.AvailabilityAvailable || d.Item.Availability == mpapi.AvailabilityOperatorExposed)
+}
+
 func discoveryInstallOptions(repoRoot string, r row, s scope) (pipeline.InstallOptions, error) {
 	d := r.MarketplaceDiscovery
-	if d == nil || d.Item.Availability != "available" {
+	if !marketplaceDiscoveryInstallable(r) {
 		return pipeline.InstallOptions{}, errors.New("marketplace resource is not installable")
 	}
 	if d.Item.Revision == "" || d.Item.ContentDigest == "" {
