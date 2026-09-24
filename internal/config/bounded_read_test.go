@@ -162,7 +162,7 @@ func TestConfigFileOverlaysRejectOversizedInclude(t *testing.T) {
 	writeBoundedConfigTestFile(t, include, string(baseline))
 	rootData := []byte("apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nregistries: []\n")
 	overlays := map[string][]byte{include: []byte("registries: []\n#" + strings.Repeat("x", int(MaxEffectiveConfigSize)) + "\n")}
-	if _, _, err := loadConfigTreeWithReads(root, root, rootData, repoLayer, overlays); !errors.Is(err, ErrConfigTooLarge) {
+	if _, err := readLayerIntent(root, root, rootData, repoLayer, overlays); !errors.Is(err, ErrConfigTooLarge) {
 		t.Fatalf("overlay error = %v, want ErrConfigTooLarge", err)
 	}
 	got, err := os.ReadFile(include)

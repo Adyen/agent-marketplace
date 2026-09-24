@@ -431,7 +431,15 @@ func TestNonOrganizationIncludesKeepSymlinkAndWritableCompatibility(t *testing.T
 			t.Fatal(err)
 		}
 		writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: alias/../nested/leaf.yaml\n")
-		cfg, err := loadConfigTree(root, kind)
+		data, err := readConfigFile(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		li, err := readLayerIntent(root, "", data, kind, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := li.bind(nil)
 		if err != nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != "/live-registry" {
 			t.Fatalf("non-organization layer %v changed: cfg=%v err=%v", kind, cfg, err)
 		}
