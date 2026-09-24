@@ -183,6 +183,14 @@ func (e *LayerEditor) EnsureRegistry(entry RegistryEntry) (SourceBinding, error)
 	return e.ensureRegistry(entry, true)
 }
 
+func (e *LayerEditor) LookupRegistry(entry RegistryEntry) (SourceBinding, bool, error) {
+	binding, err := e.ensureRegistry(entry, false)
+	if err != nil {
+		return SourceBinding{}, false, err
+	}
+	return binding, binding.id != "", nil
+}
+
 func (e *LayerEditor) ensureRegistry(entry RegistryEntry, create bool) (SourceBinding, error) {
 	kind, err := e.validateRegistryEntry(entry)
 	if err != nil {
@@ -507,6 +515,24 @@ func (e *LayerEditor) ensureV4GroupSeq(group *yaml.Node, name, key string) (*yam
 	return seq, nil
 }
 
+func (e *LayerEditor) v4IncludeOwned(name, locator string) bool {
+	group, ok := e.loaded.Groups[name]
+	if !ok {
+		return false
+	}
+	for _, req := range group.Include {
+		if req.Locator != locator {
+			continue
+		}
+		for _, prov := range req.Provenance {
+			if prov.File != e.canonical {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (e *LayerEditor) v4InheritedSuppression(name, locator string) bool {
 	group, ok := e.loaded.Groups[name]
 	if !ok {
@@ -540,12 +566,14 @@ func (e *LayerEditor) applyV4(binding SourceBinding, op SelectionOperation, loca
 		return e.v4ApplyExclude(name, group, locators)
 	case SelectionRemoveInclude:
 		include, _ := v4GroupSeqs(group)
-		if include == nil {
-			return nil
+		for _, l := range locators {
+			if e.v4IncludeOwned(name, v4Locator(l)) {
+				return v4err("config.edit.include-owned", e.target.DeclaringPath, 0, "resource %q is requested by an included fragment", v4Locator(l))
+			}
 		}
 		changed := false
 		for _, l := range locators {
-			if v4EditRemoveLocator(include, v4Locator(l)) {
+			if include != nil && v4EditRemoveLocator(include, v4Locator(l)) {
 				changed = true
 			}
 		}
@@ -879,7 +907,7 @@ func legacyKindSeqRemove(entryNode *yaml.Node, kindKey, subKey, value string) bo
 	}
 	if kindMap.Kind == yaml.SequenceNode {
 		if subKey == "include" {
-			return legacySeqRemove(kindMap, value)
+			return legacySeqRemoveAll(kindMap, value)
 		}
 		return false
 	}
@@ -890,7 +918,7 @@ func legacyKindSeqRemove(entryNode *yaml.Node, kindKey, subKey, value string) bo
 	if seq == nil || seq.Kind != yaml.SequenceNode {
 		return false
 	}
-	return legacySeqRemove(seq, value)
+	return legacySeqRemoveAll(seq, value)
 }
 
 func legacySeqRemove(seq *yaml.Node, value string) bool {
@@ -901,6 +929,14 @@ func legacySeqRemove(seq *yaml.Node, value string) bool {
 		}
 	}
 	return false
+}
+
+func legacySeqRemoveAll(seq *yaml.Node, value string) bool {
+	removed := false
+	for legacySeqRemove(seq, value) {
+		removed = true
+	}
+	return removed
 }
 
 func legacySeqAppend(seq *yaml.Node, value string) bool {
@@ -930,7 +966,7 @@ func (e *LayerEditor) ClearUnboundExclude(locator ResourceLocator) error {
 	if seq == nil || seq.Kind != yaml.SequenceNode {
 		return nil
 	}
-	if !legacySeqRemove(seq, name) {
+	if !legacySeqRemoveAll(seq, name) {
 		return nil
 	}
 	if len(seq.Content) == 0 {
@@ -957,7 +993,7 @@ func (e *LayerEditor) RemoveUnboundInclude(locator ResourceLocator) error {
 		return nil
 	}
 	if kindMap.Kind == yaml.SequenceNode {
-		if !legacySeqRemove(kindMap, name) {
+		if !legacySeqRemoveAll(kindMap, name) {
 			return nil
 		}
 		if len(kindMap.Content) == 0 {
@@ -973,7 +1009,7 @@ func (e *LayerEditor) RemoveUnboundInclude(locator ResourceLocator) error {
 	if seq == nil || seq.Kind != yaml.SequenceNode {
 		return nil
 	}
-	if !legacySeqRemove(seq, name) {
+	if !legacySeqRemoveAll(seq, name) {
 		return nil
 	}
 	if len(seq.Content) == 0 {

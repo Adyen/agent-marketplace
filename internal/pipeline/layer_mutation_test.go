@@ -460,6 +460,9 @@ func TestMutateLayerRejectsInvalidInputs(t *testing.T) {
 		if _, err := m.UnboundIncludeInherited(config.ResourceLocator{Kind: ir.KindSkill, Name: "x"}); err == nil {
 			t.Fatal("nil receiver UnboundIncludeInherited accepted")
 		}
+		if _, _, err := m.LookupRegistry(config.RegistryEntry{URL: "https://example.test/repo.git", Ref: "main"}); err == nil {
+			t.Fatal("nil receiver LookupRegistry accepted")
+		}
 	})
 
 	data, err := os.ReadFile(configPath)
