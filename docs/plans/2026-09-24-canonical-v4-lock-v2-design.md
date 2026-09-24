@@ -1,6 +1,6 @@
 # Canonical v4 configuration and lockfile v2 mutation design
 
-**Status:** In-chat architecture approved; written design pending review
+**Status:** Approved; implementation pending
 
 **Date:** 2026-09-24
 
