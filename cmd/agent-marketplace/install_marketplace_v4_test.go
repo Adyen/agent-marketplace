@@ -186,3 +186,52 @@ func TestInstallMarketplaceResourceIntoV4RepoConfig(t *testing.T) {
 		t.Fatalf("review was not materialized: %v", err)
 	}
 }
+
+func TestRemoveMarketplaceResourceFromV4UserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server := newSelfCanonicalV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("review was not materialized: %v", err)
+	}
+
+	output, err = executeCommand("remove", "review", "--scope", "user")
+	if err != nil {
+		t.Fatalf("remove Marketplace resource: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "tools/skill/review") {
+		t.Fatalf("v4 config retained removed request:\n%s", data)
+	}
+	if !strings.Contains(string(data), "marketplace:") {
+		t.Fatalf("v4 config lost endpoint source:\n%s", data)
+	}
+	doc := readLockDocument(t, lockPath)
+	if len(doc.Marketplaces) != 1 || doc.Marketplaces[0].InstanceID != "mp" {
+		t.Fatalf("lock endpoints = %#v", doc.Marketplaces)
+	}
+	if len(doc.Marketplaces[0].Resources) != 0 {
+		t.Fatalf("stale lock resources = %#v", doc.Marketplaces[0].Resources)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review")); !os.IsNotExist(err) {
+		t.Fatalf("removed skill still materialized: %v", err)
+	}
+}

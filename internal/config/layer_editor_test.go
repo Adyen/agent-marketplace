@@ -1564,3 +1564,37 @@ func TestLayerEditorUnboundIncludeInherited(t *testing.T) {
 		}
 	})
 }
+
+func TestLayerEditorRemoveMarketplacePinDirectWithSelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	layerEditorWrite(t, path, "apiVersion: agent-marketplace/v4\nsources:\n  mp: {marketplace: https://mp.example.test}\nresources:\n  mp: {include: [src/skill/review]}\n")
+	editor := openTestEditor(t, RepoPersonal, path, path)
+	binding, found, err := editor.LookupMarketplaceSource("https://mp.example.test")
+	if err != nil || !found {
+		t.Fatalf("lookup marketplace source: found=%v err=%v", found, err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	pin := MarketplaceResourcePin{
+		RegistryID:   "src",
+		RegistrySlug: "src",
+		Kind:         "skill",
+		Name:         "review",
+		Revision:     digest,
+		Digest:       digest,
+		Direct:       true,
+		SelectedBy:   MarketplaceSelectionsFrom([]MarketplaceSelection{{RegistryID: "src", Name: "bundle", Revision: digest}}),
+	}
+	if err := editor.RemoveMarketplacePins(binding, []MarketplaceResourcePin{pin}); err != nil {
+		t.Fatalf("remove direct+selected pin: %v", err)
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !candidate.Changed || strings.Contains(string(candidate.Bytes), "src/skill/review") {
+		t.Fatalf("direct locator survived removal:\n%s", candidate.Bytes)
+	}
+	if !strings.Contains(string(candidate.Bytes), "marketplace:") {
+		t.Fatalf("endpoint source dropped:\n%s", candidate.Bytes)
+	}
+}

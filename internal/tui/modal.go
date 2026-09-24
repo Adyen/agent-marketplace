@@ -155,7 +155,7 @@ func scopedToggleConfigPath(repoRoot string, s scope) (string, error) {
 	return marketplaceToggleConfigPath(repoRoot, s)
 }
 
-func runMarketplaceScopedToggle(repoRoot string, act toggleAction, mapper pipeline.ConfigPathMapper) error {
+func runMarketplaceScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mapper pipeline.ConfigPathMapper) error {
 	if act.scope == scopeUserExclude {
 		if !act.allowMarketplaceExclude || !act.hasMarketplaceSelection || act.marketplaceSelection.Pin.RegistrySlug == "" {
 			return fmt.Errorf("marketplace resource has no overridable organization pin")
@@ -180,25 +180,23 @@ func runMarketplaceScopedToggle(repoRoot string, act toggleAction, mapper pipeli
 	if err != nil {
 		return err
 	}
-	if mapper != nil {
-		configPath, err = mapper(configPath)
-		if err != nil {
-			return err
-		}
-	}
 	selection := act.marketplaceSelection
-	if act.enable {
-		pin := selection.Pin
-		pin.Direct = true
-		pin.SelectedBy = ""
-		_, _, err = config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, selection.Entry.URL, selection.Entry.InstanceID, selection.Entry.Alias, []config.MarketplaceResourcePin{pin})
-		return err
-	}
-	if !selection.Pin.Direct && len(selection.Pin.SelectedBy.List()) > 0 {
+	if !act.enable && !selection.Pin.Direct && len(selection.Pin.SelectedBy.List()) > 0 {
 		return fmt.Errorf("marketplace %s %q is selected only through a collection", skill.KindLabel(act.kind), act.skillName)
 	}
-	_, _, err = config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, selection.Entry.URL, selection.Entry.InstanceID, selection.Pin)
-	return err
+	var source config.Source
+	switch act.scope {
+	case scopeGlobal:
+		source = config.UserPersonal
+	case scopeProject:
+		source = config.RepoCommitted
+	case scopeLocal:
+		source = config.RepoPersonal
+	default:
+		return fmt.Errorf("unsupported Marketplace toggle scope")
+	}
+	localDir := config.FindLocalConfigDir()
+	return pipeline.ToggleMarketplacePin(ctx, repoRoot, localDir, configPath, source, selection.Entry, selection.Pin, act.enable)
 }
 
 func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
@@ -214,7 +212,7 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 			return mapper(path)
 		}
 		if act.isMarketplace {
-			err := runMarketplaceScopedToggle(repoRoot, act, mapper)
+			err := runMarketplaceScopedToggle(context.Background(), repoRoot, act, mapper)
 			if err != nil {
 				slog.Error("TUI Marketplace toggle failed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable, "error", err)
 			} else {
@@ -294,6 +292,12 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 func runDependencyScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
 	if mutate == nil {
 		return runScopedToggle(repoRoot, act)
+	}
+	if act.isMarketplace && act.scope != scopeUserExclude {
+		return func() tea.Msg {
+			err := runMarketplaceScopedToggle(ctx, repoRoot, act, nil)
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
+		}
 	}
 	return func() tea.Msg {
 		err := mutate(ctx, repoRoot, func(mapper pipeline.ConfigPathMapper) error {
