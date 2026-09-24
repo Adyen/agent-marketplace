@@ -47,7 +47,7 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		}
 		desired = append(desired, dependencytxn.DesiredFile{Path: layer.LockPath, Expected: layer.expected, ExpectedMode: layer.expectedMode, Bytes: data, Mode: mode})
 	}
-	reads, err := effectiveReadAssertions(ec, nil)
+	reads, err := effectiveReadAssertions(ec, nil, nil)
 	if err != nil {
 		return 0, err
 	}

@@ -155,7 +155,12 @@ func layerAssessedRevision(revision store.ResourceRevision) store.AssessedResour
 
 func (f *layerMarketplaceServer) addSkill(t *testing.T, registry store.Registry, name string) {
 	t.Helper()
-	skill := ir.NewSkill(name, name+" description", name+" body", []string{"user"}, nil, ir.SourceRef{})
+	f.setSkill(t, registry, name, name+" body")
+}
+
+func (f *layerMarketplaceServer) setSkill(t *testing.T, registry store.Registry, name, body string) {
+	t.Helper()
+	skill := ir.NewSkill(name, name+" description", body, []string{"user"}, nil, ir.SourceRef{})
 	artifact, err := hccartifact.FromIR(skill)
 	if err != nil {
 		t.Fatalf("FromIR: %v", err)

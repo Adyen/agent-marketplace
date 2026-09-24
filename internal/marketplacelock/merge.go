@@ -76,27 +76,100 @@ func mergeSelectedBy(existing, added []lockfile.MarketplaceSelectionLock) []lock
 }
 
 func MergePinsToV4(v4 *config.V4Config, current lockfile.Document, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin, cache *marketplace.Cache) (lockfile.Document, error) {
-	if v4 == nil {
-		return lockfile.Document{}, lockMismatch("lock", "candidate v4 configuration is missing")
-	}
-	if current.APIVersion != "" && current.APIVersion != lockfile.APIVersionV1 && current.APIVersion != lockfile.APIVersionV2 {
-		return lockfile.Document{}, lockMismatch("lock", "unsupported lock apiVersion %q", current.APIVersion)
-	}
-	if current.Scope != "" && !current.Scope.Valid() {
-		return lockfile.Document{}, lockMismatch("lock", "invalid lock scope %q", current.Scope)
-	}
-	if wantScope := entry.Source.LockScope(); wantScope != "" && current.Scope != "" && string(current.Scope) != wantScope {
-		return lockfile.Document{}, lockMismatch("lock", "lock scope %q does not match source scope %q", current.Scope, wantScope)
-	}
 	if len(pins) > 0 && cache == nil {
 		return lockfile.Document{}, lockMismatch("lock", "verified Marketplace cache is required to merge pins")
 	}
-	canonical, err := marketplace.NormalizeMarketplaceURL(entry.URL)
+	doc, canonical, sourceName, merged, existing, err := beginV4MarketplaceMerge(v4, current, entry)
 	if err != nil {
 		return lockfile.Document{}, err
 	}
+	return finishV4MarketplaceMerge(v4, doc, canonical, sourceName, entry, merged, existing, pins, cache)
+}
+
+func ReplacePinsToV4(v4 *config.V4Config, current lockfile.Document, entry config.MarketplaceEntry, expectedRoot config.MarketplaceResourcePin, replacements []config.MarketplaceResourcePin, cache *marketplace.Cache) (lockfile.Document, error) {
+	if len(replacements) == 0 {
+		return lockfile.Document{}, lockMismatch("lock", "Marketplace update requires a verified replacement")
+	}
+	if cache == nil {
+		return lockfile.Document{}, lockMismatch("lock", "verified Marketplace cache is required to replace pins")
+	}
+	if err := config.ValidateMarketplaceResourcePin(expectedRoot); err != nil {
+		return lockfile.Document{}, err
+	}
+	doc, canonical, sourceName, merged, existing, err := beginV4MarketplaceMerge(v4, current, entry)
+	if err != nil {
+		return lockfile.Document{}, err
+	}
+	if existing == nil {
+		return lockfile.Document{}, lockMismatch("marketplaces", "endpoint %q has no lock record to update", canonical)
+	}
+	registryName := expectedRoot.RegistrySlug
+	if registryName == "" {
+		registryName = expectedRoot.RegistryID
+	}
+	for i := range v4.Requests {
+		request := &v4.Requests[i]
+		if request.SourceName != sourceName {
+			continue
+		}
+		if request.Registry == registryName && v4MarketplaceLockKind(request.Kind) == expectedRoot.Kind && request.Name == expectedRoot.Name && request.Options.Revision != "" {
+			return lockfile.Document{}, lockMismatch("marketplaces", "request %q pins an explicit revision and cannot be updated", request.Locator)
+		}
+	}
+	root := -1
+	for i := range existing.Resources {
+		record := &existing.Resources[i]
+		if record.RegistryID == expectedRoot.RegistryID && record.Kind == expectedRoot.Kind && record.Name == expectedRoot.Name {
+			root = i
+			break
+		}
+	}
+	if root < 0 {
+		return lockfile.Document{}, lockMismatch("marketplaces", "resource %s/%s/%s has no lock record to update", expectedRoot.RegistryID, expectedRoot.Kind, expectedRoot.Name)
+	}
+	verified, err := cache.VerifiedMarketplaceLockResource(entry, expectedRoot)
+	if err != nil {
+		return lockfile.Document{}, fmt.Errorf("verify expected %s/%s/%s lock evidence: %w", expectedRoot.RegistryID, expectedRoot.Kind, expectedRoot.Name, err)
+	}
+	if evidenceOf(existing.Resources[root]) != evidenceOf(verified) {
+		return lockfile.Document{}, lockMismatch("marketplaces", "resource %s/%s/%s lock evidence no longer matches the expected pin", expectedRoot.RegistryID, expectedRoot.Kind, expectedRoot.Name)
+	}
+	existing.Resources = append(existing.Resources[:root], existing.Resources[root+1:]...)
+	if expectedRoot.Kind == "collection" {
+		for i := range existing.Resources {
+			record := &existing.Resources[i]
+			kept := record.SelectedBy[:0]
+			for _, edge := range record.SelectedBy {
+				if edge.RegistryID == expectedRoot.RegistryID && edge.Name == expectedRoot.Name && string(edge.Revision) == expectedRoot.Revision {
+					continue
+				}
+				kept = append(kept, edge)
+			}
+			record.SelectedBy = kept
+		}
+	}
+	return finishV4MarketplaceMerge(v4, doc, canonical, sourceName, entry, merged, existing, replacements, cache)
+}
+
+func beginV4MarketplaceMerge(v4 *config.V4Config, current lockfile.Document, entry config.MarketplaceEntry) (lockfile.Document, string, string, []lockfile.MarketplaceLock, *lockfile.MarketplaceLock, error) {
+	if v4 == nil {
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("lock", "candidate v4 configuration is missing")
+	}
+	if current.APIVersion != "" && current.APIVersion != lockfile.APIVersionV1 && current.APIVersion != lockfile.APIVersionV2 {
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("lock", "unsupported lock apiVersion %q", current.APIVersion)
+	}
+	if current.Scope != "" && !current.Scope.Valid() {
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("lock", "invalid lock scope %q", current.Scope)
+	}
+	if wantScope := entry.Source.LockScope(); wantScope != "" && current.Scope != "" && string(current.Scope) != wantScope {
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("lock", "lock scope %q does not match source scope %q", current.Scope, wantScope)
+	}
+	canonical, err := marketplace.NormalizeMarketplaceURL(entry.URL)
+	if err != nil {
+		return lockfile.Document{}, "", "", nil, nil, err
+	}
 	if entry.InstanceID == "" {
-		return lockfile.Document{}, lockMismatch("marketplaces", "Marketplace endpoint %q has no verified instance identity", canonical)
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("marketplaces", "Marketplace endpoint %q has no verified instance identity", canonical)
 	}
 	var sourceNames []string
 	for name, source := range v4.Sources {
@@ -105,11 +178,11 @@ func MergePinsToV4(v4 *config.V4Config, current lockfile.Document, entry config.
 		}
 	}
 	if len(sourceNames) == 0 {
-		return lockfile.Document{}, lockMismatch("sources", "Marketplace endpoint %q has no v4 source", canonical)
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("sources", "Marketplace endpoint %q has no v4 source", canonical)
 	}
 	if len(sourceNames) > 1 {
 		sort.Strings(sourceNames)
-		return lockfile.Document{}, lockMismatch("sources", "Marketplace endpoint %q matches multiple v4 sources: %v", canonical, sourceNames)
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("sources", "Marketplace endpoint %q matches multiple v4 sources: %v", canonical, sourceNames)
 	}
 	sourceName := sourceNames[0]
 
@@ -124,11 +197,11 @@ func MergePinsToV4(v4 *config.V4Config, current lockfile.Document, entry config.
 		record := doc.Marketplaces[i]
 		recordCanonical, err := marketplace.NormalizeMarketplaceURL(record.URL)
 		if err != nil {
-			return lockfile.Document{}, lockMismatch("marketplaces", "lock endpoint %q is not a valid URL: %v", record.URL, err)
+			return lockfile.Document{}, "", "", nil, nil, lockMismatch("marketplaces", "lock endpoint %q is not a valid URL: %v", record.URL, err)
 		}
 		if recordCanonical == canonical {
 			if existing != nil {
-				return lockfile.Document{}, lockMismatch("marketplaces", "lock contains duplicate endpoint records for %q", canonical)
+				return lockfile.Document{}, "", "", nil, nil, lockMismatch("marketplaces", "lock contains duplicate endpoint records for %q", canonical)
 			}
 			copy := record
 			existing = &copy
@@ -136,16 +209,19 @@ func MergePinsToV4(v4 *config.V4Config, current lockfile.Document, entry config.
 		}
 		kept, err := pruneEndpointRecord(v4, record)
 		if err != nil {
-			return lockfile.Document{}, err
+			return lockfile.Document{}, "", "", nil, nil, err
 		}
 		if kept != nil {
 			merged = append(merged, *kept)
 		}
 	}
 	if existing != nil && existing.InstanceID != entry.InstanceID {
-		return lockfile.Document{}, lockMismatch("marketplaces", "endpoint %q instance %q conflicts with prepared identity %q", canonical, existing.InstanceID, entry.InstanceID)
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("marketplaces", "endpoint %q instance %q conflicts with prepared identity %q", canonical, existing.InstanceID, entry.InstanceID)
 	}
+	return doc, canonical, sourceName, merged, existing, nil
+}
 
+func finishV4MarketplaceMerge(v4 *config.V4Config, doc lockfile.Document, canonical, sourceName string, entry config.MarketplaceEntry, merged []lockfile.MarketplaceLock, existing *lockfile.MarketplaceLock, pins []config.MarketplaceResourcePin, cache *marketplace.Cache) (lockfile.Document, error) {
 	next := lockfile.MarketplaceLock{URL: canonical, InstanceID: entry.InstanceID}
 	if existing != nil {
 		retained, err := reachableResources(v4, sourceName, existing.Resources)
