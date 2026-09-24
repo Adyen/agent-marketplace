@@ -1496,6 +1496,13 @@ func loadLayerLock(path string, scope lockfile.Scope) (*lockfile.Document, depen
 	if err != nil {
 		return nil, generation, true, &lockLifecycleError{Code: "lock.invalid", Scope: scope, Path: path, Err: err}
 	}
+	if doc.APIVersion == lockfile.APIVersionV1 {
+		slog.Warn("lock file uses the deprecated v1 schema; the next writable reconciliation upgrades it to v2",
+			slog.String("code", "lock.version-deprecated"),
+			slog.String("path", path),
+			slog.String("scope", string(scope)),
+		)
+	}
 	return &doc, generation, true, nil
 }
 

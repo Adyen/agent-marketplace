@@ -1,7 +1,6 @@
 package pipeline
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -320,18 +319,6 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	return &RemoveResult{RemovedName: name, InferredUserScope: inferredUserScope}, nil
 }
 
-func disableCollectionInRegistry(configPath, registryURL, registryPath, ref, name string) error {
-	if strings.TrimSpace(ref) != "" {
-		return config.DisableResourceWithShadowFallbackAtRef(configPath, registryURL, registryPath, ref, ir.KindCollection, name)
-	}
-	if err := config.DisableResourceWithShadowFallback(configPath, registryURL, registryPath, ref, ir.KindCollection, name); err != nil {
-		return err
-	}
-	// Retain an exclusion after removing a root selection so an included or
-	// lower-layer selection cannot re-enable the collection.
-	return config.AddKindExcludeToRegistryInConfig(configPath, registryURL, registryPath, ir.KindCollection, name)
-}
-
 func isEditUnsupported(err error) bool {
 	var validation *config.V4ValidationError
 	return errors.As(err, &validation) && validation.Code == "config.edit.unsupported-operation"
@@ -618,30 +605,6 @@ func requiredCollectionAutoSelects(entry config.RegistryEntry) bool {
 		}
 	}
 	return true
-}
-
-func removeOrExcludeCollection(configPath, name string) error {
-	rootCfg, err := config.LoadRootConfigFromPath(configPath)
-	if err != nil {
-		return fmt.Errorf("load root config %q: %w", configPath, err)
-	}
-	// Validate includes before mutating the root selection.
-	if _, err := config.LoadConfigFromPath(configPath); err != nil {
-		return fmt.Errorf("validate config includes %q: %w", configPath, err)
-	}
-	if hasTopLevelCollectionSelection(rootCfg, name) {
-		if err := config.RemoveCollectionFromConfig(configPath, name); err != nil {
-			return err
-		}
-		expandedCfg, err := config.LoadConfigFromPath(configPath)
-		if err != nil {
-			return fmt.Errorf("reload expanded config %q: %w", configPath, err)
-		}
-		if !hasTopLevelCollectionSelection(expandedCfg, name) {
-			return nil
-		}
-	}
-	return config.AddKindExcludeToConfig(configPath, ir.KindCollection, name)
 }
 
 func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg, repoCfg, orgCfg *config.Config, err error) {
@@ -1533,32 +1496,6 @@ func removalEditEntry(entry config.RegistryEntry, url, path, ref string) config.
 		out.Ref = trimmed
 	}
 	return out
-}
-
-func removeMarketplaceAndSync(ctx context.Context, repoRoot, configPath string, mutate func() (*config.FileSnapshot, config.ConfigFileCommit, error)) (retErr error) {
-	snapshot, commit, err := mutate()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if retErr == nil {
-			return
-		}
-		if rollbackErr := snapshot.RestoreIfCurrent(commit); rollbackErr != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("rollback Marketplace config: %w", rollbackErr))
-		}
-	}()
-	if err := silentSync(ctx, repoRoot); err != nil {
-		return err
-	}
-	current, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("read Marketplace config after remove: %w", err)
-	}
-	if !bytes.Equal(current, commit.Bytes) {
-		return fmt.Errorf("marketplace config changed concurrently during remove")
-	}
-	return nil
 }
 
 func marketplaceCollectionByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {

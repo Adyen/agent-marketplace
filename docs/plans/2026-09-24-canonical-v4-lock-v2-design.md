@@ -1,6 +1,15 @@
 # Canonical v4 configuration and lockfile v2 mutation design
 
-**Status:** Approved; implementation pending
+**Status:** Implemented
+
+Intentional transition boundaries retained after implementation:
+
+- v2/v3 roots remain readable and writable through the deprecated legacy editor backend; each mutation transaction emits `config.legacy-deprecated` naming the `agent-marketplace migrate --scope <scope>` command. New writable roots are always v4.
+- A writable v1 lock auto-upgrades to v2 on the next reconciliation; a read-only organization v1 lock is accepted with a `lock.version-deprecated` warning.
+- Requests owned by an included fragment refuse with `config.edit.include-owned` rather than editing the fragment.
+- A v4 layer that declares a Marketplace source without endpoint evidence in its lock fails closed (`v4.marketplace-lock-mismatch`); recovery goes through an explicit endpoint install or lock bootstrap that verifies identity online.
+- Organization configuration and locks are never written; an intentionally absent organization lock keeps its online transient in-memory acquisition path.
+- Hosted dynamic-selector snapshots (`tags`/`all`), hosted rebind, and offline transient acquisition remain outside this design.
 
 **Date:** 2026-09-24
 

@@ -134,6 +134,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	defer closeConfigStaging(staging, "update", &retErr)
 	lockEdits := make(map[string]StagedLockEdit)
 	var lockEditOrder []string
+	warnedLegacyPaths := make(map[string]bool)
 	for i := range plans {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -168,6 +169,10 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 			updateErr := fmt.Errorf("update Marketplace pin %s/%s/%s: %w", plan.OldPin.RegistryID, plan.OldPin.Kind, plan.OldPin.Name, err)
 			slog.Error("update aborted on Marketplace config conflict", "config_path", plan.ConfigPath, "registry_id", plan.OldPin.RegistryID, "kind", plan.OldPin.Kind, "name", plan.OldPin.Name, "error", updateErr)
 			return nil, updateErr
+		}
+		if !warnedLegacyPaths[plan.ConfigPath] {
+			warnedLegacyPaths[plan.ConfigPath] = true
+			warnLegacyLayerMutation(plan.Source, plan.ConfigPath)
 		}
 		plan.Updated = true
 	}

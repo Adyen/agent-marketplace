@@ -634,39 +634,6 @@ func TestRemoveCollectionDuplicateInRootAndIncludeRetainsExclusion(t *testing.T)
 	}
 }
 
-func TestRemoveOrExcludeCollectionDeletesRootSelection(t *testing.T) {
-	rootPath := config.ProjectConfigPath(t.TempDir())
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [root-bundle]\n")
-	if err := removeOrExcludeCollection(rootPath, "root-bundle"); err != nil {
-		t.Fatal(err)
-	}
-	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if slices.Contains(rootCfg.Collections.Include, "root-bundle") || slices.Contains(rootCfg.Collections.Exclude, "root-bundle") {
-		t.Fatalf("root collections = %#v, want selection removed without exclusion", rootCfg.Collections)
-	}
-}
-
-func TestRemoveOrExcludeCollectionValidatesIncludesBeforeEditing(t *testing.T) {
-	repoRoot := t.TempDir()
-	rootPath := config.ProjectConfigPath(repoRoot)
-	original := []byte("apiVersion: agent-marketplace/v2\ninclude: missing.yaml\ncollections:\n  include: [root-bundle]\n")
-	writeFile(t, rootPath, string(original))
-
-	if err := removeOrExcludeCollection(rootPath, "root-bundle"); err == nil {
-		t.Fatal("expected missing include validation error")
-	}
-	got, err := os.ReadFile(rootPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(got, original) {
-		t.Fatalf("root bytes changed after include validation failure:\nbefore %q\nafter  %q", original, got)
-	}
-}
-
 func TestRemoveCollectionUsesRequestedScopeAndPreservesOtherRoot(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
@@ -919,29 +886,6 @@ func assertResourceNotResolved(t *testing.T, repoRoot, name string) {
 	}
 }
 
-func TestDisableCollectionPathOnlyAliasIsRegistrySpecific(t *testing.T) {
-	rootPath := config.ProjectConfigPath(t.TempDir())
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nregistries:\n  - path: /local/skills\n    collections: [local-bundle]\n")
-	selection, err := collectionSelectionAtPath(rootPath, config.RepoCommitted, "local-bundle", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if selection == nil || !selection.RegistryScoped {
-		t.Fatalf("selection = %#v, want registry-scoped path alias", selection)
-	}
-	registryURL, registryPath := collectionRegistryLocation(selection)
-	if err := disableCollectionInRegistry(rootPath, registryURL, registryPath, "", "local-bundle"); err != nil {
-		t.Fatal(err)
-	}
-	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rootCfg.Registries) != 1 || !slices.Contains(rootCfg.Registries[0].Collections.Exclude, "local-bundle") || slices.Contains(rootCfg.Registries[0].Collections.Include, "local-bundle") {
-		t.Fatalf("registries = %#v, want path-only registry collection excluded", rootCfg.Registries)
-	}
-}
-
 func TestRemovePathOnlyLocalResourceUsesOnlyRequestedRegistry(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
@@ -980,21 +924,6 @@ func TestRemovePathOnlyLocalResourceUsesOnlyRequestedRegistry(t *testing.T) {
 	}
 }
 
-func TestDisableCollectionIsRegistrySpecific(t *testing.T) {
-	rootPath := config.ProjectConfigPath(t.TempDir())
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nregistries:\n  - path: /registry-a\n    collections: [shared-bundle]\n  - path: /registry-b\n    collections: [shared-bundle]\n")
-	if err := disableCollectionInRegistry(rootPath, "/registry-a", "", "", "shared-bundle"); err != nil {
-		t.Fatal(err)
-	}
-	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rootCfg.Registries) != 2 || !slices.Contains(rootCfg.Registries[0].Collections.Exclude, "shared-bundle") || !slices.Contains(rootCfg.Registries[1].Collections.Include, "shared-bundle") {
-		t.Fatalf("registries = %#v, want only registry-a collection excluded", rootCfg.Registries)
-	}
-}
-
 func TestRemoveAdHocRefTargetsOnlyNamedRef(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
@@ -1028,27 +957,6 @@ func TestRemoveAdHocRefTargetsOnlyNamedRef(t *testing.T) {
 	}
 	if len(cfg.Registries) != 1 || cfg.Registries[0].Ref != "main" {
 		t.Fatalf("registries after whole removal = %#v, want main only", cfg.Registries)
-	}
-}
-
-func TestDisableCollectionAtRefIsRegistrySpecific(t *testing.T) {
-	rootPath := config.ProjectConfigPath(t.TempDir())
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: git@example.com:shared.git\n    ref: main\n    path: bundles\n    collections: [shared-bundle]\n  - url: git@example.com:shared.git\n    ref: release\n    path: bundles\n    collections: [shared-bundle]\n")
-	if err := disableCollectionInRegistry(rootPath, "git@example.com:shared.git", "bundles", "release", "shared-bundle"); err != nil {
-		t.Fatal(err)
-	}
-	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rootCfg.Registries) != 2 {
-		t.Fatalf("registries = %#v, want two entries", rootCfg.Registries)
-	}
-	if !slices.Contains(rootCfg.Registries[0].Collections.Include, "shared-bundle") || slices.Contains(rootCfg.Registries[0].Collections.Exclude, "shared-bundle") {
-		t.Fatalf("main entry changed: %#v", rootCfg.Registries[0])
-	}
-	if slices.Contains(rootCfg.Registries[1].Collections.Include, "shared-bundle") || !slices.Contains(rootCfg.Registries[1].Collections.Exclude, "shared-bundle") {
-		t.Fatalf("release entry not disabled: %#v", rootCfg.Registries[1])
 	}
 }
 
