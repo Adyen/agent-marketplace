@@ -15,7 +15,9 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -165,7 +167,9 @@ func registerMarketplaceEndpoint(ctx context.Context, opts InstallOptions, confi
 		slog.Info("Marketplace endpoint already configured", "url", canonical, "instance_id", entry.InstanceID, "config_path", existingPath)
 		return &InstallResult{MarketplaceEndpoint: canonical, MarketplaceConfigPath: existingPath, MarketplaceAlreadyConfigured: true}, nil
 	}
-	if err := config.EnsureMarketplaceEntryInConfig(configPath, entry); err != nil {
+	if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.LocalConfigDir, configPath, installScopeSource(opts.Scope), func(m *MarketplaceLayerMutation) error {
+		return m.EnsureEndpoint(entry)
+	}, nil); err != nil {
 		return nil, fmt.Errorf("write Marketplace endpoint: %w", err)
 	}
 	slog.Info("Marketplace endpoint registered", "url", canonical, "instance_id", entry.InstanceID, "config_path", configPath)
@@ -334,7 +338,12 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	if err := evaluateMarketplaceConsent(prepared.plan, true); err != nil {
 		return nil, err
 	}
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: prepared.options.RepoRoot, LocalConfigDir: prepared.options.LocalConfigDir}, nil)
+	pins := marketplaceInstallPins(prepared.plan)
+	lockOverlay, err := preparedMarketplaceLockOverlay(prepared.configPath, installScopeSource(prepared.options.Scope), prepared.plan.Entry, pins)
+	if err != nil {
+		return nil, err
+	}
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: prepared.options.RepoRoot, LocalConfigDir: prepared.options.LocalConfigDir, FileOverlays: lockOverlay}, nil)
 	var allowedMarketplaces, allowedRegistries *[]string
 	if ec.Merged != nil {
 		allowedMarketplaces = ec.Merged.AllowedMarketplaces
@@ -358,13 +367,14 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	} else if prepared.endpointConfigured {
 		return nil, errors.New("marketplace endpoint changed after install preview; preview again")
 	}
-	if err := checkMarketplaceInstallCollision(ctx, prepared.options, &ec, prepared.plan); err != nil {
+	if err := checkMarketplaceInstallCollision(ctx, prepared.options, &ec, prepared.plan, lockOverlay); err != nil {
 		return nil, err
 	}
-	pins := marketplaceInstallPins(prepared.plan)
 	identities := marketplaceInstallIdentities(prepared.plan)
-	requirementWarnings, err := ensureMarketplacePinsAndSync(prepared.configPath, commitEntry, pins, func() ([]error, error) {
-		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan))
+	requirementWarnings, err := MutateMarketplaceLayer(ctx, prepared.options.RepoRoot, prepared.options.LocalConfigDir, prepared.configPath, installScopeSource(prepared.options.Scope), func(m *MarketplaceLayerMutation) error {
+		return m.IncludePins(commitEntry, pins)
+	}, func() ([]error, error) {
+		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan), withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
 		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
 	})
 	if err != nil {
@@ -601,7 +611,51 @@ func resolveMarketplaceEntry(locator marketplace.MarketplaceLocator, selector st
 	return config.MarketplaceEntry{URL: want}, nil
 }
 
-func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig, plan *marketplace.PreparedInstall) error {
+func preparedMarketplaceLockOverlay(configPath string, source config.Source, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin) (map[string][]byte, error) {
+	v4Cfg, err := config.LoadV4ConfigIfPresent(configPath, source)
+	if err != nil {
+		return nil, err
+	}
+	if v4Cfg == nil {
+		return nil, nil
+	}
+	hasMarketplace := false
+	for name := range v4Cfg.Sources {
+		if v4Cfg.AcquiresMarketplace(name) {
+			hasMarketplace = true
+			break
+		}
+	}
+	if !hasMarketplace {
+		return nil, nil
+	}
+	lockPath, err := marketplaceLayerLockPath(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Lstat(lockPath); err == nil {
+		return nil, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	mergeEntry := entry
+	mergeEntry.Source = source
+	repaired, err := marketplacelock.MergePinsToV4(v4Cfg, lockfile.Document{Scope: lockfile.Scope(source.LockScope())}, mergeEntry, pins, marketplace.DefaultCache())
+	if err != nil {
+		return nil, err
+	}
+	data, err := lockfile.Encode(repaired)
+	if err != nil {
+		return nil, err
+	}
+	return map[string][]byte{lockPath: data}, nil
+}
+
+func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig, plan *marketplace.PreparedInstall, lockOverlays ...map[string][]byte) error {
+	var overlays map[string][]byte
+	if len(lockOverlays) > 0 {
+		overlays = lockOverlays[0]
+	}
 	if len(plan.CollectionMembers) > 0 {
 		seen := make(map[string]*marketplace.PreparedInstall, len(plan.CollectionMembers))
 		for _, member := range plan.CollectionMembers {
@@ -614,7 +668,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 				continue
 			}
 			seen[key] = member
-			if err := checkMarketplaceInstallCollision(ctx, opts, ec, member); err != nil {
+			if err := checkMarketplaceInstallCollision(ctx, opts, ec, member, overlays); err != nil {
 				return err
 			}
 		}
@@ -641,7 +695,10 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 		return ctx.Err()
 	}
 	marketplaceMode := resolver.MarketplaceResolveModeRefresh
-	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true})
+	if overlays != nil {
+		marketplaceMode = resolver.MarketplaceResolveModeCachedNoFetch
+	}
+	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true, EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, FileOverlays: overlays}})
 	if len(resolved.Errors) > 0 {
 		return errors.Join(resolved.Errors...)
 	}

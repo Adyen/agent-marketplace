@@ -75,6 +75,7 @@ type LayerEditor struct {
 	bindings         map[string]SourceBinding
 	legacyNodes      map[string]*yaml.Node
 	includedFiles    []*Config
+	rendered         *V4Config
 }
 
 func OpenLayerEditor(target LayerTarget) (*LayerEditor, error) {
@@ -173,10 +174,21 @@ func (e *LayerEditor) Render() (LayerCandidate, error) {
 		if err := loaded.validateLayerFields(e.kind); err != nil {
 			return LayerCandidate{}, err
 		}
+		e.rendered = loaded
 	}
 	candidate.Bytes = append([]byte(nil), data...)
 	candidate.Changed = true
 	return candidate, nil
+}
+
+func (e *LayerEditor) RenderedV4() *V4Config {
+	if e.legacy {
+		return nil
+	}
+	if e.rendered != nil {
+		return e.rendered
+	}
+	return e.loaded
 }
 
 func (e *LayerEditor) EnsureRegistry(entry RegistryEntry) (SourceBinding, error) {

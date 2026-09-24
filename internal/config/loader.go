@@ -527,7 +527,18 @@ func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overla
 	}
 	canonical, err := canonicalConfigPath(configPath)
 	if err != nil {
-		return nil, nil, err
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, err
+		}
+		absolute, absErr := filepath.Abs(configPath)
+		if absErr != nil {
+			return nil, nil, absErr
+		}
+		dir, dirErr := filepath.EvalSymlinks(filepath.Dir(absolute))
+		if dirErr != nil {
+			return nil, nil, dirErr
+		}
+		canonical = filepath.Join(dir, filepath.Base(absolute))
 	}
 	paths, err := configLockPaths(configPath, canonical)
 	if err != nil {
