@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -450,6 +451,199 @@ func TestInstallFromV4UserRefPathUsesCanonicalEditor(t *testing.T) {
 			t.Fatalf("staging residue %s", entry.Name())
 		}
 	}
+}
+
+func TestConfiguredInstallV4UsesCanonicalEditor(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name         string
+		args         func(origin string) []string
+		wantLocators []string
+		wantTags     []string
+		materialized []string
+	}{
+		{
+			name:         "named skill",
+			args:         func(origin string) []string { return []string{"install", "review"} },
+			wantLocators: []string{"skill/review"},
+			materialized: []string{filepath.Join(".factory", "skills", "review", "SKILL.md")},
+		},
+		{
+			name:         "named collection",
+			args:         func(origin string) []string { return []string{"install", "platform-bundle"} },
+			wantLocators: []string{"collection/platform-bundle"},
+			materialized: []string{filepath.Join(".factory", "skills", "review", "SKILL.md")},
+		},
+		{
+			name:         "tag",
+			args:         func(origin string) []string { return []string{"install", "--tag", "platform"} },
+			wantTags:     []string{"platform"},
+			materialized: []string{filepath.Join(".factory", "skills", "review", "SKILL.md")},
+		},
+		{
+			name:         "tag with kind",
+			args:         func(origin string) []string { return []string{"install", "--tag", "platform", "--kind", "command"} },
+			wantLocators: []string{"command/audit"},
+			materialized: []string{filepath.Join(".factory", "commands", "audit.md")},
+		},
+		{
+			name: "all kind registry",
+			args: func(origin string) []string {
+				return []string{"install", "--all", "--kind", "subagent", "--registry", origin}
+			},
+			wantLocators: []string{"subagent/gatekeeper"},
+			materialized: []string{filepath.Join(".factory", "droids", "gatekeeper.md")},
+		},
+		{
+			name:         "all",
+			args:         func(origin string) []string { return []string{"install", "--all"} },
+			wantLocators: []string{"collection/platform-bundle", "command/audit", "skill/review", "subagent/gatekeeper"},
+			materialized: []string{
+				filepath.Join(".factory", "skills", "review", "SKILL.md"),
+				filepath.Join(".factory", "commands", "audit.md"),
+				filepath.Join(".factory", "droids", "gatekeeper.md"),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+
+			originPath, working := createBareRepoWithWorkingClone(t, "configured-v4.git")
+			writeSkill(t, working, "review", "Review", []string{"platform"})
+			writeSubagent(t, working, "gatekeeper", "Gatekeeper", []string{"Read"})
+			writeFile(t, filepath.Join(working, "commands", "audit.md"), "---\nname: audit\ndescription: Audit\ncommand: echo audit\nmetadata:\n  tags:\n    - platform\n---\n\n# audit\n")
+			writeCollection(t, working, "platform-bundle", `
+apiVersion: agent-marketplace/v1
+kind: Collection
+name: platform-bundle
+version: 1.0.0
+skills:
+  - name: review
+`)
+			commitAndPushAll(t, working, "seed inventory")
+			origin := "file://" + originPath
+
+			repoRoot := filepath.Join(t.TempDir(), "repo")
+			configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+			writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: "+origin+", ref: main}\n")
+			withWorkingDir(t, repoRoot)
+
+			output, err := executeCommand(tc.args(origin)...)
+			if err != nil {
+				t.Fatalf("install failed: %v\n%s", err, output)
+			}
+			raw, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "registries:") {
+				t.Fatalf("v4 config gained legacy registries:\n%s", raw)
+			}
+			cfg, err := config.LoadV4ConfigFromPath(configPath)
+			if err != nil {
+				t.Fatalf("load v4 config: %v", err)
+			}
+			if len(cfg.Sources) != 1 || cfg.Sources["hosted"].Kind != config.V4SourceGit {
+				t.Fatalf("sources = %#v", cfg.Sources)
+			}
+			if len(cfg.Groups) != 1 {
+				t.Fatalf("expected one resource group: %#v", cfg.Groups)
+			}
+			var group config.V4ResourceGroup
+			for _, g := range cfg.Groups {
+				group = g
+			}
+			var locators []string
+			for _, req := range group.Include {
+				locators = append(locators, req.Locator)
+			}
+			slices.Sort(locators)
+			want := slices.Clone(tc.wantLocators)
+			slices.Sort(want)
+			if !slices.Equal(locators, want) {
+				t.Fatalf("group locators = %v, want %v\n%s", locators, want, raw)
+			}
+			gotTags := slices.Clone(group.Tags)
+			slices.Sort(gotTags)
+			wantTags := slices.Clone(tc.wantTags)
+			slices.Sort(wantTags)
+			if !slices.Equal(gotTags, wantTags) {
+				t.Fatalf("group tags = %v, want %v\n%s", gotTags, wantTags, raw)
+			}
+			if group.All != nil && *group.All {
+				t.Fatalf("configured install wrote all:true:\n%s", raw)
+			}
+			lock := readExactManifestLock(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
+			if lock.APIVersion != lockfile.APIVersionV2 || lock.Scope != lockfile.ScopeRepo {
+				t.Fatalf("lock = %v %v", lock.APIVersion, lock.Scope)
+			}
+			for _, rel := range tc.materialized {
+				assertFileExists(t, filepath.Join(repoRoot, rel))
+			}
+			if residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
+				t.Fatalf("staging residue = %v err=%v", residue, err)
+			}
+		})
+	}
+}
+
+func TestConfiguredInstallV4AllWritesLocatorsUnderEachProvider(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("TMPDIR", t.TempDir())
+
+	skillsOrigin, skillsWorking := createBareRepoWithWorkingClone(t, "provider-skills.git")
+	writeSkill(t, skillsWorking, "alpha", "Alpha", nil)
+	commitAndPushAll(t, skillsWorking, "alpha")
+	toolsOrigin, toolsWorking := createBareRepoWithWorkingClone(t, "provider-tools.git")
+	writeCommand(t, toolsWorking, "beta", "Beta", "echo beta")
+	commitAndPushAll(t, toolsWorking, "beta")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  alpha-src: {git: file://"+skillsOrigin+", ref: main}\n  beta-src: {git: file://"+toolsOrigin+", ref: main}\n")
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--all")
+	if err != nil {
+		t.Fatalf("install --all failed: %v\n%s", err, output)
+	}
+	cfg, err := config.LoadV4ConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("load v4 config: %v", err)
+	}
+	locators := func(source string) []string {
+		group, ok := cfg.Groups[source]
+		if !ok {
+			t.Fatalf("missing resource group for %s: %#v", source, cfg.Groups)
+		}
+		var out []string
+		for _, req := range group.Include {
+			out = append(out, req.Locator)
+		}
+		slices.Sort(out)
+		return out
+	}
+	if got := locators("alpha-src"); !slices.Equal(got, []string{"skill/alpha"}) {
+		t.Fatalf("alpha-src locators = %v", got)
+	}
+	if got := locators("beta-src"); !slices.Equal(got, []string{"command/beta"}) {
+		t.Fatalf("beta-src locators = %v", got)
+	}
+	assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "alpha", "SKILL.md"))
+	assertFileExists(t, filepath.Join(repoRoot, ".factory", "commands", "beta.md"))
 }
 
 func TestInstallFromV4AdHocCollectionAndBundle(t *testing.T) {

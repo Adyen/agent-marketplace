@@ -908,6 +908,36 @@ func legacySeqAppend(seq *yaml.Node, value string) bool {
 	return true
 }
 
+func (e *LayerEditor) ClearUnboundExclude(locator ResourceLocator) error {
+	key := skill.ConfigKeyForKind(locator.Kind)
+	name := strings.TrimSpace(locator.Name)
+	if key == "" || name == "" {
+		return v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
+	}
+	if !e.legacy {
+		return nil
+	}
+	kindMap := findMappingValue(e.root, key)
+	if kindMap == nil || kindMap.Kind != yaml.MappingNode {
+		return nil
+	}
+	_, seq := findEntrySequence(kindMap, "exclude")
+	if seq == nil || seq.Kind != yaml.SequenceNode {
+		return nil
+	}
+	if !legacySeqRemove(seq, name) {
+		return nil
+	}
+	if len(seq.Content) == 0 {
+		removeMappingKeyByName(kindMap, "exclude")
+	}
+	if len(kindMap.Content) == 0 {
+		removeMappingKeyByName(e.root, key)
+	}
+	e.changed = true
+	return nil
+}
+
 func (e *LayerEditor) RemoveSource(binding SourceBinding) error {
 	if issued, ok := e.bindings[binding.id]; binding.id == "" || !ok || issued.Name != binding.Name {
 		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")

@@ -8,11 +8,45 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+func TestAddResourcesToAllRegistriesIncludesOnlyMatchingProviders(t *testing.T) {
+	_, configPath, _ := mutateLayerFixture(t)
+	writeMutateLayerConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [claude]\nregistries:\n  - url: https://a.example/repo.git\n    ref: main\n  - url: https://b.example/repo.git\n    ref: main\n")
+	entries := []config.RegistryEntry{
+		{URL: "https://a.example/repo.git", Ref: "main", CatalogKey: "cat-a"},
+		{URL: "https://b.example/repo.git", Ref: "main", CatalogKey: "cat-b"},
+	}
+	catalogs := map[string]catalog.LoadedCatalog{
+		"cat-a": {Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "alpha"}}},
+		"cat-b": {Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "beta"}}},
+	}
+	target := config.LayerTarget{Source: config.RepoCommitted, StagedPath: configPath, DeclaringPath: configPath}
+	if err := editLayerAtPath(target, func(m *LayerMutation) error {
+		return addResourcesToAllRegistries(m, entries, catalogs, ir.KindSkill, []string{"alpha"}, nil)
+	}); err != nil {
+		t.Fatalf("addResourcesToAllRegistries: %v", err)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Registries) != 2 {
+		t.Fatalf("registries = %#v", cfg.Registries)
+	}
+	if got := cfg.Registries[0].Skills.Include; len(got) != 1 || got[0] != "alpha" {
+		t.Fatalf("first registry skills = %v", got)
+	}
+	if got := cfg.Registries[1].Skills.Include; len(got) != 0 {
+		t.Fatalf("unmatched provider gained selection: %v", got)
+	}
+	assertNoStagingResidue(t)
+}
 
 func mutateLayerFixture(t *testing.T) (repoRoot, configPath, stateDir string) {
 	t.Helper()
@@ -395,6 +429,9 @@ func TestMutateLayerRejectsInvalidInputs(t *testing.T) {
 		}
 		if err := m.RemoveSource(config.SourceBinding{}); err == nil {
 			t.Fatal("nil receiver RemoveSource accepted")
+		}
+		if err := m.ClearUnboundExclude(config.ResourceLocator{Kind: ir.KindSkill, Name: "x"}); err == nil {
+			t.Fatal("nil receiver ClearUnboundExclude accepted")
 		}
 	})
 
