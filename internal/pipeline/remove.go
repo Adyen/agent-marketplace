@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -1193,6 +1192,13 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if err != nil {
 		return nil, err
 	}
+	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: declaringPath}
+	editRemoveLayer := func(mutate func(*LayerMutation) error) error {
+		if err := seedMissingLayerConfig(configPath, opts.Scope); err != nil {
+			return err
+		}
+		return editLayerAtPath(layer, mutate)
+	}
 
 	// An empty name targets the registry.
 	name := strings.TrimSpace(opts.ResourceName)
@@ -1201,13 +1207,14 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 			if err := validateRegistryScopeBoundary(mergedEntry.Source, opts.Scope, fromURL); err != nil {
 				return nil, err
 			}
-			var setErr error
-			if strings.TrimSpace(shadowRef) != "" {
-				setErr = config.SetRegistryExcludeAllInConfigAtRef(configPath, fromURL, shadowRef, selectedPath)
-			} else {
-				setErr = config.SetRegistryExcludeAllInConfig(configPath, fromURL, shadowRef, selectedPath)
-			}
-			if err := setErr; err != nil {
+			entry := removalEditEntry(mergedEntry, fromURL, selectedPath, shadowRef)
+			if err := editRemoveLayer(func(m *LayerMutation) error {
+				binding, err := m.EnsureRegistry(entry)
+				if err != nil {
+					return err
+				}
+				return m.Apply(binding, config.SelectionChange{Operation: config.SelectionExcludeAll})
+			}); err != nil {
 				return nil, fmt.Errorf("exclude registry in %s config: %w", opts.Scope, err)
 			}
 			if err := syncAfterRemove(ctx, opts, WithIgnoreBlockedRegistries()); err != nil {
@@ -1218,13 +1225,14 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		// Registry is defined at this scope (and not inherited from below):
 		// deleting the entry fully removes it.
 		if entryInTarget {
-			var removeErr error
-			if strings.TrimSpace(fromRef) != "" {
-				removeErr = config.RemoveRegistryEntryFromConfigAtRef(configPath, fromURL, selectedPath, fromRef)
-			} else {
-				removeErr = config.RemoveRegistryEntryFromConfig(configPath, fromURL, selectedPath)
-			}
-			if err := removeErr; err != nil {
+			entry := removalEditEntry(targetEntry, fromURL, selectedPath, shadowRef)
+			if err := editRemoveLayer(func(m *LayerMutation) error {
+				binding, err := m.EnsureRegistry(entry)
+				if err != nil {
+					return err
+				}
+				return m.RemoveSource(binding)
+			}); err != nil {
 				return nil, fmt.Errorf("remove registry entry from %s config: %w", opts.Scope, err)
 			}
 			if err := syncAfterRemove(ctx, opts, WithIgnoreBlockedRegistries()); err != nil {
@@ -1260,7 +1268,18 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		if collectionEntryInMerged && strings.TrimSpace(collectionMergedEntry.Ref) != "" {
 			collectionShadowRef = collectionMergedEntry.Ref
 		}
-		if err := disableCollectionInRegistry(configPath, fromURL, selectedPath, collectionShadowRef, name); err != nil {
+		collectionEditEntry := collectionMergedEntry
+		if collectionEntryInTarget {
+			collectionEditEntry = targetEntry
+		}
+		collectionEditEntry = removalEditEntry(collectionEditEntry, fromURL, selectedPath, collectionShadowRef)
+		if err := editRemoveLayer(func(m *LayerMutation) error {
+			binding, err := m.EnsureRegistry(collectionEditEntry)
+			if err != nil {
+				return err
+			}
+			return m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{{Kind: ir.KindCollection, Name: name}}})
+		}); err != nil {
 			return nil, err
 		}
 		if err := syncAfterRemove(ctx, opts, WithIgnoreBlockedRegistries()); err != nil {
@@ -1331,17 +1350,20 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if entryInTarget {
 		editEntry = targetEntry
 	}
-	handled, disableErr := config.EditV4ResourceSelection(configPath, declaringPath, editEntry, resolvedKind, name, config.V4SelectionDisable)
-	if handled {
-		slog.Debug("remove v4 selection staged", "kind", resolvedKind.String(), "scope", opts.Scope, "error", disableErr)
-	} else if disableErr == nil {
-		if strings.TrimSpace(shadowRef) != "" {
-			disableErr = config.DisableResourceWithShadowFallbackAtRef(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
-		} else {
-			disableErr = config.DisableResourceWithShadowFallback(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
-		}
+	editEntry = removalEditEntry(editEntry, fromURL, selectedPath, shadowRef)
+	operation := config.SelectionExclude
+	if entryInTarget && !requiresShadow && strings.TrimSpace(shadowRef) == "" &&
+		!editEntry.Default && !editEntry.Required && len(editEntry.Tags) == 0 &&
+		slices.Contains(editEntry.SelectorForKind(resolvedKind).Include, name) {
+		operation = config.SelectionRemoveInclude
 	}
-	if err := disableErr; err != nil {
+	if err := editRemoveLayer(func(m *LayerMutation) error {
+		binding, err := m.EnsureRegistry(editEntry)
+		if err != nil {
+			return err
+		}
+		return m.Apply(binding, config.SelectionChange{Operation: operation, Locators: []config.ResourceLocator{{Kind: resolvedKind, Name: name}}})
+	}); err != nil {
 		return nil, err
 	}
 	if cleanup != nil {
@@ -1355,6 +1377,18 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, err
 	}
 	return &RemoveResult{RemovedName: name}, nil
+}
+
+func removalEditEntry(entry config.RegistryEntry, url, path, ref string) config.RegistryEntry {
+	out := entry
+	if strings.TrimSpace(out.URL) == "" {
+		out.URL = url
+	}
+	out.Path = strings.TrimSpace(path)
+	if trimmed := strings.TrimSpace(ref); trimmed != "" {
+		out.Ref = trimmed
+	}
+	return out
 }
 
 func removeMarketplaceAndSync(ctx context.Context, repoRoot, configPath string, mutate func() (*config.FileSnapshot, config.ConfigFileCommit, error)) (retErr error) {

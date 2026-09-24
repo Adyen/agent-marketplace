@@ -255,7 +255,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	}
 	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: configDestination}
 	editInstallLayer := func(mutate func(*LayerMutation) error) error {
-		if err := seedMissingInstallConfig(configPath, opts.Scope); err != nil {
+		if err := seedMissingLayerConfig(configPath, opts.Scope); err != nil {
 			return err
 		}
 		return editLayerAtPath(layer, mutate)
@@ -1112,7 +1112,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		}
 	}
 	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: configDestination}
-	if err := seedMissingInstallConfig(configPath, opts.Scope); err != nil {
+	if err := seedMissingLayerConfig(configPath, opts.Scope); err != nil {
 		return nil, err
 	}
 	var binding config.SourceBinding
@@ -1339,7 +1339,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}, nil
 }
 
-func seedMissingInstallConfig(configPath string, scope Scope) error {
+func seedMissingLayerConfig(configPath string, scope Scope) error {
 	info, err := os.Stat(configPath)
 	if err == nil {
 		if info.IsDir() {
