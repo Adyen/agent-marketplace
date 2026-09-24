@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -1045,12 +1046,44 @@ func EnsureLocalConfigGitignored(repoRoot string) {
 		return
 	}
 	defer func() { _ = f.Close() }()
-	if err := appendLocalConfigIgnoreEntries(f); err != nil {
+	alreadyIgnored := func(paths []string) map[string]bool { return gitIgnoredPaths(repoRoot, paths) }
+	if err := appendLocalConfigIgnoreEntries(f, alreadyIgnored); err != nil {
 		slog.Warn("refused gitignore update", "code", "pipeline.gitignore.write-refused", "error", err)
 	}
 }
 
-func appendLocalConfigIgnoreEntries(f *os.File) error {
+// gitIgnoredPaths reports which repo-relative paths git's own ignore rules
+// already exclude. Wildcard or directory patterns such as `**/.agents/**`
+// cover the local files without an exact line, and appending one anyway
+// creates a spurious diff in the user's tracked .gitignore. Any failure (no
+// git, not a repository, timeout) reports nothing so the caller falls back to
+// appending.
+func gitIgnoredPaths(repoRoot string, paths []string) map[string]bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	args := append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "check-ignore", "--no-index", "--"}, paths...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		// Exit status 1 means git evaluated the rules and none matched.
+		if ctx.Err() != nil || !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			slog.Debug("gitignore coverage probe failed", "path", repoRoot, "error", err)
+		}
+		return nil
+	}
+	ignored := make(map[string]bool, len(paths))
+	for _, p := range strings.Split(string(out), "\n") {
+		if p = strings.TrimSpace(p); p != "" {
+			ignored[p] = true
+		}
+	}
+	return ignored
+}
+
+func appendLocalConfigIgnoreEntries(f *os.File, alreadyIgnored func([]string) map[string]bool) error {
 	info, err := f.Stat()
 	if err != nil {
 		return fmt.Errorf("stat gitignore: %w", err)
@@ -1076,6 +1109,18 @@ func appendLocalConfigIgnoreEntries(f *os.File) error {
 		if !present[entry] {
 			missing = append(missing, entry)
 		}
+	}
+	if len(missing) > 0 && alreadyIgnored != nil {
+		ignored := alreadyIgnored(missing)
+		uncovered := missing[:0]
+		for _, entry := range missing {
+			if ignored[entry] {
+				slog.Debug("gitignore entry already covered by existing rules", "entry", entry)
+				continue
+			}
+			uncovered = append(uncovered, entry)
+		}
+		missing = uncovered
 	}
 	if len(missing) == 0 {
 		return nil

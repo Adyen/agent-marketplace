@@ -49,7 +49,7 @@ The local layer merges above the committed one: `my-personal-skill` is added to 
 agent-marketplace sync
 ```
 
-The CLI adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore` automatically when the personal-local layer exists.
+The CLI adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore` when the personal-local layer exists and existing rules do not already ignore them.
 
 ## 3. Verify the override
 

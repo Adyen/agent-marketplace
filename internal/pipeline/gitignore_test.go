@@ -233,6 +233,89 @@ func TestEnsureLocalConfigGitignored(t *testing.T) {
 	})
 }
 
+// isolateGitIgnoreEnv keeps the developer's global and system excludes out of
+// git check-ignore so pattern-coverage assertions are deterministic.
+func isolateGitIgnoreEnv(tb testing.TB) {
+	tb.Helper()
+	home := tb.TempDir()
+	tb.Setenv("HOME", home)
+	tb.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	tb.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	tb.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+}
+
+func initGitignoreRepo(tb testing.TB) string {
+	tb.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		tb.Skip("git not available")
+	}
+	repo := tb.TempDir()
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		tb.Fatalf("git init: %v\n%s", err, out)
+	}
+	return repo
+}
+
+func TestEnsureLocalConfigGitignoredRespectsExistingPatterns(t *testing.T) {
+	isolateGitIgnoreEnv(t)
+	for _, tc := range []struct {
+		name    string
+		initial string
+		want    string
+	}{
+		{
+			name:    "recursive agents directory with negations",
+			initial: "**/config.local.yaml\n.agents/config.local.yaml\n**/.agents/**\n!**/.agents/rules/\n!**/.agents/rules/**\n!**/.agents/config.yaml\n!**/.agents/lock.yaml\n",
+		},
+		{
+			name:    "local wildcard",
+			initial: ".agents/*.local.*\n",
+		},
+		{
+			name:    "pattern covers only config",
+			initial: "**/config.local.yaml\n",
+			want:    "**/config.local.yaml\n.agents/lock.local.yaml\n",
+		},
+		{
+			name:    "negation re-includes lock",
+			initial: ".agents/*\n!.agents/lock.local.yaml\n",
+			want:    ".agents/*\n!.agents/lock.local.yaml\n.agents/lock.local.yaml\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initGitignoreRepo(t)
+			writeGitignoreLocalConfig(t, repo)
+			gitignore := filepath.Join(repo, ".gitignore")
+			if err := os.WriteFile(gitignore, []byte(tc.initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(gitignore)
+			if err != nil {
+				t.Fatal(err)
+			}
+			EnsureLocalConfigGitignored(repo)
+			got, err := os.ReadFile(gitignore)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tc.want
+			if want == "" {
+				want = tc.initial
+				after, err := os.Stat(gitignore)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !before.ModTime().Equal(after.ModTime()) {
+					t.Fatalf("covered gitignore mtime changed: before=%v after=%v", before.ModTime(), after.ModTime())
+				}
+			}
+			if string(got) != want {
+				t.Fatalf("gitignore = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestEnsureLocalConfigGitignoredFIFOChild(t *testing.T) {
 	repo := os.Getenv("PIPELINE_GITIGNORE_FIFO_REPO")
 	if repo == "" {
@@ -271,7 +354,7 @@ func TestAppendLocalConfigIgnoreEntriesRestoresBlockingDescriptor(t *testing.T) 
 	if before&unix.O_NONBLOCK == 0 || before&unix.O_APPEND == 0 {
 		t.Fatalf("initial flags = %#x", before)
 	}
-	if err := appendLocalConfigIgnoreEntries(f); err != nil {
+	if err := appendLocalConfigIgnoreEntries(f, nil); err != nil {
 		t.Fatal(err)
 	}
 	after := flags()
@@ -295,7 +378,7 @@ func TestAppendLocalConfigIgnoreEntriesRejectsFIFOBeforeClearingNonblock(t *test
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
-	if err := appendLocalConfigIgnoreEntries(f); !errors.Is(err, errUnsafeGitignore) {
+	if err := appendLocalConfigIgnoreEntries(f, nil); !errors.Is(err, errUnsafeGitignore) {
 		t.Fatalf("error = %v, want errUnsafeGitignore", err)
 	}
 	var flags int
@@ -323,6 +406,25 @@ func BenchmarkEnsureLocalConfigGitignoredNoop(b *testing.B) {
 		b.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agents/config.local.yaml\n.agents/lock.local.yaml\n"), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		EnsureLocalConfigGitignored(repo)
+	}
+}
+
+func BenchmarkEnsureLocalConfigGitignoredPatternCovered(b *testing.B) {
+	isolateGitIgnoreEnv(b)
+	repo := initGitignoreRepo(b)
+	if err := os.MkdirAll(filepath.Join(repo, ".agents"), 0o700); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agents", "config.local.yaml"), []byte("{}\n"), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("**/.agents/**\n!**/.agents/config.yaml\n"), 0o600); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()

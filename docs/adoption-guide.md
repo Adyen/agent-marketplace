@@ -197,7 +197,7 @@ skills:
   exclude: [some-skill-you-dont-want]
 ```
 
-`agent-marketplace sync` adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore` automatically when the personal-local layer exists. Local excludes apply only to non-required repo-scoped resources; machine-scoped resources and required resources cannot be locally excluded.
+`agent-marketplace sync` adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore` when the personal-local layer exists and existing rules do not already ignore them. Local excludes apply only to non-required repo-scoped resources; machine-scoped resources and required resources cannot be locally excluded.
 
 ## Git dependency locks
 

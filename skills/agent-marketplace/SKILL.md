@@ -275,7 +275,7 @@ skills:
 
 Local config is gitignored and per-checkout. Its excludes apply only to
 non-required repo-scoped resources; machine-scoped resources remain immune.
-`sync` adds `.agents/config.local.yaml` to `.gitignore` when the file exists.
+`sync` adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore` only when existing rules do not already ignore them.
 
 When the same kind and name is enabled at machine and repo scope, an unscoped
 `remove` reports the ambiguity instead of choosing a copy. Use
