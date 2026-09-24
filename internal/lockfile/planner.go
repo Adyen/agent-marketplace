@@ -69,17 +69,18 @@ type AcquisitionRequest struct {
 }
 
 type ResolutionPlan struct {
-	Desired      Document
-	Retained     []RecordRef
-	Added        []RecordRef
-	Invalidated  []RecordRef
-	Upgraded     []RecordRef
-	Removed      []RecordRef
-	Acquisitions []AcquisitionRequest
+	Desired        Document
+	VersionChanged bool
+	Retained       []RecordRef
+	Added          []RecordRef
+	Invalidated    []RecordRef
+	Upgraded       []RecordRef
+	Removed        []RecordRef
+	Acquisitions   []AcquisitionRequest
 }
 
 func (p ResolutionPlan) Changed() bool {
-	return len(p.Added)+len(p.Invalidated)+len(p.Upgraded)+len(p.Removed) > 0
+	return p.VersionChanged || len(p.Added)+len(p.Invalidated)+len(p.Upgraded)+len(p.Removed) > 0
 }
 
 func Plan(requirements Requirements, current *Document, operation Operation) (ResolutionPlan, error) {
@@ -89,8 +90,8 @@ func Plan(requirements Requirements, current *Document, operation Operation) (Re
 	if operation != OperationSync && operation != OperationUpgrade {
 		return ResolutionPlan{}, coded(CodeInvalidDocument, "invalid lock operation")
 	}
-	plan := ResolutionPlan{Desired: Document{APIVersion: APIVersionV1, Scope: requirements.Scope}}
-	old := Document{APIVersion: APIVersionV1, Scope: requirements.Scope}
+	plan := ResolutionPlan{Desired: Document{APIVersion: APIVersionV2, Scope: requirements.Scope}}
+	old := Document{APIVersion: APIVersionV2, Scope: requirements.Scope}
 	if current != nil {
 		normalized, err := Normalize(*current)
 		if err != nil {
@@ -99,12 +100,10 @@ func Plan(requirements Requirements, current *Document, operation Operation) (Re
 		if err := ValidateScope(normalized, requirements.Scope); err != nil {
 			return ResolutionPlan{}, err
 		}
+		plan.VersionChanged = normalized.APIVersion != APIVersionV2
 		old = normalized
 	}
-	if old.APIVersion == APIVersionV2 {
-		plan.Desired.APIVersion = APIVersionV2
-		plan.Desired.Marketplaces = old.Marketplaces
-	}
+	plan.Desired.Marketplaces = old.Marketplaces
 
 	gitRequirements, err := coalesceGitRequirements(requirements.Git)
 	if err != nil {

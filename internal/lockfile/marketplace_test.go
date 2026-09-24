@@ -196,8 +196,6 @@ func TestMarketplaceInvalidDocuments(t *testing.T) {
 			doc.APIVersion = APIVersionV1
 			return doc
 		}(),
-		"v2 without marketplaces": {APIVersion: APIVersionV2, Scope: ScopeRepo},
-		"v2 empty marketplaces":   {APIVersion: APIVersionV2, Scope: ScopeRepo, Marketplaces: []MarketplaceLock{}},
 		"unsafe endpoint": mutate(func(d *Document) {
 			d.Marketplaces[0].URL = "https://user@market.example"
 		}),
@@ -477,14 +475,51 @@ func TestMarketplaceRecordsSurviveGitPlan(t *testing.T) {
 	}
 }
 
-func TestV1GitOnlyPlanStaysV1(t *testing.T) {
+func TestV2AllowsGitOnlyAndEmptyMarketplaceState(t *testing.T) {
+	gitRegistries := []GitRegistry{{
+		URL: "https://git.example.com/team/tools", Ref: "main", Commit: mustOID(t, sha1a),
+		Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a), Resources: []GitResource{
+			{Kind: "skill", Name: "review", ContentDigest: Digest(sha256a), ArchiveDigest: Digest(sha256b), SupportFiles: map[string]Digest{}},
+		}}},
+	}}
+	for _, tc := range []struct {
+		name           string
+		doc            Document
+		wantRegistries []GitRegistry
+	}{
+		{name: "empty", doc: Document{APIVersion: APIVersionV2, Scope: ScopeRepo}},
+		{name: "git-only", doc: Document{APIVersion: APIVersionV2, Scope: ScopeUser, Registries: gitRegistries}, wantRegistries: gitRegistries},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := Encode(tc.doc)
+			if err != nil {
+				t.Fatalf("Encode rejected %s v2 lock: %v", tc.name, err)
+			}
+			decoded, err := Decode(data)
+			if err != nil {
+				t.Fatalf("Decode rejected %s v2 lock: %v", tc.name, err)
+			}
+			if decoded.APIVersion != APIVersionV2 || decoded.Scope != tc.doc.Scope || len(decoded.Marketplaces) != 0 {
+				t.Fatalf("%s v2 lock decoded to %#v", tc.name, decoded)
+			}
+			if !reflect.DeepEqual(decoded.Registries, tc.wantRegistries) {
+				t.Fatalf("%s v2 lock registries = %#v, want %#v", tc.name, decoded.Registries, tc.wantRegistries)
+			}
+		})
+	}
+}
+
+func TestV1GitOnlyPlanUpgradesToV2(t *testing.T) {
 	current := Document{APIVersion: APIVersionV1, Scope: ScopeRepo}
 	plan, err := Plan(Requirements{Scope: ScopeRepo}, &current, OperationSync)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Desired.APIVersion != APIVersionV1 || len(plan.Desired.Marketplaces) != 0 {
-		t.Fatalf("v1 plan promoted to v2: %#v", plan.Desired)
+	if plan.Desired.APIVersion != APIVersionV2 || len(plan.Desired.Marketplaces) != 0 {
+		t.Fatalf("v1 plan did not upgrade to v2: %#v", plan.Desired)
+	}
+	if !plan.VersionChanged || !plan.Changed() {
+		t.Fatalf("version-only upgrade not reported as changed: %#v", plan)
 	}
 }
 

@@ -76,8 +76,15 @@ func TestHasRequiredError(t *testing.T) {
 	if !HasRequiredError([]error{errors.New("other"), errors.Join(errors.New("wrapped"), required)}) {
 		t.Fatal("nested Marketplace lock requirement was not detected")
 	}
-	if HasRequiredError([]error{errors.New("other")}) {
-		t.Fatal("unrelated error was classified as a Marketplace lock requirement")
+	mismatch := &config.V4ValidationError{Code: "v4.marketplace-lock-mismatch"}
+	if !HasMismatchError([]error{errors.New("other"), errors.Join(errors.New("wrapped"), mismatch)}) {
+		t.Fatal("nested Marketplace lock mismatch was not detected")
+	}
+	if HasRequiredError([]error{mismatch}) {
+		t.Fatal("Marketplace lock mismatch was classified as a lock requirement")
+	}
+	if HasRequiredError([]error{errors.New("other")}) || HasMismatchError([]error{errors.New("other")}) {
+		t.Fatal("unrelated error was classified as a Marketplace lock error")
 	}
 }
 
