@@ -500,14 +500,58 @@ func TestTransientOrganizationMarketplaceLockReacquiresWhenOrganizationConfigCha
 	}
 }
 
+func TestTransientOrganizationMarketplaceLockFailsClosedWhenTargetHarnessesChangeDuringAcquisition(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	mutated := make(chan error, 1)
+	var once atomic.Bool
+	requests, _, _, ctx, opts := newTransientOrganizationMarketplaceResolveFixtureWithHook(t, func(userPath string) {
+		if !once.CompareAndSwap(false, true) {
+			return
+		}
+		mutated <- os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory, claude]\n"), 0o644)
+	})
+
+	result := pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("resolve error = %v, want generation conflict", err)
+	}
+	if mutationErr := <-mutated; mutationErr != nil {
+		t.Fatalf("mutate user config: %v", mutationErr)
+	}
+	raced := requests.Load()
+
+	result = pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatalf("resolve after raced acquisition: %v", err)
+	}
+	if got := requests.Load(); got <= raced {
+		t.Fatalf("resolve after raced acquisition reused its result: Marketplace requests changed from %d to %d", raced, got)
+	}
+}
+
 func newTransientOrganizationMarketplaceResolveFixture(t *testing.T) (*atomic.Int32, string, string, context.Context, pipeline.ResolveOptions) {
+	t.Helper()
+	return newTransientOrganizationMarketplaceResolveFixtureWithHook(t, nil)
+}
+
+// onRequest runs inside each Marketplace request, before the response, so it
+// can edit the user config while an acquisition is in flight.
+func newTransientOrganizationMarketplaceResolveFixtureWithHook(t *testing.T, onRequest func(userPath string)) (*atomic.Int32, string, string, context.Context, pipeline.ResolveOptions) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	userPath := filepath.Join(home, ".agents", "config.yaml")
 	var requests atomic.Int32
-	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
+	server := newV4MarketplaceLockServerWithHook(t, func() {
+		requests.Add(1)
+		if onRequest != nil {
+			onRequest(userPath)
+		}
+	})
 	t.Cleanup(server.Close)
 
 	authority := t.TempDir()
@@ -518,7 +562,6 @@ sources:
 resources:
   hosted: {include: [tools/skill/review]}
 `)
-	userPath := filepath.Join(home, ".agents", "config.yaml")
 	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := t.TempDir()

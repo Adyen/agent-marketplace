@@ -134,6 +134,7 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 	if len(provisionalEC.Errors) > 0 {
 		return provisionalEC, transientOrganizationMarketplaceLockUnused
 	}
+	inputs := transientOrganizationMarketplaceInputs(provisionalEC)
 	reads, err := transientMarketplaceReadAssertions(provisionalEC, layer.LockPath)
 	if err != nil {
 		return effectiveConfigError(provisionalEC, fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
@@ -168,8 +169,13 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 	if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
 		return effectiveConfigError(finalEC, fmt.Errorf("%w: organization Marketplace inputs changed while validating transient acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
 	}
+	// The read assertions cover only the organization layer, so a user,
+	// repository, or local edit to these inputs during acquisition is caught here.
+	if transientOrganizationMarketplaceInputs(finalEC) != inputs {
+		return effectiveConfigError(finalEC, fmt.Errorf("%w: target harnesses or allowlists changed during transient organization Marketplace acquisition", dependencytxn.ErrGenerationConflict)), transientOrganizationMarketplaceLockUnused
+	}
 	if cache != nil {
-		cache.store(layer.LockPath, exactData, reads, transientOrganizationMarketplaceInputs(provisionalEC))
+		cache.store(layer.LockPath, exactData, reads, inputs)
 	}
 	slog.Info("transient organization Marketplace lock acquisition completed", "config", orgPath, "resources", marketplaceLockResourceCount(exact))
 	return finalEC, transientOrganizationMarketplaceLockAcquired
