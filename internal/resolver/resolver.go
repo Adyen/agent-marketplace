@@ -3077,6 +3077,36 @@ func ResourcesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []Se
 	return resources
 }
 
+func EffectiveDirectSelectionSources(entry config.RegistryEntry, entries []config.RegistryEntry, localCfg *config.LocalConfig, kind ir.ResourceKind, name string) (entrySelected, localSelected bool) {
+	name = strings.TrimSpace(name)
+	for _, selected := range resolveSelectedResources(entry, nil) {
+		if selected.kind == kind && selected.name == name {
+			entrySelected = !artifactShadowedByEntries(unresolvedSelectionArtifact(entry, selected), entries)
+			break
+		}
+	}
+	if localCfg == nil {
+		return entrySelected, false
+	}
+	included := false
+	for _, candidate := range localCfg.SelectorForKind(kind).Include {
+		if strings.TrimSpace(candidate) == name {
+			included = true
+			break
+		}
+	}
+	if !included {
+		return entrySelected, false
+	}
+	owner := localOwnerCandidate{
+		entry:      entry,
+		catalogKey: entry.CatalogKey,
+		resource:   catalog.Entry{Kind: kind, Name: name},
+	}
+	localSelected = !localOwnerExcluded(owner, kind, name, &config.Config{Registries: entries}, localResourceExcludes(localCfg), localExcludeAllKinds(localCfg))
+	return entrySelected, localSelected
+}
+
 func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entry) resourceSelections {
 	selected := make(map[resourceSelection]struct{})
 

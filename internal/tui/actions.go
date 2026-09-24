@@ -866,30 +866,30 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 				if first == nil {
 					first = entry
 				}
-				if !slices.Contains(entry.SelectorForKind(kind).Include, name) {
-					continue
+				entrySelected, localSelected := resolver.EffectiveDirectSelectionSources(*entry, cfg.Registries, localCfg, kind, name)
+				if entrySelected {
+					if firstSelecting == nil {
+						firstSelecting = entry
+					}
+					direct = true
+					required = required || entry.Required
+					switch {
+					case entry.Source.IsMachineScope():
+						enabledGlobal = true
+					case entry.Source == config.RepoCommitted:
+						enabledProject = true
+					case entry.Source == config.RepoPersonal:
+						enabledLocal = true
+					}
 				}
-				if firstSelecting == nil {
-					firstSelecting = entry
-				}
-				direct = true
-				required = required || entry.Required
-				switch {
-				case entry.Source.IsMachineScope():
-					enabledGlobal = true
-				case entry.Source == config.RepoCommitted:
-					enabledProject = true
-				case entry.Source == config.RepoPersonal:
+				if localSelected {
+					direct = true
 					enabledLocal = true
 				}
 			}
 		}
 		excludedLocally := false
 		if localCfg != nil {
-			if slices.Contains(localCfg.SelectorForKind(kind).Include, name) {
-				direct = true
-				enabledLocal = true
-			}
 			if slices.Contains(localCfg.SelectorForKind(kind).Exclude, name) {
 				excludedLocally = true
 			}
@@ -955,9 +955,14 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 			if _, loaded := catalogs[entry.CatalogKey]; loaded {
 				continue
 			}
-			for _, kind := range config.AllKinds {
-				for _, name := range entry.SelectorForKind(kind).Include {
-					appendCandidate(kind, name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
+			for _, selected := range resolver.ResourcesSelected(*entry, nil) {
+				appendCandidate(selected.Kind, selected.Name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
+			}
+			if localCfg != nil {
+				for _, kind := range config.AllKinds {
+					for _, name := range localCfg.SelectorForKind(kind).Include {
+						appendCandidate(kind, name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
+					}
 				}
 			}
 		}

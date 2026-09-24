@@ -63,12 +63,14 @@ func TestInvalidConfigSnapshotDismissesStaleMutationPanes(t *testing.T) {
 		name    string
 		pane    pane
 		consent bool
+		confirm bool
 	}{
 		{name: "toggle", pane: paneToggleModal},
 		{name: "harness", pane: paneHarnessModal},
 		{name: "marketplace consent", pane: paneMarketplaceConsent, consent: true},
 		{name: "migration", pane: paneMigrationModal},
 		{name: "init", pane: paneInitModal},
+		{name: "confirm", pane: paneConfirm, confirm: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,6 +79,10 @@ func TestInvalidConfigSnapshotDismissesStaleMutationPanes(t *testing.T) {
 			m.pane = tc.pane
 			if tc.consent {
 				seedMarketplaceConsent(t, &m)
+			}
+			if tc.confirm {
+				m.confirmMsg = "2 pending changes not synced. Sync+quit? y/n/esc"
+				m.quitAfterSync = true
 			}
 
 			updated, _ := m.Update(invalidConfigSnapshot(m))
@@ -90,6 +96,14 @@ func TestInvalidConfigSnapshotDismissesStaleMutationPanes(t *testing.T) {
 			if tc.consent {
 				assertConsentCleared(t, m)
 			}
+			if tc.confirm {
+				if m.confirmMsg != "" {
+					t.Fatalf("confirmMsg = %q, want cleared", m.confirmMsg)
+				}
+				if m.quitAfterSync {
+					t.Fatal("quitAfterSync survived the invalid-config dismissal")
+				}
+			}
 		})
 	}
 }
@@ -100,12 +114,14 @@ func TestInvalidConfigKeyDismissesStaleMutationPanes(t *testing.T) {
 		pane    pane
 		key     tea.KeyMsg
 		consent bool
+		confirm bool
 	}{
 		{name: "toggle", pane: paneToggleModal, key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}},
 		{name: "harness", pane: paneHarnessModal, key: tea.KeyMsg{Type: tea.KeyEnter}},
 		{name: "marketplace consent", pane: paneMarketplaceConsent, key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}, consent: true},
 		{name: "migration", pane: paneMigrationModal, key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}}},
 		{name: "init", pane: paneInitModal, key: tea.KeyMsg{Type: tea.KeyEnter}},
+		{name: "confirm", pane: paneConfirm, key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}, confirm: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,6 +131,10 @@ func TestInvalidConfigKeyDismissesStaleMutationPanes(t *testing.T) {
 			m.pane = tc.pane
 			if tc.consent {
 				seedMarketplaceConsent(t, &m)
+			}
+			if tc.confirm {
+				m.confirmMsg = "2 pending changes not synced. Sync+quit? y/n/esc"
+				m.quitAfterSync = true
 			}
 
 			updated, cmd := m.handleKey(tc.key)
@@ -133,6 +153,46 @@ func TestInvalidConfigKeyDismissesStaleMutationPanes(t *testing.T) {
 			}
 			if tc.consent {
 				assertConsentCleared(t, m)
+			}
+			if tc.confirm {
+				if m.confirmMsg != "" {
+					t.Fatalf("confirmMsg = %q, want cleared", m.confirmMsg)
+				}
+				if m.quitAfterSync {
+					t.Fatal("stale confirm kept quitAfterSync")
+				}
+			}
+		})
+	}
+}
+
+func TestInvalidConfigBlocksSyncAndUpdate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{name: "sync", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}},
+		{name: "update", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := modelWithSelectedRow(t, mkRow("unsafe", withProject))
+			m.authoritativeRows = m.rows
+			m.configInvalid = true
+			m.driftAssessment = driftFailed
+
+			updated, cmd := m.handleKey(tc.key)
+			m = updated.(Model)
+			if m.syncing {
+				t.Fatal("config-invalid mutation started syncing")
+			}
+			if cmd == nil {
+				t.Fatal("config-invalid mutation returned no editor guidance")
+			}
+			if msg, ok := cmd().(toastMsg); !ok || !strings.Contains(msg.text, "edit config") {
+				t.Fatalf("mutation guidance = %#v, want an edit-config toast", cmd())
+			}
+			if m.operations.active != nil {
+				t.Fatalf("config-invalid key began an operation: %+v", m.operations.active)
 			}
 		})
 	}

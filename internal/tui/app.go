@@ -192,6 +192,11 @@ func (m *Model) dismissInvalidConfigMutationPane() bool {
 		m.pane = paneList
 		m.clearMarketplaceConsent()
 		return true
+	case paneConfirm:
+		m.pane = paneList
+		m.confirmMsg = ""
+		m.quitAfterSync = false
+		return true
 	}
 	return false
 }
@@ -1027,6 +1032,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.applyRowSpaceEligibility(r)
 
 	case key.Matches(msg, m.keys.Sync):
+		if m.configInvalid {
+			return m, invalidConfigToastCmd()
+		}
 		if m.syncing {
 			return m, nil
 		}
@@ -1044,6 +1052,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.dependencySyncCmd(), m.spinner.Tick)
 
 	case key.Matches(msg, m.keys.Update):
+		if m.configInvalid {
+			return m, invalidConfigToastCmd()
+		}
 		if m.syncing {
 			return m, nil
 		}
