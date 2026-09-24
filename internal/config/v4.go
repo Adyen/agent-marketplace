@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -138,6 +139,8 @@ type V4Config struct {
 	Requests   []V4ResourceRequest
 	Decisions  []V4SelectionDecision
 	Files      []string
+
+	reads []ConfigRead
 
 	// decisionStreamOffset tracks the next precedence position in the ordered
 	// decision stream. It is independent from Files because one file can author
@@ -1239,10 +1242,15 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 	if visiting[canonical] {
 		return nil, v4err("v4.include-cycle", canonical, 0, "config include cycle")
 	}
-	data, _, err := v4ConfigData(canonical, file, root, rootData, overlays)
+	data, staged, err := v4ConfigData(canonical, file, root, rootData, overlays)
 	if err != nil {
 		return nil, fmt.Errorf("read v4 config %q: %w", canonical, err)
 	}
+	requested := file
+	if abs, absErr := filepath.Abs(file); absErr == nil {
+		requested = abs
+	}
+	read := ConfigRead{Path: canonical, RequestedPath: requested, Digest: fmt.Sprintf("%x", sha256.Sum256(data)), Overlay: staged}
 	if len(kinds) == 0 && isGlobalConfigPath(file) {
 		kinds = []layerKind{userLayer}
 	}
@@ -1284,6 +1292,7 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 	if err := mergeV4Document(result, doc); err != nil {
 		return nil, err
 	}
+	result.reads = append(result.reads, read)
 	if root {
 		if err := normalizeV4Tree(result); err != nil {
 			return nil, err
@@ -1295,7 +1304,11 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 func v4ConfigData(canonical, requested string, root bool, rootData []byte, overlays map[string][]byte) ([]byte, bool, error) {
 	if root && rootData != nil {
 		data, err := boundedConfigData(rootData)
-		return data, true, err
+		_, overlaid := overlays[canonical]
+		if !overlaid {
+			_, overlaid = overlays[requested]
+		}
+		return data, overlaid, err
 	}
 	for _, key := range []string{canonical, requested} {
 		if data, ok := overlays[key]; ok {
@@ -1303,9 +1316,11 @@ func v4ConfigData(canonical, requested string, root bool, rootData []byte, overl
 			return bounded, true, err
 		}
 	}
-	data, err := readConfigFile(canonical)
+	data, err := v4ReadConfigFile(canonical)
 	return data, false, err
 }
+
+var v4ReadConfigFile = readConfigFile
 
 func yamlNodeRoot(data []byte) *yaml.Node {
 	var n yaml.Node
@@ -1325,6 +1340,7 @@ func mergeV4Config(dst, src *V4Config) error {
 		srcDecisionCount += len(group.Decisions)
 	}
 	dst.Files = append(dst.Files, src.Files...)
+	dst.reads = append(dst.reads, src.reads...)
 	if src.HasHarnesses {
 		dst.Harnesses, dst.HasHarnesses = cloneV4StringList(src.Harnesses), true
 	}
