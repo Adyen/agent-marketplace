@@ -195,6 +195,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 
 	var catalogOverlapWarnings []error
+	var hardCatalogFailure bool
 	if len(resolvedResult.CatalogErrors) > 0 {
 		var hardErrs []error
 		for _, err := range resolvedResult.CatalogErrors {
@@ -207,10 +208,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, catalogOverlapWarnings...)
 		if len(hardErrs) > 0 {
 			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticCatalog, hardErrs...)
-			base.diagnostics = deduplicateDiagnostics(diagnostics)
-			base.errs = diagnosticValues(base.diagnostics, diagnosticError)
-			base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
-			return base
+			hardCatalogFailure = true
 		}
 	}
 
@@ -224,7 +222,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	dryRunReport, dryRunErr := runMaterialize(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
 	driftState := driftReady
-	if dryRunReport == nil || dryRunErr != nil {
+	if hardCatalogFailure || dryRunReport == nil || dryRunErr != nil {
 		driftState = driftFailed
 	}
 
@@ -253,7 +251,12 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticMaterialization, dryRunErr)
 	}
 
-	base.rows = buildRows(resolvedResult.LoadedCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
+	rowCfg := resolvedResult.LoadedCfg
+	if rowCfg == nil {
+		rowCfg = resolvedResult.MergedCfg
+	}
+	base.rows = buildRows(rowCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
+	base.rows = appendUnavailableSelectionRows(base.rows, rowCfg, resolvedResult.LocalCfg, resolvedResult.ResolveErrors, resolvedResult.CatalogLoad.Catalogs)
 	attachDetailSources(base.rows, detailSources)
 	base.driftReport = driftReport
 	base.driftAssessment = driftState
@@ -819,6 +822,136 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 	}
 
+	return rows
+}
+
+const unavailableCatalogReason = "selection is unavailable because its catalog failed to load"
+
+func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *config.LocalConfig, resolveErrs []error, catalogs map[string]catalogInfo) []row {
+	seen := make(map[string]struct{}, len(rows)+len(resolveErrs))
+	for i := range rows {
+		key := skill.ResourceKey(rows[i].Artifact.Kind, rows[i].Artifact.Name)
+		seen[key+"\x01"+registryIdentityKey(rows[i].RegistryURL, rows[i].RegistryRef, rows[i].RegistryPath)] = struct{}{}
+	}
+	layerHarnesses := layerHarnessDefaults(cfg)
+	appendCandidate := func(kind ir.ResourceKind, name, url, ref, path string, required bool, reason string) {
+		key := skill.ResourceKey(kind, name)
+		identity := registryIdentityKey(url, ref, path)
+		seenKey := key + "\x01" + identity
+		if _, dup := seen[seenKey]; dup {
+			return
+		}
+		var first, firstSelecting *config.RegistryEntry
+		var enabledGlobal, enabledProject, enabledLocal bool
+		direct := false
+		if cfg != nil {
+			for i := range cfg.Registries {
+				entry := &cfg.Registries[i]
+				if registryIdentityKey(entry.URL, entry.Ref, entry.Path) != identity {
+					continue
+				}
+				if first == nil {
+					first = entry
+				}
+				if !slices.Contains(entry.SelectorForKind(kind).Include, name) {
+					continue
+				}
+				if firstSelecting == nil {
+					firstSelecting = entry
+				}
+				direct = true
+				required = required || entry.Required
+				switch {
+				case entry.Source.IsMachineScope():
+					enabledGlobal = true
+				case entry.Source == config.RepoCommitted:
+					enabledProject = true
+				case entry.Source == config.RepoPersonal:
+					enabledLocal = true
+				}
+			}
+		}
+		excludedLocally := false
+		if localCfg != nil {
+			if slices.Contains(localCfg.SelectorForKind(kind).Include, name) {
+				direct = true
+				enabledLocal = true
+			}
+			if slices.Contains(localCfg.SelectorForKind(kind).Exclude, name) {
+				excludedLocally = true
+			}
+			for i := range localCfg.Registries {
+				re := &localCfg.Registries[i]
+				if registryIdentityKey(re.URL, re.Ref, re.Path) != identity {
+					continue
+				}
+				if slices.Contains(re.SelectorForKind(kind).Exclude, name) {
+					excludedLocally = true
+				}
+			}
+		}
+		meta := firstSelecting
+		if meta == nil {
+			meta = first
+		}
+		if !direct || meta == nil {
+			return
+		}
+		seen[seenKey] = struct{}{}
+		harnesses := meta.Harnesses
+		if len(harnesses) == 0 {
+			harnesses = layerHarnesses[meta.Source]
+		}
+		rows = append(rows, row{
+			Artifact: resolver.ResolvedArtifact{
+				Entry:          catalog.Entry{Kind: kind, Name: name, SourceHarness: meta.SourceHarness},
+				RegistryURL:    meta.URL,
+				RegistryPath:   meta.Path,
+				Ref:            meta.Ref,
+				V4Kind:         meta.V4Kind,
+				Source:         meta.Source,
+				FilePrecedence: meta.FilePrecedence,
+				Required:       required,
+				CatalogKey:     meta.CatalogKey,
+			},
+			UnavailableReason: reason,
+			DriftItem:         &materialize.DriftItem{Name: key, Reason: materialize.DriftBroken},
+			IsExcluded:        excludedLocally,
+			ExcludedLocally:   excludedLocally,
+			EnabledGlobal:     enabledGlobal,
+			EnabledProject:    enabledProject,
+			EnabledLocal:      enabledLocal,
+			RegistryURL:       meta.URL,
+			RegistryName:      registryDisplayName(meta.URL),
+			RegistryPath:      meta.Path,
+			RegistryRef:       meta.Ref,
+			Harnesses:         append([]string(nil), harnesses...),
+			HarnessSource:     harnessSourceLabel(*meta, layerHarnesses[meta.Source]),
+		})
+	}
+	for _, err := range resolveErrs {
+		var snf *resolver.SelectedNotFoundError
+		if !errors.As(err, &snf) || snf.Via != "" {
+			continue
+		}
+		appendCandidate(snf.Kind, snf.Name, snf.URL, snf.Ref, snf.Path, snf.Required, snf.Error())
+	}
+	if cfg != nil {
+		for i := range cfg.Registries {
+			entry := &cfg.Registries[i]
+			if entry.CatalogKey == "" {
+				continue
+			}
+			if _, loaded := catalogs[entry.CatalogKey]; loaded {
+				continue
+			}
+			for _, kind := range config.AllKinds {
+				for _, name := range entry.SelectorForKind(kind).Include {
+					appendCandidate(kind, name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
+				}
+			}
+		}
+	}
 	return rows
 }
 

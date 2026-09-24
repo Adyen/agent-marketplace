@@ -980,11 +980,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// Space on a skill row: open the toggle modal so the user picks
 		// which config file to write.
-		if m.rowsStale {
-			return m, func() tea.Msg {
-				return toastMsg{text: "reload before changing broken state", duration: 2 * time.Second}
-			}
-		}
 		r, ok := m.selectedRow()
 		if !ok {
 			return m, nil
