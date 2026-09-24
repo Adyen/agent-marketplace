@@ -241,6 +241,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 	}
 
+	declaringConfigPath := configPath
 	if opts.DependencyReconcile != nil && !marketplaceEndpointRequested {
 		opts.configStaging, err = newConfigStagingManager()
 		if err != nil {
@@ -273,6 +274,17 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	}
 
 	repoCfg := ec.Repo.Config
+	targetCfg := repoCfg
+	switch opts.Scope {
+	case ScopeUser:
+		targetCfg = ec.User.Config
+	case ScopeLocal:
+		targetCfg = ec.LocalLayer.Config
+	}
+	v4Target := targetCfg != nil && targetCfg.APIVersion == config.APIVersionV4
+	if opts.Scope == ScopeLocal && ec.LocalLayer.Local != nil {
+		v4Target = v4Target || ec.LocalLayer.Local.APIVersion == config.APIVersionV4
+	}
 
 	// If repo config doesn't exist (and we're writing to repo scope), create skeleton
 	if repoCfg == nil && opts.Scope == ScopeRepo {
@@ -513,15 +525,25 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 					return nil, err
 				}
 			}
-			if err := config.EnsureRegistryWithPathsInConfig(configPath, entry.URL, entry.Ref, entry.Path); err != nil {
-				return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
-			}
-			// Use exact-entry matching (URL+path, where empty path = root entry
-			// specifically) to avoid "matches multiple entries" errors when the
-			// same URL has entries at different paths. AddResourceToExactRegistryEntry
-			// also clears any contradictory exclude_all on the entry.
-			if err := config.AddResourceToExactRegistryEntry(configPath, entry.URL, entry.Path, match.kind, resourceName); err != nil {
-				return nil, err
+			if v4Target {
+				handled, err := config.EditV4ResourceSelection(configPath, declaringConfigPath, *entry, match.kind, resourceName, config.V4SelectionEnable)
+				if err != nil {
+					return nil, err
+				}
+				if !handled {
+					return nil, fmt.Errorf("v4 configuration %s missing during staged installation", declaringConfigPath)
+				}
+			} else {
+				if err := config.EnsureRegistryWithPathsInConfig(configPath, entry.URL, entry.Ref, entry.Path); err != nil {
+					return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
+				}
+				// Use exact-entry matching (URL+path, where empty path = root entry
+				// specifically) to avoid "matches multiple entries" errors when the
+				// same URL has entries at different paths. AddResourceToExactRegistryEntry
+				// also clears any contradictory exclude_all on the entry.
+				if err := config.AddResourceToExactRegistryEntry(configPath, entry.URL, entry.Path, match.kind, resourceName); err != nil {
+					return nil, err
+				}
 			}
 		}
 		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName, opts.configStaging); err != nil {

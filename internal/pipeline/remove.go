@@ -605,9 +605,17 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 	if err != nil {
 		return err
 	}
+	declaringPath := path
 	path, err = stageConfigPath(staging, path)
 	if err != nil {
 		return err
+	}
+	if target.V4Kind != "" {
+		entry := config.RegistryEntry{URL: target.RegistryURL, Path: target.RegistryPath, Ref: target.Ref, V4Kind: target.V4Kind}
+		handled, err := config.EditV4ResourceSelection(path, declaringPath, entry, target.Kind, name, config.V4SelectionDisable)
+		if err != nil || handled {
+			return err
+		}
 	}
 	switch scope {
 	case ScopeUser:
