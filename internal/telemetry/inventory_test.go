@@ -31,12 +31,12 @@ func TestInventoryRoutesOnlyToDetailedPrimary(t *testing.T) {
 	community := metricNamesServer(t, &communityMu, &communityNames)
 	defer community.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{
 		Level:              tmcfg.LevelDetailed,
 		Endpoint:           primary.URL,
 		CommunityReporting: boolPtr(true),
 	}}
-	state, err := ResolveTelemetryConfig(nil, user, community.URL, "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, community.URL, "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -150,8 +150,8 @@ func TestInventoryProviderOverridesEnvironmentCardinalityLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -234,8 +234,8 @@ func TestShutdownPersistsEveryAcceptedInventoryObservation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -269,8 +269,8 @@ func TestConcurrentRecordInventoryAndRepeatedShutdown(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -326,8 +326,8 @@ func TestRecordInventoryDoesNotBlockOnExport(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -388,8 +388,8 @@ func TestSequentialInventorySnapshotsExportOnceInOrder(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -438,8 +438,8 @@ func TestInventoryGaugeValuesAndAttributes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -517,8 +517,8 @@ func TestInventoryOmissionCounterHasBoundedReason(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -553,8 +553,8 @@ func TestInventoryNoOpAtBasicLevel(t *testing.T) {
 	var names []string
 	srv := metricNamesServer(t, &mu, &names)
 	defer srv.Close()
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}

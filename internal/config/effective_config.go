@@ -180,19 +180,6 @@ func LoadOrganizationConfig() (*Config, error) {
 	return cfg, errors.Join(errs...)
 }
 
-func LoadOrganizationPolicyConfig() (*Config, error) {
-	path := organizationConfigPath("")
-	li, _ := readOrganizationIntent(path)
-	cfg, errs := bindOrganizationLayer(li, nil)
-	if len(errs) == 0 {
-		return cfg, nil
-	}
-	if fallback := organizationPolicyWithoutLock(li, errs); fallback != nil {
-		return fallback, nil
-	}
-	return nil, errors.Join(errs...)
-}
-
 func bindOrganizationLayer(li LayerIntent, runtimeLock []byte) (*Config, []error) {
 	if !li.Present() || len(li.errors) > 0 {
 		return nil, li.errors
@@ -211,27 +198,6 @@ func bindOrganizationLayer(li LayerIntent, runtimeLock []byte) (*Config, []error
 		}
 	}
 	return cfg, nil
-}
-
-func organizationPolicyWithoutLock(li LayerIntent, errs []error) *Config {
-	var validation *V4ValidationError
-	if !errors.As(errors.Join(errs...), &validation) || validation.Code != "v4.marketplace-lock-required" {
-		return nil
-	}
-	if ValidateOrganizationTrustUnit(li.Path, true, true) != nil {
-		return nil
-	}
-	if _, err := os.Lstat(OrganizationLockPath(li.Path)); !errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if li.v4 == nil {
-		return nil
-	}
-	cfg, err := li.v4.policyConfig(organizationLayer)
-	if err != nil {
-		return nil
-	}
-	return cfg
 }
 
 func organizationHasRemoteRequirements(cfg *Config) bool {
