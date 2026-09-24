@@ -49,7 +49,7 @@ func TestInitCreatesV4UserPersonalConfig(t *testing.T) {
 	}
 }
 
-func TestInitV4ConfigRejectsLegacyUserInstall(t *testing.T) {
+func TestInitV4ConfigSupportsUserInstall(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
 	registryURL := env.CreateBareRepo("init-install", SkillsOnly(
@@ -63,13 +63,23 @@ func TestInitV4ConfigRejectsLegacyUserInstall(t *testing.T) {
 	before := env.ReadFile("/root/.agents/config.yaml")
 
 	installResult := env.RunAM("install", "review", "--from", registryURL, "--scope", "user")
-	if installResult.ExitCode == 0 || !strings.Contains(installResult.Combined, "v4.writer-opt-in") {
-		t.Fatalf("install after v4 init = exit %d, want v4 writer guard: %s", installResult.ExitCode, installResult.Combined)
+	if installResult.ExitCode != 0 {
+		t.Fatalf("install after v4 init = exit %d: %s", installResult.ExitCode, installResult.Combined)
 	}
-	if after := env.ReadFile("/root/.agents/config.yaml"); after != before {
-		t.Fatalf("rejected install changed initialized user config:\nbefore:\n%s\nafter:\n%s", before, after)
+	after := env.ReadFile("/root/.agents/config.yaml")
+	if after == before {
+		t.Fatal("install did not change initialized user config")
 	}
-	env.AssertFileAbsent("/root/.factory/skills/review")
+	for _, want := range []string{"apiVersion: agent-marketplace/v4", "sources:", "git:", "skill/review"} {
+		if !strings.Contains(after, want) {
+			t.Fatalf("installed user config missing %q:\n%s", want, after)
+		}
+	}
+	if strings.Contains(after, "registries:") {
+		t.Fatalf("v4 config gained legacy registries:\n%s", after)
+	}
+	env.AssertFileContains("/root/.agents/lock.yaml", "apiVersion: agent-marketplace-lock/v2")
+	env.AssertFileExists("/root/.factory/skills/review")
 }
 
 func TestInitRequiresHarnessesInNonInteractiveMode(t *testing.T) {

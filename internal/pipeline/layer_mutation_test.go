@@ -449,3 +449,66 @@ func TestMutateLayerRemoveSource(t *testing.T) {
 	}
 	assertNoStagingResidue(t)
 }
+
+func TestAdHocEntryMatchesBinding(t *testing.T) {
+	bound := config.RegistryEntry{URL: "https://example.test/repo", Ref: "main", Path: "skills"}
+
+	t.Run("normalized git url match", func(t *testing.T) {
+		candidate := config.RegistryEntry{URL: "https://example.test/repo.git", Ref: "main", Path: "skills/"}
+		if !adHocEntryMatchesBinding(candidate, bound) {
+			t.Fatal("equivalent git identity did not match")
+		}
+	})
+	t.Run("refusal on wrong ref", func(t *testing.T) {
+		if adHocEntryMatchesBinding(config.RegistryEntry{URL: bound.URL, Ref: "dev", Path: bound.Path}, bound) {
+			t.Fatal("wrong ref matched")
+		}
+	})
+	t.Run("refusal on wrong path", func(t *testing.T) {
+		if adHocEntryMatchesBinding(config.RegistryEntry{URL: bound.URL, Ref: bound.Ref, Path: "other"}, bound) {
+			t.Fatal("wrong path matched")
+		}
+	})
+	t.Run("directory catalog key match", func(t *testing.T) {
+		dirBound := config.RegistryEntry{URL: filepath.Join(t.TempDir(), "skills"), V4Kind: config.V4SourceDirectory}
+		candidate := config.RegistryEntry{URL: "./skills", CatalogKey: dirBound.URL}
+		if !adHocEntryMatchesBinding(candidate, dirBound) {
+			t.Fatal("relative local source did not match resolved catalog root")
+		}
+	})
+	t.Run("directory refusal on different root", func(t *testing.T) {
+		dirBound := config.RegistryEntry{URL: filepath.Join(t.TempDir(), "skills"), V4Kind: config.V4SourceDirectory}
+		candidate := config.RegistryEntry{URL: "./other", CatalogKey: filepath.Join(t.TempDir(), "other")}
+		if adHocEntryMatchesBinding(candidate, dirBound) {
+			t.Fatal("different directory root matched")
+		}
+	})
+	t.Run("mixed local and git never match", func(t *testing.T) {
+		dir := t.TempDir()
+		for name, tc := range map[string]struct {
+			candidate, bound config.RegistryEntry
+		}{
+			"local binding vs git candidate": {
+				candidate: config.RegistryEntry{URL: filepath.Join(dir, "repo.git"), Ref: "main", CatalogKey: filepath.Join(dir, "skills")},
+				bound:     config.RegistryEntry{URL: filepath.Join(dir, "skills"), V4Kind: config.V4SourceDirectory},
+			},
+			"git binding vs local candidate": {
+				candidate: config.RegistryEntry{URL: filepath.Join(dir, "skills"), CatalogKey: filepath.Join(dir, "repo")},
+				bound:     config.RegistryEntry{URL: filepath.Join(dir, "repo.git"), Ref: "main"},
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				if adHocEntryMatchesBinding(tc.candidate, tc.bound) {
+					t.Fatalf("mixed local/git identity matched: %#v vs %#v", tc.candidate, tc.bound)
+				}
+			})
+		}
+	})
+	t.Run("multiple physical matches each return true", func(t *testing.T) {
+		first := config.RegistryEntry{URL: bound.URL, Ref: bound.Ref, Path: bound.Path, SourceHarness: "claude"}
+		second := config.RegistryEntry{URL: bound.URL, Ref: bound.Ref, Path: bound.Path, SourceHarness: "cursor"}
+		if !adHocEntryMatchesBinding(first, bound) || !adHocEntryMatchesBinding(second, bound) {
+			t.Fatal("duplicate physical occurrences must each match so the caller can count them")
+		}
+	})
+}

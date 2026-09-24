@@ -1,9 +1,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -98,7 +100,14 @@ func OpenLayerEditor(target LayerTarget) (*LayerEditor, error) {
 	}
 	canonical, err := canonicalConfigPath(target.DeclaringPath)
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		absolute, absErr := filepath.Abs(target.DeclaringPath)
+		if absErr != nil {
+			return nil, absErr
+		}
+		canonical = filepath.Clean(absolute)
 	}
 	doc, err := parseConfigDocument(target.StagedPath, data)
 	if err != nil {

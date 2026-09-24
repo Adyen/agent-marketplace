@@ -1056,25 +1056,45 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 
 	// Persist the registry entry to the target config scope.
-	configPath, err := ScopedConfigPath(repoRoot, opts.Scope)
+	configDestination, err := ScopedConfigPath(repoRoot, opts.Scope)
 	if err != nil {
 		return nil, fmt.Errorf("resolve config path: %w", err)
 	}
 	// Override with redirected local config path when set (monorepo subdir).
 	if opts.LocalConfigDir != "" && opts.Scope == ScopeLocal {
-		configPath = config.LocalConfigPath(opts.LocalConfigDir)
+		configDestination = config.LocalConfigPath(opts.LocalConfigDir)
 	}
+	configPath := configDestination
 	if opts.configStaging != nil {
-		configPath, err = opts.configStaging.Path(configPath)
+		configPath, err = opts.configStaging.Path(configDestination)
 		if err != nil {
 			return nil, err
 		}
 	}
-	ensureRegistry := config.EnsureRegistryWithPathsInConfig
-	if fromRef != "" {
-		ensureRegistry = config.EnsureRegistryWithPathsAtRefInConfig
+	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: configDestination}
+	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
+		var seed strings.Builder
+		if opts.Scope != ScopeLocal {
+			seed.WriteString("apiVersion: agent-marketplace/v2\n")
+		}
+		if opts.Scope == ScopeUser {
+			seed.WriteString("harnesses: [" + strings.Join(config.DefaultHarnesses(), ", ") + "]\n")
+		}
+		if seed.Len() == 0 {
+			seed.WriteString("{}\n")
+		}
+		if err := os.WriteFile(configPath, []byte(seed.String()), 0o644); err != nil {
+			return nil, fmt.Errorf("initialize %s config: %w", opts.Scope, err)
+		}
+	} else if err != nil {
+		return nil, err
 	}
-	if err := ensureRegistry(configPath, fromURL, fromRef, fromPath); err != nil {
+	var binding config.SourceBinding
+	if err := editLayerAtPath(layer, func(m *LayerMutation) error {
+		var bindErr error
+		binding, bindErr = m.EnsureRegistry(syntheticEntry)
+		return bindErr
+	}); err != nil {
 		return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
 	}
 
@@ -1121,27 +1141,33 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	// Find the catalog key for the --from entry. CatalogKey is populated
 	// by catalog.LoadRegistries during the load step above, so we need to
 	// look it up in the loaded discovery config.
-	var catalogKey string
+	catalogKeys := map[string]bool{}
 	for i := range discoveryCfg.Registries {
 		entry := &discoveryCfg.Registries[i]
-		if strings.TrimSpace(entry.URL) != fromURL || strings.TrimSpace(entry.Path) != fromPath {
+		if !adHocEntryMatchesBinding(*entry, binding.Entry) {
 			continue
 		}
-		if fromRef != "" && strings.TrimSpace(entry.Ref) != fromRef {
-			continue
-		}
-		catalogKey = entry.CatalogKey
-		break
+		catalogKeys[entry.CatalogKey] = true
+	}
+	if len(catalogKeys) != 1 {
+		return nil, fmt.Errorf("registry %s (ref %s, path %s) did not resolve to exactly one catalog in %s config: %d matches", fromURL, fromRef, fromPath, opts.Scope, len(catalogKeys))
+	}
+	var catalogKey string
+	for key := range catalogKeys {
+		catalogKey = key
 	}
 	if catalogKey == "" {
 		return nil, fmt.Errorf("no catalog found for registry %s; check that the URL and ref are correct", fromURL)
 	}
 	selectedCatalogs := map[string]catalog.LoadedCatalog{catalogKey: catalogs[catalogKey]}
 	addSelectedResource := func(resourceKind ir.ResourceKind, resourceName string) error {
-		if fromRef != "" {
-			return config.AddResourceToExactRegistryEntryAtRef(configPath, fromURL, fromPath, fromRef, resourceKind, resourceName)
-		}
-		return config.AddResourceToExactRegistryEntry(configPath, fromURL, fromPath, resourceKind, resourceName)
+		return editLayerAtPath(layer, func(m *LayerMutation) error {
+			bound, err := m.EnsureRegistry(syntheticEntry)
+			if err != nil {
+				return err
+			}
+			return m.Apply(bound, config.SelectionChange{Operation: config.SelectionInclude, Locators: []config.ResourceLocator{{Kind: resourceKind, Name: resourceName}}})
+		})
 	}
 
 	// If a name arg is given, install just that resource.
@@ -1188,9 +1214,6 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		if err := addSelectedResource(match.kind, resourceName); err != nil {
 			return nil, err
 		}
-		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName, opts.configStaging); err != nil {
-			return nil, err
-		}
 		requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: resourceName}}, silentSyncOptsForInstall(opts)...)
 		if err != nil {
 			return nil, err
@@ -1223,9 +1246,6 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			}
 			if match != nil {
 				if err := addSelectedResource(match.kind, inferredName); err != nil {
-					return nil, err
-				}
-				if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, inferredName, opts.configStaging); err != nil {
 					return nil, err
 				}
 				requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: inferredName}}, silentSyncOptsForInstall(opts)...)
@@ -1270,7 +1290,13 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	slices.Sort(allInstalled)
 
-	if err := config.EnsureRegistryWithDefaultInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
+	if err := editLayerAtPath(layer, func(m *LayerMutation) error {
+		bound, err := m.EnsureRegistry(syntheticEntry)
+		if err != nil {
+			return err
+		}
+		return m.Apply(bound, config.SelectionChange{Operation: config.SelectionSelectAll})
+	}); err != nil {
 		return nil, fmt.Errorf("set default on registry in %s config: %w", opts.Scope, err)
 	}
 	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries, opts.Scope)
@@ -1285,6 +1311,19 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		Installed:           allInstalled,
 		RequirementWarnings: requirementWarnings,
 	}, nil
+}
+
+func adHocEntryMatchesBinding(candidate, bound config.RegistryEntry) bool {
+	candidateLocal, boundLocal := candidate.IsLocal(), bound.IsLocal()
+	if candidateLocal != boundLocal {
+		return false
+	}
+	if boundLocal {
+		return candidate.CatalogKey != "" && filepath.Clean(candidate.CatalogKey) == filepath.Clean(bound.URL)
+	}
+	return config.NormalizeGitURL(candidate.URL) == config.NormalizeGitURL(bound.URL) &&
+		strings.TrimSpace(candidate.Ref) == strings.TrimSpace(bound.Ref) &&
+		config.NormalizeRegistryPath(candidate.Path) == config.NormalizeRegistryPath(bound.Path)
 }
 
 // noResourcesError is returned by allDiscoveredResourceNames when no

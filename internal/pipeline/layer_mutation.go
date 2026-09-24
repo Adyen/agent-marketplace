@@ -60,23 +60,30 @@ func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*L
 		if err != nil {
 			return err
 		}
-		editor, err := config.OpenLayerEditor(config.LayerTarget{Source: target.Source, StagedPath: staged, DeclaringPath: target.ConfigPath})
-		if err != nil {
-			return err
-		}
-		if err := mutate(&LayerMutation{editor: editor}); err != nil {
-			return err
-		}
-		candidate, err := editor.Render()
-		if err != nil {
-			return err
-		}
-		if !candidate.Changed {
-			return nil
-		}
-		if err := os.WriteFile(staged, candidate.Bytes, candidate.Mode); err != nil {
-			return fmt.Errorf("write staged config %s: %w", staged, err)
-		}
-		return nil
+		return editLayerAtPath(config.LayerTarget{Source: target.Source, StagedPath: staged, DeclaringPath: target.ConfigPath}, mutate)
 	}, target.Reconcile)
+}
+
+func editLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) error) error {
+	if mutate == nil {
+		return errors.New("layer mutation callback is required")
+	}
+	editor, err := config.OpenLayerEditor(target)
+	if err != nil {
+		return err
+	}
+	if err := mutate(&LayerMutation{editor: editor}); err != nil {
+		return err
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		return err
+	}
+	if !candidate.Changed {
+		return nil
+	}
+	if err := os.WriteFile(target.StagedPath, candidate.Bytes, candidate.Mode); err != nil {
+		return fmt.Errorf("write staged config %s: %w", target.StagedPath, err)
+	}
+	return nil
 }
