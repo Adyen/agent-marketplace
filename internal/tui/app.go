@@ -177,7 +177,6 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 			break
 		}
 	}
-	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
 }
 
 func marketplaceInstallSnapshotError(msg snapshotLoadedMsg) error {

@@ -36,9 +36,6 @@ func TestHardSnapshotFailureNeverRendersInSync(t *testing.T) {
 	if strings.Contains(footer, "in sync") || !strings.Contains(footer, "! 1 errors") {
 		t.Fatalf("hard failure did not prioritize the persistent error: %q", footer)
 	}
-	if !m.rowsStale {
-		t.Fatal("hard snapshot failure did not mark rows stale")
-	}
 }
 
 func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
@@ -141,7 +138,6 @@ func TestSnapshotDiagnosticsDeduplicateStableIdentity(t *testing.T) {
 func TestBrokenSnapshotRowsCanOpenMutationModal(t *testing.T) {
 	r := mkRow("unsafe", withProject)
 	m := modelWithSelectedRow(t, r)
-	m.rowsStale = true
 	m.pane = paneList
 
 	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
@@ -538,7 +534,6 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 	r := mkRow("unsafe", withProject)
 	m := modelWithSelectedRow(t, r)
 	m.authoritativeRows = m.rows
-	m.rowsStale = true
 	m.pane = paneList
 
 	updated, _ := m.Update(snapshotLoadedMsg{

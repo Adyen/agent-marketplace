@@ -241,7 +241,6 @@ type Model struct {
 	syncing             bool
 	refreshing          bool
 	requests            requestState
-	rowsStale           bool
 	configInvalid       bool
 	dependencyLifecycle DependencyLifecycle
 
