@@ -25,12 +25,13 @@ type Intent struct {
 }
 
 type LayerIntent struct {
-	Source Source
-	Path   string
-	Reads  []ConfigRead
-	legacy *Config
-	v4     *V4Config
-	errors []error
+	Source   Source
+	Path     string
+	Reads    []ConfigRead
+	legacy   *Config
+	v4       *V4Config
+	errors   []error
+	rootRead bool
 }
 
 type Settings struct {
@@ -323,6 +324,7 @@ func loadLayerIntent(source Source, path string, kind layerKind, overlays map[st
 		return li
 	}
 	parsed, err := readLayerIntent(path, canonicalPath, data, kind, overlays)
+	parsed.rootRead = true
 	if err != nil {
 		parsed.errors = []error{err}
 	}
@@ -358,6 +360,7 @@ func readOrganizationIntent(path string) (LayerIntent, ManagedInstallationDiagno
 		return li, inspectManagedConfig(path, readErr, nil, Organization, li.errors)
 	}
 	li, err := readLayerIntent(path, canonicalPath, data, organizationLayer, nil)
+	li.rootRead = true
 	if err != nil {
 		li.errors = []error{err}
 	}
@@ -372,15 +375,11 @@ func readOrganizationIntent(path string) (LayerIntent, ManagedInstallationDiagno
 }
 
 func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOptions) (*lockfile.Document, []ConfigRead, []error, bool) {
-	if !li.Present() || len(li.errors) > 0 {
-		return nil, nil, nil, false
-	}
-
 	overlays := opts.FileOverlays
 	runtimeLock := false
 	if source == Organization {
 		overlays = nil
-		if len(opts.OrganizationRuntimeLock) > 0 {
+		if li.rootRead && len(opts.OrganizationRuntimeLock) > 0 {
 			canonical, err := canonicalConfigPath(li.Path)
 			if err != nil {
 				return nil, nil, []error{err}, true
@@ -396,6 +395,10 @@ func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOpti
 			overlays = lockOverlays
 			runtimeLock = true
 		}
+	}
+
+	if !li.Present() || len(li.errors) > 0 {
+		return nil, nil, nil, false
 	}
 
 	var doc *lockfile.Document
@@ -492,6 +495,11 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 
 func bindLayerResult(li LayerIntent, ev Evidence, source Source) LayerResult {
 	lr := LayerResult{Source: li.Source, Path: li.Path, Reads: li.Reads}
+	if ev.runtimeSetupError[source] {
+		lr.Errors = append(lr.Errors, ev.errors[source]...)
+		lr.Reads = append(lr.Reads, ev.reads[source]...)
+		return lr
+	}
 	lr.Errors = append(lr.Errors, li.errors...)
 	lr.Errors = append(lr.Errors, ev.errors[source]...)
 	lr.Reads = append(lr.Reads, ev.reads[source]...)
