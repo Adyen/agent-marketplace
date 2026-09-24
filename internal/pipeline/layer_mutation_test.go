@@ -451,6 +451,15 @@ func TestMutateLayerRejectsInvalidInputs(t *testing.T) {
 		if err := m.ClearUnboundExclude(config.ResourceLocator{Kind: ir.KindSkill, Name: "x"}); err == nil {
 			t.Fatal("nil receiver ClearUnboundExclude accepted")
 		}
+		if err := m.RemoveUnboundInclude(config.ResourceLocator{Kind: ir.KindSkill, Name: "x"}); err == nil {
+			t.Fatal("nil receiver RemoveUnboundInclude accepted")
+		}
+		if err := m.SetUnboundExclude(config.ResourceLocator{Kind: ir.KindSkill, Name: "x"}, true); err == nil {
+			t.Fatal("nil receiver SetUnboundExclude accepted")
+		}
+		if _, err := m.UnboundIncludeInherited(config.ResourceLocator{Kind: ir.KindSkill, Name: "x"}); err == nil {
+			t.Fatal("nil receiver UnboundIncludeInherited accepted")
+		}
 	})
 
 	data, err := os.ReadFile(configPath)
