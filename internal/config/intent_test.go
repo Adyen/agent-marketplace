@@ -310,3 +310,104 @@ func TestReadLayerIntentV4OverlayIncludeRead(t *testing.T) {
 		t.Fatalf("overlaid include read = %#v in %#v", includeRead, li.Reads)
 	}
 }
+
+func TestReadLayerIntentV4KeepsCapturedCanonicalAfterRemove(t *testing.T) {
+	dir := t.TempDir()
+	rootPath, _, rootBytes, _ := writeIntentV4Files(t, dir)
+	canonical, data, err := readEffectiveLayer(rootPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	li, err := readLayerIntent(rootPath, canonical, data, repoLayer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(li.Reads) == 0 || li.Reads[len(li.Reads)-1].Path != canonical {
+		t.Fatalf("root read path = %#v, want captured canonical %q", li.Reads, canonical)
+	}
+	rootAbs, err := filepath.Abs(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootRead := li.Reads[len(li.Reads)-1]
+	if rootRead.RequestedPath != rootAbs || rootRead.Digest != fmt.Sprintf("%x", sha256.Sum256(rootBytes)) {
+		t.Fatalf("root read = %#v, want requested %q digest of captured bytes", rootRead, rootAbs)
+	}
+}
+
+func TestReadLayerIntentV4SymlinkRetargetKeepsCapturedProvenance(t *testing.T) {
+	dir := t.TempDir()
+	targetA := filepath.Join(dir, "a")
+	targetB := filepath.Join(dir, "b")
+	if err := os.MkdirAll(targetA, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(targetB, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	aBytes := []byte(`apiVersion: agent-marketplace/v4
+sources:
+  main: {directory: ./regs-a}
+resources:
+  main: {all: true}
+`)
+	bBytes := []byte(`apiVersion: agent-marketplace/v4
+sources:
+  main: {directory: ./regs-b}
+resources:
+  main: {all: true}
+`)
+	aPath := filepath.Join(targetA, "config.yaml")
+	bPath := filepath.Join(targetB, "config.yaml")
+	if err := os.WriteFile(aPath, aBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bPath, bBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.yaml")
+	if err := os.Symlink(aPath, link); err != nil {
+		t.Fatal(err)
+	}
+	canonical, data, err := readEffectiveLayer(link, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aCanonical, err := canonicalConfigPath(aPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical != aCanonical {
+		t.Fatalf("captured canonical = %q, want %q", canonical, aCanonical)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(bPath, link); err != nil {
+		t.Fatal(err)
+	}
+	li, err := readLayerIntent(link, canonical, data, repoLayer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkAbs, err := filepath.Abs(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(li.Reads) != 1 {
+		t.Fatalf("reads = %#v, want exactly the root read", li.Reads)
+	}
+	read := li.Reads[0]
+	if read.Path != aCanonical || read.RequestedPath != linkAbs || read.Digest != fmt.Sprintf("%x", sha256.Sum256(aBytes)) {
+		t.Fatalf("read = %#v, want canonical %q requested %q digest of A bytes", read, aCanonical, linkAbs)
+	}
+	if len(li.v4.Sources) != 1 {
+		t.Fatalf("sources = %#v, want A document sources", li.v4.Sources)
+	}
+	if src, ok := li.v4.Sources["main"]; !ok || src.File != aCanonical {
+		t.Fatalf("parsed sources = %#v, want A bytes", li.v4.Sources)
+	}
+}
