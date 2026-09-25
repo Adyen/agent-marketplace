@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -287,6 +288,30 @@ func canonicalConfigPath(path string) (string, error) {
 	return filepath.Clean(canonical), nil
 }
 
+// canonicalConfigPathTolerateMissing canonicalizes path even when the file
+// does not exist yet. A layer being created has no symlink of its own, so its
+// parent directory is resolved instead: that yields the same name the loader
+// produces once the file exists, which keeps provenance and lock-path
+// comparisons stable across the creating edit.
+func canonicalConfigPathTolerateMissing(path string) (string, error) {
+	canonical, err := canonicalConfigPath(path)
+	if err == nil {
+		return canonical, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	absolute, absErr := filepath.Abs(path)
+	if absErr != nil {
+		return "", absErr
+	}
+	dir, dirErr := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if dirErr != nil {
+		return filepath.Clean(absolute), nil
+	}
+	return filepath.Join(dir, filepath.Base(absolute)), nil
+}
+
 // ConfigLockPaths identifies one config and its layer-owned lock through both
 // the requested and canonical filesystem names.
 type ConfigLockPaths struct {
@@ -525,20 +550,9 @@ func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overla
 		cfg, err := v4.ToLegacyConfig(kind)
 		return cfg, nil, err
 	}
-	canonical, err := canonicalConfigPath(configPath)
+	canonical, err := canonicalConfigPathTolerateMissing(configPath)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, nil, err
-		}
-		absolute, absErr := filepath.Abs(configPath)
-		if absErr != nil {
-			return nil, nil, absErr
-		}
-		dir, dirErr := filepath.EvalSymlinks(filepath.Dir(absolute))
-		if dirErr != nil {
-			return nil, nil, dirErr
-		}
-		canonical = filepath.Join(dir, filepath.Base(absolute))
+		return nil, nil, err
 	}
 	paths, err := configLockPaths(configPath, canonical)
 	if err != nil {

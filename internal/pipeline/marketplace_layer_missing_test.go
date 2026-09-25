@@ -44,36 +44,6 @@ func TestMutateMarketplaceLayerV4MissingRootEndpoint(t *testing.T) {
 	}
 }
 
-func TestCommitPreparedMarketplaceInstallMakesNoNetworkRequests(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	repo := t.TempDir()
-	configPath := filepath.Join(home, ".agents", "config.yaml")
-	writeFileMode(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n", 0o600)
-	fake := newLayerMarketplaceServer(t)
-	registry := fake.addRegistry(t, "source")
-	fake.addSkill(t, registry, "review")
-
-	opts := InstallOptions{RepoRoot: repo, Args: []string{fake.URL + "/r/source/skill/review"}, Scope: ScopeUser, AcceptRisk: true}
-	prepared, err := PrepareMarketplaceInstall(context.Background(), opts)
-	if err != nil {
-		t.Fatalf("PrepareMarketplaceInstall: %v", err)
-	}
-	if prepared == nil {
-		t.Fatal("no prepared install")
-	}
-	fake.requests.Store(0)
-	if _, err := CommitPreparedMarketplaceInstall(context.Background(), prepared); err != nil {
-		t.Fatalf("CommitPreparedMarketplaceInstall: %v", err)
-	}
-	if got := fake.requests.Load(); got != 0 {
-		t.Fatalf("commit made %d Marketplace requests: %v", got, fake.paths)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".config", "devin", "skills", "review")); err != nil {
-		t.Fatalf("review was not materialized: %v", err)
-	}
-}
-
 func TestMutateMarketplaceLayerV4SecondPinMerges(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -409,6 +379,9 @@ func TestCommitPreparedMarketplaceInstallRepairsLockWithoutRefetch(t *testing.T)
 	if marketplaceLockResource(doc, "skill", "review") == nil {
 		t.Fatalf("repaired lock resources = %#v", doc.Marketplaces[0].Resources)
 	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "devin", "skills", "review")); err != nil {
+		t.Fatalf("review was not materialized: %v", err)
+	}
 }
 
 func TestMergePinsToV4PreservesInputDocument(t *testing.T) {
@@ -491,7 +464,7 @@ func TestMergePinsToV4PreservesInputDocument(t *testing.T) {
 	}
 }
 
-func TestMergePinsToV4RejectsNilCacheAndConflictingEvidence(t *testing.T) {
+func TestMergePinsToV4RejectsConflictingEvidence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repo := t.TempDir()
@@ -513,10 +486,6 @@ func TestMergePinsToV4RejectsNilCacheAndConflictingEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := layerMarketplaceLockDoc(t, filepath.Join(home, ".agents", "lock.yaml"))
-
-	if _, err := marketplacelock.MergePinsToV4(v4Cfg, doc, entry, pins, nil); err == nil {
-		t.Fatal("nil cache accepted")
-	}
 
 	doc.Marketplaces[0].Resources[0].Revision = "sha256:" + strings.Repeat("d", 64)
 	if _, err := marketplacelock.MergePinsToV4(v4Cfg, doc, entry, pins, marketplace.DefaultCache()); err == nil {

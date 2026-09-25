@@ -598,16 +598,17 @@ registries:
 	if err != nil {
 		t.Fatalf("load local config: %v", err)
 	}
-	excluded := localCfg != nil && containsStr(ksExclude(localCfg.Skills), "vm-lifecycle")
-	if localCfg != nil {
-		for _, reg := range localCfg.Registries {
-			if containsStr(ksExclude(reg.Skills), "vm-lifecycle") {
-				excluded = true
-			}
-		}
+	if localCfg == nil || len(localCfg.Registries) != 1 {
+		t.Fatalf("expected one source-bound personal registry entry, got: %v", localCfg)
 	}
-	if !excluded {
-		t.Fatalf("expected vm-lifecycle in personal exclude, got: %v", localCfg)
+	if !strings.HasSuffix(localCfg.Registries[0].URL, origin) {
+		t.Fatalf("personal exclude bound to %q, want the removed skill's source %q", localCfg.Registries[0].URL, origin)
+	}
+	if !containsStr(ksExclude(localCfg.Registries[0].Skills), "vm-lifecycle") {
+		t.Fatalf("expected vm-lifecycle in the personal source exclude, got: %v", localCfg.Registries[0])
+	}
+	if containsStr(ksExclude(localCfg.Skills), "vm-lifecycle") {
+		t.Fatalf("personal exclude written at top level instead of the source: %v", localCfg.Skills)
 	}
 
 	// The repo config must remain unchanged (no removal from skills list,
@@ -850,7 +851,9 @@ registries:
 			}
 			var localExclude []string
 			if localCfg != nil {
-				localExclude = append(localExclude, localCfg.Skills.Exclude...)
+				if len(localCfg.Skills.Exclude) != 0 {
+					t.Fatalf("personal exclude written at top level instead of the source: %v", localCfg.Skills.Exclude)
+				}
 				for _, reg := range localCfg.Registries {
 					localExclude = append(localExclude, reg.Skills.Exclude...)
 				}
@@ -953,7 +956,9 @@ registries:
 			}
 			var localExclude []string
 			if localCfg != nil {
-				localExclude = append(localExclude, localCfg.Skills.Exclude...)
+				if len(localCfg.Skills.Exclude) != 0 {
+					t.Fatalf("personal exclude written at top level instead of the source: %v", localCfg.Skills.Exclude)
+				}
 				for _, reg := range localCfg.Registries {
 					localExclude = append(localExclude, reg.Skills.Exclude...)
 				}

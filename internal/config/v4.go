@@ -1222,7 +1222,7 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 			}
 		}
 	}
-	canonical, err := canonicalConfigPath(file)
+	canonical, err := canonicalConfigPathTolerateMissing(file)
 	if err != nil {
 		if rootData == nil || !errors.Is(err, fs.ErrNotExist) {
 			return nil, err

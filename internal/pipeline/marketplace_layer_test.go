@@ -611,10 +611,6 @@ func TestMutateMarketplaceLayerV4SyncFailureRollback(t *testing.T) {
 		t.Fatal("lock not rolled back")
 	}
 
-	writeFileMode(t, lockPath, "", 0o644)
-	if err := os.Remove(lockPath); err != nil {
-		t.Fatal(err)
-	}
 	concurrent := []byte("apiVersion: agent-marketplace/v4\nharnesses: [devin]\n# concurrent writer\n")
 	_, err = MutateMarketplaceLayer(context.Background(), repo, repo, configPath, config.UserPersonal, func(m *MarketplaceLayerMutation) error {
 		return m.EnsureEndpoint(entry)

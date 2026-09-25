@@ -201,8 +201,8 @@ resources:
     include: [skill/vm-lifecycle, skill/k8s-basics, command/deploy-service, subagent/incident-responder]
 ```
 
-Existing v2/v3 configs keep working: every layer still loads through the legacy
-reader, mutations warn once with `config.legacy-deprecated`, and
+Existing v2/v3 configs keep working: every v2/v3 layer still loads through the
+legacy reader, mutations warn once with `config.legacy-deprecated`, and
 `agent-marketplace migrate` converts them. A v2 file for contrast:
 
 ```yaml
@@ -272,7 +272,7 @@ An exclusion suppresses a matching selection; a later include can re-enable the
 same resource. See [`docs/PRECEDENCE.md`](./docs/PRECEDENCE.md) for the full
 decision order.
 
-### Machine-wide opt-in with `required` and `default`
+### Machine-wide opt-in with `required` and `all`
 
 A registry entry in a machine-wide layer can mark its resources as automatically
 selected:
@@ -282,10 +282,10 @@ selected:
 # `security` and `shared` are named git sources declared in the same file
 resources:
   security:
-    all: true          # select everything the source offers
-    required: true     # always materialized; CANNOT be excluded at any layer
+    all: true          # select every resource the source offers
+    required: true     # no exclude at any layer can drop these
   shared:
-    all: true          # auto-selected, but a higher layer can opt out
+    all: true          # selected automatically; a higher layer can exclude individual resources
 ```
 
 - **`required: true`** — mandatory; immune to every `exclude` at every layer.
@@ -319,7 +319,7 @@ resources:
     exclude: [skill/noisy-skill]  # only from this source
 ```
 
-3. **Adding a personal source** — add a registry just for your checkout,
+3. **Adding a personal source** — add a source just for your checkout,
    without committing it for the whole team or adding it globally:
 
 ```yaml
@@ -343,7 +343,7 @@ Or equivalently, write the `sources:`/`resources:` block by hand and then `sync`
 **Note:** V4 selectors are always scoped to a named source — there is no
 source-free selector. In a legacy v2/v3 local config, top-level `exclude`
 selectors still apply *globally* across eligible repo-scoped registries as a
-broad checkout veto; migrate to keep per-source control.
+broad checkout veto; migrate to v4 to get per-source control.
 
 After editing any config layer by hand, run `agent-marketplace sync` to
 reconcile the generated files, or `agent-marketplace sync --check` to verify

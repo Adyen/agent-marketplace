@@ -4,8 +4,6 @@
 
 Intentional transition boundaries retained after implementation:
 
-- v2/v3 roots remain readable and writable through the deprecated legacy editor backend; each mutation transaction emits `config.legacy-deprecated` naming the `agent-marketplace migrate --scope <scope>` command. New writable roots are always v4.
-- A writable v1 lock auto-upgrades to v2 on the next reconciliation; a read-only organization v1 lock is accepted with a `lock.version-deprecated` warning.
 - Requests owned by an included fragment refuse with `config.edit.include-owned` rather than editing the fragment.
 - A v4 layer that declares a Marketplace source without endpoint evidence in its lock fails closed (`v4.marketplace-lock-mismatch`); recovery goes through an explicit endpoint install or lock bootstrap that verifies identity online.
 - Organization configuration and locks are never written; an intentionally absent organization lock keeps its online transient in-memory acquisition path.
@@ -15,7 +13,7 @@ Intentional transition boundaries retained after implementation:
 
 ## 1. Problem
 
-`agent-marketplace/v4` is the canonical configuration schema, but the application does not yet treat it as the canonical writable model. V4 roots are parsed and adapted into the legacy `Config` and `RegistryEntry` runtime structures, while most mutation helpers still edit v2/v3 keys such as `registries`, top-level resource selectors, and embedded Marketplace pins. Individual callers have added local v4 branches, producing uneven feature support across CLI install/remove variants, TUI toggles, stale pruning, and Marketplace operations.
+`agent-marketplace/v4` is the canonical configuration schema, but the application does not yet treat it as the canonical writable model. V4 roots are parsed and adapted into the legacy `Config` and `RegistryEntry` runtime structures, while most mutation helpers still edit v2/v3 keys such as `registries`, top-level resource selectors, and embedded Marketplace pins. Individual callers have added local v4 branches, so feature support is uneven across CLI install/remove variants, TUI toggles, stale pruning, and Marketplace operations.
 
 The reported failure is representative:
 
@@ -89,21 +87,21 @@ All callers use one version-neutral mutation engine. It has a v4 backend and a t
 
 This approach is selected.
 
-## 6. Open pull requests
+## 6. Prior art
 
 ### 6.1 PR #296: v4 resource editing parity
 
-PR #296 implements many required behaviors and provides useful regression coverage for Git/directory install and remove variants, stale pruning, exact Marketplace editing, TUI toggles, and config/lock publication.
+PR #296 implemented many required behaviors and provided useful regression coverage for Git/directory install and remove variants, stale pruning, exact Marketplace editing, TUI toggles, and config/lock publication.
 
-It is not the selected architecture because it adds schema branches throughout callers and hundreds of lines of operation-specific free editor functions. It targets the closed PR #291 branch rather than current `main`, and automated review identified unresolved risks involving duplicate insertion, a nil dereference during v4 lock pruning, and structural comparison of slice-bearing records.
+It was not the selected architecture because it added schema branches throughout callers and hundreds of lines of operation-specific free editor functions. It targeted the closed PR #291 branch rather than `main`, and automated review identified unresolved risks involving duplicate insertion, a nil dereference during v4 lock pruning, and structural comparison of slice-bearing records.
 
-Implementation should reuse independently valid behavior contracts and test scenarios from PR #296, not cherry-pick its call-site branching structure.
+This implementation reused independently valid behavior contracts and test scenarios from PR #296 rather than its call-site branching structure.
 
 ### 6.2 PRs #293 and #302
 
-PR #293 hardens lockless organization Marketplace doctor/GC behavior. PR #302 narrows transient organization acquisition cache invalidation after selection edits. Both are orthogonal to the editor interface but overlap runtime-lock and read-assertion code.
+PR #293 hardened lockless organization Marketplace doctor/GC behavior. PR #302 narrowed transient organization acquisition cache invalidation after selection edits. Both were orthogonal to the editor interface but overlapped runtime-lock and read-assertion code.
 
-The new transaction boundary must preserve:
+The transaction boundary preserves:
 
 - transient in-memory organization evidence without publishing an absent organization lock;
 - fail-closed doctor/GC behavior;

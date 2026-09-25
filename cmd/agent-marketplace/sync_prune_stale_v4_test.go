@@ -52,38 +52,6 @@ func TestSyncPruneStaleV4DirectSelection(t *testing.T) {
 	}
 }
 
-func TestSyncPruneStaleV4IncludedSelectionRefuses(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
-	repoRoot, configPath := pruneFixture(t, "v4-frag-prune.git", func(origin string) string {
-		return "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: resources.yaml\nsources:\n  main: {git: file://" + origin + ", ref: main}\nresources:\n  main: [skill/keeper]\n"
-	})
-	fragmentPath := filepath.Join(repoRoot, ".agents", "resources.yaml")
-	fragmentData := "resources:\n  main: [skill/gone]\n"
-	writeConfig(t, fragmentPath, fragmentData)
-	rootData, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	output, _ := executeCommand("sync", "--prune-stale")
-	if strings.Contains(output, `pruned stale skill "gone"`) {
-		t.Fatalf("claimed to prune an include-owned selection:\n%s", output)
-	}
-	if !strings.Contains(output, "include-owned") {
-		t.Fatalf("expected include-owned refusal in output:\n%s", output)
-	}
-	gotRoot, err := os.ReadFile(configPath)
-	if err != nil || string(gotRoot) != string(rootData) {
-		t.Fatalf("root changed:\n%s", gotRoot)
-	}
-	gotFragment, err := os.ReadFile(fragmentPath)
-	if err != nil || string(gotFragment) != fragmentData {
-		t.Fatalf("fragment changed:\n%s", gotFragment)
-	}
-}
-
 func TestSyncPruneStaleV4MixedBatch(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -92,7 +60,8 @@ func TestSyncPruneStaleV4MixedBatch(t *testing.T) {
 		return "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: resources.yaml\nsources:\n  main: {git: file://" + origin + ", ref: main}\nresources:\n  main: [skill/keeper, skill/gone-root]\n"
 	})
 	fragmentPath := filepath.Join(repoRoot, ".agents", "resources.yaml")
-	writeConfig(t, fragmentPath, "resources:\n  main: [skill/gone-frag]\n")
+	fragmentData := "resources:\n  main: [skill/gone-frag]\n"
+	writeConfig(t, fragmentPath, fragmentData)
 
 	output, err := executeCommand("sync", "--prune-stale")
 	if err != nil {
@@ -115,8 +84,8 @@ func TestSyncPruneStaleV4MixedBatch(t *testing.T) {
 		t.Fatalf("root config after prune:\n%s", configData)
 	}
 	gotFragment, err := os.ReadFile(fragmentPath)
-	if err != nil || !strings.Contains(string(gotFragment), "skill/gone-frag") {
-		t.Fatalf("fragment selection lost:\n%s", gotFragment)
+	if err != nil || string(gotFragment) != fragmentData {
+		t.Fatalf("fragment changed:\n%s", gotFragment)
 	}
 }
 

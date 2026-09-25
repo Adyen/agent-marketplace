@@ -227,10 +227,6 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 					return nil, err
 				}
 			} else {
-				// Validate includes before mutating the root selection.
-				if _, err := config.LoadConfigFromPath(destination); err != nil {
-					return nil, fmt.Errorf("validate config includes %q: %w", destination, err)
-				}
 				rootCfg, err := config.LoadRootConfigFromPath(destination)
 				if err != nil {
 					return nil, fmt.Errorf("load root config %q: %w", destination, err)
@@ -247,7 +243,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 						return err
 					}
 					if !rootSelected || inherited {
-						return m.SetLayerExclude(locator, providers, true)
+						return m.SetLayerExclude(locator, providers)
 					}
 					return nil
 				}); err != nil {
@@ -634,7 +630,7 @@ func editRemovalLayer(repoRoot string, scope Scope, staging *configStagingManage
 	if err != nil {
 		return err
 	}
-	return editLayerAtPath(config.LayerTarget{Source: scopeToConfigSource(scope), StagedPath: staged, DeclaringPath: destination}, mutate)
+	return EditLayerAtPath(config.LayerTarget{Source: scopeToConfigSource(scope), StagedPath: staged, DeclaringPath: destination}, mutate)
 }
 
 func bindRemovalRegistry(m *LayerMutation, entry config.RegistryEntry) (config.SourceBinding, error) {
@@ -660,7 +656,7 @@ func excludeWithUnboundCompatibility(repoRoot string, scope Scope, staging *conf
 	locator := config.ResourceLocator{Kind: kind, Name: name}
 	return editRemovalLayer(repoRoot, scope, staging, func(m *LayerMutation) error {
 		if clearStale {
-			if err := m.SetUnboundExclude(locator, false); err != nil {
+			if err := m.ClearUnboundExclude(locator); err != nil {
 				return err
 			}
 			if err := m.RemoveUnboundInclude(locator); err != nil {
@@ -674,11 +670,20 @@ func excludeWithUnboundCompatibility(repoRoot string, scope Scope, staging *conf
 		if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
 			return err
 		}
-		if err := m.SetUnboundExclude(locator, true); err != nil && !isEditUnsupported(err) {
+		if err := m.SetUnboundExclude(locator); err != nil && !isEditUnsupported(err) {
 			return err
 		}
 		return nil
 	})
+}
+
+// removalDropsInclude reports whether removing name from entry can delete the
+// explicit include instead of appending an exclude. An entry that selects by
+// policy (default, required, or tags) keeps selecting the resource, so only an
+// exclude removes it.
+func removalDropsInclude(entry config.RegistryEntry, kind ir.ResourceKind, name string) bool {
+	return !entry.Default && !entry.Required && len(entry.Tags) == 0 &&
+		slices.Contains(entry.SelectorForKind(kind).Include, name)
 }
 
 func removalSelectionOperation(destination string, entry config.RegistryEntry, kind ir.ResourceKind, name string) (config.SelectionOperation, error) {
@@ -700,10 +705,7 @@ func removalSelectionOperation(destination string, entry config.RegistryEntry, k
 			break
 		}
 	}
-	if rootEntry == nil || !slices.Contains(rootEntry.SelectorForKind(kind).Include, name) {
-		return config.SelectionExclude, nil
-	}
-	if rootEntry.Default || rootEntry.Required || len(rootEntry.Tags) > 0 {
+	if rootEntry == nil || !removalDropsInclude(*rootEntry, kind, name) {
 		return config.SelectionExclude, nil
 	}
 	expanded, err := config.LoadConfigFromPath(destination)
@@ -1312,7 +1314,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	}
 	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: declaringPath}
 	editRemoveLayer := func(mutate func(*LayerMutation) error) error {
-		return editLayerAtPath(layer, mutate)
+		return EditLayerAtPath(layer, mutate)
 	}
 
 	// An empty name targets the registry.
@@ -1471,8 +1473,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	editEntry = removalEditEntry(editEntry, fromURL, selectedPath, shadowRef)
 	operation := config.SelectionExclude
 	if entryInTarget && !requiresShadow && strings.TrimSpace(shadowRef) == "" &&
-		!editEntry.Default && !editEntry.Required && len(editEntry.Tags) == 0 &&
-		slices.Contains(editEntry.SelectorForKind(resolvedKind).Include, name) {
+		removalDropsInclude(editEntry, resolvedKind, name) {
 		operation = config.SelectionRemoveInclude
 	}
 	if err := editRemoveLayer(func(m *LayerMutation) error {

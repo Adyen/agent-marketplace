@@ -24,7 +24,7 @@ type MarketplaceLayerMutation struct {
 	endpointS bool
 	pins      []config.MarketplaceResourcePin
 	pinsS     bool
-	removals  []marketplaceRemoval
+	removal   *marketplaceRemoval
 }
 
 type marketplaceRemoval struct {
@@ -97,10 +97,10 @@ func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.Marketplace
 		return errors.New("marketplace layer mutation is nil")
 	}
 	if m.legacy {
-		if len(m.removals) > 0 {
+		if m.removal != nil {
 			return errors.New("marketplace layer mutation supports one legacy removal")
 		}
-		m.removals = append(m.removals, marketplaceRemoval{entry: entry, pin: pin, collection: collection})
+		m.removal = &marketplaceRemoval{entry: entry, pin: pin, collection: collection}
 		return nil
 	}
 	if m.editor == nil {
@@ -194,8 +194,7 @@ func mutateLegacyMarketplaceLayer(configPath string, source config.Source, mutat
 }
 
 func runLegacyMarketplaceMutation(configPath string, m *MarketplaceLayerMutation, sync func() ([]error, error)) ([]error, error) {
-	if len(m.removals) > 0 {
-		r := m.removals[0]
+	if r := m.removal; r != nil {
 		return commitMarketplaceConfigRemoval(configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
 			if r.collection {
 				return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, r.entry.URL, r.entry.InstanceID, r.pin)

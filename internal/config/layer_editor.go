@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -43,7 +42,6 @@ const (
 	SelectionSelectAll
 	SelectionExcludeAll
 	SelectionAddTag
-	SelectionRemoveTag
 )
 
 type SelectionChange struct {
@@ -100,16 +98,9 @@ func OpenLayerEditor(target LayerTarget) (*LayerEditor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read staged config %q: %w", target.StagedPath, err)
 	}
-	canonical, err := canonicalConfigPath(target.DeclaringPath)
+	canonical, err := canonicalConfigPathTolerateMissing(target.DeclaringPath)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, err
-		}
-		absolute, absErr := filepath.Abs(target.DeclaringPath)
-		if absErr != nil {
-			return nil, absErr
-		}
-		canonical = filepath.Clean(absolute)
+		return nil, err
 	}
 	doc, err := parseConfigDocument(target.StagedPath, data)
 	if err != nil {
@@ -203,25 +194,53 @@ func (e *LayerEditor) LookupRegistry(entry RegistryEntry) (SourceBinding, bool, 
 	return binding, binding.id != "", nil
 }
 
-func (e *LayerEditor) ensureRegistry(entry RegistryEntry, create bool) (SourceBinding, error) {
-	if !e.legacy {
-		guessed := entry.V4Kind
-		if guessed == "" {
-			if entry.IsLocal() {
-				guessed = V4SourceDirectory
-			} else {
-				guessed = V4SourceGit
-			}
+func registryEntryKind(entry RegistryEntry) V4SourceKind {
+	if entry.V4Kind != "" {
+		return entry.V4Kind
+	}
+	if entry.IsLocal() {
+		return V4SourceDirectory
+	}
+	return V4SourceGit
+}
+
+func (e *LayerEditor) occupiedSourceNames() map[string]v4MigrationSource {
+	occupied := make(map[string]v4MigrationSource, len(e.loaded.Sources)+len(e.addedV4))
+	for name := range e.loaded.Sources {
+		occupied[name] = v4MigrationSource{}
+	}
+	for name := range e.addedV4 {
+		occupied[name] = v4MigrationSource{}
+	}
+	return occupied
+}
+
+// checkBinding refuses a binding this editor did not issue.
+func (e *LayerEditor) checkBinding(binding SourceBinding) error {
+	if issued, ok := e.bindings[binding.id]; binding.id == "" || !ok || issued.Name != binding.Name {
+		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")
+	}
+	return nil
+}
+
+// normalizeRegistryEntry resolves a v4 git origin and validates the entry.
+func (e *LayerEditor) normalizeRegistryEntry(entry RegistryEntry, create bool) (RegistryEntry, V4SourceKind, error) {
+	if !e.legacy && registryEntryKind(entry) == V4SourceGit {
+		normalized, err := v4GitOriginForEdit(entry.URL, e.target.DeclaringPath, e.kind)
+		if err != nil {
+			return RegistryEntry{}, "", err
 		}
-		if guessed == V4SourceGit {
-			normalized, err := v4GitOriginForEdit(entry.URL, e.target.DeclaringPath, e.kind)
-			if err != nil {
-				return SourceBinding{}, err
-			}
-			entry.URL = normalized
-		}
+		entry.URL = normalized
 	}
 	kind, err := e.validateRegistryEntry(entry, create)
+	if err != nil {
+		return RegistryEntry{}, "", err
+	}
+	return entry, kind, nil
+}
+
+func (e *LayerEditor) ensureRegistry(entry RegistryEntry, create bool) (SourceBinding, error) {
+	entry, kind, err := e.normalizeRegistryEntry(entry, create)
 	if err != nil {
 		return SourceBinding{}, err
 	}
@@ -232,14 +251,7 @@ func (e *LayerEditor) ensureRegistry(entry RegistryEntry, create bool) (SourceBi
 }
 
 func (e *LayerEditor) validateRegistryEntry(entry RegistryEntry, create bool) (V4SourceKind, error) {
-	kind := entry.V4Kind
-	if kind == "" {
-		if entry.IsLocal() {
-			kind = V4SourceDirectory
-		} else {
-			kind = V4SourceGit
-		}
-	}
+	kind := registryEntryKind(entry)
 	if kind != V4SourceGit && kind != V4SourceDirectory {
 		return "", v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "layer editor supports only git and directory sources")
 	}
@@ -307,7 +319,7 @@ func (e *LayerEditor) ensureV4Registry(entry RegistryEntry, kind V4SourceKind, c
 		}
 		return SourceBinding{}, err
 	}
-	var physical, exact, matches []string
+	var physical, exact []string
 	for name, source := range e.loaded.Sources {
 		if !v4EditSourcePhysicalMatches(source, identity) {
 			continue
@@ -326,15 +338,9 @@ func (e *LayerEditor) ensureV4Registry(entry RegistryEntry, kind V4SourceKind, c
 			exact = append(exact, name)
 		}
 	}
-	switch {
-	case len(exact) == 1:
+	matches := physical
+	if len(exact) > 0 {
 		matches = exact
-	case len(exact) > 1:
-		matches = exact
-	case len(physical) == 1:
-		matches = physical
-	case len(physical) > 1:
-		matches = physical
 	}
 	if len(matches) > 1 {
 		sort.Strings(matches)
@@ -344,14 +350,7 @@ func (e *LayerEditor) ensureV4Registry(entry RegistryEntry, kind V4SourceKind, c
 		if !create {
 			return SourceBinding{}, nil
 		}
-		occupied := make(map[string]v4MigrationSource, len(e.loaded.Sources)+len(e.addedV4))
-		for name := range e.loaded.Sources {
-			occupied[name] = v4MigrationSource{}
-		}
-		for name := range e.addedV4 {
-			occupied[name] = v4MigrationSource{}
-		}
-		name := v4MigrationRegistrySourceName(occupied, entry.URL)
+		name := v4MigrationRegistrySourceName(e.occupiedSourceNames(), entry.URL)
 		if err := addV4EditSource(e.root, name, entry, identity, kind); err != nil {
 			return SourceBinding{}, err
 		}
@@ -415,6 +414,9 @@ func (e *LayerEditor) ensureLegacyRegistry(entry RegistryEntry, kind V4SourceKin
 	}
 	if !create {
 		return SourceBinding{}, nil
+	}
+	if err := validateRegistryWrite(e.target.DeclaringPath, entry); err != nil {
+		return SourceBinding{}, err
 	}
 	registries, err := ensureTopLevelSequence(e.root, "registries")
 	if err != nil {
@@ -487,12 +489,12 @@ func legacySourceEntryNode(entry RegistryEntry) *yaml.Node {
 }
 
 func (e *LayerEditor) Apply(binding SourceBinding, change SelectionChange) error {
-	if issued, ok := e.bindings[binding.id]; binding.id == "" || !ok || issued.Name != binding.Name {
-		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")
+	if err := e.checkBinding(binding); err != nil {
+		return err
 	}
 	op := change.Operation
 	locatorOp := op == SelectionInclude || op == SelectionExclude || op == SelectionRemoveInclude || op == SelectionClearExclude
-	tagOp := op == SelectionAddTag || op == SelectionRemoveTag
+	tagOp := op == SelectionAddTag
 	switch {
 	case locatorOp && (change.Tag != "" || len(change.Locators) == 0):
 		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "operation requires one or more locators and no tag")
@@ -500,7 +502,7 @@ func (e *LayerEditor) Apply(binding SourceBinding, change SelectionChange) error
 		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "operation accepts no locators or tag")
 	case tagOp && (len(change.Locators) > 0 || strings.TrimSpace(change.Tag) == "" || strings.TrimSpace(change.Tag) != change.Tag):
 		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "operation requires one trimmed tag and no locators")
-	case op > SelectionRemoveTag:
+	case op > SelectionAddTag:
 		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "unsupported selection operation")
 	}
 	locators, err := e.validateLocators(binding, change.Locators)
@@ -646,9 +648,7 @@ func (e *LayerEditor) applyV4(binding SourceBinding, op SelectionOperation, loca
 	case SelectionExcludeAll:
 		return e.v4ApplyExcludeAll(name, group)
 	case SelectionAddTag:
-		return e.v4ApplyTag(name, group, tag, true)
-	case SelectionRemoveTag:
-		return e.v4ApplyTag(name, group, tag, false)
+		return e.v4ApplyTag(name, group, tag)
 	}
 	return nil
 }
@@ -765,13 +765,13 @@ func (e *LayerEditor) v4ApplyClearExclude(name string, group *yaml.Node, locator
 	for _, l := range locators {
 		locator := v4Locator(l)
 		if exclude != nil && v4EditSequenceContains(exclude, locator) {
-			if v4EditSequenceHasWildcard(exclude, l.Kind, l.Name) || v4EditLoadedSelectionSuppressed(loadedGroup, locator, e.target.DeclaringPath, true) {
+			if v4EditSequenceHasWildcard(exclude, l.Kind, l.Name) || v4EditLoadedSelectionSuppressed(loadedGroup, locator, e.canonical, true) {
 				return v4err("v4.edit-exclusion", "resources."+name+".exclude", 0, "an inherited or wildcard exclusion still suppresses %q", locator)
 			}
 			removals = append(removals, locator)
 			continue
 		}
-		if v4EditLoadedSelectionSuppressed(loadedGroup, locator, e.target.DeclaringPath, false) {
+		if v4EditLoadedSelectionSuppressed(loadedGroup, locator, e.canonical, false) {
 			return v4err("v4.edit-exclusion", "resources."+name+".exclude", 0, "an inherited or wildcard exclusion still suppresses %q", locator)
 		}
 	}
@@ -845,33 +845,21 @@ func (e *LayerEditor) v4ApplyExcludeAll(name string, group *yaml.Node) error {
 	return nil
 }
 
-func (e *LayerEditor) v4ApplyTag(name string, group *yaml.Node, tag string, add bool) error {
-	var tags *yaml.Node
+func (e *LayerEditor) v4ApplyTag(name string, group *yaml.Node, tag string) error {
 	if group != nil && group.Kind == yaml.MappingNode {
-		tags = findMappingValue(group, "tags")
-	}
-	if add {
-		if tags != nil && v4EditSequenceContains(tags, tag) {
+		if tags := findMappingValue(group, "tags"); tags != nil && v4EditSequenceContains(tags, tag) {
 			return nil
 		}
-		group, err := e.ensureV4Group(name)
-		if err != nil {
-			return err
-		}
-		seq, err := e.ensureV4GroupSeq(group, name, "tags")
-		if err != nil {
-			return err
-		}
-		v4ScalarAppend(seq, tag)
-		e.changed = true
-		return nil
 	}
-	if tags == nil || !v4EditRemoveLocator(tags, tag) {
-		return nil
+	group, err := e.ensureV4Group(name)
+	if err != nil {
+		return err
 	}
-	if len(tags.Content) == 0 {
-		removeMappingKeyByName(group, "tags")
+	seq, err := e.ensureV4GroupSeq(group, name, "tags")
+	if err != nil {
+		return err
 	}
+	v4ScalarAppend(seq, tag)
 	e.changed = true
 	return nil
 }
@@ -953,15 +941,6 @@ func (e *LayerEditor) applyLegacy(binding SourceBinding, op SelectionOperation, 
 			return fmt.Errorf("update config %q: expected %q to be a sequence", e.target.DeclaringPath, "tags")
 		}
 		changed = legacySeqAppend(seq, tag) || changed
-	case SelectionRemoveTag:
-		if seq := findMappingValue(entryNode, "tags"); seq != nil && seq.Kind == yaml.SequenceNode {
-			if legacySeqRemove(seq, tag) {
-				changed = true
-				if len(seq.Content) == 0 {
-					removeMappingKeyByName(entryNode, "tags")
-				}
-			}
-		}
 	}
 	if changed {
 		e.changed = true
@@ -1121,20 +1100,14 @@ func (e *LayerEditor) UnboundIncludeInherited(locator ResourceLocator) (bool, er
 	return false, nil
 }
 
-func (e *LayerEditor) SetUnboundExclude(locator ResourceLocator, excluded bool) error {
+func (e *LayerEditor) SetUnboundExclude(locator ResourceLocator) error {
 	key := skill.ConfigKeyForKind(locator.Kind)
 	name := strings.TrimSpace(locator.Name)
 	if key == "" || name == "" {
 		return v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
 	}
 	if !e.legacy {
-		if excluded {
-			return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "v4 has no source-free selector for %q", v4ResourceKindName(locator.Kind)+"/"+name)
-		}
-		return nil
-	}
-	if !excluded {
-		return e.ClearUnboundExclude(locator)
+		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "v4 has no source-free selector for %q", v4ResourceKindName(locator.Kind)+"/"+name)
 	}
 	kindMap := ensureEntryMapping(e.root, key)
 	if kindMap == nil {
@@ -1150,46 +1123,27 @@ func (e *LayerEditor) SetUnboundExclude(locator ResourceLocator, excluded bool) 
 	return nil
 }
 
-func (e *LayerEditor) SetLayerExclude(locator ResourceLocator, entries []RegistryEntry, excluded bool) error {
+func (e *LayerEditor) SetLayerExclude(locator ResourceLocator, entries []RegistryEntry) error {
 	key := skill.ConfigKeyForKind(locator.Kind)
 	name := strings.TrimSpace(locator.Name)
 	if key == "" || name == "" {
 		return v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
 	}
 	if e.legacy {
-		return e.SetUnboundExclude(locator, excluded)
+		return e.SetUnboundExclude(locator)
 	}
 	if len(entries) == 0 {
 		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "v4 has no source-free selector for %q", v4ResourceKindName(locator.Kind)+"/"+name)
 	}
-	normalized := make([]RegistryEntry, len(entries))
-	for i, entry := range entries {
-		normalized[i] = entry
-		guessed := entry.V4Kind
-		if guessed == "" {
-			if entry.IsLocal() {
-				guessed = V4SourceDirectory
-			} else {
-				guessed = V4SourceGit
-			}
-		}
-		if guessed == V4SourceGit {
-			url, err := v4GitOriginForEdit(entry.URL, e.target.DeclaringPath, e.kind)
-			if err != nil {
-				return err
-			}
-			normalized[i].URL = url
-		}
-		if _, err := e.validateRegistryEntry(normalized[i], true); err != nil {
+	// Validate every provider before touching the document: one invalid
+	// entry must not leave the earlier ones half-excluded.
+	for _, entry := range entries {
+		if _, _, err := e.normalizeRegistryEntry(entry, true); err != nil {
 			return err
 		}
 	}
-	op := SelectionExclude
-	if !excluded {
-		op = SelectionClearExclude
-	}
 	bound := map[string]bool{}
-	for _, entry := range normalized {
+	for _, entry := range entries {
 		binding, err := e.ensureRegistry(entry, true)
 		if err != nil {
 			return err
@@ -1198,7 +1152,7 @@ func (e *LayerEditor) SetLayerExclude(locator ResourceLocator, entries []Registr
 			continue
 		}
 		bound[binding.Name] = true
-		if err := e.Apply(binding, SelectionChange{Operation: op, Locators: []ResourceLocator{{Kind: locator.Kind, Name: name}}}); err != nil {
+		if err := e.Apply(binding, SelectionChange{Operation: SelectionExclude, Locators: []ResourceLocator{{Kind: locator.Kind, Name: name}}}); err != nil {
 			return err
 		}
 	}
@@ -1206,8 +1160,8 @@ func (e *LayerEditor) SetLayerExclude(locator ResourceLocator, entries []Registr
 }
 
 func (e *LayerEditor) RemoveSource(binding SourceBinding) error {
-	if issued, ok := e.bindings[binding.id]; binding.id == "" || !ok || issued.Name != binding.Name {
-		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")
+	if err := e.checkBinding(binding); err != nil {
+		return err
 	}
 	if !binding.root {
 		return v4err("config.edit.include-owned", e.target.DeclaringPath, 0, "source %q is declared in an included fragment", binding.Name)

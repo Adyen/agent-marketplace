@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -132,8 +133,12 @@ func TestCompetingRegistryCleanupV4(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(updated), "skill/review") || !strings.Contains(string(updated), "exclude") {
-		t.Fatalf("v4 source-bound exclusion missing:\n%s", updated)
+	parsed, err := config.ParseV4(updated)
+	if err != nil {
+		t.Fatalf("parse updated config: %v\n%s", err, updated)
+	}
+	if !slices.Contains(parsed.Groups["rival"].Exclude, "skill/review") {
+		t.Fatalf("rival group exclusion missing:\n%s", updated)
 	}
 	if strings.Contains(string(updated), "registries:") || strings.Contains(string(updated), "skills:") {
 		t.Fatalf("v4 cleanup wrote legacy keys:\n%s", updated)

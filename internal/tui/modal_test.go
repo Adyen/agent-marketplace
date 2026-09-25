@@ -1049,6 +1049,47 @@ func TestRunScopedToggleGlobalRejectsRepoRelativeRegistry(t *testing.T) {
 	}
 }
 
+// TestRunScopedToggleGlobalDisablesRepoRelativeRegistry verifies that disabling
+// an existing repo-relative selection in the user config is allowed, so a user
+// can clean up an entry the global layer would refuse to create.
+func TestRunScopedToggleGlobalDisablesRepoRelativeRegistry(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve home: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	globalConfig := filepath.Join(homeDir, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(globalConfig), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	fixture := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n" +
+		"sources:\n  local: {directory: ./plugins/gitlab-mr}\n" +
+		"resources:\n  local: {include: [skill/audit]}\n"
+	if err := os.WriteFile(globalConfig, []byte(fixture), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	act := toggleAction{
+		skillName:   "audit",
+		kind:        ir.KindSkill,
+		scope:       scopeGlobal,
+		registryURL: "./plugins/gitlab-mr",
+	}
+
+	if err := runToggleAndErr(t, repoRoot, act); err != nil {
+		t.Fatalf("disabling an existing repo-relative global selection: %v", err)
+	}
+	cfg, loadErr := config.LoadRootConfigFromPath(globalConfig)
+	if loadErr != nil {
+		t.Fatalf("reload config: %v", loadErr)
+	}
+	if registrySelectorIncludes(cfg, ir.KindSkill, "audit") {
+		t.Fatalf("audit still selected after disable: %#v", cfg.Registries)
+	}
+}
+
 // TestRunScopedToggleProjectAllowsRepoRelativeRegistry verifies that enabling a
 // skill at project scope from a repo-relative registry still works; only the
 // global layer refuses the write.

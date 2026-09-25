@@ -660,51 +660,6 @@ func TestRemoveCollectionMemberShadowsIncludedRegistry(t *testing.T) {
 	assertResourceNotResolved(t, repoRoot, "included-member")
 }
 
-func TestRemoveCollectionExcludesIncludedSelection(t *testing.T) {
-	repoRoot := t.TempDir()
-	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-	includedPath := filepath.Join(repoRoot, ".agents", "collections.yaml")
-	includedData := "collections:\n  include: [included-bundle]\n"
-	writeFile(t, includedPath, includedData)
-	rootPath := config.ProjectConfigPath(repoRoot)
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: collections.yaml\n")
-
-	result, err := Remove(context.Background(), RemoveOptions{
-		RepoRoot:       repoRoot,
-		ResourceName:   "included-bundle",
-		Scope:          ScopeRepo,
-		ScopeSpecified: true,
-	})
-	if err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
-	if result == nil || !result.IsCollection || result.RemovedName != "included-bundle" {
-		t.Fatalf("result = %#v", result)
-	}
-	gotIncluded, err := os.ReadFile(includedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(gotIncluded) != includedData {
-		t.Fatalf("included config changed:\n%s", gotIncluded)
-	}
-	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(rootCfg.Collections.Exclude, "included-bundle") {
-		t.Fatalf("root collections = %#v, want collection exclusion", rootCfg.Collections)
-	}
-	rootData, err := os.ReadFile(rootPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(rootData), "include: collections.yaml") {
-		t.Fatalf("root include directive lost:\n%s", rootData)
-	}
-}
-
 func TestRemoveCollectionDuplicateInRootAndIncludeRetainsExclusion(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)

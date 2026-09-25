@@ -162,6 +162,9 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 	if strings.Contains(config, "selected_by:") || strings.Contains(config, "marketplaces:") {
 		t.Fatalf("direct TUI scope copy wrote legacy keys:\n%s", config)
 	}
+	if !consumer.CheckFileContains("/workspace/.agents/lock.local.yaml", digest) {
+		t.Fatalf("local lock missing the exact pin %s:\n%s", digest, consumer.ReadFile("/workspace/.agents/lock.local.yaml"))
+	}
 	waitForMarketplaceTUI(t, &output, func(value string) bool { return strings.Contains(value, "skill skill-one PL") })
 	for _, key := range []byte(" l") {
 		if _, err := terminal.Write([]byte{key}); err != nil {
