@@ -51,6 +51,13 @@ func (m *LayerMutation) RemoveSource(binding config.SourceBinding) error {
 	return m.editor.RemoveSource(binding)
 }
 
+func (m *LayerMutation) ClearInstallExclude(entry config.RegistryEntry, locator config.ResourceLocator) error {
+	if m == nil || m.editor == nil {
+		return errors.New("layer mutation has no open editor")
+	}
+	return m.editor.ClearInstallExclude(entry, locator)
+}
+
 func (m *LayerMutation) ClearUnboundExclude(locator config.ResourceLocator) error {
 	if m == nil || m.editor == nil {
 		return errors.New("layer mutation has no open editor")
@@ -116,6 +123,8 @@ func editLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) erro
 	if mutate == nil {
 		return errors.New("layer mutation callback is required")
 	}
+	_, statErr := os.Stat(target.StagedPath)
+	seeded := errors.Is(statErr, os.ErrNotExist)
 	if err := seedMissingLayerRoot(target); err != nil {
 		return err
 	}
@@ -131,6 +140,11 @@ func editLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) erro
 		return err
 	}
 	if !candidate.Changed {
+		if seeded {
+			if err := os.Remove(target.StagedPath); err != nil {
+				return fmt.Errorf("discard unchanged staged config %s: %w", target.StagedPath, err)
+			}
+		}
 		return nil
 	}
 	if candidate.Legacy {

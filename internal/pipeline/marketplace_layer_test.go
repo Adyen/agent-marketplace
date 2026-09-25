@@ -358,6 +358,72 @@ func TestMutateMarketplaceLayerV4IncludePins(t *testing.T) {
 	}
 }
 
+func TestToggleMarketplacePinSubdirectorySync(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	child := filepath.Join(repo, "component")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFileMode(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n", 0o600)
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "review")
+	entry := config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID}
+	pin := layerPreparePins(t, fake, "skill", "review")[0]
+	configPath := filepath.Join(child, ".agents", "config.local.yaml")
+	if _, err := MutateMarketplaceLayer(context.Background(), repo, child, configPath, config.RepoPersonal, func(m *MarketplaceLayerMutation) error {
+		return m.IncludePins(entry, []config.MarketplaceResourcePin{pin})
+	}, nil); err != nil {
+		t.Fatalf("seed child pin: %v", err)
+	}
+	if err := ToggleMarketplacePin(context.Background(), repo, child, configPath, config.RepoPersonal, entry, pin, true); err != nil {
+		t.Fatalf("enable in child: %v", err)
+	}
+	childSkill := filepath.Join(child, ".devin", "skills", "review", "SKILL.md")
+	parentSkill := filepath.Join(repo, ".devin", "skills", "review", "SKILL.md")
+	if _, err := os.Stat(childSkill); err != nil {
+		t.Fatalf("child skill not materialized: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Dir(parentSkill)); !os.IsNotExist(err) {
+		t.Fatalf("toggle wrote parent skill: %v", err)
+	}
+	if err := ToggleMarketplacePin(context.Background(), repo, child, configPath, config.RepoPersonal, entry, pin, false); err != nil {
+		t.Fatalf("disable in child: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Dir(childSkill)); !os.IsNotExist(err) {
+		t.Fatalf("child skill still present after disable: %v", err)
+	}
+}
+
+func TestMutateMarketplaceLayerV4ReinstallClearsExactExclusion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "review")
+	writeFileMode(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  mp: {marketplace: "+fake.URL+"}\nresources:\n  mp: {exclude: [source/skill/review, source/skill/other]}\n", 0o600)
+	pins := layerPreparePins(t, fake, "skill", "review")
+	if _, err := MutateMarketplaceLayer(context.Background(), repo, repo, configPath, config.UserPersonal, func(m *MarketplaceLayerMutation) error {
+		return m.IncludePins(config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID}, pins)
+	}, nil); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	loaded, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("load installed config and lock: %v", err)
+	}
+	if len(loaded.Marketplaces) != 1 || len(loaded.Marketplaces[0].Resources) != 1 || loaded.MarketplacePinExcluded(loaded.Marketplaces[0], loaded.Marketplaces[0].Resources[0]) {
+		t.Fatalf("installed resource is not selected: %#v", loaded)
+	}
+	if len(loaded.MarketplaceExclusions) != 1 || loaded.MarketplaceExclusions[0].Locator != "source/skill/other" {
+		t.Fatalf("unrelated exclusion lost: %#v", loaded.MarketplaceExclusions)
+	}
+}
+
 func layerPreparePins(t *testing.T, fake *layerMarketplaceServer, kind, name string) []config.MarketplaceResourcePin {
 	t.Helper()
 	resolver := &marketplace.Resolver{}

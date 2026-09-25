@@ -108,13 +108,16 @@ func commitStagedEdits(stateDir string, extra ...dependencytxn.DesiredFile) Depe
 	return func(ctx context.Context, _, _ string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
 		desired := make([]dependencytxn.DesiredFile, 0, len(edits)+len(extra))
 		for _, edit := range edits {
-			desired = append(desired, dependencytxn.DesiredFile{
-				Path:         edit.Path,
-				Expected:     edit.Expected,
-				ExpectedMode: edit.Mode,
-				Bytes:        edit.Bytes,
-				Mode:         edit.Mode,
-			})
+			file := dependencytxn.DesiredFile{
+				Path:     edit.Path,
+				Expected: edit.Expected,
+				Bytes:    edit.Bytes,
+				Mode:     edit.Mode,
+			}
+			if edit.Expected.Exists {
+				file.ExpectedMode = edit.Mode
+			}
+			desired = append(desired, file)
 		}
 		desired = append(desired, extra...)
 		_, err := dependencytxn.Commit(ctx, stateDir, desired)
@@ -252,6 +255,39 @@ func TestMutateLayerPublishesConfigAndLockAtomically(t *testing.T) {
 	}
 }
 
+func TestMutateLayerMissingRepoRootChangedSelectionPublishes(t *testing.T) {
+	repoRoot, configPath, stateDir := mutateLayerFixture(t)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateLayer(context.Background(), LayerMutationTarget{
+		RepoRoot: repoRoot, ConfigPath: configPath, Source: config.RepoCommitted,
+		Reconcile: commitStagedEdits(stateDir, repoLockDesired(t, configPath)),
+	}, includeSkillAlpha); err != nil {
+		t.Fatalf("MutateLayer: %v", err)
+	}
+	cfg, err := config.LoadV4ConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("missing changed config: %v", err)
+	}
+	if len(cfg.Sources) != 1 || len(cfg.Groups) != 1 {
+		t.Fatalf("missing selection: sources=%#v groups=%#v", cfg.Sources, cfg.Groups)
+	}
+	for _, group := range cfg.Groups {
+		if len(group.Include) != 1 || group.Include[0].Locator != "skill/alpha" {
+			t.Fatalf("missing skill selection: %#v", group.Include)
+		}
+	}
+	lockPath, err := lockfile.LockPathForConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockfile.ReadBytes(lockPath); err != nil {
+		t.Fatalf("lock missing: %v", err)
+	}
+	assertNoStagingResidue(t)
+}
+
 func TestMutateLayerNoOpPreservesConfigBytesModeAndMtime(t *testing.T) {
 	repoRoot, configPath, stateDir := mutateLayerFixture(t)
 	fixture := "apiVersion: agent-marketplace/v4\nsources:\n  one: {git: https://example.test/repo.git, ref: main}\nresources:\n  one: [skill/alpha]\n"
@@ -302,6 +338,52 @@ func TestMutateLayerNoOpPreservesConfigBytesModeAndMtime(t *testing.T) {
 	}
 	if !lockAfter.ModTime().Equal(lockBefore.ModTime()) {
 		t.Fatal("identical lock rewritten")
+	}
+	assertNoStagingResidue(t)
+}
+
+func TestMutateLayerMissingRepoRootStaleUserSelectionDoesNotPublishSkeleton(t *testing.T) {
+	repoRoot, configPath, stateDir := mutateLayerFixture(t)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	userBytes := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ncollections: {include: [stale]}\n"
+	writeMutateLayerConfig(t, userPath, userBytes)
+	lockPath, err := lockfile.LockPathForConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	reconcile := func(ctx context.Context, root, local string, locked bool, edits []StagedConfigEdit) (DependencyLockView, error) {
+		calls++
+		if len(edits) != 0 {
+			t.Fatalf("unchanged missing repo root staged for publication: %#v", edits)
+		}
+		return commitStagedEdits(stateDir, repoLockDesired(t, configPath))(ctx, root, local, locked, edits)
+	}
+	err = MutateLayer(context.Background(), LayerMutationTarget{
+		RepoRoot: repoRoot, ConfigPath: configPath, Source: config.RepoCommitted, Reconcile: reconcile,
+	}, func(m *LayerMutation) error {
+		return m.RemoveUnboundInclude(config.ResourceLocator{Kind: ir.KindCollection, Name: "stale"})
+	})
+	if err != nil {
+		t.Fatalf("MutateLayer: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("reconciliation calls = %d, want one", calls)
+	}
+	if _, err := os.Stat(configPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repo config created by no-op prune: %v", err)
+	}
+	if data, err := os.ReadFile(userPath); err != nil || string(data) != userBytes {
+		t.Fatalf("user config changed: %q err=%v", data, err)
+	}
+	if _, err := lockfile.ReadBytes(lockPath); err != nil {
+		t.Fatalf("independent dependency reconciliation lost: %v", err)
 	}
 	assertNoStagingResidue(t)
 }

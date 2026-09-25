@@ -179,6 +179,51 @@ func TestCompetingRegistryCleanupStaleBindingRefuses(t *testing.T) {
 	}
 }
 
+func TestGlobalToggleExistingRelativeRegistryCleanup(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const initial = "apiVersion: agent-marketplace/v2\nregistries:\n  - url: ./project-registry\n    skills: {include: [review]}\n"
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	act := toggleAction{scope: scopeGlobal, kind: ir.KindSkill, skillName: "review", registryURL: "./project-registry"}
+	msg, ok := runScopedToggle(repo, act)().(configWrittenMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("disable existing relative user registry = %#v", msg)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(updated), "exclude: [review]") {
+		t.Fatalf("disabled selection missing: %q err=%v", updated, err)
+	}
+	act.enable = true
+	msg, ok = runScopedToggle(repo, act)().(configWrittenMsg)
+	var boundary *config.GlobalRelativeRegistryError
+	if !ok || !errors.As(msg.err, &boundary) {
+		t.Fatalf("enable existing relative user registry = %#v, want GlobalRelativeRegistryError", msg)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(updated) {
+		t.Fatalf("rejected enable changed config: %q err=%v", after, err)
+	}
+	const empty = "apiVersion: agent-marketplace/v2\nregistries: []\n"
+	if err := os.WriteFile(path, []byte(empty), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	act.enable = false
+	msg, ok = runScopedToggle(repo, act)().(configWrittenMsg)
+	if !ok || !errors.As(msg.err, &boundary) {
+		t.Fatalf("disable absent relative user registry = %#v, want GlobalRelativeRegistryError", msg)
+	}
+	after, err = os.ReadFile(path)
+	if err != nil || string(after) != empty {
+		t.Fatalf("rejected creation changed config: %q err=%v", after, err)
+	}
+}
+
 func TestValidateToggleRegistryWriteScopeBoundary(t *testing.T) {
 	err := validateToggleRegistryWrite([]row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "review", Kind: ir.KindSkill}, Source: config.RepoCommitted}, RegistryURL: "./project"}}, []error{errors.New(`skill "review" is provided by multiple registries`)}, toggleAction{scope: scopeGlobal, enable: true, kind: ir.KindSkill, skillName: "review", registryURL: "https://trusted.example/repo.git"})
 	if err != nil {

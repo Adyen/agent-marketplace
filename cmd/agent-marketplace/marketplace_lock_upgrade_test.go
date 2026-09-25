@@ -155,7 +155,7 @@ func TestMergeInstallBindingsRetainsLockVersionAndMarketplaceEvidence(t *testing
 	}
 }
 
-func TestV1LockCheckReportsChangeRequiredWithoutWriting(t *testing.T) {
+func TestV1LockCheckReportsVersionUpgradeRequiredWithoutWriting(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -191,8 +191,8 @@ func TestV1LockCheckReportsChangeRequiredWithoutWriting(t *testing.T) {
 	}
 	output, err := executeCommand("lock", "--check", "--scope", "repo")
 	var lifecycle *lockLifecycleError
-	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.change-required" {
-		t.Fatalf("lock --check on writable v1 = %v, want lock.change-required\n%s", err, output)
+	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.version-upgrade-required" || lifecycle.Scope != lockfile.ScopeRepo || lifecycle.Path != lockPath {
+		t.Fatalf("lock --check on writable v1 = %v, want scoped lock.version-upgrade-required at %s\n%s", err, lockPath, output)
 	}
 	after, err := os.ReadFile(lockPath)
 	if err != nil || string(after) != string(v1Bytes) {
@@ -200,6 +200,24 @@ func TestV1LockCheckReportsChangeRequiredWithoutWriting(t *testing.T) {
 	}
 	if output, err := executeCommand("sync", "--locked"); err != nil {
 		t.Fatalf("locked consumption rejected a matching v1 lock: %v\n%s", err, output)
+	}
+	userLockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  personal:\n    git: file://"+origin+"\n    ref: main\n")
+	output, err = executeCommand("lock", "--check")
+	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.change-required" {
+		t.Fatalf("lock --check with v1 and missing user lock = %v, want lock.change-required\n%s", err, output)
+	}
+	if _, err := os.Lstat(userLockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lock --check created user lock: %v", err)
+	}
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools:\n    git: file://"+origin+"\n    ref: changed\nresources:\n  tools: {all: true}\n")
+	output, err = executeCommand("lock", "--check", "--scope", "repo")
+	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.change-required" {
+		t.Fatalf("lock --check with v1 and real drift = %v, want lock.change-required\n%s", err, output)
+	}
+	after, err = os.ReadFile(lockPath)
+	if err != nil || string(after) != string(v1Bytes) {
+		t.Fatalf("lock --check with drift rewrote the v1 lock: %v\n%s", err, after)
 	}
 }
 

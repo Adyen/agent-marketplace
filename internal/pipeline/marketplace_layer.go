@@ -463,7 +463,8 @@ func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configP
 		}
 		return m.RemoveDirectPin(entry, pin)
 	}, func() ([]error, error) {
-		return nil, silentSync(ctx, repoRoot, withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
+		syncOpts := append(silentSyncOptsForPaths(repoRoot, localConfigDir, localConfigDir), withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
+		return nil, silentSync(ctx, repoRoot, syncOpts...)
 	})
 	return err
 }

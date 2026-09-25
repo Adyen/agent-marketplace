@@ -276,7 +276,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 					}
 				}
 			}
-			if constrained[marketplaceV4PinKey(pin)] {
+			if constrained[marketplaceV4PinKey(entry.Alias, pin)] {
 				item.Reason = "request pins an explicit revision"
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
@@ -323,7 +323,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			if pin.Kind == "collection" {
 				continue
 			}
-			if constrained[marketplaceV4PinKey(pin)] {
+			if constrained[marketplaceV4PinKey(entry.Alias, pin)] {
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true, Reason: "request pins an explicit revision"}, ConfigPath: configPath})
 				continue
 			}
@@ -454,7 +454,11 @@ func marketplaceV4ConstrainedRequests(configPath string, source config.Source) (
 		if request.Options.Revision == "" {
 			continue
 		}
-		constrained[request.Registry+"\x00"+v4MarketplaceRequestLockKind(request.Kind)+"\x00"+request.Name] = true
+		source := v4.Sources[request.SourceName]
+		if source.Kind != config.V4SourceMarketplace {
+			continue
+		}
+		constrained[request.SourceName+"\x00"+request.Registry+"\x00"+v4MarketplaceRequestLockKind(request.Kind)+"\x00"+request.Name] = true
 	}
 	return constrained, nil
 }
@@ -466,12 +470,12 @@ func v4MarketplaceRequestLockKind(kind string) string {
 	return kind
 }
 
-func marketplaceV4PinKey(pin config.MarketplaceResourcePin) string {
+func marketplaceV4PinKey(sourceName string, pin config.MarketplaceResourcePin) string {
 	registry := pin.RegistrySlug
 	if registry == "" {
 		registry = pin.RegistryID
 	}
-	return registry + "\x00" + pin.Kind + "\x00" + pin.Name
+	return sourceName + "\x00" + registry + "\x00" + pin.Kind + "\x00" + pin.Name
 }
 
 func marketplaceConfigPath(opts UpdateOptions, ec *config.EffectiveConfig, source config.Source) (string, error) {

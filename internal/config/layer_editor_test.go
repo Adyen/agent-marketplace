@@ -684,6 +684,26 @@ func TestLayerEditorV4SelectionOperations(t *testing.T) {
 		}
 	})
 
+	t.Run("exclude shorthand preserves sibling include", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		layerEditorWrite(t, path, "apiVersion: agent-marketplace/v4\nsources:\n  one: {git: https://example.test/repo.git, ref: main}\nresources:\n  one: [skill/keep, skill/go]\n")
+		editor := openTestEditor(t, RepoCommitted, path, path)
+		binding, err := editor.EnsureRegistry(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := editor.Apply(binding, SelectionChange{Operation: SelectionExclude, Locators: []ResourceLocator{loc(ir.KindSkill, "go")}}); err != nil {
+			t.Fatal(err)
+		}
+		group := renderGroup(t, editor)
+		if got := groupLocators(group); !slices.Equal(got, []string{"skill/keep"}) {
+			t.Fatalf("include = %v", got)
+		}
+		if !slices.Equal(group.Exclude, []string{"skill/go"}) {
+			t.Fatalf("exclude = %v", group.Exclude)
+		}
+	})
+
 	t.Run("remove include does not add exclusion", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		layerEditorWrite(t, path, base)
@@ -1004,6 +1024,125 @@ func TestLayerEditorRejectsInvalidBindingsAndOperations(t *testing.T) {
 	}
 	if candidate.Changed || string(candidate.Bytes) != fixture {
 		t.Fatalf("rejected operations changed bytes:\n%s", candidate.Bytes)
+	}
+}
+
+func TestLayerEditorLegacyRootPathBinding(t *testing.T) {
+	const subpath = "  - url: https://example.test/repo.git\n    ref: main\n    path: skills\n    skills: {include: [sub-only]}\n"
+	const root = "  - url: https://example.test/repo.git\n    ref: main\n    skills: {include: [root-only]}\n"
+	for _, tc := range []struct {
+		name        string
+		entries     string
+		wantInclude []string
+	}{
+		{name: "sole subpath", entries: subpath, wantInclude: []string{"new-root"}},
+		{name: "root after subpath", entries: subpath + root, wantInclude: []string{"root-only", "new-root"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			fixture := "apiVersion: agent-marketplace/v2\nregistries:\n" + tc.entries
+			layerEditorWrite(t, path, fixture)
+			editor := openTestEditor(t, RepoCommitted, path, path)
+			binding, err := editor.EnsureRegistry(RegistryEntry{URL: "https://example.test/repo.git", Ref: "main"})
+			if err != nil {
+				t.Fatalf("ensure root: %v", err)
+			}
+			if err := editor.Apply(binding, SelectionChange{Operation: SelectionInclude, Locators: []ResourceLocator{loc(ir.KindSkill, "new-root")}}); err != nil {
+				t.Fatal(err)
+			}
+			candidate, err := editor.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, errs := loadV3ConfigWithAPIVersion(candidate.Bytes, repoLayer, false, true)
+			if len(errs) > 0 {
+				t.Fatalf("candidate invalid: %v", errs)
+			}
+			if len(cfg.Registries) != 2 || cfg.Registries[0].Path != "skills" || !slices.Equal(cfg.Registries[0].Skills.Include, []string{"sub-only"}) {
+				t.Fatalf("subpath changed or root missing: %#v", cfg.Registries)
+			}
+			rootEntry := cfg.Registries[1]
+			if rootEntry.Path != "" || !slices.Equal(rootEntry.Skills.Include, tc.wantInclude) {
+				t.Fatalf("root selection missing: %#v", cfg.Registries)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != fixture {
+				t.Fatalf("editor wrote staged file: %v, %s", err, got)
+			}
+		})
+	}
+}
+
+func TestLayerEditorExistingUserRelativeRegistryCleanup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path, err := GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const initial = "apiVersion: agent-marketplace/v2\nregistries:\n  - url: ./project-registry\n    skills: {include: [review]}\n"
+	entry := RegistryEntry{URL: "./project-registry"}
+	for _, tc := range []struct {
+		name string
+		edit func(*LayerEditor, SourceBinding) error
+		want string
+	}{
+		{name: "disable", edit: func(e *LayerEditor, b SourceBinding) error {
+			return e.Apply(b, SelectionChange{Operation: SelectionExclude, Locators: []ResourceLocator{loc(ir.KindSkill, "review")}})
+		}, want: "exclude: [review]"},
+		{name: "remove", edit: func(e *LayerEditor, b SourceBinding) error { return e.RemoveSource(b) }, want: "apiVersion: agent-marketplace/v2\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			layerEditorWrite(t, path, initial)
+			editor := openTestEditor(t, UserPersonal, path, path)
+			binding, found, err := editor.LookupRegistry(entry)
+			if err != nil || !found {
+				t.Fatalf("lookup existing registry: found=%v err=%v", found, err)
+			}
+			if err := tc.edit(editor, binding); err != nil {
+				t.Fatal(err)
+			}
+			candidate, err := editor.Render()
+			if err != nil || !candidate.Changed || !strings.Contains(string(candidate.Bytes), tc.want) || (tc.name == "remove" && strings.Contains(string(candidate.Bytes), "project-registry")) {
+				t.Fatalf("cleanup candidate: changed=%v bytes=%q err=%v", candidate.Changed, candidate.Bytes, err)
+			}
+			if data, err := os.ReadFile(path); err != nil || string(data) != initial {
+				t.Fatalf("editor wrote config: %q err=%v", data, err)
+			}
+		})
+	}
+	layerEditorWrite(t, path, initial)
+	editor := openTestEditor(t, UserPersonal, path, path)
+	if _, err := editor.EnsureRegistry(entry); err == nil {
+		t.Fatal("enabling existing relative user registry succeeded")
+	} else {
+		var boundary *GlobalRelativeRegistryError
+		if !errors.As(err, &boundary) {
+			t.Fatalf("enable error = %v, want GlobalRelativeRegistryError", err)
+		}
+	}
+	if candidate, err := editor.Render(); err != nil || candidate.Changed || string(candidate.Bytes) != initial {
+		t.Fatalf("rejected enable changed config: %#v err=%v", candidate, err)
+	}
+}
+
+func TestLayerEditorRejectsNewUserRelativeRegistry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path, err := GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const initial = "apiVersion: agent-marketplace/v2\nregistries: []\n"
+	layerEditorWrite(t, path, initial)
+	editor := openTestEditor(t, UserPersonal, path, path)
+	if _, err := editor.EnsureRegistry(RegistryEntry{URL: "./project-registry"}); err == nil {
+		t.Fatal("created relative user registry")
+	} else {
+		var boundary *GlobalRelativeRegistryError
+		if !errors.As(err, &boundary) {
+			t.Fatalf("creation error = %v, want GlobalRelativeRegistryError", err)
+		}
+	}
+	if candidate, err := editor.Render(); err != nil || candidate.Changed || string(candidate.Bytes) != initial {
+		t.Fatalf("rejected creation changed config: %#v err=%v", candidate, err)
 	}
 }
 
@@ -1563,6 +1702,68 @@ func TestLayerEditorUnboundIncludeInherited(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestLayerEditorRemoveMarketplacePinsIncludeProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		rootRequest   bool
+		childRequest  bool
+		wantErrorCode string
+		wantRequests  int
+	}{
+		{name: "root and fragment", rootRequest: true, childRequest: true, wantErrorCode: "config.edit.include-owned", wantRequests: 1},
+		{name: "root only", rootRequest: true, wantRequests: 0},
+		{name: "fragment only", childRequest: true, wantErrorCode: "config.edit.include-owned", wantRequests: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			child := filepath.Join(dir, "child.yaml")
+			fragment := "resources: {}\n"
+			if tc.childRequest {
+				fragment = "resources:\n  mp: {include: [src/skill/review]}\n"
+			}
+			layerEditorWrite(t, child, fragment)
+			original := "apiVersion: agent-marketplace/v4\ninclude: child.yaml\nsources:\n  mp: {marketplace: https://mp.example.test}\n"
+			if tc.rootRequest {
+				original += "resources:\n  mp: {include: [src/skill/review]}\n"
+			}
+			layerEditorWrite(t, path, original)
+			editor := openTestEditor(t, RepoPersonal, path, path)
+			binding, found, err := editor.LookupMarketplaceSource("https://mp.example.test")
+			if err != nil || !found {
+				t.Fatalf("lookup: found=%v err=%v", found, err)
+			}
+			if len(editor.RenderedV4().Requests) != 1 || editor.RenderedV4().Requests[0].Locator != "src/skill/review" {
+				t.Fatalf("initial effective requests: %#v", editor.RenderedV4().Requests)
+			}
+			pin := testMarketplacePin()
+			pin.RegistrySlug = "src"
+			pin.Revision = pin.Digest
+			pin.Direct = true
+			err = editor.RemoveMarketplacePins(binding, []MarketplaceResourcePin{pin})
+			if got := layerEditorErrCode(err); got != tc.wantErrorCode {
+				t.Fatalf("remove error = %v, code = %q, want %q", err, got, tc.wantErrorCode)
+			}
+			candidate, err := editor.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if candidate.Changed != (tc.wantErrorCode == "") || len(editor.RenderedV4().Requests) != tc.wantRequests {
+				t.Fatalf("changed=%v effective requests=%#v; config:\n%s", candidate.Changed, editor.RenderedV4().Requests, candidate.Bytes)
+			}
+			if tc.wantErrorCode != "" && string(candidate.Bytes) != original {
+				t.Fatalf("rejected removal mutated root: %s", candidate.Bytes)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != original {
+				t.Fatalf("root on disk changed: %q, %v", got, err)
+			}
+			if got, err := os.ReadFile(child); err != nil || string(got) != fragment {
+				t.Fatalf("fragment on disk changed: %q, %v", got, err)
+			}
+		})
+	}
 }
 
 func TestLayerEditorRemoveMarketplacePinDirectWithSelection(t *testing.T) {

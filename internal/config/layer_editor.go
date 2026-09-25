@@ -221,7 +221,7 @@ func (e *LayerEditor) ensureRegistry(entry RegistryEntry, create bool) (SourceBi
 			entry.URL = normalized
 		}
 	}
-	kind, err := e.validateRegistryEntry(entry)
+	kind, err := e.validateRegistryEntry(entry, create)
 	if err != nil {
 		return SourceBinding{}, err
 	}
@@ -231,7 +231,7 @@ func (e *LayerEditor) ensureRegistry(entry RegistryEntry, create bool) (SourceBi
 	return e.ensureV4Registry(entry, kind, create)
 }
 
-func (e *LayerEditor) validateRegistryEntry(entry RegistryEntry) (V4SourceKind, error) {
+func (e *LayerEditor) validateRegistryEntry(entry RegistryEntry, create bool) (V4SourceKind, error) {
 	kind := entry.V4Kind
 	if kind == "" {
 		if entry.IsLocal() {
@@ -246,8 +246,10 @@ func (e *LayerEditor) validateRegistryEntry(entry RegistryEntry) (V4SourceKind, 
 	if err := ValidateRegistryPath(entry.Path); err != nil {
 		return "", v4err("v4.edit-source", "registry.path", 0, "%v", err)
 	}
-	if err := validateRegistryWrite(e.target.DeclaringPath, entry); err != nil {
-		return "", err
+	if create {
+		if err := validateRegistryWrite(e.target.DeclaringPath, entry); err != nil {
+			return "", err
+		}
 	}
 	if kind == V4SourceGit {
 		if strings.TrimSpace(entry.Ref) == "" {
@@ -440,7 +442,7 @@ func legacyEntryNodePhysicalMatches(item *yaml.Node, entry RegistryEntry) bool {
 	if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(strings.TrimSpace(entry.URL)) {
 		return false
 	}
-	if strings.TrimSpace(entry.Path) != "" && NormalizeRegistryPath(yamlEntryPath(item)) != NormalizeRegistryPath(entry.Path) {
+	if NormalizeRegistryPath(yamlEntryPath(item)) != NormalizeRegistryPath(entry.Path) {
 		return false
 	}
 	if strings.TrimSpace(entry.Ref) != "" {
@@ -1016,6 +1018,17 @@ func legacySeqAppend(seq *yaml.Node, value string) bool {
 	return true
 }
 
+func (e *LayerEditor) ClearInstallExclude(entry RegistryEntry, locator ResourceLocator) error {
+	if e.legacy {
+		return e.ClearUnboundExclude(locator)
+	}
+	binding, found, err := e.LookupRegistry(entry)
+	if err != nil || !found {
+		return err
+	}
+	return e.Apply(binding, SelectionChange{Operation: SelectionClearExclude, Locators: []ResourceLocator{locator}})
+}
+
 func (e *LayerEditor) ClearUnboundExclude(locator ResourceLocator) error {
 	key := skill.ConfigKeyForKind(locator.Kind)
 	name := strings.TrimSpace(locator.Name)
@@ -1167,7 +1180,7 @@ func (e *LayerEditor) SetLayerExclude(locator ResourceLocator, entries []Registr
 			}
 			normalized[i].URL = url
 		}
-		if _, err := e.validateRegistryEntry(normalized[i]); err != nil {
+		if _, err := e.validateRegistryEntry(normalized[i], true); err != nil {
 			return err
 		}
 	}

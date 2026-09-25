@@ -692,6 +692,11 @@ accepted with a `lock.version-deprecated` warning. Lock v2 also carries the
 exact Marketplace endpoint/registry/resource/selection records used by v4
 layers. Plain filesystem registries stay live and unlocked.
 
+**Compatibility limit:** `agent-marketplace` v4.0.8 rejects Git-only v2 locks
+(without Marketplace records). Before committing a Git-only v2 lock, ensure
+all consuming clients, including CI, use a build containing PR #320. Add a
+numeric minimum client version here once that build is released.
+
 ---
 
 ## Command reference

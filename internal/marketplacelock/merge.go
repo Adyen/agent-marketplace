@@ -342,7 +342,9 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 			}
 			if direct || member {
 				retained = append(retained, record)
-				selected[record.RegistryID+"\x00"+record.Name+"\x00"+string(record.ContentDigest)] = true
+				if record.Kind == "collection" {
+					selected[record.RegistryID+"\x00"+record.Name+"\x00"+string(record.ContentDigest)] = true
+				}
 				progress = true
 				continue
 			}
@@ -351,6 +353,22 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 		remaining = next
 		if !progress {
 			break
+		}
+	}
+	for i := range retained {
+		var edges []lockfile.MarketplaceSelectionLock
+		for index, edge := range retained[i].SelectedBy {
+			if selected[edge.RegistryID+"\x00"+edge.Name+"\x00"+string(edge.Revision)] {
+				if edges != nil {
+					edges = append(edges, edge)
+				}
+			} else if edges == nil {
+				edges = make([]lockfile.MarketplaceSelectionLock, 0, len(retained[i].SelectedBy)-1)
+				edges = append(edges, retained[i].SelectedBy[:index]...)
+			}
+		}
+		if edges != nil {
+			retained[i].SelectedBy = edges
 		}
 	}
 	return retained, nil

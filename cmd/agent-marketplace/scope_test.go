@@ -284,7 +284,7 @@ skills:
 	}
 }
 
-func TestInstallV4PreservesSourceBoundLocalExclusion(t *testing.T) {
+func TestInstallV4ClearsSourceBoundLocalExclusion(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -314,8 +314,18 @@ func TestInstallV4PreservesSourceBoundLocalExclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(localAfter) != string(localBefore) {
-		t.Fatalf("install rewrote v4 local source-bound exclusion:\nbefore:\n%s\nafter:\n%s", localBefore, localAfter)
+	if string(localAfter) == string(localBefore) {
+		t.Fatalf("install did not clear v4 local source-bound exclusion:\n%s", localAfter)
+	}
+	localCfg, err := config.LoadV4ConfigFromPath(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group := localCfg.Groups["main"]; len(group.Exclude) != 0 {
+		t.Fatalf("local exclusion still suppresses installed skill: %v", group.Exclude)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".claude", "skills", "resurrect-skill", "SKILL.md")); err != nil {
+		t.Fatalf("installed skill not materialized: %v", err)
 	}
 	cfg, err := config.LoadV4ConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
 	if err != nil {

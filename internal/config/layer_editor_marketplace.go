@@ -216,8 +216,20 @@ func (e *LayerEditor) IncludeMarketplacePins(binding SourceBinding, pins []Marke
 	if err != nil {
 		return err
 	}
+	_, excludes := v4GroupSeqs(group)
 	var adds []v4MarketplaceRequest
+	var clearExact []string
 	for _, request := range requests {
+		if excludes != nil {
+			for _, item := range excludes.Content {
+				if item.Kind == yaml.ScalarNode && item.Value != request.locator && v4ExclusionMatches(item.Value, request.locator) {
+					return v4err("v4.edit-exclusion", "resources."+name+".exclude", 0, "wildcard exclusion suppresses %q", request.locator)
+				}
+			}
+			if v4EditSequenceContains(excludes, request.locator) {
+				clearExact = append(clearExact, request.locator)
+			}
+		}
 		conflict := false
 		if includes != nil {
 			for _, item := range includes.Content {
@@ -235,10 +247,13 @@ func (e *LayerEditor) IncludeMarketplacePins(binding SourceBinding, pins []Marke
 			adds = append(adds, request)
 		}
 	}
-	if len(adds) == 0 {
+	if len(adds) == 0 && len(clearExact) == 0 {
 		return nil
 	}
-	if group == nil || group.Kind == yaml.MappingNode {
+	for _, locator := range clearExact {
+		v4EditRemoveLocator(excludes, locator)
+	}
+	if len(adds) > 0 && (group == nil || group.Kind == yaml.MappingNode) {
 		group, err := e.ensureV4Group(name)
 		if err != nil {
 			return err
@@ -309,6 +324,9 @@ func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []Market
 	}
 	matched := make(map[*yaml.Node]bool)
 	for _, request := range requests {
+		if e.v4IncludeOwned(name, request.locator) {
+			return v4err("config.edit.include-owned", "resources."+name, 0, "Marketplace request %q is declared by an included file", request.locator)
+		}
 		found := false
 		if includes != nil {
 			for _, item := range includes.Content {
@@ -320,12 +338,6 @@ func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []Market
 		}
 		if found {
 			continue
-		}
-		for i := range e.loaded.Requests {
-			r := &e.loaded.Requests[i]
-			if r.SourceName == name && r.Registry+"/"+r.Kind+"/"+r.Name == request.locator {
-				return v4err("config.edit.include-owned", "resources."+name, 0, "Marketplace request %q is declared by an included file", request.locator)
-			}
 		}
 		return v4err("config.edit.request-missing", "resources."+name, 0, "Marketplace request %q is not present", request.locator)
 	}
