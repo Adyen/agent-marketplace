@@ -15,7 +15,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -268,11 +267,33 @@ resources:
 		bindings:  make(map[string][]lockfile.GitRegistry),
 	}
 	_, _, _, err := prepareRuntimeLocks(context.Background(), t.TempDir(), "", lockMode{reuseInstall: reuse})
-	if err == nil || !marketplacelock.HasRequiredError([]error{err}) {
+	if err == nil || !pipeline.NeedsLockBootstrap([]error{err}) {
 		t.Fatalf("install commit without prepared transient state error = %v, want v4 Marketplace lock requirement", err)
 	}
 	if got := requests.Load(); got != 0 {
 		t.Fatalf("install commit cache-only revalidation made %d Marketplace requests", got)
+	}
+}
+
+func TestInstallCommitReuseKeepsUnrelatedMissingLockError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://example.test/a.git\n    ref: main\n")
+	reuse := &preparedInstallLocks{
+		documents: make(map[string]lockfile.Document),
+		lockPaths: map[config.Source]string{config.RepoCommitted: filepath.Join(t.TempDir(), "lock.yaml")},
+		bindings:  make(map[string][]lockfile.GitRegistry),
+	}
+	_, _, _, err := prepareRuntimeLocks(context.Background(), t.TempDir(), "", lockMode{reuseInstall: reuse})
+	var lockErr *pipeline.LockViewError
+	if !errors.As(err, &lockErr) || lockErr.Code != "lock.missing" {
+		t.Fatalf("install commit with an unrelated missing lock error = %v, want lock.missing", err)
 	}
 }
 

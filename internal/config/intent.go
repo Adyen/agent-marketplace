@@ -47,16 +47,30 @@ type Settings struct {
 type SourceKind = V4SourceKind
 
 type SourceDecl struct {
-	Kind         SourceKind
-	CanonicalURL string
+	Kind          SourceKind
+	URL           string
+	Ref           string
+	Path          string
+	SourceHarness string
+}
+
+type MarketplaceSource struct {
+	Name     string
+	URL      string
+	Requests []V4ResourceRequest
 }
 
 type Evidence struct {
-	Locks             [5]*lockfile.Document
-	Reads             []ConfigRead
-	errors            [5][]error
-	reads             [5][]ConfigRead
-	runtimeSetupError [5]bool
+	Locks  [5]*lockfile.Document
+	Reads  []ConfigRead
+	errors [5][]error
+	reads  [5][]ConfigRead
+}
+
+func (e *Evidence) RecordDeployedLock(source Source, doc *lockfile.Document, read ConfigRead) {
+	e.Locks[source] = doc
+	e.reads[source] = append(e.reads[source], read)
+	e.Reads = append(e.Reads, read)
 }
 
 var intentLayerOrder = []Source{Organization, UserPersonal, RepoCommitted, RepoPersonal}
@@ -76,6 +90,10 @@ func layerForIntentSource(source Source) layerKind {
 
 func (l LayerIntent) Present() bool {
 	return l.legacy != nil || l.v4 != nil
+}
+
+func (l LayerIntent) Err() error {
+	return errors.Join(l.errors...)
 }
 
 func (l LayerIntent) Settings() Settings {
@@ -142,8 +160,14 @@ func (l LayerIntent) Sources() []SourceDecl {
 		for _, name := range names {
 			src := l.v4.Sources[name]
 			decl := SourceDecl{Kind: src.Kind}
-			if src.Kind != V4SourceDirectory {
-				decl.CanonicalURL = src.CanonicalURL
+			if src.Kind == V4SourceGit {
+				decl.URL = src.URL
+				decl.Ref = src.Ref
+				decl.Path = src.Path
+				decl.SourceHarness = src.SourceHarness
+			}
+			if src.Kind == V4SourceMarketplace {
+				decl.URL = src.CanonicalURL
 			}
 			decls = append(decls, decl)
 		}
@@ -157,11 +181,11 @@ func (l LayerIntent) Sources() []SourceDecl {
 		if entry.IsLocal() {
 			decls = append(decls, SourceDecl{Kind: V4SourceDirectory})
 		} else {
-			decls = append(decls, SourceDecl{Kind: V4SourceGit, CanonicalURL: NormalizeGitURL(entry.URL)})
+			decls = append(decls, SourceDecl{Kind: V4SourceGit, URL: entry.URL, Ref: entry.Ref, Path: entry.Path, SourceHarness: entry.SourceHarness})
 		}
 	}
 	for _, entry := range l.legacy.Marketplaces {
-		decls = append(decls, SourceDecl{Kind: V4SourceMarketplace, CanonicalURL: entry.URL})
+		decls = append(decls, SourceDecl{Kind: V4SourceMarketplace, URL: entry.URL})
 	}
 	return decls
 }
@@ -196,6 +220,48 @@ func (l LayerIntent) NeedsMarketplaceLock() bool {
 		}
 	}
 	return false
+}
+
+func (l LayerIntent) MarketplaceEndpoints() []string {
+	if l.v4 != nil {
+		var urls []string
+		for _, source := range l.MarketplaceSources() {
+			urls = append(urls, source.URL)
+		}
+		return urls
+	}
+	if l.legacy == nil {
+		return nil
+	}
+	urls := make([]string, 0, len(l.legacy.Marketplaces))
+	for _, entry := range l.legacy.Marketplaces {
+		urls = append(urls, entry.URL)
+	}
+	return urls
+}
+
+func (l LayerIntent) MarketplaceSources() []MarketplaceSource {
+	if l.v4 == nil {
+		return nil
+	}
+	names := make([]string, 0, len(l.v4.Sources))
+	for name := range l.v4.Sources {
+		if l.v4.AcquiresMarketplace(name) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	sources := make([]MarketplaceSource, 0, len(names))
+	for _, name := range names {
+		source := MarketplaceSource{Name: name, URL: l.v4.Sources[name].CanonicalURL}
+		for _, request := range l.v4.Requests {
+			if request.SourceName == name {
+				source.Requests = append(source.Requests, request)
+			}
+		}
+		sources = append(sources, source)
+	}
+	return sources
 }
 
 func (l LayerIntent) probeConfig() *Config {
@@ -237,6 +303,26 @@ func (i Intent) TargetHarnesses() ([]string, Source) {
 		return append([]string(nil), harnesses...), i.Layers[Organization].Source
 	}
 	return nil, SourceUnset
+}
+
+func (i Intent) AllowedRegistries() []string {
+	for _, source := range intentLayerOrder {
+		allowed := i.Layers[source].Settings().AllowedRegistries
+		if allowed != nil {
+			return *allowed
+		}
+	}
+	return nil
+}
+
+func (i Intent) AllowedMarketplaces() []string {
+	for _, source := range intentLayerOrder {
+		allowed := i.Layers[source].Settings().AllowedMarketplaces
+		if allowed != nil {
+			return *allowed
+		}
+	}
+	return nil
 }
 
 func readLayerIntent(path, canonical string, data []byte, kind layerKind, overlays map[string][]byte) (LayerIntent, error) {
@@ -417,31 +503,13 @@ func readOrganizationIntent(path string) (LayerIntent, ManagedInstallationDiagno
 	return li, inspectManagedConfig(path, nil, probe, li.Source, li.errors)
 }
 
-func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOptions) (*lockfile.Document, []ConfigRead, []error, bool) {
+func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOptions) (*lockfile.Document, []ConfigRead, []error) {
 	overlays := opts.FileOverlays
-	runtimeLock := false
 	if source == Organization {
 		overlays = nil
-		if li.rootRead && len(opts.OrganizationRuntimeLock) > 0 {
-			canonical, err := canonicalConfigPath(li.Path)
-			if err != nil {
-				return nil, nil, []error{err}, true
-			}
-			paths, err := configLockPaths(li.Path, canonical)
-			if err != nil {
-				return nil, nil, []error{err}, true
-			}
-			lockOverlays, err := organizationRuntimeLockOverlay(paths.CanonicalLock, opts.OrganizationRuntimeLock)
-			if err != nil {
-				return nil, nil, []error{err}, true
-			}
-			overlays = lockOverlays
-			runtimeLock = true
-		}
 	}
-
 	if !li.Present() || len(li.errors) > 0 {
-		return nil, nil, nil, false
+		return nil, nil, nil
 	}
 
 	var doc *lockfile.Document
@@ -450,25 +518,23 @@ func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOpti
 		var err error
 		doc, read, err = readDeployedLock(li.Path, overlays)
 		if err != nil {
-			return nil, nil, []error{err}, false
+			return nil, nil, []error{err}
 		}
 	}
 	var reads []ConfigRead
 	if read != nil {
-		read.RuntimeLock = runtimeLock
 		reads = []ConfigRead{*read}
 	}
-	return doc, reads, nil, false
+	return doc, reads, nil
 }
 
 func deployedLocks(intent Intent, opts LoadEffectiveOptions) Evidence {
 	ev := Evidence{}
 	for _, source := range intentLayerOrder {
-		doc, reads, errs, setupErr := deployedLayerEvidence(intent.Layers[source], source, opts)
+		doc, reads, errs := deployedLayerEvidence(intent.Layers[source], source, opts)
 		ev.Locks[source] = doc
 		ev.errors[source] = errs
 		ev.reads[source] = reads
-		ev.runtimeSetupError[source] = setupErr
 		ev.Reads = append(ev.Reads, reads...)
 	}
 	return ev
@@ -537,12 +603,7 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 }
 
 func bindLayerResult(li LayerIntent, ev Evidence, source Source) LayerResult {
-	lr := LayerResult{Source: li.Source, Path: li.Path, Reads: li.Reads}
-	if ev.runtimeSetupError[source] {
-		lr.Errors = append(lr.Errors, ev.errors[source]...)
-		lr.Reads = append(lr.Reads, ev.reads[source]...)
-		return lr
-	}
+	lr := LayerResult{Source: li.Source, Path: li.Path, Reads: li.Reads, Sources: li.Sources()}
 	lr.Errors = append(lr.Errors, li.errors...)
 	lr.Errors = append(lr.Errors, ev.errors[source]...)
 	lr.Reads = append(lr.Reads, ev.reads[source]...)
@@ -581,10 +642,7 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 		ec.Errors = append(ec.Errors, layer.Errors...)
 	}
 
-	if ev.runtimeSetupError[Organization] {
-		ec.Diagnostics.State = ManagedInstallationUnmanaged
-		ec.Diagnostics.Validation = "unreadable"
-	} else if len(intent.Layers[Organization].errors) == 0 && len(ec.Organization.Errors) > 0 {
+	if len(intent.Layers[Organization].errors) == 0 && len(ec.Organization.Errors) > 0 {
 		var trustErr *OrganizationTrustError
 		if errors.As(errors.Join(ev.errors[Organization]...), &trustErr) {
 			ec.Diagnostics.State = ManagedInstallationUnmanaged

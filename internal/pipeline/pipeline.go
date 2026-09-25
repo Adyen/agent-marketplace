@@ -20,7 +20,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
-	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -401,7 +400,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			Local:        localCfg,
 			Errors:       errs,
 		}
-		if loadMode != ConfigLoadStrict && marketplacelock.HasRequiredError(ec.Errors) {
+		if loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors) {
 			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy)
 		}
 	} else {

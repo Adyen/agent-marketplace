@@ -407,14 +407,6 @@ func marketplaceLayerReadAssertions(ec config.EffectiveConfig, configEdit Staged
 	lockDigest := dependencytxn.Digest(lockData)
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
-			if read.RuntimeLock {
-				assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath}
-				if previous, exists := byAlias[read.RequestedPath]; exists && previous != assertion {
-					return nil, fmt.Errorf("%w: config alias changed at %s", dependencytxn.ErrGenerationConflict, read.RequestedPath)
-				}
-				byAlias[read.RequestedPath] = assertion
-				continue
-			}
 			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
 				return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
 			}
