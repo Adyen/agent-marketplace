@@ -24,6 +24,9 @@ Each interaction contract has its own file:
 10. `tests/org-marketplace-lock-recovery.spec.ts` runs the same exact organization Marketplace resource with its lock published and verifies the settled TUI baseline, status groups, and a passing drift check.
 11. `tests/reinstall-recovery.test.ts` deletes every personal and generated layer, re-initializes, syncs back to a healthy workspace, and verifies plain sync recreates a missing repository lock.
 12. `tests/status-disable-scroll.spec.ts` disables an enabled resource in an overflowing Status list and verifies that the adjacent row and its section header remain visible.
+13. `tests/accept-user-migration.spec.ts` accepts the startup migration prompt, verifies that only the legacy user root converts (with a byte-exact backup) while the committed legacy repository root is untouched, then selects a repository-declared Git resource globally into the migrated user root, syncs, and passes a drift check.
+
+Every other PTY journey declines that prompt; the acceptance journey is the only one that continues on a migrated user root.
 
 Every PTY journey receives a fresh temporary HOME, XDG roots, workspace, temporary directory, and local bare Git registry from lifecycle hooks. The registry contains a project-selected and pre-synced `beta-skill` plus an available `alpha-skill`. Test discovery does not create fixtures. The test binary uses the existing `e2e` build tag only to redirect the fixed organization-config path into the fixture.
 
@@ -41,6 +44,6 @@ make tui-qa-check
 make tui-qa
 ```
 
-`make tui-qa-check` typechecks the journeys and verifies the PTY adapter. `make tui-qa` builds the e2e-tagged test binary and runs all twelve journeys once. Failures use the test runner's console report and current terminal screen; the suite does not write snapshots or traces.
+`make tui-qa-check` typechecks the journeys and verifies the PTY adapter. `make tui-qa` builds the e2e-tagged test binary and runs every journey listed above once. Failures use the test runner's console report and current terminal screen; the suite does not write snapshots or traces.
 
 `AM_TUI_QA_BINARY` may select an already-built test binary. `AM_TUI_QA_REPO_ROOT` may select its repository root. The default suite requires no direnv or organization-specific image, certificate, registry, or infrastructure path.
