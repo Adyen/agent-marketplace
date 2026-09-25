@@ -14,6 +14,7 @@ export type OrganizationFixtureMode = "missing-lock" | "published-lock";
 
 export interface FixtureOptions {
   directorySource?: boolean;
+  overflowStatus?: boolean;
   // Installs a v4 organization layer at <root>/etc/agent-marketplace that
   // declares one exact Marketplace skill:
   //  - "missing-lock" leaves the organization acquisition lock absent, so a
@@ -43,6 +44,8 @@ export interface Fixture {
   expectedOrgSkillContent?: string;
   marketplaceAcquisitionDataRequestCount?: () => number;
   marketplaceAcquisitionDataRequestPaths?: () => string[];
+  marketplaceDelayNextAcquisition?: (ms: number) => void;
+  marketplaceDelayedAcquisitionCount?: () => number;
   resetPersonalState(): void;
   cleanup(): void;
 }
@@ -78,6 +81,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let expectedOrgSkillContent: string | undefined;
     let marketplaceAcquisitionDataRequestCount: (() => number) | undefined;
     let marketplaceAcquisitionDataRequestPaths: (() => string[]) | undefined;
+    let marketplaceDelayNextAcquisition: ((ms: number) => void) | undefined;
+    let marketplaceDelayedAcquisitionCount: (() => number) | undefined;
     if (options.organization) {
       stub = await createMarketplaceStub();
       const configPath = path.join(root, "etc", "agent-marketplace", "config.yaml");
@@ -95,12 +100,18 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       expectedOrgSkillContent = stub.materializedSkillContent;
       marketplaceAcquisitionDataRequestCount = stub.acquisitionDataRequestCount;
       marketplaceAcquisitionDataRequestPaths = stub.acquisitionDataRequestPaths;
+      marketplaceDelayNextAcquisition = stub.delayNextAcquisition;
+      marketplaceDelayedAcquisitionCount = stub.delayedAcquisitionCount;
     }
 
     const env = isolatedEnvironment(root, home, tmp, xdg, orgConfigPath);
     const source = path.join(registries, "source");
     write(path.join(source, "skills", "alpha-skill", "SKILL.md"), alphaSkillContent);
     write(path.join(source, "skills", "beta-skill", "SKILL.md"), betaSkillContent);
+    const overflowSkills = options.overflowStatus ? Array.from({ length: 30 }, (_, index) => `skill-${String(index).padStart(2, "0")}`) : [];
+    for (const name of overflowSkills) {
+      write(path.join(source, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: Status overflow fixture\n---\n\n# ${name}\n`);
+    }
     let registryURL: string;
     let expectedRepoConfig: string;
     if (options.directorySource) {
@@ -114,7 +125,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       const bareRegistry = path.join(registries, "fixture.git");
       git(registries, env, ["clone", "--quiet", "--bare", source, bareRegistry]);
       registryURL = pathToFileURL(bareRegistry).href;
-      expectedRepoConfig = `apiVersion: agent-marketplace/v2\nregistries:\n  - url: ${registryURL}\n    ref: main\n    path: skills\n    skills:\n      include:\n        - beta-skill\n`;
+      expectedRepoConfig = `apiVersion: agent-marketplace/v2\nregistries:\n  - url: ${registryURL}\n    ref: main\n    path: skills\n    skills:\n      include:\n        - beta-skill\n${overflowSkills.map((name) => `        - ${name}\n`).join("")}`;
       write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n");
       write(path.join(repo, ".agents", "config.yaml"), expectedRepoConfig);
     }
@@ -170,6 +181,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       expectedOrgSkillContent,
       marketplaceAcquisitionDataRequestCount,
       marketplaceAcquisitionDataRequestPaths,
+      marketplaceDelayNextAcquisition,
+      marketplaceDelayedAcquisitionCount,
       resetPersonalState: () => {
         fs.rmSync(path.join(home, ".agents"), { recursive: true, force: true });
         fs.rmSync(path.join(home, ".factory"), { recursive: true, force: true });

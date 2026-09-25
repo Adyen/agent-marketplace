@@ -18,6 +18,9 @@ const (
 	V4SelectionEnable V4SelectionEdit = iota
 	V4SelectionDisable
 	V4SelectionClearExclude
+	// V4SourceEnsure declares the Git or directory source without selecting
+	// any of its resources.
+	V4SourceEnsure
 )
 
 func EditV4ResourceSelection(configPath, declaringPath string, entry RegistryEntry, kind ir.ResourceKind, name string, action V4SelectionEdit) (handled bool, err error) {
@@ -48,10 +51,10 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	if err := loaded.validateLayerFields(layer); err != nil {
 		return err
 	}
-	if action > V4SelectionClearExclude {
+	if action > V4SourceEnsure {
 		return v4err("v4.edit-action", declaringPath, 0, "unsupported selection edit")
 	}
-	if strings.TrimSpace(name) == "" {
+	if action != V4SourceEnsure && strings.TrimSpace(name) == "" {
 		return v4err("v4.locator", "name", 0, "resource name is required")
 	}
 	v4Kind := entry.V4Kind
@@ -72,8 +75,10 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 		if strings.TrimSpace(entry.Ref) == "" {
 			return v4err("v4.edit-source", "registry.ref", 0, "git sources require an explicit ref")
 		}
-		if _, _, _, err := parseV4Locator(v4ResourceKindName(kind)+"/"+name, "source"); err != nil {
-			return v4err("v4.locator", "resources", 0, "%v", err)
+		if action != V4SourceEnsure {
+			if _, _, _, err := parseV4Locator(v4ResourceKindName(kind)+"/"+name, "source"); err != nil {
+				return v4err("v4.locator", "resources", 0, "%v", err)
+			}
 		}
 	}
 	identity, err := v4EditSourceIdentity(entry, declaringPath, layer, v4Kind)
@@ -104,7 +109,7 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	if len(matches) == 1 {
 		sourceName = matches[0]
 	} else if action != V4SelectionClearExclude {
-		if action == V4SelectionEnable && layer == userLayer {
+		if (action == V4SelectionEnable || action == V4SourceEnsure) && layer == userLayer {
 			if err := ValidateGlobalRegistryWrite(entry); err != nil {
 				return err
 			}
@@ -119,8 +124,11 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 		}
 		changed = true
 	}
-	if sourceName == "" {
+	if sourceName == "" || (action == V4SourceEnsure && !changed) {
 		return nil
+	}
+	if action == V4SourceEnsure {
+		return writeV4EditCandidate(configPath, declaringPath, root, layer)
 	}
 	locator := v4ResourceKindName(kind) + "/" + name
 	if _, _, _, err := parseV4Locator(locator, sourceName); err != nil {
@@ -177,6 +185,10 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	if !changed {
 		return nil
 	}
+	return writeV4EditCandidate(configPath, declaringPath, root, layer)
+}
+
+func writeV4EditCandidate(configPath, declaringPath string, root *yaml.Node, layer layerKind) error {
 	candidate, err := encodeConfigDocument(configPath, &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}})
 	if err != nil {
 		return err
@@ -192,10 +204,7 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	if err != nil {
 		return fmt.Errorf("stat config %q: %w", configPath, err)
 	}
-	if err := writeConfigDocumentData(configPath, info.Mode().Perm(), candidate); err != nil {
-		return err
-	}
-	return nil
+	return writeConfigDocumentData(configPath, info.Mode().Perm(), candidate)
 }
 
 func v4EditLayer(path string) layerKind {
@@ -213,6 +222,9 @@ type v4EditIdentity struct {
 	url  string
 	ref  string
 	path string
+	// authored is the portable spelling written for a new directory source;
+	// empty means write url.
+	authored string
 }
 
 func v4EditSourceIdentity(entry RegistryEntry, declaringPath string, layer layerKind, kind V4SourceKind) (v4EditIdentity, error) {
@@ -224,17 +236,23 @@ func v4EditSourceIdentity(entry RegistryEntry, declaringPath string, layer layer
 		}
 		bundle := entry.BundlePath(localPath)
 		raw := strings.TrimSpace(entry.URL)
+		authored := ""
 		if !filepath.IsAbs(raw) && !strings.HasPrefix(raw, "~") && !strings.HasPrefix(strings.ToLower(raw), "file://") {
-			relative := filepath.Join(raw, strings.TrimSpace(entry.Path))
-			if _, err := resolveV4DirectorySource(base, filepath.ToSlash(relative)); err != nil {
+			relative := filepath.ToSlash(filepath.Clean(filepath.Join(raw, strings.TrimSpace(entry.Path))))
+			if _, err := resolveV4DirectorySource(base, relative); err != nil {
 				return v4EditIdentity{}, v4err("v4.directory-path", "registry.url", 0, "%v", err)
+			}
+			// Repository and personal-local roots resolve relative directories
+			// against the repository, so keep committed sources portable.
+			if layer == repoLayer || layer == localLayer {
+				authored = "./" + strings.TrimPrefix(relative, "./")
 			}
 		}
 		absolute, err := filepath.Abs(bundle)
 		if err != nil {
 			return v4EditIdentity{}, v4err("v4.directory-path", "registry.url", 0, "%v", err)
 		}
-		return v4EditIdentity{kind: kind, url: filepath.Clean(absolute)}, nil
+		return v4EditIdentity{kind: kind, url: filepath.Clean(absolute), authored: authored}, nil
 	}
 	return v4EditIdentity{kind: kind, url: NormalizeGitURL(strings.TrimSpace(entry.URL)), ref: strings.TrimSpace(entry.Ref), path: NormalizeRegistryPath(entry.Path)}, nil
 }
@@ -256,12 +274,16 @@ func addV4EditSource(root *yaml.Node, name string, entry RegistryEntry, identity
 	}
 	value := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	if kind == V4SourceDirectory {
-		setMappingValue(value, "directory", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: identity.url})
+		directory := identity.url
+		if identity.authored != "" {
+			directory = identity.authored
+		}
+		setMappingValue(value, "directory", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: directory})
 	} else {
 		setMappingValue(value, "git", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.TrimSpace(entry.URL)})
 		setMappingValue(value, "ref", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.TrimSpace(entry.Ref)})
 		if identity.path != "" {
-			setMappingValue(value, "path", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.TrimSpace(entry.Path)})
+			setMappingValue(value, "path", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: identity.path})
 		}
 	}
 	if strings.TrimSpace(entry.SourceHarness) != "" {

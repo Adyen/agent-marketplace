@@ -241,6 +241,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 	}
 
+	declaringConfigPath := configPath
 	if opts.DependencyReconcile != nil && !marketplaceEndpointRequested {
 		opts.configStaging, err = newConfigStagingManager()
 		if err != nil {
@@ -266,13 +267,25 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	if marketplaceEndpointRequested {
 		return registerMarketplaceEndpoint(ctx, opts, configPath, &ec)
 	}
+
+	repoCfg := ec.Repo.Config
+	targetCfg := repoCfg
+	switch opts.Scope {
+	case ScopeUser:
+		targetCfg = ec.User.Config
+	case ScopeLocal:
+		targetCfg = ec.LocalLayer.Config
+	}
+	v4Target := targetCfg != nil && targetCfg.APIVersion == config.APIVersionV4
+	if opts.Scope == ScopeLocal && ec.LocalLayer.Local != nil {
+		v4Target = v4Target || ec.LocalLayer.Local.APIVersion == config.APIVersionV4
+	}
+
 	// --from ad-hoc registry path: validate URL, persist entry, then
 	// discover and install resources from the new entry.
 	if fromURL := strings.TrimSpace(opts.FromURL); fromURL != "" {
-		return installFromAdHoc(ctx, opts, fromURL, kind, hasKind, &ec)
+		return installFromAdHoc(ctx, opts, fromURL, kind, hasKind, &ec, declaringConfigPath, v4Target)
 	}
-
-	repoCfg := ec.Repo.Config
 
 	// If repo config doesn't exist (and we're writing to repo scope), create skeleton
 	if repoCfg == nil && opts.Scope == ScopeRepo {
@@ -513,15 +526,21 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 					return nil, err
 				}
 			}
-			if err := config.EnsureRegistryWithPathsInConfig(configPath, entry.URL, entry.Ref, entry.Path); err != nil {
-				return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
-			}
-			// Use exact-entry matching (URL+path, where empty path = root entry
-			// specifically) to avoid "matches multiple entries" errors when the
-			// same URL has entries at different paths. AddResourceToExactRegistryEntry
-			// also clears any contradictory exclude_all on the entry.
-			if err := config.AddResourceToExactRegistryEntry(configPath, entry.URL, entry.Path, match.kind, resourceName); err != nil {
-				return nil, err
+			if v4Target {
+				if err := editV4Destination(configPath, declaringConfigPath, *entry, match.kind, resourceName, config.V4SelectionEnable); err != nil {
+					return nil, err
+				}
+			} else {
+				if err := config.EnsureRegistryWithPathsInConfig(configPath, entry.URL, entry.Ref, entry.Path); err != nil {
+					return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
+				}
+				// Use exact-entry matching (URL+path, where empty path = root entry
+				// specifically) to avoid "matches multiple entries" errors when the
+				// same URL has entries at different paths. AddResourceToExactRegistryEntry
+				// also clears any contradictory exclude_all on the entry.
+				if err := config.AddResourceToExactRegistryEntry(configPath, entry.URL, entry.Path, match.kind, resourceName); err != nil {
+					return nil, err
+				}
 			}
 		}
 		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName, opts.configStaging); err != nil {
@@ -987,9 +1006,20 @@ func pathBase(p string) string {
 	return p
 }
 
+// editV4Destination applies an install edit to a destination loaded as v4. An
+// unhandled edit means the staged file is no longer v4, which would otherwise
+// report success without recording the selection.
+func editV4Destination(configPath, declaringPath string, entry config.RegistryEntry, kind ir.ResourceKind, name string, action config.V4SelectionEdit) error {
+	handled, err := config.EditV4ResourceSelection(configPath, declaringPath, entry, kind, name, action)
+	if err == nil && !handled {
+		err = fmt.Errorf("v4 configuration %s missing during staged installation", declaringPath)
+	}
+	return err
+}
+
 // installFromAdHoc handles the --from code path: validate the URL against
 // policy, persist the registry entry, discover resources, and install.
-func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, kind ir.ResourceKind, hasKind bool, ec *config.EffectiveConfig) (result *InstallResult, retErr error) {
+func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, kind ir.ResourceKind, hasKind bool, ec *config.EffectiveConfig, declaringConfigPath string, v4Target bool) (result *InstallResult, retErr error) {
 	if ec == nil {
 		ec = new(config.EffectiveConfig)
 		*ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
@@ -1039,11 +1069,13 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	// For local filesystem registries, verify the path exists before writing
 	// the registry entry to the config, so a typo fails fast instead of
 	// leaving a broken entry behind.
+	localDir := ""
 	if syntheticEntry.IsLocal() {
 		baseDir := repoRoot
 		if opts.LocalConfigDir != "" {
 			baseDir = opts.LocalConfigDir
 		}
+		localDir = adHocLocalDirectory(syntheticEntry, baseDir)
 		localPath, err := syntheticEntry.ResolveLocalPath(baseDir)
 		if err != nil {
 			return nil, fmt.Errorf("resolve local registry path: %w", err)
@@ -1070,12 +1102,22 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			return nil, err
 		}
 	}
-	ensureRegistry := config.EnsureRegistryWithPathsInConfig
-	if fromRef != "" {
-		ensureRegistry = config.EnsureRegistryWithPathsAtRefInConfig
+	v4BundleRefusal := fmt.Errorf("installing every resource from an ad-hoc registry into v4 config %s is not supported; name the resource, or declare the source with an `all: true` resource group", declaringConfigPath)
+	if v4Target && len(opts.Args) == 0 && resolvedPath == "" {
+		return nil, v4BundleRefusal
 	}
-	if err := ensureRegistry(configPath, fromURL, fromRef, fromPath); err != nil {
-		return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
+	if v4Target {
+		if err := editV4Destination(configPath, declaringConfigPath, syntheticEntry, kind, "", config.V4SourceEnsure); err != nil {
+			return nil, fmt.Errorf("declare source in v4 %s config: %w", opts.Scope, err)
+		}
+	} else {
+		ensureRegistry := config.EnsureRegistryWithPathsInConfig
+		if fromRef != "" {
+			ensureRegistry = config.EnsureRegistryWithPathsAtRefInConfig
+		}
+		if err := ensureRegistry(configPath, fromURL, fromRef, fromPath); err != nil {
+			return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
+		}
 	}
 
 	// Reload the effective config so the discovery helper sees the newly
@@ -1124,10 +1166,12 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	var catalogKey string
 	for i := range discoveryCfg.Registries {
 		entry := &discoveryCfg.Registries[i]
-		if strings.TrimSpace(entry.URL) != fromURL || strings.TrimSpace(entry.Path) != fromPath {
+		// An omitted --path names the registry root here, unlike remove's
+		// wildcard, so compare the normalized path exactly.
+		if config.NormalizeRegistryPath(entry.Path) != config.NormalizeRegistryPath(fromPath) && entry.V4Kind != config.V4SourceDirectory {
 			continue
 		}
-		if fromRef != "" && strings.TrimSpace(entry.Ref) != fromRef {
+		if !adHocRegistryEntryMatches(*entry, fromURL, fromPath, fromRef, localDir) {
 			continue
 		}
 		catalogKey = entry.CatalogKey
@@ -1138,6 +1182,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	selectedCatalogs := map[string]catalog.LoadedCatalog{catalogKey: catalogs[catalogKey]}
 	addSelectedResource := func(resourceKind ir.ResourceKind, resourceName string) error {
+		if v4Target {
+			return editV4Destination(configPath, declaringConfigPath, syntheticEntry, resourceKind, resourceName, config.V4SelectionEnable)
+		}
 		if fromRef != "" {
 			return config.AddResourceToExactRegistryEntryAtRef(configPath, fromURL, fromPath, fromRef, resourceKind, resourceName)
 		}
@@ -1270,6 +1317,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	slices.Sort(allInstalled)
 
+	if v4Target {
+		return nil, v4BundleRefusal
+	}
 	if err := config.EnsureRegistryWithDefaultInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
 		return nil, fmt.Errorf("set default on registry in %s config: %w", opts.Scope, err)
 	}

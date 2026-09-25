@@ -486,7 +486,7 @@ and organization-specific infrastructure are not required.
    registries, keeping test mutations separate from personal configuration.
 
 4. **Report.** QA passes when `make tui-qa` exits zero with both runners
-   passing and all eleven journeys exercised. On failure, retain the failing
+   passing and every listed journey exercised, none skipped. On failure, retain the failing
    test name and console output/current terminal screen; the suite produces
    no snapshot or trace files. Report setup failures as blocked, not passed.
 

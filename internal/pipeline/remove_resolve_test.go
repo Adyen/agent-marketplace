@@ -241,11 +241,11 @@ func TestAdHocPathMatchingNormalizesIdentityButRejectsDescendantEntry(t *testing
 		Ref:  "main",
 		Path: "./foo//bar/",
 	}}}
-	entry, found, err := selectAdHocRegistryEntry(cfg, "git@example.com:infra", "foo\\bar", "main")
+	entry, found, err := selectAdHocRegistryEntry(cfg, "git@example.com:infra", "foo\\bar", "main", "")
 	if err != nil || !found || entry.Path != "./foo//bar/" {
 		t.Fatalf("normalized exact path lookup = (%#v, %v, %v), want matching entry", entry, found, err)
 	}
-	if _, found, err := selectAdHocRegistryEntry(cfg, "git@example.com:infra", "foo/bar/child", "main"); err != nil || found {
+	if _, found, err := selectAdHocRegistryEntry(cfg, "git@example.com:infra", "foo/bar/child", "main", ""); err != nil || found {
 		t.Fatalf("descendant path matched configured parent: found=%v err=%v", found, err)
 	}
 
