@@ -331,6 +331,55 @@ func TestEditV4ResourceSelectionGitIdentityUsesRefAndPath(t *testing.T) {
 	}
 }
 
+func TestLayerEditorEnsureRegistryDeclaresSourceOnceWithoutSelectingResources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	layerEditorWrite(t, path, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	// A trailing slash names the same subdirectory and is written normalized.
+	entry := RegistryEntry{URL: "https://example.test/repo.git", Ref: "feature", Path: "teams/skills/daily-sync/"}
+	ensure := func() bool {
+		t.Helper()
+		editor := openTestEditor(t, RepoCommitted, path, path)
+		if _, err := editor.EnsureRegistry(entry); err != nil {
+			t.Fatalf("ensure: %v", err)
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if candidate.Changed {
+			if err := os.WriteFile(path, candidate.Bytes, candidate.Mode); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return candidate.Changed
+	}
+	if !ensure() {
+		t.Fatal("first ensure did not declare the source")
+	}
+	loaded, err := LoadV4ConfigFromPath(path)
+	if err != nil || len(loaded.Sources) != 1 || len(loaded.Groups) != 0 {
+		t.Fatalf("ensured source = %#v groups %#v err %v", loaded.Sources, loaded.Groups, err)
+	}
+	if declared, err := os.ReadFile(path); err != nil || !strings.Contains(string(declared), "path: teams/skills/daily-sync\n") {
+		t.Fatalf("ensured source path not normalized: %s, %v", declared, err)
+	}
+	if ensure() {
+		t.Fatal("repeat ensure changed config")
+	}
+	if _, err := EditV4ResourceSelection(path, path, entry, ir.KindSkill, "daily-sync", V4SelectionEnable); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = LoadV4ConfigFromPath(path)
+	if err != nil || len(loaded.Sources) != 1 {
+		t.Fatalf("selection duplicated the ensured source: %#v, %v", loaded.Sources, err)
+	}
+	for name := range loaded.Sources {
+		if group := loaded.Groups[name]; len(group.Include) != 1 || group.Include[0].Locator != "skill/daily-sync" {
+			t.Fatalf("selection group = %#v", group)
+		}
+	}
+}
+
 func TestEditV4ResourceSelectionKeepsSymlinkSourceIdentities(t *testing.T) {
 	dir := canonicalDirectoryTestRoot(t)
 	real := filepath.Join(dir, "version-1")
@@ -533,8 +582,23 @@ func TestEditV4ResourceSelectionCreatesLexicalDirectoryBindingAndChecksRelativeC
 	if !handled || err != nil {
 		t.Fatalf("inside symlink handled %v err %v", handled, err)
 	}
-	if got, readErr := os.ReadFile(repoConfig); readErr != nil || !strings.Contains(string(got), "directory: ./inside") {
+	// A committed repository root keeps the portable relative spelling, and
+	// the binding stays lexical rather than following the symlink.
+	if got, readErr := os.ReadFile(repoConfig); readErr != nil || !strings.Contains(string(got), "directory: ./inside\n") {
 		t.Fatalf("inside symlink binding = %v %s", readErr, got)
+	}
+	bound, err := LoadV4ConfigFromPath(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range bound.Sources {
+		if want := filepath.Join(canonicalRepo, "inside"); source.CanonicalURL != want {
+			t.Fatalf("inside symlink resolved to %s, want lexical %s", source.CanonicalURL, want)
+		}
 	}
 }
 

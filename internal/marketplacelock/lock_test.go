@@ -165,6 +165,32 @@ resources:
 	}
 }
 
+func TestProvisionalMarketplaceMCPLocatorUsesWireKind(t *testing.T) {
+	v4, err := config.ParseV4([]byte(`apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: https://marketplace.example}
+resources:
+  hosted: {include: [tools/skill/review, tools/mcp/server-one]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := Provisional(v4, lockfile.ScopeRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Marketplaces) != 1 || len(doc.Marketplaces[0].Resources) != 2 {
+		t.Fatalf("provisional resources = %#v", doc.Marketplaces)
+	}
+	kinds := make(map[string]string)
+	for _, resource := range doc.Marketplaces[0].Resources {
+		kinds[resource.Name] = resource.Kind
+	}
+	if kinds["review"] != "skill" || kinds["server-one"] != "mcpserver" {
+		t.Fatalf("provisional Marketplace kinds = %#v, want skill and mcpserver", kinds)
+	}
+}
+
 func TestHasRequiredError(t *testing.T) {
 	required := &config.V4ValidationError{Code: "v4.marketplace-lock-required"}
 	if !HasRequiredError([]error{errors.New("other"), errors.Join(errors.New("wrapped"), required)}) {

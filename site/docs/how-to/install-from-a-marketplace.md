@@ -124,7 +124,7 @@ If everything is in sync, the check exits with status 0 and prints no drift verd
 ## Troubleshooting
 
 - `no Marketplace source configured`: Register the endpoint as in step 1, or search an unconfigured endpoint with `--marketplace <endpoint-url>`.
-- `v4.writer-opt-in`: Install commands cannot edit the selected v4 config. Changing only its `apiVersion` or writing lock evidence by hand will not make this a supported installation path. Keep CLI-managed selections in a suitable editable layer, or follow the [v4 migration and maintenance guide](./migrate-configuration.md). General acquisition of new hosted v4 requests is not implemented.
+- `v4.writer-opt-in`: This particular legacy-only install editor cannot edit the selected v4 config; named Git and directory installs have a separate v4-aware path. Changing only `apiVersion` or inventing lock evidence by hand does not enable hosted editing. Declare explicit hosted requests in a v4 source and let online writable-layer acquisition produce verified locks, or follow the [v4 migration and maintenance guide](./migrate-configuration.md).
 - `marketplace "..." not found`: Check the configured alias, or pass the endpoint URL to `--marketplace`.
 - Instance ID mismatch: The endpoint identity changed or the URL points to a different deployment. Do not edit `instance_id` to bypass the check; confirm the endpoint with its operator.
 - Marketplace URL blocked: The effective `allowed_marketplaces` policy does not permit the endpoint. Use an approved endpoint or ask the policy owner to update the controlling layer.

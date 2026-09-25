@@ -171,16 +171,32 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	m.driftAssessment = assessment
 	m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
 	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+	if m.pendingToggleReload == 0 || msg.generation < m.pendingToggleReload {
+		return
+	}
+	m.finishOperation(m.pendingToggleOperation)
+	m.pendingToggleOperation = 0
+	m.pendingToggleReload = 0
+	slog.Info("tui toggle authoritative reload completed", "generation", msg.generation, "healthy", !m.rowsStale)
+	if !m.rowsStale {
+		m.recordOperationSuccess(operationMutation)
+		return
+	}
+	msg.driftAssessment = m.driftAssessment
+	failure := snapshotAcceptanceError(msg)
+	m.recordOperationFailure(operationMutation, diagnosticMutation, failure)
+	m.toast = fmt.Sprintf("error: %v", failure)
+	m.toastExp = time.Now().Add(5 * time.Second)
 }
 
-func marketplaceInstallSnapshotError(msg snapshotLoadedMsg) error {
+func snapshotAcceptanceError(msg snapshotLoadedMsg) error {
 	hardErrors := append([]error(nil), msg.errs...)
 	hardErrors = append(hardErrors, diagnosticErrors(msg.diagnostics)...)
 	if len(hardErrors) > 0 {
 		return errors.Join(hardErrors...)
 	}
 	if msg.driftAssessment != driftReady {
-		return errors.New("post-install state could not be verified")
+		return errors.New("authoritative state could not be verified")
 	}
 	return nil
 }
@@ -282,7 +298,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pane = paneMigrationModal
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg))
+			return m, m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.refreshing = false
@@ -291,7 +307,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applySnapshotData(msg)
 		discoveryCmd := m.beginMarketplaceDiscovery(m.filter, false)
-		installCmd := m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg))
+		installCmd := m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg))
 		if msg.refreshAfterLoad {
 			m.refreshing = true
 			generation := m.beginRequest(requestSnapshot)
@@ -311,14 +327,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshotLoadedMsg))
+			return m, m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.clearMarketplaceDiscovery(true)
 			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
 		m.applySnapshotData(msg.snapshotLoadedMsg)
-		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshotLoadedMsg)))
+		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)))
 
 	case reloadMsg:
 		snapshot := snapshotLoadedMsg(msg)
@@ -339,7 +355,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.migrationPrompt = snapshot.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(snapshot.generation, marketplaceInstallSnapshotError(snapshot))
+			return m, m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		}
 		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
 			m.clearMarketplaceDiscovery(true)
@@ -348,7 +364,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySnapshotData(snapshot)
 		m.toast = "Reloaded"
 		m.toastExp = time.Now().Add(2 * time.Second)
-		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, marketplaceInstallSnapshotError(snapshot)))
+		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)))
 
 	case discoveryDebounceMsg:
 		if m.requests.active(requestDiscovery) != msg.generation {
@@ -473,10 +489,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.pendingExcludeAction = nil
-		m.finishOperation(msg.operation)
-		m.recordOperationSuccess(operationMutation)
 		// Re-load snapshot to reflect the config change.
 		generation := m.beginRequest(requestSnapshot)
+		m.pendingToggleOperation = msg.operation
+		m.pendingToggleReload = generation
 		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case harnessWrittenMsg:
@@ -558,7 +574,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Error("update failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "update", msg.err)
 			if msg.snapshot.generation != 0 {
-				installCmd = m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshot))
+				installCmd = m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshot))
 			}
 			return m, tea.Batch(toastExpiryCmd(5*time.Second), installCmd)
 		} else {
@@ -567,7 +583,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
 		if msg.snapshot.generation != 0 {
-			installCmd = m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshot))
+			installCmd = m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshot))
 		}
 		return m, tea.Batch(toastExpiryCmd(2*time.Second), installCmd)
 

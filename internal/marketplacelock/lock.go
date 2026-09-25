@@ -125,7 +125,7 @@ func Provisional(v4 *config.V4Config, scope lockfile.Scope) (lockfile.Document, 
 			resource := lockfile.MarketplaceResourceLock{
 				RegistryName:  request.Registry,
 				RegistryID:    request.Registry,
-				Kind:          v4MarketplaceLockKind(request.Kind),
+				Kind:          request.MarketplaceKind(),
 				Name:          request.Name,
 				Revision:      revision,
 				ContentDigest: lockfile.Digest(revision),
@@ -169,7 +169,7 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			plan, err := marketplaceResolver.PrepareLocatorWithResourceLimit(ctx, entry, marketplace.MarketplaceLocator{
 				URL:      entry.URL,
 				Registry: request.Registry,
-				Kind:     v4MarketplaceLockKind(request.Kind),
+				Kind:     request.MarketplaceKind(),
 				Name:     request.Name,
 				Revision: request.Options.Revision,
 				Digest:   request.Options.Revision,
@@ -269,13 +269,6 @@ func marketplaceSourceRequests(v4 *config.V4Config) []marketplaceSourceRequestGr
 		groups = append(groups, marketplaceSourceRequestGroup{name: name, requests: requests[start:requestIndex]})
 	}
 	return groups
-}
-
-func v4MarketplaceLockKind(kind string) string {
-	if kind == "mcp" {
-		return "mcpserver"
-	}
-	return kind
 }
 
 func lockTargets(names []string) []hcc.Target {

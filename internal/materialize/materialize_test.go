@@ -98,6 +98,88 @@ func TestRunResourceNilSkipped(t *testing.T) {
 	}
 }
 
+func TestMarketplaceInstalledNameCompilesWithoutMutatingCanonicalResource(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := t.TempDir()
+	canonical := ir.NewSkill("original", "Original skill", "Original body", nil, nil, ir.SourceRef{})
+	resolved := resolver.ResolvedArtifact{
+		Entry:  catalog.Entry{Kind: ir.KindSkill, Name: "review-copy", Resource: canonical},
+		Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory},
+		IsMarketplace: true, MarketplaceResourceName: "original", InstalledName: "review-copy",
+	}
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{resolved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasDiagCode(report.Diags, "materialize.marketplace.alias-invalid") {
+		t.Fatalf("aliased materialization diagnostics=%v", report.Diags)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, ".factory", "skills", "review-copy", "SKILL.md"))
+	if err != nil || !strings.Contains(string(content), "name: review-copy") || !strings.Contains(string(content), "Original body") {
+		t.Fatalf("aliased skill content = %q, %v", content, err)
+	}
+	if canonical.Name() != "original" {
+		t.Fatalf("compiler changed verified canonical name to %q", canonical.Name())
+	}
+	mcp := ir.NewMcpServer("original-server", "echo", nil, nil, nil, ir.SourceRef{})
+	mcpRepo := t.TempDir()
+	mcpResolved := resolver.ResolvedArtifact{
+		Entry:  catalog.Entry{Kind: ir.KindMcpServer, Name: "server-copy", Resource: mcp},
+		Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory},
+		IsMarketplace: true, MarketplaceResourceName: "original-server", InstalledName: "server-copy",
+	}
+	report, err = Run(context.Background(), mcpRepo, []resolver.ResolvedArtifact{mcpResolved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(mcpRepo, ".factory", "mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Servers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.Servers["server-copy"]; !ok || doc.Servers["original-server"] != nil || mcp.Name() != "original-server" {
+		t.Fatalf("aliased MCP output=%s, canonical=%q, diagnostics=%v", data, mcp.Name(), report.Diags)
+	}
+	parent := t.TempDir()
+	invalidRoot := filepath.Join(parent, "workspace")
+	if err := os.MkdirAll(invalidRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(parent, "sentinel")
+	if err := os.WriteFile(outside, []byte("handwritten"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(context.Background(), invalidRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.ReadFile(filepath.Join(invalidRoot, ".factory", "skills", "review-copy", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved.Name, resolved.InstalledName = "../../../sentinel", "../../../sentinel"
+	report, err = Run(context.Background(), invalidRoot, []resolver.ResolvedArtifact{resolved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagCode(report.Diags, "materialize.marketplace.alias-invalid") {
+		t.Fatalf("invalid installed name diagnostics=%v", report.Diags)
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "handwritten" {
+		t.Fatalf("invalid alias changed outside sentinel: %q, %v", got, err)
+	}
+	if _, err := os.Lstat(filepath.Join(invalidRoot, ".factory", "skills", "sentinel")); !os.IsNotExist(err) {
+		t.Fatalf("invalid alias produced an output: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(invalidRoot, ".factory", "skills", "review-copy", "SKILL.md")); err != nil || string(got) != string(previous) {
+		t.Fatalf("invalid alias pruned previously valid managed output: %q, %v", got, err)
+	}
+}
+
 func TestRunValidResourceOneTarget(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()

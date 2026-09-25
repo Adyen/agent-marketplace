@@ -50,6 +50,26 @@ func BenchmarkBuildWorkItemsSelectionPolicy(b *testing.B) {
 	}
 }
 
+func BenchmarkAliasedMarketplaceSkillDryRunDiskIONoNetwork(b *testing.B) {
+	discardBenchLogs(b)
+	b.Setenv("HOME", b.TempDir())
+	repo := b.TempDir()
+	canonical := ir.NewSkill("original", "Original", "body", nil, nil, ir.SourceRef{})
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:  catalog.Entry{Kind: ir.KindSkill, Name: "review-copy", Resource: canonical},
+		Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory},
+		IsMarketplace: true, MarketplaceResourceName: "original", InstalledName: "review-copy",
+	}}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		report, err := Run(context.Background(), repo, resolved, WithDryRun())
+		if err != nil || report == nil {
+			b.Fatalf("dry-run Marketplace alias: report=%v err=%v", report, err)
+		}
+	}
+}
+
 // BenchmarkRunSupportFiles measures the materialize.Run hot-path cost
 // when skills have support files that must be copied into the cache.
 func BenchmarkRunSupportFiles(b *testing.B) {
