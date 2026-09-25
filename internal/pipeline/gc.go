@@ -74,16 +74,14 @@ func GarbageCollect(ctx context.Context, dryRun bool) (report GCReport, resultEr
 	}
 	err := cache.WithExactGitNamespaceExclusiveLease(ctx, func(leaseCtx context.Context) error {
 		var runErr error
-		report, runErr = garbageCollectUnderLease(leaseCtx, dryRun, report)
+		report, runErr = garbageCollectUnderLease(leaseCtx, dryRun)
 		return runErr
 	})
 	return report, err
 }
 
-// garbageCollectUnderLease derives both collectors' reachability from one
-// intent/lock snapshot and runs the preflight/collect phases while the caller
-// holds the exclusive exact-git namespace lease.
-func garbageCollectUnderLease(ctx context.Context, dryRun bool, report GCReport) (GCReport, error) {
+func garbageCollectUnderLease(ctx context.Context, dryRun bool) (GCReport, error) {
+	var report GCReport
 	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
 		RepoRoot:       config.FindRepoRoot(),
 		LocalConfigDir: config.FindLocalConfigDir(),
@@ -129,20 +127,21 @@ func garbageCollectUnderLease(ctx context.Context, dryRun bool, report GCReport)
 		}
 	}
 	readReachability := func(context.Context) (cache.GCReachability, error) { return reachability, nil }
+	marketplaceCache := marketplace.DefaultCache()
 	var registryErr, marketplaceErr error
 	if dryRun {
 		report.Registry, registryErr = cache.GarbageCollect(ctx, true, readReachability)
-		report.Marketplace, marketplaceErr = marketplace.DefaultCache().GarbageCollect(true, roots)
+		report.Marketplace, marketplaceErr = marketplaceCache.GarbageCollect(true, roots)
 		return report, errors.Join(registryErr, marketplaceErr)
 	}
 	if _, registryErr = cache.GarbageCollect(ctx, true, readReachability); registryErr != nil {
 		registryErr = fmt.Errorf("cache garbage collection preflight: %w", registryErr)
 	}
-	if _, marketplaceErr = marketplace.DefaultCache().GarbageCollect(true, roots); marketplaceErr != nil {
+	if _, marketplaceErr = marketplaceCache.GarbageCollect(true, roots); marketplaceErr != nil {
 		marketplaceErr = fmt.Errorf("marketplace cache garbage collection preflight: %w", marketplaceErr)
 	}
 	if registryErr == nil && marketplaceErr == nil {
-		if report.Marketplace, marketplaceErr = marketplace.DefaultCache().GarbageCollect(false, roots); marketplaceErr == nil {
+		if report.Marketplace, marketplaceErr = marketplaceCache.GarbageCollect(false, roots); marketplaceErr == nil {
 			report.Registry, registryErr = cache.GarbageCollect(ctx, false, readReachability)
 		}
 	}
