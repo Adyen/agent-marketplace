@@ -222,6 +222,17 @@ func (l LayerIntent) NeedsMarketplaceLock() bool {
 	return false
 }
 
+// ValidateDeployedMarketplaceLock reports whether a present acquisition lock
+// document is congruent with this layer's v4 Marketplace sources; a nil lock
+// or a layer without acquiring Marketplace sources is always congruent.
+func (l LayerIntent) ValidateDeployedMarketplaceLock(doc *lockfile.Document) error {
+	if !l.NeedsMarketplaceLock() || doc == nil {
+		return nil
+	}
+	_, err := l.bind(doc)
+	return err
+}
+
 // LegacyMarketplaces returns a legacy (v2/v3) layer's Marketplace entries, or
 // nil for v4 and absent layers.
 func (l LayerIntent) LegacyMarketplaces() []MarketplaceEntry {
