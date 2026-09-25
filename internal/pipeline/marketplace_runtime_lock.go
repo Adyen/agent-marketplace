@@ -4,53 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
-	"sync"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
-	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
-	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
-
-type transientOrganizationMarketplaceLockCacheKey struct{}
-
-type transientOrganizationMarketplaceLockCache struct {
-	mu    sync.Mutex
-	path  string
-	entry cachedTransientOrganizationMarketplaceLock
-}
-
-type cachedTransientOrganizationMarketplaceLock struct {
-	data   []byte
-	reads  []dependencytxn.ReadAssertion
-	inputs string
-}
-
-type transientOrganizationMarketplaceLockUse uint8
-
-const (
-	transientOrganizationMarketplaceLockUnused transientOrganizationMarketplaceLockUse = iota
-	transientOrganizationMarketplaceLockAcquired
-	transientOrganizationMarketplaceLockReused
-)
-
-// WithTransientOrganizationMarketplaceLockCache reuses verified in-memory
-// organization acquisition evidence while organization config reads, the
-// effective target harnesses and registry and Marketplace allowlists, and the
-// lock-absence assertion still match. Selection edits in user, repository, or
-// local configs do not invalidate it because acquisition does not read them.
-// It never weakens a deployed lock.
-func WithTransientOrganizationMarketplaceLockCache(ctx context.Context) context.Context {
-	if transientOrganizationMarketplaceLockCacheFrom(ctx) != nil {
-		return ctx
-	}
-	cache := &transientOrganizationMarketplaceLockCache{}
-	return context.WithValue(ctx, transientOrganizationMarketplaceLockCacheKey{}, cache)
-}
 
 type ConfigLoadMode uint8
 
@@ -71,220 +31,78 @@ func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 // or reused. Strict loads never consult the transient cache; cached loads never
 // contact the Marketplace.
 func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
-	switch mode {
-	case ConfigLoadOnline, ConfigLoadCached:
-		return loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, mode == ConfigLoadOnline)
-	case ConfigLoadStrict:
-		return config.LoadEffective(ctx, opts), transientOrganizationMarketplaceLockUnused
-	default:
+	if mode != ConfigLoadOnline && mode != ConfigLoadStrict && mode != ConfigLoadCached {
 		return effectiveConfigError(config.EffectiveConfig{}, fmt.Errorf("invalid config load mode: %d", mode)), transientOrganizationMarketplaceLockUnused
 	}
-}
-
-func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, allowAcquire bool) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
-	initial := config.LoadEffective(ctx, opts)
-	if !marketplacelock.HasRequiredError(initial.Errors) {
-		return initial, transientOrganizationMarketplaceLockUnused
+	intent := readIntent(ctx, opts)
+	if len(intent.Errors) > 0 {
+		return config.Bind(intent, config.Evidence{}), transientOrganizationMarketplaceLockUnused
 	}
-
-	orgPath := opts.OrganizationPath
-	if orgPath == "" {
-		orgPath = config.OrganizationConfigPath()
+	evidence, err := readDeployedLocks(ctx, intent, opts.FileOverlays)
+	if err != nil && (mode != ConfigLoadOnline || !isMissingLockError(err)) {
+		return effectiveConfigError(config.Bind(intent, config.Evidence{}), err), transientOrganizationMarketplaceLockUnused
 	}
-	layer, provisionalData, missing, err := marketplacelock.OrganizationProvisional(orgPath)
+	organization := intent.Layers[config.Organization]
+	if mode == ConfigLoadStrict || !organization.Present() || !organization.NeedsMarketplaceLock() || evidence.Locks[config.Organization] != nil {
+		return config.Bind(intent, evidence), transientOrganizationMarketplaceLockUnused
+	}
+	if err := MarketplaceAllowlistError(intent); err != nil {
+		return effectiveConfigError(config.Bind(intent, evidence), err), transientOrganizationMarketplaceLockUnused
+	}
+	paths, err := config.ResolveConfigLockPaths(organization.Path)
 	if err != nil {
-		return effectiveConfigError(initial, fmt.Errorf("inspect organization Marketplace lock: %w", err)), transientOrganizationMarketplaceLockUnused
+		return effectiveConfigError(config.Bind(intent, evidence), err), transientOrganizationMarketplaceLockUnused
 	}
-	if !missing {
-		return initial, transientOrganizationMarketplaceLockUnused
-	}
-	cache := transientOrganizationMarketplaceLockCacheFrom(ctx)
-	if cache != nil {
-		if data, reads, inputs, ok := cache.load(layer.LockPath); ok {
-			if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
-				cache.delete(layer.LockPath)
-			} else {
-				cachedOpts := opts
-				cachedOpts.OrganizationRuntimeLock = data
-				cachedEC := config.LoadEffective(ctx, cachedOpts)
+	lockPath := paths.CanonicalLock
+	if cache := transientOrganizationMarketplaceLockCacheFrom(ctx); cache != nil {
+		if doc, reads, ok := cache.load(lockPath); ok {
+			if err := dependencytxn.ValidateReadAssertions(reads); err == nil {
+				evidence.Locks[config.Organization] = &doc
+				cachedEC := config.Bind(intent, evidence)
 				if len(cachedEC.Errors) > 0 {
 					return cachedEC, transientOrganizationMarketplaceLockUnused
 				}
 				if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
-					cache.delete(layer.LockPath)
+					cache.delete(lockPath)
 					return effectiveConfigError(cachedEC, fmt.Errorf("%w: organization Marketplace inputs changed while reusing transient acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
 				}
-				if transientOrganizationMarketplaceInputs(cachedEC) != inputs {
-					cache.delete(layer.LockPath)
-					slog.Info("transient organization Marketplace lock inputs changed; reacquiring", "config", orgPath)
-				} else {
-					slog.Info("reused transient organization Marketplace lock acquisition", "config", orgPath)
-					return cachedEC, transientOrganizationMarketplaceLockReused
-				}
+				slog.Info("reused transient organization Marketplace lock acquisition", "config", organization.Path)
+				return cachedEC, transientOrganizationMarketplaceLockReused
 			}
+			cache.delete(lockPath)
 		}
 	}
-	if !allowAcquire {
-		return initial, transientOrganizationMarketplaceLockUnused
+	if mode == ConfigLoadCached {
+		return config.Bind(intent, evidence), transientOrganizationMarketplaceLockUnused
 	}
 
-	provisionalOpts := opts
-	provisionalOpts.OrganizationRuntimeLock = provisionalData
-	provisionalEC := config.LoadEffective(ctx, provisionalOpts)
-	if len(provisionalEC.Errors) > 0 {
-		return provisionalEC, transientOrganizationMarketplaceLockUnused
-	}
-	inputs := transientOrganizationMarketplaceInputs(provisionalEC)
-	reads, err := transientMarketplaceReadAssertions(provisionalEC, layer.LockPath)
+	reads, err := transientMarketplaceReadAssertions(intent, lockPath)
 	if err != nil {
-		return effectiveConfigError(provisionalEC, fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
+		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
 	}
-
-	slog.Info("transient organization Marketplace lock acquisition started", "config", orgPath)
-	// Cache reuse revalidates only organization reads, lock absence, and
-	// transientOrganizationMarketplaceInputs. Any other effective-config value
-	// passed to this acquisition must be added there, or a cached result could
-	// be reused after that value changes.
+	slog.Info("transient organization Marketplace lock acquisition started", "config", organization.Path)
 	mpResolver := marketplace.NewResolver()
-	mpResolver.AllowedRegistries = provisionalEC.Allowed
-	exact, err := marketplacelock.Resolve(ctx, mpResolver, layer, provisionalEC.TargetHarnesses, policy)
+	mpResolver.AllowedRegistries = intent.AllowedRegistries()
+	targets, _ := intent.TargetHarnesses()
+	exact, err := marketplacelock.Resolve(ctx, mpResolver, organization, targets, policy)
 	if err != nil {
-		slog.Error("transient organization Marketplace lock acquisition failed", "config", orgPath, "error", err)
-		return effectiveConfigError(provisionalEC, fmt.Errorf("acquire transient organization Marketplace lock: %w", err)), transientOrganizationMarketplaceLockUnused
-	}
-	exactData, err := lockfile.Encode(exact)
-	if err != nil {
-		return effectiveConfigError(provisionalEC, fmt.Errorf("encode transient organization Marketplace lock: %w", err)), transientOrganizationMarketplaceLockUnused
+		slog.Error("transient organization Marketplace lock acquisition failed", "config", organization.Path, "error", err)
+		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("acquire transient organization Marketplace lock: %w", err)), transientOrganizationMarketplaceLockUnused
 	}
 	if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
-		return effectiveConfigError(provisionalEC, fmt.Errorf("%w: organization Marketplace inputs changed during transient acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
+		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("%w: organization Marketplace inputs changed during transient acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
 	}
-
-	finalOpts := opts
-	finalOpts.OrganizationRuntimeLock = exactData
-	finalEC := config.LoadEffective(ctx, finalOpts)
+	evidence.Locks[config.Organization] = &exact
+	finalEC := config.Bind(intent, evidence)
 	if len(finalEC.Errors) > 0 {
 		return finalEC, transientOrganizationMarketplaceLockUnused
 	}
 	if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
 		return effectiveConfigError(finalEC, fmt.Errorf("%w: organization Marketplace inputs changed while validating transient acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
 	}
-	// The read assertions cover only the organization layer, so a user,
-	// repository, or local edit to these inputs during acquisition is caught here.
-	if transientOrganizationMarketplaceInputs(finalEC) != inputs {
-		return effectiveConfigError(finalEC, fmt.Errorf("%w: target harnesses or allowlists changed during transient organization Marketplace acquisition", dependencytxn.ErrGenerationConflict)), transientOrganizationMarketplaceLockUnused
+	if cache := transientOrganizationMarketplaceLockCacheFrom(ctx); cache != nil {
+		cache.store(lockPath, exact, reads)
 	}
-	if cache != nil {
-		cache.store(layer.LockPath, exactData, reads, inputs)
-	}
-	slog.Info("transient organization Marketplace lock acquisition completed", "config", orgPath, "resources", marketplaceLockResourceCount(exact))
+	slog.Info("transient organization Marketplace lock acquisition completed", "config", organization.Path, "resources", marketplaceLockResourceCount(exact))
 	return finalEC, transientOrganizationMarketplaceLockAcquired
-}
-
-func transientOrganizationMarketplaceLockCacheFrom(ctx context.Context) *transientOrganizationMarketplaceLockCache {
-	if ctx == nil {
-		return nil
-	}
-	cache, _ := ctx.Value(transientOrganizationMarketplaceLockCacheKey{}).(*transientOrganizationMarketplaceLockCache)
-	return cache
-}
-
-func (c *transientOrganizationMarketplaceLockCache) load(path string) ([]byte, []dependencytxn.ReadAssertion, string, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.path != path {
-		return nil, nil, "", false
-	}
-	entry := c.entry
-	return append([]byte(nil), entry.data...), append([]dependencytxn.ReadAssertion(nil), entry.reads...), entry.inputs, true
-}
-
-func (c *transientOrganizationMarketplaceLockCache) store(path string, data []byte, reads []dependencytxn.ReadAssertion, inputs string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.path = path
-	c.entry = cachedTransientOrganizationMarketplaceLock{
-		data:   append([]byte(nil), data...),
-		reads:  append([]dependencytxn.ReadAssertion(nil), reads...),
-		inputs: inputs,
-	}
-}
-
-func (c *transientOrganizationMarketplaceLockCache) delete(path string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.path == path {
-		c.path = ""
-		c.entry = cachedTransientOrganizationMarketplaceLock{}
-	}
-}
-
-type transientOrganizationMarketplaceResolver struct {
-	delegate *marketplace.Resolver
-}
-
-func (r transientOrganizationMarketplaceResolver) Resolve(ctx context.Context, cfg *config.Config, targets []hcc.Target, mode resolver.MarketplaceResolveMode) ([]resolver.ResolvedArtifact, []error) {
-	return r.ResolveWithPolicy(ctx, cfg, targets, mode, nil)
-}
-
-func (r transientOrganizationMarketplaceResolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, targets []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) ([]resolver.ResolvedArtifact, []error) {
-	if cfg == nil {
-		return nil, nil
-	}
-	var artifacts []resolver.ResolvedArtifact
-	var errs []error
-	for _, entry := range cfg.Marketplaces {
-		entryCfg := *cfg
-		entryCfg.Marketplaces = []config.MarketplaceEntry{entry}
-		entryMode := mode
-		if entry.Source == config.Organization {
-			entryMode = resolver.MarketplaceResolveModeCachedNoFetch
-		}
-		resolved, resolveErrs := r.delegate.ResolveWithPolicy(ctx, &entryCfg, targets, entryMode, policy)
-		artifacts = append(artifacts, resolved...)
-		errs = append(errs, resolveErrs...)
-	}
-	return artifacts, errs
-}
-
-func transientMarketplaceReadAssertions(ec config.EffectiveConfig, lockPath string) ([]dependencytxn.ReadAssertion, error) {
-	byRequested, err := configReadAssertions(config.EffectiveConfig{Organization: ec.Organization}, false)
-	if err != nil {
-		return nil, err
-	}
-	expected, err := dependencytxn.ReadGeneration(lockPath)
-	if err != nil {
-		return nil, err
-	}
-	if expected.Exists {
-		return nil, fmt.Errorf("deployed organization Marketplace lock %q must remain absent", lockPath)
-	}
-	byRequested[lockPath] = dependencytxn.ReadAssertion{
-		Path:          lockPath,
-		RequestedPath: lockPath,
-		Expected:      expected,
-	}
-	reads := make([]dependencytxn.ReadAssertion, 0, len(byRequested))
-	for _, read := range byRequested {
-		reads = append(reads, read)
-	}
-	sort.Slice(reads, func(i, j int) bool { return reads[i].RequestedPath < reads[j].RequestedPath })
-	return reads, nil
-}
-
-func transientOrganizationMarketplaceInputs(ec config.EffectiveConfig) string {
-	return fmt.Sprintf("harnesses=%q allowed-nil=%t allowed=%q allowed-marketplaces-nil=%t allowed-marketplaces=%q", ec.TargetHarnesses, ec.Allowed == nil, ec.Allowed, ec.AllowedMarketplaces == nil, ec.AllowedMarketplaces)
-}
-
-func effectiveConfigError(ec config.EffectiveConfig, err error) config.EffectiveConfig {
-	ec.Errors = []error{err}
-	return ec
-}
-
-func marketplaceLockResourceCount(doc lockfile.Document) int {
-	total := 0
-	for _, entry := range doc.Marketplaces {
-		total += len(entry.Resources)
-	}
-	return total
 }

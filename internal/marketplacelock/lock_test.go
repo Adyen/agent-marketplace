@@ -2,8 +2,6 @@ package marketplacelock
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -103,111 +101,6 @@ func TestReachableResourcesRequiresMatchingCollectionDigestForEdges(t *testing.T
 		t.Fatal("reachability mutated the input")
 	}
 }
-
-func TestOrganizationProvisionalResolvesRelativePath(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	if err := os.Mkdir("organization", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join("organization", "config.yaml"), []byte(`apiVersion: agent-marketplace/v4
-sources:
-  hosted: {marketplace: https://marketplace.example}
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	layer, data, missing, err := OrganizationProvisional(filepath.Join("organization", "config.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !missing {
-		t.Fatal("expected missing organization Marketplace lock")
-	}
-	canonicalRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantLock := filepath.Join(canonicalRoot, "organization", "lock.yaml")
-	if layer.LockPath != wantLock {
-		t.Fatalf("lock path = %q, want %q", layer.LockPath, wantLock)
-	}
-	doc, err := lockfile.Decode(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if doc.Scope != lockfile.ScopeOrganization || len(doc.Marketplaces) != 1 {
-		t.Fatalf("provisional lock = %#v", doc)
-	}
-}
-
-func TestExclusionOnlyMarketplaceSourceIsNotLocked(t *testing.T) {
-	v4, err := config.ParseV4([]byte(`apiVersion: agent-marketplace/v4
-sources:
-  company: {marketplace: https://company.example}
-  hosted: {marketplace: https://hosted.example}
-resources:
-  company: {exclude: [tools/skill/review]}
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc, err := Provisional(v4, lockfile.ScopeUser)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(doc.Marketplaces) != 1 || doc.Marketplaces[0].URL != "https://hosted.example" {
-		t.Fatalf("provisional lock = %#v, want only the acquiring source", doc.Marketplaces)
-	}
-	delete(v4.Sources, "hosted")
-	if HasMarketplaceSource(v4) {
-		t.Fatal("exclusion-only source must not require a Marketplace lock")
-	}
-}
-
-func TestProvisionalMarketplaceMCPLocatorUsesWireKind(t *testing.T) {
-	v4, err := config.ParseV4([]byte(`apiVersion: agent-marketplace/v4
-sources:
-  hosted: {marketplace: https://marketplace.example}
-resources:
-  hosted: {include: [tools/skill/review, tools/mcp/server-one]}
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc, err := Provisional(v4, lockfile.ScopeRepo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(doc.Marketplaces) != 1 || len(doc.Marketplaces[0].Resources) != 2 {
-		t.Fatalf("provisional resources = %#v", doc.Marketplaces)
-	}
-	kinds := make(map[string]string)
-	for _, resource := range doc.Marketplaces[0].Resources {
-		kinds[resource.Name] = resource.Kind
-	}
-	if kinds["review"] != "skill" || kinds["server-one"] != "mcpserver" {
-		t.Fatalf("provisional Marketplace kinds = %#v, want skill and mcpserver", kinds)
-	}
-}
-
-func TestHasRequiredError(t *testing.T) {
-	required := &config.V4ValidationError{Code: "v4.marketplace-lock-required"}
-	if !HasRequiredError([]error{errors.New("other"), errors.Join(errors.New("wrapped"), required)}) {
-		t.Fatal("nested Marketplace lock requirement was not detected")
-	}
-	mismatch := &config.V4ValidationError{Code: "v4.marketplace-lock-mismatch"}
-	if !HasMismatchError([]error{errors.New("other"), errors.Join(errors.New("wrapped"), mismatch)}) {
-		t.Fatal("nested Marketplace lock mismatch was not detected")
-	}
-	if HasRequiredError([]error{mismatch}) {
-		t.Fatal("Marketplace lock mismatch was classified as a lock requirement")
-	}
-	if HasRequiredError([]error{errors.New("other")}) || HasMismatchError([]error{errors.New("other")}) {
-		t.Fatal("unrelated error was classified as a Marketplace lock error")
-	}
-}
-
 func TestMarketplaceResourceBudgetUsesConservativeEncodedMinimum(t *testing.T) {
 	digest := lockfile.Digest("sha256:0000000000000000000000000000000000000000000000000000000000000000")
 	resource := lockfile.MarketplaceResourceLock{

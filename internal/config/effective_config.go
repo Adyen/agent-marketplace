@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 const defaultOrganizationConfigPath = "/etc/agent-marketplace/config.yaml"
@@ -76,12 +74,13 @@ func organizationConfigPath(override string) string {
 // LayerResult carries one Configuration Layer's provenance, parsed config, and
 // any validation errors encountered while loading it.
 type LayerResult struct {
-	Source Source
-	Path   string
-	Config *Config
-	Local  *LocalConfig
-	Errors []error
-	Reads  []ConfigRead
+	Source  Source
+	Path    string
+	Config  *Config
+	Local   *LocalConfig
+	Errors  []error
+	Reads   []ConfigRead
+	Sources []SourceDecl
 }
 
 type ConfigRead struct {
@@ -89,7 +88,6 @@ type ConfigRead struct {
 	RequestedPath   string
 	Digest          string
 	Overlay         bool
-	RuntimeLock     bool
 	AcquisitionLock bool
 }
 
@@ -130,9 +128,6 @@ type LoadEffectiveOptions struct {
 	RepoPath         string
 	LocalPath        string
 	FileOverlays     map[string][]byte
-	// OrganizationRuntimeLock supplies a verified, process-local lock without
-	// making organization configuration itself overlayable.
-	OrganizationRuntimeLock []byte
 }
 
 func (ec EffectiveConfig) LayerResults() []LayerResult {
@@ -176,15 +171,15 @@ func globalConfigPath() (string, error) {
 // apiVersion.
 func LoadOrganizationConfig() (*Config, error) {
 	li, _ := readOrganizationIntent(organizationConfigPath(""))
-	cfg, errs := bindOrganizationLayer(li, nil)
+	cfg, errs := bindOrganizationLayer(li)
 	return cfg, errors.Join(errs...)
 }
 
-func bindOrganizationLayer(li LayerIntent, runtimeLock []byte) (*Config, []error) {
+func bindOrganizationLayer(li LayerIntent) (*Config, []error) {
 	if !li.Present() || len(li.errors) > 0 {
 		return nil, li.errors
 	}
-	doc, _, evErrs, _ := deployedLayerEvidence(li, Organization, LoadEffectiveOptions{OrganizationRuntimeLock: runtimeLock})
+	doc, _, evErrs := deployedLayerEvidence(li, Organization, LoadEffectiveOptions{})
 	if len(evErrs) > 0 {
 		return nil, append(append([]error(nil), li.errors...), evErrs...)
 	}
@@ -210,16 +205,6 @@ func organizationHasRemoteRequirements(cfg *Config) bool {
 		}
 	}
 	return false
-}
-
-func organizationRuntimeLockOverlay(lockPath string, runtimeLock []byte) (map[string][]byte, error) {
-	if len(runtimeLock) == 0 {
-		return nil, nil
-	}
-	if int64(len(runtimeLock)) > lockfile.MaxFileSize {
-		return nil, fmt.Errorf("%w: runtime lock %q exceeds %d bytes", lockfile.ErrFileTooLarge, lockPath, lockfile.MaxFileSize)
-	}
-	return map[string][]byte{lockPath: append([]byte(nil), runtimeLock...)}, nil
 }
 
 func readEffectiveLayer(path string, overlays map[string][]byte) (string, []byte, error) {
