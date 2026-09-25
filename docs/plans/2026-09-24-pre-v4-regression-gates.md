@@ -134,6 +134,29 @@ A refusal test must prove a useful legacy operation still succeeds. A preservati
 | B13 | Concurrent edits or interrupted migration publication | Transaction rejects stale inputs or recovers coherently; no silently partial conversion or unexplained residue |
 | B14 | Repeat migration, sync, and restart | Idempotent intended state; no unnecessary protected-file rewrites |
 
+### Current coverage (stack #305)
+
+`upgrade-gate` tests run the pinned v3.1.1 executable in isolated containers; `e2e` tests drive the built candidate; `cmd`, `config`, and `dependencytxn` tests own their layers.
+
+| ID | Evidence | Remaining gap |
+|---|---|---|
+| B01 | upgrade-gate `TestPreV4ReleaseUpgrade` (list/sync/install/remove before migration); `TestPreV4GitLockUpgrade` (v3.1.1 lock kept through `sync --locked`, plain `sync`, `sync --check`) | — |
+| B02 | cmd `TestPromptForV4MigrationNonInteractiveWarnsAndLeavesBytes`; tui-qa `non-tty.test.ts` | — |
+| B03 | cmd `TestPendingV4MigrationPathsOnlyOffersUserConfig`, `TestInteractiveStartupPromptMigratesLegacyConfig`; tui-qa `accept-user-migration.spec.ts` | — |
+| B04 | tui-qa `accept-user-migration.spec.ts` (global selection from a legacy repository source); e2e `TestV4UserLayerOptsOutOfLegacyOrganizationResource`, `TestV4UserLayerExcludesLegacyOrganizationCollectionMember`; upgrade-gate repository-first migration | Legacy local root beside a migrated user root at binary level |
+| B05 | upgrade-gate repo then user migration with install/remove; config `TestMigrateLocalConfig`, `TestMigrateConfigFilesToV4AllScopePublishesNothingWhenOneLayerIsUnsupported` | `--scope local`/`all` at binary level |
+| B06 | upgrade-gate include-owned refusal leaves bytes and legacy install usable; cmd `TestPromptForV4MigrationDeclineLeavesBytesUnchanged`, `TestMigrateCommandToV4IsExplicitAndSupportsDryRun`; tui-qa decline path in every other journey | — |
+| B07 | config `TestMigrateConfigFilesToV4PreservesLegacySelectorsAndPolicies`, `TestMigrateConfigFilesToV4RefusesIncludeWithoutWrites`, `TestV4VersionBoundaryRejectsExplicitNonV4Include`, `TestMigrateSkipsDuplicatePaths` | Relative-directory and duplicate-ref cases through a historical binary |
+| B08 | upgrade-gate `TestPreV4GitLockUpgrade` (exact revision until `update`), `TestPreV4AggregateOwnershipUpgrade` (handwritten entries, Devin/Codex durable ownership, plugin-style output untouched) | — |
+| B09 | config `TestMigrateConfigFilesToV4Marketplace*` (evidence required, existing lock, dry run, commit failure); e2e `TestMigrateV4MarketplaceExactPin`; cmd `TestMigrateCommandMarketplaceEndToEndUsesVerifiedCache` | — |
+| B10 | tui-qa `org-marketplace-lock-failure.spec.ts`; cmd `TestSyncAcquiresMissingV4OrganizationMarketplaceLockTransiently`, `TestSyncOfflineDoesNotAcquireMissingOrganizationMarketplaceLock`, `TestSyncCheckDoesNotAcquireMissingOrganizationMarketplaceLock` | — |
+| B11 | tui-qa `org-marketplace-lock-recovery.spec.ts` (valid lock); cmd `TestSyncNeverReplacesPresentOrganizationMarketplaceLockTransiently` (malformed/mismatched: fails closed, zero requests, bytes unchanged), `TestGcCommandRejectsPresentOrganizationLockWhenMalformedUntrustedOrStale`, `TestDeinitBlocksOnPresentInvalidOrganizationLock` | — |
+| B12 | tui-qa `reinstall-recovery.test.ts` and the lock-failure journey's user-side wipe | — |
+| B13 | dependencytxn `TestRecoveryAtEveryPublicationInterruption`, `TestPreJournalInterruptionsLeaveNoTransactionResidue`, `TestCommitRejectsConcurrentChangeWithoutResidue`; config `TestMigrateConfigFilesToV4*RejectsConcurrent*`, `TestV4MigrationDoesNotOverwriteConcurrentBackup` | Binary-level interruption needs a production failpoint; not added |
+| B14 | upgrade-gate repeated `migrate --scope repo` is byte-identical; `sync --check` after every step | — |
+
+Committed-state compatibility in the other direction, where the candidate's writes must stay readable by teammates on the latest release, is `released-client-gate` (`TestReleasedClientReadsCandidateCommittedState`).
+
 Execute applicable lifecycle actions: `list`/`status`, install/remove, lock/sync/check, update, and TUI selection workflows. Use fresh branches for actions that intentionally alter the expected starting state; do not let an early destructive action make later assertions vacuous.
 
 Exercise every writable scope and all supported resource kinds at their owning test layer. Include a representative native-output target in broad command journeys and retain the existing all-target compatibility suite for native layout policy. Add focused shared-aggregate fixtures where ownership preservation is the contract.
