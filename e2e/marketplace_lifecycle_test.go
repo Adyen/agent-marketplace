@@ -520,3 +520,59 @@ resources:
 	consumer.AssertExitCode(consumer.RunAM("sync"), 0)
 	consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
 }
+
+// With the deployed organization shape and a v4 user config from init, a
+// hosted MCP server installed into a repository without a config lives in a
+// new v4 repository root and lock, survives update, and removes cleanly while
+// the organization lock stays absent.
+func TestOrganizationMarketplaceAliasRepositoryLifecycle(t *testing.T) {
+	files := marketplaceBehaviorFiles("Behavior body", true)
+	files[".mcp.json"] = MergeMCPFile([]MCPServer{{Name: "sonarqube", Command: "echo", Args: []string{"sonarqube"}}})
+	fixture := newMarketplaceBehaviorFixture(t, files)
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.MustRunAM("init", "--harnesses", "factory")
+	consumer.WriteOrgConfigWithMode(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  org:
+    marketplace: %s
+allowed_marketplaces:
+  - '^http://127\.0\.0\.1:[0-9]+$'
+resources:
+  org:
+    include:
+      - behavior-source/collection/behavior-bundle
+`, fixture.server.URL), 0o644)
+
+	result := consumer.RunAM("install", "org:behavior-source/mcpserver/sonarqube", "--scope", "repo", "--yes")
+	if result.ExitCode != 0 {
+		t.Fatalf("install through the organization alias into repo scope failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	repoConfig := consumer.ReadFile("/workspace/.agents/config.yaml")
+	for _, want := range []string{"apiVersion: agent-marketplace/v4", "marketplace: " + fixture.server.URL, "behavior-source/mcp/sonarqube"} {
+		if !strings.Contains(repoConfig, want) {
+			t.Fatalf("new repository config missing %q:\n%s", want, repoConfig)
+		}
+	}
+	consumer.AssertFileContains("/workspace/.agents/lock.yaml", "sonarqube")
+	consumer.AssertFileContains("/workspace/.factory/mcp.json", "sonarqube")
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "Behavior body")
+	consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
+
+	for _, args := range [][]string{{"update"}, {"sync", "--check"}, {"status"}, {"doctor"}} {
+		consumer.AssertExitCode(consumer.RunAM(args...), 0)
+	}
+
+	result = consumer.RunAM("remove", "sonarqube", "--scope", "repo")
+	if result.ExitCode != 0 {
+		t.Fatalf("remove from the v4 repository config failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	if data, err := os.ReadFile(consumer.mustResolvePath("/workspace/.factory/mcp.json")); err == nil && strings.Contains(string(data), "sonarqube") {
+		t.Fatalf("removed MCP server is still materialized:\n%s", data)
+	}
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "Behavior body")
+	for _, args := range [][]string{{"gc"}, {"sync", "--check"}} {
+		consumer.AssertExitCode(consumer.RunAM(args...), 0)
+	}
+	consumer.AssertFileAbsent("/etc/agent-marketplace/lock.yaml")
+}
