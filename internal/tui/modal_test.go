@@ -468,6 +468,18 @@ func TestScopedToggleActionPopulatesRegistryMetadata(t *testing.T) {
 }
 
 func TestRunScopedToggleDisablesProjectMarketplacePinWithoutRegistryMutation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	repoRoot := t.TempDir()
 	configPath := config.ProjectConfigPath(repoRoot)
 	digest := "sha256:" + strings.Repeat("a", 64)
