@@ -527,12 +527,8 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				}
 			}
 			if v4Target {
-				handled, err := config.EditV4ResourceSelection(configPath, declaringConfigPath, *entry, match.kind, resourceName, config.V4SelectionEnable)
-				if err != nil {
+				if err := editV4Destination(configPath, declaringConfigPath, *entry, match.kind, resourceName, config.V4SelectionEnable); err != nil {
 					return nil, err
-				}
-				if !handled {
-					return nil, fmt.Errorf("v4 configuration %s missing during staged installation", declaringConfigPath)
 				}
 			} else {
 				if err := config.EnsureRegistryWithPathsInConfig(configPath, entry.URL, entry.Ref, entry.Path); err != nil {
@@ -1010,6 +1006,17 @@ func pathBase(p string) string {
 	return p
 }
 
+// editV4Destination applies an install edit to a destination loaded as v4. An
+// unhandled edit means the staged file is no longer v4, which would otherwise
+// report success without recording the selection.
+func editV4Destination(configPath, declaringPath string, entry config.RegistryEntry, kind ir.ResourceKind, name string, action config.V4SelectionEdit) error {
+	handled, err := config.EditV4ResourceSelection(configPath, declaringPath, entry, kind, name, action)
+	if err == nil && !handled {
+		err = fmt.Errorf("v4 configuration %s missing during staged installation", declaringPath)
+	}
+	return err
+}
+
 // installFromAdHoc handles the --from code path: validate the URL against
 // policy, persist the registry entry, discover resources, and install.
 func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, kind ir.ResourceKind, hasKind bool, ec *config.EffectiveConfig, declaringConfigPath string, v4Target bool) (result *InstallResult, retErr error) {
@@ -1098,7 +1105,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		return nil, v4BundleRefusal
 	}
 	if v4Target {
-		if _, err := config.EditV4ResourceSelection(configPath, declaringConfigPath, syntheticEntry, kind, "", config.V4SourceEnsure); err != nil {
+		if err := editV4Destination(configPath, declaringConfigPath, syntheticEntry, kind, "", config.V4SourceEnsure); err != nil {
 			return nil, fmt.Errorf("declare source in v4 %s config: %w", opts.Scope, err)
 		}
 	} else {
@@ -1172,8 +1179,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	selectedCatalogs := map[string]catalog.LoadedCatalog{catalogKey: catalogs[catalogKey]}
 	addSelectedResource := func(resourceKind ir.ResourceKind, resourceName string) error {
 		if v4Target {
-			_, err := config.EditV4ResourceSelection(configPath, declaringConfigPath, syntheticEntry, resourceKind, resourceName, config.V4SelectionEnable)
-			return err
+			return editV4Destination(configPath, declaringConfigPath, syntheticEntry, resourceKind, resourceName, config.V4SelectionEnable)
 		}
 		if fromRef != "" {
 			return config.AddResourceToExactRegistryEntryAtRef(configPath, fromURL, fromPath, fromRef, resourceKind, resourceName)

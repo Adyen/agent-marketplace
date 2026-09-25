@@ -18,12 +18,16 @@ import (
 const preV4LinuxSHA256 = "3e66fd4d88c03282e7505c60ee912c6f9d0f66a7db91b0d8512e6090993ab059"
 
 func TestPreV4ReleaseUpgrade(t *testing.T) {
-	historical := os.Getenv("AM_E2E_PRE_V4_BINARY")
-	if historical == "" {
+	if os.Getenv("AM_E2E_PRE_V4_BINARY") == "" {
 		t.Skip("historical executable is supplied by the dedicated upgrade gate")
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Fatalf("upgrade gate requires Docker: %v", err)
+	}
+	// Docker bind mounts require an absolute source.
+	historical, err := filepath.Abs(os.Getenv("AM_E2E_PRE_V4_BINARY"))
+	if err != nil {
+		t.Fatal(err)
 	}
 	file, err := os.Open(historical)
 	if err != nil {
@@ -47,7 +51,7 @@ func TestPreV4ReleaseUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate := filepath.Join(root, "candidate")
-	build := exec.Command("go", "build", "-tags", "e2e", "-o", candidate, "./cmd/agent-marketplace")
+	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "e2e", "-o", candidate, "./cmd/agent-marketplace")
 	build.Dir = filepath.Join("..")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 	if output, err := build.CombinedOutput(); err != nil {

@@ -29,10 +29,14 @@ var releasedClientArch = map[string]string{
 // the latest release against the same committed repository. Each actor has
 // its own HOME; only the repository is shared.
 func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
-	released := os.Getenv("AM_E2E_RELEASED_BINARY")
 	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
-	if released == "" || image == "" {
+	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {
 		t.Skip("released executable and git-capable image are supplied by the dedicated released-client gate")
+	}
+	// Docker bind mounts require an absolute source.
+	released, err := filepath.Abs(os.Getenv("AM_E2E_RELEASED_BINARY"))
+	if err != nil {
+		t.Fatal(err)
 	}
 	data, err := os.ReadFile(released)
 	if err != nil {
@@ -49,7 +53,7 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate := filepath.Join(root, "candidate")
-	build := exec.Command("go", "build", "-o", candidate, "./cmd/agent-marketplace")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", candidate, "./cmd/agent-marketplace")
 	build.Dir = ".."
 	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
 	if output, err := build.CombinedOutput(); err != nil {
