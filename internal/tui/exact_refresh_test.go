@@ -232,7 +232,9 @@ func TestAutomaticRefreshRemainsPinnedWhenRefMoves(t *testing.T) {
 	}
 	gcDone := make(chan error, 1)
 	go func() {
-		_, gcErr := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+		_, gcErr := cache.GarbageCollect(context.Background(), false, func(context.Context) (cache.GCReachability, error) {
+			return cache.GCReachability{}, nil
+		})
 		gcDone <- gcErr
 	}()
 	select {

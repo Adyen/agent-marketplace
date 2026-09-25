@@ -135,7 +135,7 @@ registries:
 	<-entered
 	gcDone := make(chan error, 1)
 	go func() {
-		_, err := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+		_, err := cache.GarbageCollect(context.Background(), false, emptyGCReachability)
 		gcDone <- err
 	}()
 	select {

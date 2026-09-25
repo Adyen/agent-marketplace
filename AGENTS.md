@@ -170,7 +170,7 @@ The sections below are carried over verbatim from the previous version of this f
 ### Known Gaps
 
 - No resource dependency mechanism (tags and collections are partial workarounds)
-- Locking covers Git registries plus exact v2 Marketplace records, writable-layer generation and update, and online transient acquisition for an intentionally absent organization lock; offline transient acquisition, hosted rebind, dynamic-selector snapshots, and GC integration remain unimplemented
+- Locking covers Git registries plus exact v2 Marketplace records, writable-layer generation and update, online transient acquisition for an intentionally absent organization lock, and GC from local reachability without organization-lock acquisition or writes; offline transient acquisition, hosted update/rebind, and dynamic-selector snapshots remain unimplemented
 
 ### Local validation workflow
 

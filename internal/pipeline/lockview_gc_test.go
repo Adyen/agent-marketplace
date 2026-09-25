@@ -17,6 +17,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
 
+func emptyGCReachability(context.Context) (cache.GCReachability, error) {
+	return cache.GCReachability{}, nil
+}
+
 func TestSyncExactLeaseBlocksGCThroughDiscoveryAndMaterialization(t *testing.T) {
 	for _, phase := range []string{"discovery", "before-materialization"} {
 		t.Run(phase, func(t *testing.T) {
@@ -87,7 +91,7 @@ func TestSyncExactLeaseBlocksGCThroughDiscoveryAndMaterialization(t *testing.T) 
 
 			gcDone := make(chan error, 1)
 			go func() {
-				_, gcErr := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+				_, gcErr := cache.GarbageCollect(context.Background(), false, emptyGCReachability)
 				gcDone <- gcErr
 			}()
 			select {
@@ -200,7 +204,7 @@ func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
 	gcDone := make(chan error, 1)
 	go func() {
 		close(gcStarted)
-		_, gcErr := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+		_, gcErr := cache.GarbageCollect(context.Background(), false, emptyGCReachability)
 		gcDone <- gcErr
 	}()
 	<-gcStarted
@@ -285,9 +289,7 @@ func TestMixedLockViewCacheLeaseOrdering(t *testing.T) {
 				var gcErr error
 				go func() {
 					defer close(gcDone)
-					_, gcErr = cache.GarbageCollectWithReachabilityAndContext(barrier, false, func(context.Context) (cache.GCReachability, error) {
-						return cache.GCReachability{Configs: []*config.Config{{}}}, nil
-					})
+					_, gcErr = cache.GarbageCollect(barrier, false, emptyGCReachability)
 				}()
 				t.Cleanup(func() {
 					cancel()
