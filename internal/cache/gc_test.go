@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
@@ -34,6 +33,27 @@ func (c *cancelAfterChecksContext) Err() error {
 }
 func (c *cancelAfterChecksContext) Value(any) any { return nil }
 
+func staticReachability(locks []lockfile.Document, sources ...string) GCReachabilityReader {
+	return func(context.Context) (GCReachability, error) {
+		return GCReachability{Locks: locks, Sources: sources}, nil
+	}
+}
+
+func TestGarbageCollectUnderHeldExclusiveNamespaceLease(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	err := WithExactGitNamespaceExclusiveLease(context.Background(), func(leaseCtx context.Context) error {
+		release, err := AcquireExactGitNamespaceLeaseWithContext(leaseCtx) // must not flock again
+		if err == nil {
+			release()
+			_, err = GarbageCollect(leaseCtx, true, staticReachability(nil))
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatalf("garbage collection under held exclusive namespace lease: %v", err)
+	}
+}
+
 func TestLegacyGarbageCollectHonorsCancellationBeforeEachRemoval(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -45,7 +65,7 @@ func TestLegacyGarbageCollectHonorsCancellationBeforeEachRemoval(t *testing.T) {
 		}
 	}
 	ctx := &cancelAfterChecksContext{cancelAt: 5}
-	result, err := garbageCollectWithContext(ctx, false, &config.Config{})
+	result, err := collectLegacyCaches(ctx, false, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("legacy GC error = %v, want context.Canceled", err)
 	}
@@ -65,7 +85,7 @@ func TestGarbageCollectReturnsEmptyWhenCacheDirMissing(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	// No ~/.cache/agent-marketplace directory exists yet.
-	res, err := GarbageCollect(false, &config.Config{})
+	res, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err != nil {
 		t.Fatalf("expected no error when cache dir missing, got %v", err)
 	}
@@ -82,7 +102,7 @@ func TestGarbageCollectEmptyCacheDirReturnsNothing(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	res, err := GarbageCollect(false, &config.Config{})
+	res, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -110,11 +130,7 @@ func TestGarbageCollectKeepsActiveAndRemovesInactive(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	cfg := &config.Config{
-		Registries: []config.RegistryEntry{{URL: activeURL, Ref: "main"}},
-	}
-
-	res, err := GarbageCollect(false, cfg)
+	res, err := GarbageCollect(context.Background(), false, staticReachability(nil, activeURL))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,7 +161,7 @@ func TestGarbageCollectDryRunReportsButDoesNotDelete(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	res, err := GarbageCollect(true, &config.Config{})
+	res, err := GarbageCollect(context.Background(), true, staticReachability(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +189,7 @@ func TestGarbageCollectIgnoresFilesInCacheDir(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	res, err := GarbageCollect(false, &config.Config{})
+	res, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -196,7 +212,9 @@ func TestGarbageCollectRequiresConfigFailsClosed(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	res, err := GarbageCollect(false)
+	res, err := GarbageCollect(context.Background(), false, func(context.Context) (GCReachability, error) {
+		return GCReachability{}, errors.New("gc requires at least one effective configuration layer")
+	})
 	if err == nil {
 		t.Fatal("expected missing effective config error")
 	}
@@ -218,8 +236,7 @@ func TestGarbageCollectIgnoresNilConfigWhenEffectiveConfigSupplied(t *testing.T)
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	// A nil layer is harmless when a nonnil effective config is supplied.
-	res, err := GarbageCollect(false, nil, &config.Config{})
+	res, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -240,15 +257,7 @@ func TestGarbageCollectSkipsLocalAndBlankRegistries(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	cfg := &config.Config{
-		Registries: []config.RegistryEntry{
-			{URL: "/local/skills"},  // local: skipped
-			{URL: "  "},             // blank: skipped
-			{URL: "./rel", Ref: ""}, // local: skipped
-		},
-	}
-
-	res, err := GarbageCollect(false, cfg)
+	res, err := GarbageCollect(context.Background(), false, staticReachability(nil, "  "))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -275,7 +284,7 @@ func TestGarbageCollectResultIsSorted(t *testing.T) {
 		}
 	}
 
-	res, err := GarbageCollect(true, &config.Config{})
+	res, err := GarbageCollect(context.Background(), true, staticReachability(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -297,10 +306,7 @@ func TestGarbageCollectDedupesSameHashAcrossConfigs(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	cfgA := &config.Config{Registries: []config.RegistryEntry{{URL: url, Ref: "main"}}}
-	cfgB := &config.Config{Registries: []config.RegistryEntry{{URL: url, Ref: "v1"}}}
-
-	res, err := GarbageCollect(false, cfgA, cfgB)
+	res, err := GarbageCollect(context.Background(), false, staticReachability(nil, url, url))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -328,7 +334,7 @@ func TestGarbageCollectRejectsSymlinkedRootAndPreservesExternalTarget(t *testing
 		t.Fatalf("symlink cache root: %v", err)
 	}
 
-	result, err := GarbageCollect(false, &config.Config{})
+	result, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err == nil {
 		t.Fatal("expected symlinked cache root error")
 	}
@@ -353,7 +359,7 @@ func TestGarbageCollectRejectsSymlinkedCacheAncestorAndPreservesExternalTarget(t
 		t.Fatalf("symlink home ancestor: %v", err)
 	}
 
-	result, err := GarbageCollect(false, &config.Config{})
+	result, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err == nil {
 		t.Fatal("expected symlinked cache ancestor error")
 	}
@@ -376,7 +382,7 @@ func TestGarbageCollectRejectsNonDirectoryCacheRoot(t *testing.T) {
 		t.Fatalf("write cache root: %v", err)
 	}
 
-	result, err := GarbageCollect(false, &config.Config{})
+	result, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err == nil {
 		t.Fatal("expected non-directory cache root error")
 	}
@@ -423,9 +429,9 @@ func TestExactGitObjectGCReachability(t *testing.T) {
 		t.Fatal(err)
 	}
 	docs := []lockfile.Document{{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo, Registries: []lockfile.GitRegistry{{URL: "https://EXAMPLE.com/locked.git", Ref: "main", Commit: oid}}}}
-	configs := []*config.Config{nil, {Registries: []config.RegistryEntry{{URL: "https://EXAMPLE.com/configured.git", Ref: "main"}, {URL: "/local/catalog"}}}, {Registries: []config.RegistryEntry{{URL: "https://example.com/included", Ref: "other"}}}}
+	sources := []string{"https://EXAMPLE.com/configured.git", "https://example.com/included"}
 	for _, dryRun := range []bool{true, false} {
-		result, err := GarbageCollectWithLocks(dryRun, docs, configs...)
+		result, err := GarbageCollect(context.Background(), dryRun, staticReachability(docs, sources...))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -469,9 +475,8 @@ func TestExactGitObjectGCRetainsAbsoluteGitConfigSources(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			cfg := &config.Config{Registries: []config.RegistryEntry{{URL: input, Ref: "main"}}}
 			for _, dryRun := range []bool{true, false} {
-				result, err := GarbageCollectWithLocks(dryRun, nil, cfg)
+				result, err := GarbageCollect(context.Background(), dryRun, staticReachability(nil, input))
 				if err != nil || !slices.Equal(result.Removed, []string{orphan}) {
 					t.Fatalf("dryRun=%v: result=%+v err=%v", dryRun, result, err)
 				}
@@ -498,17 +503,17 @@ func TestExactGitObjectGCRejectsMalformedReachability(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			cfg := &config.Config{}
 			var docs []lockfile.Document
+			var sources []string
 			wantCode := lockfile.CodeInvalidGitURL
 			if invalidLock {
 				docs = []lockfile.Document{{APIVersion: "invalid"}}
 				wantCode = lockfile.CodeUnsupportedVersion
 			} else {
-				cfg.Registries = []config.RegistryEntry{{URL: "https://example.com/%zz"}}
+				sources = []string{"https://example.com/%zz"}
 			}
 			for _, dryRun := range []bool{true, false} {
-				result, err := GarbageCollectWithLocks(dryRun, docs, cfg)
+				result, err := GarbageCollect(context.Background(), dryRun, staticReachability(docs, sources...))
 				var codedErr *lockfile.Error
 				if !errors.As(err, &codedErr) || codedErr.Code != wantCode || len(result.Removed) != 0 {
 					t.Fatalf("invalid inventory: result=%+v err=%v, want %s", result, err, wantCode)
@@ -543,7 +548,7 @@ func TestExactGitObjectGCRejectsUnsafeCandidates(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, dryRun := range []bool{true, false} {
-				result, err := GarbageCollectWithLocks(dryRun, nil, &config.Config{})
+				result, err := GarbageCollect(context.Background(), dryRun, staticReachability(nil))
 				if err == nil || len(result.Removed) != 0 {
 					t.Fatalf("unsafe candidate: result=%+v err=%v", result, err)
 				}
@@ -584,9 +589,9 @@ func TestGarbageCollectWithLocksSeparatesCommitsFromSameSource(t *testing.T) {
 	}
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeUser, Registries: []lockfile.GitRegistry{{URL: source, Ref: "main", Commit: commit}}}
 
-	result, err := GarbageCollectWithLocks(false, []lockfile.Document{doc}, &config.Config{})
+	result, err := GarbageCollect(context.Background(), false, staticReachability([]lockfile.Document{doc}))
 	if err != nil {
-		t.Fatalf("GarbageCollectWithLocks: %v", err)
+		t.Fatalf("GarbageCollect: %v", err)
 	}
 	if !slices.Contains(result.Removed, orphan) {
 		t.Fatalf("removed = %v, want orphan snapshot %q", result.Removed, orphan)
@@ -627,14 +632,14 @@ func TestGarbageCollectReloadsReachabilityUnderExclusiveLease(t *testing.T) {
 		close(entered)
 		select {
 		case <-releaseReader:
-			return GCReachability{Locks: []lockfile.Document{doc}, Configs: []*config.Config{{}}}, nil
+			return GCReachability{Locks: []lockfile.Document{doc}}, nil
 		case <-ctx.Done():
 			return GCReachability{}, ctx.Err()
 		}
 	}
 	gcDone := make(chan error, 1)
 	go func() {
-		_, err := GarbageCollectWithReachabilityAndContext(context.Background(), false, reader)
+		_, err := GarbageCollect(context.Background(), false, reader)
 		gcDone <- err
 	}()
 	<-entered
@@ -711,9 +716,9 @@ func TestGarbageCollectReloadsConcurrentNewLayerUnderExclusiveLease(t *testing.T
 	gcDone := make(chan error, 1)
 	go func() {
 		close(started)
-		_, err := GarbageCollectWithReachabilityAndContext(context.Background(), false, func(context.Context) (GCReachability, error) {
+		_, err := GarbageCollect(context.Background(), false, func(context.Context) (GCReachability, error) {
 			close(readerEntered)
-			return GCReachability{Locks: []lockfile.Document{newLayerLock}, Configs: []*config.Config{{Registries: []config.RegistryEntry{{URL: source, Ref: "main"}}}}}, nil
+			return GCReachability{Locks: []lockfile.Document{newLayerLock}, Sources: []string{source}}, nil
 		})
 		gcDone <- err
 	}()
@@ -770,9 +775,9 @@ func TestGarbageCollectWithLocksPreservesSnapshotsAcrossLayersAndSortsDryRun(t *
 		}
 	}
 
-	result, err := GarbageCollectWithLocks(true, documents, &config.Config{})
+	result, err := GarbageCollect(context.Background(), true, staticReachability(documents))
 	if err != nil {
-		t.Fatalf("GarbageCollectWithLocks dry-run: %v", err)
+		t.Fatalf("GarbageCollect dry-run: %v", err)
 	}
 	if !slices.Equal(result.Removed, []string{stageA, stageB}) {
 		t.Fatalf("dry-run removed = %v, want sorted stages", result.Removed)
@@ -810,7 +815,7 @@ func TestGarbageCollectWaitsForLiveRegistryDiscovery(t *testing.T) {
 
 	gcDone := make(chan error, 1)
 	go func() {
-		_, err := GarbageCollect(false, &config.Config{})
+		_, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 		gcDone <- err
 	}()
 	select {
@@ -844,7 +849,7 @@ func TestGarbageCollectReportsOnlySuccessfulRemovals(t *testing.T) {
 	}
 	defer func() { _ = os.Chmod(failedPath, 0o755) }()
 
-	result, err := GarbageCollect(false, &config.Config{})
+	result, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err == nil {
 		t.Skip("filesystem permitted deletion of a read-only cache directory")
 	}
@@ -874,7 +879,7 @@ func TestGarbageCollectPreservesMarketplaceCacheNamespace(t *testing.T) {
 				t.Fatalf("mkdir stale cache: %v", err)
 			}
 
-			result, err := GarbageCollect(dryRun, &config.Config{})
+			result, err := GarbageCollect(context.Background(), dryRun, staticReachability(nil))
 			if err != nil {
 				t.Fatalf("GarbageCollect: %v", err)
 			}

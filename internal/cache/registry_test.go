@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -311,7 +312,7 @@ func TestGarbageCollectPreservesCompiledCache(t *testing.T) {
 		t.Fatalf("mkdir orphan cache: %v", err)
 	}
 
-	result, err := GarbageCollect(false, &config.Config{})
+	result, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err != nil {
 		t.Fatalf("GarbageCollect: %v", err)
 	}

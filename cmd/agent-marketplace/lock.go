@@ -411,44 +411,13 @@ func (mode lockMode) readOnlyDependencies() bool {
 
 func prepareDependencyTransactions(ctx context.Context, readOnly bool) error {
 	if !readOnly {
-		return recoverDependencyTransactions(ctx)
+		return pipeline.RecoverDependencyTransactions(ctx)
 	}
 	stateDir, err := dependencyStateDir()
 	if err != nil {
 		return err
 	}
 	return dependencytxn.CheckPending(stateDir)
-}
-
-func recoverDependencyTransactions(ctx context.Context) error {
-	stateDir, err := dependencyStateDir()
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(stateDir); errors.Is(err, os.ErrNotExist) {
-		slog.Debug("lock transaction recovery skipped", "reason", "state absent")
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("inspect dependency transaction state: %w", err)
-	}
-
-	// Recovery can publish the same config/lock destinations as a normal
-	// dependency transaction. Hold the shared exact-cache namespace lease in
-	// the same order as normal publication so exclusive GC cannot inventory a
-	// half-recovered transaction and delete its newly reachable snapshots.
-	releaseExactNamespace, err := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
-	if err != nil {
-		return fmt.Errorf("acquire exact cache recovery lease: %w", err)
-	}
-	defer releaseExactNamespace()
-
-	started := time.Now()
-	if err := dependencytxn.Recover(ctx, stateDir); err != nil {
-		slog.Error("lock transaction recovery failed", "duration_ms", time.Since(started).Milliseconds(), "error", err)
-		return fmt.Errorf("recover dependency lock transaction: %w", err)
-	}
-	slog.Debug("lock transaction recovery completed", "duration_ms", time.Since(started).Milliseconds())
-	return nil
 }
 
 func rejectGeneratedLockSymlink(name string) (string, error) {

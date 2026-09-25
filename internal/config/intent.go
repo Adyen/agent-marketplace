@@ -222,6 +222,15 @@ func (l LayerIntent) NeedsMarketplaceLock() bool {
 	return false
 }
 
+// LegacyMarketplaces returns a legacy (v2/v3) layer's Marketplace entries, or
+// nil for v4 and absent layers.
+func (l LayerIntent) LegacyMarketplaces() []MarketplaceEntry {
+	if l.legacy == nil {
+		return nil
+	}
+	return l.legacy.Marketplaces
+}
+
 func (l LayerIntent) MarketplaceEndpoints() []string {
 	if l.v4 != nil {
 		var urls []string

@@ -196,8 +196,7 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	// Preserve cache entries for organization-owned artifacts so their
 	// materialized symlinks remain valid after user teardown.
 	if scope == deinitScopeUser {
-		preserveCfg := preservedCacheConfig(resolvedArtifacts)
-		gcResult, gcErr := cache.GarbageCollect(dryRun, preserveCfg)
+		gcResult, gcErr := cache.GarbageCollectLegacyCaches(ctx, dryRun, preservedCacheSources(resolvedArtifacts))
 		if gcErr != nil {
 			return fmt.Errorf("cleaning cache: %w", gcErr)
 		}
@@ -428,29 +427,14 @@ func isOrganizationRegistry(cfg *config.Config, url, path, ref string) bool {
 	return false
 }
 
-// preservedCacheConfig builds a minimal config containing the registries that
-// back the preserved organization-owned artifacts. cache.GarbageCollect uses the
-// registry URLs to keep the corresponding raw clone directories while removing
-// caches that are no longer referenced by preserved output.
-func preservedCacheConfig(artifacts []resolver.ResolvedArtifact) *config.Config {
-	cfg := &config.Config{
-		APIVersion: config.APIVersionV3,
-		Registries: []config.RegistryEntry{},
-	}
-	seen := make(map[string]struct{})
+// preservedCacheSources returns the Git source URLs that keep the raw clone
+// directories backing the preserved organization-owned artifacts reachable.
+func preservedCacheSources(artifacts []resolver.ResolvedArtifact) []string {
+	var sources []string
 	for _, a := range artifacts {
-		if a.RegistryURL == "" {
-			continue
+		if a.RegistryURL != "" {
+			sources = append(sources, a.RegistryURL)
 		}
-		key := a.RegistryURL + "@" + a.Ref
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		cfg.Registries = append(cfg.Registries, config.RegistryEntry{
-			URL: a.RegistryURL,
-			Ref: a.Ref,
-		})
 	}
-	return cfg
+	return sources
 }

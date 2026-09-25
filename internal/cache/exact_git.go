@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"golang.org/x/sys/unix"
 )
@@ -56,6 +55,12 @@ func ContextWithExactGitNamespaceLease(ctx context.Context) context.Context {
 
 func exactGitNamespaceLeaseHeld(ctx context.Context) bool {
 	return ctx != nil && ctx.Value(exactGitNamespaceLeaseContextKey{}) == true
+}
+
+type exactGitNamespaceExclusiveContextKey struct{}
+
+func exactGitNamespaceExclusiveHeld(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(exactGitNamespaceExclusiveContextKey{}) == true
 }
 
 func ResolveExactGitRef(canonicalSource, fetchURL, ref string) (GitOID, error) {
@@ -780,6 +785,19 @@ func withExactGitExclusiveLock(ctx context.Context, fn func() error) error {
 	return withExactGitFileLock(ctx, "namespace", unix.LOCK_EX, fn)
 }
 
+// WithExactGitNamespaceExclusiveLease runs fn under the exclusive exact-git
+// namespace lease so a multi-phase garbage collection sees one reachability
+// generation (config/lock publication holds the shared lease). fn's context
+// marks the held lease so nested namespace acquisitions reuse it.
+func WithExactGitNamespaceExclusiveLease(ctx context.Context, fn func(context.Context) error) error {
+	if exactGitNamespaceExclusiveHeld(ctx) {
+		return fn(ctx)
+	}
+	return withExactGitExclusiveLock(ctx, func() error {
+		return fn(context.WithValue(ctx, exactGitNamespaceExclusiveContextKey{}, true))
+	})
+}
+
 func withExactGitFileLock(ctx context.Context, key string, operation int, fn func() error) error {
 	release, err := acquireExactGitFileLock(ctx, key, operation)
 	if err != nil {
@@ -815,6 +833,10 @@ func acquireExactGitFileLockMode(ctx context.Context, key string, operation int,
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(ErrExactGitLockTimeout, err)
+	}
+	if key == "namespace" && exactGitNamespaceExclusiveHeld(ctx) {
+		// The held lease already excludes every other participant; flocking again would deadlock.
+		return func() {}, nil
 	}
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -1075,34 +1097,22 @@ func snapshotKey(canonicalSource string, oid GitOID) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func activeExactGitSources(cfgs ...*config.Config) (map[string]struct{}, error) {
+func activeExactGitSources(urls []string) (map[string]struct{}, error) {
 	sources := make(map[string]struct{})
-	for i, cfg := range cfgs {
-		if cfg == nil {
+	for i, raw := range urls {
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		for j, entry := range cfg.Registries {
-			if entry.IsLocal() {
-				continue
-			}
-			source, err := lockfile.CanonicalGitConfigURL(entry.URL)
-			if err != nil {
-				return nil, fmt.Errorf("validate exact git reachability config %d registry %d: %w", i, j, err)
-			}
-			sources[sourceKey(source)] = struct{}{}
+		source, err := lockfile.CanonicalGitConfigURL(raw)
+		if err != nil {
+			return nil, fmt.Errorf("validate exact git reachability source %d: %w", i, err)
 		}
+		sources[sourceKey(source)] = struct{}{}
 	}
 	return sources, nil
 }
 
-func garbageCollectExactGit(dryRun bool, locks []lockfile.Document) (GCResult, error) {
-	return garbageCollectExactGitWithContext(context.Background(), dryRun, locks)
-}
-
 func garbageCollectExactGitWithContext(ctx context.Context, dryRun bool, locks []lockfile.Document) (result GCResult, resultErr error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	started := time.Now()
 	var reachable map[string]struct{}
 	slog.Debug("exact git cache garbage collection started", "dry_run", dryRun, "lock_layers", len(locks))
