@@ -136,10 +136,15 @@ func TestAdHocGitPathTrailingSlashIntoV4UserConfig(t *testing.T) {
 // branch advances, plain sync keeps the locked commit, update moves to the new
 // commit, and removal by name alone clears it.
 func TestV4AdHocBranchSourceKeepsPinUntilUpdate(t *testing.T) {
-	for _, tc := range []struct{ scope, skill string }{
-		{scope: "user", skill: "/root/.factory/skills/daily-sync/SKILL.md"},
-		{scope: "repo", skill: "/workspace/.factory/skills/daily-sync/SKILL.md"},
-		{scope: "local", skill: "/workspace/.factory/skills/daily-sync/SKILL.md"},
+	configs := map[string]string{
+		"user":  "/root/.agents/config.yaml",
+		"repo":  "/workspace/.agents/config.yaml",
+		"local": "/workspace/.agents/config.local.yaml",
+	}
+	for _, tc := range []struct{ scope, skill, lock string }{
+		{scope: "user", skill: "/root/.factory/skills/daily-sync/SKILL.md", lock: "/root/.agents/lock.yaml"},
+		{scope: "repo", skill: "/workspace/.factory/skills/daily-sync/SKILL.md", lock: "/workspace/.agents/lock.yaml"},
+		{scope: "local", skill: "/workspace/.factory/skills/daily-sync/SKILL.md", lock: "/workspace/.agents/lock.local.yaml"},
 	} {
 		t.Run(tc.scope, func(t *testing.T) {
 			env := newEnv(t)
@@ -169,14 +174,30 @@ func TestV4AdHocBranchSourceKeepsPinUntilUpdate(t *testing.T) {
 				t.Fatalf("install from a feature branch into %s scope failed (exit %d):\n%s", tc.scope, install.ExitCode, install.Combined)
 			}
 			env.AssertFileContains(tc.skill, "First revision")
+			for scope, path := range configs {
+				data, err := os.ReadFile(env.mustResolvePath(path))
+				if err != nil && !os.IsNotExist(err) {
+					t.Fatalf("read %s config: %v", scope, err)
+				}
+				if recorded := strings.Contains(string(data), url) && strings.Contains(string(data), "feature"); recorded != (scope == tc.scope) {
+					t.Fatalf("%s config records the feature-branch source = %v after a %s-scope install:\n%s", scope, recorded, tc.scope, data)
+				}
+			}
+			pinned := env.ReadFile(tc.lock)
 
 			push("Second revision")
 			env.AssertExitCode(env.RunAM("sync"), 0)
 			env.AssertFileContains(tc.skill, "First revision")
+			if got := env.ReadFile(tc.lock); got != pinned {
+				t.Fatalf("plain sync moved the %s-scope lock:\nbefore:\n%s\nafter:\n%s", tc.scope, pinned, got)
+			}
 			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
 
 			env.AssertExitCode(env.RunAM("update"), 0)
 			env.AssertFileContains(tc.skill, "Second revision")
+			if env.ReadFile(tc.lock) == pinned {
+				t.Fatalf("update left the %s-scope lock on the first revision:\n%s", tc.scope, pinned)
+			}
 			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
 			if status := env.RunAM("status"); status.ExitCode != 0 || !strings.Contains(status.Combined, "daily-sync") {
 				t.Fatalf("status after update did not report daily-sync (exit %d):\n%s", status.ExitCode, status.Combined)
