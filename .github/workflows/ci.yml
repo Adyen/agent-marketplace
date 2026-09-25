@@ -556,9 +556,13 @@ jobs:
           printf '%s  %s\n' 3e66fd4d88c03282e7505c60ee912c6f9d0f66a7db91b0d8512e6090993ab059 "$RUNNER_TEMP/agent-marketplace-v3.1.1-linux-amd64" | sha256sum --check
           chmod u+x "$RUNNER_TEMP/agent-marketplace-v3.1.1-linux-amd64"
 
+      - name: Build git-capable runner image
+        run: printf 'FROM golang:1.26-alpine\nRUN apk add --no-cache git\n' | docker build -t agent-marketplace-git-runner:ci -
+
       - name: Exercise pre-v4 installation with the candidate
         env:
           AM_E2E_PRE_V4_BINARY: ${{ runner.temp }}/agent-marketplace-v3.1.1-linux-amd64
+          AM_E2E_UPGRADE_IMAGE: agent-marketplace-git-runner:ci
         shell: bash
         run: |
           set -o pipefail

@@ -1,67 +1,41 @@
 package e2e_test
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
-const preV4LinuxSHA256 = "3e66fd4d88c03282e7505c60ee912c6f9d0f66a7db91b0d8512e6090993ab059"
+// preV4ReleaseArch pins the last stable release before v4 (v3.1.1); only a
+// linux-amd64 asset was published.
+var preV4ReleaseArch = map[string]string{
+	"3e66fd4d88c03282e7505c60ee912c6f9d0f66a7db91b0d8512e6090993ab059": "amd64",
+}
+
+func upgradeImage(t *testing.T) string {
+	t.Helper()
+	image := os.Getenv("AM_E2E_UPGRADE_IMAGE")
+	if image == "" {
+		t.Fatal("AM_E2E_UPGRADE_IMAGE must name a local container image that provides git")
+	}
+	return image
+}
 
 func TestPreV4ReleaseUpgrade(t *testing.T) {
 	if os.Getenv("AM_E2E_PRE_V4_BINARY") == "" {
 		t.Skip("historical executable is supplied by the dedicated upgrade gate")
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Fatalf("upgrade gate requires Docker: %v", err)
-	}
-	// Docker bind mounts require an absolute source.
-	historical, err := filepath.Abs(os.Getenv("AM_E2E_PRE_V4_BINARY"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	file, err := os.Open(historical)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.New()
-	_, copyErr := io.Copy(digest, file)
-	closeErr := file.Close()
-	if err := copyErr; err != nil {
-		t.Fatal(err)
-	}
-	if err := closeErr; err != nil {
-		t.Fatal(err)
-	}
-	if actual := hex.EncodeToString(digest.Sum(nil)); actual != preV4LinuxSHA256 {
-		t.Fatalf("v3.1.1 executable digest = %s, want %s", actual, preV4LinuxSHA256)
-	}
-
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	candidate := filepath.Join(root, "candidate")
-	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "e2e", "-o", candidate, "./cmd/agent-marketplace")
-	build.Dir = filepath.Join("..")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build Linux candidate: %v\n%s", err, output)
-	}
+	historical, arch := verifiedExecutable(t, "AM_E2E_PRE_V4_BINARY", preV4ReleaseArch)
+	world := newHistoricalWorld(t, upgradeImage(t))
+	root := world.root
+	candidate := world.buildCandidate(arch, "e2e")
 
 	home := filepath.Join(root, "home")
 	workspace := filepath.Join(root, "workspace")
 	registry := filepath.Join(root, "registry")
-	for _, dir := range []string{home, workspace, filepath.Join(root, "tmp"), filepath.Join(registry, "skills", "release-review"), filepath.Join(registry, "skills", "after-upgrade"), filepath.Join(workspace, ".agents")} {
+	for _, dir := range []string{home, workspace, filepath.Join(registry, "skills", "release-review"), filepath.Join(registry, "skills", "after-upgrade"), filepath.Join(workspace, ".agents")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -74,32 +48,13 @@ func TestPreV4ReleaseUpgrade(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(registry, "skills", "after-upgrade", "SKILL.md"), []byte(extraSkill), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	image := os.Getenv("AM_E2E_UPGRADE_IMAGE")
-	if image == "" {
-		image = "busybox:1.36.1"
-	}
 	runCommand := func(executable string, args ...string) (string, error) {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "docker", append([]string{
-			"run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-			"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
-			"--mount", "type=bind,src=" + root + ",dst=" + root,
-			"--mount", "type=bind,src=" + executable + ",dst=/bin/agent-marketplace,readonly",
-			"--env", "HOME=" + home, "--env", "TMPDIR=" + filepath.Join(root, "tmp"), "--env", "AGENT_MARKETPLACE_LOG_ENABLED=false", "--workdir", workspace,
-			image, "/bin/agent-marketplace",
-		}, args...)...)
-		output, err := cmd.CombinedOutput()
-		return string(output), err
+		return world.run(home, workspace, executable, args...)
 	}
 	run := func(executable string, args ...string) string {
 		t.Helper()
-		output, err := runCommand(executable, args...)
-		if err != nil {
-			t.Fatalf("run %s with %v: %v\n%s", filepath.Base(executable), args, err, output)
-		}
-		return output
+		return world.must(home, workspace, executable, args...)
 	}
 
 	run(historical, "init", "--harnesses", "factory")
