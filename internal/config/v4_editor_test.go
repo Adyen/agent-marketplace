@@ -331,6 +331,43 @@ func TestEditV4ResourceSelectionGitIdentityUsesRefAndPath(t *testing.T) {
 	}
 }
 
+func TestEditV4SourceEnsureDeclaresSourceOnceWithoutSelectingResources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	entry := RegistryEntry{URL: "https://example.test/repo.git", Ref: "feature", Path: "teams/skills/daily-sync"}
+	if handled, err := EditV4ResourceSelection(path, path, entry, ir.KindSkill, "", V4SourceEnsure); !handled || err != nil {
+		t.Fatalf("ensure = handled %v err %v", handled, err)
+	}
+	declared, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadV4ConfigFromPath(path)
+	if err != nil || len(loaded.Sources) != 1 || len(loaded.Groups) != 0 {
+		t.Fatalf("ensured source = %#v groups %#v err %v", loaded.Sources, loaded.Groups, err)
+	}
+	if _, err := EditV4ResourceSelection(path, path, entry, ir.KindSkill, "", V4SourceEnsure); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := os.ReadFile(path); err != nil || string(again) != string(declared) {
+		t.Fatalf("repeat ensure changed config: %q, %v", again, err)
+	}
+	if _, err := EditV4ResourceSelection(path, path, entry, ir.KindSkill, "daily-sync", V4SelectionEnable); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = LoadV4ConfigFromPath(path)
+	if err != nil || len(loaded.Sources) != 1 {
+		t.Fatalf("selection duplicated the ensured source: %#v, %v", loaded.Sources, err)
+	}
+	for name := range loaded.Sources {
+		if group := loaded.Groups[name]; len(group.Include) != 1 || group.Include[0].Locator != "skill/daily-sync" {
+			t.Fatalf("selection group = %#v", group)
+		}
+	}
+}
+
 func TestEditV4ResourceSelectionKeepsSymlinkSourceIdentities(t *testing.T) {
 	dir := canonicalDirectoryTestRoot(t)
 	real := filepath.Join(dir, "version-1")

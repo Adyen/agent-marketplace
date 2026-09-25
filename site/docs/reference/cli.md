@@ -115,7 +115,7 @@ Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` colu
 
 ## `install`
 
-Adds selections to one writable config layer and syncs harness output. A named resource from a configured Git or directory source can be selected in a v4 destination using its v4-aware editor. Legacy-only editing paths, including some bulk, tag, ad hoc, and hosted Marketplace operations, may still refuse v4 destinations with `v4.writer-opt-in` or a source-specific diagnostic; a refusal leaves the authored configuration unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+Adds selections to one writable config layer and syncs harness output. A named resource from a configured Git or directory source, or from `--from <registry>` with an optional `--ref` and `--path`, can be selected in a v4 destination; an ad hoc registry becomes a named v4 `git` or `directory` source. Installing every resource from an ad hoc registry into a v4 destination is refused; name the resource or declare an `all: true` resource group. Other legacy-only editing paths, including some bulk, tag, and hosted Marketplace operations, may still refuse v4 destinations with `v4.writer-opt-in` or a source-specific diagnostic; a refusal leaves the authored configuration unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace install <resource-name> [flags]

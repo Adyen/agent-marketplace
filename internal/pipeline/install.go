@@ -267,11 +267,6 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	if marketplaceEndpointRequested {
 		return registerMarketplaceEndpoint(ctx, opts, configPath, &ec)
 	}
-	// --from ad-hoc registry path: validate URL, persist entry, then
-	// discover and install resources from the new entry.
-	if fromURL := strings.TrimSpace(opts.FromURL); fromURL != "" {
-		return installFromAdHoc(ctx, opts, fromURL, kind, hasKind, &ec)
-	}
 
 	repoCfg := ec.Repo.Config
 	targetCfg := repoCfg
@@ -284,6 +279,12 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	v4Target := targetCfg != nil && targetCfg.APIVersion == config.APIVersionV4
 	if opts.Scope == ScopeLocal && ec.LocalLayer.Local != nil {
 		v4Target = v4Target || ec.LocalLayer.Local.APIVersion == config.APIVersionV4
+	}
+
+	// --from ad-hoc registry path: validate URL, persist entry, then
+	// discover and install resources from the new entry.
+	if fromURL := strings.TrimSpace(opts.FromURL); fromURL != "" {
+		return installFromAdHoc(ctx, opts, fromURL, kind, hasKind, &ec, declaringConfigPath, v4Target)
 	}
 
 	// If repo config doesn't exist (and we're writing to repo scope), create skeleton
@@ -1011,7 +1012,7 @@ func pathBase(p string) string {
 
 // installFromAdHoc handles the --from code path: validate the URL against
 // policy, persist the registry entry, discover resources, and install.
-func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, kind ir.ResourceKind, hasKind bool, ec *config.EffectiveConfig) (result *InstallResult, retErr error) {
+func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, kind ir.ResourceKind, hasKind bool, ec *config.EffectiveConfig, declaringConfigPath string, v4Target bool) (result *InstallResult, retErr error) {
 	if ec == nil {
 		ec = new(config.EffectiveConfig)
 		*ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
@@ -1092,12 +1093,22 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			return nil, err
 		}
 	}
-	ensureRegistry := config.EnsureRegistryWithPathsInConfig
-	if fromRef != "" {
-		ensureRegistry = config.EnsureRegistryWithPathsAtRefInConfig
+	v4BundleRefusal := fmt.Errorf("installing every resource from an ad-hoc registry into v4 config %s is not supported; name the resource, or declare the source with an `all: true` resource group", declaringConfigPath)
+	if v4Target && len(opts.Args) == 0 && resolvedPath == "" {
+		return nil, v4BundleRefusal
 	}
-	if err := ensureRegistry(configPath, fromURL, fromRef, fromPath); err != nil {
-		return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
+	if v4Target {
+		if _, err := config.EditV4ResourceSelection(configPath, declaringConfigPath, syntheticEntry, kind, "", config.V4SourceEnsure); err != nil {
+			return nil, fmt.Errorf("declare source in v4 %s config: %w", opts.Scope, err)
+		}
+	} else {
+		ensureRegistry := config.EnsureRegistryWithPathsInConfig
+		if fromRef != "" {
+			ensureRegistry = config.EnsureRegistryWithPathsAtRefInConfig
+		}
+		if err := ensureRegistry(configPath, fromURL, fromRef, fromPath); err != nil {
+			return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
+		}
 	}
 
 	// Reload the effective config so the discovery helper sees the newly
@@ -1160,6 +1171,10 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	selectedCatalogs := map[string]catalog.LoadedCatalog{catalogKey: catalogs[catalogKey]}
 	addSelectedResource := func(resourceKind ir.ResourceKind, resourceName string) error {
+		if v4Target {
+			_, err := config.EditV4ResourceSelection(configPath, declaringConfigPath, syntheticEntry, resourceKind, resourceName, config.V4SelectionEnable)
+			return err
+		}
 		if fromRef != "" {
 			return config.AddResourceToExactRegistryEntryAtRef(configPath, fromURL, fromPath, fromRef, resourceKind, resourceName)
 		}
@@ -1292,6 +1307,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	slices.Sort(allInstalled)
 
+	if v4Target {
+		return nil, v4BundleRefusal
+	}
 	if err := config.EnsureRegistryWithDefaultInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
 		return nil, fmt.Errorf("set default on registry in %s config: %w", opts.Scope, err)
 	}

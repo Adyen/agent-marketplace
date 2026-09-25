@@ -18,6 +18,9 @@ const (
 	V4SelectionEnable V4SelectionEdit = iota
 	V4SelectionDisable
 	V4SelectionClearExclude
+	// V4SourceEnsure declares the Git or directory source without selecting
+	// any of its resources.
+	V4SourceEnsure
 )
 
 func EditV4ResourceSelection(configPath, declaringPath string, entry RegistryEntry, kind ir.ResourceKind, name string, action V4SelectionEdit) (handled bool, err error) {
@@ -48,10 +51,10 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	if err := loaded.validateLayerFields(layer); err != nil {
 		return err
 	}
-	if action > V4SelectionClearExclude {
+	if action > V4SourceEnsure {
 		return v4err("v4.edit-action", declaringPath, 0, "unsupported selection edit")
 	}
-	if strings.TrimSpace(name) == "" {
+	if action != V4SourceEnsure && strings.TrimSpace(name) == "" {
 		return v4err("v4.locator", "name", 0, "resource name is required")
 	}
 	v4Kind := entry.V4Kind
@@ -72,8 +75,10 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 		if strings.TrimSpace(entry.Ref) == "" {
 			return v4err("v4.edit-source", "registry.ref", 0, "git sources require an explicit ref")
 		}
-		if _, _, _, err := parseV4Locator(v4ResourceKindName(kind)+"/"+name, "source"); err != nil {
-			return v4err("v4.locator", "resources", 0, "%v", err)
+		if action != V4SourceEnsure {
+			if _, _, _, err := parseV4Locator(v4ResourceKindName(kind)+"/"+name, "source"); err != nil {
+				return v4err("v4.locator", "resources", 0, "%v", err)
+			}
 		}
 	}
 	identity, err := v4EditSourceIdentity(entry, declaringPath, layer, v4Kind)
@@ -104,7 +109,7 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	if len(matches) == 1 {
 		sourceName = matches[0]
 	} else if action != V4SelectionClearExclude {
-		if action == V4SelectionEnable && layer == userLayer {
+		if (action == V4SelectionEnable || action == V4SourceEnsure) && layer == userLayer {
 			if err := ValidateGlobalRegistryWrite(entry); err != nil {
 				return err
 			}
@@ -119,8 +124,11 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 		}
 		changed = true
 	}
-	if sourceName == "" {
+	if sourceName == "" || (action == V4SourceEnsure && !changed) {
 		return nil
+	}
+	if action == V4SourceEnsure {
+		return writeV4EditCandidate(configPath, declaringPath, root, layer)
 	}
 	locator := v4ResourceKindName(kind) + "/" + name
 	if _, _, _, err := parseV4Locator(locator, sourceName); err != nil {
@@ -177,6 +185,10 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	if !changed {
 		return nil
 	}
+	return writeV4EditCandidate(configPath, declaringPath, root, layer)
+}
+
+func writeV4EditCandidate(configPath, declaringPath string, root *yaml.Node, layer layerKind) error {
 	candidate, err := encodeConfigDocument(configPath, &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}})
 	if err != nil {
 		return err
@@ -192,10 +204,7 @@ func editV4ResourceSelection(configPath, declaringPath string, data []byte, entr
 	if err != nil {
 		return fmt.Errorf("stat config %q: %w", configPath, err)
 	}
-	if err := writeConfigDocumentData(configPath, info.Mode().Perm(), candidate); err != nil {
-		return err
-	}
-	return nil
+	return writeConfigDocumentData(configPath, info.Mode().Perm(), candidate)
 }
 
 func v4EditLayer(path string) layerKind {
