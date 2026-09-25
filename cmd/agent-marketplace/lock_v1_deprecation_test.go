@@ -11,7 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-func TestLoadLayerLockWarnsOnceOnV1(t *testing.T) {
+func TestLoadLayerLockWarnsOnV1(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}

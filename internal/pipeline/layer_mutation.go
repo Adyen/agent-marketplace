@@ -24,72 +24,42 @@ type LayerMutation struct {
 }
 
 func (m *LayerMutation) EnsureRegistry(entry config.RegistryEntry) (config.SourceBinding, error) {
-	if m == nil || m.editor == nil {
-		return config.SourceBinding{}, errors.New("layer mutation has no open editor")
-	}
 	return m.editor.EnsureRegistry(entry)
 }
 
 func (m *LayerMutation) Apply(binding config.SourceBinding, change config.SelectionChange) error {
-	if m == nil || m.editor == nil {
-		return errors.New("layer mutation has no open editor")
-	}
 	return m.editor.Apply(binding, change)
 }
 
 func (m *LayerMutation) LookupRegistry(entry config.RegistryEntry) (config.SourceBinding, bool, error) {
-	if m == nil || m.editor == nil {
-		return config.SourceBinding{}, false, errors.New("layer mutation has no open editor")
-	}
 	return m.editor.LookupRegistry(entry)
 }
 
 func (m *LayerMutation) RemoveSource(binding config.SourceBinding) error {
-	if m == nil || m.editor == nil {
-		return errors.New("layer mutation has no open editor")
-	}
 	return m.editor.RemoveSource(binding)
 }
 
 func (m *LayerMutation) ClearUnboundExclude(locator config.ResourceLocator) error {
-	if m == nil || m.editor == nil {
-		return errors.New("layer mutation has no open editor")
-	}
 	return m.editor.ClearUnboundExclude(locator)
 }
 
 func (m *LayerMutation) UnboundIncludeInherited(locator config.ResourceLocator) (bool, error) {
-	if m == nil || m.editor == nil {
-		return false, errors.New("layer mutation has no open editor")
-	}
 	return m.editor.UnboundIncludeInherited(locator)
 }
 
 func (m *LayerMutation) RemoveUnboundInclude(locator config.ResourceLocator) error {
-	if m == nil || m.editor == nil {
-		return errors.New("layer mutation has no open editor")
-	}
 	return m.editor.RemoveUnboundInclude(locator)
 }
 
-func (m *LayerMutation) SetUnboundExclude(locator config.ResourceLocator, excluded bool) error {
-	if m == nil || m.editor == nil {
-		return errors.New("layer mutation has no open editor")
-	}
-	return m.editor.SetUnboundExclude(locator, excluded)
+func (m *LayerMutation) SetUnboundExclude(locator config.ResourceLocator) error {
+	return m.editor.SetUnboundExclude(locator)
 }
 
-func (m *LayerMutation) SetLayerExclude(locator config.ResourceLocator, entries []config.RegistryEntry, excluded bool) error {
-	if m == nil || m.editor == nil {
-		return errors.New("layer mutation has no open editor")
-	}
-	return m.editor.SetLayerExclude(locator, entries, excluded)
+func (m *LayerMutation) SetLayerExclude(locator config.ResourceLocator, entries []config.RegistryEntry) error {
+	return m.editor.SetLayerExclude(locator, entries)
 }
 
 func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*LayerMutation) error) error {
-	if mutate == nil {
-		return errors.New("layer mutation callback is required")
-	}
 	if target.Reconcile == nil {
 		return errors.New("layer mutation reconciler is required")
 	}
@@ -104,15 +74,11 @@ func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*L
 		if err != nil {
 			return err
 		}
-		return editLayerAtPath(config.LayerTarget{Source: target.Source, StagedPath: staged, DeclaringPath: target.ConfigPath}, mutate)
+		return EditLayerAtPath(config.LayerTarget{Source: target.Source, StagedPath: staged, DeclaringPath: target.ConfigPath}, mutate)
 	}, target.Reconcile)
 }
 
 func EditLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) error) error {
-	return editLayerAtPath(target, mutate)
-}
-
-func editLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) error) error {
 	if mutate == nil {
 		return errors.New("layer mutation callback is required")
 	}

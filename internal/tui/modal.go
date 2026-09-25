@@ -237,7 +237,11 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 		}
 		entry := config.RegistryEntry{URL: act.registryURL, Ref: act.registryRef, Path: act.registryPath, V4Kind: act.registryKind, SourceHarness: act.sourceHarness}
 		locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
-		if act.scope == scopeGlobal {
+		// Repo-relative local paths are valid in repo/local configs but
+		// meaningless machine-wide; refuse to write them to the user (global)
+		// config when enabling. Disabling an existing broken entry is still
+		// allowed so users can clean it up.
+		if act.scope == scopeGlobal && act.enable {
 			if err := config.ValidateGlobalRegistryWrite(entry); err != nil {
 				return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
 			}
@@ -245,7 +249,10 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 		err := pipeline.EditLayerAtPath(config.LayerTarget{Source: source, StagedPath: mappedPath, DeclaringPath: originalPath}, func(m *pipeline.LayerMutation) error {
 			if act.scope == scopeLocalExclude {
 				if strings.TrimSpace(act.registryURL) == "" {
-					return m.SetUnboundExclude(locator, act.enable)
+					if act.enable {
+						return m.SetUnboundExclude(locator)
+					}
+					return m.ClearUnboundExclude(locator)
 				}
 				if act.enable {
 					binding, err := m.EnsureRegistry(entry)

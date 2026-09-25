@@ -14,6 +14,14 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
+func assertNoStagingResidue(t *testing.T, dir string) {
+	t.Helper()
+	residue, err := filepath.Glob(filepath.Join(dir, ".agent-marketplace-config-*"))
+	if err != nil || len(residue) != 0 {
+		t.Fatalf("staging residue = %v err=%v", residue, err)
+	}
+}
+
 func TestRemoveFromV4PreservesMarketplaceLock(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -105,9 +113,7 @@ func TestRemoveFromV4PreservesMarketplaceLock(t *testing.T) {
 			if info, err := os.Stat(lockPath); err != nil || info.Mode().Perm() != 0o600 {
 				t.Fatalf("lock permissions changed: %v", err)
 			}
-			if residue, err := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
-				t.Fatalf("staging residue = %v err=%v", residue, err)
-			}
+			assertNoStagingResidue(t, os.Getenv("TMPDIR"))
 		})
 	}
 }
@@ -248,9 +254,7 @@ func TestAdHocInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(repo, ".claude", "skills", "new")); !os.IsNotExist(err) {
 		t.Fatalf("new output exists: %v", err)
 	}
-	if residue, err := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
-		t.Fatalf("staging residue = %v err=%v", residue, err)
-	}
+	assertNoStagingResidue(t, os.Getenv("TMPDIR"))
 }
 
 func TestRemoveUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
@@ -518,9 +522,7 @@ func TestRemoveFromV4AdHocSourceOperations(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "beta")); !os.IsNotExist(err) {
 			t.Fatalf("beta materialization retained: %v", err)
 		}
-		if residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
-			t.Fatalf("staging residue = %v err=%v", residue, err)
-		}
+		assertNoStagingResidue(t, tmp)
 	})
 
 	t.Run("inherited repo source local scope writes v4 shadow exclusion", func(t *testing.T) {
@@ -586,9 +588,7 @@ func TestRemoveFromV4AdHocSourceOperations(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "alpha")); !os.IsNotExist(err) {
 			t.Fatalf("excluded skill still materialized: %v", err)
 		}
-		if residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
-			t.Fatalf("staging residue = %v err=%v", residue, err)
-		}
+		assertNoStagingResidue(t, tmp)
 	})
 
 	t.Run("named collection writes exact exclusion", func(t *testing.T) {
@@ -646,9 +646,7 @@ skills:
 		if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle")); !os.IsNotExist(err) {
 			t.Fatalf("collection member still materialized: %v", err)
 		}
-		if residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
-			t.Fatalf("staging residue = %v err=%v", residue, err)
-		}
+		assertNoStagingResidue(t, tmp)
 	})
 }
 
@@ -786,9 +784,7 @@ skills:
 			for _, rel := range tc.materialized {
 				assertFileExists(t, filepath.Join(repoRoot, rel))
 			}
-			if residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
-				t.Fatalf("staging residue = %v err=%v", residue, err)
-			}
+			assertNoStagingResidue(t, tmp)
 		})
 	}
 }
@@ -927,10 +923,7 @@ func TestConfiguredRemoveV4UsesCanonicalEditor(t *testing.T) {
 		return home, tmp
 	}
 	assertNoResidue := func(t *testing.T, tmp string) {
-		residue, err := filepath.Glob(filepath.Join(tmp, ".agent-marketplace-config-*"))
-		if err != nil || len(residue) != 0 {
-			t.Fatalf("staging residue = %v err=%v", residue, err)
-		}
+		assertNoStagingResidue(t, tmp)
 	}
 	assertGone := func(t *testing.T, path string) {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {

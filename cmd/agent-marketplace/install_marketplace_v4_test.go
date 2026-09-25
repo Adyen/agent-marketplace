@@ -18,38 +18,7 @@ import (
 )
 
 func newSelfCanonicalV4MarketplaceServer(t *testing.T, instanceID, resourceName string) *httptest.Server {
-	t.Helper()
-	canonical, err := hccartifact.FromIR(ir.NewSkill(resourceName, "Review", "Review carefully.", nil, nil, ir.SourceRef{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonical.Manifest.RegistryID = "src"
-	canonical.Manifest.RegistrySlug = "tools"
-	raw, archiveDigest, err := hccartifact.Encode(canonical)
-	if err != nil {
-		t.Fatal(err)
-	}
-	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(instanceID), Registry: "src", Kind: "skill", Name: resourceName},
-		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
-		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	})
-	registry := mpapi.PublicRegistry{ID: "src", Slug: "tools", Origins: []string{"https://example.com/tools.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true}
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
-		case r.URL.Path == "/api/v1/registries/tools" || r.URL.Path == "/api/v1/registries/src":
-			_ = json.NewEncoder(w).Encode(registry)
-		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/"+resourceName) || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"+resourceName):
-			_ = json.NewEncoder(w).Encode(revision)
-		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/"):
-			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
-			_, _ = w.Write(raw)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	return newV4MarketplaceServer(t, instanceID, resourceName, true, nil, nil)
 }
 
 func TestInstallMarketplaceEndpointIntoV4UserConfig(t *testing.T) {
@@ -237,7 +206,7 @@ func TestRemoveMarketplaceResourceFromV4UserConfig(t *testing.T) {
 	}
 }
 
-func newUpdatableV4MarketplaceServer(t *testing.T, instanceID, resourceName string) (*httptest.Server, func(), func() string, *atomic.Int32) {
+func newUpdatableV4MarketplaceServer(t *testing.T, instanceID, resourceName string) (*httptest.Server, func(), func() string) {
 	t.Helper()
 	build := func(body string) ([]byte, store.AssessedResourceRevision) {
 		canonical, err := hccartifact.FromIR(ir.NewSkill(resourceName, "Review", body, nil, nil, ir.SourceRef{}))
@@ -260,10 +229,8 @@ func newUpdatableV4MarketplaceServer(t *testing.T, instanceID, resourceName stri
 	oldRaw, oldRevision := build("Review carefully.")
 	newRaw, newRevision := build("Review carefully, updated.")
 	var updated atomic.Bool
-	var requests atomic.Int32
 	registry := mpapi.PublicRegistry{ID: "src", Slug: "tools", Origins: []string{"https://example.com/tools.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
@@ -286,7 +253,7 @@ func newUpdatableV4MarketplaceServer(t *testing.T, instanceID, resourceName stri
 			http.NotFound(w, r)
 		}
 	}))
-	return server, func() { updated.Store(true) }, func() string { return string(newRevision.ContentDigest) }, &requests
+	return server, func() { updated.Store(true) }, func() string { return string(newRevision.ContentDigest) }
 }
 
 func TestUpdateMarketplaceV4ReplacesLockNotConfig(t *testing.T) {
@@ -297,7 +264,7 @@ func TestUpdateMarketplaceV4ReplacesLockNotConfig(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	server, upgrade, latestDigest, requests := newUpdatableV4MarketplaceServer(t, "mp", "review")
+	server, upgrade, latestDigest := newUpdatableV4MarketplaceServer(t, "mp", "review")
 	defer server.Close()
 	configPath := filepath.Join(home, ".agents", "config.yaml")
 	lockPath := filepath.Join(home, ".agents", "lock.yaml")
@@ -323,7 +290,6 @@ func TestUpdateMarketplaceV4ReplacesLockNotConfig(t *testing.T) {
 	oldDigest := string(oldDoc.Marketplaces[0].Resources[0].ContentDigest)
 
 	upgrade()
-	requests.Store(0)
 	output, err = executeCommand("update")
 	if err != nil {
 		t.Fatalf("update: %v\n%s", err, output)

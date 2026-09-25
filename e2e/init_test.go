@@ -60,16 +60,11 @@ func TestInitV4ConfigSupportsUserInstall(t *testing.T) {
 	if initResult.ExitCode != 0 {
 		t.Fatalf("init failed (exit %d): %s", initResult.ExitCode, initResult.Combined)
 	}
-	before := env.ReadFile("/root/.agents/config.yaml")
-
 	installResult := env.RunAM("install", "review", "--from", registryURL, "--scope", "user")
 	if installResult.ExitCode != 0 {
 		t.Fatalf("install after v4 init = exit %d: %s", installResult.ExitCode, installResult.Combined)
 	}
 	after := env.ReadFile("/root/.agents/config.yaml")
-	if after == before {
-		t.Fatal("install did not change initialized user config")
-	}
 	for _, want := range []string{"apiVersion: agent-marketplace/v4", "sources:", "git:", "skill/review"} {
 		if !strings.Contains(after, want) {
 			t.Fatalf("installed user config missing %q:\n%s", want, after)

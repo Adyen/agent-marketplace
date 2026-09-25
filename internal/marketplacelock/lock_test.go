@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -122,5 +123,42 @@ func TestMarketplaceResourceBudgetUsesConservativeEncodedMinimum(t *testing.T) {
 	}
 	if delta := len(two) - len(one); delta < minimumMarketplaceResourceLockBytes {
 		t.Fatalf("minimum encoded Marketplace resource = %d bytes, budget assumes at least %d", delta, minimumMarketplaceResourceLockBytes)
+	}
+}
+
+func TestMergeRejectsRegistryBindingChange(t *testing.T) {
+	v4, err := config.ParseV4([]byte(`apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: https://hosted.example}
+resources:
+  hosted: {include: [tools/skill/review]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := lockfile.Digest("sha256:" + strings.Repeat("a", 64))
+	current := lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeUser,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL:              "https://hosted.example",
+			InstanceID:       "instance",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "old-id"}},
+			Resources: []lockfile.MarketplaceResourceLock{{
+				RegistryName: "tools", RegistryID: "new-id", Kind: "skill", Name: "review",
+				Revision: string(digest), ContentDigest: digest, ArchiveDigest: digest,
+				Acquisition: lockfile.MarketplaceAcquisitionMirror,
+			}},
+		}},
+	}
+	entry := config.MarketplaceEntry{URL: "https://hosted.example", InstanceID: "instance", Source: config.UserPersonal}
+
+	_, err = MergePinsToV4(v4, current, entry, nil, nil)
+	var mismatch *config.V4ValidationError
+	if !errors.As(err, &mismatch) || mismatch.Code != "v4.marketplace-lock-mismatch" {
+		t.Fatalf("rebound registry accepted: %v", err)
+	}
+	if !strings.Contains(mismatch.Msg, "old-id") || !strings.Contains(mismatch.Msg, "new-id") {
+		t.Fatalf("binding error = %q", mismatch.Msg)
 	}
 }

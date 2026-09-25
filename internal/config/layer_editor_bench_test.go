@@ -8,7 +8,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func BenchmarkEditV4ResourceSelection(b *testing.B) {
+func BenchmarkLayerEditorSelection(b *testing.B) {
 	dir := b.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	data := []byte("apiVersion: agent-marketplace/v4\nsources:\n  one: {git: https://example.test/repo.git, ref: main}\nresources:\n  one: [skill/alpha]\n")
@@ -16,10 +16,22 @@ func BenchmarkEditV4ResourceSelection(b *testing.B) {
 		b.Fatal(err)
 	}
 	entry := RegistryEntry{URL: "https://example.test/repo.git", Ref: "main"}
+	target := LayerTarget{Source: RepoCommitted, StagedPath: path, DeclaringPath: path}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := EditV4ResourceSelection(path, path, entry, ir.KindSkill, "alpha", V4SelectionEnable); err != nil {
+		editor, err := OpenLayerEditor(target)
+		if err != nil {
+			b.Fatal(err)
+		}
+		binding, err := editor.EnsureRegistry(entry)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := editor.Apply(binding, SelectionChange{Operation: SelectionInclude, Locators: []ResourceLocator{{Kind: ir.KindSkill, Name: "alpha"}}}); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := editor.Render(); err != nil {
 			b.Fatal(err)
 		}
 	}

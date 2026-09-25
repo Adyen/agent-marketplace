@@ -255,7 +255,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	}
 	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: configDestination}
 	editInstallLayer := func(mutate func(*LayerMutation) error) error {
-		return editLayerAtPath(layer, mutate)
+		return EditLayerAtPath(layer, mutate)
 	}
 
 	// Load the effective configuration once to validate config versions and resolve
@@ -763,7 +763,7 @@ func clearInstallExcludes(repoRoot string, kind ir.ResourceKind, name string, st
 			return err
 		}
 	}
-	return editLayerAtPath(config.LayerTarget{Source: config.RepoPersonal, StagedPath: mapped, DeclaringPath: destination}, func(m *LayerMutation) error {
+	return EditLayerAtPath(config.LayerTarget{Source: config.RepoPersonal, StagedPath: mapped, DeclaringPath: destination}, func(m *LayerMutation) error {
 		return m.ClearUnboundExclude(config.ResourceLocator{Kind: kind, Name: name})
 	})
 }
@@ -1110,7 +1110,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: configDestination}
 	var binding config.SourceBinding
-	if err := editLayerAtPath(layer, func(m *LayerMutation) error {
+	if err := EditLayerAtPath(layer, func(m *LayerMutation) error {
 		var bindErr error
 		binding, bindErr = m.EnsureRegistry(syntheticEntry)
 		return bindErr
@@ -1181,7 +1181,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	selectedCatalogs := map[string]catalog.LoadedCatalog{catalogKey: catalogs[catalogKey]}
 	addSelectedResource := func(resourceKind ir.ResourceKind, resourceName string) error {
-		return editLayerAtPath(layer, func(m *LayerMutation) error {
+		return EditLayerAtPath(layer, func(m *LayerMutation) error {
 			bound, err := m.EnsureRegistry(syntheticEntry)
 			if err != nil {
 				return err
@@ -1310,7 +1310,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	slices.Sort(allInstalled)
 
-	if err := editLayerAtPath(layer, func(m *LayerMutation) error {
+	if err := EditLayerAtPath(layer, func(m *LayerMutation) error {
 		bound, err := m.EnsureRegistry(syntheticEntry)
 		if err != nil {
 			return err

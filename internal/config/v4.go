@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/url"
 	"os"
 	"path"
@@ -1222,16 +1221,9 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 			}
 		}
 	}
-	canonical, err := canonicalConfigPath(file)
+	canonical, err := canonicalConfigPathTolerateMissing(file)
 	if err != nil {
-		if rootData == nil || !errors.Is(err, fs.ErrNotExist) {
-			return nil, err
-		}
-		absolute, absErr := filepath.Abs(file)
-		if absErr != nil {
-			return nil, absErr
-		}
-		canonical = filepath.Clean(absolute)
+		return nil, err
 	}
 	if visiting[canonical] {
 		return nil, v4err("v4.include-cycle", canonical, 0, "config include cycle")

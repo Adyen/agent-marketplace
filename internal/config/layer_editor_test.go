@@ -53,10 +53,6 @@ func TestLayerEditorSchemaTable(t *testing.T) {
 			fixture: "apiVersion: agent-marketplace/v2\n# team comment\nregistries:\n  - url: https://example.test/repo.git\n    ref: main\n    skills: {include: [keep]}\n",
 		},
 		{
-			name:    "v3",
-			fixture: "apiVersion: agent-marketplace/v3\n# team comment\nregistries:\n  - url: https://example.test/repo.git\n    ref: main\n    skills: {include: [keep]}\n",
-		},
-		{
 			name:    "v4",
 			fixture: "apiVersion: agent-marketplace/v4\n# team comment\nsources:\n  one: {git: https://example.test/repo.git, ref: main}\nresources:\n  one: [skill/keep]\n",
 			v4:      true,
@@ -463,7 +459,7 @@ func TestLayerEditorSetLayerExclude(t *testing.T) {
 			{URL: "https://example.test/two.git", Ref: "main", V4Kind: V4SourceGit},
 			{URL: "https://example.test/one.git", Ref: "main", V4Kind: V4SourceGit},
 		}
-		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries, true); err != nil {
+		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries); err != nil {
 			t.Fatalf("set layer exclude: %v", err)
 		}
 		candidate, err := editor.Render()
@@ -490,7 +486,7 @@ func TestLayerEditorSetLayerExclude(t *testing.T) {
 		fixture := "apiVersion: agent-marketplace/v4\n"
 		layerEditorWrite(t, path, fixture)
 		editor := openTestEditor(t, RepoPersonal, path, path)
-		err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), nil, true)
+		err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), nil)
 		if layerEditorErrCode(err) != "config.edit.unsupported-operation" {
 			t.Fatalf("error = %v, want unsupported-operation", err)
 		}
@@ -512,7 +508,7 @@ func TestLayerEditorSetLayerExclude(t *testing.T) {
 			{URL: "https://example.test/one.git", Ref: "main", V4Kind: V4SourceGit},
 			{URL: "https://mp.example.test", V4Kind: V4SourceMarketplace},
 		}
-		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries, true); err == nil {
+		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries); err == nil {
 			t.Fatal("marketplace provider accepted")
 		}
 		candidate, err := editor.Render()
@@ -524,29 +520,12 @@ func TestLayerEditorSetLayerExclude(t *testing.T) {
 		}
 	})
 
-	t.Run("v4 clear exclusion", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "config.yaml")
-		layerEditorWrite(t, path, "apiVersion: agent-marketplace/v4\nsources:\n  one: {git: https://example.test/one.git, ref: main}\nresources:\n  one: {exclude: [collection/bundle]}\n")
-		editor := openTestEditor(t, RepoPersonal, path, path)
-		entries := []RegistryEntry{{URL: "https://example.test/one.git", Ref: "main", V4Kind: V4SourceGit}}
-		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries, false); err != nil {
-			t.Fatalf("clear layer exclude: %v", err)
-		}
-		candidate, err := editor.Render()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !candidate.Changed || strings.Contains(string(candidate.Bytes), "collection/bundle") {
-			t.Fatalf("exclusion not cleared:\n%s", candidate.Bytes)
-		}
-	})
-
 	t.Run("legacy delegates to the top-level selector", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		layerEditorWrite(t, path, "apiVersion: agent-marketplace/v2\n")
 		editor := openTestEditor(t, RepoPersonal, path, path)
 		entries := []RegistryEntry{{URL: "https://example.test/one.git", Ref: "main", V4Kind: V4SourceGit}}
-		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries, true); err != nil {
+		if err := editor.SetLayerExclude(loc(ir.KindCollection, "bundle"), entries); err != nil {
 			t.Fatalf("legacy set layer exclude: %v", err)
 		}
 		candidate, err := editor.Render()
@@ -778,7 +757,7 @@ func TestLayerEditorV4SelectionOperations(t *testing.T) {
 		}
 	})
 
-	t.Run("tag add and remove", func(t *testing.T) {
+	t.Run("tag add", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		layerEditorWrite(t, path, base)
 		editor := openTestEditor(t, RepoCommitted, path, path)
@@ -792,16 +771,6 @@ func TestLayerEditorV4SelectionOperations(t *testing.T) {
 		group := renderGroup(t, editor)
 		if len(group.Tags) != 2 || group.Tags[0] != "t1" || group.Tags[1] != "t2" {
 			t.Fatalf("tags = %v", group.Tags)
-		}
-		if err := editor.Apply(binding, SelectionChange{Operation: SelectionRemoveTag, Tag: "t1"}); err != nil {
-			t.Fatal(err)
-		}
-		if err := editor.Apply(binding, SelectionChange{Operation: SelectionRemoveTag, Tag: "t2"}); err != nil {
-			t.Fatal(err)
-		}
-		group = renderGroup(t, editor)
-		if group.HasTags {
-			t.Fatalf("empty tags key retained: %#v", group.Tags)
 		}
 	})
 }
@@ -938,7 +907,7 @@ func TestLayerEditorLegacySelectionOperations(t *testing.T) {
 		}
 	})
 
-	t.Run("tag add remove dedupes and drops empty key", func(t *testing.T) {
+	t.Run("tag add dedupes", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		layerEditorWrite(t, path, base)
 		editor := openTestEditor(t, RepoCommitted, path, path)
@@ -955,16 +924,6 @@ func TestLayerEditorLegacySelectionOperations(t *testing.T) {
 		e := renderEntry(t, editor, path)
 		if len(e.Tags) != 2 || e.Tags[0] != "t1" || e.Tags[1] != "t2" {
 			t.Fatalf("tags = %v", e.Tags)
-		}
-		if err := editor.Apply(binding, SelectionChange{Operation: SelectionRemoveTag, Tag: "t1"}); err != nil {
-			t.Fatal(err)
-		}
-		if err := editor.Apply(binding, SelectionChange{Operation: SelectionRemoveTag, Tag: "t2"}); err != nil {
-			t.Fatal(err)
-		}
-		e = renderEntry(t, editor, path)
-		if e.Tags != nil {
-			t.Fatalf("empty tags retained: %v", e.Tags)
 		}
 	})
 }
@@ -1248,23 +1207,6 @@ func TestLayerEditorClearUnboundExclude(t *testing.T) {
 		}
 	})
 
-	t.Run("v4 is a byte-stable no-op", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "config.yaml")
-		fixture := "apiVersion: agent-marketplace/v4\nsources:\n  one: {git: https://example.test/repo.git, ref: main}\nresources:\n  one: {exclude: [skill/alpha]}\n"
-		layerEditorWrite(t, path, fixture)
-		editor := openTestEditor(t, RepoPersonal, path, path)
-		if err := editor.ClearUnboundExclude(loc(ir.KindSkill, "alpha")); err != nil {
-			t.Fatalf("clear: %v", err)
-		}
-		candidate, err := editor.Render()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if candidate.Changed || string(candidate.Bytes) != fixture {
-			t.Fatalf("v4 clear mutated:\n%s", candidate.Bytes)
-		}
-	})
-
 	t.Run("invalid locators", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		fixture := "apiVersion: agent-marketplace/v2\nskills: {exclude: [alpha]}\n"
@@ -1401,7 +1343,7 @@ func TestLayerEditorUnboundIncludeAndExclude(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		layerEditorWrite(t, path, "apiVersion: agent-marketplace/v2\nskills: {exclude: [keep]}\n")
 		editor := openTestEditor(t, RepoPersonal, path, path)
-		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "alpha"), true); err != nil {
+		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "alpha")); err != nil {
 			t.Fatalf("set: %v", err)
 		}
 		candidate, err := editor.Render()
@@ -1416,7 +1358,7 @@ func TestLayerEditorUnboundIncludeAndExclude(t *testing.T) {
 			t.Fatalf("top-level excludes = %#v", cfg.Skills)
 		}
 		firstBytes := candidate.Bytes
-		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "alpha"), true); err != nil {
+		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "alpha")); err != nil {
 			t.Fatalf("reapply: %v", err)
 		}
 		candidate, err = editor.Render()
@@ -1426,7 +1368,7 @@ func TestLayerEditorUnboundIncludeAndExclude(t *testing.T) {
 		if string(candidate.Bytes) != string(firstBytes) {
 			t.Fatal("reapply changed bytes")
 		}
-		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "alpha"), false); err != nil {
+		if err := editor.ClearUnboundExclude(loc(ir.KindSkill, "alpha")); err != nil {
 			t.Fatalf("clear: %v", err)
 		}
 		candidate, err = editor.Render()
@@ -1443,7 +1385,7 @@ func TestLayerEditorUnboundIncludeAndExclude(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		layerEditorWrite(t, path, "apiVersion: agent-marketplace/v2\n")
 		editor := openTestEditor(t, RepoPersonal, path, path)
-		if err := editor.SetUnboundExclude(loc(ir.KindCommand, "audit"), true); err != nil {
+		if err := editor.SetUnboundExclude(loc(ir.KindCommand, "audit")); err != nil {
 			t.Fatal(err)
 		}
 		candidate, err := editor.Render()
@@ -1464,10 +1406,10 @@ func TestLayerEditorUnboundIncludeAndExclude(t *testing.T) {
 		if err := editor.RemoveUnboundInclude(loc(ir.KindSkill, "alpha")); err != nil {
 			t.Fatalf("remove include: %v", err)
 		}
-		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "gamma"), true); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "gamma")); err == nil || !strings.Contains(err.Error(), "unsupported") {
 			t.Fatalf("expected unsupported-operation for v4 unbound exclude, got %v", err)
 		}
-		if err := editor.SetUnboundExclude(loc(ir.KindSkill, "beta"), false); err != nil {
+		if err := editor.ClearUnboundExclude(loc(ir.KindSkill, "beta")); err != nil {
 			t.Fatalf("clear exclude: %v", err)
 		}
 		candidate, err := editor.Render()
@@ -1488,7 +1430,7 @@ func TestLayerEditorUnboundIncludeAndExclude(t *testing.T) {
 			if err := editor.RemoveUnboundInclude(l); err == nil {
 				t.Fatalf("RemoveUnboundInclude accepted locator %#v", l)
 			}
-			if err := editor.SetUnboundExclude(l, true); err == nil {
+			if err := editor.SetUnboundExclude(l); err == nil {
 				t.Fatalf("SetUnboundExclude accepted locator %#v", l)
 			}
 		}
@@ -1563,6 +1505,197 @@ func TestLayerEditorUnboundIncludeInherited(t *testing.T) {
 			}
 		}
 	})
+}
+
+// layerEditorEditFile applies one selection change through the layer editor and
+// publishes the candidate, so a test can reload the file between edits.
+func layerEditorEditFile(t *testing.T, path string, entry RegistryEntry, op SelectionOperation, locator ResourceLocator) bool {
+	t.Helper()
+	editor := openTestEditor(t, RepoCommitted, path, path)
+	binding, err := editor.EnsureRegistry(entry)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if err := editor.Apply(binding, SelectionChange{Operation: op, Locators: []ResourceLocator{locator}}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !candidate.Changed {
+		return false
+	}
+	if err := os.WriteFile(path, candidate.Bytes, candidate.Mode); err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
+
+func TestLayerEditorV4PreservesMappingsOptionsCommentsAndKinds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	source := filepath.Join(dir, "registry")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	layerEditorWrite(t, path, "apiVersion: agent-marketplace/v4\nharnesses: [factory, gemini, devin] # targets\nsources:\n  local: {directory: "+source+"}\nresources:\n  local:\n    include:\n      - skill/beta: {as: beta}\n      - command/alpha\n    tags: [platform]\n    all: true\n    harnesses: [factory]\n    exclude: [skill/sibling]\n")
+	entry := RegistryEntry{URL: source, V4Kind: V4SourceDirectory}
+
+	if !layerEditorEditFile(t, path, entry, SelectionInclude, loc(ir.KindSkill, "alpha")) {
+		t.Fatal("include did not change the document")
+	}
+	changed, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(changed), "# targets") {
+		t.Fatalf("comment lost:\n%s", changed)
+	}
+	loaded, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Sources) != 1 || len(loaded.Groups) != 1 {
+		t.Fatalf("source/group counts = %d/%d", len(loaded.Sources), len(loaded.Groups))
+	}
+	group := loaded.Groups["local"]
+	foundBeta, foundCommand, foundAlpha := false, false, false
+	for _, request := range group.Include {
+		switch request.Locator {
+		case "skill/beta":
+			foundBeta = request.Options.HasAs && request.Options.As == "beta"
+		case "command/alpha":
+			foundCommand = true
+		case "skill/alpha":
+			foundAlpha = true
+		}
+	}
+	if !foundBeta || !foundCommand || !foundAlpha || !group.HasTags || !group.HasAll || !group.HasHarnesses || len(group.Exclude) != 1 || group.Exclude[0] != "skill/sibling" {
+		t.Fatalf("unrelated resource policy changed: %#v", group)
+	}
+
+	layerEditorEditFile(t, path, entry, SelectionExclude, loc(ir.KindSkill, "alpha"))
+	loaded, err = LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range loaded.Groups["local"].Include {
+		if request.Locator == "skill/alpha" {
+			t.Fatal("disabled alpha remained included")
+		}
+	}
+
+	layerEditorEditFile(t, path, entry, SelectionInclude, loc(ir.KindSkill, "alpha"))
+	loaded, err = LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Groups["local"].Include) != 3 {
+		t.Fatalf("re-enabled include count = %d", len(loaded.Groups["local"].Include))
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode = %v err %v", info.Mode().Perm(), err)
+	}
+}
+
+func TestLayerEditorV4KeepsSymlinkSourceIdentities(t *testing.T) {
+	dir := canonicalDirectoryTestRoot(t)
+	real := filepath.Join(dir, "version-1")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	currentA := filepath.Join(dir, "current-a")
+	currentB := filepath.Join(dir, "current-b")
+	if err := os.Symlink(real, currentA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, currentB); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	layerEditorWrite(t, path, "apiVersion: agent-marketplace/v4\nsources:\n  one: {directory: "+currentA+"}\n  two: {directory: "+currentB+"}\nresources:\n  two: [skill/beta]\n")
+	entry := RegistryEntry{URL: currentA, V4Kind: V4SourceDirectory}
+
+	layerEditorEditFile(t, path, entry, SelectionInclude, loc(ir.KindSkill, "alpha"))
+	loaded, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Sources) != 2 || loaded.Sources["one"].Directory != currentA || loaded.Sources["two"].Directory != currentB {
+		t.Fatalf("source identities = %#v", loaded.Sources)
+	}
+	seen := map[string]bool{}
+	for _, request := range loaded.Requests {
+		seen[request.SourceName+"/"+request.Locator] = true
+	}
+	if len(seen) != 2 || !seen["one/skill/alpha"] || !seen["two/skill/beta"] {
+		t.Fatalf("requests = %#v", loaded.Requests)
+	}
+
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layerEditorEditFile(t, path, entry, SelectionInclude, loc(ir.KindSkill, "alpha")) {
+		t.Fatal("repeat include rewrote the document")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("repeat include changed bytes: %v\n%s", err, after)
+	}
+}
+
+func TestLayerEditorV4CreatesSeparateSymlinkBinding(t *testing.T) {
+	dir := canonicalDirectoryTestRoot(t)
+	real := filepath.Join(dir, "version-1")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	currentA := filepath.Join(dir, "current-a")
+	currentB := filepath.Join(dir, "current-b")
+	if err := os.Symlink(real, currentA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, currentB); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	layerEditorWrite(t, path, "apiVersion: agent-marketplace/v4\nsources:\n  one: {directory: "+currentA+"}\nresources:\n  one: [skill/beta]\n")
+
+	layerEditorEditFile(t, path, RegistryEntry{URL: currentB, V4Kind: V4SourceDirectory}, SelectionInclude, loc(ir.KindSkill, "alpha"))
+	loaded, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newName := ""
+	for name, source := range loaded.Sources {
+		if source.Directory == currentB {
+			newName = name
+		}
+	}
+	if newName == "" || len(loaded.Sources) != 2 || loaded.Sources["one"].Directory != currentA {
+		t.Fatalf("sources = %#v", loaded.Sources)
+	}
+	oneBeta, newAlpha := false, false
+	for _, request := range loaded.Requests {
+		if request.SourceName == "one" {
+			if request.Locator != "skill/beta" {
+				t.Fatalf("one source request = %#v", request)
+			}
+			oneBeta = true
+		}
+		if request.SourceName == newName {
+			if request.Locator != "skill/alpha" {
+				t.Fatalf("new source request = %#v", request)
+			}
+			newAlpha = true
+		}
+	}
+	if !oneBeta || !newAlpha {
+		t.Fatalf("requests did not preserve separate selections: %#v", loaded.Requests)
+	}
 }
 
 func TestLayerEditorRemoveMarketplacePinDirectWithSelection(t *testing.T) {

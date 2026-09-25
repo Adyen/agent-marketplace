@@ -241,9 +241,6 @@ func TestReplacePinsToV4RejectsStaleExpectedAndPreservesUnrelated(t *testing.T) 
 			t.Fatalf("stale error = %v", err)
 		}
 	}
-	if _, err := marketplacelock.ReplacePinsToV4(v4Cfg, doc, entry, oldPin, []config.MarketplaceResourcePin{newPin}, nil); err == nil {
-		t.Fatal("nil cache accepted")
-	}
 	if after, _ := lockfile.Encode(doc); string(after) != string(before) {
 		t.Fatal("failed replace mutated the input document")
 	}

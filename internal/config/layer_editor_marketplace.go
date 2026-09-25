@@ -28,19 +28,9 @@ func (e *LayerEditor) marketplaceSourceBinding(name string) SourceBinding {
 	if source, ok := e.loaded.Sources[name]; ok {
 		rootOwned = source.File == e.canonical
 	}
-	binding := SourceBinding{Name: name, Entry: RegistryEntry{URL: e.marketplaceBindingURL(name), V4Kind: V4SourceMarketplace}, id: fmt.Sprintf("v4:%p:%s", e, name), root: rootOwned}
+	binding := SourceBinding{Name: name, Entry: RegistryEntry{V4Kind: V4SourceMarketplace}, id: fmt.Sprintf("v4:%p:%s", e, name), root: rootOwned}
 	e.bindings[binding.id] = binding
 	return binding
-}
-
-func (e *LayerEditor) marketplaceBindingURL(name string) string {
-	if source, ok := e.loaded.Sources[name]; ok {
-		return source.CanonicalURL
-	}
-	if added, ok := e.addedV4[name]; ok {
-		return added.url
-	}
-	return ""
 }
 
 func (e *LayerEditor) LookupMarketplaceSource(marketplaceURL string) (SourceBinding, bool, error) {
@@ -76,14 +66,7 @@ func (e *LayerEditor) EnsureMarketplaceSource(marketplaceURL string) (SourceBind
 		return SourceBinding{}, v4err("config.edit.ambiguous-source", e.target.DeclaringPath, 0, "Marketplace endpoint matches multiple sources: %s", strings.Join(matches, ", "))
 	}
 	if len(matches) == 0 {
-		occupied := make(map[string]v4MigrationSource, len(e.loaded.Sources)+len(e.addedV4))
-		for name := range e.loaded.Sources {
-			occupied[name] = v4MigrationSource{}
-		}
-		for name := range e.addedV4 {
-			occupied[name] = v4MigrationSource{}
-		}
-		name := v4MigrationMarketplaceSourceName(occupied, "")
+		name := v4MigrationMarketplaceSourceName(e.occupiedSourceNames(), "")
 		sources, err := ensureV4EditMapping(e.root, "sources")
 		if err != nil {
 			return SourceBinding{}, err
@@ -181,8 +164,8 @@ func (e *LayerEditor) IncludeMarketplacePins(binding SourceBinding, pins []Marke
 	if e.legacy {
 		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
 	}
-	if issued, ok := e.bindings[binding.id]; binding.id == "" || !ok || issued.Name != binding.Name {
-		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")
+	if err := e.checkBinding(binding); err != nil {
+		return err
 	}
 	name := binding.Name
 	source, known := e.loaded.Sources[name]
@@ -278,8 +261,8 @@ func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []Market
 	if e.legacy {
 		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
 	}
-	if issued, ok := e.bindings[binding.id]; binding.id == "" || !ok || issued.Name != binding.Name {
-		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")
+	if err := e.checkBinding(binding); err != nil {
+		return err
 	}
 	name := binding.Name
 	source, known := e.loaded.Sources[name]

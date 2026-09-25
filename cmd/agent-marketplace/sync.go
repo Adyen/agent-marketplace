@@ -867,17 +867,24 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 			}
 			removed := false
 			if inEntry {
-				binding, _, bindErr := m.LookupRegistry(entry)
+				binding, found, bindErr := m.LookupRegistry(entry)
 				if bindErr != nil {
 					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, bindErr))
 					continue
 				}
-				if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionRemoveInclude, Locators: []config.ResourceLocator{locator}}); err != nil {
-					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
-					continue
+				if found {
+					if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionRemoveInclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+						errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
+						continue
+					}
+					removed = true
 				}
-				removed = true
 			} else if strings.TrimSpace(snf.URL) != "" {
+				// The root file does not select this resource under a registry
+				// entry, so there is nothing here to remove: selectionSites
+				// would have reported inEntry. The edit is still attempted so
+				// that a selection owned by an included fragment is refused by
+				// name instead of being reported as undeclared.
 				binding, found, bindErr := m.LookupRegistry(config.RegistryEntry{URL: snf.URL, Ref: snf.Ref, Path: snf.Path})
 				if bindErr != nil {
 					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, bindErr))

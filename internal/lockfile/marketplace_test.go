@@ -518,9 +518,6 @@ func TestV1GitOnlyPlanUpgradesToV2(t *testing.T) {
 	if plan.Desired.APIVersion != APIVersionV2 || len(plan.Desired.Marketplaces) != 0 {
 		t.Fatalf("v1 plan did not upgrade to v2: %#v", plan.Desired)
 	}
-	if !plan.VersionChanged || !plan.Changed() {
-		t.Fatalf("version-only upgrade not reported as changed: %#v", plan)
-	}
 }
 
 func TestV2NormalizesNonCanonicalEndpointOnDecode(t *testing.T) {

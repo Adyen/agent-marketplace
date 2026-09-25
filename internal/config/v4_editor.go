@@ -1,100 +1,12 @@
 package config
 
 import (
-	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
 )
-
-type V4SelectionEdit uint8
-
-const (
-	V4SelectionEnable V4SelectionEdit = iota
-	V4SelectionDisable
-	V4SelectionClearExclude
-)
-
-func EditV4ResourceSelection(configPath, declaringPath string, entry RegistryEntry, kind ir.ResourceKind, name string, action V4SelectionEdit) (handled bool, err error) {
-	err = withConfigPathLock(configPath, func() error {
-		data, readErr := readConfigFile(configPath)
-		if errors.Is(readErr, os.ErrNotExist) {
-			return nil
-		}
-		if readErr != nil {
-			handled = true
-			return readErr
-		}
-		if PeekAPIVersion(data) != APIVersionV4 {
-			return nil
-		}
-		handled = true
-		if action > V4SelectionClearExclude {
-			return v4err("v4.edit-action", declaringPath, 0, "unsupported selection edit")
-		}
-		editor, err := OpenLayerEditor(LayerTarget{Source: sourceForLayer(v4EditLayer(declaringPath)), StagedPath: configPath, DeclaringPath: declaringPath})
-		if err != nil {
-			return err
-		}
-		binding, err := editor.ensureRegistry(entry, action != V4SelectionClearExclude)
-		if err != nil {
-			return v4EditCompatError(err)
-		}
-		if binding.id == "" {
-			return nil
-		}
-		var operation SelectionOperation
-		switch action {
-		case V4SelectionEnable:
-			operation = SelectionInclude
-		case V4SelectionDisable:
-			operation = SelectionExclude
-		case V4SelectionClearExclude:
-			operation = SelectionClearExclude
-		}
-		if err := editor.Apply(binding, SelectionChange{Operation: operation, Locators: []ResourceLocator{{Kind: kind, Name: name}}}); err != nil {
-			return v4EditCompatError(err)
-		}
-		candidate, err := editor.Render()
-		if err != nil {
-			return v4EditCompatError(err)
-		}
-		if !candidate.Changed {
-			return nil
-		}
-		return writeConfigDocumentData(configPath, candidate.Mode, candidate.Bytes)
-	})
-	return handled, err
-}
-
-func v4EditCompatError(err error) error {
-	var validation *V4ValidationError
-	if !errors.As(err, &validation) {
-		return err
-	}
-	switch validation.Code {
-	case "config.edit.ambiguous-source":
-		return v4err("v4.edit-ambiguous-source", validation.Path, validation.Line, "%s", validation.Msg)
-	case "config.edit.unsafe-directory":
-		return v4err("v4.directory-path", validation.Path, validation.Line, "%s", validation.Msg)
-	case "config.edit.unsupported-operation", "config.edit.invalid-binding", "config.edit.include-owned":
-		return v4err("v4.edit-source", validation.Path, validation.Line, "%s", validation.Msg)
-	}
-	return err
-}
-
-func v4EditLayer(path string) layerKind {
-	if isLocalConfigPath(path) {
-		return localLayer
-	}
-	if isGlobalConfigPath(path) {
-		return userLayer
-	}
-	return repoLayer
-}
 
 type v4EditIdentity struct {
 	kind          V4SourceKind
@@ -250,8 +162,7 @@ func v4EditSequenceHasWildcard(sequence *yaml.Node, kind ir.ResourceKind, name s
 	return false
 }
 
-func v4EditLoadedSelectionSuppressed(group V4ResourceGroup, locator, declaringPath string, ignoreRootExact bool) bool {
-	canonical, _ := canonicalConfigPath(declaringPath)
+func v4EditLoadedSelectionSuppressed(group V4ResourceGroup, locator, canonical string, ignoreRootExact bool) bool {
 	suppressed := false
 	for _, decision := range group.Decisions {
 		if decision.Action == V4SelectionExclude {

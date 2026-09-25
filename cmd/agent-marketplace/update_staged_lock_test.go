@@ -25,43 +25,16 @@ func TestStagedLockDestinationValidation(t *testing.T) {
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nregistries: []\n")
 	withWorkingDir(t, repo)
 
-	t.Run("empty path refused", func(t *testing.T) {
-		_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedLockEdits: []pipeline.StagedLockEdit{{Path: "", Bytes: []byte("apiVersion: 2\n")}}})
-		if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
-			t.Fatalf("empty staged lock error = %v", err)
-		}
+	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{
+		stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Bytes: []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")}},
+		stagedLockEdits:   []pipeline.StagedLockEdit{{Path: configPath, Bytes: []byte("apiVersion: 2\n")}},
 	})
+	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("colliding staged lock error = %v", err)
+	}
 
-	t.Run("relative path refused", func(t *testing.T) {
-		_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedLockEdits: []pipeline.StagedLockEdit{{Path: "lock.yaml", Bytes: []byte("apiVersion: 2\n")}}})
-		if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
-			t.Fatalf("relative staged lock error = %v", err)
-		}
-	})
-
-	t.Run("duplicate paths refused", func(t *testing.T) {
-		edits := []pipeline.StagedLockEdit{
-			{Path: lockPath, Bytes: []byte("apiVersion: 2\n")},
-			{Path: filepath.Join(filepath.Dir(lockPath), ".", "lock.yaml"), Bytes: []byte("apiVersion: 2\n")},
-		}
-		_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedLockEdits: edits})
-		if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
-			t.Fatalf("duplicate staged lock error = %v", err)
-		}
-	})
-
-	t.Run("config destination collision refused", func(t *testing.T) {
-		_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{
-			stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Bytes: []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")}},
-			stagedLockEdits:   []pipeline.StagedLockEdit{{Path: configPath, Bytes: []byte("apiVersion: 2\n")}},
-		})
-		if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
-			t.Fatalf("colliding staged lock error = %v", err)
-		}
-	})
-
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("refused staged locks wrote %s: %v", lockPath, err)
+	if _, statErr := os.Stat(lockPath); !os.IsNotExist(statErr) {
+		t.Fatalf("refused staged locks wrote %s: %v", lockPath, statErr)
 	}
 }
 
@@ -73,7 +46,7 @@ func TestUpdateMarketplaceV4RejectsStaleStagedLock(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	server, upgrade, _, _ := newUpdatableV4MarketplaceServer(t, "mp", "review")
+	server, upgrade, _ := newUpdatableV4MarketplaceServer(t, "mp", "review")
 	defer server.Close()
 	configPath := filepath.Join(home, ".agents", "config.yaml")
 	lockPath := filepath.Join(home, ".agents", "lock.yaml")

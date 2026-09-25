@@ -815,6 +815,13 @@ func newV4MarketplaceLockServerWithIdentity(t *testing.T, instanceID, resourceNa
 }
 
 func newV4MarketplaceLockServerWithOptions(t *testing.T, instanceID, resourceName string, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
+	return newV4MarketplaceServer(t, instanceID, resourceName, false, hook, mutate)
+}
+
+// newV4MarketplaceServer serves one skill revision. selfCanonical makes the
+// well-known document advertise the test server's own address, which endpoint
+// installs require; the lock fixtures instead pin a fixed canonical URL.
+func newV4MarketplaceServer(t *testing.T, instanceID, resourceName string, selfCanonical bool, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
 	t.Helper()
 	canonical, err := hccartifact.FromIR(ir.NewSkill(resourceName, "Review", "Review carefully.", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -841,7 +848,11 @@ func newV4MarketplaceLockServerWithOptions(t *testing.T, instanceID, resourceNam
 		}
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com"))
+			canonical := "https://example.com"
+			if selfCanonical {
+				canonical = "http://" + r.Host
+			}
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, canonical))
 		case r.URL.Path == "/api/v1/registries/tools" || r.URL.Path == "/api/v1/registries/src":
 			_ = json.NewEncoder(w).Encode(registry)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/"+resourceName) || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"+resourceName):

@@ -69,18 +69,17 @@ type AcquisitionRequest struct {
 }
 
 type ResolutionPlan struct {
-	Desired        Document
-	VersionChanged bool
-	Retained       []RecordRef
-	Added          []RecordRef
-	Invalidated    []RecordRef
-	Upgraded       []RecordRef
-	Removed        []RecordRef
-	Acquisitions   []AcquisitionRequest
+	Desired      Document
+	Retained     []RecordRef
+	Added        []RecordRef
+	Invalidated  []RecordRef
+	Upgraded     []RecordRef
+	Removed      []RecordRef
+	Acquisitions []AcquisitionRequest
 }
 
 func (p ResolutionPlan) Changed() bool {
-	return p.VersionChanged || len(p.Added)+len(p.Invalidated)+len(p.Upgraded)+len(p.Removed) > 0
+	return len(p.Added)+len(p.Invalidated)+len(p.Upgraded)+len(p.Removed) > 0
 }
 
 func Plan(requirements Requirements, current *Document, operation Operation) (ResolutionPlan, error) {
@@ -100,7 +99,6 @@ func Plan(requirements Requirements, current *Document, operation Operation) (Re
 		if err := ValidateScope(normalized, requirements.Scope); err != nil {
 			return ResolutionPlan{}, err
 		}
-		plan.VersionChanged = normalized.APIVersion != APIVersionV2
 		old = normalized
 	}
 	plan.Desired.Marketplaces = old.Marketplaces
