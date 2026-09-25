@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
     paths:
       - 'site/**'
       - 'design/**'
@@ -32,19 +34,72 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ${{ vars.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }}
+      AGENT_BROWSER_EXECUTABLE_PATH: ${{ vars.AGENT_BROWSER_EXECUTABLE_PATH }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
 
       - name: Set up pnpm
         run: |
           corepack enable pnpm
-          corepack install --global pnpm@10.4.1
+          corepack install --global pnpm@10.26.0
+
+      - name: Install website dependencies
+        working-directory: site
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify versioning contracts and types
+        working-directory: site
+        run: |
+          pnpm test
+          pnpm typecheck
+          pnpm docs:check
+
+      - name: Preserve published snapshots
+        working-directory: site
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$BASE_SHA" && ! "$BASE_SHA" =~ ^0+$ ]]; then
+            node scripts/docs.mjs check-history "$BASE_SHA"
+          fi
+
+      - name: Verify release snapshot
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: site
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.?[0-9]+)?$ ]]; then
+            pnpm docs:check "$RELEASE_TAG"
+          fi
+
+      - name: Install Chromium
+        working-directory: site
+        run: |
+          chromium="${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-$AGENT_BROWSER_EXECUTABLE_PATH}"
+          if [[ -n "$chromium" ]]; then
+            test -x "$chromium"
+          else
+            pnpm exec playwright install --with-deps chromium
+          fi
 
       - name: Build website
         run: make site-build
+
+      - name: Verify root deployment in the browser
+        working-directory: site
+        run: pnpm test:e2e
 
       - name: Verify sibling Marketplace and documentation links
         env:
@@ -61,3 +116,4 @@ jobs:
           grep -Fq 'href="/marketplace/"' .vitepress/dist/docs/reference/cli.html
           ! grep -Fq 'href="../marketplace/"' .vitepress/dist/docs/reference/cli.html
           ! grep -Fq 'href="/agent-marketplace/marketplace/"' .vitepress/dist/docs/reference/cli.html
+          pnpm test:e2e

@@ -3,6 +3,7 @@ import DefaultTheme from 'vitepress/theme-without-fonts'
 
 import LandingPage from '../../src/pages/landing/LandingPage.vue'
 import MarketplaceNavLink from '../../src/shared/components/MarketplaceNavLink.vue'
+import DocsVersionSelect from '../../src/shared/components/DocsVersionSelect.vue'
 import SiteLayout from '../../src/shared/components/SiteLayout.vue'
 
 import './styles/design-tokens.css'
@@ -14,5 +15,6 @@ export default {
   enhanceApp({ app }) {
     app.component('LandingPage', LandingPage)
     app.component('MarketplaceNavLink', MarketplaceNavLink)
+    app.component('DocsVersionSelect', DocsVersionSelect)
   }
 } satisfies Theme
