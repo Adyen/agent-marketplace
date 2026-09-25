@@ -739,7 +739,7 @@ func TestRemoveTopLevelOrganizationCollectionInfersUserScope(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
 	config.SetTestV3OrganizationConfigPath(t, orgPath)
-	writeFile(t, orgPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [machine-bundle]\n")
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v3\ntelemetry:\n  level: detailed\ncollections:\n  include: [machine-bundle]\n")
 	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
 
 	result, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "machine-bundle"})
