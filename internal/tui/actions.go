@@ -954,6 +954,8 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 		appendCandidate(snf.Kind, snf.Name, snf.URL, snf.Ref, snf.Path, snf.Required, snf.Error())
 	}
 	if cfg != nil {
+		failedIdentities := make(map[string]struct{})
+		var failedRepresentative *config.RegistryEntry
 		for i := range cfg.Registries {
 			entry := &cfg.Registries[i]
 			if _, loaded := catalogs[entry.CatalogKey]; loaded {
@@ -962,14 +964,20 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 			for _, selected := range resolver.ResourcesSelected(*entry, nil) {
 				appendCandidate(selected.Kind, selected.Name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
 			}
-			if localCfg != nil {
-				for _, kind := range config.AllKinds {
-					for _, name := range localCfg.SelectorForKind(kind).Include {
-						if _, covered := available[skill.ResourceKey(kind, name)]; covered {
-							continue
-						}
-						appendCandidate(kind, name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
+			identity := registryIdentityKey(entry.URL, entry.Ref, entry.Path)
+			if _, dup := failedIdentities[identity]; !dup {
+				failedIdentities[identity] = struct{}{}
+				failedRepresentative = entry
+			}
+		}
+		if localCfg != nil && len(failedIdentities) == 1 {
+			entry := failedRepresentative
+			for _, kind := range config.AllKinds {
+				for _, name := range localCfg.SelectorForKind(kind).Include {
+					if _, covered := available[skill.ResourceKey(kind, name)]; covered {
+						continue
 					}
+					appendCandidate(kind, name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
 				}
 			}
 		}

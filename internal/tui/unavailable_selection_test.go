@@ -164,6 +164,71 @@ func TestAppendUnavailableSelectionRowsFailedCatalogLocalIncludeEntrySelectionSt
 	}
 }
 
+func TestAppendUnavailableSelectionRowsLocalIncludeMultipleFailedIdentities(t *testing.T) {
+	entryA := unavailableEntry(func(e *config.RegistryEntry) {
+		e.URL = "/regA"
+		e.CatalogKey = "kA"
+		e.Skills.Include = nil
+	})
+	entryB := unavailableEntry(func(e *config.RegistryEntry) {
+		e.URL = "/regB"
+		e.CatalogKey = "kB"
+		e.Skills.Include = nil
+	})
+	cfg := &config.Config{Registries: []config.RegistryEntry{entryA, entryB}}
+	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"missing"}}}
+	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	if len(rows) != 0 {
+		t.Fatalf("local include with two failed registry identities synthesized %d rows, want 0", len(rows))
+	}
+}
+
+func TestAppendUnavailableSelectionRowsLocalIncludeMultipleFailedIdentitiesEntrySelectionsStillRecovered(t *testing.T) {
+	entryA := unavailableEntry(func(e *config.RegistryEntry) {
+		e.URL = "/regA"
+		e.CatalogKey = "kA"
+	})
+	entryB := unavailableEntry(func(e *config.RegistryEntry) {
+		e.URL = "/regB"
+		e.CatalogKey = "kB"
+	})
+	cfg := &config.Config{Registries: []config.RegistryEntry{entryA, entryB}}
+	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"missing"}}}
+	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	if len(rows) != 2 {
+		t.Fatalf("explicit entry selections on two failed catalogs synthesized %d rows, want 2", len(rows))
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		seen[r.RegistryURL] = true
+	}
+	for _, url := range []string{"/regA", "/regB"} {
+		if !seen[url] {
+			t.Fatalf("ambiguous local suppression dropped the %q entry-owned recovery row: %#v", url, rows)
+		}
+	}
+}
+
+func TestAppendUnavailableSelectionRowsLocalIncludeDuplicateFailedIdentity(t *testing.T) {
+	first := unavailableEntry(func(e *config.RegistryEntry) {
+		e.Skills.Include = nil
+	})
+	dup := unavailableEntry(func(e *config.RegistryEntry) {
+		e.CatalogKey = "k2"
+		e.Source = config.RepoPersonal
+		e.Skills.Include = nil
+	})
+	cfg := &config.Config{Registries: []config.RegistryEntry{first, dup}}
+	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"missing"}}}
+	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	if len(rows) != 1 {
+		t.Fatalf("duplicate failed entries sharing one identity synthesized %d rows, want 1", len(rows))
+	}
+	if rows[0].RegistryURL != "/reg" {
+		t.Fatalf("recovery row registry = %q, want representative /reg", rows[0].RegistryURL)
+	}
+}
+
 func TestAppendUnavailableSelectionRowsFailedCatalogEffectiveRequests(t *testing.T) {
 	failedEntry := unavailableEntry(func(e *config.RegistryEntry) {
 		e.Skills.Include = []string{"kept", "dropped"}
