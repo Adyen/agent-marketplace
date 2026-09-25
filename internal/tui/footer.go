@@ -110,13 +110,17 @@ func renderErrorFooter(m Model) string {
 	return styleFooterError.Render(status) + " " + actions
 }
 
-func (m Model) hasUnavailableRows() bool {
-	for _, r := range m.rows {
+func rowsHaveUnavailable(rows []row) bool {
+	for _, r := range rows {
 		if r.UnavailableReason != "" {
 			return true
 		}
 	}
 	return false
+}
+
+func (m Model) hasUnavailableRows() bool {
+	return rowsHaveUnavailable(m.rows)
 }
 
 func (m Model) failuresOrDrift() bool {

@@ -264,11 +264,8 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 	base.rows = buildRows(rowCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
 	base.rows = appendUnavailableSelectionRows(base.rows, recoveryCfg, resolvedResult.LocalCfg, resolvedResult.ResolveErrors, resolvedResult.CatalogLoad.Catalogs)
-	for _, r := range base.rows {
-		if r.UnavailableReason != "" {
-			driftState = driftFailed
-			break
-		}
+	if rowsHaveUnavailable(base.rows) {
+		driftState = driftFailed
 	}
 	attachDetailSources(base.rows, detailSources)
 	base.driftReport = driftReport
