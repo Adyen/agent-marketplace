@@ -169,7 +169,7 @@ For configured Git registries, discovery stays on the exact inventory of every l
 
 ## `remove`
 
-Removes an explicit selection or records an exclusion, then synchronizes materialized output. For hosted Marketplace pins, removing a direct resource clears its direct selection while preserving any collection ownership; removing a collection clears that collection selector and prunes leaves no longer retained. Required organization resources cannot be removed or excluded.
+Removes an explicit selection or records an exclusion, then synchronizes materialized output. For hosted Marketplace pins, removing a direct resource clears its direct selection while preserving any collection ownership; removing a collection clears that collection selector and prunes leaves no longer retained. A hosted resource installed with `--as` can be removed by either its local name or canonical Marketplace name; a name that identifies more than one direct pin is refused. Required organization resources cannot be removed or excluded.
 
 Named removals from configured v4 Git or directory sources use the v4-aware editor and sync the resulting selection. Other legacy-only removal paths can still refuse a v4 destination. Hosted sources have further restrictions; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 

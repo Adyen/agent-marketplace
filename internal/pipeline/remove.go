@@ -155,7 +155,9 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
 	}
 
-	if pin, entry, ok := marketplaceDirectPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+	if pin, entry, matches := marketplaceDirectPinMatches(mergedCfg, name, opts.Kind, opts.HasKind); matches > 1 {
+		return nil, fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
+	} else if matches == 1 {
 		if entry.Source == config.Organization {
 			if entry.Required {
 				return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
@@ -1409,15 +1411,20 @@ func marketplaceCollectionByName(cfg *config.Config, name string, kind ir.Resour
 }
 
 func marketplaceDirectPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
+	pin, entry, count := marketplaceDirectPinMatches(cfg, name, kind, hasKind)
+	return pin, entry, count == 1
+}
+
+func marketplaceDirectPinMatches(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, int) {
 	if cfg == nil {
-		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
+		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, 0
 	}
 	var found config.MarketplaceResourcePin
 	var foundEntry config.MarketplaceEntry
 	count := 0
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
-			if pin.Kind == "collection" || pin.Name != strings.TrimSpace(name) {
+			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
 				continue
 			}
 			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {
@@ -1429,7 +1436,12 @@ func marketplaceDirectPinByName(cfg *config.Config, name string, kind ir.Resourc
 			found, foundEntry, count = pin, entry, count+1
 		}
 	}
-	return found, foundEntry, count == 1
+	return found, foundEntry, count
+}
+
+func marketplacePinNamed(pin config.MarketplaceResourcePin, name string) bool {
+	name = strings.TrimSpace(name)
+	return pin.Name == name || marketplaceInstalledName(pin) == name
 }
 
 func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, bool) {
@@ -1438,7 +1450,7 @@ func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir
 	}
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
-			if pin.Kind == "collection" || pin.Name != strings.TrimSpace(name) {
+			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
 				continue
 			}
 			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {

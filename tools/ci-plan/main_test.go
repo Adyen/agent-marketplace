@@ -35,6 +35,7 @@ var expectedBenchmarkRoots = []string{
 	"internal/lockfile",
 	"internal/sourcerevision",
 	"internal/pipeline",
+	"internal/marketplace",
 	"internal/marketplacelock",
 }
 

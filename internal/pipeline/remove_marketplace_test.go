@@ -61,6 +61,39 @@ func TestMarketplaceRemoveKindDisambiguatesCollectionAndResource(t *testing.T) {
 	}
 }
 
+func TestMarketplaceRemoveFindsDirectPinByInstalledNameWithoutAmbiguity(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	aliased := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "canonical", InstalledName: "review-copy", Revision: digest, Digest: digest, Direct: true}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{Resources: []config.MarketplaceResourcePin{aliased}}}}
+	for _, name := range []string{"review-copy", "canonical"} {
+		if got, _, ok := marketplaceDirectPinByName(cfg, name, ir.KindSkill, true); !ok || got.Name != "canonical" {
+			t.Fatalf("lookup %q = %#v, %v", name, got, ok)
+		}
+	}
+	other := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review-copy", Revision: digest, Digest: digest, Direct: true}
+	cfg.Marketplaces[0].Resources = append(cfg.Marketplaces[0].Resources, other)
+	if got, _, ok := marketplaceDirectPinByName(cfg, "review-copy", ir.KindSkill, true); ok {
+		t.Fatalf("ambiguous local/canonical name selected %#v", got)
+	}
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, "https://market.example", "mp", "public", cfg.Marketplaces[0].Resources); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	if _, err := Remove(context.Background(), RemoveOptions{RepoRoot: repo, ResourceName: "review-copy", Kind: ir.KindSkill, HasKind: true}); err == nil || !strings.Contains(err.Error(), "matches 2 Marketplace pins") {
+		t.Fatalf("ambiguous removal error = %v", err)
+	}
+	if after, err := os.ReadFile(configPath); err != nil || string(after) != string(before) {
+		t.Fatalf("ambiguous removal changed config: %q, %v", after, err)
+	}
+}
+
 func TestMarketplaceRemoveRejectsCollectionOnlyLeafAndHonorsKind(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	collection := config.MarketplaceResourcePin{RegistryID: "src", Kind: "collection", Name: "bundle", Revision: digest, Digest: digest}

@@ -382,13 +382,14 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 			discovery := &marketplaceDiscovery{Endpoint: outcome.Endpoint, Item: item, CacheState: outcome.CacheState, ObservedAt: outcome.ObservedAt}
 			rows = append(rows, row{
 				Artifact: resolver.ResolvedArtifact{
-					Entry:                 catalog.Entry{Kind: kind, Name: item.Name, Description: item.Description, Tags: tags},
-					CatalogKey:            "marketplace-discovery:" + outcome.Endpoint.InstanceID + ":" + item.RegistryID + ":" + item.Revision + ":" + item.ContentDigest,
-					IsMarketplace:         true,
-					MarketplaceURL:        outcome.Endpoint.URL,
-					MarketplaceInstanceID: outcome.Endpoint.InstanceID,
-					MarketplaceAlias:      outcome.Endpoint.Alias,
-					MarketplaceRegistryID: item.RegistryID,
+					Entry:                   catalog.Entry{Kind: kind, Name: item.Name, Description: item.Description, Tags: tags},
+					CatalogKey:              "marketplace-discovery:" + outcome.Endpoint.InstanceID + ":" + item.RegistryID + ":" + item.Revision + ":" + item.ContentDigest,
+					IsMarketplace:           true,
+					MarketplaceURL:          outcome.Endpoint.URL,
+					MarketplaceInstanceID:   outcome.Endpoint.InstanceID,
+					MarketplaceAlias:        outcome.Endpoint.Alias,
+					MarketplaceRegistryID:   item.RegistryID,
+					MarketplaceResourceName: item.Name,
 				},
 				IsAvailable:          true,
 				RegistryURL:          outcome.Endpoint.URL,

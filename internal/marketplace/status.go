@@ -361,7 +361,7 @@ func newPinStatus(entry config.MarketplaceEntry, pin config.MarketplaceResourceP
 		Required: required, CatalogKey: marketplaceCatalogKey(entry, pin),
 		Harnesses: targetSet, IsMarketplace: true, MarketplaceURL: entry.URL,
 		MarketplaceInstanceID: entry.InstanceID, MarketplaceAlias: entry.Alias,
-		MarketplaceRegistryID: pin.RegistryID, InstalledName: pin.InstalledName,
+		MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name, InstalledName: pin.InstalledName,
 		Unresolved: true,
 	}
 	return status, artifact, true
