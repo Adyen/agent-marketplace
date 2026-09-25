@@ -42,13 +42,19 @@ const (
 
 // Warning codes.
 const (
-	CodeIngestClaudeUnconsumedConfig        = "ingest.claude.unconsumed-config"
-	CodeIngestFactoryUnconsumedConfig       = "ingest.factory.unconsumed-config"
-	CodeIngestCursorUnconsumedConfig        = "ingest.cursor.unconsumed-config"
-	CodeIngestGeminiUnconsumedConfig        = "ingest.gemini.unconsumed-config"
-	CodeIngestWindsurfUnconsumedConfig      = "ingest.windsurf.unconsumed-config"
-	CodeIngestDevinUnconsumedConfig         = "ingest.devin.unconsumed-config"
-	CodeIngestCodexUnconsumedConfig         = "ingest.codex.unconsumed-config"
+	CodeIngestClaudeUnconsumedConfig   = "ingest.claude.unconsumed-config"
+	CodeIngestFactoryUnconsumedConfig  = "ingest.factory.unconsumed-config"
+	CodeIngestCursorUnconsumedConfig   = "ingest.cursor.unconsumed-config"
+	CodeIngestGeminiUnconsumedConfig   = "ingest.gemini.unconsumed-config"
+	CodeIngestWindsurfUnconsumedConfig = "ingest.windsurf.unconsumed-config"
+	CodeIngestDevinUnconsumedConfig    = "ingest.devin.unconsumed-config"
+	CodeIngestCodexUnconsumedConfig    = "ingest.codex.unconsumed-config"
+	// CodeIngestClaudeDuplicateRootSkill reports a plugin-form bundle whose
+	// root SKILL.md declares the same frontmatter name as a skill already
+	// loaded from skills/. The skills/ entry wins deterministically (it loads
+	// first, in sorted order) and the root duplicate is dropped rather than
+	// published twice; the warning records the loss instead of hiding it.
+	CodeIngestClaudeDuplicateRootSkill      = "ingest.claude.duplicate-root-skill"       // Root SKILL.md duplicated a skills/ entry; the skills/ entry is kept
 	CodeSubagentWindsurfNoPrimitive         = "subagent.windsurf.no-primitive"           // Windsurf has no subagent primitive
 	CodeHookClaudeUnsupportedType           = "hook.claude.unsupported-type"             // Claude hook with unsupported type (http/prompt/agent)
 	CodeHookFactoryNonCommandTypeDropped    = "hook.factory.non-command-type-dropped"    // Factory dropped non-command hook type
@@ -558,6 +564,7 @@ var codeCatalog = []CodeDoc{
 	{CodeDoctorDevinVersionUnsupported, SeverityWarning, "The installed Devin CLI is older than the 3000.3 compatibility floor", "Sync does not require a Devin binary and is not blocked; upgrade the Devin CLI to 3000.3 or newer before relying on the generated output"},
 	{CodeDoctorDevinVersionUnknown, SeverityWarning, "A Devin CLI is installed but its version could not be established", "The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed"},
 	{CodeDoctorRepairConflictReplaceable, SeverityWarning, "An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan", "Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it"},
+	{CodeIngestClaudeDuplicateRootSkill, SeverityWarning, "A plugin-form bundle's root SKILL.md declared a name already loaded from skills/; the skills/ entry is kept", "Rename the root skill or remove the duplicate; skills/ entries load first and win deterministically"},
 
 	// Error
 	{CodeSubagentFactoryToolUnknown, SeverityError, "Factory cannot map an explicit subagent tool; subagent artifact suppressed", "Use a supported tool mapping or remove the restriction explicitly"},
