@@ -54,7 +54,7 @@ Resource installation defaults to `repo`, and endpoint registration defaults to 
 
 ## `init`
 
-Creates a minimal user config with the editable v2 schema and an explicit harness list. V4 is the canonical source/resource schema, but the editors that change resource selections do not support it yet. Initialization adds no registries or resources and leaves an existing user config unchanged.
+Creates a minimal v4 user config with an explicit harness list. Initialization adds no sources or resources and leaves an existing user config unchanged. Named Git and directory resource selections can subsequently be edited with the v4-aware CLI or TUI paths; other legacy-only editors still refuse unsupported v4 edits.
 
 ```text
 agent-marketplace init [flags]
@@ -115,7 +115,7 @@ Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` colu
 
 ## `install`
 
-Adds selections to one writable config layer and syncs harness output. Install operations that write config, including endpoint registration, return `v4.writer-opt-in` if the destination is v4. They cannot translate the edit to v4 automatically. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+Adds selections to one writable config layer and syncs harness output. A named resource from a configured Git or directory source can be selected in a v4 destination using its v4-aware editor. Legacy-only editing paths, including some bulk, tag, ad hoc, and hosted Marketplace operations, may still refuse v4 destinations with `v4.writer-opt-in` or a source-specific diagnostic; a refusal leaves the authored configuration unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace install <resource-name> [flags]
@@ -171,7 +171,7 @@ For configured Git registries, discovery stays on the exact inventory of every l
 
 Removes an explicit selection or records an exclusion, then synchronizes materialized output. For hosted Marketplace pins, removing a direct resource clears its direct selection while preserving any collection ownership; removing a collection clears that collection selector and prunes leaves no longer retained. Required organization resources cannot be removed or excluded.
 
-Resource-removal editors cannot edit v4 files. For v4 Git/directory sources, edit the resource group directly, then sync. Hosted sources have further restrictions; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+Named removals from configured v4 Git or directory sources use the v4-aware editor and sync the resulting selection. Other legacy-only removal paths can still refuse a v4 destination. Hosted sources have further restrictions; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace remove <resource-name> [flags]
@@ -309,7 +309,7 @@ Source kinds are explicit:
 - `directory` sources are live and never acquire a Git lock. Relative paths in repository `.agents/config.yaml` and `.agents/config.local.yaml` roots use the repository root; user/organization configs and included fragments use the declaring directory.
 - `marketplace` sources require a matching verified layer lock for explicit requests.
 
-Use the [v4 configuration reference](configuration.md) to write source declarations and resource groups directly. Legacy resource-selection editors cannot edit v4 roots. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Explicit hosted requests need matching verified records in the layer's lockfile; general hosted v4 acquisition, update, and snapshots for dynamic selectors are not implemented.
+Use the [v4 configuration reference](configuration.md) to write source declarations and resource groups directly. Named Git and directory selections also have v4-aware CLI and TUI editors; unsupported legacy-only editors fail closed. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Writable-layer locks can be generated online for explicit hosted requests; an intentionally absent organization lock permits verified transient online acquisition without an organization write. Offline transient acquisition, hosted update/rebind, dynamic-selector snapshots, and general hosted editing remain unsupported.
 
 ## `migrate`
 

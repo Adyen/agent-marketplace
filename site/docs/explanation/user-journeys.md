@@ -15,9 +15,9 @@ Find → Inspect → Choose scope and harnesses → Install → Use
 [Install the CLI](../install.md), then choose your coding harnesses with `agent-marketplace init` or the TUI's first-run prompt. You can browse with `list` before choosing harnesses, but installation and sync need that choice.
 
 ::: warning Check your configuration version
-V4 is the canonical configuration schema, and `init` creates a v4 user config directly; interactive CLI startup and the TUI also offer to migrate a legacy user config (the user-personal root only). However, the commands and TUI actions that change resource selections still require v2/v3 files: the CLI's `install` and `remove` operations, endpoint registration, and TUI resource toggles fail with `v4.writer-opt-in` if they need to edit a v4 file. The TUI's harness modal (`H`) can still edit the target harness list of a v4 config.
+V4 is the canonical configuration schema, and `init` creates a v4 user config directly; interactive CLI startup and the TUI also offer to migrate a legacy user config (the user-personal root only). Named CLI installs/removals and TUI toggles for configured Git and directory resources have v4-aware editors. Other legacy-only editing forms, especially bulk, ad hoc, or hosted mutations, can still refuse a v4 destination; the TUI harness modal (`H`) can edit the target harness list.
 
-For v2/v3, follow the command and TUI steps below. For v4 Git and directory sources, edit `sources` and `resources` directly, then run `sync`. Hosted v4 requests also need matching verified records in the layer's lockfile. Adding a source and digest by hand is not enough to install one. Read [maintaining and migrating configuration](../how-to/migrate-configuration.md) before switching to v4.
+For v2/v3, follow the command and TUI steps below. For v4 Git and directory sources, use supported named edits or edit `sources` and `resources` directly, then run `sync`. Online writable-layer lock generation supports explicit hosted requests; an intentionally missing organization lock is acquired transiently online. Unverified pin evidence and unsupported hosted editors still fail closed. Read [maintaining and migrating configuration](../how-to/migrate-configuration.md) before switching to v4.
 :::
 
 Choose where a resource belongs before installing it:
@@ -85,7 +85,7 @@ Checking for drift and installing a new upstream revision are different operatio
 
 An ordinary sync keeps a healthy Git lock at its recorded revision, even if the branch has moved. `update` defaults to all writable scopes, so pass a scope to limit it to the repository. The TUI's `u` action upgrades Git locks across writable scopes and syncs the output. To reload state without upgrading, use `r`.
 
-Once the revisions you wanted are installed, review the config/lock diff and run `sync --check`. When the check passes, commit shared changes together. Legacy hosted mirror pins can be updated. Updates to index-only and organization-required pins have restrictions. General hosted v4 acquisition/update and snapshots for dynamic selectors are not implemented. See [the command reference](../reference/cli.md#update).
+Once the revisions you wanted are installed, review the config/lock diff and run `sync --check`. When the check passes, commit shared changes together. Legacy hosted mirror pins can be updated. Updates to index-only and organization-required pins have restrictions. Explicit hosted v4 requests can be acquired online into writable-layer locks, and an intentionally absent organization lock is acquired transiently online. Offline transient acquisition, hosted update/rebind, and snapshots for dynamic selectors remain unsupported. See [the command reference](../reference/cli.md#update).
 
 ## 5. Remove something without changing everyone else's setup
 

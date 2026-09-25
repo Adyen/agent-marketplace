@@ -51,6 +51,20 @@ func TestConvertCommandConvertsClaudeSkillToFactory(t *testing.T) {
 	assertFileExists(t, filepath.Join(outDir, "skills", "demo-skill", "SKILL.md"))
 }
 
+func TestConvertCommandAutodetectsSourceHarness(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	source := t.TempDir()
+	writeClaudePluginSkill(t, source, "autodetected-skill")
+	out := filepath.Join(t.TempDir(), "factory-out")
+	output, err := executeCommand("convert", "--autodetect", "--to", "factory", "--out", out, source)
+	if err != nil || !strings.Contains(output, "Converted claude -> factory") {
+		t.Fatalf("autodetected conversion = %q, %v", output, err)
+	}
+	assertFileExists(t, filepath.Join(out, "skills", "autodetected-skill", "SKILL.md"))
+}
+
 func TestConvertCommandRejectsMissingFrom(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

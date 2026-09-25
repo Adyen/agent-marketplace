@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -168,6 +169,231 @@ func TestDocsContract(t *testing.T) {
 			t.Errorf("expected subsection to stop at top heading, got %q", got)
 		}
 	})
+}
+
+func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
+	witnesses := map[string]func(*testing.T){
+		"init":                  TestInitCreatesV4UserPersonalConfig,
+		"list":                  TestListCommandPrintsCatalogWithStatuses,
+		"search":                TestSearchCommandJSONOutput,
+		"install":               TestInstallCommandAddsSkillToRepoConfigAndSyncsIt,
+		"remove":                TestInstallThenRemove_RepoScope,
+		"lock":                  TestLockUpgradeGitNameExpandsContainingSource,
+		"sync":                  TestSyncCommandMaterializesSkillsAndPrintsSummary,
+		"update":                TestUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig,
+		"status":                TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions,
+		"migrate":               TestMigrateCommandDefaultsToV4ForUserAndRepo,
+		"convert":               TestConvertCommandConvertsClaudeSkillToFactory,
+		"doctor":                TestDoctorCommandReportsDetectedHarnessAndInstallRoots,
+		"backup":                TestBackupListCommand,
+		"backup create":         TestBackupCreateOnDemand,
+		"backup list":           TestBackupListCommand,
+		"backup restore":        TestBackupRestoreRoundTrip,
+		"gc":                    TestGcCommandRemovesInactiveHashDirectoriesAndIsIdempotent,
+		"serve":                 TestServeRequiresConfig,
+		"serve reindex":         TestServeReindexRequiresConfig,
+		"serve adopt":           TestServeAdoptMaintenance,
+		"deinit":                TestDeinitTable,
+		"telemetry":             TestTelemetryStatus,
+		"telemetry status":      TestTelemetryStatus,
+		"telemetry enable":      TestTelemetryEnableAndDisable,
+		"telemetry disable":     TestTelemetryEnableAndDisable,
+		"telemetry preview":     TestTelemetryPreview,
+		"telemetry purge":       TestTelemetryPurge,
+		"telemetry reset-id":    TestTelemetryResetID,
+		"tui":                   TestSyncCLIAndTUIParity,
+		"completion":            TestCompletionCommandGeneratesEachShellScript,
+		"completion bash":       TestCompletionCommandGeneratesEachShellScript,
+		"completion zsh":        TestCompletionCommandGeneratesEachShellScript,
+		"completion fish":       TestCompletionCommandGeneratesEachShellScript,
+		"completion powershell": TestCompletionCommandGeneratesEachShellScript,
+		"help":                  TestHelpListsPlaceholderSubcommands,
+	}
+	missing, stale := missingCommandWitnesses(newRootCmd(), witnesses)
+	for _, path := range missing {
+		t.Errorf("public command %q has no behavior-test witness", path)
+	}
+	for _, path := range stale {
+		t.Errorf("behavior-test witness %q no longer has a public command", path)
+	}
+	root := newRootCmd()
+	root.AddCommand(&cobra.Command{Use: "untested-command"})
+	missing, _ = missingCommandWitnesses(root, witnesses)
+	if !slices.Contains(missing, "untested-command") {
+		t.Fatal("a newly added public command did not fail the coverage guard")
+	}
+	flagWitnesses := map[string]func(*testing.T){
+		"backup restore --target":                 TestBackupRestoreRoundTrip,
+		"completion bash --no-descriptions":       TestCompletionCommandGeneratesEachShellScript,
+		"completion fish --no-descriptions":       TestCompletionCommandGeneratesEachShellScript,
+		"completion powershell --no-descriptions": TestCompletionCommandGeneratesEachShellScript,
+		"completion zsh --no-descriptions":        TestCompletionCommandGeneratesEachShellScript,
+		"convert --autodetect":                    TestConvertCommandAutodetectsSourceHarness,
+		"convert --dry-run":                       TestConvertCommandToCodexDryRunDoesNotWrite,
+		"convert --from":                          TestConvertCommandConvertsClaudeSkillToFactory,
+		"convert --out":                           TestConvertCommandConvertsClaudeSkillToFactory,
+		"convert --sync":                          TestConvertCommandToCodexSyncPrunesStaleOutput,
+		"convert --to":                            TestConvertCommandConvertsClaudeSkillToFactory,
+		"deinit --dry-run":                        TestDeinitTable,
+		"deinit --purge-config":                   TestDeinitTable,
+		"deinit --scope":                          TestDeinitTable,
+		"doctor --repair":                         TestDoctorRepairYesAdoptsWithoutPrompting,
+		"doctor --yes":                            TestDoctorRepairYesAdoptsWithoutPrompting,
+		"gc --dry-run":                            TestGcCommandDryRunReportsOrphanedCacheDirectoriesWithoutDeleting,
+		"init --harnesses":                        TestInitCreatesV4UserPersonalConfig,
+		"install --accept-risk":                   TestInstallValidationAllowsSelectorAndBareCoordinateWithMarketplaceFlags,
+		"install --all":                           TestInstallCommandAddsAllDiscoveredSkillsToRepoConfigAndSyncsThem,
+		"install --as":                            TestInstallValidationAllowsSelectorAndBareCoordinateWithMarketplaceFlags,
+		"install --from":                          TestInstallFromFlagInstallsNamedResourceFromAdHocRegistry,
+		"install --kind":                          TestInstallFromFlagWithKindFilter,
+		"install --marketplace":                   TestInstallValidationAllowsSelectorAndBareCoordinateWithMarketplaceFlags,
+		"install --path":                          TestInstallFromFlagWithWebURLInfersResourceName,
+		"install --ref":                           TestInstallFromFlagInstallsNamedResourceFromAdHocRegistry,
+		"install --registry":                      TestInstallCommandAddsAllDiscoveredSkillsForSingleRegistryWhenRegistryFlagIsSet,
+		"install --scope":                         TestInstallThenRemove_UserScope,
+		"install --tag":                           TestInstallCommandAddsTagToRepoConfigAndSyncsMatchingSkills,
+		"install --verbose":                       TestMarketplaceInstallOutputShowsCompactVerifiedDetails,
+		"install --yes":                           TestInstallValidationAllowsSelectorAndBareCoordinateWithMarketplaceFlags,
+		"list --from":                             TestListFromFlagListsResourcesAtAdHocRegistry,
+		"list --kind":                             TestListFromFlagWithKindFilter,
+		"list --path":                             TestListFromFlagRefAndPathRequireFrom,
+		"list --ref":                              TestListFromFlagListsResourcesAtAdHocRegistry,
+		"lock --check":                            TestLockCheckDoesNotAcquireMissingOrganizationMarketplaceLock,
+		"lock --kind":                             TestLockUpgradeGitNameExpandsContainingSource,
+		"lock --path":                             TestLockUpgradeTargetsExactRefAndPath,
+		"lock --ref":                              TestLockUpgradeTargetsExactRefAndPath,
+		"lock --registry":                         TestLockUpgradeGitNameExpandsContainingSource,
+		"lock --scope":                            TestLockUpgradeScopeLeavesOtherLayerAtExactCommit,
+		"lock --upgrade":                          TestLockUpgradeGitNameExpandsContainingSource,
+		"migrate --dry-run":                       TestMigrateCommandToV4IsExplicitAndSupportsDryRun,
+		"migrate --harnesses":                     TestMigrateCommandUsesExplicitHarnesses,
+		"migrate --scope":                         TestMigrateCommandDefaultsToV4ForUserAndRepo,
+		"migrate --to":                            TestMigrateCommandToV4IsExplicitAndSupportsDryRun,
+		"remove --from":                           TestRemoveFromFlagRemovesNamedResourceFromAdHocRegistry,
+		"remove --kind":                           TestRemoveFromFlagUsesResolvedKindNotFlagDefault,
+		"remove --path":                           TestRemoveFromFlagRefAndPathRequireFrom,
+		"remove --ref":                            TestRemoveFromFlagRefAndPathRequireFrom,
+		"remove --scope":                          TestInstallThenRemove_UserScope,
+		"root --debug":                            TestDebugFlagEnablesStructuredDebugLogs,
+		"root --diagnostic":                       TestDiagnosticFlagExportsPayload,
+		"root --diagnostic-accept-sensitive-data": TestDiagnosticFlagExportsPayload,
+		"root --version":                          TestVersionFlagPrintsVersion,
+		"search --kind":                           TestSearchCommandWithoutKindReturnsEveryResourceKind,
+		"search --limit":                          TestSearchCommandLimitOffsetBounds,
+		"search --marketplace":                    TestSearchCommandJSONOutput,
+		"search --offset":                         TestSearchCommandLimitOffsetBounds,
+		"search --output":                         TestSearchCommandJSONOutput,
+		"serve --config":                          TestServeRequiresConfig,
+		"serve --role":                            TestServeRejectsUnsupportedRole,
+		"serve adopt --actor":                     TestServeAdoptMaintenance,
+		"serve adopt --config":                    TestServeAdoptMaintenance,
+		"serve adopt --confirm-maintenance":       TestServeAdoptMaintenance,
+		"serve adopt --idempotency-key":           TestServeAdoptMaintenance,
+		"serve adopt --reason":                    TestServeAdoptMaintenance,
+		"serve reindex --config":                  TestServeReindexRequiresConfig,
+		"sync --allow-revoked":                    TestSyncTransientOrganizationLockHonorsRevocationOverride,
+		"sync --check":                            TestSyncCheckExitsZeroWhenInSync,
+		"sync --locked":                           TestSyncCLIAndTUIParity,
+		"sync --no-backup":                        TestSyncNoBackupFlag,
+		"sync --offline":                          TestSyncCLIAndTUIParity,
+		"sync --prune-stale":                      TestSyncPruneStaleRemovesStaleSkillSelection,
+		"sync --strict":                           TestSyncPruneStaleStrictModePrunesTheSelectionsItPromoted,
+		"sync --verbose":                          TestSyncCommandOutputDirsShowCountsAndVerboseDetail,
+		"telemetry enable --endpoint":             TestTelemetryEnableEndpoint,
+		"telemetry enable --level":                TestTelemetryEnableAndDisable,
+		"telemetry preview --level":               TestTelemetryPreview,
+		"update --bump":                           TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache,
+		"update --kind":                           TestUpdateBumpHonorsScopeAndDirectTarget,
+		"update --path":                           TestUpdateBumpHonorsScopeAndDirectTarget,
+		"update --ref":                            TestUpdateBumpHonorsScopeAndDirectTarget,
+		"update --registry":                       TestUpdateBumpHonorsScopeAndDirectTarget,
+		"update --scope":                          TestUpdateBumpHonorsScopeAndDirectTarget,
+	}
+	missingFlags, staleFlags := missingFlagWitnesses(newRootCmd(), flagWitnesses)
+	for _, path := range missingFlags {
+		t.Errorf("public flag %q has no behavior-test witness", path)
+	}
+	for _, path := range staleFlags {
+		t.Errorf("flag behavior-test witness %q no longer has a public flag", path)
+	}
+	root = newRootCmd()
+	root.PersistentFlags().Bool("untested-public-flag", false, "")
+	missingFlags, _ = missingFlagWitnesses(root, flagWitnesses)
+	if !slices.Contains(missingFlags, "root --untested-public-flag") {
+		t.Fatal("a newly added public flag did not fail the coverage guard")
+	}
+}
+
+func missingCommandWitnesses(root *cobra.Command, witnesses map[string]func(*testing.T)) (missing, stale []string) {
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	seen := make(map[string]bool, len(witnesses))
+	var walk func(*cobra.Command)
+	walk = func(parent *cobra.Command) {
+		for _, cmd := range parent.Commands() {
+			if cmd.Hidden {
+				continue
+			}
+			path := strings.TrimPrefix(cmd.CommandPath(), root.Name()+" ")
+			if witnesses[path] == nil {
+				missing = append(missing, path)
+			}
+			seen[path] = true
+			walk(cmd)
+		}
+	}
+	walk(root)
+	for path := range witnesses {
+		if !seen[path] {
+			stale = append(stale, path)
+		}
+	}
+	slices.Sort(missing)
+	slices.Sort(stale)
+	return missing, stale
+}
+
+func missingFlagWitnesses(root *cobra.Command, witnesses map[string]func(*testing.T)) (missing, stale []string) {
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	seen := make(map[string]bool, len(witnesses))
+	collect := func(path string, flags *pflag.FlagSet) {
+		flags.VisitAll(func(flag *pflag.Flag) {
+			if flag.Hidden || flag.Name == "help" {
+				return
+			}
+			key := path + " --" + flag.Name
+			if seen[key] {
+				return
+			}
+			if witnesses[key] == nil {
+				missing = append(missing, key)
+			}
+			seen[key] = true
+		})
+	}
+	collect("root", root.PersistentFlags())
+	collect("root", root.LocalFlags())
+	var walk func(*cobra.Command)
+	walk = func(parent *cobra.Command) {
+		for _, cmd := range parent.Commands() {
+			if cmd.Hidden {
+				continue
+			}
+			path := strings.TrimPrefix(cmd.CommandPath(), root.Name()+" ")
+			collect(path, cmd.LocalFlags())
+			walk(cmd)
+		}
+	}
+	walk(root)
+	for path := range witnesses {
+		if !seen[path] {
+			stale = append(stale, path)
+		}
+	}
+	slices.Sort(missing)
+	slices.Sort(stale)
+	return missing, stale
 }
 
 func repoRoot(t *testing.T) string {

@@ -136,6 +136,26 @@ func TestVersionFlagPrintsVersion(t *testing.T) {
 	}
 }
 
+func TestDebugFlagEnablesStructuredDebugLogs(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("HOME", t.TempDir())
+	withWorkingDir(t, t.TempDir())
+	if output, err := executeCommand("list"); err != nil {
+		t.Fatalf("baseline list: %v\n%s", err, output)
+	}
+	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		t.Fatal("ordinary list unexpectedly enabled debug logging")
+	}
+	if output, err := executeCommand("--debug", "list"); err != nil {
+		t.Fatalf("debug list: %v\n%s", err, output)
+	}
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		t.Fatal("--debug did not enable structured debug logging")
+	}
+}
+
 func TestSyncFlagsAreDocumentedAndValidated(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -207,6 +227,31 @@ func TestHelpListsPlaceholderSubcommands(t *testing.T) {
 		if !strings.Contains(output, subcommand) {
 			t.Fatalf("expected help output to contain %q, got %q", subcommand, output)
 		}
+	}
+}
+
+func TestCompletionCommandGeneratesEachShellScript(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		shell, marker string
+	}{
+		{"bash", "__start_agent-marketplace"},
+		{"zsh", "#compdef agent-marketplace"},
+		{"fish", "complete -c agent-marketplace"},
+		{"powershell", "Register-ArgumentCompleter"},
+	} {
+		t.Run(tc.shell, func(t *testing.T) {
+			withDescriptions, err := executeCommand("completion", tc.shell)
+			if err != nil || !strings.Contains(withDescriptions, tc.marker) {
+				t.Fatalf("completion %s did not generate a script with %q: %v", tc.shell, tc.marker, err)
+			}
+			withoutDescriptions, err := executeCommand("completion", tc.shell, "--no-descriptions")
+			if err != nil || !strings.Contains(withoutDescriptions, tc.marker) || withDescriptions == withoutDescriptions {
+				t.Fatalf("completion %s --no-descriptions did not change a valid script: %v", tc.shell, err)
+			}
+		})
 	}
 }
 
