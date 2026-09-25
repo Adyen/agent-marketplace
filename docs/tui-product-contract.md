@@ -46,7 +46,7 @@ Snapshot diagnostics and operation diagnostics have separate lifecycles. An acce
 
 Hard snapshot errors make drift unavailable or failed, never `in sync`. A configuration parse or load failure may produce no structured rows at all; in that case the E editor remains the recovery path because row intent cannot be inferred safely.
 
-Hard catalog, resolution, dry-run, or materialization errors keep their diagnostics and failed drift but retain the partial inventory: rows from successfully loaded catalogs stay rendered, and each directly configured selection missing from a failed catalog gains one unavailable recovery row that preserves its kind, name, registry identity, and scope flags. Every otherwise-mutable rendered row can open the scope toggle modal while those errors remain.
+Hard catalog, resolution, dry-run, or materialization errors keep their diagnostics and failed drift but retain the partial inventory: rows from successfully loaded catalogs stay rendered. Each selection explicitly configured on a failed registry gains one unavailable recovery row that preserves its kind, name, registry identity, and scope flags; a top-level local include gains a recovery row only when exactly one failed registry identity can own it and no healthy available row already covers it. Every otherwise-mutable rendered row can open the scope toggle modal while those errors remain.
 
 Required, malformed, unavailable Marketplace, and serialization restrictions are unchanged. Unavailable rows never fabricate detail content: they perform no source lookup and report that no verified content is available.
 

@@ -29,7 +29,7 @@ The TUI shows at most 50 results per endpoint and query, with no pagination. Nar
 - `s` syncs dependencies and generated output with your selections. A healthy Git lock stays at its recorded revision even if its branch has moved.
 - `u` upgrades Git locks in all writable scopes and syncs output. The help label says "update caches", but this action can also change lockfiles and installed resources. Use CLI `update --scope repo` to limit an update to the repository.
 
-If a layer has no lock, the TUI may browse its current source content and show a warning. An invalid existing lock blocks that fallback. If the TUI cannot load the current local state, you can still inspect resources, but must fix the load error before changing selections.
+If a layer has no lock, the TUI may browse its current source content and show a warning. An invalid existing lock blocks that fallback. A configuration load error blocks selection changes until you fix it with `E`. Catalog, resolution, and materialization failures keep the loaded rows inspectable; rows that can normally be toggled still open the scope modal, including eligible selections shown as unavailable, while drift remains failed.
 
 ## Navigation
 
