@@ -110,6 +110,9 @@ func garbageCollectUnderLease(ctx context.Context, dryRun bool) (GCReport, error
 		if !ok {
 			continue
 		}
+		if err := layer.ValidateDeployedMarketplaceLock(evidence.Locks[source]); err != nil {
+			return report, err
+		}
 		for _, decl := range layer.Sources() {
 			if decl.Kind == config.V4SourceGit {
 				reachability.Sources = append(reachability.Sources, decl.URL)
