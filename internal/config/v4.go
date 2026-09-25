@@ -1227,11 +1227,10 @@ func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, ov
 		if rootData == nil || !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
 		}
-		absolute, absErr := filepath.Abs(file)
-		if absErr != nil {
-			return nil, absErr
+		canonical, err = canonicalEffectiveLayerPath(file)
+		if err != nil {
+			return nil, err
 		}
-		canonical = filepath.Clean(absolute)
 	}
 	if visiting[canonical] {
 		return nil, v4err("v4.include-cycle", canonical, 0, "config include cycle")
