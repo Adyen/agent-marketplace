@@ -580,13 +580,25 @@ func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg, repoCfg,
 	return ec.Merged, ec.Repo.Config, ec.Organization.Config, nil
 }
 
+// disableInV4Layer edits a v4 destination through the v4 editor whatever
+// schema declared the source; organization sources are always legacy while
+// init creates v4 user layers. handled is false when the destination is not v4.
+func disableInV4Layer(path, declaringPath string, target *resolver.ResolvedArtifact, name string) (bool, error) {
+	entry := config.RegistryEntry{URL: target.RegistryURL, Path: target.RegistryPath, Ref: target.Ref, V4Kind: target.V4Kind}
+	return config.EditV4ResourceSelection(path, declaringPath, entry, target.Kind, name, config.V4SelectionDisable)
+}
+
 func excludeCollectionMember(repoRoot string, scope Scope, staging *configStagingManager, target *resolver.ResolvedArtifact, name string) error {
 	path, err := ScopedConfigPath(repoRoot, scope)
 	if err != nil {
 		return err
 	}
+	declaringPath := path
 	path, err = stageConfigPath(staging, path)
 	if err != nil {
+		return err
+	}
+	if handled, err := disableInV4Layer(path, declaringPath, target, name); err != nil || handled {
 		return err
 	}
 	switch scope {
@@ -612,12 +624,8 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 	if err != nil {
 		return err
 	}
-	if target.V4Kind != "" {
-		entry := config.RegistryEntry{URL: target.RegistryURL, Path: target.RegistryPath, Ref: target.Ref, V4Kind: target.V4Kind}
-		handled, err := config.EditV4ResourceSelection(path, declaringPath, entry, target.Kind, name, config.V4SelectionDisable)
-		if err != nil || handled {
-			return err
-		}
+	if handled, err := disableInV4Layer(path, declaringPath, target, name); err != nil || handled {
+		return err
 	}
 	switch scope {
 	case ScopeUser:

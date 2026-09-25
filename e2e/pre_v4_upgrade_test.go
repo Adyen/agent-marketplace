@@ -42,7 +42,10 @@ func TestPreV4ReleaseUpgrade(t *testing.T) {
 		t.Fatalf("v3.1.1 executable digest = %s, want %s", actual, preV4LinuxSHA256)
 	}
 
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	candidate := filepath.Join(root, "candidate")
 	build := exec.Command("go", "build", "-tags", "e2e", "-o", candidate, "./cmd/agent-marketplace")
 	build.Dir = filepath.Join("..")
