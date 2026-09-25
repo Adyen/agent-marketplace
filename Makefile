@@ -207,7 +207,7 @@ marketplace-gate:
 upgrade-gate:
 	@test -n "$(AM_E2E_PRE_V4_BINARY)" || { echo "ERROR: AM_E2E_PRE_V4_BINARY must point to the verified v3.1.1 Linux release" >&2; exit 1; }
 	@test -n "$(AM_E2E_UPGRADE_IMAGE)" || { echo "ERROR: AM_E2E_UPGRADE_IMAGE must name a local container image that provides git" >&2; exit 1; }
-	AM_E2E_PRE_V4_BINARY="$(abspath $(AM_E2E_PRE_V4_BINARY))" CGO_ENABLED=0 $(GO) -C e2e test -count=1 -timeout 10m -run '^TestPreV4(ReleaseUpgrade|GitLockUpgrade|AggregateOwnershipUpgrade)$$' .
+	AM_E2E_PRE_V4_BINARY="$(abspath $(AM_E2E_PRE_V4_BINARY))" CGO_ENABLED=0 $(GO) -C e2e test -count=1 -timeout 10m -run '^TestPreV4(ReleaseUpgrade|GitLockUpgrade|AggregateOwnershipUpgrade|LocalLayerUpgrade)$$' .
 
 released-client-gate:
 	@test -n "$(AM_E2E_RELEASED_BINARY)" || { echo "ERROR: AM_E2E_RELEASED_BINARY must point to the verified latest Linux release" >&2; exit 1; }
