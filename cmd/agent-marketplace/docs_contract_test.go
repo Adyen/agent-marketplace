@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -322,6 +324,25 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 	if !slices.Contains(missingFlags, "root --untested-public-flag") {
 		t.Fatal("a newly added public flag did not fail the coverage guard")
 	}
+	// tools/witness-check reads these lines from `go test -json` and fails CI
+	// unless every witness also ran and passed; mapping alone is not coverage.
+	for _, name := range witnessTestNames(witnesses, flagWitnesses) {
+		t.Logf("%s%s", behaviorWitnessPrefix, name)
+	}
+}
+
+const behaviorWitnessPrefix = "behavior-witness: "
+
+func witnessTestNames(maps ...map[string]func(*testing.T)) []string {
+	var names []string
+	for _, witnesses := range maps {
+		for _, fn := range witnesses {
+			full := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
+			names = append(names, full[strings.LastIndex(full, ".")+1:])
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
 }
 
 func missingCommandWitnesses(root *cobra.Command, witnesses map[string]func(*testing.T)) (missing, stale []string) {

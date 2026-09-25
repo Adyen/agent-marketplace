@@ -407,8 +407,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run tests
-        run: make test
+      - name: Run tests and verify CLI behavior witnesses
+        run: make test-witnessed
 
   tui-qa:
     name: TUI QA (${{ matrix.os }})

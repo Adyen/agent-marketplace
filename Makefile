@@ -8,7 +8,7 @@ TEST_PACKAGES ?= ./...
 TEST_FLAGS ?=
 VALIDATE_JOBS ?= 2
 
-.PHONY: test-fast validate validate-fast validate-full validate-e2e
+.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e
 
 # Public container defaults. Override these generic variables in the environment
 # when builds must use a registry mirror.
@@ -58,6 +58,11 @@ test:
 test-fast:
 	+$(MAKE) test TEST_FLAGS="$(TEST_FLAGS) -short"
 
+# Full root tests plus proof that every CLI behavior witness ran and passed.
+# witness-check fails on any failed package, so no shell pipefail is needed.
+test-witnessed:
+	+$(MAKE) --no-print-directory test TEST_PACKAGES=./... TEST_FLAGS="$(TEST_FLAGS) -json" | CGO_ENABLED=0 $(GO) run ./tools/witness-check
+
 validate:
 	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build
 
@@ -65,7 +70,7 @@ validate-fast:
 	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build TEST_FLAGS="$(TEST_FLAGS) -short"
 
 validate-full:
-	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build validate-e2e tui-qa TEST_PACKAGES=./... TEST_FLAGS=-count=1
+	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test-witnessed ci-lint build validate-e2e tui-qa TEST_PACKAGES=./... TEST_FLAGS=-count=1
 
 validate-e2e:
 	CGO_ENABLED=0 HARNESS_COMPAT_TARGET=all HARNESS_COMPAT_NATIVE_MODE=unavailable \
