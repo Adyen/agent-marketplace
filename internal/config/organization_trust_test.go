@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 const remoteOrganizationFixture = `apiVersion: agent-marketplace/v2
@@ -464,89 +462,6 @@ func TestOrganizationIncludeCannotEnableTestTrustFromFragmentPath(t *testing.T) 
 	if !errors.As(err, &trustErr) || trustErr.Code != "organization.trust.ancestor.owner" || trustErr.Path != dir {
 		t.Fatalf("production authority accepted fixture owner: %v", err)
 	}
-}
-
-func TestLoadEffectiveValidatesUnusedOrganizationRuntimeLock(t *testing.T) {
-	oversized := make([]byte, lockfile.MaxFileSize+1)
-	for _, test := range []struct {
-		name    string
-		fixture string
-	}{
-		{name: "legacy remote git", fixture: remoteOrganizationFixture},
-		{name: "v4 git only", fixture: "apiVersion: agent-marketplace/v4\nsources: {org: {git: https://example.com/org.git, ref: main}}\n"},
-	} {
-		t.Run(test.name+" oversized", func(t *testing.T) {
-			dir := t.TempDir()
-			configPath := filepath.Join(dir, "config.yaml")
-			writeFile(t, configPath, test.fixture)
-			opts := isolatedEffectiveOptions(configPath)
-			opts.OrganizationRuntimeLock = oversized
-			ec := LoadEffective(context.Background(), opts)
-			if !errors.Is(errors.Join(ec.Errors...), lockfile.ErrFileTooLarge) {
-				t.Fatalf("errors = %v, want lockfile.ErrFileTooLarge", ec.Errors)
-			}
-			if ec.Organization.Config != nil || ec.Managed {
-				t.Fatalf("oversized runtime lock applied: managed=%v config=%v", ec.Managed, ec.Organization.Config != nil)
-			}
-			if ec.Diagnostics.Validation != "unreadable" {
-				t.Fatalf("diagnostics validation = %q, want unreadable", ec.Diagnostics.Validation)
-			}
-		})
-	}
-
-	t.Run("runtime lock setup error masks parse error", func(t *testing.T) {
-		dir := t.TempDir()
-		configPath := filepath.Join(dir, "config.yaml")
-		writeFile(t, configPath, "not: [yaml")
-		opts := isolatedEffectiveOptions(configPath)
-		opts.OrganizationRuntimeLock = oversized
-		ec := LoadEffective(context.Background(), opts)
-		if len(ec.Errors) != 1 || !errors.Is(ec.Errors[0], lockfile.ErrFileTooLarge) {
-			t.Fatalf("errors = %v, want a sole lockfile.ErrFileTooLarge", ec.Errors)
-		}
-		if ec.Organization.Config != nil || ec.Managed {
-			t.Fatalf("malformed organization pair applied: managed=%v config=%v", ec.Managed, ec.Organization.Config != nil)
-		}
-		if ec.Diagnostics.Validation != "unreadable" {
-			t.Fatalf("diagnostics validation = %q, want unreadable", ec.Diagnostics.Validation)
-		}
-	})
-
-	t.Run("malformed config without runtime lock is invalid", func(t *testing.T) {
-		dir := t.TempDir()
-		configPath := filepath.Join(dir, "config.yaml")
-		writeFile(t, configPath, "not: [yaml")
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
-		if len(ec.Errors) == 0 {
-			t.Fatal("expected a parse error, got none")
-		}
-		if errors.Is(errors.Join(ec.Errors...), lockfile.ErrFileTooLarge) {
-			t.Fatalf("errors = %v, want a parse error, not lockfile.ErrFileTooLarge", ec.Errors)
-		}
-		if ec.Organization.Config != nil || ec.Managed {
-			t.Fatalf("malformed organization pair applied: managed=%v config=%v", ec.Managed, ec.Organization.Config != nil)
-		}
-		if ec.Diagnostics.Validation != "invalid" {
-			t.Fatalf("diagnostics validation = %q, want invalid", ec.Diagnostics.Validation)
-		}
-	})
-
-	t.Run("small unused lock ignored", func(t *testing.T) {
-		dir := t.TempDir()
-		configPath := filepath.Join(dir, "config.yaml")
-		writeFile(t, configPath, remoteOrganizationFixture)
-		opts := isolatedEffectiveOptions(configPath)
-		opts.OrganizationRuntimeLock = []byte("apiVersion: agent-marketplace-lock/v1\nscope: organization\n")
-		ec := LoadEffective(context.Background(), opts)
-		if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
-			t.Fatalf("unused runtime lock was not ignored: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
-		}
-		for _, read := range ec.Organization.Reads {
-			if read.AcquisitionLock {
-				t.Fatalf("unused runtime lock recorded an acquisition read: %#v", read)
-			}
-		}
-	})
 }
 
 func TestLoadEffectivePreservesOrganizationLockErrorPrecedence(t *testing.T) {

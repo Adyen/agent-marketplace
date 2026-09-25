@@ -9,9 +9,10 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
-func TestLoadLayerLockWarnsOnV1(t *testing.T) {
+func TestReadLayerLockWarnsOnV1(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -22,7 +23,7 @@ func TestLoadLayerLockWarnsOnV1(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
-	doc, _, exists, err := loadLayerLock(path, lockfile.ScopeUser)
+	doc, _, exists, err := pipeline.ReadLayerLock(path, lockfile.ScopeUser)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestLoadLayerLockWarnsOnV1(t *testing.T) {
 	}
 }
 
-func TestLoadLayerLockSkipsWarningOnV2(t *testing.T) {
+func TestReadLayerLockSkipsWarningOnV2(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -61,7 +62,7 @@ func TestLoadLayerLockSkipsWarningOnV2(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
-	if _, _, _, err := loadLayerLock(path, lockfile.ScopeUser); err != nil {
+	if _, _, _, err := pipeline.ReadLayerLock(path, lockfile.ScopeUser); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(logs.String(), "lock.version-deprecated") {

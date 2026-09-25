@@ -49,8 +49,8 @@ resources:
 	li := LayerIntent{Source: UserPersonal, v4: v4}
 
 	wantSources := []SourceDecl{
-		{Kind: V4SourceGit, CanonicalURL: "https://example.com/repo"},
-		{Kind: V4SourceMarketplace, CanonicalURL: "https://market.example"},
+		{Kind: V4SourceGit, URL: "https://example.com/repo.git", Ref: "main"},
+		{Kind: V4SourceMarketplace, URL: "https://market.example"},
 		{Kind: V4SourceDirectory},
 	}
 	if got := li.Sources(); !reflect.DeepEqual(got, wantSources) {
@@ -88,9 +88,9 @@ resources:
 	}
 	ll := LayerIntent{Source: UserPersonal, legacy: legacy}
 	wantLegacySources := []SourceDecl{
-		{Kind: V4SourceGit, CanonicalURL: "https://example.com/legacy"},
+		{Kind: V4SourceGit, URL: "https://example.com/legacy.git"},
 		{Kind: V4SourceDirectory},
-		{Kind: V4SourceMarketplace, CanonicalURL: "https://mp.example"},
+		{Kind: V4SourceMarketplace, URL: "https://mp.example"},
 	}
 	if got := ll.Sources(); !reflect.DeepEqual(got, wantLegacySources) {
 		t.Fatalf("legacy sources = %#v, want %#v", got, wantLegacySources)

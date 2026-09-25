@@ -150,7 +150,7 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 }
 
 func cleanupReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAssertion, error) {
-	byRequested, err := configReadAssertions(ec, true)
+	byRequested, err := configReadAssertions(ec.LayerResults(), true)
 	if err != nil {
 		return nil, err
 	}
@@ -185,13 +185,12 @@ func cleanupReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAsser
 	return reads, nil
 }
 
-func configReadAssertions(ec config.EffectiveConfig, includeAcquisitionLocks bool) (map[string]dependencytxn.ReadAssertion, error) {
-	layers := []config.LayerResult{ec.Organization, ec.User, ec.Repo, ec.LocalLayer}
+func configReadAssertions(layers []config.LayerResult, includeAcquisitionLocks bool) (map[string]dependencytxn.ReadAssertion, error) {
 	byRequested := map[string]dependencytxn.ReadAssertion{}
 	represented := map[string]bool{}
 	for _, layer := range layers {
 		for _, read := range layer.Reads {
-			if read.RuntimeLock || (read.AcquisitionLock && !includeAcquisitionLocks) {
+			if read.AcquisitionLock && !includeAcquisitionLocks {
 				continue
 			}
 			assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath, Expected: dependencytxn.Generation{Exists: true, Digest: read.Digest}}

@@ -190,7 +190,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 			if !bumpScopeSelected(opts.BumpScopes, scope) {
 				continue
 			}
-			registries := layerRegistriesForUpdate(layer)
+			registries := GitRegistryEntries(layer.Sources)
 			if len(registries) == 0 {
 				continue
 			}
@@ -540,16 +540,6 @@ func isUnsupportedMarketplaceSyncError(err error) bool {
 		}
 	}
 	return false
-}
-
-func layerRegistriesForUpdate(layer config.LayerResult) []config.RegistryEntry {
-	if layer.Config != nil {
-		return layer.Config.Registries
-	}
-	if layer.Local != nil {
-		return layer.Local.Registries
-	}
-	return nil
 }
 
 func bumpScopeSelected(scopes map[lockfile.Scope]bool, scope lockfile.Scope) bool {
