@@ -510,3 +510,138 @@ func TestClaudeIngester_LoadBundle_SingleSkillDir_NoName(t *testing.T) {
 		t.Fatal("expected error diagnostic for root SKILL.md without name field")
 	}
 }
+
+// pluginRootSkillFS reproduces the source shape of single-skill plugin
+// repositories such as github.com/blader/humanizer: a Claude plugin manifest
+// whose "skills" entry points at the repository root, a root-level SKILL.md,
+// and sibling content that carries no loadable plugin resource (the
+// non-markdown agents/ entry must not become a subagent).
+var pluginRootSkillFS = fstest.MapFS{
+	".claude-plugin/plugin.json": {Data: []byte(`{"name":"humanizer","version":"3.0.0","skills":["./"]}`)},
+	"SKILL.md":                   {Data: []byte("---\nname: humanizer\ndescription: Rewrite AI-sounding text\n---\nBody")},
+	"agents/openai.yaml":         {Data: []byte("mode: overwrite\n")},
+	"README.md":                  {Data: []byte("# Humanizer\n")},
+}
+
+func TestClaudeIngester_LoadBundle_PluginFormWithRootSkill(t *testing.T) {
+	ing, ok := ingest.For(ingest.HarnessClaude)
+	if !ok {
+		t.Fatal("Claude ingester not registered")
+	}
+
+	b, err := ing.LoadBundle(pluginRootSkillFS)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	if len(b.Resources) != 1 {
+		t.Fatalf("LoadBundle: got %d resources, want 1 (the root skill): %#v", len(b.Resources), b.Resources)
+	}
+	skill, ok := b.Resources[0].(*ir.Skill)
+	if !ok {
+		t.Fatalf("resource kind = %v, want Skill", b.Resources[0].Kind())
+	}
+	if skill.Name() != "humanizer" {
+		t.Errorf("skill name = %q, want %q", skill.Name(), "humanizer")
+	}
+	if skill.Source.File != "SKILL.md" {
+		t.Errorf("skill source = %q, want SKILL.md", skill.Source.File)
+	}
+}
+
+func TestClaudeIngester_LoadBundle_BarePluginFormWithRootSkill(t *testing.T) {
+	ing, ok := ingest.For(ingest.HarnessClaude)
+	if !ok {
+		t.Fatal("Claude ingester not registered")
+	}
+
+	// A non-markdown file under agents/ claims the bare plugin form; the
+	// root SKILL.md must still load.
+	src := fstest.MapFS{
+		"SKILL.md":           {Data: []byte("---\nname: humanizer\ndescription: Rewrite AI-sounding text\n---\nBody")},
+		"agents/openai.yaml": {Data: []byte("mode: overwrite\n")},
+	}
+
+	b, err := ing.LoadBundle(src)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	if len(b.Resources) != 1 {
+		t.Fatalf("LoadBundle: got %d resources, want 1 (the root skill): %#v", len(b.Resources), b.Resources)
+	}
+	skill, ok := b.Resources[0].(*ir.Skill)
+	if !ok {
+		t.Fatalf("resource kind = %v, want Skill", b.Resources[0].Kind())
+	}
+	if skill.Name() != "humanizer" {
+		t.Errorf("skill name = %q, want %q", skill.Name(), "humanizer")
+	}
+}
+
+func TestClaudeIngester_LoadBundle_PluginFormRootSkillDuplicateName(t *testing.T) {
+	ing, ok := ingest.For(ingest.HarnessClaude)
+	if !ok {
+		t.Fatal("Claude ingester not registered")
+	}
+
+	src := fstest.MapFS{
+		".claude-plugin/plugin.json": {Data: []byte(`{"name":"test-plugin"}`)},
+		"skills/foo/SKILL.md":        {Data: []byte("---\nname: foo\ndescription: Directory skill\n---\nDirectory body")},
+		"SKILL.md":                   {Data: []byte("---\nname: foo\ndescription: Root skill\n---\nRoot body")},
+	}
+
+	b, err := ing.LoadBundle(src)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	if len(b.Resources) != 1 {
+		t.Fatalf("LoadBundle: got %d resources, want 1 (the skills/ entry): %#v", len(b.Resources), b.Resources)
+	}
+	skill, ok := b.Resources[0].(*ir.Skill)
+	if !ok {
+		t.Fatalf("resource kind = %v, want Skill", b.Resources[0].Kind())
+	}
+	if skill.Source.File != "skills/foo/SKILL.md" {
+		t.Errorf("kept skill source = %q, want skills/foo/SKILL.md", skill.Source.File)
+	}
+	var warned bool
+	for _, d := range b.Diagnostics {
+		if d.Code == diag.CodeIngestClaudeDuplicateRootSkill {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("expected duplicate-root-skill warning; diagnostics=%#v", b.Diagnostics)
+	}
+}
+
+func TestClaudeIngester_LoadBundle_PluginFormRootSkillCoexistsWithSkillsDir(t *testing.T) {
+	ing, ok := ingest.For(ingest.HarnessClaude)
+	if !ok {
+		t.Fatal("Claude ingester not registered")
+	}
+
+	src := fstest.MapFS{
+		".claude-plugin/plugin.json": {Data: []byte(`{"name":"test-plugin"}`)},
+		"skills/foo/SKILL.md":        {Data: []byte("---\nname: foo\ndescription: Directory skill\n---\nDirectory body")},
+		"SKILL.md":                   {Data: []byte("---\nname: root-doc\ndescription: Root skill\n---\nRoot body")},
+	}
+
+	b, err := ing.LoadBundle(src)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	sources := make(map[string]string)
+	for _, r := range b.Resources {
+		skill, ok := r.(*ir.Skill)
+		if !ok {
+			t.Fatalf("resource %q kind = %v, want Skill", r.Name(), r.Kind())
+		}
+		sources[skill.Name()] = skill.Source.File
+	}
+	if got, ok := sources["foo"]; !ok || got != "skills/foo/SKILL.md" {
+		t.Errorf("skills/ entry missing or wrong source: %#v", sources)
+	}
+	if got, ok := sources["root-doc"]; !ok || got != "SKILL.md" {
+		t.Errorf("root skill missing or wrong source: %#v", sources)
+	}
+}

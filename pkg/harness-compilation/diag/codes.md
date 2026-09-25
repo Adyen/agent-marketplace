@@ -56,6 +56,7 @@ comparison in non-test code.
 | Code | Summary | Hint |
 |------|---------|------|
 | `ingest.claude.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Claude layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
+| `ingest.claude.duplicate-root-skill` | A plugin-form bundle's root SKILL.md declared a name already loaded from skills/; the skills/ entry is kept | Rename the root skill or remove the duplicate; skills/ entries load first and win deterministically |
 | `ingest.factory.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Factory layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
 | `ingest.cursor.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Cursor layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
 | `ingest.gemini.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Gemini layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |

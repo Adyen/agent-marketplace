@@ -140,6 +140,14 @@ func skillSupportFiles(src fs.FS, root string) ([]string, error) {
 			return err
 		}
 		if d.IsDir() {
+			// VCS internals are never skill content. A root skill's
+			// directory is the whole checkout and a marketplace clone keeps
+			// .git on disk, so walking it would publish object databases
+			// into installable archives and feed multi-megabyte pack files
+			// to bounded support reads.
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
 			return nil
 		}
 
