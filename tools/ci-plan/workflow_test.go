@@ -188,7 +188,11 @@ func TestE2EGatesDriver(t *testing.T) {
 			t.Errorf("%s runs on %v, not the E2E planner output the driver checks", gate, cond)
 		}
 	}
-	step := stepMap(t, getSlice(t, driver, "steps")[0])
+	steps := getSlice(t, driver, "steps")
+	if len(steps) != 1 {
+		t.Fatalf("steps = %d, want 1", len(steps))
+	}
+	step := stepMap(t, steps[0])
 	env := getMap(t, step, "env")
 	for key, want := range map[string]string{
 		"CHANGES_RESULT":         "${{ needs.changes.result }}",
@@ -201,7 +205,10 @@ func TestE2EGatesDriver(t *testing.T) {
 			t.Errorf("env[%s] = %v, want %q", key, env[key], want)
 		}
 	}
-	run := step["run"].(string)
+	run, ok := step["run"].(string)
+	if !ok {
+		t.Fatalf("step run is not a string: %v", step["run"])
+	}
 	for _, tc := range []struct {
 		name                                     string
 		changes, planned, market, upgrade, older string
@@ -219,8 +226,8 @@ func TestE2EGatesDriver(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command("bash", "-c", run)
 			cmd.Env = []string{"CHANGES_RESULT=" + tc.changes, "RUN_E2E=" + tc.planned, "MARKETPLACE_RESULT=" + tc.market, "UPGRADE_RESULT=" + tc.upgrade, "RELEASED_CLIENT_RESULT=" + tc.older}
-			if err := cmd.Run(); (err == nil) != tc.wantPass {
-				t.Fatalf("pass = %v, want %v", err == nil, tc.wantPass)
+			if out, err := cmd.CombinedOutput(); (err == nil) != tc.wantPass {
+				t.Fatalf("pass = %v, want %v; err %v, output:\n%s", err == nil, tc.wantPass, err, out)
 			}
 		})
 	}

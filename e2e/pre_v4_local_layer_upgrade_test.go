@@ -61,12 +61,15 @@ func TestPreV4LocalLayerUpgrade(t *testing.T) {
 			t.Fatalf("%s: second installed=%v, want %v", stage, got, second)
 		}
 	}
-	apiVersion := func(path string) string {
+	readConfig := func(path string) []byte {
 		t.Helper()
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
+		return data
+	}
+	apiVersion := func(data []byte) string {
 		for _, line := range strings.Split(string(data), "\n") {
 			if value, ok := strings.CutPrefix(line, "apiVersion: "); ok {
 				return value
@@ -98,8 +101,8 @@ func TestPreV4LocalLayerUpgrade(t *testing.T) {
 
 	must(candidate, "migrate", "--scope", "all")
 	for _, path := range []string{repoConfig, localConfig} {
-		data, _ := os.ReadFile(path)
-		if apiVersion(path) != "agent-marketplace/v4" || !strings.Contains(string(data), "directory: ./vendor/registry") {
+		data := readConfig(path)
+		if apiVersion(data) != "agent-marketplace/v4" || !strings.Contains(string(data), "directory: ./vendor/registry") {
 			t.Fatalf("migrate --scope all did not convert %s keeping its relative source:\n%s", path, data)
 		}
 	}
@@ -118,7 +121,7 @@ func TestPreV4LocalLayerUpgrade(t *testing.T) {
 
 	settled := map[string][]byte{}
 	for _, path := range []string{repoConfig, localConfig} {
-		settled[path], _ = os.ReadFile(path)
+		settled[path] = readConfig(path)
 	}
 	must(candidate, "migrate", "--scope", "all")
 	for path, want := range settled {
