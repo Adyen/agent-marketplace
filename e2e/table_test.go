@@ -4599,6 +4599,41 @@ harnesses:
 			{Args: []string{"status"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "gemini-extension.json", "For Claude plugins, rename"}},
 		},
 	},
+	{
+		Name:       "v4_user/inspect_lock_and_backup",
+		Desc:       "Given a v4 user config that selects a Git skill, When status, doctor, lock, and backup run, Then each succeeds against the v4 layer and the workspace stays in sync",
+		Registries: []RegistryDef{{Name: "v4-user-ops", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools: {git: '{{REG:v4-user-ops}}', ref: main}\nresources:\n  tools: {include: [skill/review]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/root/.factory/skills/review/SKILL.md", "/root/.agents/lock.yaml"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"SYNCED RESOURCES", "review", "USER"}},
+			{Args: []string{"doctor"}, MustPass: true, OutContains: []string{"agent-marketplace doctor"}},
+			{Args: []string{"lock", "--scope", "user"}, MustPass: true, OutContains: []string{"Locks: 0 changed"}},
+			{Args: []string{"lock", "--check"}, MustPass: true},
+			{Args: []string{"backup", "create"}, MustPass: true, OutContains: []string{"Backup created for: factory"}},
+			{Args: []string{"backup", "list"}, MustPass: true, OutContains: []string{"factory (1)"}},
+			{Args: []string{"backup", "restore", "--target", "factory"}, MustPass: true, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	{
+		Name:       "v4_user/gc_and_deinit",
+		Desc:       "Given a v4 user config that selects a Git skill, When deinit runs, the source is dropped, and gc runs, Then deinit keeps the config, gc removes only the orphaned cache, and deinit --purge-config removes the v4 config and its lock",
+		Registries: []RegistryDef{{Name: "v4-user-gc", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools: {git: '{{REG:v4-user-gc}}', ref: main}\nresources:\n  tools: {include: [skill/review]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"gc", "--dry-run"}, MustPass: true, OutContains: []string{"Would remove 0 cache entries"}},
+			{Args: []string{"deinit", "--dry-run"}, MustPass: true, OutContains: []string{"Would remove 1 managed artifact(s)"}, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"deinit"}, MustPass: true, OutContains: []string{"Removed 1 managed artifact(s)"}, FilesAbsent: []string{"/root/.factory/skills/review"}, FilesExist: []string{"/root/.agents/config.yaml"}},
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n", Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/root/.factory/skills/review"}},
+			{Args: []string{"gc", "--dry-run"}, MustPass: true, OutNotContains: []string{"Would remove 0 cache entries"}},
+			{Args: []string{"gc"}, MustPass: true, OutNotContains: []string{"Removed 0 cache entries"}},
+			{Args: []string{"gc", "--dry-run"}, MustPass: true, OutContains: []string{"Would remove 0 cache entries"}},
+			{Args: []string{"deinit", "--purge-config"}, MustPass: true, FilesAbsent: []string{"/root/.agents/config.yaml", "/root/.agents/lock.yaml"}},
+		},
+	},
 }
 
 // ---------- parallelism configuration ----------

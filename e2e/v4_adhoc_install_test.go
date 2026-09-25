@@ -131,3 +131,63 @@ func TestAdHocGitPathTrailingSlashIntoV4UserConfig(t *testing.T) {
 	}
 	env.AssertFileAbsent("/root/.factory/skills/review")
 }
+
+// A user installs a skill from a feature branch into each scope. When the
+// branch advances, plain sync keeps the locked commit, update moves to the new
+// commit, and removal by name alone clears it.
+func TestV4AdHocBranchSourceKeepsPinUntilUpdate(t *testing.T) {
+	for _, tc := range []struct{ scope, skill string }{
+		{scope: "user", skill: "/root/.factory/skills/daily-sync/SKILL.md"},
+		{scope: "repo", skill: "/workspace/.factory/skills/daily-sync/SKILL.md"},
+		{scope: "local", skill: "/workspace/.factory/skills/daily-sync/SKILL.md"},
+	} {
+		t.Run(tc.scope, func(t *testing.T) {
+			env := newEnv(t)
+			env.InitGitRepo()
+			env.MustRunAM("init", "--harnesses", "factory")
+			url := env.CreateBareRepo("branch-source", map[string]string{"README.md": "registry"})
+			working := filepath.Join(t.TempDir(), "working")
+			gitRun(t, "", "clone", strings.TrimPrefix(url, "file://"), working)
+			gitRun(t, working, "checkout", "-b", "feature")
+			push := func(body string) {
+				t.Helper()
+				file := filepath.Join(working, "skills", "daily-sync", "SKILL.md")
+				if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, []byte("---\nname: daily-sync\ndescription: Daily sync\n---\n\n"+body+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				gitRun(t, working, "add", "-A")
+				gitRun(t, working, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-m", body)
+				gitRun(t, working, "push", "origin", "feature")
+			}
+			push("First revision")
+
+			install := env.RunAM("install", "daily-sync", "--from", url, "--ref", "feature", "--path", "skills/daily-sync", "--scope", tc.scope)
+			if install.ExitCode != 0 {
+				t.Fatalf("install from a feature branch into %s scope failed (exit %d):\n%s", tc.scope, install.ExitCode, install.Combined)
+			}
+			env.AssertFileContains(tc.skill, "First revision")
+
+			push("Second revision")
+			env.AssertExitCode(env.RunAM("sync"), 0)
+			env.AssertFileContains(tc.skill, "First revision")
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+
+			env.AssertExitCode(env.RunAM("update"), 0)
+			env.AssertFileContains(tc.skill, "Second revision")
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+			if status := env.RunAM("status"); status.ExitCode != 0 || !strings.Contains(status.Combined, "daily-sync") {
+				t.Fatalf("status after update did not report daily-sync (exit %d):\n%s", status.ExitCode, status.Combined)
+			}
+
+			remove := env.RunAM("remove", "daily-sync")
+			if remove.ExitCode != 0 {
+				t.Fatalf("remove by name from %s scope failed (exit %d):\n%s", tc.scope, remove.ExitCode, remove.Combined)
+			}
+			env.AssertFileAbsent(tc.skill)
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+		})
+	}
+}
