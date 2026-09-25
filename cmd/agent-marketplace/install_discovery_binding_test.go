@@ -584,9 +584,9 @@ func testInstallMissingSelectionDoesNotPublishOrLeakLease(t *testing.T, configur
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	visited := false
-	_, err = cache.GarbageCollectWithReachabilityAndContext(ctx, true, func(context.Context) (cache.GCReachability, error) {
+	_, err = cache.GarbageCollect(ctx, true, func(context.Context) (cache.GCReachability, error) {
 		visited = true
-		return cache.GCReachability{Configs: []*config.Config{{APIVersion: config.APIVersionV2}}}, nil
+		return cache.GCReachability{}, nil
 	})
 	if err != nil || !visited {
 		t.Fatalf("GC after failed install: visited=%t error=%v", visited, err)

@@ -14,8 +14,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
 func mutableLocalRegistry(t testing.TB) string {
@@ -204,17 +202,15 @@ func TestMutableRegistryLeaseBlocksGCAndPersists(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				reader := func(context.Context) (GCReachability, error) {
-					return GCReachability{Configs: []*config.Config{{}}}, nil
-				}
+				reader := staticReachability(nil)
 				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 				defer cancel()
-				if _, err := GarbageCollectWithReachabilityAndContext(ctx, false, reader); !errors.Is(err, context.DeadlineExceeded) {
+				if _, err := GarbageCollect(ctx, false, reader); !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("GC during lease: %v", err)
 				}
 				assertFileContents(t, marker, "held")
 				release()
-				if _, err := GarbageCollectWithReachabilityAndContext(context.Background(), false, reader); err != nil {
+				if _, err := GarbageCollect(context.Background(), false, reader); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {

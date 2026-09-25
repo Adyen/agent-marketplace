@@ -464,7 +464,6 @@ func TestGcCommandV4OrganizationMarketplaceWithoutLockCollects(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	t.Skip("known gap: awaits WP4 lock-free local reachability")
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))

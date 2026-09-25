@@ -16,7 +16,12 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
+
+func emptyGCReachability(context.Context) (cache.GCReachability, error) {
+	return cache.GCReachability{}, nil
+}
 
 func dependencyReadOnlyEntrypoints() map[string]func() error {
 	entries := map[string]func() error{
@@ -224,17 +229,17 @@ func TestDependencyRecoveryWaitsForExactGCNamespace(t *testing.T) {
 	releaseGC := make(chan struct{})
 	gcDone := make(chan error, 1)
 	go func() {
-		_, err := cache.GarbageCollectWithReachabilityAndContext(context.Background(), true, func(context.Context) (cache.GCReachability, error) {
+		_, err := cache.GarbageCollect(context.Background(), true, func(context.Context) (cache.GCReachability, error) {
 			close(gcEntered)
 			<-releaseGC
-			return cache.GCReachability{Configs: []*config.Config{{}}}, nil
+			return cache.GCReachability{}, nil
 		})
 		gcDone <- err
 	}()
 	<-gcEntered
 
 	recoveryDone := make(chan error, 1)
-	go func() { recoveryDone <- recoverDependencyTransactions(context.Background()) }()
+	go func() { recoveryDone <- pipeline.RecoverDependencyTransactions(context.Background()) }()
 	select {
 	case err := <-recoveryDone:
 		t.Fatalf("recovery entered publication while GC held the exclusive namespace lease: %v", err)
@@ -283,7 +288,7 @@ func TestDeinitOrganizationResolutionReturnsHeldExactLease(t *testing.T) {
 	}
 	gcDone := make(chan error, 1)
 	go func() {
-		_, err := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+		_, err := cache.GarbageCollect(context.Background(), false, emptyGCReachability)
 		gcDone <- err
 	}()
 	select {
@@ -352,9 +357,7 @@ registries:
 	gcDone := make(chan error, 1)
 	go func() {
 		close(started)
-		_, err := cache.GarbageCollectWithReachabilityAndContext(context.Background(), false, func(context.Context) (cache.GCReachability, error) {
-			return cache.GCReachability{Configs: []*config.Config{{}}}, nil
-		})
+		_, err := cache.GarbageCollect(context.Background(), false, emptyGCReachability)
 		gcDone <- err
 	}()
 	<-started

@@ -32,7 +32,7 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 	if err != nil {
 		return err
 	}
-	if err := recoverDependencyTransactions(ctx); err != nil {
+	if err := pipeline.RecoverDependencyTransactions(ctx); err != nil {
 		return err
 	}
 	return tui.Run(ctx, workspace.RepoRoot(), homeDir, tui.WithWorkspace(workspace), tui.WithDependencyLifecycle(tui.DependencyLifecycle{
