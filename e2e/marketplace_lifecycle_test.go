@@ -518,4 +518,5 @@ resources:
 	consumer.AssertFileContains("/root/.factory/mcp.json", "sonarqube")
 	consumer.AssertFileAbsent("/etc/agent-marketplace/lock.yaml")
 	consumer.AssertExitCode(consumer.RunAM("sync"), 0)
+	consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
 }
