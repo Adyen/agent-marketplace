@@ -251,28 +251,28 @@ func TestRunIdempotentSecondRunSkips(t *testing.T) {
 	}
 }
 
-func TestRunNilHarnessesDefaultsToClaude(t *testing.T) {
+func TestRunNilHarnessesRejectedWithoutClaudeOutput(t *testing.T) {
 	repoRoot := t.TempDir()
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	t.Setenv("HOME", t.TempDir())
 
-	irSkill := ir.NewSkill("default-target-skill", "Default target", "Body", nil, nil, ir.SourceRef{})
+	irSkill := ir.NewSkill("unspecified-target-skill", "Unspecified target", "Body", nil, nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{
-			Entry:     catalog.Entry{Name: "default-target-skill", Resource: irSkill},
+			Entry:     catalog.Entry{Name: "unspecified-target-skill", Resource: irSkill},
 			Source:    config.RepoCommitted,
-			Harnesses: nil, // nil defaults to [TargetClaude]
+			Harnesses: nil,
 		},
 	}
 
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		t.Fatalf("expected diagnostic report, got error %v", err)
 	}
-
-	_, ok := report.PerTarget[hcc.TargetClaude]
-	if !ok {
-		t.Fatal("expected Claude target report when Harnesses is nil")
+	if !hasDiagCode(report.Diags, "materialize.target.nil") {
+		t.Fatalf("expected nil target diagnostic, got %#v", report.Diags)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("nil target intent must not create Claude output, stat error=%v", err)
 	}
 }
 
@@ -293,12 +293,132 @@ func TestRunEmptyHarnessesSkipsSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	// The skill is opted out but the default target may appear for pruning.
-	// The key assertion: no files should be written for this skill.
+	// The explicit empty target list must not materialize this skill.
 	for _, tr := range report.PerTarget {
 		if len(tr.Written) != 0 {
 			t.Fatalf("expected no written files for opted-out skill, got %v", tr.Written)
 		}
+	}
+}
+
+func TestRunEmptyHarnessesIsIntentionalNoOp(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	resource := ir.NewSkill("retained-skill", "Retained", "Body", nil, nil, ir.SourceRef{})
+	selected := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "retained-skill", Resource: resource},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetClaude},
+	}}
+	first, err := Run(context.Background(), repoRoot, selected)
+	if err != nil || first.TotalWritten() == 0 {
+		t.Fatalf("positive control should materialize before no-op: report=%#v err=%v", first, err)
+	}
+
+	noOp := selected
+	noOp[0].Harnesses = []hcc.Target{}
+	second, err := Run(context.Background(), repoRoot, noOp)
+	if err != nil {
+		t.Fatalf("explicit empty target list: %v", err)
+	}
+	if second.TotalWritten() != 0 || second.TotalRemoved() != 0 {
+		t.Fatalf("explicit empty target list must not write or prune: written=%d removed=%d", second.TotalWritten(), second.TotalRemoved())
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".claude")); err != nil {
+		t.Fatalf("explicit empty target list must preserve prior output: %v", err)
+	}
+}
+
+func TestRunNilHarnessesRejectedForUnresolvedInput(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:      catalog.Entry{Name: "unresolved-target-skill", Resource: ir.NewSkill("unresolved-target-skill", "Unresolved", "Body", nil, nil, ir.SourceRef{})},
+		Source:     config.RepoCommitted,
+		Harnesses:  nil,
+		Unresolved: true,
+	}}
+
+	report, err := Run(context.Background(), repoRoot, resolved)
+	if err != nil {
+		t.Fatalf("expected diagnostic report, got error %v", err)
+	}
+	if !hasDiagCode(report.Diags, "materialize.target.nil") {
+		t.Fatalf("expected nil target diagnostic for unresolved input, got %#v", report.Diags)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("unresolved nil target must not create Claude output, stat error=%v", err)
+	}
+}
+
+func TestRunMixedExplicitEmptyPreservesStalePartition(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	resource := ir.NewSkill("partitioned-skill", "Partitioned", "Body", nil, nil, ir.SourceRef{})
+	initial := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "partitioned-skill", Resource: resource},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory},
+	}}
+	first, err := Run(context.Background(), repoRoot, initial)
+	if err != nil || first.TotalWritten() == 0 {
+		t.Fatalf("positive control should materialize both partitions: report=%#v err=%v", first, err)
+	}
+
+	claudeOnly := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "partitioned-skill", Resource: resource},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetClaude},
+	}, {
+		Entry:     catalog.Entry{Name: "opted-out", Resource: ir.NewSkill("opted-out", "Opted out", "Body", nil, nil, ir.SourceRef{})},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{},
+	}}
+	second, err := Run(context.Background(), repoRoot, claudeOnly)
+	if err != nil {
+		t.Fatalf("mixed explicit-empty run: %v", err)
+	}
+	factorySkill := filepath.Join(repoRoot, ".factory", "skills", "partitioned-skill")
+	if _, err := os.Lstat(factorySkill); err != nil {
+		t.Fatalf("explicit-empty intent must preserve Factory partition, got err=%v report=%#v", err, second)
+	}
+	if len(second.PerTarget[hcc.TargetFactory].Removed) != 0 {
+		t.Fatalf("explicit-empty Factory partition must not prune: %v", second.PerTarget[hcc.TargetFactory].Removed)
+	}
+}
+
+func TestRunMalformedSelectionFenceRetainsOnlyAffectedPartition(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	resource := ir.NewSkill("prior-output", "Prior", "Body", nil, nil, ir.SourceRef{})
+	initial := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "prior-output", Resource: resource},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory},
+	}}
+	if report, err := Run(context.Background(), repoRoot, initial); err != nil || report.TotalWritten() == 0 {
+		t.Fatalf("positive control materialization: report=%#v err=%v", report, err)
+	}
+
+	validSibling := ir.NewSkill("valid-sibling", "Valid", "Body", nil, nil, ir.SourceRef{})
+	second := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "valid-sibling", Resource: validSibling},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetFactory},
+	}}
+	fenced := []PruneFence{{Target: hcc.TargetClaude, MachineScope: false, Kind: ir.KindSkill}}
+	if _, err := Run(context.Background(), repoRoot, second, WithPruneFences(fenced)); err != nil {
+		t.Fatalf("malformed-selection fenced materialization: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".claude", "skills", "prior-output")); err != nil {
+		t.Fatalf("malformed Claude selection must retain prior managed output: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "prior-output")); !os.IsNotExist(err) {
+		t.Fatalf("valid Factory sibling must still prune prior output, stat error=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "valid-sibling")); err != nil {
+		t.Fatalf("valid Factory sibling did not materialize: %v", err)
 	}
 }
 
@@ -4783,5 +4903,62 @@ func TestCommandMarkerInjectionIgnoresBodyText(t *testing.T) {
 				t.Fatal("injection and cleanup disagree on ownership")
 			}
 		})
+	}
+}
+
+func TestRunExplicitEmptyFencesOnlyItsTargetAndScope(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	resource := ir.NewSkill("partitioned", "partitioned", "body", nil, nil, ir.SourceRef{})
+	initial := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Name: "partitioned", Resource: resource}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory, hcc.TargetGemini}},
+		{Entry: catalog.Entry{Name: "machine-partitioned", Resource: ir.NewSkill("machine-partitioned", "machine", "body", nil, nil, ir.SourceRef{})}, Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetClaude}},
+	}
+	if _, err := Run(context.Background(), repoRoot, initial); err != nil {
+		t.Fatalf("initial materialization: %v", err)
+	}
+
+	for _, stale := range []struct {
+		root string
+		name string
+	}{
+		{filepath.Join(repoRoot, ".claude"), "repo-stale"},
+		{filepath.Join(repoRoot, ".factory"), "factory-stale"},
+		{filepath.Join(repoRoot, ".gemini"), "gemini-stale"},
+		{filepath.Join(homeDir, ".claude"), "machine-stale"},
+	} {
+		path := filepath.Join(stale.root, "skills", stale.name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir stale parent: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(homeDir, ".cache", "agent-marketplace", "stale"), path); err != nil {
+			t.Fatalf("create stale symlink %s: %v", stale.name, err)
+		}
+	}
+
+	second := []resolver.ResolvedArtifact{
+		// Claude and Factory remain active, so their stale siblings must prune.
+		{Entry: catalog.Entry{Name: "partitioned", Resource: resource}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory}},
+		// Empty repo scope is explicit, so it must fence only the repo Gemini
+		// partition, not the active repo Claude or Factory partitions.
+		{Entry: catalog.Entry{Name: "repo-opted-out", Resource: ir.NewSkill("repo-opted-out", "empty", "body", nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{}},
+		// Empty machine scope independently fences machine Claude.
+		{Entry: catalog.Entry{Name: "machine-opted-out", Resource: ir.NewSkill("machine-opted-out", "empty", "body", nil, nil, ir.SourceRef{})}, Source: config.UserPersonal, Harnesses: []hcc.Target{}},
+	}
+	if _, err := Run(context.Background(), repoRoot, second); err != nil {
+		t.Fatalf("mixed explicit-empty materialization: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".claude", "skills", "repo-stale")); !os.IsNotExist(err) {
+		t.Fatalf("active repo Claude partition should prune stale output, err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "factory-stale")); !os.IsNotExist(err) {
+		t.Fatalf("active repo Factory sibling should prune stale output, err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".gemini", "skills", "gemini-stale")); err != nil {
+		t.Fatalf("explicit-empty repo Gemini partition should preserve stale output, err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(homeDir, ".claude", "skills", "machine-stale")); err != nil {
+		t.Fatalf("explicit-empty machine Claude partition should preserve stale output, err=%v", err)
 	}
 }

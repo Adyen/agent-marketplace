@@ -605,6 +605,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 				return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
 			}
 		}
+
 	}
 
 	// Merge fragment artifacts before processing.
@@ -612,6 +613,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	if err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: merge fragments: %w", err)
 	}
+
 	// Validate all artifact paths and reject symlinked destination parents
 	// before any reads, writes, or stale-file discovery can follow them.
 	if err := rejectSymlinkedPathComponents(outDir); err != nil {

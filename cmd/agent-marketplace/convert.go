@@ -398,9 +398,11 @@ func codexConversionResult(result *hcc.Result) (*hcc.Result, error) {
 			}
 			continue
 		}
+
 		candidate.ExternalReconciliationRequired = false
 		if external {
 			candidate.Reconciliation = hcc.ReconciliationPolicy{Mode: hcc.ReconciliationReplace}
+
 			candidate.MergeWithExisting = false
 			candidate.ManagedByField = ""
 			candidate.ManagedByValue = ""

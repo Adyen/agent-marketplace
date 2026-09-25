@@ -94,6 +94,23 @@ func TestResolveBasicResolution(t *testing.T) {
 	}
 }
 
+func TestMergeTargetQualifiedArtifactsDoesNotAliasHarnessSlices(t *testing.T) {
+	inputHarnesses := make([]hcc.Target, 1, 2)
+	inputHarnesses[0] = hcc.TargetClaude
+	resolved := []ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, Harnesses: inputHarnesses},
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, Harnesses: []hcc.Target{hcc.TargetFactory}},
+	}
+
+	merged := mergeTargetQualifiedArtifacts(resolved)
+	if len(merged) != 1 || !slices.Equal(merged[0].Harnesses, []hcc.Target{hcc.TargetClaude, hcc.TargetFactory}) {
+		t.Fatalf("merged artifacts = %#v, want one artifact with both targets", merged)
+	}
+	if slices.Contains(inputHarnesses[:cap(inputHarnesses)], hcc.TargetFactory) {
+		t.Fatalf("merge mutated the input Harnesses backing array: %v", inputHarnesses[:cap(inputHarnesses)])
+	}
+}
+
 func TestResolveReportsUnmetRequirement(t *testing.T) {
 	type warningExpectation struct {
 		message     string
@@ -4528,6 +4545,94 @@ func TestResolveTargetHarnesses(t *testing.T) {
 	})
 }
 
+func TestResolveNestedCollectionFiltersIncompatibleOwnersBeforePrecedence(t *testing.T) {
+	parent := config.RegistryEntry{
+		URL:         "git@example.com:parent.git",
+		Ref:         "main",
+		Source:      config.RepoCommitted,
+		Collections: ks("root"),
+		Harnesses:   []string{string(hcc.TargetClaude)},
+	}
+	factoryOwner := config.RegistryEntry{
+		URL:       "git@example.com:nested.git",
+		Ref:       "main",
+		Source:    config.UserPersonal,
+		Harnesses: []string{string(hcc.TargetFactory)},
+	}
+	claudeOwner := config.RegistryEntry{
+		URL:       "git@example.com:nested.git",
+		Ref:       "main",
+		Source:    config.RepoCommitted,
+		Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{parent, factoryOwner, claudeOwner}}
+	setCatalogKeys(cfg)
+	root := ir.NewCollection("root", "", "", nil, []string{"nested"}, nil, ir.SourceRef{})
+	nested := ir.NewCollection("nested", "", "", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		ck(parent.URL, parent.Ref):             {{Kind: ir.KindCollection, Name: "root", Resource: root}},
+		ck(factoryOwner.URL, factoryOwner.Ref): {{Kind: ir.KindCollection, Name: "nested", Resource: nested}, {Kind: ir.KindSkill, Name: "nested-skill", Resource: ir.NewSkill("nested-skill", "Factory", "", nil, nil, ir.SourceRef{})}},
+		ck(claudeOwner.URL, claudeOwner.Ref):   {{Kind: ir.KindCollection, Name: "nested", Resource: nested}, {Kind: ir.KindSkill, Name: "nested-skill", Resource: ir.NewSkill("nested-skill", "Claude", "", nil, nil, ir.SourceRef{})}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses([]hcc.Target{hcc.TargetClaude, hcc.TargetFactory}))
+	if len(errs) != 0 {
+		t.Fatalf("nested target qualification errors = %v", errs)
+	}
+	if len(resolved) != 1 || resolved[0].Name != "nested-skill" {
+		t.Fatalf("resolved nested artifacts = %#v, want Claude-compatible member", resolved)
+	}
+	if !harnessesEqual(resolved[0].Harnesses, []hcc.Target{hcc.TargetClaude}) || resolved[0].RegistryURL != claudeOwner.URL {
+		t.Fatalf("nested winner = %#v, want compatible Claude owner", resolved[0])
+	}
+}
+
+func TestResolveCollectionMemberBindingUsesParentTargetBeforeOwnerPrecedence(t *testing.T) {
+	parent := config.RegistryEntry{
+		URL:         "git@example.com:parent-members.git",
+		Ref:         "main",
+		Source:      config.RepoCommitted,
+		Collections: ks("root"),
+		Harnesses:   []string{string(hcc.TargetClaude)},
+	}
+	high := config.RegistryEntry{URL: "git@example.com:member-owner.git", Ref: "main", Source: config.UserPersonal, Harnesses: []string{string(hcc.TargetFactory)}}
+	low := config.RegistryEntry{URL: "git@example.com:member-owner.git", Ref: "main", Source: config.RepoCommitted, Harnesses: []string{string(hcc.TargetClaude)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{parent, high, low}}
+	setCatalogKeys(cfg)
+	root := ir.NewCollection("root", "", "", []ir.CollectionMember{{Registry: high.URL, Name: "member", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		ck(parent.URL, parent.Ref): {{Kind: ir.KindCollection, Name: "root", Resource: root}},
+		ck(high.URL, high.Ref):     {{Kind: ir.KindSkill, Name: "member", Resource: ir.NewSkill("member", "Factory", "", nil, nil, ir.SourceRef{})}},
+		ck(low.URL, low.Ref):       {{Kind: ir.KindSkill, Name: "member", Resource: ir.NewSkill("member", "Claude", "", nil, nil, ir.SourceRef{})}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses([]hcc.Target{hcc.TargetClaude, hcc.TargetFactory}))
+	if len(errs) != 0 {
+		t.Fatalf("member target qualification errors = %v", errs)
+	}
+	if len(resolved) != 1 || resolved[0].Name != "member" || resolved[0].RegistryURL != low.URL {
+		t.Fatalf("resolved member = %#v, want compatible owner", resolved)
+	}
+	if !harnessesEqual(resolved[0].Harnesses, []hcc.Target{hcc.TargetClaude}) || resolved[0].Resource == nil {
+		t.Fatalf("resolved member target/resource = %#v, want Claude member", resolved[0])
+	}
+}
+
+func TestValidateRequirementsChecksEveryExplicitTarget(t *testing.T) {
+	resolved := []ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindMcpServer, Name: "provider", Resource: ir.NewMcpServer("provider", "", nil, nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude}},
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "consumer", Resource: requirementTestSkillNamed("consumer", "provider")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory}},
+	}
+	warnings := validateRequirements(resolved)
+	if len(warnings) != 1 {
+		t.Fatalf("multi-target requirements = %v, want one unmet Factory partition", warnings)
+	}
+	var unmet *UnmetRequirementWarning
+	if !errors.As(warnings[0], &unmet) || unmet.ResourceName != "consumer" || unmet.Requirement.Name != "provider" {
+		t.Fatalf("unexpected requirement warning = %v", warnings[0])
+	}
+}
+
 type contextCapturingMarketplaceResolver struct {
 	got context.Context
 }
@@ -4578,4 +4683,389 @@ func resolvedNames(got []ResolvedArtifact) map[string]bool {
 		names[r.Name] = true
 	}
 	return names
+}
+
+func TestResolveRequirementsAreTargetAndScopeQualified(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		provider     config.RegistryEntry
+		providerKind config.KindSelector
+	}{
+		{
+			name: "different target",
+			provider: config.RegistryEntry{
+				URL:       "git@example.com:provider.git",
+				Ref:       "main",
+				Source:    config.RepoCommitted,
+				Harnesses: []string{string(hcc.TargetFactory)},
+			},
+			providerKind: config.KindSelector{Include: []string{"provider"}},
+		},
+		{
+			name: "different scope",
+			provider: config.RegistryEntry{
+				URL:       "git@example.com:provider.git",
+				Ref:       "main",
+				Source:    config.UserPersonal,
+				Harnesses: []string{string(hcc.TargetClaude)},
+			},
+			providerKind: config.KindSelector{Include: []string{"provider"}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			consumer := config.RegistryEntry{
+				URL:       "git@example.com:consumer.git",
+				Ref:       "main",
+				Source:    config.RepoCommitted,
+				Skills:    ks("consumer"),
+				Harnesses: []string{string(hcc.TargetClaude)},
+			}
+			test.provider.MCP = test.providerKind
+			cfg := &config.Config{Registries: []config.RegistryEntry{consumer, test.provider}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				ck(consumer.URL, consumer.Ref):           {{Kind: ir.KindSkill, Name: "consumer", Resource: requirementTestSkillNamed("consumer", "provider")}},
+				ck(test.provider.URL, test.provider.Ref): {{Kind: ir.KindMcpServer, Name: "provider"}},
+			}
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(resolved) != 2 {
+				t.Fatalf("resolved %d artifacts, want consumer and provider", len(resolved))
+			}
+			var found bool
+			for _, err := range errs {
+				var warning *UnmetRequirementWarning
+				if errors.As(err, &warning) && warning.ResourceName == "consumer" && warning.Requirement.Name == "provider" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected target/scope-qualified unmet requirement, got %v", errs)
+			}
+		})
+	}
+}
+
+func TestResolveDisjointTargetResourcesRemainAvailable(t *testing.T) {
+	first := config.RegistryEntry{URL: "git@example.com:first.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}}
+	second := config.RegistryEntry{URL: "git@example.com:second.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetFactory)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{first, second}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(first.URL, first.Ref):   {{Kind: ir.KindSkill, Name: "shared", Resource: ir.NewSkill("shared", "first", "", nil, nil, ir.SourceRef{})}},
+		ck(second.URL, second.Ref): {{Kind: ir.KindSkill, Name: "shared", Resource: ir.NewSkill("shared", "second", "", nil, nil, ir.SourceRef{})}},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("disjoint target resolution errors = %v", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("resolved %d artifacts, want one per target-qualified source", len(resolved))
+	}
+	seen := map[hcc.Target]bool{}
+	for _, artifact := range resolved {
+		if artifact.Name != "shared" || len(artifact.Harnesses) != 1 {
+			t.Fatalf("unexpected resolved artifact %#v", artifact)
+		}
+		seen[artifact.Harnesses[0]] = true
+	}
+	if !seen[hcc.TargetClaude] || !seen[hcc.TargetFactory] {
+		t.Fatalf("disjoint target resources lost a partition: %v", seen)
+	}
+}
+
+func TestResolveSamePartitionRetainsCollisionWinnerPolicy(t *testing.T) {
+	first := config.RegistryEntry{URL: "git@example.com:first.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}}
+	second := config.RegistryEntry{URL: "git@example.com:second.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{first, second}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(first.URL, first.Ref):   {{Kind: ir.KindSkill, Name: "shared", Resource: ir.NewSkill("shared", "first", "", nil, nil, ir.SourceRef{})}},
+		ck(second.URL, second.Ref): {{Kind: ir.KindSkill, Name: "shared", Resource: ir.NewSkill("shared", "second", "", nil, nil, ir.SourceRef{})}},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 1 || resolved[0].RegistryURL != first.URL || !harnessesEqual(resolved[0].Harnesses, []hcc.Target{hcc.TargetClaude}) {
+		t.Fatalf("same-partition winner = %#v, want first source in Claude partition", resolved)
+	}
+	if len(errs) != 1 || !IsNameCollision(errs[0]) {
+		t.Fatalf("same-partition collision diagnostics = %v, want one collision warning", errs)
+	}
+}
+
+func TestResolveCollectionExpansionRetainsDisjointTargets(t *testing.T) {
+	first := config.RegistryEntry{URL: "git@example.com:first.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("tools"), Harnesses: []string{string(hcc.TargetClaude)}}
+	second := config.RegistryEntry{URL: "git@example.com:second.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("tools"), Harnesses: []string{string(hcc.TargetFactory)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{first, second}}
+	setCatalogKeys(cfg)
+	member := ir.NewSkill("shared", "member", "", nil, nil, ir.SourceRef{})
+	collection := ir.NewCollection("tools", "", "", []ir.CollectionMember{{Name: "shared", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		ck(first.URL, first.Ref): {
+			{Kind: ir.KindCollection, Name: "tools", Resource: collection},
+			{Kind: ir.KindSkill, Name: "shared", Resource: member},
+		},
+		ck(second.URL, second.Ref): {
+			{Kind: ir.KindCollection, Name: "tools", Resource: collection},
+			{Kind: ir.KindSkill, Name: "shared", Resource: member},
+		},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("disjoint collection errors = %v", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("expanded %d artifacts, want one member per target partition", len(resolved))
+	}
+	seen := map[hcc.Target]bool{}
+	for _, artifact := range resolved {
+		if artifact.Name != "shared" || artifact.Via == "" || len(artifact.Harnesses) != 1 {
+			t.Fatalf("unexpected expanded artifact %#v", artifact)
+		}
+		seen[artifact.Harnesses[0]] = true
+	}
+	if !seen[hcc.TargetClaude] || !seen[hcc.TargetFactory] {
+		t.Fatalf("collection member was not retained per target: %v", seen)
+	}
+}
+
+// Two different registries offering one name are a single selection decision
+// even when their occurrences live in different scopes: collapsing them keeps
+// the duplicate reportable instead of quietly materializing it into both the
+// machine and the repository output.
+func TestResolveCollapsesCrossScopeMultiRegistryCollision(t *testing.T) {
+	machine := config.RegistryEntry{
+		URL: "git@example.com:machine.git", Ref: "main", Source: config.UserPersonal,
+		Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	repo := config.RegistryEntry{
+		URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted,
+		Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{machine, repo}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(machine.URL, machine.Ref): {{Name: "shared", Resource: ir.NewSkill("shared", "machine", "", nil, nil, ir.SourceRef{})}},
+		ck(repo.URL, repo.Ref):       {{Name: "shared", Resource: ir.NewSkill("shared", "repo", "", nil, nil, ir.SourceRef{})}},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 1 || !IsNameCollision(errs[0]) {
+		t.Fatalf("cross-scope multi-registry diagnostics = %v, want one collision warning", errs)
+	}
+	if len(resolved) != 1 || resolved[0].RegistryURL != repo.URL {
+		t.Fatalf("resolved %#v, want only the repository-scope winner %q", resolved, repo.URL)
+	}
+	if !harnessesEqual(resolved[0].Harnesses, []hcc.Target{hcc.TargetClaude}) {
+		t.Fatalf("artifact lost target qualification: %#v", resolved[0])
+	}
+}
+
+// Scope does separate partitions for two locations of the same registry: the
+// machine copy keeps the resource globally available while the repository copy
+// populates the project output, so neither is a runner-up of the other.
+func TestResolveRetainsScopeSeparatedPartitionsOfOneRegistry(t *testing.T) {
+	const url = "git@example.com:shared.git"
+	machine := config.RegistryEntry{
+		URL: url, Ref: "main", Path: "machine", Source: config.UserPersonal,
+		Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	repo := config.RegistryEntry{
+		URL: url, Ref: "main", Path: "repo", Source: config.RepoCommitted,
+		Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{machine, repo}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(url, "main", "machine"): {{Name: "shared", Resource: ir.NewSkill("shared", "machine", "", nil, nil, ir.SourceRef{})}},
+		ck(url, "main", "repo"):    {{Name: "shared", Resource: ir.NewSkill("shared", "repo", "", nil, nil, ir.SourceRef{})}},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("scope-separated partitions emitted collision diagnostics: %v", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("resolved %d artifacts, want one per scope, got %#v", len(resolved), resolved)
+	}
+	seen := map[config.Source]bool{}
+	for _, artifact := range resolved {
+		if !harnessesEqual(artifact.Harnesses, []hcc.Target{hcc.TargetClaude}) {
+			t.Fatalf("artifact lost target qualification: %#v", artifact)
+		}
+		seen[artifact.Source] = true
+	}
+	if !seen[config.UserPersonal] || !seen[config.RepoCommitted] {
+		t.Fatalf("scope-separated partition was dropped: %v", seen)
+	}
+}
+
+func TestResolveCollectionDuplicateUsesDeterministicPartitionWinner(t *testing.T) {
+	first := config.RegistryEntry{URL: "git@example.com:z-collection.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("z-tools"), Harnesses: []string{string(hcc.TargetClaude)}}
+	second := config.RegistryEntry{URL: "git@example.com:a-collection.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("a-tools"), Harnesses: []string{string(hcc.TargetClaude)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{first, second}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(first.URL, first.Ref): {
+			{Kind: ir.KindCollection, Name: "z-tools", Resource: ir.NewCollection("z-tools", "", "", []ir.CollectionMember{{Name: "duplicate", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})},
+			{Name: "duplicate", Resource: ir.NewSkill("duplicate", "z", "", nil, nil, ir.SourceRef{})},
+		},
+		ck(second.URL, second.Ref): {
+			{Kind: ir.KindCollection, Name: "a-tools", Resource: ir.NewCollection("a-tools", "", "", []ir.CollectionMember{{Name: "duplicate", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})},
+			{Name: "duplicate", Resource: ir.NewSkill("duplicate", "a", "", nil, nil, ir.SourceRef{})},
+		},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 1 || resolved[0].Name != "duplicate" || resolved[0].RegistryURL != second.URL {
+		t.Fatalf("collection duplicate winner = %#v, want deterministic URL winner %q", resolved, second.URL)
+	}
+	if len(errs) != 1 || !IsNameCollision(errs[0]) {
+		t.Fatalf("collection duplicate diagnostics = %v, want one collision warning", errs)
+	}
+}
+
+func TestResolveCollectionDirectOverlapSubtractsOnlyOverlappingTarget(t *testing.T) {
+	direct := config.RegistryEntry{URL: "git@example.com:direct.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}}
+	collectionOwner := config.RegistryEntry{URL: "git@example.com:collection.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("tools"), Harnesses: []string{string(hcc.TargetClaude), string(hcc.TargetFactory)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{direct, collectionOwner}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(direct.URL, direct.Ref): {{Name: "shared", Resource: ir.NewSkill("shared", "direct", "", nil, nil, ir.SourceRef{})}},
+		ck(collectionOwner.URL, collectionOwner.Ref): {
+			{Kind: ir.KindCollection, Name: "tools", Resource: ir.NewCollection("tools", "", "", []ir.CollectionMember{{Name: "shared", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})},
+			{Name: "shared", Resource: ir.NewSkill("shared", "collection", "", nil, nil, ir.SourceRef{})},
+		},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("direct/collection overlap errors = %v", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("resolved %d artifacts, want Claude direct plus Factory collection member: %#v", len(resolved), resolved)
+	}
+	for _, artifact := range resolved {
+		if artifact.Name != "shared" || len(artifact.Harnesses) != 1 {
+			t.Fatalf("unexpected overlap artifact %#v", artifact)
+		}
+		if artifact.Harnesses[0] == hcc.TargetClaude && artifact.Via != "" {
+			t.Fatalf("collection member was not subtracted from direct Claude partition: %#v", artifact)
+		}
+	}
+}
+
+func TestResolveSameTargetCollisionWinnerIsOrderIndependent(t *testing.T) {
+	type artifactView struct {
+		Name        string
+		Description string
+		URL         string
+		Path        string
+		Source      config.Source
+		Harnesses   []hcc.Target
+	}
+
+	build := func(reverseRegistries, reverseCatalogs bool) (*config.Config, map[string][]catalog.Entry) {
+		registries := []config.RegistryEntry{
+			{
+				URL: "git@example.com:machine-z.git", Ref: "main", Source: config.UserPersonal,
+				Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+			},
+			{
+				URL: "git@example.com:machine-a.git", Ref: "main", Source: config.UserPersonal,
+				Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+			},
+			{
+				URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted,
+				Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+			},
+		}
+		if reverseRegistries {
+			slices.Reverse(registries)
+		}
+		cfg := &config.Config{Registries: registries}
+		setCatalogKeys(cfg)
+
+		catalogs := make(map[string][]catalog.Entry, len(cfg.Registries))
+		for _, entry := range cfg.Registries {
+			entries := []catalog.Entry{
+				{
+					Kind: ir.KindSkill, Name: "shared", Description: entry.URL,
+					Path:     "/cache/" + strings.TrimSuffix(strings.TrimPrefix(entry.URL, "git@example.com:"), ".git") + "/shared",
+					Resource: ir.NewSkill("shared", "order-independent resource", "", nil, nil, ir.SourceRef{}),
+				},
+				{Kind: ir.KindSkill, Name: "catalog-order-control", Path: "/cache/control"},
+			}
+			if reverseCatalogs {
+				slices.Reverse(entries)
+			}
+			catalogs[entry.CatalogKey] = entries
+		}
+		return cfg, catalogs
+	}
+
+	view := func(t *testing.T, resolved []ResolvedArtifact) map[config.Source]artifactView {
+		t.Helper()
+		if len(resolved) != 1 {
+			t.Fatalf("resolved %d artifacts, want the single collision winner: %#v", len(resolved), resolved)
+		}
+		got := make(map[config.Source]artifactView, len(resolved))
+		for _, artifact := range resolved {
+			if artifact.Name != "shared" {
+				t.Fatalf("unexpected resolved artifact: %#v", artifact)
+			}
+			if artifact.Resource == nil {
+				t.Fatalf("resolved artifact lost its machine/repository resource: %#v", artifact)
+			}
+			if _, exists := got[artifact.Source]; exists {
+				t.Fatalf("resolved duplicate scope %s: %#v", artifact.Source, resolved)
+			}
+			got[artifact.Source] = artifactView{
+				Name: artifact.Name, Description: artifact.Description, URL: artifact.RegistryURL, Path: artifact.Path,
+				Source: artifact.Source, Harnesses: artifact.Harnesses,
+			}
+		}
+		return got
+	}
+
+	want := map[config.Source]artifactView{
+		config.RepoCommitted: {
+			Name: "shared", Description: "git@example.com:repo.git", URL: "git@example.com:repo.git", Path: "/cache/repo/shared",
+			Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude},
+		},
+	}
+
+	var first map[config.Source]artifactView
+	for _, tc := range []struct {
+		name              string
+		reverseRegistries bool
+		reverseCatalogs   bool
+	}{
+		{name: "declared order", reverseRegistries: false, reverseCatalogs: false},
+		{name: "reversed registries", reverseRegistries: true, reverseCatalogs: false},
+		{name: "reversed catalogs", reverseRegistries: false, reverseCatalogs: true},
+		{name: "reversed registries and catalogs", reverseRegistries: true, reverseCatalogs: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, catalogs := build(tc.reverseRegistries, tc.reverseCatalogs)
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(errs) != 1 {
+				t.Fatalf("Resolve() errors = %v, want one collision warning", errs)
+			}
+			var warning *NameCollisionWarning
+			if !errors.As(errs[0], &warning) {
+				t.Fatalf("Resolve() error = %T, want NameCollisionWarning: %v", errs[0], errs[0])
+			}
+			if warning.Name != "shared" || warning.Winner != "git@example.com:repo" {
+				t.Fatalf("collision winner = %#v, want repo", warning)
+			}
+			if !slices.Equal(warning.RunnersUp, []string{"git@example.com:machine-a", "git@example.com:machine-z"}) {
+				t.Fatalf("collision runners-up = %v, want machine-a and machine-z", warning.RunnersUp)
+			}
+
+			got := view(t, resolved)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("resolved collision winner = %#v, want %#v", got, want)
+			}
+			if first == nil {
+				first = got
+			} else if !reflect.DeepEqual(got, first) {
+				t.Fatalf("resolved artifacts changed with input order: %#v vs %#v", got, first)
+			}
+		})
+	}
 }

@@ -220,10 +220,11 @@ type Remediable interface {
 }
 
 type skillOccurrence struct {
-	resolved ResolvedArtifact
-	source   string
-	url      string
-	order    int
+	resolved       ResolvedArtifact
+	source         string
+	url            string
+	order          int
+	partitionOrder int
 }
 
 type IneffectiveExcludeWarning struct {
@@ -488,6 +489,12 @@ type SelectedNotFoundError struct {
 	// to fail their sync on its own; CandidatePaths then holds the paths that
 	// are configured.
 	RequestedPath string
+
+	// partitionKeys identifies the target-and-scope partitions in which a
+	// collection member was actually searched. It is intentionally unexported:
+	// partition identity is diagnostic correlation state, not user-facing error
+	// data. Suppression must not use the kind/name alone across partitions.
+	partitionKeys []string
 }
 
 func (e *SelectedNotFoundError) Error() string {
@@ -595,13 +602,19 @@ func IsSelectedNotFound(err error) bool {
 // alone). A malformed selection is correct and the fix is to repair the file
 // named here — dropping it would delete a working selection over a syntax error
 // the tool has already read and already has an exact message for.
+type SelectionPartition struct {
+	Target       hcc.Target
+	MachineScope bool
+}
+
 type SelectedMalformedError struct {
-	Kind     ir.ResourceKind
-	Name     string
-	URL      string
-	Path     string
-	Ref      string
-	Required bool
+	Kind       ir.ResourceKind
+	Name       string
+	URL        string
+	Path       string
+	Ref        string
+	Required   bool
+	partitions []SelectionPartition
 	// Via is set when the selection originated from a collection expansion
 	// rather than a direct config entry. Format: "collection:<name>@<version>".
 	Via string
@@ -657,6 +670,17 @@ func (e *SelectedMalformedError) Remediation() string {
 func IsSelectedMalformed(err error) bool {
 	var sme *SelectedMalformedError
 	return errors.As(err, &sme)
+}
+
+// MalformedSelectionPartitions returns the target-and-scope partitions whose
+// output may contain stale materialization for a malformed selection. The copy
+// keeps diagnostic correlation state private and immutable to callers.
+func MalformedSelectionPartitions(err error) []SelectionPartition {
+	var sme *SelectedMalformedError
+	if !errors.As(err, &sme) {
+		return nil
+	}
+	return append([]SelectionPartition(nil), sme.partitions...)
 }
 
 // IsSoftSelectedMalformed reports whether err is a SelectedMalformedError that
@@ -753,22 +777,24 @@ func malformedSelectionError(
 	url, path, ref string,
 	required bool,
 	via string,
+	partitions []SelectionPartition,
 ) *SelectedMalformedError {
 	match, found := malformed.lookup(catalogKey, kind, name)
 	if !found {
 		return nil
 	}
 	return &SelectedMalformedError{
-		Kind:     kind,
-		Name:     name,
-		URL:      url,
-		Path:     path,
-		Ref:      ref,
-		Required: required,
-		Via:      via,
-		DirName:  strings.TrimSpace(match.DirName),
-		File:     skill.MalformedSourceFile(match),
-		Err:      match.Error,
+		Kind:       kind,
+		Name:       name,
+		URL:        url,
+		Path:       path,
+		Ref:        ref,
+		Required:   required,
+		Via:        via,
+		partitions: append([]SelectionPartition(nil), partitions...),
+		DirName:    strings.TrimSpace(match.DirName),
+		File:       skill.MalformedSourceFile(match),
+		Err:        match.Error,
 	}
 }
 
@@ -854,6 +880,11 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		slog.Debug("resolver marketplace occurrences built", "marketplaces", len(cfg.Marketplaces), "errors", len(mpErrs))
 	}
 
+	// Qualify winner selection by target before deduplicating. The same resource
+	// may legitimately have different winners, requirements, or collection
+	// members in otherwise disjoint output partitions.
+	occurrencesByName = partitionOccurrencesByTarget(occurrencesByName)
+
 	// Phase 2: Pick winners (deduplicate, detect collisions).
 	winners, pickErrs := pickWinners(occurrencesByName)
 	errs = append(errs, pickErrs...)
@@ -884,7 +915,10 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	var expandErrs []error
 	resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
 	errs = append(errs, expandErrs...)
+	resolved, collectionErrs := deduplicateCollectionArtifacts(resolved)
+	errs = append(errs, collectionErrs...)
 	errs = append(errs, validateRequirements(resolved)...)
+	resolved = mergeTargetQualifiedArtifacts(resolved)
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
 
 	return resolved, errs
@@ -1025,58 +1059,227 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	return occurrencesByName, errs
 }
 
-func validateRequirements(resolved []ResolvedArtifact) []error {
-	firstRequirementIndex := -1
-	var firstRequirements []catalog.Requirement
-	for i, artifact := range resolved {
-		requirements := catalog.RequirementsFromResource(artifact.Resource)
-		if len(requirements) == 0 {
-			continue
+// partitionOccurrencesByTarget splits winner contention by output target only.
+// Machine and repo scope deliberately share a partition: a name provided by two
+// different registries is one selection decision no matter which scope each
+// occurrence came from, and collapsing it to a single winner is what keeps a
+// scope-crossing duplicate reportable instead of silently materializing twice.
+// Scope separation for occurrences of the same registry is applied afterwards by
+// pickWinnersReporting.
+func partitionOccurrencesByTarget(input map[resourceSelection][]skillOccurrence) map[resourceSelection][]skillOccurrence {
+	partitioned := make(map[resourceSelection][]skillOccurrence, len(input))
+	for selection, occurrences := range input {
+		for _, occurrence := range occurrences {
+			if occurrence.resolved.Harnesses == nil {
+				partitioned[selection] = append(partitioned[selection], occurrence)
+				continue
+			}
+			if len(occurrence.resolved.Harnesses) == 0 {
+				key := selection
+				key.empty = true
+				partitioned[key] = append(partitioned[key], occurrence)
+				continue
+			}
+			for targetIndex, target := range occurrence.resolved.Harnesses {
+				clone := occurrence
+				clone.partitionOrder = targetIndex
+				clone.resolved.Harnesses = []hcc.Target{target}
+				key := resourceSelection{kind: selection.kind, name: selection.name, target: target}
+				partitioned[key] = append(partitioned[key], clone)
+			}
 		}
-		firstRequirementIndex = i
-		firstRequirements = requirements
-		break
 	}
-	if firstRequirementIndex == -1 {
-		return nil
-	}
-	slog.Debug("requirement validation start", "resolved", len(resolved))
+	return partitioned
+}
 
+func validateRequirements(resolved []ResolvedArtifact) []error {
 	type resourceKey struct {
-		kind ir.ResourceKind
-		name string
+		kind         ir.ResourceKind
+		name         string
+		target       hcc.Target
+		machineScope bool
 	}
+
 	selected := make(map[resourceKey]struct{}, len(resolved))
 	for _, artifact := range resolved {
-		selected[resourceKey{kind: artifact.Kind, name: artifact.Name}] = struct{}{}
+		if artifact.Harnesses != nil && len(artifact.Harnesses) == 0 {
+			continue
+		}
+		for _, target := range artifactTargets(artifact) {
+			selected[resourceKey{
+				kind:         artifact.Kind,
+				name:         artifact.Name,
+				target:       target,
+				machineScope: artifact.Source.IsMachineScope(),
+			}] = struct{}{}
+		}
 	}
 
 	var warnings []error
-	for i := firstRequirementIndex; i < len(resolved); i++ {
-		artifact := resolved[i]
-		requirements := firstRequirements
-		if i != firstRequirementIndex {
-			requirements = catalog.RequirementsFromResource(artifact.Resource)
+	for _, artifact := range resolved {
+		if artifact.Harnesses != nil && len(artifact.Harnesses) == 0 {
+			continue
 		}
-		for _, requirement := range requirements {
-			if _, ok := selected[resourceKey{kind: requirement.Kind, name: requirement.Name}]; ok {
-				continue
+		for _, requirement := range catalog.RequirementsFromResource(artifact.Resource) {
+			for _, target := range artifactTargets(artifact) {
+				key := resourceKey{
+					kind:         requirement.Kind,
+					name:         requirement.Name,
+					target:       target,
+					machineScope: artifact.Source.IsMachineScope(),
+				}
+				if _, ok := selected[key]; ok {
+					continue
+				}
+				slog.Debug("unmet resource requirement",
+					"resource_kind", skill.KindLabel(artifact.Kind),
+					"resource_name", artifact.Name,
+					"requirement_kind", skill.KindLabel(requirement.Kind),
+					"requirement_name", requirement.Name,
+					"target", key.target,
+					"machine_scope", key.machineScope,
+				)
+				warnings = append(warnings, &UnmetRequirementWarning{
+					ResourceKind: artifact.Kind,
+					ResourceName: artifact.Name,
+					Requirement:  requirement,
+				})
 			}
-			slog.Debug("unmet resource requirement",
-				"resource_kind", skill.KindLabel(artifact.Kind),
-				"resource_name", artifact.Name,
-				"requirement_kind", skill.KindLabel(requirement.Kind),
-				"requirement_name", requirement.Name,
-			)
-			warnings = append(warnings, &UnmetRequirementWarning{
-				ResourceKind: artifact.Kind,
-				ResourceName: artifact.Name,
-				Requirement:  requirement,
-			})
 		}
 	}
 	slog.Debug("requirement validation end", "unmet", len(warnings))
 	return warnings
+}
+
+func artifactTarget(artifact ResolvedArtifact) hcc.Target {
+	if len(artifact.Harnesses) == 1 {
+		return artifact.Harnesses[0]
+	}
+	return ""
+}
+
+// artifactTargets returns every output partition represented by an artifact.
+// Legacy nil-target artifacts retain the empty target identity for diagnostics;
+// explicit target lists are checked independently.
+func artifactTargets(artifact ResolvedArtifact) []hcc.Target {
+	if len(artifact.Harnesses) > 0 {
+		return artifact.Harnesses
+	}
+	return []hcc.Target{artifactTarget(artifact)}
+}
+
+type resolvedArtifactIdentity struct {
+	kind                  ir.ResourceKind
+	name                  string
+	path                  string
+	registryURL           string
+	registryPath          string
+	ref                   string
+	source                config.Source
+	filePrecedence        int
+	required              bool
+	catalogKey            string
+	via                   string
+	isMarketplace         bool
+	marketplaceURL        string
+	marketplaceInstanceID string
+	marketplaceAlias      string
+	marketplaceRegistryID string
+	installedName         string
+	unresolved            bool
+	revoked               bool
+	updateAvailable       bool
+	stale                 bool
+}
+
+func resolvedArtifactIdentityOf(artifact ResolvedArtifact) resolvedArtifactIdentity {
+	return resolvedArtifactIdentity{
+		kind:                  artifact.Kind,
+		name:                  artifact.Name,
+		path:                  artifact.Path,
+		registryURL:           artifact.RegistryURL,
+		registryPath:          artifact.RegistryPath,
+		ref:                   artifact.Ref,
+		source:                artifact.Source,
+		filePrecedence:        artifact.FilePrecedence,
+		required:              artifact.Required,
+		catalogKey:            artifact.CatalogKey,
+		via:                   artifact.Via,
+		isMarketplace:         artifact.IsMarketplace,
+		marketplaceURL:        artifact.MarketplaceURL,
+		marketplaceInstanceID: artifact.MarketplaceInstanceID,
+		marketplaceAlias:      artifact.MarketplaceAlias,
+		marketplaceRegistryID: artifact.MarketplaceRegistryID,
+		installedName:         artifact.InstalledName,
+		unresolved:            artifact.Unresolved,
+		revoked:               artifact.Revoked,
+		updateAvailable:       artifact.UpdateAvailable,
+		stale:                 artifact.Stale,
+	}
+}
+
+func mergeTargetQualifiedArtifacts(resolved []ResolvedArtifact) []ResolvedArtifact {
+	merged := make([]ResolvedArtifact, 0, len(resolved))
+	indices := make(map[resolvedArtifactIdentity]int, len(resolved))
+	for _, artifact := range resolved {
+		identity := resolvedArtifactIdentityOf(artifact)
+		if index, ok := indices[identity]; ok {
+			for _, target := range artifact.Harnesses {
+				if !slices.Contains(merged[index].Harnesses, target) {
+					merged[index].Harnesses = append(merged[index].Harnesses, target)
+				}
+			}
+			continue
+		}
+		indices[identity] = len(merged)
+		if len(artifact.Harnesses) > 0 {
+			harnesses := make([]hcc.Target, len(artifact.Harnesses))
+			copy(harnesses, artifact.Harnesses)
+			artifact.Harnesses = harnesses
+		}
+		merged = append(merged, artifact)
+	}
+	return merged
+}
+
+// deduplicateCollectionArtifacts applies the normal target-qualified winner
+// policy after collection expansion. Direct selections have already been
+// subtracted per target and scope; collection members must still contend with
+// one another instead of letting the first collection traversal win.
+func deduplicateCollectionArtifacts(resolved []ResolvedArtifact) ([]ResolvedArtifact, []error) {
+	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
+	for order, artifact := range resolved {
+		if artifact.Via == "" {
+			continue
+		}
+		selection := resourceSelection{kind: artifact.Kind, name: artifact.Name}
+		occurrencesByName[selection] = append(occurrencesByName[selection], skillOccurrence{
+			resolved: artifact,
+			source:   artifact.RegistryURL,
+			url:      artifact.RegistryURL,
+			order:    order,
+		})
+	}
+	if len(occurrencesByName) == 0 {
+		return append([]ResolvedArtifact(nil), resolved...), nil
+	}
+	partitioned := partitionOccurrencesByTarget(occurrencesByName)
+	winners, errs := pickWinners(partitioned)
+	winnerByOrder := make(map[int]ResolvedArtifact, len(winners))
+	for _, winner := range winners {
+		winnerByOrder[winner.order] = winner.resolved
+	}
+	out := make([]ResolvedArtifact, 0, len(resolved))
+	for order, artifact := range resolved {
+		if artifact.Via == "" {
+			out = append(out, artifact)
+			continue
+		}
+		if winner, ok := winnerByOrder[order]; ok {
+			out = append(out, winner)
+		}
+	}
+	return out, errs
 }
 
 // cloneStringsForResolve preserves nil-vs-empty selector semantics while
@@ -1166,13 +1369,18 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 	var errs []error
 	expanded := false
 
-	// Build a set of directly-resolved resource names (kind:name) from
-	// non-collection artifacts. Collection members that are already directly
-	// resolved should NOT be duplicated — the direct resolution takes precedence.
+	// Build a set of directly-resolved resource partitions from non-collection
+	// artifacts. Collection members that are already directly resolved in the
+	// same target and scope should NOT be duplicated — direct resolution takes
+	// precedence. Keep the partition qualification here because the same name
+	// can legitimately be missing in another target or scope.
 	directResolved := make(map[string]struct{})
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
-			directResolved[ViaMapKey(artifact.Kind, artifact.Name)] = struct{}{}
+			memberKey := ViaMapKey(artifact.Kind, artifact.Name)
+			for _, partitionKey := range artifactPartitionKeys(memberKey, artifact.Harnesses, artifact.Source) {
+				directResolved[partitionKey] = struct{}{}
+			}
 		}
 	}
 
@@ -1254,7 +1462,7 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 		viaLabel := "collection:" + irCol.Label()
 
 		// Expand members recursively (handles Includes via depth-first walk).
-		visited := map[string]struct{}{irCol.Label(): {}}
+		visited := map[string]struct{}{canonicalCollectionName(irCol.Name()): {}}
 		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &errs, targetSet)
 	}
 
@@ -1305,22 +1513,27 @@ func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, [
 }
 
 // suppressResolvedMemberMisses drops "selected but not found" errors raised
-// while expanding a collection member when that exact (kind, name) was in fact
-// resolved — directly from a config entry, or from another registry through
-// another collection. Reporting the miss then is a false positive, and with an
-// all-required candidate set it would fail a sync for a resource that is
-// present. This mirrors the cross-registry suppression already applied to
-// collection lookups themselves in buildOccurrences.
-func suppressResolvedMemberMisses(errs []error, resolvedNames map[string]struct{}) []error {
-	if len(errs) == 0 || len(resolvedNames) == 0 {
+// while expanding a collection member when that member was resolved in one of
+// the exact target-and-scope partitions searched by the collection. Reporting
+// that miss then is a false positive, but kind:name alone is not sufficient:
+// the same resource may be directly resolved in another target or scope.
+func suppressResolvedMemberMisses(errs []error, resolvedPartitions map[string]struct{}) []error {
+	if len(errs) == 0 || len(resolvedPartitions) == 0 {
 		return errs
 	}
 	filtered := errs[:0]
 	for _, err := range errs {
 		var snf *SelectedNotFoundError
+
 		if errors.As(err, &snf) && snf.Via != "" && !HasAdditiveSources(snf.Kind) {
-			if _, resolved := resolvedNames[ViaMapKey(snf.Kind, snf.Name)]; resolved {
-				slog.Debug("collection member miss suppressed: resolved elsewhere",
+			resolved := false
+			for _, partitionKey := range snf.partitionKeys {
+				if _, resolved = resolvedPartitions[partitionKey]; resolved {
+					break
+				}
+			}
+			if resolved {
+				slog.Debug("collection member miss suppressed: resolved in same partition",
 					"kind", snf.Kind.String(), "name", snf.Name, "via", snf.Via)
 				continue
 			}
@@ -1452,12 +1665,28 @@ func nestedCollectionArtifact(candidate collectionCandidate, parent ResolvedArti
 	return artifact
 }
 
+func nestedCollectionCompatible(candidate collectionCandidate, parent ResolvedArtifact, targetSet []hcc.Target) bool {
+	if parent.Harnesses != nil && len(parent.Harnesses) == 0 {
+		return false
+	}
+	if !candidate.ownerFound {
+		return true
+	}
+	if len(targetSet) == 0 && candidate.owner.Harnesses == nil && parent.Harnesses == nil {
+		return true
+	}
+	return len(effectiveMemberHarnesses(parent.Harnesses, candidate.owner, true, targetSet)) > 0
+}
+
 // chooseNestedCollectionEligible filters definitions before applying authority
 // ordering. Required definitions remain immune because
 // collectionDefinitionExcluded preserves required artifacts.
-func chooseNestedCollectionEligible(candidates []collectionCandidate, parent ResolvedArtifact, excludedResources map[string]struct{}, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, entries []config.RegistryEntry) (collectionCandidate, bool) {
+func chooseNestedCollectionEligible(candidates []collectionCandidate, parent ResolvedArtifact, excludedResources map[string]struct{}, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, entries []config.RegistryEntry, targetSet []hcc.Target) (collectionCandidate, bool) {
 	eligible := make([]collectionCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
+		if !nestedCollectionCompatible(candidate, parent, targetSet) {
+			continue
+		}
 		if collectionDefinitionExcluded(nestedCollectionArtifact(candidate, parent), excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, entries) {
 			continue
 		}
@@ -1465,6 +1694,11 @@ func chooseNestedCollectionEligible(candidates []collectionCandidate, parent Res
 	}
 	return chooseNestedCollection(eligible, parent)
 }
+
+// canonicalCollectionName is the one ancestry key used for collection seed,
+// comparison, and branch extension. Collection labels include @version, while
+// Includes and catalog names use the raw collection name.
+func canonicalCollectionName(name string) string { return strings.TrimSpace(name) }
 
 // cloneVisitedWith extends a collection's include ancestry for one branch.
 // Keeping a separate map per branch allows a shared DAG node to expand once
@@ -1474,7 +1708,7 @@ func cloneVisitedWith(visited map[string]struct{}, name string) map[string]struc
 	for seen := range visited {
 		branch[seen] = struct{}{}
 	}
-	branch[name] = struct{}{}
+	branch[canonicalCollectionName(name)] = struct{}{}
 	return branch
 }
 
@@ -1519,6 +1753,7 @@ func expandMembersRecursive(
 		memberRequired := artifact.Required
 		memberEntry := config.RegistryEntry{}
 		memberEntryFound := false
+		var ambiguity *AmbiguousCollectionMemberWarning
 
 		sel := resourceSelection{kind: member.Kind, name: memberName}
 
@@ -1535,7 +1770,7 @@ func expandMembersRecursive(
 			requestedRef := strings.TrimSpace(member.Ref)
 			candidates := candidatesAtRef(forURL, requestedRef)
 			if len(candidates) == 0 {
-				*errs = append(*errs, &SelectedNotFoundError{
+				err := &SelectedNotFoundError{
 					Kind:           member.Kind,
 					Name:           memberName,
 					URL:            memberRegistry,
@@ -1544,7 +1779,9 @@ func expandMembersRecursive(
 					Via:            viaLabel,
 					Hint:           fmt.Sprintf("no configured entry for this repository uses ref %q", requestedRef),
 					CandidatePaths: candidateLocationLabels(forURL),
-				})
+					partitionKeys:  collectionMemberPartitionKeys(ViaMapKey(member.Kind, memberName), artifact.Harnesses, artifact.Source, forURL, targetSet),
+				}
+				appendCollectionDiagnostic(errs, err, ViaMapKey(member.Kind, memberName), directResolved)
 				continue
 			}
 
@@ -1593,7 +1830,7 @@ func expandMembersRecursive(
 					// severity as a path-less miss: soft unless any
 					// configured location for the repository is required,
 					// which keeps `required: true` policy unbypassable.
-					*errs = append(*errs, &SelectedNotFoundError{
+					err := &SelectedNotFoundError{
 						Kind:           member.Kind,
 						Name:           memberName,
 						URL:            memberRegistry,
@@ -1602,12 +1839,14 @@ func expandMembersRecursive(
 						Via:            viaLabel,
 						RequestedPath:  requestedPath,
 						CandidatePaths: candidateLocationLabels(candidates),
-					})
+						partitionKeys:  collectionMemberPartitionKeys(ViaMapKey(member.Kind, memberName), artifact.Harnesses, artifact.Source, candidates, targetSet),
+					}
+					appendCollectionDiagnostic(errs, err, ViaMapKey(member.Kind, memberName), directResolved)
 					continue
 				}
 				chosen = preferRequired(atPath)
 				if strings.TrimSpace(member.Ref) == "" && distinctLocations(atPath) > 1 {
-					*errs = append(*errs, &AmbiguousCollectionMemberWarning{
+					ambiguity = &AmbiguousCollectionMemberWarning{
 						Kind:       member.Kind,
 						Name:       memberName,
 						URL:        memberRegistry,
@@ -1616,7 +1855,7 @@ func expandMembersRecursive(
 						Path:       requestedPath,
 						Chosen:     locationLabel(chosen.entry, spansMultipleRefs(atPath)),
 						Candidates: candidateLocationLabels(atPath),
-					})
+					}
 				}
 			} else {
 				// A path-less member means "this repository, wherever the
@@ -1637,7 +1876,7 @@ func expandMembersRecursive(
 					if len(allContaining) > 0 {
 						continue
 					}
-					*errs = append(*errs, &SelectedNotFoundError{
+					err := &SelectedNotFoundError{
 						Kind:           member.Kind,
 						Name:           memberName,
 						URL:            memberRegistry,
@@ -1645,7 +1884,9 @@ func expandMembersRecursive(
 						Required:       anyLocationRequired(candidates),
 						Via:            viaLabel,
 						CandidatePaths: candidateLocationLabels(candidates),
-					})
+						partitionKeys:  collectionMemberPartitionKeys(ViaMapKey(member.Kind, memberName), artifact.Harnesses, artifact.Source, candidates, targetSet),
+					}
+					appendCollectionDiagnostic(errs, err, ViaMapKey(member.Kind, memberName), directResolved)
 					continue
 				}
 				if len(targetSet) > 0 {
@@ -1664,7 +1905,7 @@ func expandMembersRecursive(
 				}
 				chosen = preferRequired(containing)
 				if distinctLocations(containing) > 1 {
-					*errs = append(*errs, &AmbiguousCollectionMemberWarning{
+					ambiguity = &AmbiguousCollectionMemberWarning{
 						Kind:       member.Kind,
 						Name:       memberName,
 						URL:        memberRegistry,
@@ -1672,7 +1913,7 @@ func expandMembersRecursive(
 						Via:        viaLabel,
 						Chosen:     locationLabel(chosen.entry, spansMultipleRefs(containing)),
 						Candidates: candidateLocationLabels(containing),
-					})
+					}
 				}
 			}
 
@@ -1691,7 +1932,7 @@ func expandMembersRecursive(
 			memberEntry = entry
 			memberEntryFound = true
 		} else {
-			if entry, _, found := findRegistryEntry(cfg, artifact.RegistryURL, artifact.Ref, artifact.RegistryPath); found {
+			if entry, _, found := findRegistryEntryForArtifact(cfg, artifact); found {
 				memberEntry = entry
 				memberEntryFound = true
 				// The member inherits the collection's registry location, but
@@ -1732,6 +1973,24 @@ func expandMembersRecursive(
 			continue
 		}
 
+		memberNameKey := ViaMapKey(member.Kind, memberName)
+		if !HasAdditiveSources(member.Kind) {
+			if len(memberHarnesses) == 0 {
+				if _, direct := directResolved[artifactPartitionKey(memberNameKey, memberHarnesses, memberSource)]; direct {
+					continue
+				}
+			} else {
+				unresolved := unresolvedMemberTargets(memberNameKey, memberHarnesses, memberSource, directResolved)
+				if len(unresolved) == 0 {
+					continue
+				}
+				memberHarnesses = unresolved
+			}
+		}
+		if ambiguity != nil {
+			*errs = append(*errs, ambiguity)
+		}
+
 		// Look up the member in the catalog.
 		idx, ok := catalogIndex[memberCatalogKey]
 		if !ok {
@@ -1745,39 +2004,34 @@ func expandMembersRecursive(
 			// is present upstream, so reporting it as removed would send the
 			// user to edit a collection definition that is correct.
 			if sme := malformedSelectionError(malformed, memberCatalogKey, member.Kind, memberName,
-				memberRegistryURL, memberRegistryPath, memberRef, memberRequired, viaLabel); sme != nil {
-				*errs = append(*errs, sme)
+				memberRegistryURL, memberRegistryPath, memberRef, memberRequired, viaLabel,
+				selectionPartitions(memberHarnesses, memberSource)); sme != nil {
+				appendCollectionDiagnostic(errs, sme, memberNameKey, directResolved)
 				continue
 			}
-			*errs = append(*errs, &SelectedNotFoundError{
-				Kind:     member.Kind,
-				Name:     memberName,
-				URL:      memberRegistryURL,
-				Path:     memberRegistryPath,
-				Ref:      memberRef,
-				Required: memberRequired,
-				Via:      viaLabel,
-			})
+			appendCollectionDiagnostic(errs, &SelectedNotFoundError{
+				Kind:          member.Kind,
+				Name:          memberName,
+				URL:           memberRegistryURL,
+				Path:          memberRegistryPath,
+				Ref:           memberRef,
+				Required:      memberRequired,
+				Via:           viaLabel,
+				partitionKeys: artifactPartitionKeys(memberNameKey, memberHarnesses, memberSource),
+			}, memberNameKey, directResolved)
 			continue
 		}
 
-		// Skip if already directly resolved (direct resolution takes
-		// precedence over collection expansion; no duplicates).
-		memberKey := ViaMapKey(member.Kind, memberName)
-		if _, direct := directResolved[memberKey]; direct && !HasAdditiveSources(member.Kind) {
-			continue
-		}
-
-		if _, excluded := excludedResources[memberKey]; excluded && !memberRequired {
+		if _, excluded := excludedResources[memberNameKey]; excluded && !memberRequired {
 			continue
 		}
 		if localResourceExcluded(localExcludes, localExcludeAllKinds, member.Kind, memberName, memberRequired, memberSource) {
 			continue
 		}
 
-		// Mark as resolved to prevent duplicates from other collections.
-		directResolved[memberKey] = struct{}{}
-
+		// Keep every collection contribution until the target-qualified winner
+		// pass below. That pass applies requiredness, precedence, and stable URL
+		// ordering instead of making collection traversal order policy.
 		*out = append(*out, ResolvedArtifact{
 			Entry:          attachResource(catEntry, resources, memberCatalogKey),
 			RegistryURL:    memberRegistryURL,
@@ -1795,20 +2049,20 @@ func expandMembersRecursive(
 
 	// Expand includes (nested collections) recursively.
 	for _, includedName := range col.Includes {
-		name := strings.TrimSpace(includedName)
+		name := canonicalCollectionName(includedName)
 		if name == "" {
 			continue
 		}
 
 		// Cycle detection is path-local: a collection shared by sibling branches
 		// is valid, while an include repeated along one branch is a cycle.
-		if _, seen := visited[name]; seen {
+		if _, seen := visited[canonicalCollectionName(name)]; seen {
 			*errs = append(*errs, fmt.Errorf("collection %q: cycle detected including %q", col.Label(), name))
 			continue
 		}
 		branchVisited := cloneVisitedWith(visited, name)
 
-		includedEntry, found := chooseNestedCollectionEligible(allCollectionsByName[name], artifact, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, cfg.Registries)
+		includedEntry, found := chooseNestedCollectionEligible(allCollectionsByName[name], artifact, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, cfg.Registries, targetSet)
 		if !found {
 			// A known definition may have been excluded in every eligible
 			// location. That is an intentional no-op, not a missing include.
@@ -2098,6 +2352,22 @@ func anyLocationRequired(candidates []memberEntryCandidate) bool {
 	return false
 }
 
+func findRegistryEntryForArtifact(cfg *config.Config, artifact ResolvedArtifact) (config.RegistryEntry, string, bool) {
+	wantURL := normalizedRegistryURL(artifact.RegistryURL)
+	wantPath := normalizedEntryPath(artifact.RegistryPath)
+	wantRef := strings.TrimSpace(artifact.Ref)
+	for _, entry := range cfg.Registries {
+		if normalizedRegistryURL(entry.URL) == wantURL &&
+			normalizedEntryPath(entry.Path) == wantPath &&
+			strings.TrimSpace(entry.Ref) == wantRef &&
+			entry.Source == artifact.Source &&
+			entry.FilePrecedence == artifact.FilePrecedence {
+			return entry, entry.CatalogKey, true
+		}
+	}
+	return findRegistryEntry(cfg, artifact.RegistryURL, artifact.Ref, artifact.RegistryPath)
+}
+
 // findRegistryEntry finds a config registry entry matching the given URL
 // (and optionally ref and path). Returns the entry, its catalog key, and
 // whether it was found.
@@ -2135,13 +2405,210 @@ func ViaMapKey(kind ir.ResourceKind, name string) string {
 	return kind.String() + ":" + strings.TrimSpace(name)
 }
 
+func partitionKey(resourceKey string, target hcc.Target, machineScope bool) string {
+	return resourceKey + "\x00" + string(target) + "\x00" + fmt.Sprint(machineScope)
+}
+
+func artifactPartitionKey(resourceKey string, harnesses []hcc.Target, source config.Source) string {
+	return partitionKey(resourceKey, artifactTarget(ResolvedArtifact{Harnesses: harnesses}), source.IsMachineScope())
+}
+
+func artifactPartitionKeys(resourceKey string, harnesses []hcc.Target, source config.Source) []string {
+	if len(harnesses) == 0 {
+		return []string{artifactPartitionKey(resourceKey, harnesses, source)}
+	}
+	keys := make([]string, 0, len(harnesses))
+	for _, target := range harnesses {
+		keys = append(keys, artifactPartitionKey(resourceKey, []hcc.Target{target}, source))
+	}
+	return keys
+}
+
+func selectionPartitions(harnesses []hcc.Target, source config.Source) []SelectionPartition {
+	if len(harnesses) == 0 {
+		return []SelectionPartition{{MachineScope: source.IsMachineScope()}}
+	}
+	partitions := make([]SelectionPartition, 0, len(harnesses))
+	for _, target := range harnesses {
+		partitions = append(partitions, SelectionPartition{Target: target, MachineScope: source.IsMachineScope()})
+	}
+	return partitions
+}
+
+func selectionPartitionKeys(resourceKey string, partitions []SelectionPartition) []string {
+	keys := make([]string, 0, len(partitions))
+	for _, partition := range partitions {
+		keys = append(keys, partitionKey(resourceKey, partition.Target, partition.MachineScope))
+	}
+	return keys
+}
+
+func selectionPartitionKey(resourceKey string, partition SelectionPartition) string {
+	return partitionKey(resourceKey, partition.Target, partition.MachineScope)
+}
+
+// unresolvedMemberTargets removes target partitions already covered by a direct
+// artifact. Collection expansion remains responsible for every other target.
+func unresolvedMemberTargets(resourceKey string, harnesses []hcc.Target, source config.Source, directResolved map[string]struct{}) []hcc.Target {
+	if len(harnesses) == 0 {
+		if _, direct := directResolved[artifactPartitionKey(resourceKey, harnesses, source)]; direct {
+			return nil
+		}
+		return harnesses
+	}
+	unresolved := make([]hcc.Target, 0, len(harnesses))
+	for _, target := range harnesses {
+		if _, direct := directResolved[partitionKey(resourceKey, target, source.IsMachineScope())]; !direct {
+			unresolved = append(unresolved, target)
+		}
+	}
+	return unresolved
+}
+
+// retainMalformedPartitions narrows a malformed diagnostic to the partition
+// keys that remain unresolved. It returns false when all embedded certificates
+// were satisfied and the diagnostic must be dropped.
+func retainMalformedPartitions(err error, resourceKey string, keep func(string) bool) bool {
+	var sme *SelectedMalformedError
+	if !errors.As(err, &sme) || len(sme.partitions) == 0 {
+		return true
+	}
+	remaining := sme.partitions[:0]
+	for _, partition := range sme.partitions {
+		if keep(selectionPartitionKey(resourceKey, partition)) {
+			remaining = append(remaining, partition)
+		}
+	}
+	sme.partitions = remaining
+	return len(remaining) > 0
+}
+
+// appendCollectionDiagnostic retains only collection diagnostics for partitions
+// not already covered by a direct artifact. Errors can describe several owner
+// partitions (notably path-less members), so filtering is done before append.
+func appendCollectionDiagnostic(errs *[]error, err error, resourceKey string, directResolved map[string]struct{}) {
+	var snf *SelectedNotFoundError
+	if errors.As(err, &snf) && HasAdditiveSources(snf.Kind) {
+		*errs = append(*errs, err)
+		return
+	}
+	var sme *SelectedMalformedError
+	if errors.As(err, &sme) && HasAdditiveSources(sme.Kind) {
+		*errs = append(*errs, err)
+		return
+	}
+	if errors.As(err, &snf) && len(snf.partitionKeys) > 0 {
+		remaining := snf.partitionKeys[:0]
+		for _, key := range snf.partitionKeys {
+			if _, direct := directResolved[key]; !direct {
+				remaining = append(remaining, key)
+			}
+		}
+		snf.partitionKeys = remaining
+		if len(remaining) == 0 {
+			return
+		}
+	}
+	if !retainMalformedPartitions(err, resourceKey, func(key string) bool {
+		_, direct := directResolved[key]
+		return !direct
+	}) {
+		return
+	}
+	*errs = append(*errs, err)
+}
+
+// collectionMemberPartitionKeys returns every target-and-scope partition in
+// which a member miss could have been searched. Aggregate diagnostics (for
+// example, a path-less member) may cover multiple configured owners, so retain
+// all of their qualified partitions rather than collapsing them to kind:name.
+func collectionMemberPartitionKeys(resourceKey string, parentHarnesses []hcc.Target, parentSource config.Source, candidates []memberEntryCandidate, targetSet []hcc.Target) []string {
+	if len(candidates) == 0 {
+		return artifactPartitionKeys(resourceKey, parentHarnesses, parentSource)
+	}
+
+	seen := make(map[string]struct{})
+	var keys []string
+	for _, candidate := range candidates {
+		harnesses := effectiveMemberHarnesses(parentHarnesses, candidate.entry, true, targetSet)
+		for _, key := range artifactPartitionKeys(resourceKey, harnesses, candidate.entry.Source) {
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
 // deferredCollectionError is a per-registry collection resolution failure held
 // back until every registry has been walked, because a top-level
 // collections.include is propagated to all of them and only fails for real
 // when no registry provides it.
 type deferredCollectionError struct {
-	name string
-	err  error
+	name          string
+	err           error
+	partitionKeys []string
+}
+
+type missingSelectionDiagnostic struct {
+	selection  resourceSelection
+	err        error
+	required   bool
+	partitions []SelectionPartition
+	errIndex   int
+	emitted    bool
+}
+
+// mergeSelectionPartitions appends only new target-and-scope certificates while
+// preserving their first-seen order. Identical selection certificates are still
+// collapsed into one diagnostic, but disjoint partitions cannot hide each other.
+func mergeSelectionPartitions(existing []SelectionPartition, additions []SelectionPartition) []SelectionPartition {
+	for _, addition := range additions {
+		duplicate := false
+		for _, partition := range existing {
+			if partition == addition {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			existing = append(existing, addition)
+		}
+	}
+	return existing
+}
+
+func mergeMissingSelectionDiagnostic(diagnostic *missingSelectionDiagnostic, candidate error, required bool, partitions []SelectionPartition) {
+	diagnostic.required = diagnostic.required || required
+	diagnostic.partitions = mergeSelectionPartitions(diagnostic.partitions, partitions)
+
+	var currentMalformed *SelectedMalformedError
+	var candidateMalformed *SelectedMalformedError
+	if errors.As(diagnostic.err, &currentMalformed) {
+		return
+	}
+	if errors.As(candidate, &candidateMalformed) {
+		// A malformed resource is present upstream but failed ingestion. Prefer
+		// that precise diagnosis over a not-found guess if equivalent selection
+		// certificates came from different catalog aliases.
+		diagnostic.err = candidate
+	}
+}
+
+func applyMissingSelectionMetadata(diagnostic missingSelectionDiagnostic) error {
+	var malformed *SelectedMalformedError
+	if errors.As(diagnostic.err, &malformed) {
+		malformed.Required = diagnostic.required
+		malformed.partitions = append([]SelectionPartition(nil), diagnostic.partitions...)
+		return diagnostic.err
+	}
+	var notFound *SelectedNotFoundError
+	if errors.As(diagnostic.err, &notFound) {
+		notFound.Required = diagnostic.required
+	}
+	return diagnostic.err
 }
 
 func unresolvedSelectionArtifact(entry config.RegistryEntry, selected resourceSelection) ResolvedArtifact {
@@ -2182,14 +2649,15 @@ func newSkillOccurrence(entry config.RegistryEntry, entryIndex int, candidate ca
 func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targetSet []hcc.Target) (map[resourceSelection][]skillOccurrence, []error) {
 	var errs []error
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
-	reportedNotFound := make(map[missingResource]struct{})
-	// Track per-registry collection not-found errors separately so they
-	// can be suppressed when the collection is found in another registry.
-	// propagateTopLevelCollections adds collection includes to every entry,
-	// so "not found in registry X" is only a real error if the collection
-	// isn't found in ANY registry. Malformed correlation does not change that:
-	// a per-registry "failed to load" for a collection resolved elsewhere is
-	// the same false positive, and it is a HARD error, so it must defer too.
+	reportedNotFound := make(map[missingResource]int)
+	var missingDiagnostics []missingSelectionDiagnostic
+	// Track per-registry collection not-found errors separately so they can be
+	// reconciled after every registry is walked. propagateTopLevelCollections
+	// adds collection includes to every entry, so a miss is suppressible when
+	// another registry provides the collection in the same target and scope.
+	// Malformed correlation does not change that: a per-registry "failed to
+	// load" for a collection resolved in the same partition is the same false
+	// positive, and it is a HARD error, so it must defer too.
 	var collectionNotFoundErrs []deferredCollectionError
 	order := 0
 
@@ -2217,39 +2685,53 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 			selectedSkill, found := byName[selected]
 			if !found {
 				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref}
-				if _, reported := reportedNotFound[notFoundKey]; !reported {
-					reportedNotFound[notFoundKey] = struct{}{}
-					// Correlate before blaming. The resource may be absent from
-					// the catalog because the ingester could not load it, in
-					// which case the exact validation failure is already known
-					// and "removed upstream" is a misdiagnosis.
-					var selErr error
+				partitions := selectionPartitions(harnessTargets, entry.Source)
+				if diagnosticIndex, reported := reportedNotFound[notFoundKey]; reported {
+					var duplicateErr error
 					if sme := malformedSelectionError(malformed, catalogKey, selected.kind, selected.name,
-						entry.URL, entry.Path, entry.Ref, entry.Required, ""); sme != nil {
-						selErr = sme
-					} else {
-						snf := &SelectedNotFoundError{
-							Kind:     selected.kind,
-							Name:     selected.name,
-							URL:      entry.URL,
-							Path:     entry.Path,
-							Ref:      entry.Ref,
-							Required: entry.Required,
-						}
-						// Check if the name exists under a different kind and suggest the correct selector.
-						if hint := kindMismatchHint(byName, selected); hint != "" {
-							snf.Hint = hint
-						}
-						selErr = snf
+						entry.URL, entry.Path, entry.Ref, entry.Required, "", partitions); sme != nil {
+						duplicateErr = sme
 					}
-					// Defer collection errors: they may be false positives if
-					// the collection exists in another registry.
-					if selected.kind == ir.KindCollection {
-						collectionNotFoundErrs = append(collectionNotFoundErrs, deferredCollectionError{name: selected.name, err: selErr})
-					} else {
-						errs = append(errs, selErr)
-					}
+					mergeMissingSelectionDiagnostic(&missingDiagnostics[diagnosticIndex], duplicateErr, entry.Required, partitions)
+					continue
 				}
+
+				// Correlate before blaming. The resource may be absent from
+				// the catalog because the ingester could not load it, in
+				// which case the exact validation failure is already known
+				// and "removed upstream" is a misdiagnosis.
+				var selErr error
+				if sme := malformedSelectionError(malformed, catalogKey, selected.kind, selected.name,
+					entry.URL, entry.Path, entry.Ref, entry.Required, "", partitions); sme != nil {
+					selErr = sme
+				} else {
+					snf := &SelectedNotFoundError{
+						Kind:     selected.kind,
+						Name:     selected.name,
+						URL:      entry.URL,
+						Path:     entry.Path,
+						Ref:      entry.Ref,
+						Required: entry.Required,
+					}
+					// Check if the name exists under a different kind and suggest the correct selector.
+					if hint := kindMismatchHint(byName, selected); hint != "" {
+						snf.Hint = hint
+					}
+					selErr = snf
+				}
+				diagnostic := missingSelectionDiagnostic{
+					selection:  selected,
+					err:        selErr,
+					required:   entry.Required,
+					partitions: partitions,
+				}
+				if selected.kind != ir.KindCollection {
+					diagnostic.errIndex = len(errs)
+					diagnostic.emitted = true
+					errs = append(errs, selErr)
+				}
+				reportedNotFound[notFoundKey] = len(missingDiagnostics)
+				missingDiagnostics = append(missingDiagnostics, diagnostic)
 				continue
 			}
 
@@ -2258,16 +2740,53 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 		}
 	}
 
-	// Reconcile collection not-found errors: if the collection was found in
-	// at least one registry, suppress per-registry "not found" errors from
-	// other registries. A collection referenced in top-level
-	// collections.include is virtual — it doesn't belong to any specific
-	// registry, so "not found in registry X" is only a real error if the
-	// collection doesn't exist anywhere.
+	// Emit one deterministic diagnostic per matching selection location after all
+	// entries have been walked. This lets duplicate certificates contribute
+	// disjoint target/scope partitions and requiredness without repeating exact
+	// duplicates.
+	for _, diagnostic := range missingDiagnostics {
+		selErr := applyMissingSelectionMetadata(diagnostic)
+		if diagnostic.emitted {
+			errs[diagnostic.errIndex] = selErr
+			continue
+		}
+		collectionNotFoundErrs = append(collectionNotFoundErrs, deferredCollectionError{
+			name:          diagnostic.selection.name,
+			err:           selErr,
+			partitionKeys: selectionPartitionKeys(ViaMapKey(diagnostic.selection.kind, diagnostic.selection.name), diagnostic.partitions),
+		})
+	}
+
+	// Reconcile collection not-found errors only within the same target and
+	// scope. Top-level collection includes are propagated to every registry,
+	// but a collection found for one output partition does not satisfy a miss in
+	// another partition.
 	for _, deferred := range collectionNotFoundErrs {
 		key := resourceSelection{kind: ir.KindCollection, name: deferred.name}
-		if _, found := occurrencesByName[key]; found {
-			// Collection exists in another registry — suppress.
+		foundPartitions := make(map[string]struct{})
+		for _, occurrence := range occurrencesByName[key] {
+			for _, partition := range artifactPartitionKeys(ViaMapKey(key.kind, key.name), occurrence.resolved.Harnesses, occurrence.resolved.Source) {
+				foundPartitions[partition] = struct{}{}
+			}
+		}
+		remaining := deferred.partitionKeys[:0]
+		for _, partition := range deferred.partitionKeys {
+			if _, found := foundPartitions[partition]; !found {
+				remaining = append(remaining, partition)
+			}
+		}
+		if len(remaining) == 0 {
+			continue
+		}
+		remainingPartitions := make(map[string]struct{}, len(remaining))
+		for _, partition := range remaining {
+			remainingPartitions[partition] = struct{}{}
+		}
+		resourceKey := ViaMapKey(key.kind, key.name)
+		if !retainMalformedPartitions(deferred.err, resourceKey, func(partitionKey string) bool {
+			_, unresolved := remainingPartitions[partitionKey]
+			return unresolved
+		}) {
 			continue
 		}
 		errs = append(errs, deferred.err)
@@ -2335,7 +2854,16 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 		if a.kind != b.kind {
 			return int(a.kind) - int(b.kind)
 		}
-		return strings.Compare(a.name, b.name)
+		if a.name != b.name {
+			return strings.Compare(a.name, b.name)
+		}
+		if a.empty != b.empty {
+			if a.empty {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(string(a.target), string(b.target))
 	})
 
 	for _, key := range keys {
@@ -2411,7 +2939,13 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 	}
 
 	slices.SortFunc(winners, func(a, b skillOccurrence) int {
-		return a.order - b.order
+		if a.order != b.order {
+			return a.order - b.order
+		}
+		if a.partitionOrder != b.partitionOrder {
+			return a.partitionOrder - b.partitionOrder
+		}
+		return strings.Compare(string(artifactTarget(a.resolved)), string(artifactTarget(b.resolved)))
 	})
 
 	return winners, errs
@@ -2548,8 +3082,10 @@ func attachResource(e catalog.Entry, resources map[string]map[string]ir.Resource
 }
 
 type resourceSelection struct {
-	kind ir.ResourceKind
-	name string
+	kind   ir.ResourceKind
+	name   string
+	target hcc.Target // non-empty when this selection belongs to one output partition
+	empty  bool       // true for an explicit empty target intent
 }
 
 type missingResource struct {
@@ -3820,5 +4356,6 @@ func collisionRunnersUpByPath(occurrences []skillOccurrence, winner skillOccurre
 		seen[label] = struct{}{}
 		runnersUp = append(runnersUp, label)
 	}
+	slices.Sort(runnersUp)
 	return runnersUp
 }
