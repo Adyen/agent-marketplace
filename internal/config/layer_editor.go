@@ -222,7 +222,7 @@ func (e *LayerEditor) checkBinding(binding SourceBinding) error {
 	return nil
 }
 
-func (e *LayerEditor) normalizeRegistryEntry(entry RegistryEntry) (RegistryEntry, V4SourceKind, error) {
+func (e *LayerEditor) normalizeRegistryEntry(entry RegistryEntry, create bool) (RegistryEntry, V4SourceKind, error) {
 	if !e.legacy && registryEntryKind(entry) == V4SourceGit {
 		normalized, err := v4GitOriginForEdit(entry.URL, e.target.DeclaringPath, e.kind)
 		if err != nil {
@@ -230,7 +230,7 @@ func (e *LayerEditor) normalizeRegistryEntry(entry RegistryEntry) (RegistryEntry
 		}
 		entry.URL = normalized
 	}
-	kind, err := e.validateRegistryEntry(entry)
+	kind, err := e.validateRegistryEntry(entry, create)
 	if err != nil {
 		return RegistryEntry{}, "", err
 	}
@@ -238,7 +238,7 @@ func (e *LayerEditor) normalizeRegistryEntry(entry RegistryEntry) (RegistryEntry
 }
 
 func (e *LayerEditor) ensureRegistry(entry RegistryEntry, create bool) (SourceBinding, error) {
-	entry, kind, err := e.normalizeRegistryEntry(entry)
+	entry, kind, err := e.normalizeRegistryEntry(entry, create)
 	if err != nil {
 		return SourceBinding{}, err
 	}
@@ -248,13 +248,18 @@ func (e *LayerEditor) ensureRegistry(entry RegistryEntry, create bool) (SourceBi
 	return e.ensureV4Registry(entry, kind, create)
 }
 
-func (e *LayerEditor) validateRegistryEntry(entry RegistryEntry) (V4SourceKind, error) {
+func (e *LayerEditor) validateRegistryEntry(entry RegistryEntry, create bool) (V4SourceKind, error) {
 	kind := registryEntryKind(entry)
 	if kind != V4SourceGit && kind != V4SourceDirectory {
 		return "", v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "layer editor supports only git and directory sources")
 	}
 	if err := ValidateRegistryPath(entry.Path); err != nil {
 		return "", v4err("v4.edit-source", "registry.path", 0, "%v", err)
+	}
+	if create {
+		if err := validateRegistryWrite(e.target.DeclaringPath, entry); err != nil {
+			return "", err
+		}
 	}
 	if kind == V4SourceGit {
 		if strings.TrimSpace(entry.Ref) == "" {
@@ -342,9 +347,6 @@ func (e *LayerEditor) ensureV4Registry(entry RegistryEntry, kind V4SourceKind, c
 	if len(matches) == 0 {
 		if !create {
 			return SourceBinding{}, nil
-		}
-		if err := validateRegistryWrite(e.target.DeclaringPath, entry); err != nil {
-			return SourceBinding{}, err
 		}
 		name := v4MigrationRegistrySourceName(e.occupiedSourceNames(), entry.URL)
 		if err := addV4EditSource(e.root, name, entry, identity, kind); err != nil {
@@ -440,7 +442,7 @@ func legacyEntryNodePhysicalMatches(item *yaml.Node, entry RegistryEntry) bool {
 	if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(strings.TrimSpace(entry.URL)) {
 		return false
 	}
-	if strings.TrimSpace(entry.Path) != "" && NormalizeRegistryPath(yamlEntryPath(item)) != NormalizeRegistryPath(entry.Path) {
+	if NormalizeRegistryPath(yamlEntryPath(item)) != NormalizeRegistryPath(entry.Path) {
 		return false
 	}
 	if strings.TrimSpace(entry.Ref) != "" {
@@ -993,6 +995,17 @@ func legacySeqAppend(seq *yaml.Node, value string) bool {
 	return true
 }
 
+func (e *LayerEditor) ClearInstallExclude(entry RegistryEntry, locator ResourceLocator) error {
+	if e.legacy {
+		return e.ClearUnboundExclude(locator)
+	}
+	binding, found, err := e.LookupRegistry(entry)
+	if err != nil || !found {
+		return err
+	}
+	return e.Apply(binding, SelectionChange{Operation: SelectionClearExclude, Locators: []ResourceLocator{locator}})
+}
+
 func (e *LayerEditor) ClearUnboundExclude(locator ResourceLocator) error {
 	key := skill.ConfigKeyForKind(locator.Kind)
 	name := strings.TrimSpace(locator.Name)
@@ -1123,7 +1136,7 @@ func (e *LayerEditor) SetLayerExclude(locator ResourceLocator, entries []Registr
 	// Validate every provider before touching the document: one invalid
 	// entry must not leave the earlier ones half-excluded.
 	for _, entry := range entries {
-		if _, _, err := e.normalizeRegistryEntry(entry); err != nil {
+		if _, _, err := e.normalizeRegistryEntry(entry, true); err != nil {
 			return err
 		}
 	}

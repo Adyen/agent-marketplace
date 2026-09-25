@@ -112,8 +112,9 @@ type upgradeTargetSpec struct {
 }
 
 type upgradeTargetResult struct {
-	selection lockfile.UpgradeSelection
-	notices   []string
+	selection       lockfile.UpgradeSelection
+	notices         []string
+	checkUpgradeErr *lockLifecycleError
 }
 
 type exactLockSet struct {
@@ -171,6 +172,9 @@ func newLockCmd() *cobra.Command {
 				return err
 			}
 			if check && changed > 0 {
+				if result.checkUpgradeErr != nil {
+					return result.checkUpgradeErr
+				}
 				return &lockLifecycleError{Code: "lock.change-required", Err: errors.New("lock files would change")}
 			}
 			if err := writeGroupedWarnings(cmd.OutOrStdout(), warnings, false); err != nil {
@@ -821,6 +825,8 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 	}
 	organizationRequiresLock := false
+	var checkUpgradeErr *lockLifecycleError
+	checkHasDrift := false
 	// Exact snapshot acquisition, verification, and dependency publication form
 	// one GC-critical section. Preserve the lock order: namespace before
 	// dependency transaction destinations.
@@ -932,7 +938,12 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if mode.check {
 			fresh := exists && current != nil && unselectedLayerIsFresh(scope, remote, *current)
 			if fresh && current.APIVersion == lockfile.APIVersionV1 && !implicitOrg && !mode.locked {
+				if checkUpgradeErr == nil {
+					checkUpgradeErr = &lockLifecycleError{Code: "lock.version-upgrade-required", Scope: scope, Path: lockPath, Err: errors.New("lock schema upgrade to v2 required")}
+				}
 				fresh = false
+			} else if !fresh {
+				checkHasDrift = true
 			}
 			if !fresh {
 				if mode.locked {
@@ -1161,6 +1172,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		mode.prepareInstall.discoveryConfig = ec.Merged
 		mode.prepareInstall.release = releaseSnapshotLease
 		releaseSnapshotLease = nil
+	}
+	if mode.upgradeResult != nil && !checkHasDrift {
+		mode.upgradeResult.checkUpgradeErr = checkUpgradeErr
 	}
 	return option, changed, resultLease, nil
 }

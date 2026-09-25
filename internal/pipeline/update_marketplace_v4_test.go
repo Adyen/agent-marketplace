@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -115,6 +116,112 @@ func TestUpdateMarketplaceV4SkipsExplicitRevision(t *testing.T) {
 	}
 	layerAssertFileUnchanged(t, configPath, configBytes, configStat)
 	layerAssertFileUnchanged(t, lockPath, lockBytes, lockStat)
+}
+
+func TestUpdateMarketplaceV4RevisionConstraintIsSourceScoped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kind string
+	}{
+		{name: "skill", kind: "skill"},
+		{name: "collection", kind: "collection"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			repo := t.TempDir()
+			configPath := filepath.Join(home, ".agents", "config.yaml")
+			lockPath := filepath.Join(home, ".agents", "lock.yaml")
+			writeFileMode(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n", 0o600)
+			a, b := newLayerMarketplaceServer(t), newLayerMarketplaceServer(t)
+			entryA := config.MarketplaceEntry{URL: a.URL, InstanceID: a.instanceID}
+			entryB := config.MarketplaceEntry{URL: b.URL, InstanceID: b.instanceID}
+			var pinsA, pinsB []config.MarketplaceResourcePin
+			resourceName := "review"
+			if tc.kind == "collection" {
+				resourceName = "bundle"
+				pinsA = layerCollectionPins(t, a, "review", "bundle")
+				pinsB = layerCollectionPins(t, b, "review", "bundle")
+			} else {
+				registryA := a.addRegistry(t, "source")
+				registryB := b.addRegistry(t, "source")
+				a.addSkill(t, registryA, "review")
+				b.setSkill(t, registryB, "review", "initial B body")
+				pinsA = layerPreparePins(t, a, "skill", "review")
+				pinsB = layerPreparePins(t, b, "skill", "review")
+			}
+			installV4MarketplaceLayer(t, repo, configPath, entryA, pinsA)
+			oldA := layerMarketplaceLockDoc(t, lockPath).Marketplaces[0]
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			locator := "source/" + tc.kind + "/" + resourceName
+			constrained := strings.Replace(string(data), locator, locator+": {revision: "+pinsA[0].Revision+"}", 1)
+			if constrained == string(data) {
+				t.Fatalf("A request not found in config: %s", data)
+			}
+			writeFileMode(t, configPath, constrained, 0o600)
+			installV4MarketplaceLayer(t, repo, configPath, entryB, pinsB)
+			oldDoc := layerMarketplaceLockDoc(t, lockPath)
+			if len(oldDoc.Marketplaces) != 2 {
+				t.Fatalf("initial lock endpoints = %#v", oldDoc.Marketplaces)
+			}
+			configBytes, configStat := layerFreezeFile(t, configPath)
+			b.setSkill(t, b.registries["source"], "review", "advanced B body")
+			latestSkill := b.resources["source/skill/review"].revision
+			if tc.kind == "collection" {
+				b.addCollection(t, b.registries["source"], "bundle", []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: string(b.registries["source"].ID), Revision: string(latestSkill.ContentDigest)}})
+			}
+
+			result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+			if err != nil {
+				t.Fatalf("update: %v", err)
+			}
+			if result.UpdatedMarketplacePins != 1 || result.MarketplacePins[0].Reason != "request pins an explicit revision" {
+				t.Fatalf("update result = %#v, want fixed A and advanced B", result)
+			}
+			layerAssertFileUnchanged(t, configPath, configBytes, configStat)
+			updated := layerMarketplaceLockDoc(t, lockPath)
+			if len(updated.Marketplaces) != 2 {
+				t.Fatalf("updated lock endpoints = %#v", updated.Marketplaces)
+			}
+			var gotA, gotB *lockfile.MarketplaceLock
+			for i := range updated.Marketplaces {
+				switch updated.Marketplaces[i].URL {
+				case a.URL:
+					gotA = &updated.Marketplaces[i]
+				case b.URL:
+					gotB = &updated.Marketplaces[i]
+				}
+			}
+			if gotA == nil || !reflect.DeepEqual(*gotA, oldA) {
+				t.Fatalf("pinned endpoint A changed: got %#v, want %#v", gotA, oldA)
+			}
+			if gotB == nil {
+				t.Fatalf("endpoint B missing from lock: %#v", updated.Marketplaces)
+			}
+			latestRoot := latestSkill
+			if tc.kind == "collection" {
+				latestRoot = b.resources["source/collection/bundle"].revision
+			}
+			if len(gotB.Resources) != len(pinsB) {
+				t.Fatalf("B lock resources = %#v, want %d", gotB.Resources, len(pinsB))
+			}
+			for _, resource := range gotB.Resources {
+				want := latestSkill
+				if resource.Kind == tc.kind && resource.Name == resourceName {
+					want = latestRoot
+				}
+				if string(resource.ContentDigest) != string(want.ContentDigest) || resource.Revision != string(want.ContentDigest) {
+					t.Fatalf("B lock resource = %#v, want digest/revision %s", resource, want.ContentDigest)
+				}
+				if tc.kind == "collection" && resource.Kind == "skill" && (len(resource.SelectedBy) != 1 || resource.SelectedBy[0].Name != "bundle" || string(resource.SelectedBy[0].Revision) != string(latestRoot.ContentDigest)) {
+					t.Fatalf("B collection leaf selection = %#v, want new bundle revision", resource.SelectedBy)
+				}
+			}
+		})
+	}
 }
 
 func TestUpdateMarketplaceV4CollectionUpdate(t *testing.T) {

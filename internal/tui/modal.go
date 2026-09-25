@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -196,6 +197,12 @@ func runMarketplaceScopedToggle(ctx context.Context, repoRoot string, act toggle
 		return fmt.Errorf("unsupported Marketplace toggle scope")
 	}
 	localDir := config.FindLocalConfigDir()
+	if act.scope == scopeLocal {
+		rel, err := filepath.Rel(repoRoot, localDir)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			configPath = config.LocalConfigPath(localDir)
+		}
+	}
 	return pipeline.ToggleMarketplacePin(ctx, repoRoot, localDir, configPath, source, selection.Entry, selection.Pin, act.enable)
 }
 
@@ -272,9 +279,20 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 				}
 				return m.ClearUnboundExclude(locator)
 			}
-			binding, err := m.EnsureRegistry(entry)
-			if err != nil {
-				return err
+			var binding config.SourceBinding
+			var found bool
+			var err error
+			if !act.enable {
+				binding, found, err = m.LookupRegistry(entry)
+				if err != nil {
+					return err
+				}
+			}
+			if !found {
+				binding, err = m.EnsureRegistry(entry)
+				if err != nil {
+					return err
+				}
 			}
 			operation := config.SelectionExclude
 			if act.enable {

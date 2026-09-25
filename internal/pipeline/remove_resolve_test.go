@@ -2,7 +2,7 @@ package pipeline
 
 import (
 	"context"
-
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -270,6 +270,120 @@ func TestResolvedResourceInRegistry_EntryPathOwnsDiscoveredSubPath(t *testing.T)
 	}
 	if got == nil {
 		t.Fatal("entry path should own the deeper discovered sub-bundle path")
+	}
+}
+
+func TestRemoveExistingRelativeUserRegistry(t *testing.T) {
+	repoRoot, home := t.TempDir(), t.TempDir()
+	t.Chdir(repoRoot)
+	t.Setenv("HOME", home)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := filepath.Join(repoRoot, "project-registry")
+	writeSkill(t, registryRoot, "review", "review skill", nil)
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: ./project-registry\n    skills: {include: [review]}\n"
+	writeFile(t, userPath, initial)
+	result, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot: repoRoot, Scope: ScopeUser, ScopeSpecified: true, FromURL: "./project-registry",
+	})
+	if err != nil {
+		t.Fatalf("remove existing relative user registry: %v", err)
+	}
+	if result == nil || result.ExcludedRegistry {
+		t.Fatalf("remove result = %#v", result)
+	}
+	data, err := os.ReadFile(userPath)
+	if err != nil || strings.Contains(string(data), "project-registry") || !strings.Contains(string(data), "harnesses: [factory]") {
+		t.Fatalf("existing registry not removed: %q err=%v", data, err)
+	}
+}
+
+func TestRemoveNamedExistingRelativeUserRegistry(t *testing.T) {
+	for _, tc := range []struct {
+		name, selection, resource string
+		from                      bool
+		collection                bool
+	}{
+		{name: "named from", selection: "skills: {include: [review]}", resource: "review", from: true},
+		{name: "named unscoped", selection: "skills: {include: [review]}", resource: "review"},
+		{name: "collection from", selection: "collections: [bundle]", resource: "bundle", from: true, collection: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot, home := t.TempDir(), t.TempDir()
+			t.Chdir(repoRoot)
+			t.Setenv("HOME", home)
+			config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+			registryRoot := filepath.Join(repoRoot, "project-registry")
+			writeSkill(t, registryRoot, "review", "review skill", nil)
+			if tc.collection {
+				writeFile(t, filepath.Join(registryRoot, "collections", "bundle", "COLLECTION.yaml"), "name: bundle\nskills:\n  - name: review\n")
+			}
+			userPath, err := config.GlobalConfigPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: ./project-registry\n    " + tc.selection + "\n"
+			writeFile(t, userPath, initial)
+			opts := RemoveOptions{RepoRoot: repoRoot, ResourceName: tc.resource, Scope: ScopeUser, ScopeSpecified: true}
+			if tc.from {
+				opts.FromURL = "./project-registry"
+			}
+			result, err := Remove(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("remove existing relative user selection: %v", err)
+			}
+			if result == nil || result.RemovedName != tc.resource || result.IsCollection != tc.collection {
+				t.Fatalf("remove result = %#v", result)
+			}
+			cfg, err := config.LoadRootConfigFromPath(userPath)
+			if err != nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != "./project-registry" {
+				t.Fatalf("existing entry was lost: %#v err=%v", cfg, err)
+			}
+			entry := cfg.Registries[0]
+			if tc.collection {
+				if !slices.Contains(entry.Collections.Exclude, tc.resource) || slices.Contains(entry.Collections.Include, tc.resource) {
+					t.Fatalf("collection cleanup missing: %#v", entry.Collections)
+				}
+			} else if slices.Contains(entry.Skills.Include, tc.resource) && !slices.Contains(entry.Skills.Exclude, tc.resource) {
+				t.Fatalf("skill cleanup missing: %#v", entry.Skills)
+			}
+		})
+	}
+}
+
+func TestRemoveFromRelativeRepoRegistryRejectsNewUserShadow(t *testing.T) {
+	repoRoot, home := t.TempDir(), t.TempDir()
+	t.Chdir(repoRoot)
+	t.Setenv("HOME", home)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := filepath.Join(repoRoot, "project-registry")
+	writeSkill(t, registryRoot, "review", "review skill", nil)
+	repoPath := config.ProjectConfigPath(repoRoot)
+	repoInitial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: ./project-registry\n    skills: {include: [review]}\n"
+	writeFile(t, repoPath, repoInitial)
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	userInitial := "apiVersion: agent-marketplace/v2\nregistries: []\n"
+	writeFile(t, userPath, userInitial)
+	_, err = Remove(context.Background(), RemoveOptions{
+		RepoRoot: repoRoot, ResourceName: "review", FromURL: "./project-registry", Scope: ScopeUser, ScopeSpecified: true,
+	})
+	var boundary *config.GlobalRelativeRegistryError
+	if !errors.As(err, &boundary) {
+		t.Fatalf("new relative user shadow error = %v, want GlobalRelativeRegistryError", err)
+	}
+	data, err := os.ReadFile(userPath)
+	if err != nil || string(data) != userInitial {
+		t.Fatalf("rejected shadow changed user config: %q err=%v", data, err)
+	}
+	data, err = os.ReadFile(repoPath)
+	if err != nil || string(data) != repoInitial {
+		t.Fatalf("rejected shadow changed repo config: %q err=%v", data, err)
 	}
 }
 
