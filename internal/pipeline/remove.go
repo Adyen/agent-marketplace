@@ -633,10 +633,18 @@ func editRemovalLayer(repoRoot string, scope Scope, staging *configStagingManage
 	return EditLayerAtPath(config.LayerTarget{Source: scopeToConfigSource(scope), StagedPath: staged, DeclaringPath: destination}, mutate)
 }
 
+func bindRemovalRegistry(m *LayerMutation, entry config.RegistryEntry) (config.SourceBinding, error) {
+	binding, found, err := m.LookupRegistry(entry)
+	if err != nil || found {
+		return binding, err
+	}
+	return m.EnsureRegistry(entry)
+}
+
 func editRemovalSelection(repoRoot string, scope Scope, staging *configStagingManager, entry config.RegistryEntry, kind ir.ResourceKind, name string, operation config.SelectionOperation) error {
 	locator := config.ResourceLocator{Kind: kind, Name: name}
 	return editRemovalLayer(repoRoot, scope, staging, func(m *LayerMutation) error {
-		binding, err := m.EnsureRegistry(entry)
+		binding, err := bindRemovalRegistry(m, entry)
 		if err != nil {
 			return err
 		}
@@ -655,7 +663,7 @@ func excludeWithUnboundCompatibility(repoRoot string, scope Scope, staging *conf
 				return err
 			}
 		}
-		binding, err := m.EnsureRegistry(entry)
+		binding, err := bindRemovalRegistry(m, entry)
 		if err != nil {
 			return err
 		}
@@ -1336,9 +1344,12 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		if entryInTarget {
 			entry := removalEditEntry(targetEntry, fromURL, selectedPath, shadowRef)
 			if err := editRemoveLayer(func(m *LayerMutation) error {
-				binding, err := m.EnsureRegistry(entry)
+				binding, found, err := m.LookupRegistry(entry)
 				if err != nil {
 					return err
+				}
+				if !found {
+					return fmt.Errorf("registry %q is not declared in target config", entry.URL)
 				}
 				return m.RemoveSource(binding)
 			}); err != nil {
@@ -1383,7 +1394,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		}
 		collectionEditEntry = removalEditEntry(collectionEditEntry, fromURL, selectedPath, collectionShadowRef)
 		if err := editRemoveLayer(func(m *LayerMutation) error {
-			binding, err := m.EnsureRegistry(collectionEditEntry)
+			binding, err := bindRemovalRegistry(m, collectionEditEntry)
 			if err != nil {
 				return err
 			}
@@ -1466,7 +1477,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		operation = config.SelectionRemoveInclude
 	}
 	if err := editRemoveLayer(func(m *LayerMutation) error {
-		binding, err := m.EnsureRegistry(editEntry)
+		binding, err := bindRemovalRegistry(m, editEntry)
 		if err != nil {
 			return err
 		}

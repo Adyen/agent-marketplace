@@ -76,6 +76,9 @@ func mergeSelectedBy(existing, added []lockfile.MarketplaceSelectionLock) []lock
 }
 
 func MergePinsToV4(v4 *config.V4Config, current lockfile.Document, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin, cache *marketplace.Cache) (lockfile.Document, error) {
+	if len(pins) > 0 && cache == nil {
+		return lockfile.Document{}, lockMismatch("lock", "verified Marketplace cache is required to merge pins")
+	}
 	doc, canonical, sourceName, merged, existing, err := beginV4MarketplaceMerge(v4, current, entry)
 	if err != nil {
 		return lockfile.Document{}, err
@@ -86,6 +89,9 @@ func MergePinsToV4(v4 *config.V4Config, current lockfile.Document, entry config.
 func ReplacePinsToV4(v4 *config.V4Config, current lockfile.Document, entry config.MarketplaceEntry, expectedRoot config.MarketplaceResourcePin, replacements []config.MarketplaceResourcePin, cache *marketplace.Cache) (lockfile.Document, error) {
 	if len(replacements) == 0 {
 		return lockfile.Document{}, lockMismatch("lock", "Marketplace update requires a verified replacement")
+	}
+	if cache == nil {
+		return lockfile.Document{}, lockMismatch("lock", "verified Marketplace cache is required to replace pins")
 	}
 	if err := config.ValidateMarketplaceResourcePin(expectedRoot); err != nil {
 		return lockfile.Document{}, err
@@ -149,6 +155,12 @@ func beginV4MarketplaceMerge(v4 *config.V4Config, current lockfile.Document, ent
 	if v4 == nil {
 		return lockfile.Document{}, "", "", nil, nil, lockMismatch("lock", "candidate v4 configuration is missing")
 	}
+	if current.APIVersion != "" && current.APIVersion != lockfile.APIVersionV1 && current.APIVersion != lockfile.APIVersionV2 {
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("lock", "unsupported lock apiVersion %q", current.APIVersion)
+	}
+	if current.Scope != "" && !current.Scope.Valid() {
+		return lockfile.Document{}, "", "", nil, nil, lockMismatch("lock", "invalid lock scope %q", current.Scope)
+	}
 	if wantScope := entry.Source.LockScope(); wantScope != "" && current.Scope != "" && string(current.Scope) != wantScope {
 		return lockfile.Document{}, "", "", nil, nil, lockMismatch("lock", "lock scope %q does not match source scope %q", current.Scope, wantScope)
 	}
@@ -181,16 +193,25 @@ func beginV4MarketplaceMerge(v4 *config.V4Config, current lockfile.Document, ent
 
 	merged := make([]lockfile.MarketplaceLock, 0, len(doc.Marketplaces)+1)
 	var existing *lockfile.MarketplaceLock
-	// Endpoint URLs are canonical and unique per document: lockfile.Normalize
-	// rewrites and dedupes them before any lock reaches this merge.
 	for i := range doc.Marketplaces {
 		record := doc.Marketplaces[i]
-		if record.URL == canonical {
+		recordCanonical, err := marketplace.NormalizeMarketplaceURL(record.URL)
+		if err != nil {
+			return lockfile.Document{}, "", "", nil, nil, lockMismatch("marketplaces", "lock endpoint %q is not a valid URL: %v", record.URL, err)
+		}
+		if recordCanonical == canonical {
+			if existing != nil {
+				return lockfile.Document{}, "", "", nil, nil, lockMismatch("marketplaces", "lock contains duplicate endpoint records for %q", canonical)
+			}
 			copy := record
 			existing = &copy
 			continue
 		}
-		if kept := pruneEndpointRecord(v4, record); kept != nil {
+		kept, err := pruneEndpointRecord(v4, record)
+		if err != nil {
+			return lockfile.Document{}, "", "", nil, nil, err
+		}
+		if kept != nil {
 			merged = append(merged, *kept)
 		}
 	}
@@ -203,7 +224,11 @@ func beginV4MarketplaceMerge(v4 *config.V4Config, current lockfile.Document, ent
 func finishV4MarketplaceMerge(v4 *config.V4Config, doc lockfile.Document, canonical, sourceName string, entry config.MarketplaceEntry, merged []lockfile.MarketplaceLock, existing *lockfile.MarketplaceLock, pins []config.MarketplaceResourcePin, cache *marketplace.Cache) (lockfile.Document, error) {
 	next := lockfile.MarketplaceLock{URL: canonical, InstanceID: entry.InstanceID}
 	if existing != nil {
-		next.Resources = reachableResources(v4, sourceName, existing.Resources)
+		retained, err := reachableResources(v4, sourceName, existing.Resources)
+		if err != nil {
+			return lockfile.Document{}, err
+		}
+		next.Resources = retained
 	}
 	resources := make(map[string]lockfile.MarketplaceResourceLock, len(next.Resources)+len(pins))
 	for _, record := range next.Resources {
@@ -254,17 +279,24 @@ func finishV4MarketplaceMerge(v4 *config.V4Config, doc lockfile.Document, canoni
 	return lockfile.Normalize(doc)
 }
 
-func pruneEndpointRecord(v4 *config.V4Config, record lockfile.MarketplaceLock) *lockfile.MarketplaceLock {
+func pruneEndpointRecord(v4 *config.V4Config, record lockfile.MarketplaceLock) (*lockfile.MarketplaceLock, error) {
+	canonical, err := marketplace.NormalizeMarketplaceURL(record.URL)
+	if err != nil {
+		return nil, lockMismatch("marketplaces", "lock endpoint %q is not a valid URL: %v", record.URL, err)
+	}
 	sourceName := ""
 	for name, source := range v4.Sources {
-		if source.Kind == config.V4SourceMarketplace && source.CanonicalURL == record.URL {
+		if source.Kind == config.V4SourceMarketplace && source.CanonicalURL == canonical {
 			sourceName = name
 		}
 	}
 	if sourceName == "" {
-		return nil
+		return nil, nil
 	}
-	resources := reachableResources(v4, sourceName, record.Resources)
+	resources, err := reachableResources(v4, sourceName, record.Resources)
+	if err != nil {
+		return nil, err
+	}
 	kept := record
 	kept.Resources = resources
 	referenced := make(map[string]bool, len(resources))
@@ -278,10 +310,13 @@ func pruneEndpointRecord(v4 *config.V4Config, record lockfile.MarketplaceLock) *
 		}
 	}
 	kept.RegistryBindings = bindings
-	return &kept
+	return &kept, nil
 }
 
-func reachableResources(v4 *config.V4Config, sourceName string, records []lockfile.MarketplaceResourceLock) []lockfile.MarketplaceResourceLock {
+func reachableResources(v4 *config.V4Config, sourceName string, records []lockfile.MarketplaceResourceLock) ([]lockfile.MarketplaceResourceLock, error) {
+	if _, ok := v4.Sources[sourceName]; !ok {
+		return nil, lockMismatch("marketplaces", "lock references missing v4 source %q", sourceName)
+	}
 	requested := make(map[string]bool)
 	for i := range v4.Requests {
 		request := &v4.Requests[i]
@@ -307,7 +342,9 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 			}
 			if direct || member {
 				retained = append(retained, record)
-				selected[record.RegistryID+"\x00"+record.Name+"\x00"+string(record.ContentDigest)] = true
+				if record.Kind == "collection" {
+					selected[record.RegistryID+"\x00"+record.Name+"\x00"+string(record.ContentDigest)] = true
+				}
 				progress = true
 				continue
 			}
@@ -318,5 +355,21 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 			break
 		}
 	}
-	return retained
+	for i := range retained {
+		var edges []lockfile.MarketplaceSelectionLock
+		for index, edge := range retained[i].SelectedBy {
+			if selected[edge.RegistryID+"\x00"+edge.Name+"\x00"+string(edge.Revision)] {
+				if edges != nil {
+					edges = append(edges, edge)
+				}
+			} else if edges == nil {
+				edges = make([]lockfile.MarketplaceSelectionLock, 0, len(retained[i].SelectedBy)-1)
+				edges = append(edges, retained[i].SelectedBy[:index]...)
+			}
+		}
+		if edges != nil {
+			retained[i].SelectedBy = edges
+		}
+	}
+	return retained, nil
 }

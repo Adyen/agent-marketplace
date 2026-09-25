@@ -629,7 +629,7 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "collections", Name: "bundle", Revision: "v1"}}),
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
-	warmMarketplaceSkillPin(t, entry, pin)
+	pin.Digest = warmMarketplaceSkillPin(t, entry, pin)
 	r := row{
 		Artifact:       resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "team-review"}, IsMarketplace: true, Source: config.RepoCommitted},
 		EnabledProject: true,
@@ -659,6 +659,31 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 	}
 	if len(loaded.Registries) != 0 {
 		t.Fatalf("registries mutated by Marketplace enable: %#v", loaded.Registries)
+	}
+	parentBefore, err := os.ReadFile(config.LocalConfigPath(repoRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(repoRoot, "component")
+	childPath := config.LocalConfigPath(child)
+	if err := os.MkdirAll(filepath.Dir(childPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(childPath, []byte("apiVersion: agent-marketplace/v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(child)
+	msg = runScopedToggle(repoRoot, scopedToggleAction(r, scopeLocal))()
+	if written, ok := msg.(configWrittenMsg); !ok || written.err != nil {
+		t.Fatalf("subdirectory Marketplace toggle = %#v", msg)
+	}
+	childConfig, err := config.LoadLocalConfigFromPath(childPath)
+	if err != nil || childConfig == nil || len(childConfig.Marketplaces) != 1 || len(childConfig.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("subdirectory local Marketplace pin = %#v, %v", childConfig, err)
+	}
+	parentAfter, err := os.ReadFile(config.LocalConfigPath(repoRoot))
+	if err != nil || string(parentAfter) != string(parentBefore) {
+		t.Fatalf("parent local config changed: %v", err)
 	}
 }
 

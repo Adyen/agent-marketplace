@@ -91,7 +91,9 @@ func TestInstallScopeRepoFromSubdir(t *testing.T) {
 	// Skeleton .agents/config.yaml should be created in the subdir.
 	env.AssertFileExists("/workspace/subdir/.agents/config.yaml")
 	// Repo config keeps relative paths (committed, portable).
+	env.AssertFileContains("/workspace/subdir/.agents/config.yaml", "apiVersion: agent-marketplace/v4")
 	env.AssertFileContains("/workspace/subdir/.agents/config.yaml", "./registry")
+	env.AssertFileContains("/workspace/subdir/.agents/config.yaml", "all: true")
 
 	// Skill should materialize in the subdir's .factory/skills/ (new project root).
 	env.AssertFileExists("/workspace/subdir/.factory/skills/repo-skill/SKILL.md")

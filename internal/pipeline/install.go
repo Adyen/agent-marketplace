@@ -10,8 +10,6 @@ import (
 	"slices"
 	"strings"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
@@ -194,15 +192,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 					break
 				}
 				if opts.DependencyReconcile == nil {
-					if err := os.MkdirAll(filepath.Dir(cwdProjectConfig), 0755); err != nil {
-						return nil, fmt.Errorf("create .agents directory: %w", err)
-					}
-					skeleton := config.Config{APIVersion: config.APIVersionV2}
-					data, err := yaml.Marshal(&skeleton)
-					if err != nil {
-						return nil, fmt.Errorf("marshal skeleton config: %w", err)
-					}
-					if err := os.WriteFile(cwdProjectConfig, data, 0644); err != nil {
+					if err := seedMissingLayerRoot(config.LayerTarget{Source: config.RepoCommitted, StagedPath: cwdProjectConfig}); err != nil {
 						return nil, fmt.Errorf("create skeleton config: %w", err)
 					}
 				}
@@ -277,46 +267,6 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return installFromAdHoc(ctx, opts, fromURL, kind, hasKind, &ec)
 	}
 
-	repoCfg := ec.Repo.Config
-
-	// If repo config doesn't exist (and we're writing to repo scope), create skeleton
-	if repoCfg == nil && opts.Scope == ScopeRepo {
-		repoConfigPath := configPath
-		if err := os.MkdirAll(filepath.Dir(repoConfigPath), 0755); err != nil {
-			return nil, fmt.Errorf("create .agents directory: %w", err)
-		}
-		skeleton := config.Config{
-			APIVersion: config.APIVersionV2,
-			// Harnesses intentionally omitted: project configs inherit
-			// from the org/global layer during merge (per AGENTS.md).
-		}
-		data, err := yaml.Marshal(&skeleton)
-		if err != nil {
-			return nil, fmt.Errorf("marshal skeleton config: %w", err)
-		}
-		if err := os.WriteFile(repoConfigPath, data, 0644); err != nil {
-			return nil, fmt.Errorf("create skeleton config: %w", err)
-		}
-
-		// The discovery helper needs the newly created repo layer to be
-		// reflected in the effective config.
-		var overlays map[string][]byte
-		if opts.configStaging != nil {
-			overlays, err = opts.configStaging.Overlays()
-			if err != nil {
-				return nil, err
-			}
-		}
-		ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
-			RepoRoot:       repoRoot,
-			LocalConfigDir: opts.LocalConfigDir,
-			FileOverlays:   overlays,
-		}, nil)
-		if len(ec.Errors) > 0 {
-			return nil, errors.Join(ec.Errors...)
-		}
-	}
-
 	discoveryCfg, err := loadInstallDiscoveryConfig(ctx, opts, &ec)
 	if err != nil {
 		return nil, err
@@ -377,6 +327,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	var installedResources []resourceIdentity
 	var mutateInstall func(*LayerMutation) error
 	var excludeCleanup *resourceIdentity
+	var excludeCleanupEntry *config.RegistryEntry
 	if trimmedTag := strings.TrimSpace(opts.Tag); trimmedTag != "" {
 		if opts.Scope != ScopeRepo {
 			return nil, fmt.Errorf("--tag is only supported with --scope repo (or no --scope)")
@@ -535,6 +486,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		if entry == nil {
 			return nil, fmt.Errorf("%s %q was found but no providing registry entry could be identified", skill.KindLabel(match.kind), resourceName)
 		}
+		excludeCleanupEntry = entry
 		// Repo-relative local registries are project-local and cannot be
 		// shadowed into the user-personal (global) config.
 		if err := validateRegistryWriteScope(opts.Scope, *entry); err != nil {
@@ -564,7 +516,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return nil, err
 	}
 	if excludeCleanup != nil {
-		if err := clearInstallExcludes(repoRoot, excludeCleanup.kind, excludeCleanup.name, opts.configStaging); err != nil {
+		if err := clearInstallExcludes(repoRoot, *excludeCleanupEntry, excludeCleanup.kind, excludeCleanup.name, opts.configStaging); err != nil {
 			return nil, err
 		}
 	}
@@ -747,7 +699,7 @@ func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, repoRoot, l
 	return result.Catalogs, result.Collections, nil
 }
 
-func clearInstallExcludes(repoRoot string, kind ir.ResourceKind, name string, staging *configStagingManager) error {
+func clearInstallExcludes(repoRoot string, entry config.RegistryEntry, kind ir.ResourceKind, name string, staging *configStagingManager) error {
 	destination := config.LocalConfigPath(repoRoot)
 	if _, err := os.Stat(destination); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -764,7 +716,7 @@ func clearInstallExcludes(repoRoot string, kind ir.ResourceKind, name string, st
 		}
 	}
 	return EditLayerAtPath(config.LayerTarget{Source: config.RepoPersonal, StagedPath: mapped, DeclaringPath: destination}, func(m *LayerMutation) error {
-		return m.ClearUnboundExclude(config.ResourceLocator{Kind: kind, Name: name})
+		return m.ClearInstallExclude(entry, config.ResourceLocator{Kind: kind, Name: name})
 	})
 }
 
@@ -1234,6 +1186,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		if err := addSelectedResource(match.kind, resourceName); err != nil {
 			return nil, err
 		}
+		if err := clearInstallExcludes(repoRoot, binding.Entry, match.kind, resourceName, opts.configStaging); err != nil {
+			return nil, err
+		}
 		requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: resourceName}}, silentSyncOptsForInstall(opts)...)
 		if err != nil {
 			return nil, err
@@ -1266,6 +1221,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			}
 			if match != nil {
 				if err := addSelectedResource(match.kind, inferredName); err != nil {
+					return nil, err
+				}
+				if err := clearInstallExcludes(repoRoot, binding.Entry, match.kind, inferredName, opts.configStaging); err != nil {
 					return nil, err
 				}
 				requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: inferredName}}, silentSyncOptsForInstall(opts)...)
