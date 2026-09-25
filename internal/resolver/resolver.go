@@ -2666,11 +2666,17 @@ func localOwnerExcluded(candidate localOwnerCandidate, kind ir.ResourceKind, nam
 	if artifactShadowedByEntries(localCandidateArtifact(candidate), cfg.Registries) {
 		return true
 	}
-	selector := candidate.entry.SelectorForKind(kind)
-	if !candidate.entry.Required && (selector.ExcludeAll || slices.ContainsFunc(selector.Exclude, func(excluded string) bool {
-		return strings.TrimSpace(excluded) == name
-	})) {
-		return true
+	if candidate.entry.V4Decisions != nil {
+		if v4OwnerExcluded(candidate.entry, kind, name) {
+			return true
+		}
+	} else {
+		selector := candidate.entry.SelectorForKind(kind)
+		if !candidate.entry.Required && (selector.ExcludeAll || slices.ContainsFunc(selector.Exclude, func(excluded string) bool {
+			return strings.TrimSpace(excluded) == name
+		})) {
+			return true
+		}
 	}
 	return localResourceExcluded(localExcludes, localExcludeAllKinds, kind, name, candidate.entry.Required, candidate.entry.Source)
 }
@@ -3261,6 +3267,24 @@ func v4DecisionKind(kind string) ir.ResourceKind {
 	default:
 		return ir.ResourceKind(-1)
 	}
+}
+
+func v4OwnerExcluded(entry config.RegistryEntry, kind ir.ResourceKind, name string) bool {
+	target := resourceSelection{kind: kind, name: name}
+	excluded := false
+	for _, decision := range entry.V4Decisions {
+		switch decision.Action {
+		case config.V4SelectionExplicit:
+			if decision.Request != nil && v4DecisionKind(decision.Request.Kind) == kind && strings.TrimSpace(decision.Request.Name) == name {
+				excluded = false
+			}
+		case config.V4SelectionExclude:
+			if !entry.Required && v4DecisionExclusionMatches(decision.Exclusion, target) {
+				excluded = true
+			}
+		}
+	}
+	return excluded
 }
 
 func v4DecisionExclusionMatches(exclusion string, selected resourceSelection) bool {

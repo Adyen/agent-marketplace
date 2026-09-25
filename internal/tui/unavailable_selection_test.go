@@ -128,6 +128,36 @@ func TestAppendUnavailableSelectionRowsFailedCatalogTopLevelLocal(t *testing.T) 
 	}
 }
 
+func TestAppendUnavailableSelectionRowsFailedCatalogV4ReincludeKeepsLocalFlag(t *testing.T) {
+	failedEntry := unavailableEntry(func(e *config.RegistryEntry) {
+		e.Skills.Include = nil
+		e.V4Decisions = []config.V4SelectionDecision{
+			{Action: config.V4SelectionExclude, Exclusion: "skill/missing"},
+			{Action: config.V4SelectionExplicit, Request: &config.V4ResourceRequest{Kind: "skill", Name: "missing"}},
+		}
+	})
+	cfg := &config.Config{Registries: []config.RegistryEntry{failedEntry}}
+	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"missing"}}}
+	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	if len(rows) != 1 {
+		t.Fatalf("v4 reinclude with local include synthesized %d rows, want 1", len(rows))
+	}
+	if !rows[0].EnabledLocal || !rows[0].EnabledProject {
+		t.Fatalf("v4 reinclude row scope flags = project:%v local:%v, want project and local",
+			rows[0].EnabledProject, rows[0].EnabledLocal)
+	}
+
+	failedEntry.V4Decisions = []config.V4SelectionDecision{
+		{Action: config.V4SelectionExplicit, Request: &config.V4ResourceRequest{Kind: "skill", Name: "missing"}},
+		{Action: config.V4SelectionExclude, Exclusion: "skill/missing"},
+	}
+	cfg.Registries[0] = failedEntry
+	rows = appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	if len(rows) != 0 {
+		t.Fatalf("v4 include then exclude synthesized %d rows, want 0", len(rows))
+	}
+}
+
 func TestAppendUnavailableSelectionRowsFailedCatalogLocalIncludeCoveredByAvailableRow(t *testing.T) {
 	failedEntry := unavailableEntry(func(e *config.RegistryEntry) {
 		e.URL = "/regA"

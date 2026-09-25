@@ -193,6 +193,64 @@ func TestEffectiveDirectSelectionSourcesLocalPolicy(t *testing.T) {
 			wantLocal: true,
 		},
 		{
+			name: "v4 exclude then include keeps local selection",
+			entry: effectiveSelectionEntry(func(e *config.RegistryEntry) {
+				e.V4Decisions = []config.V4SelectionDecision{
+					{Action: config.V4SelectionExclude, Exclusion: "skill/picked"},
+					{Action: config.V4SelectionExplicit, Request: &config.V4ResourceRequest{Kind: "skill", Name: "picked"}},
+				}
+			}),
+			local:     &config.LocalConfig{Skills: config.KindSelector{Include: []string{"picked"}}},
+			wantEntry: true,
+			wantLocal: true,
+		},
+		{
+			name: "v4 include then exclude suppresses local selection",
+			entry: effectiveSelectionEntry(func(e *config.RegistryEntry) {
+				e.V4Decisions = []config.V4SelectionDecision{
+					{Action: config.V4SelectionExplicit, Request: &config.V4ResourceRequest{Kind: "skill", Name: "picked"}},
+					{Action: config.V4SelectionExclude, Exclusion: "skill/picked"},
+				}
+			}),
+			local: &config.LocalConfig{Skills: config.KindSelector{Include: []string{"picked"}}},
+		},
+		{
+			name: "v4 wildcard exclude then include keeps local selection",
+			entry: effectiveSelectionEntry(func(e *config.RegistryEntry) {
+				e.V4Decisions = []config.V4SelectionDecision{
+					{Action: config.V4SelectionExclude, Exclusion: "skill/*"},
+					{Action: config.V4SelectionExplicit, Request: &config.V4ResourceRequest{Kind: "skill", Name: "picked"}},
+				}
+			}),
+			local:     &config.LocalConfig{Skills: config.KindSelector{Include: []string{"picked"}}},
+			wantEntry: true,
+			wantLocal: true,
+		},
+		{
+			name: "v4 reinclude suppressed by local exclude",
+			entry: effectiveSelectionEntry(func(e *config.RegistryEntry) {
+				e.V4Decisions = []config.V4SelectionDecision{
+					{Action: config.V4SelectionExclude, Exclusion: "skill/picked"},
+					{Action: config.V4SelectionExplicit, Request: &config.V4ResourceRequest{Kind: "skill", Name: "picked"}},
+				}
+			}),
+			local:     &config.LocalConfig{Skills: config.KindSelector{Include: []string{"picked"}, Exclude: []string{"picked"}}},
+			wantEntry: true,
+		},
+		{
+			name: "v4 required owner keeps local reinclude",
+			entry: effectiveSelectionEntry(func(e *config.RegistryEntry) {
+				e.Required = true
+				e.V4Decisions = []config.V4SelectionDecision{
+					{Action: config.V4SelectionExplicit, Request: &config.V4ResourceRequest{Kind: "skill", Name: "picked"}},
+					{Action: config.V4SelectionExclude, Exclusion: "skill/picked"},
+				}
+			}),
+			local:     &config.LocalConfig{Skills: config.KindSelector{Include: []string{"picked"}, Exclude: []string{"picked"}}},
+			wantEntry: true,
+			wantLocal: true,
+		},
+		{
 			name:      "no local include does not select",
 			entry:     entry,
 			local:     &config.LocalConfig{},
