@@ -285,7 +285,7 @@ resources:
     all: true          # select every resource the source offers
     required: true     # no exclude at any layer can drop these
   shared:
-    all: true          # selected automatically; a higher layer can exclude individual resources
+    all: true          # selected automatically
 ```
 
 - **`required: true`** — mandatory; immune to every `exclude` at every layer.
