@@ -56,7 +56,11 @@ resources:
 			if remove.ExitCode != 0 {
 				t.Fatalf("remove from the legacy %s config failed (exit %d):\n%s", tc.scope, remove.ExitCode, remove.Combined)
 			}
-			if data, err := os.ReadFile(consumer.mustResolvePath(tc.mcpPath)); err == nil && strings.Contains(string(data), "sonarqube") {
+			data, err := os.ReadFile(consumer.mustResolvePath(tc.mcpPath))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatalf("read %s after removal: %v", tc.mcpPath, err)
+			}
+			if strings.Contains(string(data), "sonarqube") {
 				t.Fatalf("removed MCP server is still materialized in %s:\n%s", tc.mcpPath, data)
 			}
 			consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
