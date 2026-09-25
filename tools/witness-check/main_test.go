@@ -50,7 +50,9 @@ func TestCheckRequiresEveryWitnessToPass(t *testing.T) {
 	}
 
 	for name, events := range map[string][]event{
-		"skipped witness": append(guard("pass", "TestA"), event{Action: "skip", Package: guardPackage, Test: "TestA"}),
+		"skipped witness": append(guard("pass", "TestA"),
+			event{Action: "output", Package: guardPackage, Test: "TestA", Output: "    a_test.go:9: docker unavailable\n"},
+			event{Action: "skip", Package: guardPackage, Test: "TestA"}),
 		"missing witness": guard("pass", "TestA"),
 		"guard skipped":   guard("skip", "TestA"),
 		"guard missing":   {{Action: "pass", Package: guardPackage, Test: "TestA"}},
@@ -67,7 +69,7 @@ func TestCheckRequiresEveryWitnessToPass(t *testing.T) {
 			if err == nil {
 				t.Fatal("check passed")
 			}
-			if name == "skipped witness" && !strings.Contains(err.Error(), "TestA: skip") {
+			if name == "skipped witness" && (!strings.Contains(err.Error(), "TestA: skip") || !strings.Contains(err.Error(), "docker unavailable")) {
 				t.Fatalf("error = %v", err)
 			}
 			if name == "missing witness" && !strings.Contains(err.Error(), "TestA: never ran") {
@@ -77,6 +79,11 @@ func TestCheckRequiresEveryWitnessToPass(t *testing.T) {
 				t.Fatalf("failing test output not relayed:\n%s", out.String())
 			}
 		})
+	}
+	var relayed strings.Builder
+	unrelated := stream(t, append(passing[:len(passing):len(passing)], event{Action: "skip", Package: "other", Test: "TestRoutine"})...)
+	if err := check(strings.NewReader(`{"level":"info","msg":"setup"}`+"\n"+unrelated), &relayed); err != nil || !strings.Contains(relayed.String(), `{"level":"info","msg":"setup"}`) {
+		t.Fatalf("non-event JSON was not relayed (err %v):\n%s", err, relayed.String())
 	}
 	if err := check(strings.NewReader("ok  \tpkg\t1.0s\n"), &strings.Builder{}); err == nil || !strings.Contains(err.Error(), "-json") {
 		t.Fatalf("plain output error = %v", err)

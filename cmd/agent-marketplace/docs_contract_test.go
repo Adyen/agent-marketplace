@@ -337,6 +337,10 @@ func witnessTestNames(maps ...map[string]func(*testing.T)) []string {
 	var names []string
 	for _, witnesses := range maps {
 		for _, fn := range witnesses {
+			// A nil entry is already reported as a missing witness.
+			if fn == nil {
+				continue
+			}
 			full := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
 			names = append(names, full[strings.LastIndex(full, ".")+1:])
 		}

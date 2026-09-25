@@ -38,13 +38,16 @@ func main() {
 func check(in io.Reader, out io.Writer) error {
 	results := make(map[string]string)
 	buffered := make(map[string][]string)
+	// Skips are routine across the root suite, so their reasons are kept for
+	// guard-package tests and reported only when the skipped test is a witness.
+	skipReasons := make(map[string]string)
 	var witnesses, failedPackages []string
 	events := 0
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
 		var e event
-		if line := scanner.Bytes(); len(line) == 0 || line[0] != '{' || json.Unmarshal(line, &e) != nil {
+		if line := scanner.Bytes(); len(line) == 0 || line[0] != '{' || json.Unmarshal(line, &e) != nil || e.Action == "" {
 			_, _ = fmt.Fprintf(out, "%s\n", line)
 			continue
 		}
@@ -70,10 +73,13 @@ func check(in io.Reader, out io.Writer) error {
 			if e.Action == "fail" {
 				_, _ = io.WriteString(out, strings.Join(buffered[key], ""))
 			}
-			delete(buffered, key)
 			if e.Package == guardPackage && !strings.Contains(e.Test, "/") {
 				results[e.Test] = e.Action
+				if e.Action == "skip" {
+					skipReasons[e.Test] = strings.TrimSpace(strings.Join(buffered[key], ""))
+				}
 			}
+			delete(buffered, key)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -96,7 +102,11 @@ func check(in io.Reader, out io.Writer) error {
 	var problems []string
 	for _, name := range witnesses {
 		if got := results[name]; got != "pass" {
-			problems = append(problems, name+": "+stateLabel(got))
+			problem := name + ": " + stateLabel(got)
+			if reason := skipReasons[name]; reason != "" {
+				problem += "\n    " + strings.ReplaceAll(reason, "\n", "\n    ")
+			}
+			problems = append(problems, problem)
 		}
 	}
 	if len(problems) > 0 {

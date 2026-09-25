@@ -105,10 +105,17 @@ func TestPreV4AggregateOwnershipUpgrade(t *testing.T) {
 	// and only Devin and Codex into their native aggregates.
 	assertAggregates("v3.1.1 sync", "devin", "codex")
 	pluginOutputs := map[string][]byte{}
-	for _, rel := range []string{".claude/.mcp.json", ".claude/.claude-plugin/plugin.json", ".gemini/gemini-extension.json"} {
+	for rel, entry := range map[string]string{
+		".claude/.mcp.json":                  "team-server",
+		".claude/.claude-plugin/plugin.json": "review",
+		".gemini/gemini-extension.json":      "team-server",
+	} {
 		data, err := os.ReadFile(filepath.Join(workspace, rel))
-		if err != nil || !strings.Contains(string(data), "team-server") && strings.HasSuffix(rel, ".mcp.json") {
-			t.Fatalf("v3.1.1 plugin-style output %s = %q, %v", rel, data, err)
+		if err != nil {
+			t.Fatalf("v3.1.1 did not write plugin-style output %s: %v", rel, err)
+		}
+		if !strings.Contains(string(data), entry) {
+			t.Fatalf("v3.1.1 plugin-style output %s lacks %s:\n%s", rel, entry, data)
 		}
 		pluginOutputs[rel] = data
 	}
