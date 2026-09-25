@@ -510,11 +510,7 @@ registries: []
 	}
 
 	// Remove the subagent WITHOUT --kind. The resolved kind (subagent)
-	// must be used, not the flag default (skill). If the wrong kind is
-	// used, RemoveResourceFromRegistryInConfig would look for the name
-	// under the "skills" include key (which is empty), not find it,
-	// and incorrectly fall through to adding an exclude under the
-	// wrong selector.
+	// must be used, not the flag default (skill).
 	out, err := executeCommand("remove", "worker-generic", "--from", origin)
 	if err != nil {
 		t.Fatalf("remove --from subagent failed: %v\n%s", err, out)

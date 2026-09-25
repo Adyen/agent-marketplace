@@ -142,7 +142,6 @@ const (
     SelectionSelectAll
     SelectionExcludeAll
     SelectionAddTag
-    SelectionRemoveTag
 )
 
 type SelectionChange struct {
