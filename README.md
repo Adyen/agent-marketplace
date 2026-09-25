@@ -282,10 +282,10 @@ selected:
 # `security` and `shared` are named git sources declared in the same file
 resources:
   security:
-    all: true          # select every resource the source offers
-    required: true     # no exclude at any layer can drop these
+    all: true
+    required: true
   shared:
-    all: true          # selected automatically
+    all: true
 ```
 
 - **`required: true`** — mandatory; immune to every `exclude` at every layer.

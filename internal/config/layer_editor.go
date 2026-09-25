@@ -215,7 +215,6 @@ func (e *LayerEditor) occupiedSourceNames() map[string]v4MigrationSource {
 	return occupied
 }
 
-// checkBinding refuses a binding this editor did not issue.
 func (e *LayerEditor) checkBinding(binding SourceBinding) error {
 	if issued, ok := e.bindings[binding.id]; binding.id == "" || !ok || issued.Name != binding.Name {
 		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")
@@ -223,7 +222,6 @@ func (e *LayerEditor) checkBinding(binding SourceBinding) error {
 	return nil
 }
 
-// normalizeRegistryEntry resolves a v4 git origin and validates the entry.
 func (e *LayerEditor) normalizeRegistryEntry(entry RegistryEntry) (RegistryEntry, V4SourceKind, error) {
 	if !e.legacy && registryEntryKind(entry) == V4SourceGit {
 		normalized, err := v4GitOriginForEdit(entry.URL, e.target.DeclaringPath, e.kind)
