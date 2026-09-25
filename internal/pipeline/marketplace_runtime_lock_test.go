@@ -37,6 +37,10 @@ func TestTransientMarketplaceFailureReplacesStaleOrganizationErrorWithoutDroppin
 	if len(got.Organization.Errors) != 1 || !errors.Is(got.Organization.Errors[0], cause) || len(got.Errors) != 2 || !errors.Is(got.Errors[1], other) {
 		t.Fatalf("unrelated layer errors were lost when organization had no prior error: %#v", got)
 	}
+	got = effectiveConfigError(config.EffectiveConfig{Organization: config.LayerResult{Errors: []error{required, other}}}, cause)
+	if len(got.Errors) != 1 || !errors.Is(got.Errors[0], cause) {
+		t.Fatalf("organization errors missing from the effective list produced %v, want only the provisional failure", got.Errors)
+	}
 }
 
 func TestTransientMarketplaceReadAssertionsRequireLockAbsence(t *testing.T) {

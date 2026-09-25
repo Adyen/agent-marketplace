@@ -172,10 +172,13 @@ resources:
   behavior: {include: [behavior-source/collection/behavior-bundle]}
 `, fixture.server.URL))
 	before := env.ReadFile("/etc/agent-marketplace/config.yaml")
+	env.AssertExitCode(env.RunAM("sync"), 0)
+	env.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "GC collection")
 	for _, args := range [][]string{{"gc", "--dry-run"}, {"gc"}} {
 		result := env.RunAM(args...)
 		env.AssertExitCode(result, 0)
 		env.AssertOutputContains(result, "0 marketplace artifact directories")
+		env.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "GC collection")
 		if got := env.ReadFile("/etc/agent-marketplace/config.yaml"); got != before {
 			t.Fatalf("%v changed organization config:\n%s", args, got)
 		}

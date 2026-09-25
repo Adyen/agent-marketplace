@@ -55,8 +55,7 @@ type doctorOptions struct {
 	// cloned registry. Its error reaches the caller, so a Workspace
 	// construction failure keeps its wrapped cause instead of degrading to a
 	// silently empty selection.
-	resolve    func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error)
-	revalidate func() error
+	resolve func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error)
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -177,11 +176,11 @@ func runDoctor(opts doctorOptions) error {
 	if err != nil {
 		return fmt.Errorf("doctor --repair: snapshot policy: %w", err)
 	}
-	opts.revalidate = func() error { return dependencytxn.ValidateReadAssertions(reads) }
-	if err := opts.revalidate(); err != nil {
+	revalidate := func() error { return dependencytxn.ValidateReadAssertions(reads) }
+	if err := revalidate(); err != nil {
 		return fmt.Errorf("doctor --repair: validate policy: %w", err)
 	}
-	return runDoctorRepair(out, opts, repoRoot)
+	return runDoctorRepair(out, opts, repoRoot, revalidate)
 }
 
 // writeDoctorInstallRoots lists every declared target with its capabilities and
@@ -398,7 +397,7 @@ func devinHarnessSelection(ec config.EffectiveConfig) (bool, []string) {
 // The exit code is produced by returning a non-nil error, which main turns into
 // exit 1. Every other path returns nil, including "nothing to repair", "preview
 // only", and "the user said no to everything".
-func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string) error {
+func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string, revalidate func() error) error {
 	ctx := opts.ctx
 	slog.Info("doctor repair preview start", "repo_root", repoRoot)
 	var selection []resolver.ResolvedArtifact
@@ -430,7 +429,7 @@ func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string) error {
 		slog.Error("doctor repair preview failed", "repo_root", repoRoot, "status", "error", "code", diag.CodeDoctorRepairFailed)
 		return fmt.Errorf("repair preview: %w", err)
 	}
-	if err := opts.revalidate(); err != nil {
+	if err := revalidate(); err != nil {
 		return fmt.Errorf("repair preview: policy changed: %w", err)
 	}
 
@@ -485,7 +484,10 @@ func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string) error {
 	slog.Info("doctor repair execution start", "repo_root", repoRoot, "targets", len(previews), "automatic_adoption", opts.yes)
 	var failures []error
 	for _, targetPreview := range previews {
-		failures = append(failures, applyRepairActions(out, opts, targetPreview.Preview)...)
+		failures = append(failures, applyRepairActions(out, opts, targetPreview.Preview, revalidate)...)
+		if slices.ContainsFunc(failures, func(err error) bool { return errors.Is(err, dependencytxn.ErrGenerationConflict) }) {
+			break
+		}
 	}
 	if len(failures) > 0 {
 		for _, failure := range failures {
@@ -627,7 +629,7 @@ func writeRepairPreview(out io.Writer, preview *materialize.RepairPreview) error
 //     inherits orphan removal's rules exactly. opts.yes is deliberately not
 //     consulted in that loop at all: there is no code path from --yes to a
 //     replacement, and ownership.Apply would refuse an unconfirmed one anyway.
-func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.RepairPreview) []error {
+func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.RepairPreview, revalidate func() error) []error {
 	var failures []error
 	// bufio.NewReader(nil) returns a NON-nil reader wrapping a nil io.Reader,
 	// which panics on the first prompt. The nil reader is passed through
@@ -662,7 +664,7 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 			}
 		}
 		if len(adopt) > 0 {
-			if err := opts.revalidate(); err != nil {
+			if err := revalidate(); err != nil {
 				return append(failures, fmt.Errorf("repair policy changed before adoption: %w", err))
 			}
 			if _, err := file.Adopt(adopt); err != nil {
@@ -702,7 +704,7 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				logDoctorRepairDecision(file, "replace", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
 				continue
 			}
-			if err := opts.revalidate(); err != nil {
+			if err := revalidate(); err != nil {
 				return append(failures, fmt.Errorf("repair policy changed before replacement: %w", err))
 			}
 			logDoctorRepairDecision(file, "replace", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
@@ -743,7 +745,7 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				logDoctorRepairDecision(file, "remove", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
 				continue
 			}
-			if err := opts.revalidate(); err != nil {
+			if err := revalidate(); err != nil {
 				return append(failures, fmt.Errorf("repair policy changed before removal: %w", err))
 			}
 			logDoctorRepairDecision(file, "remove", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
