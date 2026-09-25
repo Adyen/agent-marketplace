@@ -171,6 +171,61 @@ func TestTUIQADriverShell(t *testing.T) {
 	}
 }
 
+// E2E Gates is the single required context for the Marketplace, pre-v4
+// upgrade, and released-client gates, which share one planner output.
+func TestE2EGatesDriver(t *testing.T) {
+	jobs := getMap(t, loadCIWorkflow(t), "jobs")
+	driver := getMap(t, jobs, "e2e-gates-required")
+	gates := []string{"marketplace-gate", "upgrade-gate", "released-client-gate"}
+	if driver["name"] != "E2E Gates" || driver["if"] != "always()" || !slices.Equal(toStringSlice(t, getSlice(t, driver, "needs")), append([]string{"changes"}, gates...)) {
+		t.Fatalf("E2E Gates driver = name %v, if %v, needs %v", driver["name"], driver["if"], driver["needs"])
+	}
+	if perms, ok := driver["permissions"].(map[string]any); !ok || len(perms) != 0 {
+		t.Errorf("permissions must be empty; got %v", driver["permissions"])
+	}
+	for _, gate := range gates {
+		if cond := getMap(t, jobs, gate)["if"]; cond != "needs.changes.outputs.marketplace_e2e == 'true'" {
+			t.Errorf("%s runs on %v, not the E2E planner output the driver checks", gate, cond)
+		}
+	}
+	step := stepMap(t, getSlice(t, driver, "steps")[0])
+	env := getMap(t, step, "env")
+	for key, want := range map[string]string{
+		"CHANGES_RESULT":         "${{ needs.changes.result }}",
+		"RUN_E2E":                "${{ needs.changes.outputs.marketplace_e2e }}",
+		"MARKETPLACE_RESULT":     "${{ needs.marketplace-gate.result }}",
+		"UPGRADE_RESULT":         "${{ needs.upgrade-gate.result }}",
+		"RELEASED_CLIENT_RESULT": "${{ needs.released-client-gate.result }}",
+	} {
+		if env[key] != want {
+			t.Errorf("env[%s] = %v, want %q", key, env[key], want)
+		}
+	}
+	run := step["run"].(string)
+	for _, tc := range []struct {
+		name                                     string
+		changes, planned, market, upgrade, older string
+		wantPass                                 bool
+	}{
+		{"relevant+success", "success", "true", "success", "success", "success", true},
+		{"unrelated+skipped", "success", "false", "skipped", "skipped", "skipped", true},
+		{"one gate failed", "success", "true", "success", "failure", "success", false},
+		{"one gate skipped when planned", "success", "true", "success", "success", "skipped", false},
+		{"gate ran when unplanned", "success", "false", "skipped", "success", "skipped", false},
+		{"planner failed", "failure", "false", "skipped", "skipped", "skipped", false},
+		{"empty plan", "success", "", "success", "success", "success", false},
+		{"cancelled", "success", "true", "cancelled", "success", "success", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("bash", "-c", run)
+			cmd.Env = []string{"CHANGES_RESULT=" + tc.changes, "RUN_E2E=" + tc.planned, "MARKETPLACE_RESULT=" + tc.market, "UPGRADE_RESULT=" + tc.upgrade, "RELEASED_CLIENT_RESULT=" + tc.older}
+			if err := cmd.Run(); (err == nil) != tc.wantPass {
+				t.Fatalf("pass = %v, want %v", err == nil, tc.wantPass)
+			}
+		})
+	}
+}
+
 func TestPullRequestTrigger(t *testing.T) {
 	doc := loadCIWorkflow(t)
 

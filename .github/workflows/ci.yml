@@ -632,6 +632,34 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  e2e-gates-required:
+    name: E2E Gates
+    if: always()
+    needs: [changes, marketplace-gate, upgrade-gate, released-client-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Require every E2E gate
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RUN_E2E: ${{ needs.changes.outputs.marketplace_e2e }}
+          MARKETPLACE_RESULT: ${{ needs.marketplace-gate.result }}
+          UPGRADE_RESULT: ${{ needs.upgrade-gate.result }}
+          RELEASED_CLIENT_RESULT: ${{ needs.released-client-gate.result }}
+        run: |
+          set -euo pipefail
+          test "$CHANGES_RESULT" = success
+          if [[ "$RUN_E2E" == true ]]; then
+            want=success
+          else
+            test "$RUN_E2E" = false
+            want=skipped
+          fi
+          for result in "$MARKETPLACE_RESULT" "$UPGRADE_RESULT" "$RELEASED_CLIENT_RESULT"; do
+            test "$result" = "$want"
+          done
+
   benchmark:
     name: Benchmark
     needs: changes
