@@ -222,6 +222,9 @@ type v4EditIdentity struct {
 	url  string
 	ref  string
 	path string
+	// authored is the portable spelling written for a new directory source;
+	// empty means write url.
+	authored string
 }
 
 func v4EditSourceIdentity(entry RegistryEntry, declaringPath string, layer layerKind, kind V4SourceKind) (v4EditIdentity, error) {
@@ -233,17 +236,23 @@ func v4EditSourceIdentity(entry RegistryEntry, declaringPath string, layer layer
 		}
 		bundle := entry.BundlePath(localPath)
 		raw := strings.TrimSpace(entry.URL)
+		authored := ""
 		if !filepath.IsAbs(raw) && !strings.HasPrefix(raw, "~") && !strings.HasPrefix(strings.ToLower(raw), "file://") {
-			relative := filepath.Join(raw, strings.TrimSpace(entry.Path))
-			if _, err := resolveV4DirectorySource(base, filepath.ToSlash(relative)); err != nil {
+			relative := filepath.ToSlash(filepath.Clean(filepath.Join(raw, strings.TrimSpace(entry.Path))))
+			if _, err := resolveV4DirectorySource(base, relative); err != nil {
 				return v4EditIdentity{}, v4err("v4.directory-path", "registry.url", 0, "%v", err)
+			}
+			// Repository and personal-local roots resolve relative directories
+			// against the repository, so keep committed sources portable.
+			if layer == repoLayer || layer == localLayer {
+				authored = "./" + strings.TrimPrefix(relative, "./")
 			}
 		}
 		absolute, err := filepath.Abs(bundle)
 		if err != nil {
 			return v4EditIdentity{}, v4err("v4.directory-path", "registry.url", 0, "%v", err)
 		}
-		return v4EditIdentity{kind: kind, url: filepath.Clean(absolute)}, nil
+		return v4EditIdentity{kind: kind, url: filepath.Clean(absolute), authored: authored}, nil
 	}
 	return v4EditIdentity{kind: kind, url: NormalizeGitURL(strings.TrimSpace(entry.URL)), ref: strings.TrimSpace(entry.Ref), path: NormalizeRegistryPath(entry.Path)}, nil
 }
@@ -265,12 +274,16 @@ func addV4EditSource(root *yaml.Node, name string, entry RegistryEntry, identity
 	}
 	value := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	if kind == V4SourceDirectory {
-		setMappingValue(value, "directory", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: identity.url})
+		directory := identity.url
+		if identity.authored != "" {
+			directory = identity.authored
+		}
+		setMappingValue(value, "directory", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: directory})
 	} else {
 		setMappingValue(value, "git", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.TrimSpace(entry.URL)})
 		setMappingValue(value, "ref", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.TrimSpace(entry.Ref)})
 		if identity.path != "" {
-			setMappingValue(value, "path", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.TrimSpace(entry.Path)})
+			setMappingValue(value, "path", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: identity.path})
 		}
 	}
 	if strings.TrimSpace(entry.SourceHarness) != "" {

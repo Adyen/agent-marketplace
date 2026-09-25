@@ -1069,11 +1069,13 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	// For local filesystem registries, verify the path exists before writing
 	// the registry entry to the config, so a typo fails fast instead of
 	// leaving a broken entry behind.
+	localDir := ""
 	if syntheticEntry.IsLocal() {
 		baseDir := repoRoot
 		if opts.LocalConfigDir != "" {
 			baseDir = opts.LocalConfigDir
 		}
+		localDir = adHocLocalDirectory(syntheticEntry, baseDir)
 		localPath, err := syntheticEntry.ResolveLocalPath(baseDir)
 		if err != nil {
 			return nil, fmt.Errorf("resolve local registry path: %w", err)
@@ -1164,10 +1166,12 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	var catalogKey string
 	for i := range discoveryCfg.Registries {
 		entry := &discoveryCfg.Registries[i]
-		if strings.TrimSpace(entry.URL) != fromURL || strings.TrimSpace(entry.Path) != fromPath {
+		// An omitted --path names the registry root here, unlike remove's
+		// wildcard, so compare the normalized path exactly.
+		if config.NormalizeRegistryPath(entry.Path) != config.NormalizeRegistryPath(fromPath) && entry.V4Kind != config.V4SourceDirectory {
 			continue
 		}
-		if fromRef != "" && strings.TrimSpace(entry.Ref) != fromRef {
+		if !adHocRegistryEntryMatches(*entry, fromURL, fromPath, fromRef, localDir) {
 			continue
 		}
 		catalogKey = entry.CatalogKey

@@ -204,15 +204,22 @@ compose-config:
 marketplace-gate:
 	@E2E_SKIP_DOCKER=1 $(MAKE) e2e
 
+# Dedicated gates name their scenarios once; witness-check fails the gate when
+# any of them skipped, failed, or never ran (for example after a rename).
+comma := ,
+# The pinned Go build image ships git; override when Docker Hub is unavailable.
+AM_E2E_UPGRADE_IMAGE ?= $(GO_BUILD_IMAGE)
+AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
+UPGRADE_GATE_TESTS := TestPreV4ReleaseUpgrade,TestPreV4GitLockUpgrade,TestPreV4AggregateOwnershipUpgrade,TestPreV4LocalLayerUpgrade
+RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState
+
 upgrade-gate:
 	@test -n "$(AM_E2E_PRE_V4_BINARY)" || { echo "ERROR: AM_E2E_PRE_V4_BINARY must point to the verified v3.1.1 Linux release" >&2; exit 1; }
-	@test -n "$(AM_E2E_UPGRADE_IMAGE)" || { echo "ERROR: AM_E2E_UPGRADE_IMAGE must name a local container image that provides git" >&2; exit 1; }
-	AM_E2E_PRE_V4_BINARY="$(abspath $(AM_E2E_PRE_V4_BINARY))" CGO_ENABLED=0 $(GO) -C e2e test -count=1 -timeout 10m -run '^TestPreV4(ReleaseUpgrade|GitLockUpgrade|AggregateOwnershipUpgrade|LocalLayerUpgrade)$$' .
+	AM_E2E_PRE_V4_BINARY="$(abspath $(AM_E2E_PRE_V4_BINARY))" AM_E2E_UPGRADE_IMAGE="$(AM_E2E_UPGRADE_IMAGE)" CGO_ENABLED=0 $(GO) -C e2e test -json -count=1 -timeout 10m -run '^($(subst $(comma),|,$(UPGRADE_GATE_TESTS)))$$' . | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require $(UPGRADE_GATE_TESTS)
 
 released-client-gate:
 	@test -n "$(AM_E2E_RELEASED_BINARY)" || { echo "ERROR: AM_E2E_RELEASED_BINARY must point to the verified latest Linux release" >&2; exit 1; }
-	@test -n "$(AM_E2E_RELEASED_IMAGE)" || { echo "ERROR: AM_E2E_RELEASED_IMAGE must name a local container image that provides git" >&2; exit 1; }
-	AM_E2E_RELEASED_BINARY="$(abspath $(AM_E2E_RELEASED_BINARY))" CGO_ENABLED=0 $(GO) -C e2e test -count=1 -timeout 10m -run '^TestReleasedClientReadsCandidateCommittedState$$' .
+	AM_E2E_RELEASED_BINARY="$(abspath $(AM_E2E_RELEASED_BINARY))" AM_E2E_RELEASED_IMAGE="$(AM_E2E_RELEASED_IMAGE)" CGO_ENABLED=0 $(GO) -C e2e test -json -count=1 -timeout 10m -run '^($(subst $(comma),|,$(RELEASED_CLIENT_GATE_TESTS)))$$' . | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require $(RELEASED_CLIENT_GATE_TESTS)
 
 # Cross-compilation targets
 darwin-arm64:

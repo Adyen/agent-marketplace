@@ -570,8 +570,23 @@ func TestEditV4ResourceSelectionCreatesLexicalDirectoryBindingAndChecksRelativeC
 	if !handled || err != nil {
 		t.Fatalf("inside symlink handled %v err %v", handled, err)
 	}
-	if got, readErr := os.ReadFile(repoConfig); readErr != nil || !strings.Contains(string(got), "directory: "+filepath.Join(repo, "inside")) {
+	// A committed repository root keeps the portable relative spelling, and
+	// the binding stays lexical rather than following the symlink.
+	if got, readErr := os.ReadFile(repoConfig); readErr != nil || !strings.Contains(string(got), "directory: ./inside\n") {
 		t.Fatalf("inside symlink binding = %v %s", readErr, got)
+	}
+	bound, err := LoadV4ConfigFromPath(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range bound.Sources {
+		if want := filepath.Join(canonicalRepo, "inside"); source.CanonicalURL != want {
+			t.Fatalf("inside symlink resolved to %s, want lexical %s", source.CanonicalURL, want)
+		}
 	}
 }
 

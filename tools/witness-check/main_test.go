@@ -37,7 +37,7 @@ func TestCheckRequiresEveryWitnessToPass(t *testing.T) {
 		event{Action: "pass", Package: guardPackage},
 	)
 	var out strings.Builder
-	if err := check(strings.NewReader("make[1]: Entering directory\n"+stream(t, passing...)), &out); err != nil {
+	if err := check(strings.NewReader("make[1]: Entering directory\n"+stream(t, passing...)), &out, nil); err != nil {
 		t.Fatalf("passing run: %v", err)
 	}
 	for _, want := range []string{"make[1]: Entering directory", "ok  \tpkg", "2 behavior witnesses ran and passed"} {
@@ -65,7 +65,7 @@ func TestCheckRequiresEveryWitnessToPass(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var out strings.Builder
-			err := check(strings.NewReader(stream(t, events...)), &out)
+			err := check(strings.NewReader(stream(t, events...)), &out, nil)
 			if err == nil {
 				t.Fatal("check passed")
 			}
@@ -82,10 +82,38 @@ func TestCheckRequiresEveryWitnessToPass(t *testing.T) {
 	}
 	var relayed strings.Builder
 	unrelated := stream(t, append(passing[:len(passing):len(passing)], event{Action: "skip", Package: "other", Test: "TestRoutine"})...)
-	if err := check(strings.NewReader(`{"level":"info","msg":"setup"}`+"\n"+unrelated), &relayed); err != nil || !strings.Contains(relayed.String(), `{"level":"info","msg":"setup"}`) {
+	if err := check(strings.NewReader(`{"level":"info","msg":"setup"}`+"\n"+unrelated), &relayed, nil); err != nil || !strings.Contains(relayed.String(), `{"level":"info","msg":"setup"}`) {
 		t.Fatalf("non-event JSON was not relayed (err %v):\n%s", err, relayed.String())
 	}
-	if err := check(strings.NewReader("ok  \tpkg\t1.0s\n"), &strings.Builder{}); err == nil || !strings.Contains(err.Error(), "-json") {
+	if err := check(strings.NewReader("ok  \tpkg\t1.0s\n"), &strings.Builder{}, nil); err == nil || !strings.Contains(err.Error(), "-json") {
 		t.Fatalf("plain output error = %v", err)
+	}
+}
+
+func TestCheckFailsWhenAPackageNeverFinishes(t *testing.T) {
+	events := append([]event{{Action: "start", Package: guardPackage}, {Action: "start", Package: "killed"}}, guard("pass", "TestA")...)
+	events = append(events, event{Action: "pass", Package: guardPackage, Test: "TestA"}, event{Action: "pass", Package: guardPackage})
+	err := check(strings.NewReader(stream(t, events...)), &strings.Builder{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "killed") {
+		t.Fatalf("truncated package stream error = %v", err)
+	}
+}
+
+func TestCheckRequireModeNeedsEveryNamedTest(t *testing.T) {
+	run := func(events ...event) error {
+		t.Helper()
+		return check(strings.NewReader(stream(t, events...)), &strings.Builder{}, []string{"TestUpgrade", "TestLocks"})
+	}
+	pkg := "github.com/Adyen/agent-marketplace/e2e"
+	start := event{Action: "start", Package: pkg}
+	done := event{Action: "pass", Package: pkg}
+	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestUpgrade"}, event{Action: "pass", Package: pkg, Test: "TestLocks"}, done); err != nil {
+		t.Fatalf("both required tests passed: %v", err)
+	}
+	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestUpgrade"}, done); err == nil || !strings.Contains(err.Error(), "TestLocks: never ran") {
+		t.Fatalf("renamed or filtered test error = %v", err)
+	}
+	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestUpgrade"}, event{Action: "skip", Package: pkg, Test: "TestLocks"}, done); err == nil || !strings.Contains(err.Error(), "TestLocks: skip") {
+		t.Fatalf("skipped required test error = %v", err)
 	}
 }

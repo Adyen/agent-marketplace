@@ -1,13 +1,16 @@
 // Command witness-check reads `go test -json` output on stdin and fails unless
-// the run passed and every behavior witness declared by the CLI surface guard
-// actually ran and passed. A mapped witness that skipped or never ran is not
-// coverage. Package summaries and the output of failing tests are relayed so
-// the log reads like a plain `go test` run.
+// every package finished and passed and every behavior witness declared by the
+// CLI surface guard actually ran and passed. A mapped witness that skipped or
+// never ran is not coverage. With -require, the named top-level tests are the
+// witnesses instead, so a dedicated gate cannot pass after running nothing.
+// Package summaries and the output of failing tests are relayed so the log
+// reads like a plain `go test` run.
 package main
 
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -29,19 +32,31 @@ type event struct {
 }
 
 func main() {
-	if err := check(os.Stdin, os.Stdout); err != nil {
+	require := flag.String("require", "", "comma-separated top-level tests that must pass, instead of the CLI guard's witnesses")
+	flag.Parse()
+	var required []string
+	for _, name := range strings.Split(*require, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			required = append(required, name)
+		}
+	}
+	if err := check(os.Stdin, os.Stdout, required); err != nil {
 		fmt.Fprintln(os.Stderr, "witness-check:", err)
 		os.Exit(1)
 	}
 }
 
-func check(in io.Reader, out io.Writer) error {
+func check(in io.Reader, out io.Writer, required []string) error {
 	results := make(map[string]string)
 	buffered := make(map[string][]string)
+	// A package that started but never reported a result was killed or its
+	// stream was truncated; its exit status would otherwise be lost.
+	unfinished := make(map[string]bool)
 	// Skips are routine across the root suite, so their reasons are kept for
 	// guard-package tests and reported only when the skipped test is a witness.
 	skipReasons := make(map[string]string)
-	var witnesses, failedPackages []string
+	witnesses := slices.Clone(required)
+	var failedPackages []string
 	events := 0
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -60,20 +75,25 @@ func check(in io.Reader, out io.Writer) error {
 			if e.Output != "PASS\n" {
 				_, _ = io.WriteString(out, e.Output)
 			}
+		case e.Action == "start" && e.Test == "":
+			unfinished[e.Package] = true
 		case e.Action == "output":
 			buffered[key] = append(buffered[key], e.Output)
-			if e.Package == guardPackage && e.Test == guardTest {
+			if required == nil && e.Package == guardPackage && e.Test == guardTest {
 				if _, name, ok := strings.Cut(e.Output, witnessPrefix); ok {
 					witnesses = append(witnesses, strings.TrimSpace(name))
 				}
 			}
+		case (e.Action == "pass" || e.Action == "skip") && e.Test == "":
+			delete(unfinished, e.Package)
 		case e.Action == "fail" && e.Test == "":
+			delete(unfinished, e.Package)
 			failedPackages = append(failedPackages, e.Package)
 		case e.Action == "pass" || e.Action == "fail" || e.Action == "skip":
 			if e.Action == "fail" {
 				_, _ = io.WriteString(out, strings.Join(buffered[key], ""))
 			}
-			if e.Package == guardPackage && !strings.Contains(e.Test, "/") {
+			if (required != nil || e.Package == guardPackage) && !strings.Contains(e.Test, "/") {
 				results[e.Test] = e.Action
 				if e.Action == "skip" {
 					skipReasons[e.Test] = strings.TrimSpace(strings.Join(buffered[key], ""))
@@ -91,11 +111,21 @@ func check(in io.Reader, out io.Writer) error {
 	if len(failedPackages) > 0 {
 		return fmt.Errorf("test packages failed: %s", strings.Join(failedPackages, ", "))
 	}
-	if got := results[guardTest]; got != "pass" {
-		return fmt.Errorf("%s in %s did not pass (%s); witness coverage is unknown", guardTest, guardPackage, stateLabel(got))
+	if len(unfinished) > 0 {
+		packages := make([]string, 0, len(unfinished))
+		for pkg := range unfinished {
+			packages = append(packages, pkg)
+		}
+		slices.Sort(packages)
+		return fmt.Errorf("test packages started but never reported a result: %s", strings.Join(packages, ", "))
 	}
-	if len(witnesses) == 0 {
-		return fmt.Errorf("%s declared no behavior witnesses", guardTest)
+	if required == nil {
+		if got := results[guardTest]; got != "pass" {
+			return fmt.Errorf("%s in %s did not pass (%s); witness coverage is unknown", guardTest, guardPackage, stateLabel(got))
+		}
+		if len(witnesses) == 0 {
+			return fmt.Errorf("%s declared no behavior witnesses", guardTest)
+		}
 	}
 	slices.Sort(witnesses)
 	witnesses = slices.Compact(witnesses)
@@ -112,7 +142,11 @@ func check(in io.Reader, out io.Writer) error {
 	if len(problems) > 0 {
 		return fmt.Errorf("behavior witnesses without a passing run:\n  %s", strings.Join(problems, "\n  "))
 	}
-	_, _ = fmt.Fprintf(out, "witness-check: %d behavior witnesses ran and passed\n", len(witnesses))
+	label := "behavior witnesses"
+	if required != nil {
+		label = "required tests"
+	}
+	_, _ = fmt.Fprintf(out, "witness-check: %d %s ran and passed\n", len(witnesses), label)
 	return nil
 }
 

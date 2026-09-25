@@ -76,3 +76,58 @@ func TestV4UserConfigInstallsAndRemovesAdHocGitResource(t *testing.T) {
 	env.AssertFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v4")
 	env.AssertExitCode(env.RunAM("sync", "--check"), 0)
 }
+
+// A relative in-repository directory registry installs and removes through
+// `--from` in a legacy repository config; a v4 repository config must behave
+// the same and keep the committed source portable.
+func TestAdHocRelativeDirectoryParityAcrossSchemas(t *testing.T) {
+	for _, apiVersion := range []string{"agent-marketplace/v2", "agent-marketplace/v4"} {
+		t.Run(apiVersion, func(t *testing.T) {
+			env := newEnv(t)
+			env.InitGitRepo()
+			env.MustRunAM("init", "--harnesses", "factory")
+			env.WriteFile("/workspace/vendor/registry/skills/review/SKILL.md", "---\nname: review\ndescription: Review\n---\n\nReview body\n")
+			env.WriteRepoConfig("apiVersion: " + apiVersion + "\n")
+
+			install := env.RunAM("install", "review", "--from", "./vendor/registry", "--scope", "repo")
+			if install.ExitCode != 0 {
+				t.Fatalf("relative ad-hoc install failed (exit %d):\n%s", install.ExitCode, install.Combined)
+			}
+			env.AssertFileContains("/workspace/.factory/skills/review/SKILL.md", "Review body")
+			config := env.ReadFile("/workspace/.agents/config.yaml")
+			if strings.Contains(config, env.workspace) || strings.Contains(config, "/private/") {
+				t.Fatalf("committed repository config records a machine-specific path:\n%s", config)
+			}
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+			repeat := env.RunAM("install", "review", "--from", "./vendor/registry", "--scope", "repo")
+			if repeat.ExitCode != 0 || env.ReadFile("/workspace/.agents/config.yaml") != config {
+				t.Fatalf("repeat relative ad-hoc install was not idempotent (exit %d):\n%s", repeat.ExitCode, repeat.Combined)
+			}
+
+			remove := env.RunAM("remove", "review", "--from", "./vendor/registry", "--scope", "repo")
+			if remove.ExitCode != 0 {
+				t.Fatalf("relative ad-hoc remove failed (exit %d):\n%s", remove.ExitCode, remove.Combined)
+			}
+			env.AssertFileAbsent("/workspace/.factory/skills/review")
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+		})
+	}
+}
+
+// A trailing slash on --path names the same registry subdirectory.
+func TestAdHocGitPathTrailingSlashIntoV4UserConfig(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.MustRunAM("init", "--harnesses", "factory")
+	url := env.CreateBareRepo("slash", SkillsOnly(Skill{Name: "review", Description: "Review changes"}))
+	install := env.RunAM("install", "review", "--from", url, "--ref", "main", "--path", "skills/", "--scope", "user")
+	if install.ExitCode != 0 {
+		t.Fatalf("install with trailing-slash --path failed (exit %d):\n%s", install.ExitCode, install.Combined)
+	}
+	env.AssertFileContains("/root/.factory/skills/review/SKILL.md", "Review changes")
+	remove := env.RunAM("remove", "review", "--from", url, "--ref", "main", "--path", "skills/", "--scope", "user")
+	if remove.ExitCode != 0 {
+		t.Fatalf("remove with trailing-slash --path failed (exit %d):\n%s", remove.ExitCode, remove.Combined)
+	}
+	env.AssertFileAbsent("/root/.factory/skills/review")
+}
