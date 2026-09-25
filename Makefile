@@ -27,7 +27,7 @@ export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_N
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common tidy version release clean e2e marketplace-gate upgrade-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common tidy version release clean e2e marketplace-gate upgrade-gate released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -202,6 +202,11 @@ marketplace-gate:
 upgrade-gate:
 	@test -n "$(AM_E2E_PRE_V4_BINARY)" || { echo "ERROR: AM_E2E_PRE_V4_BINARY must point to the verified v3.1.1 Linux release" >&2; exit 1; }
 	CGO_ENABLED=0 $(GO) -C e2e test -count=1 -timeout 10m -run '^TestPreV4ReleaseUpgrade$$' .
+
+released-client-gate:
+	@test -n "$(AM_E2E_RELEASED_BINARY)" || { echo "ERROR: AM_E2E_RELEASED_BINARY must point to the verified latest Linux release" >&2; exit 1; }
+	@test -n "$(AM_E2E_RELEASED_IMAGE)" || { echo "ERROR: AM_E2E_RELEASED_IMAGE must name a local container image that provides git" >&2; exit 1; }
+	CGO_ENABLED=0 $(GO) -C e2e test -count=1 -timeout 10m -run '^TestReleasedClientReadsCandidateCommittedState$$' .
 
 # Cross-compilation targets
 darwin-arm64:
