@@ -185,6 +185,7 @@ func TestV4UserConfigInstallsFromSSHRemoteBranchAndPath(t *testing.T) {
 		t.Fatalf("remove through SSH remote from v4 user config failed (exit %d):\n%s", remove.ExitCode, remove.Combined)
 	}
 	env.AssertFileAbsent("/root/.factory/skills/daily-sync")
+	env.AssertExitCode(env.RunAMWithEnv(ssh, "sync", "--check"), 0)
 }
 
 // A user pastes a GitLab tree URL for a skills directory without naming a

@@ -567,7 +567,11 @@ resources:
 	if result.ExitCode != 0 {
 		t.Fatalf("remove from the v4 repository config failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
-	if data, err := os.ReadFile(consumer.mustResolvePath("/workspace/.factory/mcp.json")); err == nil && strings.Contains(string(data), "sonarqube") {
+	data, err := os.ReadFile(consumer.mustResolvePath("/workspace/.factory/mcp.json"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read the repository MCP config after removal: %v", err)
+	}
+	if strings.Contains(string(data), "sonarqube") {
 		t.Fatalf("removed MCP server is still materialized:\n%s", data)
 	}
 	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "Behavior body")
