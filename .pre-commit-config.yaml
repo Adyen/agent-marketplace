@@ -1,23 +1,50 @@
 repos:
+  # https://github.com/tekwizely/pre-commit-golang
+  # File/package-scoped Go hooks: only staged .go files and their packages run.
+  - repo: https://github.com/tekwizely/pre-commit-golang
+    rev: v1.0.0-rc.4
+    hooks:
+      - id: go-fmt
+        args: [-w]
+
+      # my-cmd-pkg runs '$ARGS ./<pkg>' once per package containing a staged
+      # .go file. Route it through `make test` so the Makefile stays the single
+      # owner of the Git/CGO environment sanitization tests rely on.
+      - id: my-cmd-pkg
+        name: go test affected packages
+        alias: go-test-pkg
+        exclude: ^e2e/
+        args:
+          - sh
+          - --hook:env:GO111MODULE=on
+          - -c
+          - exec make test TEST_PACKAGES="$1"
+          - sh
+
+  # Full-repository checks; CI runs these. Opt in locally with
+  # `pre-commit run --hook-stage manual <id>`.
   - repo: local
     hooks:
-      - id: test
-        name: make test
+      - id: full-test
+        name: make test (manual)
         entry: make test
         language: system
         pass_filenames: false
-        stages: [pre-commit]
+        always_run: true
+        stages: [manual]
 
       - id: lint
-        name: make lint
+        name: make lint (manual)
         entry: make lint
         language: system
         pass_filenames: false
-        stages: [pre-commit]
+        always_run: true
+        stages: [manual]
 
       - id: build
-        name: make build
+        name: make build (manual)
         entry: make build
         language: system
         pass_filenames: false
-        stages: [pre-commit]
+        always_run: true
+        stages: [manual]
