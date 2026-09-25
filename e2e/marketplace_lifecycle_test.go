@@ -477,3 +477,45 @@ func TestMarketplaceCollectionSelectorLifecycle(t *testing.T) {
 	consumer.AssertRepoFactorySkillAbsent("skill-one")
 	consumer.AssertFileAbsent("/workspace/.factory/commands/command-one.md")
 }
+
+// The organization config declares its Marketplace under an alias and
+// selects a collection without deploying a lock, and init creates a v4 user
+// config. A user installs a hosted MCP server through that alias into the
+// user config (v4.0.8 failed with v4.writer-opt-in).
+func TestOrganizationMarketplaceAliasInstallsMCPServerIntoV4UserConfig(t *testing.T) {
+	files := marketplaceBehaviorFiles("Behavior body", true)
+	files[".mcp.json"] = MergeMCPFile([]MCPServer{{Name: "sonarqube", Command: "echo", Args: []string{"sonarqube"}}})
+	fixture := newMarketplaceBehaviorFixture(t, files)
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.MustRunAM("init", "--harnesses", "factory")
+	consumer.WriteOrgConfigWithMode(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  org:
+    marketplace: %s
+allowed_marketplaces:
+  - '^http://127\.0\.0\.1:[0-9]+$'
+resources:
+  org:
+    include:
+      - behavior-source/collection/behavior-bundle
+`, fixture.server.URL), 0o644)
+
+	result := consumer.RunAM("install", "org:behavior-source/mcpserver/sonarqube", "--scope", "user", "--yes")
+	if result.ExitCode != 0 {
+		t.Fatalf("install through the organization Marketplace alias into v4 user config failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	userConfig := consumer.ReadFile("/root/.agents/config.yaml")
+	for _, want := range []string{"apiVersion: agent-marketplace/v4", "marketplace: " + fixture.server.URL, "behavior-source/mcp/sonarqube"} {
+		if !strings.Contains(userConfig, want) {
+			t.Fatalf("v4 user config missing %q:\n%s", want, userConfig)
+		}
+	}
+	if strings.Contains(userConfig, "marketplaces:") {
+		t.Fatalf("v4 user config gained the legacy marketplaces key:\n%s", userConfig)
+	}
+	consumer.AssertFileContains("/root/.agents/lock.yaml", "sonarqube")
+	consumer.AssertFileContains("/root/.factory/mcp.json", "sonarqube")
+	consumer.AssertFileAbsent("/etc/agent-marketplace/lock.yaml")
+	consumer.AssertExitCode(consumer.RunAM("sync"), 0)
+}
