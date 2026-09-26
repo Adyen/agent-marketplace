@@ -758,6 +758,18 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return false
 		})
 	}
+	if mode.check && pipeline.NeedsLockBootstrap(ec.Errors) {
+		changeErr := &lockLifecycleError{Code: "lock.change-required", Err: errors.Join(ec.Errors...)}
+		for _, loadErr := range ec.Errors {
+			var lockErr *pipeline.LockViewError
+			if errors.As(loadErr, &lockErr) && lockErr.Code == "lock.missing" {
+				changeErr.Scope = lockErr.Scope
+				changeErr.Path = lockErr.Path
+				break
+			}
+		}
+		return nil, 1, nil, changeErr
+	}
 	if len(ec.Errors) > 0 && (!mode.ignoreBlocked || !config.OnlyRegistryURLBlockedErrors(ec.Errors)) {
 		return nil, 0, nil, errors.Join(ec.Errors...)
 	}
