@@ -952,7 +952,7 @@ func mergeV4MigrationLock(input v4MigrationInput, desired []lockfile.Marketplace
 		case lockfile.APIVersionV1:
 			doc.Registries = existing.Registries
 		case lockfile.APIVersionV2:
-			if !reflect.DeepEqual(existing.Marketplaces, desired) {
+			if len(existing.Marketplaces) > 0 && !reflect.DeepEqual(existing.Marketplaces, desired) {
 				return fail(v4err("v4.migration-marketplace-lock-conflict", input.path, 0, "existing lock %q records different Marketplace identity", lockPath))
 			}
 			doc.Registries = existing.Registries

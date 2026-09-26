@@ -66,10 +66,6 @@ func ProjectConfigPath(repoRoot string) string {
 	return filepath.Join(repoRoot, ".agents", "config.yaml")
 }
 
-func entryResourcesForKind(entry RegistryEntry, kind ir.ResourceKind) []string {
-	return entry.SelectorForKind(kind).Include
-}
-
 // readOrInitConfig reads and parses the YAML at configPath. If the file does
 // not exist, returns a document pre-populated with apiVersion. When the path
 // is the global config (~/.agents/config.yaml), the skeleton includes
@@ -597,10 +593,6 @@ func normalizedUniqueValues(values []string) []string {
 	return normalized
 }
 
-func appendUniqueValues(existing, additions []string) []string {
-	return append(normalizedUniqueValues(existing), normalizedUniqueValues(additions)...)
-}
-
 // encodeConfigDocument renders doc to the exact bytes writeConfigDocumentData
 // writes, so callers can validate the candidate document before any byte
 // lands on disk.
@@ -810,38 +802,4 @@ func yamlEntryPath(entryNode *yaml.Node) string {
 		return strings.TrimSpace(pathNode.Value)
 	}
 	return ""
-}
-
-// registryEntryMatchesExactURLPathRef matches one URL/path/ref YAML entry.
-func registryEntryMatchesExactURLPathRef(entryNode *yaml.Node, registryURL, registryPath, registryRef string) bool {
-	if entryNode == nil || entryNode.Kind != yaml.MappingNode {
-		return false
-	}
-	urlNode := findRegistryURLNode(entryNode)
-	if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(strings.TrimSpace(registryURL)) {
-		return false
-	}
-	refNode := findMappingValue(entryNode, "ref")
-	if refNode == nil || strings.TrimSpace(refNode.Value) != strings.TrimSpace(registryRef) {
-		return false
-	}
-	return NormalizeRegistryPath(yamlEntryPath(entryNode)) == NormalizeRegistryPath(registryPath)
-}
-
-// pathLabel returns a human-readable label for a registry path value,
-// using "(root)" for the empty-string root path.
-func pathLabel(p string) string {
-	if p == "" {
-		return "(root)"
-	}
-	return p
-}
-
-// registryPathMatches reports whether a requested --path identifies the
-// configured registry entry. Ad-hoc editor operations deliberately require
-// identity equality: a requested descendant must not silently mutate its
-// configured parent. Callers that remove a named resource can separately use
-// the resolver's subtree lookup against the selected (raw) entry path.
-func registryPathMatches(entryPath, requestedPath string) bool {
-	return NormalizeRegistryPath(entryPath) == NormalizeRegistryPath(requestedPath)
 }

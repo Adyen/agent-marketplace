@@ -19,8 +19,16 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func testMarketplaceUpdateReconcile(_ context.Context, _, _ string, _ []RefBump, edits []StagedConfigEdit) (DependencyLockView, error) {
+func testMarketplaceUpdateReconcile(_ context.Context, _, _ string, _ []RefBump, edits []StagedConfigEdit, lockEdits []StagedLockEdit) (DependencyLockView, error) {
 	for _, edit := range edits {
+		if err := os.MkdirAll(filepath.Dir(edit.Path), 0o755); err != nil {
+			return DependencyLockView{}, err
+		}
+		if err := os.WriteFile(edit.Path, edit.Bytes, edit.Mode); err != nil {
+			return DependencyLockView{}, err
+		}
+	}
+	for _, edit := range lockEdits {
 		if err := os.MkdirAll(filepath.Dir(edit.Path), 0o755); err != nil {
 			return DependencyLockView{}, err
 		}

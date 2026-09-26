@@ -44,7 +44,11 @@ Config-changing TUI interactions are serialized. Resource toggles, target saves,
 
 Snapshot diagnostics and operation diagnostics have separate lifecycles. An accepted snapshot atomically replaces earlier snapshot diagnostics without erasing an operation failure. An operation failure remains visible until a successful operation of the same kind supersedes it. Stable diagnostic identity deduplicates repeated values within one outcome.
 
-Hard configuration, catalog, resolution, dry-run, or materialization errors make drift unavailable or failed, never `in sync`. Rows produced by a hard-failed snapshot remain inspectable but cannot initiate config mutation until a healthy snapshot is accepted.
+Hard snapshot errors make drift unavailable or failed, never `in sync`. A configuration parse or load failure may produce no structured rows at all; in that case the E editor remains the recovery path because row intent cannot be inferred safely.
+
+Hard catalog, resolution, dry-run, or materialization errors keep their diagnostics and failed drift but retain the partial inventory: rows from successfully loaded catalogs stay rendered. Each selection explicitly configured on a failed registry gains one unavailable recovery row that preserves its kind, name, registry identity, and scope flags; a top-level local include gains a recovery row only when exactly one failed registry identity can own it and no healthy available row already covers it. Every otherwise-mutable rendered row can open the scope toggle modal while those errors remain.
+
+Required, malformed, unavailable Marketplace, and serialization restrictions are unchanged. Unavailable rows never fabricate detail content: they perform no source lookup and report that no verified content is available.
 
 Automatic snapshot loads, reloads, and refreshes consume every present valid layer lock as an exact snapshot. A missing layer lock permits the TUI to fall back to mutable discovery without creating a lock and is reported as a warning; this never downgrades an invalid present lock. Mutable movement cannot replace inventory protected by a lock. The TUI holds the exact-cache read lease through catalog discovery and materialization so garbage collection cannot remove a resolved exact snapshot while it is still being consumed.
 

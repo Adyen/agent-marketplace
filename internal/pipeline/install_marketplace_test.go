@@ -458,7 +458,7 @@ func TestMarketplacePinRollbackRestoresExistingConfigAfterSyncFailure(t *testing
 	}
 	plan := testMarketplacePreparedInstall()
 	wantErr := errors.New("materialization failed")
-	_, err := ensureMarketplacePinAndSync(configPath, plan, func() ([]error, error) {
+	_, err := ensureMarketplacePinsAndSync(configPath, plan.Entry, []config.MarketplaceResourcePin{plan.Pin}, func() ([]error, error) {
 		return nil, wantErr
 	})
 	if !errors.Is(err, wantErr) {
@@ -478,7 +478,8 @@ func TestMarketplacePinRollbackRestoresExistingConfigAfterSyncFailure(t *testing
 
 func TestMarketplacePinRollbackRemovesConfigCreatedByFailedSync(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	_, err := ensureMarketplacePinAndSync(configPath, testMarketplacePreparedInstall(), func() ([]error, error) {
+	plan := testMarketplacePreparedInstall()
+	_, err := ensureMarketplacePinsAndSync(configPath, plan.Entry, []config.MarketplaceResourcePin{plan.Pin}, func() ([]error, error) {
 		return nil, errors.New("materialization failed")
 	})
 	if err == nil {
@@ -500,7 +501,8 @@ func TestMarketplacePinRollbackRefusesConcurrentConfigChange(t *testing.T) {
 	}
 	concurrent := []byte("apiVersion: agent-marketplace/v2\n# another writer\n")
 	wantErr := errors.New("materialization failed")
-	_, err := ensureMarketplacePinAndSync(configPath, testMarketplacePreparedInstall(), func() ([]error, error) {
+	plan := testMarketplacePreparedInstall()
+	_, err := ensureMarketplacePinsAndSync(configPath, plan.Entry, []config.MarketplaceResourcePin{plan.Pin}, func() ([]error, error) {
 		if err := os.WriteFile(configPath, concurrent, 0o600); err != nil {
 			t.Fatalf("simulate concurrent writer: %v", err)
 		}

@@ -237,9 +237,8 @@ func resolveInheritedList(defaults, overrides []string) []string {
 **Consequence for editors**: when writing a resource into a config, if
 the matching registry entry has its own list for that kind, write into
 *that* list, not the top-level. The TUI toggle modal
-(`internal/tui/modal.go` → `runScopedToggle`) should use the generic
-resource editor helpers (`AddResourceToRegistryInConfig`,
-`DisableResourceInRegistryInConfig`, `AddResourceToConfig`) so skills,
+(`internal/tui/modal.go` → `runScopedToggle`) goes through
+`pipeline.EditLayerAtPath` with a `pipeline.LayerMutation` so skills,
 commands, subagents, hooks, and MCP servers stay aligned.
 
 ### Required registries and machine scope ignore local excludes
