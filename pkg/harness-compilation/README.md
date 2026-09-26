@@ -46,7 +46,7 @@ For an ordinary model release, edit data rather than a translator:
 
 Do not update `compile/mapping/models.go` for new releases: that table is frozen for legacy source-revision digest projection and the legacy mapping interface. Active subagent compilation uses `modelpolicy`. No Marketplace config migration or runtime model-catalog setting is required. A new native field format, unlike a new model ID, still needs serializer/resolver support and acceptance evidence.
 
-Unresolved models produce warnings and omit the model field, never the whole resource. Source-native model strings retain `ModelSource` provenance through ingestion and canonical archives; same-harness preservation does not certify account availability. See the [catalog design reference](../../docs/plans/2026-09-21-harness-model-catalogs-design.md) for the schema and the outstanding Devin variant-acceptance gate.
+Unresolved models produce warnings and omit the model field, never the whole resource. Source-native model strings retain `ModelSource` provenance through ingestion and canonical archives; same-harness preservation does not certify account availability. See the [catalog design reference](../../docs/plans/2026-09-21-harness-model-catalogs-design.md) for the schema and the Devin CLI-inventory evidence policy.
 
 ## Investigate nightly model drift
 

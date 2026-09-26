@@ -1,7 +1,7 @@
 # Harness model catalogs and reasoning conversion
 
 Date: 2026-09-21
-Status: approved by the user on 2026-09-21; generic implementation complete, with new Devin forward variants still gated by D1.
+Status: approved by the user on 2026-09-21; generic implementation complete, with the Devin variant mappings enabled on 2026-09-26 under the approved CLI-inventory evidence policy.
 Baseline: `d688dce101c4d2bddc434d8a2665ea9d1874ab64`.
 Audience: harness-compilation maintainers. This is the design reference; the library README contains the implemented maintenance workflow.
 
@@ -35,7 +35,7 @@ Evidence was reviewed on 2026-09-21. Documentation, source inspection, catalog d
 | Factory | `model`: public ID, configured `custom:` ID, or `inherit`; omission inherits, subject to native routing | Separate `reasoningEffort`, compatible with the selected model | [Factory subagents](https://docs.factory.ai/harness/subagents) says effort is ignored with `inherit`. Its subagent table names low/medium/high; the broader [model catalog](https://docs.factory.ai/docs/models) lists additional session/CLI levels. Do not infer custom-droid acceptance of all session levels from that table alone. |
 | Cursor | `model`: ID or `inherit`; omission inherits | Parameters embedded in model string, for example `claude-opus-5[effort=high]` | [Cursor subagents](https://cursor.com/docs/subagents) documents bracket syntax. Parameter names and values depend on the model. Empty brackets and unrelated parameters have meaning. |
 | Gemini | `model`: ID or `inherit`; omission inherits | No reasoning field in the inspected agent Markdown schema | [Gemini subagents](https://geminicli.com/docs/core/subagents/) and [pinned loader](https://github.com/google-gemini/gemini-cli/blob/cfbcaa8df13ea4610bb379b377b56d62980c0032/packages/core/src/agents/agentLoader.ts). `localAgentSchema` is strict and has no `effort` or `thinkingConfig`; `markdownToAgentDefinition` uses `markdown.model || 'inherit'`. |
-| Devin | Custom profile `model`; omission selects the configured default subagent model, not the parent | Catalog lists model variants containing thinking levels; acceptance of those UIDs in custom profiles is not yet established | [Devin subagents](https://docs.devin.ai/cli/subagents), [models](https://docs.devin.ai/cli/models), and the capture below. No documented custom-profile `inherit` sentinel or independent effort field was found. |
+| Devin | Custom profile `model`; omission selects the configured default subagent model, not the parent | Catalog lists model variants containing thinking levels; the CLI inventory plus the documented profile `model` override is accepted catalog evidence, without claiming live profile execution | [Devin subagents](https://docs.devin.ai/cli/subagents), [models](https://docs.devin.ai/cli/models), and the capture below. No documented custom-profile `inherit` sentinel or independent effort field was found. |
 | Codex | Optional `model`; omission inherits | Optional `model_reasoning_effort`; omission inherits when model is also inherited; an explicitly selected model can use its own default | [Codex subagents](https://developers.openai.com/codex/subagents.md). No literal `model = "inherit"` is needed to express inheritance. |
 | Windsurf | No compiler-supported subagent primitive | Not applicable | Existing compiler no-primitive contract remains unchanged; no model resolver may invent a subagent artifact. |
 
@@ -47,18 +47,11 @@ The current Gemini emitter writes `effort`, which the inspected upstream schema 
 
 The reviewed [Factory](https://docs.factory.ai/harness/skills), [Cursor](https://cursor.com/docs/skills), and [Gemini](https://geminicli.com/docs/cli/creating-skills/) skill references do not establish a skill model override. This is an evidence gap, not proof that every version rejects the field. The initial model resolver must not claim those surfaces support model selection merely because their subagents do. Existing undocumented field behavior is explicitly identified in the implementation review rather than silently promoted to a new contract. Source skill-directory symlink installation remains distribution policy: this design does not rewrite source trees or change installation mode to force skill conversion.
 
-### Devin capture and unresolved gate
+### Devin capture and evidence policy
 
-Installed CLI: `devin 3000.10.31 (b98cc431)`. Authenticated `devin models list --format json` returned:
+Installed CLI: `devin 3000.10.31 (b98cc431)`. The authenticated `devin models list --format json` capture was refreshed on 2026-09-26 and now covers every listed model UID: ordinary variants, fast/priority variants, `adaptive`, SWE-1.7/SWE-2, and the Fusion composites, each as a distinct identity. Families also report floating aliases (`swe`, `fable`, `claude`, `sonnet`, `opus`, `gemini`). The capture establishes identifiers in an account-visible catalog; combined with the documented custom-profile `model` override it is sufficient catalog evidence, without claiming live profile execution testing. The repository's [Devin validation guide](../harness-validation/devin.md) records no standalone metadata-only custom-profile inventory. No new profile, model turn, trust mutation, or authentication change was performed.
 
-| Family UID / slug | Variant UID | Variant label |
-|---|---|---|
-| `gpt-5.6-luna` | `gpt-5-6-luna-medium` | GPT-5.6 Luna Medium Thinking |
-| `gpt-5.6-terra` | `gpt-5-6-terra-high` | GPT-5.6 Terra High Thinking |
-
-Both families also listed low, medium, high, xhigh, and max variants. The capture establishes identifiers in an account-visible catalog, not accepted custom-profile syntax. The repository's [Devin validation guide](../harness-validation/devin.md) records no standalone metadata-only custom-profile inventory. No new profile, model turn, trust mutation, or authentication change was performed.
-
-**Gate D1:** new Devin variant mappings require first-party confirmation that custom-profile `model` accepts these UIDs, source-backed resolution evidence, or an explicitly authorized isolated native verification. Until then, example entries below remain candidate data, not enabled verified mappings. If D1 remains blocked, the compiler still warns and emits without an unresolved model as required. The original Luna/Terra warning examples cannot be claimed fixed by catalog discovery alone.
+The former **Gate D1** (first-party confirmation that custom profiles accept these UIDs) is superseded by this approved evidence policy: the enabled catalog mappings below are live data, not candidates, while runtime acceptance in a real profile remains unverified and is not claimed.
 
 ## 3. Module and data flow
 
@@ -132,7 +125,7 @@ models:
 
 ### Example: reasoning encoded in a model
 
-Candidate Devin data, subject to D1:
+Enabled Devin data, matching the shipped catalog shape:
 
 ```yaml
 schema: 1
@@ -147,7 +140,6 @@ surfaces:
     omitted_model: default
 models:
   openai/gpt-5.6-luna:
-    model: gpt-5.6-luna
     reasoning:
       low: {model: gpt-5-6-luna-low}
       medium: {model: gpt-5-6-luna-medium}
@@ -156,7 +148,7 @@ models:
       max: {model: gpt-5-6-luna-max}
 ```
 
-The base `model` spelling requires acceptance evidence too. A variant-only record may omit the base model: it resolves only when a supported reasoning selection identifies a complete encoding. Unspecified effort must not arbitrarily choose the first variant.
+The base `model` spelling requires evidence too. A variant-only record may omit the base model: it resolves only when a supported reasoning selection identifies a complete encoding. Unspecified effort must not arbitrarily choose the first variant.
 
 Cursor uses the same shape, for example `high: {model: "claude-opus-5[effort=high]"}` beneath `anthropic/claude-opus-5`. No generic period-to-hyphen replacement, appended reasoning suffix, parameter-name guess, or executable template is allowed. Explicit spellings are inexpensive data and avoid accidental model changes.
 
@@ -190,7 +182,7 @@ Catalog syntax is deliberately small. Overrides may change model and effort only
 - Portable unqualified provider names are indexed from concrete identity keys. If several providers claim the same name, only a provider-qualified input resolves globally; no first-row-wins behavior is allowed.
 - A reasoning entry must form a complete output and may not request a separate effort field on a surface that has none. Model-specific inventory and inherited-effort inventory are validated independently.
 - A floating native alias remains floating; a concrete version is never rewritten to a latest-family alias. A family pin is an explicit catalog policy, not an inferred cross-version equivalence.
-- Catalogs contain only enabled, evidence-backed mappings. Pending proposals such as D1 live in the design/test planning evidence, not in the runtime catalog behind a silently ignored flag.
+- Catalogs contain only enabled, evidence-backed mappings. Pending proposals live in the design/test planning evidence, not in the runtime catalog behind a silently ignored flag.
 
 ## 5. Resolution order and losses
 
@@ -240,8 +232,8 @@ Tests must assert observable outputs and loss codes, not compute their expectati
 
 - All harnesses: inherit, omitted selection, explicit concrete model, family alias, unsupported model, supported/unsupported reasoning, and native opaque same-target round trip.
 - Exact identity remains exact; floating identity remains floating or reports an explicit catalog pin. Old Sonnet/Opus/Haiku versions never silently float to the latest generation.
-- Factory/Codex separate effort, Cursor embedded effort, Gemini warning/drop, and gated Devin variants are separate expected-output fixtures through the public compiler.
-- Regression examples: Luna + medium; Terra + high; repeated inherited agents; valid body retained with no model when resolution fails. D1 controls the Devin success expectations.
+- Factory/Codex separate effort, Cursor embedded effort, Gemini warning/drop, and Devin reasoning-encoded variants are separate expected-output fixtures through the public compiler.
+- Regression examples: Luna + medium; Terra + high; repeated inherited agents; valid body retained with no model when resolution fails. The captured Devin inventory controls the Devin success expectations.
 - Unknown model plus valid reasoning, variant-only models without effort, explicit versus embedded effort conflicts, unknown model override values, empty overrides, ambiguous portable IDs, opaque custom models, and unknown Cursor parameters.
 - Public paths: native loaders, direct IR constructors, target `Translate`, `Compile`, `CompileBundle`, conversion, canonical encode/decode, and Marketplace materialization. A wrapper-only fix fails acceptance.
 - Source revision legacy vectors and verified exact locks survive; new provenance reaches hosted artifact decode; malformed/case-colliding provenance is rejected rather than hidden in extras.
@@ -254,7 +246,7 @@ Existing library tests, affected materialization/source-revision tests, `make ha
 
 The user approved the concrete design and bounded skill scope before implementation. The generic resolver, catalogs, provenance handling, compatibility projection, and offline maintenance gate are implemented. No runtime configuration surface was added.
 
-D1 remains open: acceptance evidence is required before enabling the proposed Devin forward variant mappings. This does not block the generic implementation, but does block claiming the Luna/Terra-to-Devin examples are fully corrected. Native same-harness preservation is a separate, tested contract and is not acceptance evidence.
+The Devin forward variant mappings are enabled under the approved CLI-inventory evidence policy: the captured `devin models list` inventory plus the documented custom-profile `model` override is sufficient catalog evidence. Runtime acceptance in a real custom profile remains untested and is not claimed. Native same-harness preservation is a separate, tested contract and is not acceptance evidence.
 
 Required before delivery: independent expected-output tests, legacy digest tests, consumer-path coverage, native evidence labels, and updated diagnostic/field-matrix reference. Existing approximate cross-provider mappings such as Sonnet to Gemini are intentionally removed from automatic conversion; explicit library overrides remain the escape hatch.
 

@@ -54,16 +54,14 @@ cells:
     # subagent.devin.tool-unknown is a WARNING since bead
     # agent-marketplace-pu6b, so this cell now PRODUCES a profile with the
     # allowed-tools key omitted instead of being suppressed. `tools` therefore
-    # joins the expected losses, and subagent.devin.effort-dropped surfaces
-    # because the compiler no longer returns before reaching it.
+    # joins the expected losses. The captured Devin catalog resolves the Opus
+    # high selection to its reasoning-encoded variant UID.
     - from: cursor
       to: devin
       class: cross
       diagnostics:
-        - subagent.devin.model-unmappable
-        - subagent.devin.effort-dropped
         - subagent.devin.tool-unknown
-      expectedModel: ""
+      expectedModel: claude-opus-5-high
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation, tools]
     - from: cursor

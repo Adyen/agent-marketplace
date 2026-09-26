@@ -71,12 +71,108 @@
   want_model: minimax-m3
   losses: [model.reasoning-omitted]
 
-- name: Devin variant UID stays gated cross-harness
+- name: Devin Luna medium resolves to captured variant UID
   source: claude
   target: devin
   model: gpt-5.6-luna
   effort: medium
+  want_model: gpt-5-6-luna-medium
+
+- name: Devin Terra high variant decodes to Codex effort
+  source: devin
+  target: codex
+  model: gpt-5-6-terra-high
+  want_model: gpt-5.6-terra
+  want_effort: high
+
+- name: Devin Opus high variant decodes to Factory effort
+  source: devin
+  target: factory
+  model: claude-opus-5-high
+  want_model: claude-opus-5
+  want_effort: high
+
+- name: Devin fast variant keeps its distinct identity
+  source: devin
+  target: factory
+  model: claude-opus-5-5-medium-fast
+  want_model: claude-opus-5-5-fast
+  want_effort: medium
+
+- name: Devin priority variant does not collapse to the base model
+  source: devin
+  target: factory
+  model: gpt-6-sol-low-priority
   losses: [model.unresolved, model.reasoning-omitted]
+
+- name: Devin no-thinking level keeps the model but drops the level
+  source: devin
+  target: factory
+  model: gpt-6-sol-none
+  want_model: gpt-6-sol
+  losses: [model.reasoning-omitted]
+
+- name: Devin concrete family resolves to its captured base slug
+  source: claude
+  target: devin
+  model: gpt-5.6-luna
+  want_model: gpt-5.6-luna
+
+- name: Devin fast-only identity stays omitted without effort
+  source: claude
+  target: devin
+  model: claude-opus-5-5-fast
+  losses: [model.unresolved]
+
+- name: SWE-1.7 max resolves to its captured UID
+  source: claude
+  target: devin
+  model: swe-1.7
+  effort: max
+  want_model: swe-1-7
+
+- name: SWE-1.7 base slug resolves without effort
+  source: claude
+  target: devin
+  model: swe-1.7
+  want_model: swe-1.7
+
+- name: Adaptive selector resolves on Devin
+  source: claude
+  target: devin
+  model: adaptive
+  want_model: adaptive
+
+- name: SWE-2 high resolves to captured Devin UID
+  source: claude
+  target: devin
+  model: swe-2
+  effort: high
+  want_model: swe-2-high
+
+- name: Haiku selector stays floating on Devin
+  source: claude
+  target: devin
+  model: haiku
+  want_model: haiku
+
+- name: Fable selector never maps to another family
+  source: devin
+  target: claude
+  model: fable
+  losses: [model.unresolved]
+
+- name: Fusion composite round-trips on Devin
+  source: devin
+  target: devin
+  model: fusion-gpt-6-astra-medium-sidekick-gpt-5-6-luna-high
+  want_model: fusion-gpt-6-astra-medium-sidekick-gpt-5-6-luna-high
+
+- name: Fusion composite never maps to an ordinary model
+  source: devin
+  target: claude
+  model: fusion-claude-opus-5-high-sidekick-swe-2-high
+  losses: [model.unresolved]
 
 - name: Devin native variant UID round-trips
   source: devin
