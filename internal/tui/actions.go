@@ -24,8 +24,21 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// snapshotStage identifies which part of a progressive snapshot a delivery
+// carries. The zero value is a complete assessed snapshot, so callers that do
+// not opt into staging keep their single-message behavior.
+type snapshotStage uint8
+
+const (
+	snapshotStageFinal     snapshotStage = iota // complete authoritative result
+	snapshotStageConfig                         // validated config; starts cached Marketplace discovery
+	snapshotStageInventory                      // verified inventory; drift still pending
+)
+
 type snapshotLoadedMsg struct {
 	generation           requestGeneration
+	stage                snapshotStage
+	stages               <-chan snapshotLoadedMsg
 	rows                 []row
 	driftReport          materialize.DriftReport
 	driftAssessment      driftAssessment
@@ -129,11 +142,35 @@ var (
 	readSnapshotForUpdate = readSnapshotForWorkspace
 )
 
+// snapshotStreamClosedMsg is delivered when a staged snapshot channel is
+// drained; it carries no state.
+type snapshotStreamClosedMsg struct{}
+
 func loadSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
 		snapshot := readSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadCached)
 		snapshot.generation = generation
 		return snapshot
+	}
+}
+
+// loadSnapshotProgressive schedules the staged startup snapshot: a validated
+// config stage (which starts cached Marketplace discovery), a verified
+// inventory stage, and the final assessed snapshot, all under one generation.
+func loadSnapshotProgressive(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
+	return waitSnapshotStages(readSnapshotStagesForWorkspace(ctx, workspace, homeDir, catalogLoadCached, generation))
+}
+
+func waitSnapshotStages(stages <-chan snapshotLoadedMsg) tea.Cmd {
+	if stages == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg, ok := <-stages
+		if !ok {
+			return snapshotStreamClosedMsg{}
+		}
+		return msg
 	}
 }
 
@@ -143,6 +180,30 @@ func refreshSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir 
 		snapshot.generation = generation
 		return refreshLoadedMsg{snapshotLoadedMsg: snapshot}
 	}
+}
+
+// readSnapshotStages runs one snapshot read and delivers its progressive
+// stages on the returned channel: validated config, verified inventory, and
+// the assessed result. Every delivery shares the caller's generation so stale
+// streams are rejected by the normal request acceptance path. The channel is
+// buffered past the maximum number of stages, so a reader that stops
+// consuming after a superseded generation cannot block the writer.
+func readSnapshotStagesForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode, generation requestGeneration) <-chan snapshotLoadedMsg {
+	stages := make(chan snapshotLoadedMsg, 4)
+	go func() {
+		defer close(stages)
+		emit := func(msg snapshotLoadedMsg) {
+			msg.generation = generation
+			msg.stages = stages
+			stages <- msg
+		}
+		readSnapshotStaged(ctx, ws, homeDir, mode, emit)
+	}()
+	return stages
+}
+
+func readSnapshotStages(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode, generation requestGeneration) <-chan snapshotLoadedMsg {
+	return readSnapshotStagesForWorkspace(ctx, defaultTUIWorkspace(repoRoot), homeDir, mode, generation)
 }
 
 func loadLocalConfigAt(localDir string) (*config.LocalConfig, error) {
@@ -174,11 +235,52 @@ func invalidWorkspaceSnapshot(err error) snapshotLoadedMsg {
 }
 
 func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+	var snapshot snapshotLoadedMsg
+	readSnapshotStaged(ctx, ws, homeDir, mode, func(msg snapshotLoadedMsg) { snapshot = msg })
+	return snapshot
+}
+
+func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode, emit func(snapshotLoadedMsg)) {
 	ws, err := validatedTUIWorkspace(ws)
 	if err != nil {
-		return invalidWorkspaceSnapshot(err)
+		emit(invalidWorkspaceSnapshot(err))
+		return
 	}
 	repoRoot := ws.RepoRoot()
+	makeBase := func(inspection pipeline.InspectionResult) snapshotLoadedMsg {
+		resolvedResult := inspection.ResolveResult
+		base := snapshotLoadedMsg{
+			catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
+			resolved:             resolvedResult.Resolved,
+			mergedCfg:            resolvedResult.LoadedCfg,
+			inventoryResult:      &resolvedResult,
+			materializationModes: resolvedResult.MaterializationModes,
+			localExcludes:        localExcludes(resolvedResult.LocalCfg),
+			globalHarnesses:      configHarnesses(resolvedResult.GlobalCfg),
+			projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
+			targetHarnesses:      resolvedResult.TargetHarnesses,
+			targetHarnessSource:  resolvedResult.TargetHarnessSource,
+			pendingMigration:     pendingMigrationFor(repoRoot, ws.LocalConfigDir(), homeDir),
+			driftAssessment:      driftFailed,
+			refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
+		}
+		if resolvedResult.MergedCfg != nil {
+			base.configuredRegistries = append([]config.RegistryEntry(nil), resolvedResult.MergedCfg.Registries...)
+		}
+		for _, issue := range inspection.Issues {
+			severity := diagnosticWarning
+			if issue.Severity == pipeline.IssueError {
+				severity = diagnosticError
+			}
+			base.diagnostics = appendSnapshotDiagnostics(base.diagnostics, severity, diagnosticCategoryFor(issue.Category), issue.Err)
+		}
+		base.diagnostics = deduplicateDiagnostics(base.diagnostics)
+		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
+		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
+		return base
+	}
+	var inventoryRows []row
+	var unavailable bool
 	inspection, releaseExactLease := pipeline.Inspect(ctx, pipeline.InspectOptions{
 		Resolve: pipeline.ResolveOptions{
 			Workspace:     ws,
@@ -204,45 +306,45 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 			},
 			ReadOnlyExactLocks:        true,
 			AllowMissingReadOnlyLocks: true,
+			ConfigReady: func(merged *config.Config) {
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
+			},
+		},
+		Resolved: func(result pipeline.InspectionResult) {
+			resolved := result.ResolveResult
+			recoveryCfg := resolved.LoadedCfg
+			for _, err := range resolved.CatalogErrors {
+				if catalog.IsOverlapWarning(err) {
+					continue
+				}
+				if resolved.MergedCfg != nil {
+					recoveryCfg = resolved.MergedCfg
+				}
+				break
+			}
+			// The verified inventory is published before detail capture and the
+			// materialization dry run: rows are navigable and config-only toggles are
+			// eligible while drift stays explicitly pending.
+			inventoryRows = buildRows(resolved.LoadedCfg, resolved.CatalogLoad.Catalogs, resolved.Resolved, resolved.LocalCfg, materialize.DriftReport{}, harnessDefaultsBySource(resolved.GlobalCfg, resolved.RepoCfg))
+			inventoryRows = appendUnavailableSelectionRows(inventoryRows, recoveryCfg, resolved.LocalCfg, resolved.ResolveErrors, resolved.CatalogLoad.Catalogs)
+			unavailable = rowsHaveUnavailable(inventoryRows)
+			inventory := makeBase(result)
+			inventory.stage = snapshotStageInventory
+			inventory.rows = inventoryRows
+			inventory.driftAssessment = driftUnknown
+			inventory.inventoryResult = nil // the assessed stage owns inventory telemetry
+			emit(inventory)
 		},
 		DryRun: runMaterialize,
 	})
 	defer releaseExactLease()
 	resolvedResult := inspection.ResolveResult
 
-	base := snapshotLoadedMsg{
-		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
-		resolved:             resolvedResult.Resolved,
-		mergedCfg:            resolvedResult.LoadedCfg,
-		inventoryResult:      &resolvedResult,
-		materializationModes: resolvedResult.MaterializationModes,
-		localExcludes:        localExcludes(resolvedResult.LocalCfg),
-		globalHarnesses:      configHarnesses(resolvedResult.GlobalCfg),
-		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
-		targetHarnesses:      resolvedResult.TargetHarnesses,
-		targetHarnessSource:  resolvedResult.TargetHarnessSource,
-		pendingMigration:     pendingMigrationFor(repoRoot, ws.LocalConfigDir(), homeDir),
-		driftAssessment:      driftFailed,
-		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
-	}
-	if resolvedResult.MergedCfg != nil {
-		base.configuredRegistries = append([]config.RegistryEntry(nil), resolvedResult.MergedCfg.Registries...)
-	}
-
-	var diagnostics []tuiDiagnostic
-	for _, issue := range inspection.Issues {
-		severity := diagnosticWarning
-		if issue.Severity == pipeline.IssueError {
-			severity = diagnosticError
-		}
-		diagnostics = appendSnapshotDiagnostics(diagnostics, severity, diagnosticCategoryFor(issue.Category), issue.Err)
-	}
+	base := makeBase(inspection)
 
 	if len(resolvedResult.ConfigErrors) > 0 {
-		base.diagnostics = deduplicateDiagnostics(diagnostics)
-		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
-		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
-		return base
+		emit(base)
+		return
 	}
 
 	var hardCatalogFailure bool
@@ -258,10 +360,8 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 	// here, before detail capture or dry-run materialization can act on an
 	// invalid root and mask the original error.
 	if len(resolvedResult.Errors) > 0 && len(resolvedResult.CatalogErrors) == 0 && len(resolvedResult.ResolveErrors) == 0 {
-		base.diagnostics = deduplicateDiagnostics(diagnostics)
-		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
-		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
-		return base
+		emit(base)
+		return
 	}
 
 	var resolvedNames []string
@@ -274,28 +374,44 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 	dryRunReport := inspection.Report
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
 	driftState := driftReady
-	if hardCatalogFailure || dryRunReport == nil || !inspection.Healthy() {
+	if hardCatalogFailure || unavailable || dryRunReport == nil || !inspection.Healthy() {
 		driftState = driftFailed
 	}
-
-	rowCfg := resolvedResult.LoadedCfg
-	recoveryCfg := rowCfg
-	if hardCatalogFailure && resolvedResult.MergedCfg != nil {
-		recoveryCfg = resolvedResult.MergedCfg
-	}
-	base.rows = buildRows(rowCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
-	base.rows = appendUnavailableSelectionRows(base.rows, recoveryCfg, resolvedResult.LocalCfg, resolvedResult.ResolveErrors, resolvedResult.CatalogLoad.Catalogs)
-	if rowsHaveUnavailable(base.rows) {
-		driftState = driftFailed
-	}
+	base.rows = applyDriftItems(inventoryRows, driftReport)
 	attachDetailSources(base.rows, detailSources)
 	base.driftReport = driftReport
 	base.driftAssessment = driftState
-	base.diagnostics = deduplicateDiagnostics(diagnostics)
-	base.errs = diagnosticValues(base.diagnostics, diagnosticError)
-	base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
-	base.refreshAfterLoad = resolvedResult.CatalogLoad.RefreshAfterLoad
-	return base
+	emit(base)
+}
+
+// applyDriftItems returns a copy of the published inventory rows with assessed
+// drift attached, so a stage the model already applied is never mutated behind
+// its back. Rows that already carry drift (unavailable recovery rows) keep it.
+func applyDriftItems(rows []row, driftReport materialize.DriftReport) []row {
+	out := slices.Clone(rows)
+	if len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned) == 0 {
+		return out
+	}
+	driftByName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
+	for _, item := range driftReport.Missing {
+		driftByName[item.Name] = item
+	}
+	for _, item := range driftReport.Broken {
+		driftByName[item.Name] = item
+	}
+	for _, item := range driftReport.Orphaned {
+		driftByName[item.Name] = item
+	}
+	for i := range out {
+		if out[i].IsAvailable || out[i].DriftItem != nil {
+			continue
+		}
+		item, hasDrift := driftByName[skill.ResourceKey(out[i].Artifact.Kind, out[i].Artifact.Name)]
+		if hasDrift {
+			out[i].DriftItem = &item
+		}
+	}
+	return out
 }
 
 func captureSnapshotDetailSources(resolved []resolver.ResolvedArtifact, catalogs map[string]catalogInfo) map[string]*detailSourceSnapshot {

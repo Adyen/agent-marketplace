@@ -172,11 +172,19 @@ func (m *Model) switchTab(t tab) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick)
+	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick)
 }
 
 func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	assessment := msg.driftAssessment
+	if msg.stage != snapshotStageFinal {
+		// Intermediate stages carry a pending assessment; never derive a
+		// verdict before the assessed stage lands.
+		m.driftAssessment = assessment
+		m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
+		m.rowsStale = len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+		return
+	}
 	if assessment == driftUnknown {
 		if len(msg.errs) > 0 || len(diagnosticErrors(msg.diagnostics)) > 0 {
 			assessment = driftFailed
@@ -279,10 +287,12 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	}
 	m.clampListOffset()
 	m.rebuildOpenBundle(previousDetail, hadPreviousDetail)
-	if msg.inventoryResult != nil {
-		pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
+	if msg.stage == snapshotStageFinal {
+		if msg.inventoryResult != nil {
+			pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
+		}
+		recordConfigSnapshotSpans(m.ctx, msg)
 	}
-	recordConfigSnapshotSpans(m.ctx, msg)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -342,6 +352,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case snapshotLoadedMsg:
+		if msg.stage == snapshotStageConfig {
+			if m.requests.active(requestSnapshot) != msg.generation {
+				return m, nil
+			}
+			// The merged configuration is validated; cached-first Marketplace
+			// discovery may publish rows before local verification lands.
+			m.mergedCfg = msg.mergedCfg
+			return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), waitSnapshotStages(msg.stages))
+		}
+		if msg.stage == snapshotStageInventory {
+			if m.requests.active(requestSnapshot) != msg.generation {
+				return m, nil
+			}
+			m.loading = false
+			m.applySnapshotStatus(msg)
+			m.applySnapshotData(msg)
+			return m, waitSnapshotStages(msg.stages)
+		}
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
 			return m, nil
 		}
@@ -713,6 +741,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detailStickyBottom = false
 		m.detailViewport.SetContent(msg.content)
 		m.detailViewport.GotoTop()
+		return m, nil
+
+	case snapshotStreamClosedMsg:
 		return m, nil
 
 	case spinner.TickMsg:

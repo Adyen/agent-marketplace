@@ -30,11 +30,13 @@ Rejected stale completions do not change the active pane, input focus, selected 
 
 Accepted snapshot rebuilds restore stable row or section selection and keep the identity of an open detail resource when rows are inserted or reordered. After a resource is disabled, the mutation-triggered rebuild instead selects the next resource that was below it, so the cursor does not follow the disabled resource to its new section.
 
+The startup snapshot is delivered progressively under one request generation. Once the merged configuration validates, a config stage publishes it and starts cached-first Marketplace discovery, so cached browsing and search results can render before local catalog verification, detail capture, and the materialization dry run finish. Once exact-lock and catalog resolution complete, an inventory stage publishes the verified rows: they are navigable, searchable, and otherwise-eligible config-only toggles may begin, while drift remains explicitly pending and is never presented as `in sync` or assessed. A final assessed stage then replaces the pending inventory with authoritative rows, drift, and diagnostics. Stages share the snapshot generation, so a superseded or failed stream cannot overwrite newer rows, selection, pane, filters, operation outcome, or drift, and an intermediate stage can never complete a pending mutation reload. An invalid configuration still delivers only one fail-closed final stage. Post-write reloads stay single authoritative deliveries. Cached Marketplace pages are read on the discovery command's goroutine, never inside Bubble Tea's `Update`.
+
 ### Marketplace discovery
 
 Marketplace discovery is replaceable and non-authoritative.
 
-- The TUI renders the authoritative local snapshot first. Each configured Marketplace may then add a first page of at most 50 results to the existing Available group.
+- The TUI renders progressively loaded local inventory and cached Marketplace rows before final assessment. Each configured Marketplace may add a first page of at most 50 results to the existing Available group.
 - Search filters loaded rows immediately and starts a remote search after approximately 250 milliseconds without input. A new request cancels and supersedes the prior generation.
 - Clearing search restores the empty-query browse results.
 - Discovery has no pagination and does not change the command-line `search` interface.
@@ -70,7 +72,7 @@ A successful resource-toggle write stays active until an authoritative post-writ
 
 Snapshot diagnostics and operation diagnostics have separate lifecycles. An accepted snapshot atomically replaces earlier snapshot diagnostics without erasing an operation failure. An operation failure stays visible until a successful operation of the same kind supersedes it. Stable diagnostic identity deduplicates repeated values within one outcome.
 
-Hard snapshot errors make drift unavailable or failed, never `in sync`. A configuration parse or load failure may produce no structured rows at all. In that case the E editor remains the recovery path, because row intent cannot be inferred safely.
+Hard snapshot errors make drift unavailable or failed, never `in sync`. Before the assessed stage lands, drift is explicitly pending and shown as unavailable rather than `in sync` or assessed. A configuration parse or load failure may produce no structured rows at all; in that case the E editor remains the recovery path because row intent cannot be inferred safely.
 
 Hard catalog, resolution, dry-run, or materialization errors keep their diagnostics and failed drift but retain the partial inventory:
 
@@ -124,4 +126,4 @@ The full resource view is a split bundle browser. The left pane is an expandable
 
 ## Performance evidence
 
-Changed user-visible render and state paths keep their benchmarks. Base and head comparisons use identical selections where a base equivalent exists; genuinely new paths record a repeated HEAD baseline with allocation data.
+Changed user-visible render and state paths retain benchmarks. Progressive startup reports milestones separately, with allocation data on identical fixtures: config validation as a prerequisite (`config_ready_prerequisite`), the real startup path from staged config read through the config stage and the cached-first discovery it launches until the first cached Marketplace row is rendered (`first_visible`), first toggle-ready verified inventory (`toggle_ready`), and the fully assessed snapshot (`fully_assessed`). Base and head comparisons use identical selections where a base equivalent exists; genuinely new paths record a repeated HEAD baseline with allocation data.

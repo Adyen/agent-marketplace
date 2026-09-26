@@ -80,6 +80,10 @@ type ResolveOptions struct {
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
+	// ConfigReady, when set, is invoked with the merged configuration once it
+	// has been loaded and validated, before catalog loading begins. It runs on
+	// the caller's goroutine; failing to return quickly delays resolution.
+	ConfigReady func(*config.Config)
 }
 
 type ResolveResult struct {
@@ -504,6 +508,9 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		return result, releaseExactLease
 	}
 	result.MaterializationModes = materializationModes
+	if opts.ConfigReady != nil && mergedCfg != nil {
+		opts.ConfigReady(mergedCfg)
+	}
 	registryCount := 0
 	if mergedCfg != nil {
 		registryCount = len(mergedCfg.Registries)

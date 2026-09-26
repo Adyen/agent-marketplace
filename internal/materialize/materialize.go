@@ -3786,7 +3786,6 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 	}
 	report := TargetReport{OutDir: skillsDir}
 	desired := make(map[string]string, len(links))
-	desiredDigests := make(map[string]string, len(links))
 	linkMeta := make(map[string]skillLink, len(links))
 	orderedLinks := append([]skillLink(nil), links...)
 	slices.SortFunc(orderedLinks, func(a, b skillLink) int {
@@ -3796,13 +3795,6 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		return strings.Compare(a.target, b.target)
 	})
 	for _, link := range orderedLinks {
-		if state != nil {
-			digest, err := portableLinkedDesiredDigest(link, dryRun)
-			if err != nil {
-				return report, err
-			}
-			desiredDigests[link.name] = digest
-		}
 		desired[link.name] = link.target
 		linkMeta[link.name] = link
 	}
@@ -3830,8 +3822,14 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				if digestErr != nil {
 					return report, digestErr
 				}
-				migrationAllowed = (entry.Digest != "" && currentDigest == entry.Digest) ||
-					(entry.Digest == "" && currentDigest == desiredDigests[name])
+				ownedDigest := entry.Digest
+				if ownedDigest == "" {
+					ownedDigest, digestErr = portableLinkedDesiredDigest(linkMeta[name], dryRun)
+					if digestErr != nil {
+						return report, digestErr
+					}
+				}
+				migrationAllowed = currentDigest == ownedDigest
 			} else {
 				migrationAllowed = true
 			}

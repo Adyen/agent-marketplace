@@ -24,7 +24,7 @@ var (
 // existing glyph + name rendering. The cursor highlights either a section
 // header or a skill row depending on what it points to.
 func renderList(m Model, visibleHeight int) string {
-	if m.loading {
+	if m.loading && len(m.flatItems) == 0 {
 		return styleListEmpty.Render("Loading resources...")
 	}
 

@@ -298,18 +298,12 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	}
 	m.cancelMarketplaceDiscovery()
 	if !debounce {
-		cached, needsNetwork, err := marketplace.CachedDiscovery(effectiveMarketplaceConfig(m.mergedCfg), query, marketplace.DiscoveryOptions{Limit: marketplace.DiscoveryPageLimit})
-		if err != nil {
+		// Validate synchronously so a tightened allowlist fails closed in the
+		// same update; endpoint pages (cache and network) are read on the
+		// discovery command's goroutine, never inside Update.
+		if err := config.ValidateMarketplaceURLs(m.mergedCfg.Marketplaces, effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces); err != nil {
 			m.clearMarketplaceDiscovery(true)
 			m.discoveryErrs = []error{err}
-			return nil
-		}
-		if len(cached) > 0 {
-			m.applyDiscovery(query, cached)
-		}
-		if !needsNetwork {
-			m.discoveryLoading = false
-			m.cancelRequest(requestDiscovery)
 			return nil
 		}
 	}
