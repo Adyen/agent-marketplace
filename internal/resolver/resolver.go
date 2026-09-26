@@ -44,16 +44,17 @@ type ResolvedArtifact struct {
 	Harnesses []hcc.Target
 
 	// Marketplace-specific fields.
-	IsMarketplace         bool
-	MarketplaceURL        string
-	MarketplaceInstanceID string
-	MarketplaceAlias      string
-	MarketplaceRegistryID string
-	InstalledName         string // overrides Name for materialization while preserving canonical digest
-	Unresolved            bool   // true when only metadata was fetched (status inspect mode)
-	Revoked               bool   // true when the resolved revision is revoked
-	UpdateAvailable       bool   // true when a newer revision exists (status/update)
-	Stale                 bool   // true when the registry refresh is stale/unavailable
+	IsMarketplace           bool
+	MarketplaceURL          string
+	MarketplaceInstanceID   string
+	MarketplaceAlias        string
+	MarketplaceRegistryID   string
+	MarketplaceResourceName string
+	InstalledName           string // overrides Name for materialization while preserving canonical digest
+	Unresolved              bool   // true when only metadata was fetched (status inspect mode)
+	Revoked                 bool   // true when the resolved revision is revoked
+	UpdateAvailable         bool   // true when a newer revision exists (status/update)
+	Stale                   bool   // true when the registry refresh is stale/unavailable
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {

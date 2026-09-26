@@ -79,7 +79,7 @@ func addV4EditSource(root *yaml.Node, name string, entry RegistryEntry, identity
 		setMappingValue(value, "git", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.TrimSpace(entry.URL)})
 		setMappingValue(value, "ref", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.TrimSpace(entry.Ref)})
 		if identity.path != "" {
-			setMappingValue(value, "path", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: strings.TrimSpace(entry.Path)})
+			setMappingValue(value, "path", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: identity.path})
 		}
 	}
 	if strings.TrimSpace(entry.SourceHarness) != "" {

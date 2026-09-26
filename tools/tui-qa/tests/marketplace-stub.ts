@@ -12,6 +12,8 @@ export interface MarketplaceStub {
   materializedSkillContent: string;
   acquisitionDataRequestCount(): number;
   acquisitionDataRequestPaths(): string[];
+  delayNextAcquisition(ms: number): void;
+  delayedAcquisitionCount(): number;
   close(): void;
 }
 
@@ -71,10 +73,18 @@ const revision = {
 export const createMarketplaceStub = async (): Promise<MarketplaceStub> => {
   const instanceID = "tui-qa-marketplace";
   const acquisitionDataRequests: string[] = [];
-  const server = http.createServer((request, response) => {
+  let nextAcquisitionDelayMs = 0;
+  let delayedAcquisitions = 0;
+  const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (/^\/api\/v1\/(?:registries|resources|artifacts|manifests)\//.test(url.pathname)) {
       acquisitionDataRequests.push(url.pathname);
+      if (nextAcquisitionDelayMs > 0) {
+        const delay = nextAcquisitionDelayMs;
+        nextAcquisitionDelayMs = 0;
+        delayedAcquisitions++;
+        await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      }
     }
     if (request.method === "GET" && url.pathname === wellKnownPath) {
       // Mirrors the wire shape of the Go API type: the capabilities fields are
@@ -163,6 +173,11 @@ export const createMarketplaceStub = async (): Promise<MarketplaceStub> => {
     materializedSkillContent,
     acquisitionDataRequestCount: () => acquisitionDataRequests.length,
     acquisitionDataRequestPaths: () => [...acquisitionDataRequests],
+    delayNextAcquisition: (ms: number) => {
+      if (!Number.isSafeInteger(ms) || ms < 1) throw new Error("acquisition delay must be a positive integer");
+      nextAcquisitionDelayMs = ms;
+    },
+    delayedAcquisitionCount: () => delayedAcquisitions,
     close: () => {
       server.closeAllConnections();
       server.close();

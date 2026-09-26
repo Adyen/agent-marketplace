@@ -242,6 +242,7 @@ type Model struct {
 	refreshing          bool
 	requests            requestState
 	configInvalid       bool
+	rowsStale           bool
 	dependencyLifecycle DependencyLifecycle
 
 	// Cached config state for toggle/sync
@@ -286,6 +287,8 @@ type Model struct {
 	migrationPrompt             migrationPrompt
 	migrationDismissed          bool
 	operations                  operationState
+	pendingToggleOperation      operationID
+	pendingToggleReload         requestGeneration
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.

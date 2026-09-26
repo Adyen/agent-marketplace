@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -155,7 +156,9 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
 	}
 
-	if pin, entry, ok := marketplaceDirectPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+	if pin, entry, matches := marketplaceDirectPinMatches(mergedCfg, name, opts.Kind, opts.HasKind); matches > 1 {
+		return nil, fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
+	} else if matches == 1 {
 		if entry.Source == config.Organization {
 			if entry.Required {
 				return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
@@ -700,7 +703,7 @@ func removalSelectionOperation(destination string, entry config.RegistryEntry, k
 	var rootEntry *config.RegistryEntry
 	for i := range rootCfg.Registries {
 		candidate := &rootCfg.Registries[i]
-		if adHocRegistryEntryMatches(*candidate, entry.URL, entry.Path, "") {
+		if adHocRegistryEntryMatches(*candidate, entry.URL, entry.Path, "", "") {
 			rootEntry = candidate
 			break
 		}
@@ -712,7 +715,7 @@ func removalSelectionOperation(destination string, entry config.RegistryEntry, k
 	if err != nil {
 		return config.SelectionExclude, err
 	}
-	if expanded != nil && countAdHocRegistryEntries(expanded.Registries, entry.URL, entry.Path, "") > countAdHocRegistryEntries(rootCfg.Registries, entry.URL, entry.Path, "") {
+	if expanded != nil && countAdHocRegistryEntries(expanded.Registries, entry.URL, entry.Path, "", "") > countAdHocRegistryEntries(rootCfg.Registries, entry.URL, entry.Path, "", "") {
 		return config.SelectionExclude, nil
 	}
 	return config.SelectionRemoveInclude, nil
@@ -844,13 +847,13 @@ func registryEntryInList(entries []config.RegistryEntry, url, registryPath strin
 // selectAdHocRegistryEntry resolves one configured entry for --from. An
 // omitted path or ref is a wildcard only while it identifies one logical
 // location; distinct paths or refs are ambiguous and fail closed.
-func selectAdHocRegistryEntry(cfg *config.Config, url, path, ref string) (config.RegistryEntry, bool, error) {
+func selectAdHocRegistryEntry(cfg *config.Config, url, path, ref, localDir string) (config.RegistryEntry, bool, error) {
 	if cfg == nil {
 		return config.RegistryEntry{}, false, nil
 	}
 	var matches []config.RegistryEntry
 	for _, entry := range cfg.Registries {
-		if adHocRegistryEntryMatches(entry, url, path, ref) {
+		if adHocRegistryEntryMatches(entry, url, path, ref, localDir) {
 			matches = append(matches, entry)
 		}
 	}
@@ -866,17 +869,50 @@ func selectAdHocRegistryEntry(cfg *config.Config, url, path, ref string) (config
 	return first, true, nil
 }
 
-func adHocRegistryEntryMatches(entry config.RegistryEntry, url, registryPath, ref string) bool {
+// adHocRegistryEntryMatches compares a configured entry with --from
+// coordinates. localDir is the ad-hoc registry's absolute bundle directory
+// (see adHocLocalDirectory): v4 directory sources are loaded with that
+// absolute path, never the relative spelling a user typed.
+func adHocRegistryEntryMatches(entry config.RegistryEntry, url, registryPath, ref, localDir string) bool {
+	if localDir != "" && entry.V4Kind == config.V4SourceDirectory {
+		return sameDirectory(entry.URL, localDir)
+	}
 	pathOmitted := strings.TrimSpace(registryPath) == ""
 	return config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(url) &&
 		(pathOmitted || config.NormalizeRegistryPath(entry.Path) == config.NormalizeRegistryPath(registryPath)) &&
 		(strings.TrimSpace(ref) == "" || strings.TrimSpace(entry.Ref) == strings.TrimSpace(ref))
 }
 
-func countAdHocRegistryEntries(entries []config.RegistryEntry, url, path, ref string) int {
+// adHocLocalDirectory is the absolute bundle directory of a local --from
+// registry resolved against baseDir; "" for remote registries.
+func adHocLocalDirectory(entry config.RegistryEntry, baseDir string) string {
+	if !entry.IsLocal() {
+		return ""
+	}
+	local, err := entry.ResolveLocalPath(baseDir)
+	if err != nil {
+		return ""
+	}
+	absolute, err := filepath.Abs(entry.BundlePath(local))
+	if err != nil {
+		return ""
+	}
+	return absolute
+}
+
+func sameDirectory(a, b string) bool {
+	left, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	right, err := os.Stat(b)
+	return err == nil && os.SameFile(left, right)
+}
+
+func countAdHocRegistryEntries(entries []config.RegistryEntry, url, path, ref, localDir string) int {
 	count := 0
 	for _, entry := range entries {
-		if adHocRegistryEntryMatches(entry, url, path, ref) {
+		if adHocRegistryEntryMatches(entry, url, path, ref, localDir) {
 			count++
 		}
 	}
@@ -1279,7 +1315,8 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if err != nil {
 		return nil, err
 	}
-	mergedEntry, entryInMerged, err := selectAdHocRegistryEntry(mergedCfg, fromURL, fromPath, fromRef)
+	localDir := adHocLocalDirectory(syntheticEntry, repoRoot)
+	mergedEntry, entryInMerged, err := selectAdHocRegistryEntry(mergedCfg, fromURL, fromPath, fromRef, localDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1287,7 +1324,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if cfg != nil {
 		rootEntries = cfg.Registries
 	}
-	targetEntry, entryInTarget, err := selectAdHocRegistryEntry(&config.Config{Registries: rootEntries}, fromURL, fromPath, fromRef)
+	targetEntry, entryInTarget, err := selectAdHocRegistryEntry(&config.Config{Registries: rootEntries}, fromURL, fromPath, fromRef, localDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1300,7 +1337,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	} else if selectedPath == "" && entryInTarget {
 		selectedPath = strings.TrimSpace(targetEntry.Path)
 	}
-	requiresShadow := entryInMerged && countAdHocRegistryEntries(mergedCfg.Registries, fromURL, fromPath, fromRef) > countAdHocRegistryEntries(rootEntries, fromURL, fromPath, fromRef)
+	requiresShadow := entryInMerged && countAdHocRegistryEntries(mergedCfg.Registries, fromURL, fromPath, fromRef, localDir) > countAdHocRegistryEntries(rootEntries, fromURL, fromPath, fromRef, localDir)
 	// Prefer the defining layer's ref when writing a shadow entry, so git
 	// shadow entries pass ref-required validation even if the user omitted --ref.
 	shadowRef := fromRef
@@ -1528,15 +1565,20 @@ func marketplaceCollectionByName(cfg *config.Config, name string, kind ir.Resour
 }
 
 func marketplaceDirectPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
+	pin, entry, count := marketplaceDirectPinMatches(cfg, name, kind, hasKind)
+	return pin, entry, count == 1
+}
+
+func marketplaceDirectPinMatches(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, int) {
 	if cfg == nil {
-		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
+		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, 0
 	}
 	var found config.MarketplaceResourcePin
 	var foundEntry config.MarketplaceEntry
 	count := 0
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
-			if pin.Kind == "collection" || pin.Name != strings.TrimSpace(name) {
+			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
 				continue
 			}
 			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {
@@ -1548,7 +1590,12 @@ func marketplaceDirectPinByName(cfg *config.Config, name string, kind ir.Resourc
 			found, foundEntry, count = pin, entry, count+1
 		}
 	}
-	return found, foundEntry, count == 1
+	return found, foundEntry, count
+}
+
+func marketplacePinNamed(pin config.MarketplaceResourcePin, name string) bool {
+	name = strings.TrimSpace(name)
+	return pin.Name == name || marketplaceInstalledName(pin) == name
 }
 
 func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, bool) {
@@ -1557,7 +1604,7 @@ func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir
 	}
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
-			if pin.Kind == "collection" || pin.Name != strings.TrimSpace(name) {
+			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
 				continue
 			}
 			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {

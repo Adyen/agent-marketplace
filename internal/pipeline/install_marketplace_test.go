@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -679,6 +681,9 @@ func TestMarketplaceInstallDoesNotRefreshWarmRegistries(t *testing.T) {
 }
 
 func BenchmarkMarketplaceInstallWarmRegistries(b *testing.B) {
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.Cleanup(func() { slog.SetDefault(previousLogger) })
 	opts, ec, plan, fetches := marketplaceInstallWarmRegistryFixture(b, time.Millisecond)
 	b.ReportAllocs()
 	b.ResetTimer()

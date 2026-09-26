@@ -77,6 +77,10 @@ type V4ResourceRequest struct {
 	Provenance   []V4Provenance
 }
 
+func (r V4ResourceRequest) MarketplaceKind() string {
+	return api.FromIR(v4KindToIR(r.Kind))
+}
+
 type V4SelectionReason string
 
 const (
@@ -1948,7 +1952,7 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 		if !ok {
 			return nil, v4err("v4.marketplace-lock-mismatch", request.Locator, src.Line, "registry binding %q is not in the lock", request.Registry)
 		}
-		lockKind := api.FromIR(v4KindToIR(request.Kind))
+		lockKind := request.MarketplaceKind()
 		index, ok := resources[registryID+"\x00"+lockKind+"\x00"+request.Name]
 		if !ok {
 			return nil, v4err("v4.marketplace-lock-mismatch", request.Locator, src.Line, "resource %q is not in the lock", request.Locator)

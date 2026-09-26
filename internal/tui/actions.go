@@ -764,7 +764,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 						Entry: catalog.Entry{Kind: kind, Name: name}, RegistryURL: entry.URL,
 						RegistryPath: pin.RegistryID, Ref: pin.Revision, Source: entry.Source,
 						CatalogKey: catalogKey, IsMarketplace: true, MarketplaceURL: entry.URL,
-						MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID,
+						MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name,
 					},
 					IsAvailable: true, IsExcluded: true, ExcludedByUser: true, EnabledGlobal: true,
 					RegistryURL: entry.URL, RegistryName: registryDisplayName(entry.URL),
