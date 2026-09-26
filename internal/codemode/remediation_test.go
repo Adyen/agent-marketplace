@@ -1,0 +1,332 @@
+package codemode
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
+)
+
+func TestSnapshotFindConcurrent(t *testing.T) {
+	snap := &Snapshot{Resources: []Resource{
+		{Ref: "reg/skill/a", Kind: "skill", Name: "a"},
+		{Ref: "reg/mcp/b", Kind: "mcp", Name: "b"},
+	}}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				if snap.Find("reg/skill/a") == nil || snap.Find("reg/mcp/b") == nil {
+					t.Error("Find returned nil")
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestExecuteHostCallHonorsContext(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+	})
+	e.Pool = &blockingPool{}
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv"},
+		"code":    `async () => mcp.srv.ping()`,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := e.Execute(ctx, args)
+		done <- err
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("blocked host call did not honor the call context")
+	}
+}
+
+type blockingPool struct{ fakePool }
+
+func (p *blockingPool) Call(ctx context.Context, alias string, res *Resource, tool string, args json.RawMessage) (any, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(30 * time.Second):
+		return nil, errors.New("host call returned without context cancellation")
+	}
+}
+
+func TestExecuteDeadlineBoundsBlockedHostCall(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+	})
+	e.Limits = Limits{Deadline: 75 * time.Millisecond}
+	pool := &deadlinePool{}
+	e.Pool = pool
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv"},
+		"code":    `async () => mcp.srv.ping()`,
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := e.Execute(context.Background(), args)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("blocked host call returned success at the deadline")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked host call was not bounded by the VM deadline")
+	}
+	if !pool.bounded {
+		t.Fatal("host call context carried no deadline")
+	}
+}
+
+type deadlinePool struct {
+	fakePool
+	bounded bool
+}
+
+func (p *deadlinePool) Call(ctx context.Context, alias string, res *Resource, tool string, args json.RawMessage) (any, error) {
+	_, p.bounded = ctx.Deadline()
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestExecuteGatesDeclaredServersBeforeCode(t *testing.T) {
+	res := []Resource{
+		{Ref: "reg/mcp/revoked", Kind: "mcp", Name: "revoked", Registry: "reg", Assessment: "allow"},
+		{Ref: "reg/mcp/ok", Kind: "mcp", Name: "ok", Registry: "reg", Assessment: "allow"},
+	}
+	e, _ := testEngine(t, res)
+	gated := map[string]bool{}
+	e.Gate = func(ctx context.Context, r *Resource) error {
+		gated[r.Ref] = true
+		if r.Name == "revoked" {
+			return CodeError(ErrCodeRevoked, "%s is revoked", r.Ref)
+		}
+		return nil
+	}
+	pool := newFakePool()
+	e.Pool = pool
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/ok", "reg/mcp/revoked"},
+		"code":    `async () => mcp.ok.ping()`,
+	})
+	_, _, err := e.Execute(context.Background(), args)
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Code != ErrCodeRevoked {
+		t.Fatalf("expected %s, got %v", ErrCodeRevoked, err)
+	}
+	if !gated["reg/mcp/revoked"] || !gated["reg/mcp/ok"] {
+		t.Fatalf("gate not consulted for every declared ref: %v", gated)
+	}
+	if len(pool.started) != 0 {
+		t.Fatalf("code ran or server touched despite revoked gate: %v", pool.started)
+	}
+}
+
+func TestExecuteFailsClosedWithoutGateEvidence(t *testing.T) {
+	res := &Resource{Ref: "pub:x/mcp/srv", Kind: "mcp", Name: "srv", Registry: "x", Assessment: "allow"}
+	res.SetOrigin(&Origin{Marketplace: &MarketplaceOrigin{
+		Entry:      config.MarketplaceEntry{URL: "https://marketplace.example"},
+		RegistryID: "x", Kind: "mcp", Name: "srv", Revision: "r1",
+	}})
+	e, _ := testEngine(t, []Resource{*res})
+	loader := &FileSkillLoader{Cache: marketplace.NewCache(t.TempDir()), Online: false}
+	e.Gate = loader.Gate
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"pub:x/mcp/srv"},
+		"code":    `async () => 1`,
+	})
+	_, _, err := e.Execute(context.Background(), args)
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Code != ErrCodeNotFound {
+		t.Fatalf("expected %s for missing gate evidence, got %v", ErrCodeNotFound, err)
+	}
+}
+
+func TestSkillReadRejectsTraversalAndSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("external bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("# s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "leak.txt")); err != nil {
+		t.Fatal(err)
+	}
+	res := &Resource{Ref: "reg/skill/s", Kind: "skill", Name: "s"}
+	res.SetOrigin(&Origin{ContentDir: root, File: "SKILL.md"})
+	loader := &FileSkillLoader{}
+	for _, p := range []string{"../outside.txt", "../../etc/passwd", "leak.txt", "sub/../../outside.txt"} {
+		got, err := loader.ReadFile(context.Background(), res, p)
+		if err == nil {
+			t.Fatalf("ReadFile(%q) = %q, expected rejection", p, got)
+		}
+		if strings.Contains(got, "external bytes") {
+			t.Fatalf("external content read via %q", p)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("inside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loader.ReadFile(context.Background(), res, "notes.txt")
+	if err != nil || got != "inside" {
+		t.Fatalf("ReadFile legit = %q, %v", got, err)
+	}
+}
+
+func TestSkillReadRefusesSymlinkComponents(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("external bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("# s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "real.txt"), []byte("real"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "inner.txt"), []byte("inner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"alias.txt":  "real.txt",
+		"diralias":   "sub",
+		"escape.txt": outside,
+	} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := &Resource{Ref: "reg/skill/s", Kind: "skill", Name: "s"}
+	res.SetOrigin(&Origin{ContentDir: root, File: "SKILL.md"})
+	loader := &FileSkillLoader{}
+	for _, p := range []string{"alias.txt", "diralias/inner.txt", "escape.txt"} {
+		got, err := loader.ReadFile(context.Background(), res, p)
+		if err == nil {
+			t.Fatalf("ReadFile(%q) through symlink = %q, expected refusal", p, got)
+		}
+	}
+	for _, p := range []string{"real.txt", "sub/inner.txt", "SKILL.md"} {
+		if _, err := loader.ReadFile(context.Background(), res, p); err != nil {
+			t.Fatalf("ReadFile(%q) in-root control: %v", p, err)
+		}
+	}
+}
+
+func TestMarketplaceReadRejectsTraversal(t *testing.T) {
+	res := &Resource{Ref: "m:x/skill/s", Kind: "skill", Name: "s"}
+	res.SetOrigin(&Origin{Marketplace: &MarketplaceOrigin{Kind: "skill", Name: "s"}})
+	loader := &FileSkillLoader{Cache: nil, Online: false}
+
+	for _, p := range []string{"../escape", "a/../../b"} {
+		_, err := loader.ReadFile(context.Background(), res, p)
+		var ce *Error
+		if !errors.As(err, &ce) || ce.Code != ErrCodeNotFound {
+			t.Fatalf("ReadFile(%q): expected %s, got %v", p, ErrCodeNotFound, err)
+		}
+	}
+}
+
+func TestOutputTruncatedProducesValidJSON(t *testing.T) {
+	res, err := Run(context.Background(), `async () => "x".repeat(2 * 1024 * 1024)`, nil, Limits{OutputCap: 1 << 20})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatal("expected Truncated=true")
+	}
+	var decoded any
+	if err := json.Unmarshal(res.Value, &decoded); err != nil {
+		t.Fatalf("truncated value is not valid JSON: %v (%.80s)", err, res.Value)
+	}
+	m, ok := decoded.(map[string]any)
+	if !ok || m["truncated"] != true {
+		t.Fatalf("truncated marker missing: %.200s", res.Value)
+	}
+}
+
+func TestServerStartLogged(t *testing.T) {
+	dir := t.TempDir()
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Revision: "v9", Assessment: "allow"},
+	})
+	e.Log = NewSessionLog(dir, "sess-start")
+	pool := &observePool{fakePool: fakePool{}}
+	e.Pool = pool
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv"},
+		"code":    `async () => mcp.srv.ping()`,
+	})
+	if _, _, err := e.Execute(context.Background(), args); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	entries, err := ReadSession(e.Log.Path())
+	if err != nil {
+		t.Fatalf("ReadSession: %v", err)
+	}
+	var starts int
+	for _, en := range entries {
+		if en.Event == "server.start" {
+			starts++
+			if en.Ref != "reg/mcp/srv" || en.Revision != "v9" || en.Digest != "sha256:def" {
+				t.Fatalf("server.start entry = %+v", en)
+			}
+		}
+	}
+	if starts != 1 {
+		t.Fatalf("expected exactly one server.start entry, got %d (%+v)", starts, entries)
+	}
+}
+
+type observePool struct {
+	fakePool
+	cb      func(string, *Resource, *ServerDef)
+	started bool
+}
+
+func (p *observePool) ObserveStarts(fn func(string, *Resource, *ServerDef)) { p.cb = fn }
+
+func (p *observePool) Call(ctx context.Context, alias string, res *Resource, tool string, args json.RawMessage) (any, error) {
+	p.fire(res)
+	return p.fakePool.Call(ctx, alias, res, tool, args)
+}
+
+func (p *observePool) fire(res *Resource) {
+	if p.started {
+		return
+	}
+	p.started = true
+	if p.cb != nil {
+		p.cb("", res, &ServerDef{Digest: "sha256:def"})
+	}
+}

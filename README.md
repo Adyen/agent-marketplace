@@ -495,6 +495,42 @@ entry, and the mode does not change how their ownership is tracked.
 
 ---
 
+## Code-mode MCP (opt-in)
+
+`agent-marketplace mcp` is a local stdio MCP server that lets an agent discover
+and use Marketplace resources dynamically instead of only through static
+materialization. It exposes exactly two tools:
+
+- `search({code})` runs an async JavaScript arrow function against a read-only
+  catalog snapshot merged from every configured Marketplace endpoint and
+  Git/directory registry. It never starts a process and never writes resources.
+- `execute({servers, code})` adds `skills.load`/`skills.read` and `mcp.<alias>`
+  bindings for exactly the MCP server refs listed in `servers`, starting them
+  lazily with only the environment variables their definitions declare.
+
+Each call runs in a fresh VM with a 30-second deadline, a 1 MiB output cap, and
+a 100 host-call cap; there is no filesystem, network, process, or environment
+access from model code. Skill loads and server starts are recorded in a session
+log under `$XDG_STATE_HOME/agent-marketplace/mcp-sessions/`; `agent-marketplace
+promote <ref>` turns a logged resource into a normal installed, locked
+selection.
+
+Enable it explicitly — it is never registered by default:
+
+```bash
+agent-marketplace mcp enable --scope user   # or init --code-mode
+agent-marketplace sync                    # registers the server per harness
+agent-marketplace mcp disable && agent-marketplace sync   # unregisters it
+```
+
+> **Security note:** `execute` starts catalog MCP servers, which runs registry
+> code with your privileges. Approval is the harness's approval of each
+> `execute` call; the explicit `servers` list shows exactly which servers will
+> start, and `search` never starts one. Rejected and actively revoked resources
+> are excluded.
+
+---
+
 ## Codex
 
 Codex is not in any default harness list. To use it, press `H` in the TUI and
