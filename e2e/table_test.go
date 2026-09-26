@@ -180,6 +180,18 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:       "install/missing_repo_config_is_v4",
+		Desc:       "Given a v4 user registry and no repo config, When installing a skill to repo scope, Then the newly created repo root uses v4 and selects the skill",
+		Registries: []RegistryDef{{Name: "new-repo-config", Skills: []Skill{{Name: "new-skill"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {shared: {git: '{{REG:new-repo-config}}', ref: main}}\n",
+		Steps: []Step{
+			{Args: []string{"install", "new-skill", "--scope", "repo"}, MustPass: true,
+				FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/workspace/.factory/skills/new-skill/SKILL.md": "name: new-skill"},
+				FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "skill/new-skill"}},
+		},
+	},
+	{
 		Name:      "migration/startup_preserves_legacy_repo_layers",
 		Desc:      "Given a v4 user config and legacy repo/local configs, When listing and explicitly migrating the repo, Then startup preserves both legacy layers and only explicit migration upgrades the repo",
 		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
@@ -1598,6 +1610,94 @@ registries:
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist:  []string{"/root/.factory/skills/keep-skill/SKILL.md"},
 				FilesAbsent: []string{"/root/.factory/skills/drop-skill"}},
+		},
+	},
+	{
+		Name: "install/v4_reinstall_clears_only_provider_local_exclude",
+		Desc: "Given a v4 default-selected repo skill removed into a local source exclusion, When configured install reinstalls it, Then only that provider's exclusion is cleared and sibling exclusions remain",
+		Registries: []RegistryDef{
+			{Name: "v4-reinstall-main", Skills: []Skill{{Name: "foo"}, {Name: "keep"}}},
+			{Name: "v4-reinstall-other", Skills: []Skill{{Name: "other"}}},
+		},
+		RepoCfg: `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  main: {git: "{{REG:v4-reinstall-main}}", ref: main}
+resources:
+  main: {all: true}
+`,
+		LocalCfg: `
+apiVersion: agent-marketplace/v4
+sources:
+  other: {git: "{{REG:v4-reinstall-other}}", ref: main}
+resources:
+  other: {exclude: [skill/foo]}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"}},
+			{Args: []string{"remove", "foo"}, MustPass: true,
+				FilesAbsent:  []string{"/workspace/.factory/skills/foo"},
+				FilesExist:   []string{"/workspace/.factory/skills/keep/SKILL.md"},
+				FileContains: map[string]string{"/workspace/.agents/config.local.yaml": "skill/foo"}},
+			{Args: []string{"install", "foo"}, MustPass: true,
+				FilesExist:   []string{"/workspace/.factory/skills/foo/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"},
+				FileContains: map[string]string{"/workspace/.agents/config.local.yaml": "skill/foo"}},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist:     []string{"/workspace/.factory/skills/foo/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"},
+				PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+		},
+	},
+	{
+		Name:       "install/from_named_reinstall_clears_legacy_local_exclude",
+		Desc:       "Given a default-selected skill disabled by a legacy local exclude, When named ad-hoc install reinstalls it, Then it materializes and only that exclude is cleared",
+		Registries: []RegistryDef{{Name: "adhoc-reinstall-named", Skills: []Skill{{Name: "foo"}, {Name: "keep"}}}},
+		RepoCfg: `
+apiVersion: agent-marketplace/v2
+harnesses: [factory]
+registries:
+  - url: {{REG:adhoc-reinstall-named}}
+    ref: main
+    default: true
+`,
+		LocalCfg: "apiVersion: agent-marketplace/v2\nskills: {exclude: [foo, keep]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/foo", "/workspace/.factory/skills/keep"}},
+			{Args: []string{"install", "foo", "--from", "{{REG:adhoc-reinstall-named}}", "--ref", "main"}, MustPass: true,
+				FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/keep"},
+				FileNotContains: map[string]string{"/workspace/.agents/config.local.yaml": "foo"}, FileContains: map[string]string{"/workspace/.agents/config.local.yaml": "keep"}},
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+		},
+	},
+	{
+		Name: "install/from_inferred_reinstall_clears_provider_local_exclude",
+		Desc: "Given a v4 default-selected nested skill removed into a provider-scoped local exclude, When inferred-name ad-hoc install reinstalls it, Then only its provider exclusion is cleared",
+		Registries: []RegistryDef{
+			{Name: "adhoc-reinstall-inferred", Skills: []Skill{{Name: "foo"}}},
+			{Name: "adhoc-reinstall-other", Skills: []Skill{{Name: "other"}}},
+		},
+		RepoCfg: `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  main: {git: "{{REG:adhoc-reinstall-inferred}}", ref: main, path: skills/foo}
+resources:
+  main: {all: true}
+`,
+		LocalCfg: `
+apiVersion: agent-marketplace/v4
+sources:
+  other: {git: "{{REG:adhoc-reinstall-other}}", ref: main}
+resources:
+  other: {exclude: [skill/foo]}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md"}},
+			{Args: []string{"remove", "foo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/foo"}},
+			{Args: []string{"install", "--from", "{{REG:adhoc-reinstall-inferred}}", "--ref", "main", "--path", "skills/foo"}, MustPass: true,
+				FilesExist:   []string{"/workspace/.factory/skills/foo/SKILL.md"},
+				FileContains: map[string]string{"/workspace/.agents/config.local.yaml": "skill/foo"}},
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
 		},
 	},
 	{

@@ -220,6 +220,55 @@ resources:
 	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "organization member")
 }
 
+func TestMarketplaceInstallFlagsKeepExactInstalledName(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Named install", false))
+	for _, tc := range []struct {
+		kind, name, alias, output, original, body string
+	}{
+		{"skill", "skill-one", "review-copy", "/workspace/.factory/skills/review-copy/SKILL.md", "/workspace/.factory/skills/skill-one", "Named install"},
+		{"command", "command-one", "invoke-copy", "/workspace/.factory/commands/invoke-copy.md", "/workspace/.factory/commands/command-one.md", "echo behavior"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			consumer := fixture.newConsumer(t, fixture.server.URL)
+			result := consumer.RunAM("install", "behavior-source/"+tc.kind+"/"+tc.name, "--marketplace", "behavior", "--as", tc.alias, "--accept-risk", "--verbose", "--scope", "repo")
+			if result.ExitCode != 0 {
+				t.Fatalf("Marketplace flag install failed (exit %d):\n%s", result.ExitCode, result.Combined)
+			}
+			if !consumer.CheckFileExists(tc.output) {
+				t.Fatalf("aliased installation produced no %s: output=%s config=%s", tc.alias, result.Combined, consumer.ReadFile("/workspace/.agents/config.yaml"))
+			}
+			consumer.AssertFileContains(tc.output, tc.body)
+			if tc.kind == "skill" {
+				consumer.AssertFileContains(tc.output, "name: "+tc.alias)
+			}
+			consumer.AssertFileAbsent(tc.original)
+			config := consumer.ReadFile("/workspace/.agents/config.yaml")
+			if !strings.Contains(config, "installed_name: "+tc.alias) || !strings.Contains(config, "kind: "+tc.kind) {
+				t.Fatalf("exact Marketplace install lost the local alias: %s", config)
+			}
+			if !strings.Contains(result.Combined, "Marketplace install preview") {
+				t.Fatalf("--verbose omitted the verified Marketplace preview: %s", result.Combined)
+			}
+			consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
+			repeat := consumer.RunAM("install", "behavior-source/"+tc.kind+"/"+tc.name, "--marketplace", "behavior", "--as", tc.alias, "--yes", "--scope", "repo")
+			if repeat.ExitCode != 0 || consumer.ReadFile("/workspace/.agents/config.yaml") != config {
+				t.Fatalf("repeat aliased install changed selection: exit=%d output=%s", repeat.ExitCode, repeat.Combined)
+			}
+			consumer.AssertExitCode(consumer.RunAM("sync", "--offline"), 0)
+			consumer.AssertFileContains(tc.output, tc.body)
+			removed := consumer.RunAM("remove", tc.alias, "--kind", tc.kind, "--scope", "repo")
+			if removed.ExitCode != 0 {
+				t.Fatalf("remove by installed alias failed (exit %d):\n%s", removed.ExitCode, removed.Combined)
+			}
+			consumer.AssertFileAbsent(tc.output)
+			if config := consumer.ReadFile("/workspace/.agents/config.yaml"); strings.Contains(config, "installed_name: "+tc.alias) {
+				t.Fatalf("remove by installed alias retained the pin: %s", config)
+			}
+			consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
+		})
+	}
+}
+
 func TestMarketplacePinRemainsExactUntilUpdateAndWorksOffline(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("version one", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)

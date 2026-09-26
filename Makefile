@@ -8,7 +8,7 @@ TEST_PACKAGES ?= ./...
 TEST_FLAGS ?=
 VALIDATE_JOBS ?= 2
 
-.PHONY: test-fast validate validate-fast validate-full validate-e2e
+.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e
 
 # Public container defaults. Override these generic variables in the environment
 # when builds must use a registry mirror.
@@ -27,7 +27,7 @@ export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_N
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common tidy version release clean e2e marketplace-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common tidy version release clean e2e marketplace-gate upgrade-gate released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -58,6 +58,11 @@ test:
 test-fast:
 	+$(MAKE) test TEST_FLAGS="$(TEST_FLAGS) -short"
 
+# Full root tests plus proof that every CLI behavior witness ran and passed.
+# witness-check fails on any failed package, so no shell pipefail is needed.
+test-witnessed:
+	+$(MAKE) --no-print-directory test TEST_PACKAGES=./... TEST_FLAGS="$(TEST_FLAGS) -json" | CGO_ENABLED=0 $(GO) run ./tools/witness-check
+
 validate:
 	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build
 
@@ -65,7 +70,7 @@ validate-fast:
 	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build TEST_FLAGS="$(TEST_FLAGS) -short"
 
 validate-full:
-	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build validate-e2e tui-qa TEST_PACKAGES=./... TEST_FLAGS=-count=1
+	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test-witnessed ci-lint build validate-e2e tui-qa TEST_PACKAGES=./... TEST_FLAGS=-count=1
 
 validate-e2e:
 	CGO_ENABLED=0 HARNESS_COMPAT_TARGET=all HARNESS_COMPAT_NATIVE_MODE=unavailable \
@@ -198,6 +203,23 @@ compose-config:
 
 marketplace-gate:
 	@E2E_SKIP_DOCKER=1 $(MAKE) e2e
+
+# Dedicated gates name their scenarios once; witness-check fails the gate when
+# any of them skipped, failed, or never ran (for example after a rename).
+comma := ,
+# The pinned Go build image ships git; override when Docker Hub is unavailable.
+AM_E2E_UPGRADE_IMAGE ?= $(GO_BUILD_IMAGE)
+AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
+UPGRADE_GATE_TESTS := TestPreV4ReleaseUpgrade,TestPreV4GitLockUpgrade,TestPreV4AggregateOwnershipUpgrade,TestPreV4LocalLayerUpgrade,TestPreV4DuplicateRefUpgrade
+RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState
+
+upgrade-gate:
+	@test -n "$(AM_E2E_PRE_V4_BINARY)" || { echo "ERROR: AM_E2E_PRE_V4_BINARY must point to the verified v3.1.1 Linux release" >&2; exit 1; }
+	AM_E2E_PRE_V4_BINARY="$(abspath $(AM_E2E_PRE_V4_BINARY))" AM_E2E_UPGRADE_IMAGE="$(AM_E2E_UPGRADE_IMAGE)" CGO_ENABLED=0 $(GO) -C e2e test -json -count=1 -timeout 10m -run '^($(subst $(comma),|,$(UPGRADE_GATE_TESTS)))$$' . | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require $(UPGRADE_GATE_TESTS)
+
+released-client-gate:
+	@test -n "$(AM_E2E_RELEASED_BINARY)" || { echo "ERROR: AM_E2E_RELEASED_BINARY must point to the verified latest Linux release" >&2; exit 1; }
+	AM_E2E_RELEASED_BINARY="$(abspath $(AM_E2E_RELEASED_BINARY))" AM_E2E_RELEASED_IMAGE="$(AM_E2E_RELEASED_IMAGE)" CGO_ENABLED=0 $(GO) -C e2e test -json -count=1 -timeout 10m -run '^($(subst $(comma),|,$(RELEASED_CLIENT_GATE_TESTS)))$$' . | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require $(RELEASED_CLIENT_GATE_TESTS)
 
 # Cross-compilation targets
 darwin-arm64:

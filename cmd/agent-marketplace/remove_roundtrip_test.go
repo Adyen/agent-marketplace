@@ -510,11 +510,7 @@ registries: []
 	}
 
 	// Remove the subagent WITHOUT --kind. The resolved kind (subagent)
-	// must be used, not the flag default (skill). If the wrong kind is
-	// used, RemoveResourceFromRegistryInConfig would look for the name
-	// under the "skills" include key (which is empty), not find it,
-	// and incorrectly fall through to adding an exclude under the
-	// wrong selector.
+	// must be used, not the flag default (skill).
 	out, err := executeCommand("remove", "worker-generic", "--from", origin)
 	if err != nil {
 		t.Fatalf("remove --from subagent failed: %v\n%s", err, out)
@@ -573,8 +569,8 @@ registries: []
 	if err != nil {
 		t.Fatalf("read config.local.yaml: %v", err)
 	}
-	if strings.Contains(string(localBytes), "apiVersion") {
-		t.Fatalf("precondition: generated local config should not carry apiVersion, got:\n%s", localBytes)
+	if !strings.Contains(string(localBytes), "apiVersion: agent-marketplace/v4") {
+		t.Fatalf("precondition: generated local config should be canonical v4, got:\n%s", localBytes)
 	}
 
 	// Remove via --from at local scope — previously failed on missing apiVersion.

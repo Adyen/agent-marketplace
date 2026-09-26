@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -46,21 +47,39 @@ func TestSyncUpgradesGitOnlyLockWhenMarketplaceSourceIsAdded(t *testing.T) {
 		t.Fatalf("initial sync: %v\n%s", err, output)
 	}
 	gitOnly := readLockDocument(t, lockPath)
-	if gitOnly.APIVersion != lockfile.APIVersionV1 || len(gitOnly.Registries) != 1 {
-		t.Fatalf("initial lock = %#v, want Git-only v1", gitOnly)
+	if gitOnly.APIVersion != lockfile.APIVersionV2 || len(gitOnly.Registries) != 1 || len(gitOnly.Marketplaces) != 0 {
+		t.Fatalf("initial lock = %#v, want Git-only v2", gitOnly)
 	}
-
 	checkMode(0o644)
+
+	v1 := gitOnly
+	v1.APIVersion = lockfile.APIVersionV1
+	v1Bytes, err := lockfile.Encode(v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, v1Bytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(lockPath, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("v1 upgrade sync: %v\n%s", err, output)
+	}
+	rewritten := readLockDocument(t, lockPath)
+	if rewritten.APIVersion != lockfile.APIVersionV2 || len(rewritten.Marketplaces) != 0 || !reflect.DeepEqual(rewritten.Registries, gitOnly.Registries) {
+		t.Fatalf("rewritten lock = %#v, want v2 retaining Git registry %#v", rewritten, gitOnly.Registries)
+	}
+	checkMode(0o600)
+
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n"+gitSource+
 		"  hosted: {marketplace: "+server.URL+"}\nresources:\n  git-tools: {all: true}\n  hosted: {include: [tools/skill/review]}\n")
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("sync after adding Marketplace source: %v\n%s", err, output)
 	}
 	upgraded := readLockDocument(t, lockPath)
-	if upgraded.APIVersion != lockfile.APIVersionV2 || len(upgraded.Marketplaces) != 1 || len(upgraded.Registries) != 1 || upgraded.Registries[0].Commit != gitOnly.Registries[0].Commit {
+	if upgraded.APIVersion != lockfile.APIVersionV2 || len(upgraded.Marketplaces) != 1 || !reflect.DeepEqual(upgraded.Registries, gitOnly.Registries) {
 		t.Fatalf("upgraded lock = %#v, want v2 retaining Git registry %#v", upgraded, gitOnly.Registries)
 	}
 	for _, skill := range []string{"git-review", "review"} {
@@ -110,14 +129,14 @@ func TestMergeInstallBindingsRetainsLockVersionAndMarketplaceEvidence(t *testing
 		Resources:        []lockfile.MarketplaceResourceLock{{RegistryName: "tools", RegistryID: "src", Kind: "skill", Name: "review", Revision: string(digest), ContentDigest: digest, ArchiveDigest: digest, Acquisition: lockfile.MarketplaceAcquisitionMirror}},
 	}}
 	for _, tc := range []struct {
-		name        string
-		base        lockfile.Document
-		wantVersion string
+		name string
+		base lockfile.Document
 	}{
-		{name: "new", wantVersion: lockfile.APIVersionV1},
-		{name: "v1", base: lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}, wantVersion: lockfile.APIVersionV1},
-		{name: "v2 endpoint-only", base: lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo, Marketplaces: []lockfile.MarketplaceLock{{URL: "https://market.example", InstanceID: "mp"}}}, wantVersion: lockfile.APIVersionV2},
-		{name: "v2 Marketplace", base: lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo, Marketplaces: marketplaces}, wantVersion: lockfile.APIVersionV2},
+		{name: "new"},
+		{name: "v1", base: lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}},
+		{name: "v2 Git-only", base: lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo, Registries: []lockfile.GitRegistry{registry}}},
+		{name: "v2 endpoint-only", base: lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo, Marketplaces: []lockfile.MarketplaceLock{{URL: "https://market.example", InstanceID: "mp"}}}},
+		{name: "v2 Marketplace", base: lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo, Marketplaces: marketplaces}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.base.APIVersion != "" {
@@ -129,10 +148,76 @@ func TestMergeInstallBindingsRetainsLockVersionAndMarketplaceEvidence(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			if merged.APIVersion != tc.wantVersion || merged.Scope != lockfile.ScopeRepo || !reflect.DeepEqual(merged.Marketplaces, tc.base.Marketplaces) || !reflect.DeepEqual(merged.Registries, []lockfile.GitRegistry{registry}) {
-				t.Fatalf("merged lock = %#v, want version %s with Git binding and unchanged Marketplace evidence", merged, tc.wantVersion)
+			if merged.APIVersion != lockfile.APIVersionV2 || merged.Scope != lockfile.ScopeRepo || !reflect.DeepEqual(merged.Marketplaces, tc.base.Marketplaces) || !reflect.DeepEqual(merged.Registries, []lockfile.GitRegistry{registry}) {
+				t.Fatalf("merged lock = %#v, want v2 with Git binding and unchanged Marketplace evidence", merged)
 			}
 		})
+	}
+}
+
+func TestV1LockCheckReportsVersionUpgradeRequiredWithoutWriting(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	origin, working := createBareRepoWithWorkingClone(t, "v1-check.git")
+	writeSkill(t, working, "review", "Review", nil)
+	commitAndPushAll(t, working, "seed")
+
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools:\n    git: file://"+origin+"\n    ref: main\nresources:\n  tools: {all: true}\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	doc := readLockDocument(t, lockPath)
+	if doc.APIVersion != lockfile.APIVersionV2 || len(doc.Registries) != 1 {
+		t.Fatalf("initial lock = %#v, want Git-only v2", doc)
+	}
+
+	doc.APIVersion = lockfile.APIVersionV1
+	v1Bytes, err := lockfile.Encode(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, v1Bytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand("lock", "--check", "--scope", "repo")
+	var lifecycle *lockLifecycleError
+	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.version-upgrade-required" || lifecycle.Scope != lockfile.ScopeRepo || lifecycle.Path != lockPath {
+		t.Fatalf("lock --check on writable v1 = %v, want scoped lock.version-upgrade-required at %s\n%s", err, lockPath, output)
+	}
+	after, err := os.ReadFile(lockPath)
+	if err != nil || string(after) != string(v1Bytes) {
+		t.Fatalf("lock --check rewrote the v1 lock: %v\n%s", err, after)
+	}
+	if output, err := executeCommand("sync", "--locked"); err != nil {
+		t.Fatalf("locked consumption rejected a matching v1 lock: %v\n%s", err, output)
+	}
+	userLockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  personal:\n    git: file://"+origin+"\n    ref: main\n")
+	output, err = executeCommand("lock", "--check")
+	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.change-required" {
+		t.Fatalf("lock --check with v1 and missing user lock = %v, want lock.change-required\n%s", err, output)
+	}
+	if _, err := os.Lstat(userLockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lock --check created user lock: %v", err)
+	}
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools:\n    git: file://"+origin+"\n    ref: changed\nresources:\n  tools: {all: true}\n")
+	output, err = executeCommand("lock", "--check", "--scope", "repo")
+	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.change-required" {
+		t.Fatalf("lock --check with v1 and real drift = %v, want lock.change-required\n%s", err, output)
+	}
+	after, err = os.ReadFile(lockPath)
+	if err != nil || string(after) != string(v1Bytes) {
+		t.Fatalf("lock --check with drift rewrote the v1 lock: %v\n%s", err, after)
 	}
 }
 

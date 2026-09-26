@@ -1,12 +1,11 @@
 package pipeline
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -147,15 +146,19 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if err != nil {
 			return nil, fmt.Errorf("resolve config path: %w", err)
 		}
-		if err := removeMarketplaceAndSync(ctx, opts.RepoRoot, configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
-			return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, collection)
+		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
+			return m.RemoveCollection(entry, collection)
+		}, func() ([]error, error) {
+			return nil, silentSync(ctx, opts.RepoRoot)
 		}); err != nil {
 			return nil, err
 		}
 		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
 	}
 
-	if pin, entry, ok := marketplaceDirectPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+	if pin, entry, matches := marketplaceDirectPinMatches(mergedCfg, name, opts.Kind, opts.HasKind); matches > 1 {
+		return nil, fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
+	} else if matches == 1 {
 		if entry.Source == config.Organization {
 			if entry.Required {
 				return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
@@ -173,8 +176,10 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if err != nil {
 			return nil, fmt.Errorf("resolve config path: %w", err)
 		}
-		if err := removeMarketplaceAndSync(ctx, opts.RepoRoot, configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
-			return config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, pin)
+		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
+			return m.RemoveDirectPin(entry, pin)
+		}, func() ([]error, error) {
+			return nil, silentSync(ctx, opts.RepoRoot)
 		}); err != nil {
 			return nil, err
 		}
@@ -208,21 +213,45 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 				}
 				return nil, err
 			}
-			configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+			destination, err := scopedConfigPath(opts.RepoRoot, effective)
 			if err != nil {
 				return nil, fmt.Errorf("resolve config path: %w", err)
 			}
-			configPath, err = stageConfigPath(opts.configStaging, configPath)
-			if err != nil {
-				return nil, err
-			}
 			if selection.RegistryScoped {
 				registryURL, registryPath := collectionRegistryLocation(selection)
-				if err := disableCollectionInRegistry(configPath, registryURL, registryPath, selection.Ref, name); err != nil {
+				entry := config.RegistryEntry{
+					URL:           registryURL,
+					Path:          registryPath,
+					Ref:           strings.TrimSpace(selection.Ref),
+					V4Kind:        selection.V4Kind,
+					SourceHarness: strings.TrimSpace(selection.SourceHarness),
+				}
+				if err := editRemovalSelection(opts.RepoRoot, effective, opts.configStaging, entry, ir.KindCollection, name, config.SelectionExclude); err != nil {
 					return nil, err
 				}
-			} else if err := removeOrExcludeCollection(configPath, name); err != nil {
-				return nil, err
+			} else {
+				rootCfg, err := config.LoadRootConfigFromPath(destination)
+				if err != nil {
+					return nil, fmt.Errorf("load root config %q: %w", destination, err)
+				}
+				rootSelected := hasTopLevelCollectionSelection(rootCfg, name)
+				providers := collectionProviderEntries(mergedCfg, name)
+				if err := editRemovalLayer(opts.RepoRoot, effective, opts.configStaging, func(m *LayerMutation) error {
+					locator := config.ResourceLocator{Kind: ir.KindCollection, Name: name}
+					inherited, err := m.UnboundIncludeInherited(locator)
+					if err != nil {
+						return err
+					}
+					if err := m.RemoveUnboundInclude(locator); err != nil {
+						return err
+					}
+					if !rootSelected || inherited {
+						return m.SetLayerExclude(locator, providers)
+					}
+					return nil
+				}); err != nil {
+					return nil, err
+				}
 			}
 			if err := syncAfterRemove(ctx, opts); err != nil {
 				return nil, err
@@ -289,16 +318,9 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	return &RemoveResult{RemovedName: name, InferredUserScope: inferredUserScope}, nil
 }
 
-func disableCollectionInRegistry(configPath, registryURL, registryPath, ref, name string) error {
-	if strings.TrimSpace(ref) != "" {
-		return config.DisableResourceWithShadowFallbackAtRef(configPath, registryURL, registryPath, ref, ir.KindCollection, name)
-	}
-	if err := config.DisableResourceWithShadowFallback(configPath, registryURL, registryPath, ref, ir.KindCollection, name); err != nil {
-		return err
-	}
-	// Retain an exclusion after removing a root selection so an included or
-	// lower-layer selection cannot re-enable the collection.
-	return config.AddKindExcludeToRegistryInConfig(configPath, registryURL, registryPath, ir.KindCollection, name)
+func isEditUnsupported(err error) bool {
+	var validation *config.V4ValidationError
+	return errors.As(err, &validation) && validation.Code == "config.edit.unsupported-operation"
 }
 
 func hasTopLevelCollectionSelection(cfg *config.Config, name string) bool {
@@ -321,6 +343,8 @@ type collectionRemovalSelection struct {
 	RegistryURL    string
 	RegistryPath   string
 	Ref            string
+	V4Kind         config.V4SourceKind
+	SourceHarness  string
 }
 
 // findCollectionRemovalSelection finds the collection occurrence owned by the
@@ -382,6 +406,8 @@ func findCollectionRemovalSelection(repoRoot string, mergedCfg, orgCfg *config.C
 					RegistryURL:    entry.URL,
 					RegistryPath:   entry.Path,
 					Ref:            entry.Ref,
+					V4Kind:         entry.V4Kind,
+					SourceHarness:  entry.SourceHarness,
 				}, requested, nil
 			}
 		}
@@ -435,6 +461,8 @@ func collectionSelectionInConfig(cfg *config.Config, source config.Source, name 
 			RegistryURL:    entry.URL,
 			RegistryPath:   entry.Path,
 			Ref:            entry.Ref,
+			V4Kind:         entry.V4Kind,
+			SourceHarness:  entry.SourceHarness,
 		}
 	}
 	return nil
@@ -470,6 +498,38 @@ func collectionSelectedInEntry(entry config.RegistryEntry, name string) bool {
 		}
 	}
 	return false
+}
+
+func collectionProviderEntries(cfg *config.Config, name string) []config.RegistryEntry {
+	if cfg == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var providers []config.RegistryEntry
+	for _, entry := range cfg.Registries {
+		if !collectionSelectedInEntry(entry, name) {
+			continue
+		}
+		kind := entry.V4Kind
+		if kind == "" {
+			if entry.IsLocal() {
+				kind = config.V4SourceDirectory
+			} else {
+				kind = config.V4SourceGit
+			}
+		}
+		if kind != config.V4SourceGit && kind != config.V4SourceDirectory {
+			continue
+		}
+		identity := string(kind) + "|" + config.NormalizeGitURL(entry.URL) + "|" + strings.TrimSpace(entry.Ref) + "|" + config.NormalizeRegistryPath(entry.Path) + "|" + strings.TrimSpace(entry.SourceHarness)
+		if seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		entry.V4Kind = kind
+		providers = append(providers, entry)
+	}
+	return providers
 }
 
 // collectionRequiredInConfig checks only explicit required collection
@@ -546,30 +606,6 @@ func requiredCollectionAutoSelects(entry config.RegistryEntry) bool {
 	return true
 }
 
-func removeOrExcludeCollection(configPath, name string) error {
-	rootCfg, err := config.LoadRootConfigFromPath(configPath)
-	if err != nil {
-		return fmt.Errorf("load root config %q: %w", configPath, err)
-	}
-	// Validate includes before mutating the root selection.
-	if _, err := config.LoadConfigFromPath(configPath); err != nil {
-		return fmt.Errorf("validate config includes %q: %w", configPath, err)
-	}
-	if hasTopLevelCollectionSelection(rootCfg, name) {
-		if err := config.RemoveCollectionFromConfig(configPath, name); err != nil {
-			return err
-		}
-		expandedCfg, err := config.LoadConfigFromPath(configPath)
-		if err != nil {
-			return fmt.Errorf("reload expanded config %q: %w", configPath, err)
-		}
-		if !hasTopLevelCollectionSelection(expandedCfg, name) {
-			return nil
-		}
-	}
-	return config.AddKindExcludeToConfig(configPath, ir.KindCollection, name)
-}
-
 func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg, repoCfg, orgCfg *config.Config, err error) {
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
@@ -578,85 +614,171 @@ func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg, repoCfg,
 	return ec.Merged, ec.Repo.Config, ec.Organization.Config, nil
 }
 
-func excludeCollectionMember(repoRoot string, scope Scope, staging *configStagingManager, target *resolver.ResolvedArtifact, name string) error {
-	path, err := ScopedConfigPath(repoRoot, scope)
-	if err != nil {
-		return err
-	}
-	path, err = stageConfigPath(staging, path)
-	if err != nil {
-		return err
-	}
-	switch scope {
-	case ScopeUser:
-		return config.DisableResourceWithShadowFallback(path, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
-	case ScopeLocal:
-		if target.Source == config.RepoPersonal {
-			return config.AddKindExcludeToRegistryInConfig(path, target.RegistryURL, target.RegistryPath, target.Kind, name)
-		}
-		return config.AddKindExcludeToConfig(path, target.Kind, name)
-	default:
-		return config.DisableResourceWithShadowFallback(path, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
+func registryEntryForResolved(target *resolver.ResolvedArtifact) config.RegistryEntry {
+	return config.RegistryEntry{
+		URL:           strings.TrimSpace(target.RegistryURL),
+		Ref:           strings.TrimSpace(target.Ref),
+		Path:          strings.TrimSpace(target.RegistryPath),
+		V4Kind:        target.V4Kind,
+		SourceHarness: strings.TrimSpace(target.SourceHarness),
 	}
 }
 
+func editRemovalLayer(repoRoot string, scope Scope, staging *configStagingManager, mutate func(*LayerMutation) error) error {
+	destination, err := ScopedConfigPath(repoRoot, scope)
+	if err != nil {
+		return err
+	}
+	staged, err := stageConfigPath(staging, destination)
+	if err != nil {
+		return err
+	}
+	return EditLayerAtPath(config.LayerTarget{Source: scopeToConfigSource(scope), StagedPath: staged, DeclaringPath: destination}, mutate)
+}
+
+func bindRemovalRegistry(m *LayerMutation, entry config.RegistryEntry) (config.SourceBinding, error) {
+	binding, found, err := m.LookupRegistry(entry)
+	if err != nil || found {
+		return binding, err
+	}
+	return m.EnsureRegistry(entry)
+}
+
+func editRemovalSelection(repoRoot string, scope Scope, staging *configStagingManager, entry config.RegistryEntry, kind ir.ResourceKind, name string, operation config.SelectionOperation) error {
+	locator := config.ResourceLocator{Kind: kind, Name: name}
+	return editRemovalLayer(repoRoot, scope, staging, func(m *LayerMutation) error {
+		binding, err := bindRemovalRegistry(m, entry)
+		if err != nil {
+			return err
+		}
+		return m.Apply(binding, config.SelectionChange{Operation: operation, Locators: []config.ResourceLocator{locator}})
+	})
+}
+
+func excludeWithUnboundCompatibility(repoRoot string, scope Scope, staging *configStagingManager, entry config.RegistryEntry, kind ir.ResourceKind, name string, clearStale bool) error {
+	locator := config.ResourceLocator{Kind: kind, Name: name}
+	return editRemovalLayer(repoRoot, scope, staging, func(m *LayerMutation) error {
+		if clearStale {
+			if err := m.ClearUnboundExclude(locator); err != nil {
+				return err
+			}
+			if err := m.RemoveUnboundInclude(locator); err != nil {
+				return err
+			}
+		}
+		binding, err := bindRemovalRegistry(m, entry)
+		if err != nil {
+			return err
+		}
+		if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+			return err
+		}
+		if err := m.SetUnboundExclude(locator); err != nil && !isEditUnsupported(err) {
+			return err
+		}
+		return nil
+	})
+}
+
+// removalDropsInclude reports whether removing name from entry can delete the
+// explicit include instead of appending an exclude. An entry that selects by
+// policy (default, required, or tags) keeps selecting the resource, so only an
+// exclude removes it.
+func removalDropsInclude(entry config.RegistryEntry, kind ir.ResourceKind, name string) bool {
+	return !entry.Default && !entry.Required && len(entry.Tags) == 0 &&
+		slices.Contains(entry.SelectorForKind(kind).Include, name)
+}
+
+func removalSelectionOperation(destination string, entry config.RegistryEntry, kind ir.ResourceKind, name string) (config.SelectionOperation, error) {
+	rootCfg, err := config.LoadRootConfigFromPath(destination)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return config.SelectionExclude, nil
+		}
+		return config.SelectionExclude, err
+	}
+	if rootCfg == nil {
+		return config.SelectionExclude, nil
+	}
+	var rootEntry *config.RegistryEntry
+	for i := range rootCfg.Registries {
+		candidate := &rootCfg.Registries[i]
+		if adHocRegistryEntryMatches(*candidate, entry.URL, entry.Path, "", "") {
+			rootEntry = candidate
+			break
+		}
+	}
+	if rootEntry == nil || !removalDropsInclude(*rootEntry, kind, name) {
+		return config.SelectionExclude, nil
+	}
+	expanded, err := config.LoadConfigFromPath(destination)
+	if err != nil {
+		return config.SelectionExclude, err
+	}
+	if expanded != nil && countAdHocRegistryEntries(expanded.Registries, entry.URL, entry.Path, "", "") > countAdHocRegistryEntries(rootCfg.Registries, entry.URL, entry.Path, "", "") {
+		return config.SelectionExclude, nil
+	}
+	return config.SelectionRemoveInclude, nil
+}
+
+func excludeCollectionMember(repoRoot string, scope Scope, staging *configStagingManager, target *resolver.ResolvedArtifact, name string) error {
+	return editRemovalSelection(repoRoot, scope, staging, registryEntryForResolved(target), target.Kind, name, config.SelectionExclude)
+}
+
 func removeResource(repoRoot string, scope Scope, staging *configStagingManager, repoCfg *config.Config, target *resolver.ResolvedArtifact, name string, scopeSpecified bool) error {
-	path, err := ScopedConfigPath(repoRoot, scope)
-	if err != nil {
-		return err
-	}
-	path, err = stageConfigPath(staging, path)
-	if err != nil {
-		return err
-	}
+	entry := registryEntryForResolved(target)
 	switch scope {
 	case ScopeUser:
-		return config.DisableResourceWithShadowFallback(path, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
+		destination, err := ScopedConfigPath(repoRoot, scope)
+		if err != nil {
+			return err
+		}
+		operation, err := removalSelectionOperation(destination, entry, target.Kind, name)
+		if err != nil {
+			return err
+		}
+		return editRemovalSelection(repoRoot, scope, staging, entry, target.Kind, name, operation)
 
 	case ScopeLocal:
 		if target.Source == config.RepoPersonal {
-			rootCfg, err := config.LoadRootConfigFromPath(path)
+			destination, err := ScopedConfigPath(repoRoot, scope)
+			if err != nil {
+				return err
+			}
+			rootCfg, err := config.LoadRootConfigFromPath(destination)
 			if err != nil {
 				return fmt.Errorf("load local root config: %w", err)
 			}
 			if rootCfg != nil && registryEntryInList(rootCfg.Registries, target.RegistryURL, target.RegistryPath) {
-				if err := config.RemoveResourceFromRegistryInConfig(path, target.RegistryURL, target.RegistryPath, target.Kind, name); err != nil {
-					return fmt.Errorf("remove resource from registry entry: %w", err)
-				}
-				return config.AddKindExcludeToRegistryInConfig(path, target.RegistryURL, target.RegistryPath, target.Kind, name)
+				return editRemovalSelection(repoRoot, scope, staging, entry, target.Kind, name, config.SelectionExclude)
 			}
-			localCfg, err := config.LoadLocalConfigFromPath(path)
+			localCfg, err := config.LoadLocalConfigFromPath(destination)
 			if err != nil {
 				return fmt.Errorf("load local config: %w", err)
 			}
 			if localCfg != nil && localRegistryEntryExists(localCfg, target.RegistryURL, target.RegistryPath) {
-				if err := config.DisableResourceWithShadowFallback(path, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name); err != nil {
-					return err
-				}
-				return config.AddKindExcludeToConfig(path, target.Kind, name)
+				return excludeWithUnboundCompatibility(repoRoot, scope, staging, entry, target.Kind, name, false)
 			}
-			if err := config.RemoveKindExcludeFromConfig(path, target.Kind, name); err != nil {
-				return fmt.Errorf("clear stale exclude from local config: %w", err)
-			}
-			if err := config.RemoveSkillFromConfig(path, name); err != nil {
-				return fmt.Errorf("remove skill from local config include: %w", err)
-			}
-			return config.AddKindExcludeToConfig(path, target.Kind, name)
+			return excludeWithUnboundCompatibility(repoRoot, scope, staging, entry, target.Kind, name, true)
 		}
-		return config.AddKindExcludeToConfig(path, target.Kind, name)
+		return excludeWithUnboundCompatibility(repoRoot, scope, staging, entry, target.Kind, name, false)
 
 	default:
 		if repoCfg == nil {
 			return fmt.Errorf("no repo config found; cannot remove %q", name)
 		}
 		if (!scopeSpecified || target.Source.IsMachineScope()) && !projectExplicitlySelects(repoCfg, *target) && !projectSelectsByTag(repoCfg, *target) {
-			localPath, err := stageConfigPath(staging, config.LocalConfigPath(repoRoot))
-			if err != nil {
-				return err
-			}
-			return config.AddKindExcludeToConfig(localPath, target.Kind, name)
+			return excludeWithUnboundCompatibility(repoRoot, ScopeLocal, staging, entry, target.Kind, name, false)
 		}
-		return config.DisableResourceWithShadowFallback(path, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
+		destination, err := ScopedConfigPath(repoRoot, scope)
+		if err != nil {
+			return err
+		}
+		operation, err := removalSelectionOperation(destination, entry, target.Kind, name)
+		if err != nil {
+			return err
+		}
+		return editRemovalSelection(repoRoot, scope, staging, entry, target.Kind, name, operation)
 	}
 }
 
@@ -725,13 +847,13 @@ func registryEntryInList(entries []config.RegistryEntry, url, registryPath strin
 // selectAdHocRegistryEntry resolves one configured entry for --from. An
 // omitted path or ref is a wildcard only while it identifies one logical
 // location; distinct paths or refs are ambiguous and fail closed.
-func selectAdHocRegistryEntry(cfg *config.Config, url, path, ref string) (config.RegistryEntry, bool, error) {
+func selectAdHocRegistryEntry(cfg *config.Config, url, path, ref, localDir string) (config.RegistryEntry, bool, error) {
 	if cfg == nil {
 		return config.RegistryEntry{}, false, nil
 	}
 	var matches []config.RegistryEntry
 	for _, entry := range cfg.Registries {
-		if adHocRegistryEntryMatches(entry, url, path, ref) {
+		if adHocRegistryEntryMatches(entry, url, path, ref, localDir) {
 			matches = append(matches, entry)
 		}
 	}
@@ -747,17 +869,50 @@ func selectAdHocRegistryEntry(cfg *config.Config, url, path, ref string) (config
 	return first, true, nil
 }
 
-func adHocRegistryEntryMatches(entry config.RegistryEntry, url, registryPath, ref string) bool {
+// adHocRegistryEntryMatches compares a configured entry with --from
+// coordinates. localDir is the ad-hoc registry's absolute bundle directory
+// (see adHocLocalDirectory): v4 directory sources are loaded with that
+// absolute path, never the relative spelling a user typed.
+func adHocRegistryEntryMatches(entry config.RegistryEntry, url, registryPath, ref, localDir string) bool {
+	if localDir != "" && entry.V4Kind == config.V4SourceDirectory {
+		return sameDirectory(entry.URL, localDir)
+	}
 	pathOmitted := strings.TrimSpace(registryPath) == ""
 	return config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(url) &&
 		(pathOmitted || config.NormalizeRegistryPath(entry.Path) == config.NormalizeRegistryPath(registryPath)) &&
 		(strings.TrimSpace(ref) == "" || strings.TrimSpace(entry.Ref) == strings.TrimSpace(ref))
 }
 
-func countAdHocRegistryEntries(entries []config.RegistryEntry, url, path, ref string) int {
+// adHocLocalDirectory is the absolute bundle directory of a local --from
+// registry resolved against baseDir; "" for remote registries.
+func adHocLocalDirectory(entry config.RegistryEntry, baseDir string) string {
+	if !entry.IsLocal() {
+		return ""
+	}
+	local, err := entry.ResolveLocalPath(baseDir)
+	if err != nil {
+		return ""
+	}
+	absolute, err := filepath.Abs(entry.BundlePath(local))
+	if err != nil {
+		return ""
+	}
+	return absolute
+}
+
+func sameDirectory(a, b string) bool {
+	left, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	right, err := os.Stat(b)
+	return err == nil && os.SameFile(left, right)
+}
+
+func countAdHocRegistryEntries(entries []config.RegistryEntry, url, path, ref, localDir string) int {
 	count := 0
 	for _, entry := range entries {
-		if adHocRegistryEntryMatches(entry, url, path, ref) {
+		if adHocRegistryEntryMatches(entry, url, path, ref, localDir) {
 			count++
 		}
 	}
@@ -1160,7 +1315,8 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if err != nil {
 		return nil, err
 	}
-	mergedEntry, entryInMerged, err := selectAdHocRegistryEntry(mergedCfg, fromURL, fromPath, fromRef)
+	localDir := adHocLocalDirectory(syntheticEntry, repoRoot)
+	mergedEntry, entryInMerged, err := selectAdHocRegistryEntry(mergedCfg, fromURL, fromPath, fromRef, localDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1168,7 +1324,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if cfg != nil {
 		rootEntries = cfg.Registries
 	}
-	targetEntry, entryInTarget, err := selectAdHocRegistryEntry(&config.Config{Registries: rootEntries}, fromURL, fromPath, fromRef)
+	targetEntry, entryInTarget, err := selectAdHocRegistryEntry(&config.Config{Registries: rootEntries}, fromURL, fromPath, fromRef, localDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1181,7 +1337,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	} else if selectedPath == "" && entryInTarget {
 		selectedPath = strings.TrimSpace(targetEntry.Path)
 	}
-	requiresShadow := entryInMerged && countAdHocRegistryEntries(mergedCfg.Registries, fromURL, fromPath, fromRef) > countAdHocRegistryEntries(rootEntries, fromURL, fromPath, fromRef)
+	requiresShadow := entryInMerged && countAdHocRegistryEntries(mergedCfg.Registries, fromURL, fromPath, fromRef, localDir) > countAdHocRegistryEntries(rootEntries, fromURL, fromPath, fromRef, localDir)
 	// Prefer the defining layer's ref when writing a shadow entry, so git
 	// shadow entries pass ref-required validation even if the user omitted --ref.
 	shadowRef := fromRef
@@ -1193,6 +1349,10 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if err != nil {
 		return nil, err
 	}
+	layer := config.LayerTarget{Source: scopeToConfigSource(opts.Scope), StagedPath: configPath, DeclaringPath: declaringPath}
+	editRemoveLayer := func(mutate func(*LayerMutation) error) error {
+		return EditLayerAtPath(layer, mutate)
+	}
 
 	// An empty name targets the registry.
 	name := strings.TrimSpace(opts.ResourceName)
@@ -1201,13 +1361,14 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 			if err := validateRegistryScopeBoundary(mergedEntry.Source, opts.Scope, fromURL); err != nil {
 				return nil, err
 			}
-			var setErr error
-			if strings.TrimSpace(shadowRef) != "" {
-				setErr = config.SetRegistryExcludeAllInConfigAtRef(configPath, fromURL, shadowRef, selectedPath)
-			} else {
-				setErr = config.SetRegistryExcludeAllInConfig(configPath, fromURL, shadowRef, selectedPath)
-			}
-			if err := setErr; err != nil {
+			entry := removalEditEntry(mergedEntry, fromURL, selectedPath, shadowRef)
+			if err := editRemoveLayer(func(m *LayerMutation) error {
+				binding, err := m.EnsureRegistry(entry)
+				if err != nil {
+					return err
+				}
+				return m.Apply(binding, config.SelectionChange{Operation: config.SelectionExcludeAll})
+			}); err != nil {
 				return nil, fmt.Errorf("exclude registry in %s config: %w", opts.Scope, err)
 			}
 			if err := syncAfterRemove(ctx, opts, WithIgnoreBlockedRegistries()); err != nil {
@@ -1218,13 +1379,17 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		// Registry is defined at this scope (and not inherited from below):
 		// deleting the entry fully removes it.
 		if entryInTarget {
-			var removeErr error
-			if strings.TrimSpace(fromRef) != "" {
-				removeErr = config.RemoveRegistryEntryFromConfigAtRef(configPath, fromURL, selectedPath, fromRef)
-			} else {
-				removeErr = config.RemoveRegistryEntryFromConfig(configPath, fromURL, selectedPath)
-			}
-			if err := removeErr; err != nil {
+			entry := removalEditEntry(targetEntry, fromURL, selectedPath, shadowRef)
+			if err := editRemoveLayer(func(m *LayerMutation) error {
+				binding, found, err := m.LookupRegistry(entry)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return fmt.Errorf("registry %q is not declared in target config", entry.URL)
+				}
+				return m.RemoveSource(binding)
+			}); err != nil {
 				return nil, fmt.Errorf("remove registry entry from %s config: %w", opts.Scope, err)
 			}
 			if err := syncAfterRemove(ctx, opts, WithIgnoreBlockedRegistries()); err != nil {
@@ -1260,7 +1425,18 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		if collectionEntryInMerged && strings.TrimSpace(collectionMergedEntry.Ref) != "" {
 			collectionShadowRef = collectionMergedEntry.Ref
 		}
-		if err := disableCollectionInRegistry(configPath, fromURL, selectedPath, collectionShadowRef, name); err != nil {
+		collectionEditEntry := collectionMergedEntry
+		if collectionEntryInTarget {
+			collectionEditEntry = targetEntry
+		}
+		collectionEditEntry = removalEditEntry(collectionEditEntry, fromURL, selectedPath, collectionShadowRef)
+		if err := editRemoveLayer(func(m *LayerMutation) error {
+			binding, err := bindRemovalRegistry(m, collectionEditEntry)
+			if err != nil {
+				return err
+			}
+			return m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{{Kind: ir.KindCollection, Name: name}}})
+		}); err != nil {
 			return nil, err
 		}
 		if err := syncAfterRemove(ctx, opts, WithIgnoreBlockedRegistries()); err != nil {
@@ -1331,17 +1507,19 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if entryInTarget {
 		editEntry = targetEntry
 	}
-	handled, disableErr := config.EditV4ResourceSelection(configPath, declaringPath, editEntry, resolvedKind, name, config.V4SelectionDisable)
-	if handled {
-		slog.Debug("remove v4 selection staged", "kind", resolvedKind.String(), "scope", opts.Scope, "error", disableErr)
-	} else if disableErr == nil {
-		if strings.TrimSpace(shadowRef) != "" {
-			disableErr = config.DisableResourceWithShadowFallbackAtRef(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
-		} else {
-			disableErr = config.DisableResourceWithShadowFallback(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
-		}
+	editEntry = removalEditEntry(editEntry, fromURL, selectedPath, shadowRef)
+	operation := config.SelectionExclude
+	if entryInTarget && !requiresShadow && strings.TrimSpace(shadowRef) == "" &&
+		removalDropsInclude(editEntry, resolvedKind, name) {
+		operation = config.SelectionRemoveInclude
 	}
-	if err := disableErr; err != nil {
+	if err := editRemoveLayer(func(m *LayerMutation) error {
+		binding, err := bindRemovalRegistry(m, editEntry)
+		if err != nil {
+			return err
+		}
+		return m.Apply(binding, config.SelectionChange{Operation: operation, Locators: []config.ResourceLocator{{Kind: resolvedKind, Name: name}}})
+	}); err != nil {
 		return nil, err
 	}
 	if cleanup != nil {
@@ -1357,30 +1535,16 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	return &RemoveResult{RemovedName: name}, nil
 }
 
-func removeMarketplaceAndSync(ctx context.Context, repoRoot, configPath string, mutate func() (*config.FileSnapshot, config.ConfigFileCommit, error)) (retErr error) {
-	snapshot, commit, err := mutate()
-	if err != nil {
-		return err
+func removalEditEntry(entry config.RegistryEntry, url, path, ref string) config.RegistryEntry {
+	out := entry
+	if strings.TrimSpace(out.URL) == "" {
+		out.URL = url
 	}
-	defer func() {
-		if retErr == nil {
-			return
-		}
-		if rollbackErr := snapshot.RestoreIfCurrent(commit); rollbackErr != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("rollback Marketplace config: %w", rollbackErr))
-		}
-	}()
-	if err := silentSync(ctx, repoRoot); err != nil {
-		return err
+	out.Path = strings.TrimSpace(path)
+	if trimmed := strings.TrimSpace(ref); trimmed != "" {
+		out.Ref = trimmed
 	}
-	current, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("read Marketplace config after remove: %w", err)
-	}
-	if !bytes.Equal(current, commit.Bytes) {
-		return fmt.Errorf("marketplace config changed concurrently during remove")
-	}
-	return nil
+	return out
 }
 
 func marketplaceCollectionByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
@@ -1401,15 +1565,20 @@ func marketplaceCollectionByName(cfg *config.Config, name string, kind ir.Resour
 }
 
 func marketplaceDirectPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
+	pin, entry, count := marketplaceDirectPinMatches(cfg, name, kind, hasKind)
+	return pin, entry, count == 1
+}
+
+func marketplaceDirectPinMatches(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, int) {
 	if cfg == nil {
-		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
+		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, 0
 	}
 	var found config.MarketplaceResourcePin
 	var foundEntry config.MarketplaceEntry
 	count := 0
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
-			if pin.Kind == "collection" || pin.Name != strings.TrimSpace(name) {
+			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
 				continue
 			}
 			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {
@@ -1421,7 +1590,12 @@ func marketplaceDirectPinByName(cfg *config.Config, name string, kind ir.Resourc
 			found, foundEntry, count = pin, entry, count+1
 		}
 	}
-	return found, foundEntry, count == 1
+	return found, foundEntry, count
+}
+
+func marketplacePinNamed(pin config.MarketplaceResourcePin, name string) bool {
+	name = strings.TrimSpace(name)
+	return pin.Name == name || marketplaceInstalledName(pin) == name
 }
 
 func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, bool) {
@@ -1430,7 +1604,7 @@ func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir
 	}
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
-			if pin.Kind == "collection" || pin.Name != strings.TrimSpace(name) {
+			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
 				continue
 			}
 			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {

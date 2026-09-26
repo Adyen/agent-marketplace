@@ -56,7 +56,7 @@ func TestEffectiveReadAssertionsRequireTransientOrganizationLockAbsence(t *testi
 				Overlay: true, RuntimeLock: true, AcquisitionLock: true,
 			}},
 		},
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -339,6 +339,9 @@ func classifyStatus(r row) statusBucket {
 	if r.IsMalformed {
 		return statusMalformed
 	}
+	if r.UnavailableReason != "" {
+		return statusBroken
+	}
 	if r.Artifact.Required {
 		return statusRequired
 	}

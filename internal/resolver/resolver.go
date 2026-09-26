@@ -44,16 +44,17 @@ type ResolvedArtifact struct {
 	Harnesses []hcc.Target
 
 	// Marketplace-specific fields.
-	IsMarketplace         bool
-	MarketplaceURL        string
-	MarketplaceInstanceID string
-	MarketplaceAlias      string
-	MarketplaceRegistryID string
-	InstalledName         string // overrides Name for materialization while preserving canonical digest
-	Unresolved            bool   // true when only metadata was fetched (status inspect mode)
-	Revoked               bool   // true when the resolved revision is revoked
-	UpdateAvailable       bool   // true when a newer revision exists (status/update)
-	Stale                 bool   // true when the registry refresh is stale/unavailable
+	IsMarketplace           bool
+	MarketplaceURL          string
+	MarketplaceInstanceID   string
+	MarketplaceAlias        string
+	MarketplaceRegistryID   string
+	MarketplaceResourceName string
+	InstalledName           string // overrides Name for materialization while preserving canonical digest
+	Unresolved              bool   // true when only metadata was fetched (status inspect mode)
+	Revoked                 bool   // true when the resolved revision is revoked
+	UpdateAvailable         bool   // true when a newer revision exists (status/update)
+	Stale                   bool   // true when the registry refresh is stale/unavailable
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {
@@ -2666,11 +2667,17 @@ func localOwnerExcluded(candidate localOwnerCandidate, kind ir.ResourceKind, nam
 	if artifactShadowedByEntries(localCandidateArtifact(candidate), cfg.Registries) {
 		return true
 	}
-	selector := candidate.entry.SelectorForKind(kind)
-	if !candidate.entry.Required && (selector.ExcludeAll || slices.ContainsFunc(selector.Exclude, func(excluded string) bool {
-		return strings.TrimSpace(excluded) == name
-	})) {
-		return true
+	if candidate.entry.V4Decisions != nil {
+		if v4OwnerExcluded(candidate.entry, kind, name) {
+			return true
+		}
+	} else {
+		selector := candidate.entry.SelectorForKind(kind)
+		if !candidate.entry.Required && (selector.ExcludeAll || slices.ContainsFunc(selector.Exclude, func(excluded string) bool {
+			return strings.TrimSpace(excluded) == name
+		})) {
+			return true
+		}
 	}
 	return localResourceExcluded(localExcludes, localExcludeAllKinds, kind, name, candidate.entry.Required, candidate.entry.Source)
 }
@@ -3077,6 +3084,36 @@ func ResourcesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []Se
 	return resources
 }
 
+func EffectiveDirectSelectionSources(entry config.RegistryEntry, entries []config.RegistryEntry, localCfg *config.LocalConfig, kind ir.ResourceKind, name string) (entrySelected, localSelected bool) {
+	name = strings.TrimSpace(name)
+	for _, selected := range resolveSelectedResources(entry, nil) {
+		if selected.kind == kind && selected.name == name {
+			entrySelected = !artifactShadowedByEntries(unresolvedSelectionArtifact(entry, selected), entries)
+			break
+		}
+	}
+	if localCfg == nil {
+		return entrySelected, false
+	}
+	included := false
+	for _, candidate := range localCfg.SelectorForKind(kind).Include {
+		if strings.TrimSpace(candidate) == name {
+			included = true
+			break
+		}
+	}
+	if !included {
+		return entrySelected, false
+	}
+	owner := localOwnerCandidate{
+		entry:      entry,
+		catalogKey: entry.CatalogKey,
+		resource:   catalog.Entry{Kind: kind, Name: name},
+	}
+	localSelected = !localOwnerExcluded(owner, kind, name, &config.Config{Registries: entries}, localResourceExcludes(localCfg), localExcludeAllKinds(localCfg))
+	return entrySelected, localSelected
+}
+
 func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entry) resourceSelections {
 	selected := make(map[resourceSelection]struct{})
 
@@ -3231,6 +3268,24 @@ func v4DecisionKind(kind string) ir.ResourceKind {
 	default:
 		return ir.ResourceKind(-1)
 	}
+}
+
+func v4OwnerExcluded(entry config.RegistryEntry, kind ir.ResourceKind, name string) bool {
+	target := resourceSelection{kind: kind, name: name}
+	excluded := false
+	for _, decision := range entry.V4Decisions {
+		switch decision.Action {
+		case config.V4SelectionExplicit:
+			if decision.Request != nil && v4DecisionKind(decision.Request.Kind) == kind && strings.TrimSpace(decision.Request.Name) == name {
+				excluded = false
+			}
+		case config.V4SelectionExclude:
+			if !entry.Required && v4DecisionExclusionMatches(decision.Exclusion, target) {
+				excluded = true
+			}
+		}
+	}
+	return excluded
 }
 
 func v4DecisionExclusionMatches(exclusion string, selected resourceSelection) bool {

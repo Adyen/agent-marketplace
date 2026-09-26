@@ -68,7 +68,7 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 }
 
 func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, plan *preparedInstallLocks) ([]dependencytxn.ReadAssertion, error) {
-	reads, err := effectiveReadAssertions(ec, staged)
+	reads, err := effectiveReadAssertions(ec, staged, nil)
 	if err != nil {
 		return nil, err
 	}

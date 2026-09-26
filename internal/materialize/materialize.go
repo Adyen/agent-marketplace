@@ -690,6 +690,36 @@ func outputDirExists(path string) bool {
 	return info.IsDir()
 }
 
+func marketplaceResourceForInstallName(resource ir.Resource, name string) (ir.Resource, error) {
+	if err := ir.ValidateName(name); err != nil {
+		return nil, err
+	}
+	switch typed := resource.(type) {
+	case *ir.Skill:
+		copy := *typed
+		copy.SetName(name)
+		return &copy, nil
+	case *ir.Command:
+		copy := *typed
+		copy.SetName(name)
+		return &copy, nil
+	case *ir.Subagent:
+		copy := *typed
+		copy.SetName(name)
+		return &copy, nil
+	case *ir.Hook:
+		copy := *typed
+		copy.SetName(name)
+		return &copy, nil
+	case *ir.McpServer:
+		copy := *typed
+		copy.SetName(name)
+		return &copy, nil
+	default:
+		return nil, fmt.Errorf("unsupported Marketplace resource kind %s for installed name", resource.Kind())
+	}
+}
+
 // compileWorkItems compiles each skill-target pair, splits artifacts by kind,
 // and groups results by output key.
 func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs map[outputKey]bool, blocked blockedOutputs, repoRoot string) compilePhaseResult {
@@ -717,6 +747,16 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeMaterializeHookSupportConflict, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: fmt.Sprintf("hook support paths conflict across selected sources: %s; affected hooks were not emitted", strings.Join(paths, ", ")), Hint: "Rename the conflicting support files or exclude one hook provider", Source: compilepkg.SourceOf(w.skill.Resource)})
 			continue
+		}
+		if w.skill.IsMarketplace && w.skill.InstalledName != "" {
+			renamed, err := marketplaceResourceForInstallName(w.skill.Resource, w.skill.InstalledName)
+			if err != nil {
+				blocked.blockResource(key, w)
+				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+				allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.marketplace.alias-invalid", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Resource.Name(), Message: "Marketplace installed name cannot be materialized safely"})
+				continue
+			}
+			w.skill.Resource = renamed
 		}
 		compileOptions := []hcc.Option{}
 		if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
@@ -2773,6 +2813,12 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 				return err
 			}
 			if info.IsDir() {
+				// Mirror copySupportFilesExcluding: VCS internals are never
+				// part of the support tree, so the dry-run digest must
+				// exclude them exactly like the real cache copy does.
+				if entry.Name() == ".git" {
+					continue
+				}
 				ensureParents(childRel)
 				// copyDir does not chmod an already-created directory, so an
 				// artifact-created parent keeps its existing 0755 mode.
@@ -3374,6 +3420,13 @@ func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, 
 		dstPath := filepath.Join(dstDir, name)
 
 		if entry.IsDir() {
+			// A root skill's source dir is a whole registry checkout, so
+			// VCS internals must never become harness-visible support
+			// files. Git cannot track a .git directory, so regular skills
+			// are unaffected.
+			if name == ".git" {
+				continue
+			}
 			if err := os.MkdirAll(dstPath, 0o755); err != nil {
 				return fmt.Errorf("create support dir %s: %w", childRel, err)
 			}

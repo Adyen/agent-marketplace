@@ -8,7 +8,7 @@ import (
 func TestV4GitAndDirectorySourcesRunThroughNormalCLI(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
-	gitURL := env.CreateBareRepo("v4-git", RegistryFiles([]Skill{{Name: "git-review"}}, nil, nil))
+	gitURL := env.CreateBareRepo("v4-git", RegistryFiles([]Skill{{Name: "git-review"}, {Name: "git-followup"}}, nil, nil))
 	// Keep the directory source below the repository root and deliberately give
 	// it a .git suffix: v4 source kind, not the path spelling, controls locality.
 	env.WriteFile("/workspace/registry.git/skills/local-review/SKILL.md", (Skill{Name: "local-review"}).SkillFile())
@@ -44,6 +44,45 @@ resources:
 	env.AssertExitCode(status, 0)
 	env.AssertOutputContains(status, "git-review")
 	env.AssertOutputContains(status, "local-review")
+
+	env.AssertExitCode(env.RunAM("install", "git-followup", "--scope", "repo"), 0)
+	env.AssertFileExists("/workspace/.factory/skills/git-followup/SKILL.md")
+	env.AssertExitCode(env.RunAM("remove", "git-followup", "--scope", "repo"), 0)
+	env.AssertFileAbsent("/workspace/.factory/skills/git-followup")
+	env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+}
+
+func TestV4UserDirectoryNamedInstallRemovePreservesSelectedResource(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	registry := env.mustResolvePath("/root/resources")
+	for _, name := range []string{"original", "followup"} {
+		env.WriteFile("/root/resources/skills/"+name+"/SKILL.md", (Skill{Name: name}).SkillFile())
+	}
+	env.WriteGlobalConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  personal: {directory: %s}
+resources:
+  personal: {include: [skill/original]}
+`, registry))
+	env.AssertExitCode(env.RunAM("sync"), 0)
+	env.AssertExitCode(env.RunAM("install", "followup", "--scope", "user"), 0)
+	env.AssertFileExists("/root/.factory/skills/followup/SKILL.md")
+	env.AssertExitCode(env.RunAM("remove", "followup", "--scope", "user"), 0)
+	env.AssertFileAbsent("/root/.factory/skills/followup")
+	env.AssertFileExists("/root/.factory/skills/original/SKILL.md")
+	env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+
+	invalid := env.ReadFile("/root/.agents/config.yaml") + "unknown_field: true\n"
+	env.WriteFile("/root/.agents/config.yaml", invalid)
+	rejected := env.RunAM("install", "followup", "--scope", "user")
+	env.AssertExitCode(rejected, 1)
+	if got := env.ReadFile("/root/.agents/config.yaml"); got != invalid {
+		t.Fatalf("failed install changed invalid v4 user config: got %q, want %q; output: %s", got, invalid, rejected.Combined)
+	}
+	env.AssertFileAbsent("/root/.factory/skills/followup")
+	env.AssertFileExists("/root/.factory/skills/original/SKILL.md")
 }
 
 func TestV4MarketplaceMissingLockCreatedByWritingCommands(t *testing.T) {

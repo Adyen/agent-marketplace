@@ -52,6 +52,8 @@ func TestAdminHTTPValidationAndApply(t *testing.T) {
 	}
 	if w := request("validate", `"1"`, "", body); w.Code != 200 {
 		t.Fatalf("validate: %d %s", w.Code, w.Body.String())
+	} else if got := strings.TrimSpace(w.Body.String()); got != `{"valid":true,"warnings":[]}` {
+		t.Fatalf("static validation must not claim preview state, which only the discovery preview knows: %s", got)
 	}
 	if w := request("changes", "", "missing-version", body); w.Code != 428 {
 		t.Fatalf("missing version: %d %s", w.Code, w.Body.String())

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -20,6 +21,14 @@ type StagedConfigEdit struct {
 	Expected      dependencytxn.Generation
 	Bytes         []byte
 	Mode          fs.FileMode
+}
+
+type StagedLockEdit struct {
+	Path         string
+	Expected     dependencytxn.Generation
+	ExpectedMode fs.FileMode
+	Bytes        []byte
+	Mode         fs.FileMode
 }
 
 type ConfigPathMapper func(string) (string, error)
@@ -166,7 +175,33 @@ func (m *configStagingManager) Close() error {
 	return os.RemoveAll(m.root)
 }
 
+// stagedPathError reports a staged mutation failure against the config the
+// user asked to edit instead of its temporary shadow, keeping the error chain.
+type stagedPathError struct {
+	err     error
+	message string
+}
+
+func (e *stagedPathError) Error() string { return e.message }
+func (e *stagedPathError) Unwrap() error { return e.err }
+
+func (m *configStagingManager) unstageError(err error) error {
+	if m == nil || err == nil {
+		return err
+	}
+	message := err.Error()
+	replaced := message
+	for _, staged := range m.files {
+		replaced = strings.ReplaceAll(replaced, staged.shadow, staged.requested)
+	}
+	if replaced == message {
+		return err
+	}
+	return &stagedPathError{err: err, message: replaced}
+}
+
 func closeConfigStaging(m *configStagingManager, operation string, retErr *error) {
+	*retErr = m.unstageError(*retErr)
 	if err := m.Close(); err != nil {
 		slog.Error("config staging cleanup failed", "operation", operation, "error", err)
 		*retErr = errors.Join(*retErr, fmt.Errorf("clean up staged config: %w", err))

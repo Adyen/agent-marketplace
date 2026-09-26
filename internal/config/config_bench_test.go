@@ -240,6 +240,7 @@ func BenchmarkEditorAddRemoveLargeYAML(b *testing.B) {
 			baseYAML := []byte(yaml)
 			configPath := filepath.Join(b.TempDir(), "config.yaml")
 
+			target := LayerTarget{Source: RepoCommitted, StagedPath: configPath, DeclaringPath: configPath}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -248,10 +249,17 @@ func BenchmarkEditorAddRemoveLargeYAML(b *testing.B) {
 					b.Fatal(err)
 				}
 				b.StartTimer()
-				if err := AddResourcesToConfig(configPath, ir.KindSkill, []string{"bench-added-a", "bench-added-b"}); err != nil {
+				editor, err := OpenLayerEditor(target)
+				if err != nil {
 					b.Fatal(err)
 				}
-				if err := RemoveResourceFromConfig(configPath, ir.KindSkill, "bench-added-a"); err != nil {
+				if err := editor.SetUnboundExclude(ResourceLocator{Kind: ir.KindSkill, Name: "skill-000"}); err != nil {
+					b.Fatal(err)
+				}
+				if err := editor.RemoveUnboundInclude(ResourceLocator{Kind: ir.KindSkill, Name: "skill-001"}); err != nil {
+					b.Fatal(err)
+				}
+				if _, err := editor.Render(); err != nil {
 					b.Fatal(err)
 				}
 			}
