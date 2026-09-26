@@ -53,6 +53,7 @@ You run the hosted service that curates registries for an organization.
 | Goal | Read |
 |---|---|
 | See the whole thing working on your laptop | [Tutorial: run a local Marketplace](./tutorials/run-a-local-marketplace.md) |
+| Add a registry from the admin panel for the first time | [Tutorial: add your first registry](./tutorials/add-your-first-marketplace-registry.md) |
 | Deploy it for real | [Deploy a production Marketplace](./how-to/operator/deploy-a-production-marketplace.md) · [Configure a reverse proxy](./how-to/operator/configure-a-reverse-proxy.md) |
 | Index a registry that needs credentials | [Connect a private registry](./how-to/operator/connect-a-private-registry.md) |
 | Decide what is allowed in | [Manage ingestion policy](./how-to/operator/manage-ingestion-policy.md) |
