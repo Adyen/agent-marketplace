@@ -131,15 +131,21 @@ Enabled Devin data, matching the shipped catalog shape:
 schema: 1
 harness: devin
 evidence:
-  checked: "2026-09-21"
+  checked: "2026-09-26"
   refs:
     - https://docs.devin.ai/cli/subagents
+    - https://docs.devin.ai/cli/models
 surfaces:
   subagent:
     model_field: model
     omitted_model: default
+  skill:
+    model_field: model
+    omitted_model: inherit
+    inherit_model: ""
 models:
   openai/gpt-5.6-luna:
+    model: gpt-5.6-luna
     reasoning:
       low: {model: gpt-5-6-luna-low}
       medium: {model: gpt-5-6-luna-medium}
