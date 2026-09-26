@@ -31,7 +31,7 @@ func TestBuildFlags(t *testing.T) {
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "go"), []byte("#!/bin/sh\nprintf '%s\\000' \"$@\"\nprintf '\\n'\n"), 0o700); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "go"), []byte("#!/bin/sh\nprintf '%s\\000' \"$@\"\nprintf '\\n'\nprintf '%s\\n' 'build tool warning' >&2\n"), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("make", "-s", "-f", filepath.Join(root, "Makefile"), tc.target)
@@ -46,13 +46,19 @@ func TestBuildFlags(t *testing.T) {
 				"AGENT_MARKETPLACE_RELEASE_TELEMETRY_ENDPOINT=https://telemetry.example.invalid",
 				"AGENT_MARKETPLACE_RELEASE_TELEMETRY_RETENTION_URL=https://telemetry.example.invalid/retention",
 			}
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("build invocation: %v\n%s", err, output)
+			var stdout, stderr strings.Builder
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("build invocation: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
 			}
-			records := strings.Split(strings.TrimSuffix(string(output), "\n"), "\n")
+			if got := strings.Count(stderr.String(), "build tool warning\n"); got != tc.builds {
+				t.Fatalf("got %d tool warnings, want %d: %q", got, tc.builds, stderr.String())
+			}
+			output := stdout.String()
+			records := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
 			if len(records) != tc.builds {
-				t.Fatalf("got %d build invocations, want %d: %q", len(records), tc.builds, output)
+				t.Fatalf("got %d build invocations, want %d: stdout %q, stderr %q", len(records), tc.builds, output, stderr.String())
 			}
 			for _, record := range records {
 				args := strings.Split(strings.TrimSuffix(record, "\x00"), "\x00")
