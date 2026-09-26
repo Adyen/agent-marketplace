@@ -12,10 +12,10 @@ On first launch, choose your target harnesses and press `enter` to save an edita
 1. Open **Registry** (`2`) to browse sources, or **Scope** (`1`) to see where resources are selected. Use `/` to search and `esc` to clear it.
 2. Press `enter` on a resource to inspect it. Local resources open a file browser. For a Marketplace resource you haven't installed, the TUI shows metadata without downloading the artifact. Installed Marketplace resources can show files from their trusted cached bundles. If the cached files are missing, sync can restore them.
 3. Press `space` to choose a scope. Check the current selection before toggling it for user, project, or local scope. Required resources cannot be excluded.
-4. For a new Marketplace resource, review the verified revision preview and confirm the installation scope. Installation requires this check even if the resource appears in search. You can inspect blocked and revoked rows but cannot install them.
+4. Selecting a new Marketplace resource verifies its exact revision before installation. The TUI shows the verified preview and asks for confirmation when security findings exist; with no findings, it installs the prepared revision without an extra prompt. Capability metadata alone does not trigger consent. You can inspect blocked and revoked rows but cannot install them.
 5. Press `s` to sync pending changes, then check **Status** (`3`) and diagnostics (`e`). Fix any errors before relying on the generated output.
 
-The TUI saves selection changes to config as soon as you accept them. They remain saved if you quit without syncing; "pending" means the output still needs a sync. Marketplace installation has a separate verification and confirmation step.
+The TUI saves selection changes to config as soon as you accept them. They remain saved if you quit without syncing; "pending" means the output still needs a sync. Marketplace installation always verifies the exact revision, and requires a separate confirmation only when findings exist.
 
 ## Hosted Marketplace discovery
 

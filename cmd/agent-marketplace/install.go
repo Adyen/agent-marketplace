@@ -120,8 +120,8 @@ func newInstallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref (branch/tag/sha) for --from registry; requires --from")
 	cmd.Flags().StringVar(&fromPath, "path", "", "Subdirectory within the --from registry; requires --from")
 	cmd.Flags().StringVar(&installedName, "as", "", "Install a Marketplace resource under this local name")
-	cmd.Flags().BoolVar(&acceptRisk, "accept-risk", false, "Accept Marketplace findings and active capabilities")
-	cmd.Flags().BoolVar(&assumeYes, "yes", false, "Accept Marketplace findings and active capabilities (automation)")
+	cmd.Flags().BoolVar(&acceptRisk, "accept-risk", false, "Accept Marketplace security findings for this verified revision")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "Accept Marketplace security findings in automation")
 	cmd.Flags().StringVar(&marketplace, "marketplace", "", "Marketplace alias or endpoint for a Marketplace locator")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show full Marketplace resource and security details")
 
