@@ -368,12 +368,16 @@ agent-marketplace mcp disable --scope user
 Converts a code-mode session-log entry for a catalog ref into a normal installed, locked selection through the existing install transaction.
 
 ```text
-agent-marketplace promote <ref> [--scope <scope>]
+agent-marketplace promote <ref> [--scope <scope>] [--accept-risk | --yes]
 ```
+
+When the recorded entry resolves to a Marketplace resource with security findings or active capabilities, `promote` applies the same consent gate as `install`: interactive terminals get the risk summary prompt, non-interactive runs refuse until `--accept-risk` or `--yes` is passed. Those flags are rejected for Git and directory sources.
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--scope` | string | no | resolved by install | Config layer to write to: `repo`, `user`, or `local`. |
+| `--accept-risk` | bool | no | `false` | Accept Marketplace findings and active capabilities for the promoted resource. |
+| `--yes` | bool | no | `false` | Accept Marketplace findings and active capabilities (automation). |
 
 ## Configuration authoring
 

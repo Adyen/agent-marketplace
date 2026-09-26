@@ -12,9 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"bytes"
+
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/codemode"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -54,6 +57,26 @@ func promoteArtifact(t *testing.T, kind, name string, resource ir.Resource) prom
 			ArchiveDigest: store.ArchiveDigest(archiveDigest),
 		}),
 	}
+}
+
+func promoteWarnArtifact(t *testing.T, kind, name string, resource ir.Resource) promoteResource {
+	t.Helper()
+	res := promoteArtifact(t, kind, name, resource)
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate:               res.revision.Coordinate,
+		ContentDigest:            res.revision.ContentDigest,
+		AnalyzerVersion:          "agent-marketplace-test/v1",
+		PolicyDigest:             store.PolicyDigest("sha256:" + strings.Repeat("c", 64)),
+		Decision:                 store.AssessmentDecisionWarn,
+		Findings:                 []store.Finding{{Code: "test.warn", Severity: "medium", Policy: "warn", Message: "fixture warning"}},
+		InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("d", 64)),
+		AssessedAt:               time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("finalize warn assessment: %v", err)
+	}
+	res.revision.Assessment = assessment
+	return res
 }
 
 func newPromoteMarketplaceServer(t *testing.T, resources map[string]promoteResource) *httptest.Server {
@@ -351,6 +374,158 @@ func TestPromoteMarketplacePinsExactContentDigest(t *testing.T) {
 	for _, pin := range pins {
 		if pin == mcpRes.archiveDigest || pin == skillRes.archiveDigest {
 			t.Fatalf("pin recorded the archive digest instead of the content digest: %v", pins)
+		}
+	}
+}
+
+func setupPromoteWarnMarketplace(t *testing.T) (server *httptest.Server, configPath, lockPath string, res promoteResource) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("TMPDIR", t.TempDir())
+
+	res = promoteWarnArtifact(t, "skill", "risky", ir.NewSkill("risky", "Risky", "Risky body.", nil, nil, ir.SourceRef{}))
+	server = newPromoteMarketplaceServer(t, map[string]promoteResource{"tools/skill/risky": res})
+
+	configPath = filepath.Join(home, ".agents", "config.yaml")
+	lockPath = filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  mp: {marketplace: "+server.URL+"}\n")
+	withWorkingDir(t, t.TempDir())
+	if output, err := executeCommand("lock"); err != nil {
+		t.Fatalf("lock endpoint source: %v\n%s", err, output)
+	}
+	writeSessionEntry(t, home+"/state", "sess-warn", codemode.SessionEntry{
+		Event: "skill.load", Ref: "mp:tools/skill/risky", Revision: res.contentDigest,
+		Source: "marketplace:" + server.URL, Digest: res.contentDigest,
+	})
+	return server, configPath, lockPath, res
+}
+
+func lockHasResourcePin(t *testing.T, lockPath, name string) bool {
+	t.Helper()
+	doc := readLockDocument(t, lockPath)
+	for _, mp := range doc.Marketplaces {
+		for _, r := range mp.Resources {
+			if r.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestPromoteMarketplaceWarnRefusesWithoutConsent(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	server, configPath, lockPath, _ := setupPromoteWarnMarketplace(t)
+	configBefore, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeCommand("promote", "mp:tools/skill/risky", "--scope", "user")
+	if err == nil || !strings.Contains(err.Error(), "risk acceptance") {
+		t.Fatalf("expected consent refusal, got %v\n%s", err, output)
+	}
+	if strings.Contains(output, server.URL) {
+		t.Fatalf("promote leaked the marketplace source URL:\n%s", output)
+	}
+	configAfter, err := os.ReadFile(configPath)
+	if err != nil || !bytes.Equal(configBefore, configAfter) {
+		t.Fatalf("config changed without consent: %v\n%s", err, configAfter)
+	}
+	if lockHasResourcePin(t, lockPath, "risky") {
+		t.Fatal("lock recorded the resource without consent")
+	}
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(filepath.Dir(configPath)), ".factory", "skills", "risky", "SKILL.md")); !os.IsNotExist(statErr) {
+		t.Fatal("materialized the resource without consent")
+	}
+}
+
+func TestPromoteMarketplaceWarnAcceptRiskInstalls(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, _, lockPath, res := setupPromoteWarnMarketplace(t)
+	for _, flag := range []string{"--accept-risk", "--yes"} {
+		output, err := executeCommand("promote", "mp:tools/skill/risky", "--scope", "user", flag)
+		if err != nil {
+			t.Fatalf("promote %s: %v\n%s", flag, err, output)
+		}
+		if !lockHasResourcePin(t, lockPath, "risky") {
+			t.Fatalf("promote %s did not record the lock pin", flag)
+		}
+	}
+	doc := readLockDocument(t, lockPath)
+	var pin string
+	for _, mp := range doc.Marketplaces {
+		for _, r := range mp.Resources {
+			if r.Name == "risky" {
+				pin = string(r.ContentDigest)
+			}
+		}
+	}
+	if pin != res.contentDigest {
+		t.Fatalf("pin = %q, want %q", pin, res.contentDigest)
+	}
+}
+
+func TestPromoteMarketplaceWarnInteractiveConsent(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, configPath, lockPath, _ := setupPromoteWarnMarketplace(t)
+	scope, err := pipeline.ParseScope("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, reply := range []string{"", "n\n"} {
+		var out bytes.Buffer
+		if err := runPromote(context.Background(), &out, strings.NewReader(reply), "mp:tools/skill/risky", scope, true, true, false); err != nil {
+			t.Fatalf("interactive decline %q: %v", reply, err)
+		}
+		if !strings.Contains(out.String(), "Nothing has been installed.") {
+			t.Fatalf("interactive decline %q output: %s", reply, out.String())
+		}
+		if lockHasResourcePin(t, lockPath, "risky") {
+			t.Fatalf("interactive decline %q installed the resource", reply)
+		}
+	}
+
+	var out bytes.Buffer
+	if err := runPromote(context.Background(), &out, strings.NewReader("y\n"), "mp:tools/skill/risky", scope, true, true, false); err != nil {
+		t.Fatalf("interactive accept: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "Install despite these risks?") {
+		t.Fatalf("interactive accept skipped the risk summary:\n%s", out.String())
+	}
+	if !lockHasResourcePin(t, lockPath, "risky") {
+		t.Fatal("interactive accept did not record the lock pin")
+	}
+	configAfter, err := os.ReadFile(configPath)
+	if err != nil || !bytes.Contains(configAfter, []byte("risky")) {
+		t.Fatalf("interactive accept did not update config: %v\n%s", err, configAfter)
+	}
+}
+
+func TestPromoteRejectsRiskFlagsForNonMarketplaceSource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	writeSessionEntry(t, home+"/state", "sess-local", codemode.SessionEntry{
+		Event: "skill.load", Ref: "local:reg/skill/x", Source: t.TempDir(),
+	})
+	for _, flag := range []string{"--accept-risk", "--yes"} {
+		_, err := executeCommand("promote", "local:reg/skill/x", flag)
+		if err == nil || !strings.Contains(err.Error(), "Marketplace") {
+			t.Fatalf("promote %s on a non-Marketplace entry: got %v", flag, err)
 		}
 	}
 }

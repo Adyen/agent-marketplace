@@ -50,6 +50,124 @@ func TestMcpEnableThenDisableUserScope(t *testing.T) {
 	}
 }
 
+func TestMcpEnableCreatesV4RootsInEachScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+
+	for _, scope := range []string{"user", "repo", "local"} {
+		out, err := executeCommand("mcp", "enable", "--scope", scope)
+		if err != nil {
+			t.Fatalf("mcp enable --scope %s: %v\n%s", scope, err, out)
+		}
+	}
+
+	userPath, err := config.UserPersonalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for scope, path := range map[string]string{
+		"user":  userPath,
+		"repo":  config.ProjectConfigPath(repo),
+		"local": config.LocalConfigPath(repo),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%s root missing: %v", scope, err)
+		}
+		if config.PeekAPIVersion(data) != config.APIVersionV4 {
+			t.Fatalf("%s root is not v4:\n%s", scope, data)
+		}
+		cfg, err := config.LoadV4ConfigFromPath(path)
+		if err != nil {
+			t.Fatalf("%s root failed v4 load: %v", scope, err)
+		}
+		if !cfg.CodeMode.EnabledValue() {
+			t.Fatalf("%s root lost codeMode.enabled", scope)
+		}
+	}
+
+	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{
+		RepoRoot:         repo,
+		LocalConfigDir:   repo,
+		GlobalPath:       userPath,
+		OrganizationPath: filepath.Join(repo, "absent-org.yaml"),
+	})
+	if len(ec.Errors) > 0 {
+		t.Fatalf("effective load errors: %v", ec.Errors)
+	}
+	if !ec.Merged.CodeMode.EnabledValue() {
+		t.Fatalf("effective config lost codeMode.enabled: %+v", ec.Merged.CodeMode)
+	}
+	for _, warning := range ec.Warnings {
+		if strings.Contains(warning.Error(), "deprecated") {
+			t.Fatalf("fresh v4 roots produced a legacy warning: %v", warning)
+		}
+	}
+}
+
+func TestMcpEnableRefusesLegacyRootsWithoutRewriting(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+
+	userPath, err := config.UserPersonalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	localPath := config.LocalConfigPath(repo)
+	roots := map[string]string{
+		userPath:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
+		localPath: "registries: []\n",
+	}
+	for path, body := range roots {
+		writeConfig(t, path, body)
+	}
+
+	out, err := executeCommand("mcp", "enable", "--scope", "user")
+	if err == nil || !strings.Contains(err.Error(), "migrate --scope user") {
+		t.Fatalf("expected user migrate guidance, got %v\n%s", err, out)
+	}
+	out, err = executeCommand("mcp", "enable", "--scope", "local")
+	if err == nil || !strings.Contains(err.Error(), "migrate --scope local") {
+		t.Fatalf("expected local migrate guidance, got %v\n%s", err, out)
+	}
+
+	for path, body := range roots {
+		after, err := os.ReadFile(path)
+		if err != nil || string(after) != body {
+			t.Fatalf("legacy root %s modified:\n%s", path, after)
+		}
+	}
+}
+
+func TestMcpDisableAbsentRootIsNoop(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	out, err := executeCommand("mcp", "disable", "--scope", "user")
+	if err != nil {
+		t.Fatalf("mcp disable on absent root: %v\n%s", err, out)
+	}
+	userPath, err := config.UserPersonalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(userPath); !os.IsNotExist(statErr) {
+		t.Fatal("disable created a config root")
+	}
+}
+
 func TestMcpEnableRejectsUnknownScope(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

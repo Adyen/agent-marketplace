@@ -17,6 +17,8 @@ import (
 
 func newPromoteCmd() *cobra.Command {
 	var scopeStr string
+	var acceptRisk bool
+	var assumeYes bool
 	cmd := &cobra.Command{
 		Use:   "promote <ref>",
 		Short: "Install a resource discovered through code-mode",
@@ -29,10 +31,15 @@ func newPromoteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runPromote(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), args[0], scope, cmd.Flags().Changed("scope"))
+			in := cmd.InOrStdin()
+			fd, hasFD := in.(interface{ Fd() uintptr })
+			interactive := hasFD && isTerminal(fd.Fd()) && !acceptRisk && !assumeYes
+			return runPromote(cmd.Context(), cmd.OutOrStdout(), in, args[0], scope, cmd.Flags().Changed("scope"), interactive, acceptRisk || assumeYes)
 		},
 	}
 	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo, user, or local")
+	cmd.Flags().BoolVar(&acceptRisk, "accept-risk", false, "Accept Marketplace findings and active capabilities for the promoted resource")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "Accept Marketplace findings and active capabilities (automation)")
 	return cmd
 }
 
@@ -45,7 +52,7 @@ var sessionLogDir = func() string {
 	return filepath.Join(root, "agent-marketplace", "mcp-sessions")
 }
 
-func runPromote(ctx context.Context, out io.Writer, in io.Reader, ref string, scope pipeline.Scope, scopeSpecified bool) error {
+func runPromote(ctx context.Context, out io.Writer, in io.Reader, ref string, scope pipeline.Scope, scopeSpecified, interactive, acceptRisk bool) error {
 	entry, err := latestSessionEntry(ref)
 	if err != nil {
 		return err
@@ -66,16 +73,19 @@ func runPromote(ctx context.Context, out io.Writer, in io.Reader, ref string, sc
 		if entry.Digest != "" {
 			locator += "@" + entry.Digest
 		}
-		return runInstall(ctx, out, in, false, false, []string{locator}, "", false, "", scope, scopeSpecified, "", "", "", "", "", true, "")
+		return runInstall(ctx, out, in, interactive, false, []string{locator}, "", false, "", scope, scopeSpecified, "", "", "", "", "", acceptRisk, "")
+	}
+	if acceptRisk {
+		return fmt.Errorf("--accept-risk and --yes are only supported for Marketplace resources")
 	}
 	name := entry.Ref[strings.LastIndex(entry.Ref, "/")+1:]
 	if entry.Source != "" {
-		return runInstall(ctx, out, in, false, false, []string{name}, "", false, "", scope, scopeSpecified, kind, entry.Source, entry.Revision, entry.SourcePath, "", true, "")
+		return runInstall(ctx, out, in, interactive, false, []string{name}, "", false, "", scope, scopeSpecified, kind, entry.Source, entry.Revision, entry.SourcePath, "", false, "")
 	}
 	if strings.Contains(entry.Ref, ":") && !strings.HasPrefix(entry.Ref, "local:") {
 		return fmt.Errorf("ref %q has no recorded provenance and cannot be routed safely; reload it through code mode first", entry.Ref)
 	}
-	return runInstall(ctx, out, in, false, false, []string{name}, "", false, "", scope, scopeSpecified, kind, "", "", "", "", true, "")
+	return runInstall(ctx, out, in, interactive, false, []string{name}, "", false, "", scope, scopeSpecified, kind, "", "", "", "", false, "")
 }
 
 func refKind(ref string) string {
