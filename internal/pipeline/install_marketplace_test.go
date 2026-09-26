@@ -146,8 +146,41 @@ func TestMarketplaceInstallSummaryAggregatesCollectionRisks(t *testing.T) {
 	if len(summary.Findings) != 2 || summary.Findings[0].Resource != "coderabbit-skills" || summary.Findings[1].Resource != "fix" {
 		t.Fatalf("summary findings = %#v", summary.Findings)
 	}
-	if err := evaluateMarketplaceConsent(root, false); err == nil || !strings.Contains(err.Error(), "2 finding(s), 2 active capability(ies)") {
-		t.Fatalf("consent error = %v, want aggregate collection counts", err)
+	if err := evaluateMarketplaceConsent(root, false); err == nil || !strings.Contains(err.Error(), "2 security finding(s)") {
+		t.Fatalf("consent error = %v, want aggregate collection findings", err)
+	}
+}
+
+func TestMarketplaceConsentDoesNotRequireAcceptanceForCapabilitiesWithoutFindings(t *testing.T) {
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "skill-one"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+	}
+	plan := &marketplace.PreparedInstall{
+		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionAllow, nil),
+		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"skill"}}},
+	}
+	if err := evaluateMarketplaceConsent(plan, false); err != nil {
+		t.Fatalf("capability-only install required risk acceptance: %v", err)
+	}
+}
+
+func TestPreparedMarketplaceInstallRequiresRiskAcceptanceOnlyForFindings(t *testing.T) {
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "skill-one"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+	}
+	prepared := &PreparedMarketplaceInstall{plan: &marketplace.PreparedInstall{
+		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionAllow, nil),
+		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"skill"}}},
+	}}
+	if prepared.RequiresRiskAcceptance() {
+		t.Fatal("capability-only install required risk acceptance")
+	}
+
+	prepared.plan.Revision = testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, []store.Finding{{Code: "review", Severity: "warning", Policy: "warn"}})
+	if !prepared.RequiresRiskAcceptance() {
+		t.Fatal("finding-bearing install did not require risk acceptance")
 	}
 }
 
@@ -391,6 +424,62 @@ func TestCommitPreparedMarketplaceInstallRejectsPolicyChangeWithoutMutation(t *t
 				t.Fatalf("config changed after policy refusal:\n%s", after)
 			}
 		})
+	}
+}
+
+func TestCommitPreparedMarketplaceInstallSucceedsForOperatorExposedRejectedResource(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(home, "missing-org.yaml"))
+	repo := t.TempDir()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	writeFileMode(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n", 0o600)
+
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	for _, name := range []string{"review", "second"} {
+		fake.addSkill(t, registry, name)
+		resource := fake.resources["source/skill/"+name]
+		resource.revision = testAssessedResourceRevision(t, resource.revision.ResourceRevision, store.AssessmentDecisionReject,
+			[]store.Finding{{Code: "policy-block", Severity: "high", Policy: "reject", Message: "blocked by policy"}})
+		resource.availability = string(mpapi.AvailabilityOperatorExposed)
+		fake.resources["source/skill/"+name] = resource
+	}
+
+	prepared, err := PrepareMarketplaceInstall(context.Background(), InstallOptions{Args: []string{fake.URL + "/r/source/skill/review"}, RepoRoot: repo, Scope: ScopeUser})
+	if err != nil {
+		t.Fatalf("PrepareMarketplaceInstall: %v", err)
+	}
+	if _, err := CommitPreparedMarketplaceInstall(context.Background(), prepared); err != nil {
+		t.Fatalf("CommitPreparedMarketplaceInstall: %v", err)
+	}
+	if configData, readErr := os.ReadFile(configPath); readErr != nil || !strings.Contains(string(configData), "source/skill/review") {
+		t.Fatalf("config missing installed pin: %v\n%s", readErr, configData)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("materialized skill missing: %v", err)
+	}
+
+	prepared, err = PrepareMarketplaceInstall(context.Background(), InstallOptions{Args: []string{fake.URL + "/r/source/skill/second"}, RepoRoot: repo, Scope: ScopeUser})
+	if err != nil {
+		t.Fatalf("PrepareMarketplaceInstall for second: %v", err)
+	}
+	resource := fake.resources["source/skill/second"]
+	resource.availability = ""
+	fake.resources["source/skill/second"] = resource
+	configBefore, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = CommitPreparedMarketplaceInstall(context.Background(), prepared); err == nil {
+		t.Fatal("withdrawn exposure install succeeded")
+	}
+	if configAfter, readErr := os.ReadFile(configPath); readErr != nil || !bytes.Equal(configBefore, configAfter) {
+		t.Fatalf("config changed after withdrawn exposure refusal:\n%s", configAfter)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "second")); !os.IsNotExist(err) {
+		t.Fatalf("withdrawn exposure materialized output: %v", err)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 // MarketplaceConsentError carries the verified preview even when consent
@@ -202,12 +203,16 @@ func marketplaceRegistrationConfigPath(ec *config.EffectiveConfig, source config
 	}
 }
 
-// Preview returns the verified human-readable plan that must be confirmed before commit.
+// Preview returns the verified human-readable install plan.
 func (p *PreparedMarketplaceInstall) Preview() string {
 	if p == nil {
 		return ""
 	}
 	return p.preview
+}
+
+func (p *PreparedMarketplaceInstall) RequiresRiskAcceptance() bool {
+	return p != nil && p.plan != nil && len(marketplaceInstallSummary(p.plan).Findings) > 0
 }
 
 // PrepareMarketplaceInstall resolves and verifies an exact Marketplace install
@@ -374,7 +379,7 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	requirementWarnings, err := MutateMarketplaceLayer(ctx, prepared.options.RepoRoot, prepared.options.LocalConfigDir, prepared.configPath, installScopeSource(prepared.options.Scope), func(m *MarketplaceLayerMutation) error {
 		return m.IncludePins(commitEntry, pins)
 	}, func() ([]error, error) {
-		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan), withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
+		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan)))
 		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
 	})
 	if err != nil {
@@ -389,6 +394,25 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 		CollectionLabel: prepared.plan.Pin.Name, MarketplacePreview: prepared.preview,
 		MarketplaceSummary: marketplaceInstallSummary(prepared.plan), RequirementWarnings: requirementWarnings,
 	}, nil
+}
+
+func marketplaceInstallResolveMode(plan *marketplace.PreparedInstall) resolver.MarketplaceResolveMode {
+	if marketplacePlanNeedsRevalidation(plan) {
+		return resolver.MarketplaceResolveModeCached
+	}
+	return resolver.MarketplaceResolveModeCachedNoFetch
+}
+
+func marketplacePlanNeedsRevalidation(plan *marketplace.PreparedInstall) bool {
+	if plan.Revision.Assessment.Decision == store.AssessmentDecisionReject {
+		return true
+	}
+	for _, member := range plan.CollectionMembers {
+		if marketplacePlanNeedsRevalidation(member) {
+			return true
+		}
+	}
+	return false
 }
 
 func marketplaceInstallSummary(plan *marketplace.PreparedInstall) MarketplaceInstallSummary {
@@ -685,7 +709,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 	}
 	marketplaceMode := resolver.MarketplaceResolveModeRefresh
 	if overlays != nil {
-		marketplaceMode = resolver.MarketplaceResolveModeCachedNoFetch
+		marketplaceMode = marketplaceInstallResolveMode(plan)
 	}
 	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true, EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, FileOverlays: overlays}})
 	if len(resolved.Errors) > 0 {
@@ -777,8 +801,8 @@ func evaluateMarketplaceConsent(plan *marketplace.PreparedInstall, accept bool) 
 		return err
 	}
 	summary := marketplaceInstallSummary(plan)
-	if (len(summary.Findings) > 0 || len(summary.Capabilities) > 0) && !accept {
-		return fmt.Errorf("marketplace install requires risk acceptance: %d finding(s), %d active capability(ies); re-run with --accept-risk (or --yes)", len(summary.Findings), len(summary.Capabilities))
+	if len(summary.Findings) > 0 && !accept {
+		return fmt.Errorf("marketplace install requires risk acceptance: %d security finding(s); re-run with --accept-risk (or --yes)", len(summary.Findings))
 	}
 	return nil
 }
