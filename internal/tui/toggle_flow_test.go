@@ -720,6 +720,68 @@ func TestDisableInStatusTabKeepsListScrollPosition(t *testing.T) {
 	}
 }
 
+func TestToggleRemainsSerializedUntilAuthoritativeReload(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width, m.height = 80, 24
+	m.rows = []row{mkRow("review", withProject)}
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	first, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("initial toggle was blocked")
+	}
+	updated, cmd := m.Update(configWrittenMsg{operation: first, skillName: "review", enabled: true})
+	m = updated.(Model)
+	generation := m.requests.active(requestSnapshot)
+	if cmd == nil || generation == 0 {
+		t.Fatal("config write did not schedule an authoritative reload")
+	}
+	if _, ok := m.beginOperation(operationMutation); ok {
+		t.Fatal("second toggle started before authoritative reload")
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation - 1, rows: []row{mkRow("stale", withProject)}})
+	m = updated.(Model)
+	if _, ok := m.beginOperation(operationMutation); ok {
+		t.Fatal("stale snapshot unblocked a second toggle")
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, rows: []row{mkRow("review", withProject)}, mergedCfg: &config.Config{}, driftAssessment: driftReady})
+	m = updated.(Model)
+	if m.operations.active != nil {
+		t.Fatal("accepted reload left the toggle blocked")
+	}
+	if _, ok := m.beginOperation(operationMutation); !ok {
+		t.Fatal("toggle was not available after authoritative reload")
+	}
+}
+
+func TestToggleSupersededReloadReportsAuthoritativeFailure(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	first, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("initial toggle was blocked")
+	}
+	updated, _ := m.Update(configWrittenMsg{operation: first, skillName: "review", enabled: true})
+	m = updated.(Model)
+	original := m.requests.active(requestSnapshot)
+	superseding := m.beginRequest(requestSnapshot)
+	updated, _ = m.Update(snapshotLoadedMsg{generation: original, rows: []row{mkRow("stale", withProject)}})
+	m = updated.(Model)
+	if m.operations.active == nil || m.pendingToggleReload != original {
+		t.Fatal("stale snapshot completed a pending toggle")
+	}
+	failure := fmt.Errorf("catalog unavailable")
+	updated, _ = m.Update(snapshotLoadedMsg{generation: superseding, mergedCfg: &config.Config{}, driftAssessment: driftFailed, errs: []error{failure}})
+	m = updated.(Model)
+	if m.operations.active != nil || m.pendingToggleReload != 0 {
+		t.Fatal("accepted failed reload left the toggle operation active")
+	}
+	if !m.rowsStale || !contains(m.toast, "catalog unavailable") {
+		t.Fatalf("failed reload reported stale or misleading status: stale=%t toast=%q", m.rowsStale, m.toast)
+	}
+}
+
 // TestReadSnapshotExpandsCollections verifies that the TUI's readSnapshot
 // expands collection references into synthetic registry entries before
 // resolving skills. Without this step, skills selected via collections

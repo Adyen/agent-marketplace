@@ -43,6 +43,8 @@ func TestMarketplaceResolvedCollision(t *testing.T) {
 		collision bool
 	}{
 		{"same pin", resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}, InstalledName: "alias", IsMarketplace: true, MarketplaceURL: "https://market.example", MarketplaceInstanceID: "mp", MarketplaceRegistryID: "source"}, false},
+		{"same aliased pin", resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "alias"}, InstalledName: "alias", MarketplaceResourceName: "review", IsMarketplace: true, MarketplaceURL: "https://market.example", MarketplaceInstanceID: "mp", MarketplaceRegistryID: "source"}, false},
+		{"different pin using alias", resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "alias"}, InstalledName: "alias", MarketplaceResourceName: "other", IsMarketplace: true, MarketplaceURL: "https://market.example", MarketplaceInstanceID: "mp", MarketplaceRegistryID: "source"}, true},
 		{"other Marketplace", resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}, InstalledName: "alias", IsMarketplace: true, MarketplaceURL: "https://other.example", MarketplaceInstanceID: "mp", MarketplaceRegistryID: "source"}, true},
 		{"other kind", resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "alias"}}, false},
 		{"other name", resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "different"}}, false},

@@ -112,7 +112,7 @@ func ReplacePinsToV4(v4 *config.V4Config, current lockfile.Document, entry confi
 		if request.SourceName != sourceName {
 			continue
 		}
-		if request.Registry == registryName && v4MarketplaceLockKind(request.Kind) == expectedRoot.Kind && request.Name == expectedRoot.Name && request.Options.Revision != "" {
+		if request.Registry == registryName && request.MarketplaceKind() == expectedRoot.Kind && request.Name == expectedRoot.Name && request.Options.Revision != "" {
 			return lockfile.Document{}, lockMismatch("marketplaces", "request %q pins an explicit revision and cannot be updated", request.Locator)
 		}
 	}
@@ -323,7 +323,7 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 		if request.SourceName != sourceName {
 			continue
 		}
-		requested[request.Registry+"\x00"+v4MarketplaceLockKind(request.Kind)+"\x00"+request.Name] = true
+		requested[request.Registry+"\x00"+request.MarketplaceKind()+"\x00"+request.Name] = true
 	}
 	retained := make([]lockfile.MarketplaceResourceLock, 0, len(records))
 	selected := make(map[string]bool)

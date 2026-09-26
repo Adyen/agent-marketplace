@@ -2,12 +2,43 @@ package pipeline
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 )
+
+func TestConfigStagingErrorsNameTheRealConfig(t *testing.T) {
+	destination := filepath.Join(canonicalTempDir(t), "config.yaml")
+	if err := os.WriteFile(destination, []byte("apiVersion: agent-marketplace/v4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := newConfigStagingManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadow, err := manager.Path(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("cause")
+	retErr := fmt.Errorf("ensure registry: %s: %w", shadow, cause)
+	closeConfigStaging(manager, "test", &retErr)
+	if message := retErr.Error(); strings.Contains(message, manager.root) || message != "ensure registry: "+destination+": cause" {
+		t.Fatalf("staged error = %q, want real destination %s", message, destination)
+	}
+	if !errors.Is(retErr, cause) {
+		t.Fatalf("staged error lost its cause: %v", retErr)
+	}
+	var none error
+	closeConfigStaging(nil, "test", &none)
+	if none != nil {
+		t.Fatalf("nil staging produced error %v", none)
+	}
+}
 
 func TestConfigStagingManagerCoalescesAndCleans(t *testing.T) {
 	dir := canonicalTempDir(t)
