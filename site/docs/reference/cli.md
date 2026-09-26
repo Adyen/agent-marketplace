@@ -146,15 +146,15 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
 | `--marketplace` | alias or endpoint URL | no | locator prefix | Resolves a Marketplace resource locator against the selected endpoint. Valid only for one Marketplace resource. |
 | `--as` | safe local name | no | resource name | Changes the generated local name while retaining the Marketplace coordinate. |
-| `--accept-risk` | boolean | no | `false` | Accepts the verified revision's warning findings and active capabilities. |
+| `--accept-risk` | boolean | no | `false` | Accepts security findings for the verified revision. |
 | `--yes` | boolean | no | `false` | Automation spelling of `--accept-risk`. |
 | `--verbose` | boolean | no | `false` | Shows the complete collection inventory and technical Marketplace preview, including revisions, digests, acquisition details, and provenance. |
 
 A Marketplace endpoint lookup verifies its well-known identity and canonical URL. To use the endpoint from a v4 root, declare a named `marketplace` source and add an exact request to its `resources` group; keep the matching verified layer lock next to the configuration.
 
-A Marketplace install resolves and verifies the exact artifact before changing config. The default output shows a summary of its source, findings, capabilities, and up to ten collection members. Add `--verbose` to see all collection members, the digest, license, provenance, and acquisition mode. You cannot install rejected or revoked resources. In non-interactive use, pass `--accept-risk` or `--yes` to accept warning findings and active capabilities for that verified invocation only.
+A Marketplace install resolves and verifies the exact artifact before changing config. The default output shows a summary of its source, findings, capabilities, and up to ten collection members. Add `--verbose` to see all collection members, the digest, license, provenance, and acquisition mode. You cannot install rejected or revoked resources. In non-interactive use, pass `--accept-risk` or `--yes` to accept findings for that verified invocation only; capability metadata alone does not require either flag.
 
-In an interactive terminal, warning findings and active capabilities produce an `Install despite these risks? [y/N]:` prompt. Accepting commits the exact prepared revision and prints only the result. Non-interactive execution still requires `--accept-risk` or `--yes` and returns a nonzero exit code without consent.
+In an interactive terminal, security findings produce an `Install despite these risks? [y/N]:` prompt. Capabilities remain visible but do not independently trigger consent. Accepting commits the exact prepared revision and prints only the result. Non-interactive execution requires `--accept-risk` or `--yes` only when findings exist.
 
 Successful Marketplace installs print a concise confirmation:
 
@@ -585,7 +585,7 @@ agent-marketplace tui
 
 The command resolves the repository root from the current directory and uses the current user's home directory for machine-scoped configuration and output. It renders configured resources before network discovery, loads up to 50 results from each Marketplace, and starts federated Marketplace search 250 milliseconds after search input settles. Discovery cache entries are fresh for five minutes and may be used as stale fallback for up to 24 hours.
 
-Marketplace installation verifies the exact revision and displays its findings, capabilities, provenance, and digest before confirmation. Blocked and revoked resources remain visible but cannot be installed.
+Marketplace installation verifies the exact revision before committing. Security findings display the verified preview and require confirmation; capability metadata alone does not. Blocked and revoked resources remain visible but cannot be installed.
 
 ## `completion`
 

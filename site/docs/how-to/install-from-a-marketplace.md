@@ -44,7 +44,7 @@ agent-marketplace install shared-agents/skill/review \
   --marketplace https://marketplace.example.com --scope repo
 ```
 
-The CLI fetches and verifies the immutable revision before changing config. Use `--verbose` to see its license, findings, capabilities, provenance, and acquisition mode. If it has no findings or active capabilities, the output looks like this:
+The CLI fetches and verifies the immutable revision before changing config. Use `--verbose` to see its license, findings, capabilities, provenance, and acquisition mode. When the verified revision has no findings, installation proceeds without an extra confirmation, even if capabilities are listed. The output looks like this:
 
 ```text
 Installing review · skill
@@ -67,7 +67,7 @@ A URL ending in `/revisions/sha256:<digest>` installs that exact revision. Witho
 
 ## 4. Review findings and capabilities
 
-If the verified artifact contains warning-level findings or active capabilities, an interactive terminal shows the compact install details and asks for confirmation:
+Warning-level security findings trigger an interactive confirmation. Capabilities remain visible in the verified preview but do not independently require consent:
 
 ```text
 Installing review · skill
@@ -83,7 +83,7 @@ Install despite these risks? [y/N]:
 
 Answer `y` to install the prepared revision without fetching it again. After acceptance, the CLI prints only the concise success result.
 
-For non-interactive automation, pass `--accept-risk` or `--yes`. Both flags apply only to the exact revision verified by that invocation. Without either flag the command returns a nonzero exit code and installs nothing. A rejected or revoked revision remains blocked.
+For non-interactive automation, pass `--accept-risk` or `--yes` when findings are present. Both flags apply only to the exact revision verified by that invocation. Capability metadata alone does not require either flag. A rejected or revoked revision remains blocked.
 
 If the resource name conflicts with an existing generated path, choose a safe local name:
 

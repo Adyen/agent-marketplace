@@ -41,7 +41,7 @@ Choose one command: `user` installs machine-wide, while `local` keeps the select
 
 ## 4. Review the verified CLI result
 
-The CLI verifies the artifact before writing configuration, even if you already inspected it in the browser. Read any warning findings and active capabilities before answering the confirmation prompt. If you decline, the CLI does not apply the prepared installation. The prompt cannot approve a blocked or revoked revision.
+The CLI verifies the artifact before writing configuration, even if you already inspected it in the browser. Review its findings and capabilities; security findings trigger a confirmation prompt, while capability metadata alone does not. If you decline, the CLI does not apply the prepared installation. The prompt cannot approve a blocked or revoked revision.
 
 After installation:
 

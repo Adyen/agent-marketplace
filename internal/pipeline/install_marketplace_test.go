@@ -146,8 +146,41 @@ func TestMarketplaceInstallSummaryAggregatesCollectionRisks(t *testing.T) {
 	if len(summary.Findings) != 2 || summary.Findings[0].Resource != "coderabbit-skills" || summary.Findings[1].Resource != "fix" {
 		t.Fatalf("summary findings = %#v", summary.Findings)
 	}
-	if err := evaluateMarketplaceConsent(root, false); err == nil || !strings.Contains(err.Error(), "2 finding(s), 2 active capability(ies)") {
-		t.Fatalf("consent error = %v, want aggregate collection counts", err)
+	if err := evaluateMarketplaceConsent(root, false); err == nil || !strings.Contains(err.Error(), "2 security finding(s)") {
+		t.Fatalf("consent error = %v, want aggregate collection findings", err)
+	}
+}
+
+func TestMarketplaceConsentDoesNotRequireAcceptanceForCapabilitiesWithoutFindings(t *testing.T) {
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "skill-one"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+	}
+	plan := &marketplace.PreparedInstall{
+		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionAllow, nil),
+		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"skill"}}},
+	}
+	if err := evaluateMarketplaceConsent(plan, false); err != nil {
+		t.Fatalf("capability-only install required risk acceptance: %v", err)
+	}
+}
+
+func TestPreparedMarketplaceInstallRequiresRiskAcceptanceOnlyForFindings(t *testing.T) {
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "skill-one"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+	}
+	prepared := &PreparedMarketplaceInstall{plan: &marketplace.PreparedInstall{
+		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionAllow, nil),
+		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"skill"}}},
+	}}
+	if prepared.RequiresRiskAcceptance() {
+		t.Fatal("capability-only install required risk acceptance")
+	}
+
+	prepared.plan.Revision = testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, []store.Finding{{Code: "review", Severity: "warning", Policy: "warn"}})
+	if !prepared.RequiresRiskAcceptance() {
+		t.Fatal("finding-bearing install did not require risk acceptance")
 	}
 }
 

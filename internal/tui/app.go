@@ -447,6 +447,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.marketplaceInstallOptions = msg.options
 			m.marketplaceInstallOperation = msg.operation
 			m.marketplacePreparedInstall = msg.prepared
+			if !msg.prepared.RequiresRiskAcceptance() {
+				return m, commitDiscoveryInstall(ctxOrBackground(m.ctx), msg.operation, msg.options, msg.prepared)
+			}
 			m.setMarketplaceConsentPreview(msg.preview)
 			m.pane = paneMarketplaceConsent
 			return m, nil
