@@ -19,8 +19,10 @@ pins are explicit catalog entries and produce informational diagnostics.
 Cursor reasoning uses cataloged model-parameter encodings; Gemini no longer emits
 an unsupported agent `effort` field. Devin native model strings round-trip without
 requiring a Claude alias, and native default selection is distinct from parent
-inheritance. New Devin forward variant mappings remain gated on custom-profile
-acceptance evidence, not merely model-list discovery.
+inheritance. Devin forward variant mappings are enabled from the captured
+`devin models list` CLI inventory plus the documented custom-profile `model`
+override; live acceptance in a real custom profile remains untested and is not
+claimed.
 
 Ingestion preserves native model/effort strings with `ModelSource` provenance.
 Existing constructors and legacy sidecars remain readable; source-aware editable

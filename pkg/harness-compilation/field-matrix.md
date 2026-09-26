@@ -46,7 +46,7 @@ Subagent model selection uses the shipped `modelpolicy/catalogs/<harness>.yaml` 
 | Factory | Cataloged separate `reasoningEffort` | Omission or `inherit`; effort is omitted with a warning because native inheritance ignores it |
 | Cursor | Cataloged parameters in the model string, such as `claude-opus-5[effort=high]` | Omission or `inherit`; no separate effort field |
 | Gemini | Omit effort with a warning; native agent Markdown has no effort field | Omission or `inherit` |
-| Devin | No new forward variant encodings enabled without custom-profile acceptance evidence | Omission uses Devin's default; cross-harness parent inheritance warns, native default round trips do not |
+| Devin | Cataloged reasoning levels encode into model-variant UIDs per `devin.yaml`; unsupported combinations warn and are omitted | Omission uses Devin's default; cross-harness parent inheritance warns, native default round trips do not |
 | Codex | Cataloged separate `model_reasoning_effort` | Omit `model`; do not emit the literal `inherit` |
 
 Native model strings and separate effort values retain `ModelSource` through ingestion and archives. Same-harness opaque selections round-trip without claiming current account availability. Exact versions never silently become floating aliases. A catalog's explicit family-to-version pin emits `model.selector-pinned`. Legacy model/effort sidecars remain readable; authoritative source-aware fields take precedence. Claude/Devin skill model fields share resolution, while other existing skill field policies remain unchanged and are not evidence of native model-override support.
