@@ -202,12 +202,16 @@ func marketplaceRegistrationConfigPath(ec *config.EffectiveConfig, source config
 	}
 }
 
-// Preview returns the verified human-readable plan that must be confirmed before commit.
+// Preview returns the verified human-readable install plan.
 func (p *PreparedMarketplaceInstall) Preview() string {
 	if p == nil {
 		return ""
 	}
 	return p.preview
+}
+
+func (p *PreparedMarketplaceInstall) RequiresRiskAcceptance() bool {
+	return p != nil && p.plan != nil && len(marketplaceInstallSummary(p.plan).Findings) > 0
 }
 
 // PrepareMarketplaceInstall resolves and verifies an exact Marketplace install
@@ -777,8 +781,8 @@ func evaluateMarketplaceConsent(plan *marketplace.PreparedInstall, accept bool) 
 		return err
 	}
 	summary := marketplaceInstallSummary(plan)
-	if (len(summary.Findings) > 0 || len(summary.Capabilities) > 0) && !accept {
-		return fmt.Errorf("marketplace install requires risk acceptance: %d finding(s), %d active capability(ies); re-run with --accept-risk (or --yes)", len(summary.Findings), len(summary.Capabilities))
+	if len(summary.Findings) > 0 && !accept {
+		return fmt.Errorf("marketplace install requires risk acceptance: %d security finding(s); re-run with --accept-risk (or --yes)", len(summary.Findings))
 	}
 	return nil
 }
