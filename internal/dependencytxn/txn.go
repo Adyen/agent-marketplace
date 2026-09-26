@@ -138,6 +138,11 @@ type FaultPoint struct {
 
 type FaultHook func(FaultPoint) error
 
+// defaultFault is always nil in production builds. The e2e build tag installs
+// a process-crash hook (fault_e2e.go) so built-binary tests can interrupt a
+// real publication; WithFaultHook still overrides it.
+var defaultFault FaultHook
+
 type Option func(*options)
 
 type options struct {
@@ -1233,7 +1238,7 @@ func sortedKeys(values map[string]struct{}) []string {
 }
 
 func applyOptions(opts []Option) options {
-	cfg := options{syncDir: fsyncDir}
+	cfg := options{syncDir: fsyncDir, fault: defaultFault}
 	for _, opt := range opts {
 		opt(&cfg)
 	}

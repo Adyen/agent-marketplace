@@ -36,6 +36,8 @@ var benchmarkRoots = []string{
 	"internal/lockfile",
 	"internal/sourcerevision",
 	"internal/pipeline",
+	"internal/marketplace",
+	"internal/marketplacelock",
 }
 
 func main() {

@@ -737,9 +737,13 @@ func sameMarketplacePlanIdentity(a, b *marketplace.PreparedInstall) bool {
 func sameResolvedMarketplaceIdentity(existing resolver.ResolvedArtifact, plan *marketplace.PreparedInstall) bool {
 	existingURL := canonicalMarketplaceURL(existing.MarketplaceURL)
 	planURL := canonicalMarketplaceURL(plan.Entry.URL)
+	canonicalName := existing.MarketplaceResourceName
+	if canonicalName == "" {
+		canonicalName = existing.Name
+	}
 	return existing.IsMarketplace && existingURL != "" && existingURL == planURL &&
 		existing.MarketplaceInstanceID == plan.Entry.InstanceID && existing.MarketplaceRegistryID == plan.Pin.RegistryID &&
-		existing.Kind == plan.Resolved.Kind && existing.Name == plan.Pin.Name
+		existing.Kind == plan.Resolved.Kind && canonicalName == plan.Pin.Name
 }
 
 func marketplaceResolvedInstalledName(existing resolver.ResolvedArtifact) string {

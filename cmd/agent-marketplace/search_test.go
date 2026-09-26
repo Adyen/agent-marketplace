@@ -137,6 +137,39 @@ marketplaces:
 	if !strings.Contains(output, `"name": "genai-architect"`) || !strings.Contains(output, `"name": "architecture"`) {
 		t.Fatalf("expected MCP server and skill in output, got:\n%s", output)
 	}
+	if _, err := executeCommand("search", "--output", "json", "--kind", "mcp", "architect"); err != nil || receivedKind != "mcpserver" {
+		t.Fatalf("MCP kind was not forwarded as mcpserver: kind=%q error=%v", receivedKind, err)
+	}
+}
+
+func TestSearchCommandLimitOffsetBounds(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	withWorkingDir(t, t.TempDir())
+	server := searchCommandServer(t, false)
+	defer server.Close()
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), fmt.Sprintf("marketplaces:\n  - url: %s\n    instance_id: mp-public\n    alias: public\n", server.URL))
+	positive, err := executeCommand("search", "--marketplace", "public", "--output", "json", "--limit", "1")
+	if err != nil || !strings.Contains(positive, `"name": "review"`) {
+		t.Fatalf("limited search failed to return the fixture: %q, %v", positive, err)
+	}
+	paged, err := executeCommand("search", "--marketplace", "public", "--output", "json", "--limit", "1", "--offset", "1")
+	var result struct {
+		Results []struct {
+			Name string `json:"name"`
+		} `json:"results"`
+	}
+	if parseErr := json.Unmarshal([]byte(paged), &result); err != nil || parseErr != nil || len(result.Results) != 0 {
+		t.Fatalf("offset did not skip the only result: %q, err=%v, parse=%v", paged, err, parseErr)
+	}
+	for _, args := range [][]string{{"search", "--limit", "-1"}, {"search", "--offset", "-1"}} {
+		if output, err := executeCommand(args...); err == nil {
+			t.Fatalf("invalid bound %v succeeded: %s", args, output)
+		}
+	}
 }
 
 func TestSearchCommandAdHocURL(t *testing.T) {

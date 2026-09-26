@@ -68,7 +68,16 @@ resources:
 	}
 
 	cfgPath := env.mustResolvePath("/workspace/marketplace.yaml")
-	assertPublicGateProcess(t, env, cfgPath, listenAddr, operationsAddr)
+	var v4Consumer *Env
+	assertPublicGateProcess(t, env, cfgPath, listenAddr, operationsAddr, func(endpoint string) {
+		v4Consumer = assertPublicGateV4ConsumerRoundTrip(t, endpoint)
+	})
+	offline := v4Consumer.RunAM("sync", "--offline")
+	if offline.ExitCode != 0 {
+		t.Fatalf("v4 offline sync after Marketplace shutdown failed (exit %d):\n%s", offline.ExitCode, offline.Combined)
+	}
+	v4Consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
+	v4Consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
 	cfg, meta, blobs := openPublicGateStores(t, cfgPath)
 	server := httptest.NewServer(mpapi.NewServer(cfg, meta, blobs).PublicHandler())
 	defer server.Close()
@@ -206,7 +215,7 @@ func publicGateEphemeralAddress(t *testing.T) string {
 	return address
 }
 
-func assertPublicGateProcess(t *testing.T, env *Env, cfgPath, publicAddr, operationsAddr string) {
+func assertPublicGateProcess(t *testing.T, env *Env, cfgPath, publicAddr, operationsAddr string, verify func(string)) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -261,6 +270,9 @@ func assertPublicGateProcess(t *testing.T, env *Env, cfgPath, publicAddr, operat
 	waitFor("http://"+operationsAddr+"/readyz", http.StatusOK)
 	waitFor("http://"+publicAddr+"/readyz", http.StatusNotFound)
 	waitFor("http://"+operationsAddr+"/healthz", http.StatusNotFound)
+	verify("http://" + publicAddr)
+	cancel()
+	_ = wait()
 }
 
 func publicGateResourceDigest(t *testing.T, base, kind, name string) string {
@@ -406,6 +418,53 @@ marketplaces:
 			t.Fatalf("Marketplace mirror %s failed (exit %d):\n%s", strings.Join(args, " "), result.ExitCode, result.Combined)
 		}
 	}
+}
+
+func assertPublicGateV4ConsumerRoundTrip(t *testing.T, endpoint string) *Env {
+	t.Helper()
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	consumer.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  public: {marketplace: %s}
+resources:
+  public:
+    include:
+      - public-registry/skill/skill-one
+      - public-registry/command/command-one
+      - public-registry/subagent/agent-one
+      - public-registry/hook/PreToolUse-command
+      - public-registry/mcp/server-one
+      - public-registry/collection/public-bundle
+`, endpoint))
+	before := consumer.ReadFile("/workspace/.agents/config.yaml")
+	digest := publicGateResourceDigest(t, endpoint, "skill", "skill-one")
+	synced := consumer.RunAM("sync")
+	if synced.ExitCode != 0 {
+		t.Fatalf("v4 sync through running Marketplace failed (exit %d):\n%s", synced.ExitCode, synced.Combined)
+	}
+	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
+	consumer.AssertFileContains("/workspace/.factory/commands/command-one.md", "echo command-one")
+	consumer.AssertFileExists("/workspace/.factory/droids/agent-one.md")
+	consumer.AssertFileContains("/workspace/.factory/hooks/hooks.json", "echo hook")
+	consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
+	consumer.AssertFileAbsent("/workspace/.factory/skills/public-bundle")
+	if got := consumer.ReadFile("/workspace/.agents/config.yaml"); got != before {
+		t.Fatalf("running Marketplace sync rewrote authored v4 selection: %q", got)
+	}
+	for _, want := range []string{"agent-marketplace-lock/v2", "e2e-public-gate", "registry-public", "public-bundle", "kind: mcpserver", digest} {
+		if !consumer.CheckFileContains("/workspace/.agents/lock.yaml", want) {
+			t.Fatalf("runtime acquisition lock missing %q:\n%s", want, consumer.ReadFile("/workspace/.agents/lock.yaml"))
+		}
+	}
+	for _, args := range [][]string{{"list"}, {"status"}, {"sync", "--check"}, {"sync", "--locked"}} {
+		result := consumer.RunAM(args...)
+		if result.ExitCode != 0 {
+			t.Fatalf("v4 %s through running Marketplace failed (exit %d):\n%s", strings.Join(args, " "), result.ExitCode, result.Combined)
+		}
+	}
+	return consumer
 }
 
 func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDigest string) {
