@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -23,14 +24,14 @@ const (
 // LoadEffective loads configuration with explicit organization-lock semantics:
 // online acquisition, strict on-disk evidence, or reuse of verified cached evidence.
 func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
-	ec, _ := loadEffective(ctx, mode, opts, policy)
+	ec, _ := loadEffective(ctx, mode, opts, policy, nil)
 	return ec
 }
 
 // loadEffective also reports whether organization Marketplace state was acquired
 // or reused. Strict loads never consult the transient cache; cached loads never
 // contact the Marketplace.
-func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady func(*config.Config)) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
 	if mode != ConfigLoadOnline && mode != ConfigLoadStrict && mode != ConfigLoadCached {
 		return effectiveConfigError(config.EffectiveConfig{}, fmt.Errorf("invalid config load mode: %d", mode)), transientOrganizationMarketplaceLockUnused
 	}
@@ -86,6 +87,12 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	if err != nil {
 		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
 	}
+	if browsingReady != nil {
+		provisional := config.Bind(intent, evidence)
+		if provisional.Merged != nil {
+			browsingReady(browsingMergedConfig(ctx, provisional.Merged, organization.MarketplaceSources()))
+		}
+	}
 	slog.Info("transient organization Marketplace lock acquisition started", "config", organization.Path)
 	mpResolver := marketplace.NewResolver()
 	mpResolver.AllowedRegistries = intent.AllowedRegistries()
@@ -111,4 +118,49 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	}
 	slog.Info("transient organization Marketplace lock acquisition completed", "config", organization.Path, "resources", marketplaceLockResourceCount(exact))
 	return finalEC, transientOrganizationMarketplaceLockAcquired
+}
+
+const browsingIdentityTimeout = 5 * time.Second
+
+func browsingMergedConfig(ctx context.Context, merged *config.Config, sources []config.MarketplaceSource) *config.Config {
+	out := *merged
+	entries := make([]config.MarketplaceEntry, 0, len(merged.Marketplaces)+len(sources))
+	for _, entry := range merged.Marketplaces {
+		if entry.Source == config.Organization {
+			bound, ok := bindBrowsingInstanceID(ctx, entry)
+			if !ok {
+				slog.Warn("organization Marketplace endpoint excluded from browsing config: identity unavailable", "url", entry.URL)
+				continue
+			}
+			entries = append(entries, bound)
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	for _, source := range sources {
+		bound, ok := bindBrowsingInstanceID(ctx, config.MarketplaceEntry{URL: source.URL, Source: config.Organization})
+		if !ok {
+			slog.Warn("organization Marketplace endpoint excluded from browsing config: identity unavailable", "url", source.URL)
+			continue
+		}
+		entries = append(entries, bound)
+	}
+	out.Marketplaces = entries
+	return &out
+}
+
+func bindBrowsingInstanceID(ctx context.Context, entry config.MarketplaceEntry) (config.MarketplaceEntry, bool) {
+	client, err := marketplace.NewClient(entry.URL, marketplace.WithTimeout(browsingIdentityTimeout))
+	if err != nil {
+		return entry, false
+	}
+	wkCtx, cancel := context.WithTimeout(ctx, browsingIdentityTimeout)
+	defer cancel()
+	wk, err := client.WellKnown(wkCtx)
+	if err != nil {
+		return entry, false
+	}
+	entry.InstanceID = wk.InstanceID
+	entry.Resources = nil
+	return entry, true
 }

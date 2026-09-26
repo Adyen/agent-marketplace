@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -229,6 +231,92 @@ func BenchmarkTUIStartupStages(b *testing.B) {
 			})
 		}
 	}
+	b.Run("transient_org_marketplace_lock/first_visible", func(b *testing.B) {
+		defer benchDiscardLogs()()
+		home, repo := b.TempDir(), b.TempDir()
+		b.Setenv("HOME", home)
+		b.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+		b.Setenv("XDG_STATE_HOME", filepath.Join(home, ".state"))
+		b.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+		b.Chdir(repo)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/.well-known/agent-marketplace.json" {
+				_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
+				return
+			}
+			if strings.HasPrefix(r.URL.Path, "/api/v1/") {
+				time.Sleep(150 * time.Millisecond)
+			}
+			http.NotFound(w, r)
+		}))
+		b.Cleanup(server.Close)
+		seedCachedBrowseFixture(b, config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Alias: "mp"})
+		orgDir := b.TempDir()
+		orgPath := filepath.Join(orgDir, "config.yaml")
+		orgConfig := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  mp: {marketplace: " + server.URL + "}\nresources:\n  mp: {include: [tools/skill/resource-00]}\n"
+		if err := os.WriteFile(orgPath, []byte(orgConfig), 0o600); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(home, ".agents"), 0o700); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses: [devin]\n"), 0o600); err != nil {
+			b.Fatal(err)
+		}
+		config.SetTestOrganizationConfigPath(b, orgPath)
+		oldOrg, oldGlobal, oldRepo, oldLocal := loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig
+		b.Cleanup(func() {
+			loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = oldOrg, oldGlobal, oldRepo, oldLocal
+		})
+		loadOrgConfig = func() (*config.Config, error) { return config.LoadOrganizationConfig() }
+		loadGlobalConfig = func() (*config.Config, error) {
+			return config.LoadConfigFromPath(filepath.Join(home, ".agents", "config.yaml"))
+		}
+		loadRepoConfig = func() (*config.Config, error) { return nil, nil }
+		loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			m := NewModel(repo, home)
+			m.width, m.height = 120, 40
+			stages := readSnapshotStages(context.Background(), repo, home, catalogLoadCached, 1)
+			var cfgMsg snapshotLoadedMsg
+			for candidate := range stages {
+				if candidate.stage == snapshotStageConfig {
+					cfgMsg = candidate
+					break
+				}
+			}
+			if cfgMsg.mergedCfg == nil {
+				b.Fatalf("config stage never delivered a merged config; last = %+v", cfgMsg)
+			}
+			m.mergedCfg = cfgMsg.mergedCfg
+			next := m.beginMarketplaceDiscovery(m.filter, false)
+			if next == nil {
+				b.Fatal("config stage produced no discovery command")
+			}
+			for {
+				msg := next().(discoveryLoadedMsg)
+				if msg.err != nil {
+					b.Fatalf("cached discovery failed: %v", msg.err)
+				}
+				updated, follow := m.Update(msg)
+				m = updated.(Model)
+				if len(m.rows) > 0 {
+					break
+				}
+				if msg.done || follow == nil {
+					b.Fatalf("discovery finished without a visible row: %+v", msg)
+				}
+				next = follow
+			}
+			_ = m.View()
+			b.StopTimer()
+			for range stages {
+			}
+			b.StartTimer()
+		}
+	})
 }
 
 func BenchmarkTUIToggleEditorAndReloadDiskIONoReconcile(b *testing.B) {

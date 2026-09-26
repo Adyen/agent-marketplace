@@ -36,6 +36,7 @@ func BenchmarkMarketplaceDiscoveryMerge(b *testing.B) {
 
 func storeCachedBrowseFixture(b *testing.B) config.MarketplaceEntry {
 	b.Helper()
+	b.Setenv("HOME", b.TempDir())
 	b.Setenv("XDG_CACHE_HOME", b.TempDir())
 	return seedCachedBrowseFixture(b, config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "market"})
 }

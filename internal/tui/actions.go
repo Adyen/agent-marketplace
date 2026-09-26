@@ -301,6 +301,9 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			},
 			ReadOnlyExactLocks:        true,
 			AllowMissingReadOnlyLocks: true,
+			BrowsingConfigReady: func(merged *config.Config) {
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
+			},
 			ConfigReady: func(merged *config.Config) {
 				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
 			},
