@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -88,5 +90,65 @@ func TestServerE2E(t *testing.T) {
 
 	if resps[3].Error != nil {
 		t.Fatalf("ping error: %+v", resps[3].Error)
+	}
+}
+
+func serveTestEngine() *Engine {
+	store := &SnapshotStore{}
+	store.Store(&Snapshot{Resources: []Resource{{
+		Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow",
+	}}, AsOf: time.Now()})
+	return &Engine{Snapshots: store, Skills: fakeSkills{}, Pool: newFakePool()}
+}
+
+func TestServeReturnsOnContextCancel(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer func() { _ = pw.Close() }()
+	var out bytes.Buffer
+	srv := &Server{Engine: serveTestEngine(), In: pr, Out: &out}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(ctx) }()
+
+	if _, err := fmt.Fprintln(pw, `{"jsonrpc":"2.0","id":1,"method":"ping"}`); err != nil {
+		t.Fatalf("write ping request: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve returned %v on context cancel", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve blocked on open stdin after context cancel")
+	}
+}
+
+func TestServeCancelCancelsPendingToolCall(t *testing.T) {
+	engine := serveTestEngine()
+	engine.Pool = &blockingPool{}
+	pr, pw := io.Pipe()
+	defer func() { _ = pw.Close() }()
+	var out bytes.Buffer
+	srv := &Server{Engine: engine, In: pr, Out: &out}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(ctx) }()
+
+	if _, err := fmt.Fprintln(pw, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute","arguments":{"servers":["reg/mcp/srv"],"code":"async () => mcp.srv.ping()"}}}`); err != nil {
+		t.Fatalf("write tools/call request: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve returned %v after cancelling a pending call", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return after context cancel with a pending request")
 	}
 }

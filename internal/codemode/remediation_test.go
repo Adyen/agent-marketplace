@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -615,6 +616,233 @@ func TestSnapshotGitContentMatchesAdvertisedCommit(t *testing.T) {
 	}
 	if !strings.Contains(sc.Content, "body one") {
 		t.Fatalf("loaded content does not match advertised commit %q: %q", commitA, sc.Content)
+	}
+}
+
+func writeLocalMCPServer(t *testing.T, dir, name, command string, args ...string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rawArgs, _ := json.Marshal(args)
+	raw := fmt.Sprintf(`{"mcpServers":{%q:{"command":%q,"args":%s}}}`, name, command, rawArgs)
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type recordPool struct {
+	fakePool
+	calls []*Resource
+}
+
+func (p *recordPool) Call(ctx context.Context, alias string, res *Resource, tool string, args json.RawMessage) (any, error) {
+	p.calls = append(p.calls, res)
+	return map[string]any{"tool": tool}, nil
+}
+
+func TestSnapshotDisambiguatesCollidingRegistryLabels(t *testing.T) {
+	snapshotOfflineHome(t)
+
+	base := t.TempDir()
+	dirA := filepath.Join(base, "a", "tools")
+	dirB := filepath.Join(base, "b", "tools")
+	writeLocalMCPServer(t, dirA, "fake", "echo", "aaa")
+	writeLocalMCPServer(t, dirB, "fake", "echo", "bbb")
+	writeLocalMCPServer(t, filepath.Join(dirA, "sub"), "fake", "echo", "ccc")
+
+	ec := config.EffectiveConfig{Merged: &config.Config{Registries: []config.RegistryEntry{
+		{URL: dirA},
+		{URL: dirB},
+		{URL: dirA, Path: "sub"},
+	}}}
+	builder := &SnapshotBuilder{CatalogMode: catalog.LoadModeCached}
+
+	build := func() *Snapshot {
+		snap, errs := builder.BuildSnapshot(context.Background(), ec)
+		if len(errs) > 0 {
+			t.Fatalf("BuildSnapshot errors: %v", errs)
+		}
+		return snap
+	}
+	snap := build()
+	if len(snap.Resources) != 3 {
+		t.Fatalf("snapshot resources = %+v", snap.Resources)
+	}
+
+	wantArgs := map[string]string{dirA: "aaa", dirB: "bbb", filepath.Join(dirA, "sub"): "ccc"}
+	seen := map[string]string{}
+	for i := range snap.Resources {
+		res := &snap.Resources[i]
+		if res.Kind != "mcp" {
+			t.Fatalf("unexpected resource %+v", res)
+		}
+		if !strings.HasPrefix(res.Ref, "local:tools") {
+			t.Fatalf("ref %q lost the local label prefix", res.Ref)
+		}
+		if prev, dup := seen[res.Ref]; dup {
+			t.Fatalf("ref %q collides between %s and %s", res.Ref, prev, res.Origin().ContentDir)
+		}
+		seen[res.Ref] = res.Origin().ContentDir
+		if got := snap.Find(res.Ref); got == nil || got.Ref != res.Ref {
+			t.Fatalf("Find(%q) = %+v", res.Ref, got)
+		}
+		def := res.ServerDef()
+		if def == nil {
+			t.Fatalf("resource %+v has no server definition", res)
+		}
+		if want, ok := wantArgs[res.Origin().ContentDir]; !ok || len(def.Args) == 0 || def.Args[0] != want {
+			t.Fatalf("ref %q routed to definition %v from %s", res.Ref, def.Args, res.Origin().ContentDir)
+		}
+	}
+	if got := snap.Find("local:tools/mcp/fake"); got != nil {
+		t.Fatalf("ambiguous legacy ref still resolves to %+v", got)
+	}
+
+	snap2 := build()
+	if len(snap2.Resources) != len(snap.Resources) {
+		t.Fatalf("second build resources = %+v", snap2.Resources)
+	}
+	for i := range snap.Resources {
+		if snap.Resources[i].Ref != snap2.Resources[i].Ref {
+			t.Fatalf("ref %q is not deterministic; second build has %q", snap.Resources[i].Ref, snap2.Resources[i].Ref)
+		}
+	}
+
+	e, _ := testEngine(t, snap.Resources)
+	pool := &recordPool{}
+	e.Pool = pool
+	for _, res := range snap.Resources {
+		want := wantArgs[res.Origin().ContentDir]
+		args, _ := json.Marshal(map[string]any{
+			"servers": []string{res.Ref},
+			"code":    `async () => mcp.fake.ping()`,
+		})
+		if _, _, err := e.Execute(context.Background(), args); err != nil {
+			t.Fatalf("Execute(%s): %v", res.Ref, err)
+		}
+		last := pool.calls[len(pool.calls)-1]
+		if last.Ref != res.Ref || last.ServerDef().Args[0] != want {
+			t.Fatalf("declared ref %q routed to %+v", res.Ref, last)
+		}
+	}
+}
+
+func TestSnapshotLabelsSurviveAdversarialSuffixAndIdenticalSources(t *testing.T) {
+	snapshotOfflineHome(t)
+
+	base := t.TempDir()
+	dirA := filepath.Join(base, "a", "tools")
+	dirB := filepath.Join(base, "b", "tools")
+	dirD := filepath.Join(base, "d", "other")
+	writeLocalMCPServer(t, dirA, "fake", "echo", "aaa")
+	writeLocalMCPServer(t, dirB, "fake", "echo", "bbb")
+	writeLocalMCPServer(t, dirD, "fake", "echo", "ddd")
+
+	builder := &SnapshotBuilder{CatalogMode: catalog.LoadModeCached}
+	build := func(entries ...config.RegistryEntry) *Snapshot {
+		ec := config.EffectiveConfig{Merged: &config.Config{Registries: entries}}
+		snap, errs := builder.BuildSnapshot(context.Background(), ec)
+		if len(errs) > 0 {
+			t.Fatalf("BuildSnapshot errors: %v", errs)
+		}
+		return snap
+	}
+
+	snap := build(config.RegistryEntry{URL: dirA}, config.RegistryEntry{URL: dirB})
+	if len(snap.Resources) != 2 {
+		t.Fatalf("snapshot resources = %+v", snap.Resources)
+	}
+	var labelA string
+	for i := range snap.Resources {
+		res := &snap.Resources[i]
+		if res.Origin().ContentDir == dirA {
+			labelA = strings.TrimSuffix(res.Ref, "/mcp/fake")
+		}
+	}
+	if !strings.HasPrefix(labelA, "local:tools-") {
+		t.Fatalf("dirA label = %q, expected a suffixed local label", labelA)
+	}
+	dirC := filepath.Join(base, "c", strings.TrimPrefix(labelA, "local:"))
+	writeLocalMCPServer(t, dirC, "fake", "echo", "ccc")
+
+	entries := []config.RegistryEntry{
+		{URL: dirA},
+		{URL: dirB},
+		{URL: dirC},
+		{URL: dirD},
+		{URL: dirA},
+	}
+	snap = build(entries...)
+	if len(snap.Resources) != 4 {
+		t.Fatalf("snapshot resources = %+v", snap.Resources)
+	}
+	wantArgs := map[string]string{dirA: "aaa", dirB: "bbb", dirC: "ccc", dirD: "ddd"}
+	seen := map[string]string{}
+	for i := range snap.Resources {
+		res := &snap.Resources[i]
+		if prev, dup := seen[res.Ref]; dup {
+			t.Fatalf("ref %q shared by %s and %s", res.Ref, prev, res.Origin().ContentDir)
+		}
+		seen[res.Ref] = res.Origin().ContentDir
+		if !SanitizeRef(res.Ref) {
+			t.Fatalf("ref %q fails SanitizeRef", res.Ref)
+		}
+		got := snap.Find(res.Ref)
+		if got == nil || got.Origin().ContentDir != res.Origin().ContentDir {
+			t.Fatalf("Find(%q) misroutes to %+v", res.Ref, got)
+		}
+		def := res.ServerDef()
+		if def == nil || len(def.Args) == 0 || def.Args[0] != wantArgs[res.Origin().ContentDir] {
+			t.Fatalf("ref %q routed to wrong definition %+v", res.Ref, def)
+		}
+	}
+	if ref := "local:other/mcp/fake"; snap.Find(ref) == nil {
+		t.Fatalf("unambiguous ref %q was modified", ref)
+	}
+
+	snap2 := build(entries...)
+	if len(snap2.Resources) != len(snap.Resources) {
+		t.Fatalf("second build resources = %+v", snap2.Resources)
+	}
+	for i := range snap.Resources {
+		if snap.Resources[i].Ref != snap2.Resources[i].Ref {
+			t.Fatalf("ref %q is not deterministic; second build has %q", snap.Resources[i].Ref, snap2.Resources[i].Ref)
+		}
+	}
+
+	e, _ := testEngine(t, snap.Resources)
+	pool := &recordPool{}
+	e.Pool = pool
+	for _, res := range snap.Resources {
+		want := wantArgs[res.Origin().ContentDir]
+		args, _ := json.Marshal(map[string]any{
+			"servers": []string{res.Ref},
+			"code":    `async () => mcp.fake.ping()`,
+		})
+		if _, _, err := e.Execute(context.Background(), args); err != nil {
+			t.Fatalf("Execute(%s): %v", res.Ref, err)
+		}
+		last := pool.calls[len(pool.calls)-1]
+		if last.Ref != res.Ref || last.ServerDef().Args[0] != want {
+			t.Fatalf("declared ref %q routed to %+v", res.Ref, last)
+		}
+	}
+}
+
+func TestExecuteFailsClosedOnAmbiguousAlias(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/one", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+		{Ref: "reg/mcp/two", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+	})
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/one", "reg/mcp/two"},
+		"code":    `async () => mcp["reg-srv"].ping()`,
+	})
+	_, _, err := e.Execute(context.Background(), args)
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Code != ErrCodeInvalidArguments {
+		t.Fatalf("expected %s for colliding aliases, got %v", ErrCodeInvalidArguments, err)
 	}
 }
 

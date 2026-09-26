@@ -53,10 +53,24 @@ type toolContent struct {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
+	if closer, ok := s.In.(io.Closer); ok {
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = closer.Close()
+			case <-done:
+			}
+		}()
+	}
 	scanner := bufio.NewScanner(s.In)
 	scanner.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	enc := json.NewEncoder(s.Out)
 	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return nil
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
@@ -74,6 +88,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		if err := enc.Encode(resp); err != nil {
 			return fmt.Errorf("write response: %w", err)
 		}
+	}
+	if ctx.Err() != nil {
+		return nil
 	}
 	return scanner.Err()
 }

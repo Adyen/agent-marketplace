@@ -55,6 +55,8 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 		return &Snapshot{Stale: true, AsOf: time.Now()}, nil
 	}
 
+	seenRefs := map[string]bool{}
+	duplicateRefs := map[string]bool{}
 	if len(cfg.Registries) > 0 {
 		hasRemote := false
 		for i := range cfg.Registries {
@@ -122,8 +124,14 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 				errs = append(errs, err)
 			}
 		}
+		labels := registryLabels(cfg.Registries, b.RepoRoot)
 		for i := range cfg.Registries {
 			entry := cfg.Registries[i]
+			if labels[i] == "" {
+				errs = append(errs, fmt.Errorf("registry %q produced an ambiguous catalog label; omitting its resources", entry.URL))
+				snap.Stale = true
+				continue
+			}
 			key, kerr := cache.RegistryKey(entry, b.RepoRoot)
 			if kerr != nil {
 				continue
@@ -140,7 +148,7 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 				contentBase = entry.BundlePath(info.root)
 				exactRoot = info.root
 			}
-			registryLabel := registryLabel(entry)
+			registryLabel := labels[i]
 			for i := range loaded.Entries {
 				e := loaded.Entries[i]
 				res := Resource{
@@ -153,6 +161,10 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 					Assessment:  "allow",
 				}
 				res.Ref = registryLabel + "/" + res.Kind + "/" + res.Name
+				if seenRefs[res.Ref] {
+					continue
+				}
+				seenRefs[res.Ref] = true
 				res.origin = registryOrigin(contentBase, e, entry, exactRoot)
 				if res.Kind == "mcp" {
 					res.Tools = "unknown"
@@ -226,6 +238,15 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 				if item.Kind == "mcp" {
 					res.Tools = "unknown"
 				}
+				if seenRefs[res.Ref] {
+					if !duplicateRefs[res.Ref] {
+						duplicateRefs[res.Ref] = true
+						errs = append(errs, fmt.Errorf("ref %q is produced by more than one source; keeping the first source and omitting the rest", res.Ref))
+						snap.Stale = true
+					}
+					continue
+				}
+				seenRefs[res.Ref] = true
 				snap.Resources = append(snap.Resources, res)
 			}
 		}
@@ -405,6 +426,59 @@ func registryLabel(entry config.RegistryEntry) string {
 	label = strings.ReplaceAll(label, "/", "-")
 	label = strings.TrimSuffix(label, ".git")
 	return label
+}
+
+func registryLabels(entries []config.RegistryEntry, baseDir string) []string {
+	labels := make([]string, len(entries))
+	identities := make([]string, len(entries))
+	used := map[string]bool{}
+	counts := map[string]int{}
+	for i := range entries {
+		labels[i] = registryLabel(entries[i])
+		counts[labels[i]]++
+		used[labels[i]] = true
+		identity, err := cache.RegistryKey(entries[i], baseDir)
+		if err != nil {
+			identity = entries[i].URL + "\x00" + entries[i].Ref + "\x00" + entries[i].Path
+		}
+		identities[i] = identity
+	}
+	groupIdentities := map[string]map[string]bool{}
+	for i := range entries {
+		if counts[labels[i]] < 2 {
+			continue
+		}
+		set := groupIdentities[labels[i]]
+		if set == nil {
+			set = map[string]bool{}
+			groupIdentities[labels[i]] = set
+		}
+		set[identities[i]] = true
+	}
+	assigned := map[string]string{}
+	for i := range entries {
+		if counts[labels[i]] < 2 || len(groupIdentities[labels[i]]) < 2 {
+			continue
+		}
+		if prev, ok := assigned[identities[i]]; ok {
+			labels[i] = prev
+			continue
+		}
+		sum := sha256.Sum256([]byte(identities[i]))
+		digest := hex.EncodeToString(sum[:])
+		label := ""
+		for off := 0; off+8 <= len(digest); off += 8 {
+			candidate := labels[i] + "-" + digest[off:off+8]
+			if !used[candidate] {
+				label = candidate
+				break
+			}
+		}
+		labels[i] = label
+		assigned[identities[i]] = label
+		used[label] = true
+	}
+	return labels
 }
 
 func registryOrigin(contentBase string, e catalog.Entry, entry config.RegistryEntry, exactRoot string) *Origin {

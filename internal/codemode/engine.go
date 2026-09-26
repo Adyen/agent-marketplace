@@ -138,6 +138,9 @@ func (e *Engine) runExecute(ctx context.Context, snap *Snapshot, declared map[st
 		if names[res.Name] > 1 {
 			alias = res.Registry + "-" + res.Name
 		}
+		if prev, ok := aliases[alias]; ok && prev != ref {
+			return Result{}, CodeError(ErrCodeInvalidArguments, "declared refs %q and %q resolve to the same mcp alias %q", prev, ref, alias)
+		}
 		aliases[alias] = ref
 	}
 

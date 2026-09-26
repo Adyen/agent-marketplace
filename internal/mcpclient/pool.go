@@ -268,9 +268,6 @@ func (p *Pool) Call(ctx context.Context, alias string, res *codemode.Resource, t
 	out, err := entry.client.Call(ctx, tool, args)
 	if err != nil {
 		var ce *codemode.Error
-		if errors.As(err, &ce) && (ce.Code == codemode.ErrCodeToolError && entry.dead) {
-			p.markDead(key, err)
-		}
 		if errors.As(err, &ce) && ce.Code == codemode.ErrCodeTimeout {
 			p.markDead(key, err)
 		}

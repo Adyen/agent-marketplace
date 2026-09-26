@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,6 +119,41 @@ func TestMcpServerListsExactlySearchAndExecute(t *testing.T) {
 	}
 	if len(names) != 2 || names[0] != "search" || names[1] != "execute" {
 		t.Fatalf("tools = %v", names)
+	}
+}
+
+func TestMcpServerExitsOnContextCancel(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = inW.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runMCPServer(ctx, inR, io.Discard) }()
+
+	if _, err := inW.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("server: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("server did not exit on context cancel while stdin stayed open")
 	}
 }
 
