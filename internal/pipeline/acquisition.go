@@ -215,7 +215,15 @@ func transientOrganizationMarketplaceInputs(intent config.Intent) string {
 
 func transientMarketplaceReadAssertions(intent config.Intent, lockPath string) ([]dependencytxn.ReadAssertion, error) {
 	organization := intent.Layers[config.Organization]
-	byRequested, err := configReadAssertions([]config.LayerResult{{Source: config.Organization, Path: organization.Path, Reads: organization.Reads}}, false)
+	return transientReadAssertions([]config.LayerResult{{Source: config.Organization, Path: organization.Path, Reads: organization.Reads}}, lockPath)
+}
+
+func transientAcquisitionReadAssertions(intent config.Intent, lockPath string) ([]dependencytxn.ReadAssertion, error) {
+	return transientReadAssertions(intentLayerResults(intent), lockPath)
+}
+
+func transientReadAssertions(layers []config.LayerResult, lockPath string) ([]dependencytxn.ReadAssertion, error) {
+	byRequested, err := configReadAssertions(layers, false)
 	if err != nil {
 		return nil, err
 	}
@@ -306,6 +314,13 @@ func (c *transientOrganizationMarketplaceLockCache) store(path string, doc lockf
 		reads:  append([]dependencytxn.ReadAssertion(nil), reads...),
 		inputs: inputs,
 	}
+}
+
+func transientOrganizationMarketplaceInputs(intent config.Intent) string {
+	harnesses, _ := intent.TargetHarnesses()
+	allowed := intent.AllowedRegistries()
+	marketplaces := intent.AllowedMarketplaces()
+	return fmt.Sprintf("harnesses=%q allowed-nil=%t allowed=%q allowed-marketplaces-nil=%t allowed-marketplaces=%q", harnesses, allowed == nil, allowed, marketplaces == nil, marketplaces)
 }
 
 func (c *transientOrganizationMarketplaceLockCache) delete(path string) {
