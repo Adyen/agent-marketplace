@@ -108,7 +108,9 @@ type MarketplaceResolveMode int
 const (
 	// MarketplaceResolveModeRefresh fetches artifacts when they are missing from cache.
 	MarketplaceResolveModeRefresh MarketplaceResolveMode = iota
-	// MarketplaceResolveModeCached uses only cached artifacts and metadata.
+	// MarketplaceResolveModeCached uses cached artifacts and metadata, but
+	// revalidates a cached rejected revision online because cached metadata
+	// drops EffectiveAvailability.
 	MarketplaceResolveModeCached
 	// MarketplaceResolveModeInspect fetches metadata only and leaves Resource nil.
 	MarketplaceResolveModeInspect

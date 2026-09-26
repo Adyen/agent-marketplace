@@ -22,6 +22,7 @@ import (
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 // MarketplaceConsentError carries the verified preview even when consent
@@ -378,7 +379,7 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	requirementWarnings, err := MutateMarketplaceLayer(ctx, prepared.options.RepoRoot, prepared.options.LocalConfigDir, prepared.configPath, installScopeSource(prepared.options.Scope), func(m *MarketplaceLayerMutation) error {
 		return m.IncludePins(commitEntry, pins)
 	}, func() ([]error, error) {
-		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan), withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
+		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan)))
 		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
 	})
 	if err != nil {
@@ -393,6 +394,25 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 		CollectionLabel: prepared.plan.Pin.Name, MarketplacePreview: prepared.preview,
 		MarketplaceSummary: marketplaceInstallSummary(prepared.plan), RequirementWarnings: requirementWarnings,
 	}, nil
+}
+
+func marketplaceInstallResolveMode(plan *marketplace.PreparedInstall) resolver.MarketplaceResolveMode {
+	if marketplacePlanNeedsRevalidation(plan) {
+		return resolver.MarketplaceResolveModeCached
+	}
+	return resolver.MarketplaceResolveModeCachedNoFetch
+}
+
+func marketplacePlanNeedsRevalidation(plan *marketplace.PreparedInstall) bool {
+	if plan.Revision.Assessment.Decision == store.AssessmentDecisionReject {
+		return true
+	}
+	for _, member := range plan.CollectionMembers {
+		if marketplacePlanNeedsRevalidation(member) {
+			return true
+		}
+	}
+	return false
 }
 
 func marketplaceInstallSummary(plan *marketplace.PreparedInstall) MarketplaceInstallSummary {
@@ -689,7 +709,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 	}
 	marketplaceMode := resolver.MarketplaceResolveModeRefresh
 	if overlays != nil {
-		marketplaceMode = resolver.MarketplaceResolveModeCachedNoFetch
+		marketplaceMode = marketplaceInstallResolveMode(plan)
 	}
 	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true, EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, FileOverlays: overlays}})
 	if len(resolved.Errors) > 0 {
