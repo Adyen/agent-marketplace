@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,10 +54,11 @@ type Client interface {
 type stdioClient struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
+	stderr  *stderrCapture
+	secrets []string
 	scanner *bufio.Scanner
-	mu      sync.Mutex
+	sem     chan struct{}
 	dead    atomic.Bool
-	err     error
 	inited  atomic.Bool
 }
 
@@ -66,7 +68,8 @@ func Spawn(ctx context.Context, def *codemode.ServerDef) (*stdioClient, error) {
 	}
 	cmd := exec.Command(def.Command, def.Args...)
 	cmd.Env = declaredEnv(def.Env)
-	cmd.Stderr = newStderrCapture()
+	stderr := newStderrCapture()
+	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "stdout pipe: %v", err)
@@ -81,7 +84,10 @@ func Spawn(ctx context.Context, def *codemode.ServerDef) (*stdioClient, error) {
 	c := &stdioClient{
 		cmd:     cmd,
 		stdin:   stdin,
+		stderr:  stderr,
+		secrets: envSecrets(def.Env),
 		scanner: bufio.NewScanner(stdout),
+		sem:     make(chan struct{}, 1),
 	}
 	c.scanner.Buffer(make([]byte, 0, 64<<10), 8<<20)
 	return c, nil
@@ -93,13 +99,7 @@ func declaredEnv(declared map[string]string) []string {
 	for k := range declared {
 		keys = append(keys, k)
 	}
-	for i := 0; i < len(keys); i++ {
-		for j := i + 1; j < len(keys); j++ {
-			if keys[j] < keys[i] {
-				keys[i], keys[j] = keys[j], keys[i]
-			}
-		}
-	}
+	slices.Sort(keys)
 	for _, k := range keys {
 		v := declared[k]
 		if v == "" {
@@ -112,13 +112,26 @@ func declaredEnv(declared map[string]string) []string {
 	return env
 }
 
+func envSecrets(declared map[string]string) []string {
+	var out []string
+	for _, kv := range declaredEnv(declared) {
+		if i := strings.IndexByte(kv, '='); i >= 0 && kv[i+1:] != "" {
+			out = append(out, kv[i+1:])
+		}
+	}
+	return out
+}
+
 type stderrCapture struct {
+	mu  sync.Mutex
 	buf bytes.Buffer
 }
 
 func newStderrCapture() *stderrCapture { return &stderrCapture{} }
 
 func (s *stderrCapture) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.buf.Len() < 2048 {
 		remain := 2048 - s.buf.Len()
 		if len(p) > remain {
@@ -130,22 +143,57 @@ func (s *stderrCapture) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (s *stderrCapture) String() string { return s.buf.String() }
+func (s *stderrCapture) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+func (c *stdioClient) redactedStderr() string {
+	s := c.stderr.String()
+	for _, secret := range c.secrets {
+		s = strings.ReplaceAll(s, secret, "<redacted>")
+	}
+	return s
+}
+
+func (c *stdioClient) kill() {
+	c.dead.Store(true)
+	_ = c.stdin.Close()
+	if c.cmd.Process != nil {
+		_ = c.cmd.Process.Kill()
+	}
+}
 
 func (c *stdioClient) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	if c.dead.Load() {
 		return nil, codemode.CodeError(codemode.ErrCodeToolError, "server exited and is not restarted")
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	select {
+	case c.sem <- struct{}{}:
+		defer func() { <-c.sem }()
+	case <-ctx.Done():
+		return nil, codemode.CodeError(codemode.ErrCodeTimeout, "server %s exceeded deadline: %v", method, ctx.Err())
+	}
 	if c.dead.Load() {
 		return nil, codemode.CodeError(codemode.ErrCodeToolError, "server exited and is not restarted")
 	}
 	id := atomic.AddInt64(&requestID, 1)
 	raw, _ := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
-	if _, err := c.stdin.Write(append(raw, '\n')); err != nil {
-		c.markDead(err)
-		return nil, codemode.CodeError(codemode.ErrCodeToolError, "write to server: %v", scrubErr(err))
+	writeCh := make(chan error, 1)
+	go func() {
+		_, err := c.stdin.Write(append(raw, '\n'))
+		writeCh <- err
+	}()
+	select {
+	case err := <-writeCh:
+		if err != nil {
+			c.kill()
+			return nil, codemode.CodeError(codemode.ErrCodeToolError, "write to server: %v", scrubErr(err))
+		}
+	case <-ctx.Done():
+		c.kill()
+		return nil, codemode.CodeError(codemode.ErrCodeTimeout, "server %s exceeded deadline: %v", method, ctx.Err())
 	}
 	type reply struct {
 		msg *rpcReply
@@ -170,7 +218,10 @@ func (c *stdioClient) request(ctx context.Context, method string, params any) (j
 	select {
 	case r := <-ch:
 		if r.err != nil {
-			c.markDead(r.err)
+			c.kill()
+			if !c.inited.Load() {
+				return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "server exited during initialize: %s", c.redactedStderr())
+			}
 			return nil, codemode.CodeError(codemode.ErrCodeToolError, "server closed during %s", method)
 		}
 		if r.msg.Error != nil {
@@ -178,17 +229,9 @@ func (c *stdioClient) request(ctx context.Context, method string, params any) (j
 		}
 		return r.msg.Result, nil
 	case <-ctx.Done():
-		c.markDead(ctx.Err())
-		_ = c.cmd.Process.Kill()
+		c.kill()
 		return nil, codemode.CodeError(codemode.ErrCodeTimeout, "server %s exceeded deadline: %v", method, ctx.Err())
 	}
-}
-
-func (c *stdioClient) markDead(err error) {
-	if c.err == nil {
-		c.err = err
-	}
-	c.dead.Store(true)
 }
 
 func (c *stdioClient) Initialize(ctx context.Context) error {

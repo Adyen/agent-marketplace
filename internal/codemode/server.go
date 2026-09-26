@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -132,7 +133,7 @@ func (s *Server) callTool(ctx context.Context, name string, args json.RawMessage
 	}
 	if err != nil {
 		var ce *Error
-		if asError(err, &ce) {
+		if errors.As(err, &ce) {
 			return errorResult(ce)
 		}
 		return errorResult(CodeError(ErrCodeScriptError, "%v", err))

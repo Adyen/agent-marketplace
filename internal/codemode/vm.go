@@ -124,18 +124,40 @@ func RunWithBinder(ctx context.Context, code string, binder func(context.Context
 	if err != nil {
 		return Result{}, mapRunError(err, sentinel)
 	}
+	if goja.IsUndefined(out) {
+		return Result{Value: json.RawMessage("null")}, nil
+	}
 	raw := out.String()
 	if len(raw) > lim.OutputCap {
-		marker, err := json.Marshal(map[string]any{
-			"truncated": true,
-			"prefix":    raw[:lim.OutputCap],
-		})
+		marker, err := truncatedMarker(raw, lim.OutputCap)
 		if err != nil {
-			return Result{}, CodeError(ErrCodeScriptError, "marshal truncation marker: %v", err)
+			return Result{}, err
 		}
 		return Result{Value: marker, Truncated: true}, nil
 	}
 	return Result{Value: json.RawMessage(raw)}, nil
+}
+
+func truncatedMarker(raw string, cap int) (json.RawMessage, error) {
+	for n := len(raw); ; {
+		marker, err := json.Marshal(map[string]any{
+			"truncated": true,
+			"prefix":    raw[:n],
+		})
+		if err != nil {
+			return nil, CodeError(ErrCodeScriptError, "marshal truncation marker: %v", err)
+		}
+		if len(marker) <= cap {
+			return marker, nil
+		}
+		if n == 0 {
+			return nil, CodeError(ErrCodeOutputLimit, "output cap %d cannot hold truncation marker", cap)
+		}
+		n -= len(marker) - cap
+		if n < 0 {
+			n = 0
+		}
+	}
 }
 
 func mapRunError(err error, sentinel *interruptSentinel) error {

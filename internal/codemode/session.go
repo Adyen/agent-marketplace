@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -77,7 +78,7 @@ func ReadSession(path string) ([]SessionEntry, error) {
 		return nil, err
 	}
 	var out []SessionEntry
-	for i, line := range splitLines(string(data)) {
+	for i, line := range strings.Split(string(data), "\n") {
 		if line == "" {
 			continue
 		}
@@ -88,19 +89,4 @@ func ReadSession(path string) ([]SessionEntry, error) {
 		out = append(out, e)
 	}
 	return out, nil
-}
-
-func splitLines(s string) []string {
-	var out []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			out = append(out, s[start:i])
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		out = append(out, s[start:])
-	}
-	return out
 }

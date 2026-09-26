@@ -3,6 +3,7 @@ package codemode
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -305,23 +306,8 @@ func (e *Engine) logEvent(event, ref, revision, digest string) {
 
 func coded(err error, code, format string, args ...any) *Error {
 	var ce *Error
-	if asError(err, &ce) {
+	if errors.As(err, &ce) {
 		return ce
 	}
 	return CodeError(code, "%s: %v", fmt.Sprintf(format, args...), err)
-}
-
-func asError(err error, target **Error) bool {
-	for err != nil {
-		if ce, ok := err.(*Error); ok {
-			*target = ce
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
 }

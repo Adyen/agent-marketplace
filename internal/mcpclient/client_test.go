@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,9 +17,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if os.Getenv("GO_MCP_FAKE") == "1" {
+	switch os.Getenv("GO_MCP_FAKE") {
+	case "1":
 		fakeServer()
 		return
+	case "stderr-exit":
+		fmt.Fprintf(os.Stderr, "boom %s boom\n", os.Getenv("SECRET_TOKEN"))
+		_, _ = io.WriteString(os.Stderr, strings.Repeat("z", 4096))
+		os.Exit(3)
 	}
 	os.Exit(m.Run())
 }
@@ -73,6 +79,9 @@ func fakeServer() {
 			continue
 		}
 		_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result})
+		if method == "initialize" && os.Getenv("GO_MCP_FAKE_STALL") == "1" {
+			time.Sleep(time.Hour)
+		}
 	}
 }
 
@@ -225,6 +234,77 @@ func TestHTTPRejectedInsecure(t *testing.T) {
 	_, err := NewHTTP(&codemode.ServerDef{URL: "http://example.com/mcp"})
 	if err == nil {
 		t.Fatal("expected insecure URL rejection")
+	}
+}
+
+func TestStartFailedCapturesBoundedRedactedStderr(t *testing.T) {
+	secret := "s3cr3t-value-12345"
+	def := fakeDef(map[string]string{"GO_MCP_FAKE": "stderr-exit", "SECRET_TOKEN": secret})
+	c, err := Spawn(context.Background(), def)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+	err = c.Initialize(context.Background())
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if !strings.Contains(ce.Message, "boom") {
+		t.Fatalf("stderr not included in start failure: %q", ce.Message)
+	}
+	if strings.Contains(ce.Message, secret) {
+		t.Fatalf("declared secret leaked in error: %q", ce.Message)
+	}
+	if len(ce.Message) > 2200 {
+		t.Fatalf("stderr not bounded near 2KB: %d bytes", len(ce.Message))
+	}
+	if strings.Contains(ce.Message, "-test.run") || strings.Contains(ce.Message, "SECRET_TOKEN=") {
+		t.Fatalf("raw arguments or environment leaked: %q", ce.Message)
+	}
+}
+
+func TestBlockedStdinWriteCancelledAtDeadline(t *testing.T) {
+	def := fakeDef(map[string]string{"GO_MCP_FAKE": "1", "GO_MCP_FAKE_STALL": "1"})
+	c, err := Spawn(context.Background(), def)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+	big := json.RawMessage(`{"blob":"` + strings.Repeat("y", 8<<20) + `"}`)
+
+	first := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, err := c.Call(ctx, "ping", big)
+		first <- err
+	}()
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel2()
+	start2 := time.Now()
+	_, err2 := c.Call(ctx2, "ping", big)
+	var ce *codemode.Error
+	if !errors.As(err2, &ce) || ce.Code != codemode.ErrCodeTimeout {
+		t.Fatalf("queued call must finish on its own ctx with %s, got %v", codemode.ErrCodeTimeout, err2)
+	}
+	if time.Since(start2) > 1500*time.Millisecond {
+		t.Fatalf("queued call waited on blocked exchange instead of its own deadline")
+	}
+
+	select {
+	case err1 := <-first:
+		if !errors.As(err1, &ce) || ce.Code != codemode.ErrCodeTimeout {
+			t.Fatalf("expected %s, got %v", codemode.ErrCodeTimeout, err1)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked stdin write did not finish at its deadline")
+	}
+
+	_, err3 := c.Call(context.Background(), "ping", json.RawMessage(`{}`))
+	if !errors.As(err3, &ce) || ce.Code != codemode.ErrCodeToolError {
+		t.Fatalf("expected %s for dead server, got %v", codemode.ErrCodeToolError, err3)
 	}
 }
 

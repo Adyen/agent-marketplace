@@ -2,6 +2,7 @@ package codemode
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -58,6 +59,37 @@ func TestRunOutputCap(t *testing.T) {
 	}
 	if len(res.Value) > 256 {
 		t.Fatalf("value not truncated: %d bytes", len(res.Value))
+	}
+}
+
+func TestRunOutputCapSerializedWithinCap(t *testing.T) {
+	res, err := Run(context.Background(), `async () => '"'.repeat(4096)`, nil, Limits{OutputCap: 128})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatal("expected truncated result")
+	}
+	if len(res.Value) > 128 {
+		t.Fatalf("serialized output exceeds cap: %d bytes", len(res.Value))
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(res.Value, &parsed); err != nil {
+		t.Fatalf("truncated output is not valid JSON: %v", err)
+	}
+	if parsed["truncated"] != true {
+		t.Fatalf("marker = %s", res.Value)
+	}
+}
+
+func TestRunUndefinedSerializesToValidJSON(t *testing.T) {
+	res, err := Run(context.Background(), `async () => undefined`, nil, Limits{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var parsed any
+	if err := json.Unmarshal(res.Value, &parsed); err != nil {
+		t.Fatalf("undefined result is not valid JSON: %q", res.Value)
 	}
 }
 
