@@ -10,13 +10,21 @@ import (
 	"time"
 )
 
+const marketplaceSourcePrefix = "marketplace:"
+
 type SessionEntry struct {
-	Timestamp time.Time `json:"ts"`
-	Session   string    `json:"session"`
-	Event     string    `json:"event"`
-	Ref       string    `json:"ref"`
-	Revision  string    `json:"revision,omitempty"`
-	Digest    string    `json:"digest,omitempty"`
+	Timestamp  time.Time `json:"ts"`
+	Session    string    `json:"session"`
+	Event      string    `json:"event"`
+	Ref        string    `json:"ref"`
+	Revision   string    `json:"revision,omitempty"`
+	Digest     string    `json:"digest,omitempty"`
+	Source     string    `json:"source,omitempty"`
+	SourcePath string    `json:"source_path,omitempty"`
+}
+
+func (e SessionEntry) MarketplaceProvenance() bool {
+	return strings.HasPrefix(e.Source, marketplaceSourcePrefix)
 }
 
 type SessionLog struct {
@@ -48,7 +56,7 @@ func defaultStateRoot() string {
 
 func (l *SessionLog) Path() string { return l.path }
 
-func (l *SessionLog) Append(event, ref, revision, digest string) error {
+func (l *SessionLog) Append(entry SessionEntry) error {
 	if l == nil || l.path == "" {
 		return nil
 	}
@@ -62,10 +70,9 @@ func (l *SessionLog) Append(event, ref, revision, digest string) error {
 		return fmt.Errorf("session log open: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	rec, _ := json.Marshal(SessionEntry{
-		Timestamp: time.Now().UTC(), Session: l.session,
-		Event: event, Ref: ref, Revision: revision, Digest: digest,
-	})
+	entry.Timestamp = time.Now().UTC()
+	entry.Session = l.session
+	rec, _ := json.Marshal(entry)
 	if _, err := f.Write(append(rec, '\n')); err != nil {
 		return fmt.Errorf("session log write: %w", err)
 	}

@@ -5,14 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 func TestSnapshotFindConcurrent(t *testing.T) {
@@ -311,6 +316,7 @@ func TestServerStartLogged(t *testing.T) {
 type observePool struct {
 	fakePool
 	cb      func(string, *Resource, *ServerDef)
+	def     *ServerDef
 	started bool
 }
 
@@ -327,6 +333,368 @@ func (p *observePool) fire(res *Resource) {
 	}
 	p.started = true
 	if p.cb != nil {
-		p.cb("", res, &ServerDef{Digest: "sha256:def"})
+		def := p.def
+		if def == nil {
+			def = &ServerDef{Digest: "sha256:def"}
+		}
+		p.cb("", res, def)
 	}
+}
+
+func TestSkillLoadErrorsPreserveCodedErrors(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/skill/ok", Kind: "skill", Name: "ok", Revision: "v1", Assessment: "allow"},
+	})
+
+	uncaught, _ := json.Marshal(map[string]any{
+		"code": `async () => skills.load("reg/skill/missing")`,
+	})
+	_, _, err := e.Execute(context.Background(), uncaught)
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Code != ErrCodeNotFound {
+		t.Fatalf("expected %s at the tools/call boundary, got %v", ErrCodeNotFound, err)
+	}
+
+	caught, _ := json.Marshal(map[string]any{
+		"code": `async () => {
+			try { await skills.load("reg/skill/missing") } catch (err) { return err.Code }
+			return "missed"
+		}`,
+	})
+	res, _, err := e.Execute(context.Background(), caught)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if string(res.Value) != `"`+ErrCodeNotFound+`"` {
+		t.Fatalf("caught value = %s, want coded object with Code %q", res.Value, ErrCodeNotFound)
+	}
+
+	e.Gate = func(ctx context.Context, r *Resource) error {
+		return CodeError(ErrCodeRevoked, "%s is revoked", r.Ref)
+	}
+	revoked, _ := json.Marshal(map[string]any{
+		"code": `async () => skills.load("reg/skill/ok")`,
+	})
+	_, _, err = e.Execute(context.Background(), revoked)
+	if !errors.As(err, &ce) || ce.Code != ErrCodeRevoked {
+		t.Fatalf("expected %s for a gated skill, got %v", ErrCodeRevoked, err)
+	}
+
+	e.Gate = nil
+	control, _ := json.Marshal(map[string]any{
+		"code": `async () => (await skills.load("reg/skill/ok")).content`,
+	})
+	res, _, err = e.Execute(context.Background(), control)
+	if err != nil {
+		t.Fatalf("Execute control: %v", err)
+	}
+	if string(res.Value) != `"# ok"` {
+		t.Fatalf("control load = %s", res.Value)
+	}
+}
+
+func TestSessionLogRecordsSourceProvenance(t *testing.T) {
+	dir := t.TempDir()
+	gitRes := &Resource{Ref: "github.com:org-repo/skill/x", Kind: "skill", Name: "x", Revision: "main", Assessment: "allow"}
+	gitRes.SetOrigin(&Origin{ContentDir: t.TempDir(), SourceURL: "git@github.com:org/repo.git", SourcePath: "skills"})
+	mpRes := &Resource{Ref: "mp:tools/skill/review", Kind: "skill", Name: "review", Revision: "r1", Assessment: "allow"}
+	mpRes.SetOrigin(&Origin{Marketplace: &MarketplaceOrigin{
+		Entry:      config.MarketplaceEntry{URL: "https://mp.example"},
+		RegistryID: "src", Kind: "skill", Name: "review", Revision: "r1",
+	}})
+	e, _ := testEngine(t, []Resource{*gitRes, *mpRes})
+	e.Log = NewSessionLog(dir, "sess-prov")
+	args, _ := json.Marshal(map[string]any{
+		"code": `async () => [(await skills.load("github.com:org-repo/skill/x")).content, (await skills.load("mp:tools/skill/review")).content]`,
+	})
+	if _, _, err := e.Execute(context.Background(), args); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	entries, err := ReadSession(e.Log.Path())
+	if err != nil {
+		t.Fatalf("ReadSession: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if entries[0].Source != "git@github.com:org/repo.git" || entries[0].SourcePath != "skills" || entries[0].MarketplaceProvenance() {
+		t.Fatalf("git provenance = %+v", entries[0])
+	}
+	if !entries[1].MarketplaceProvenance() || entries[1].Source != "marketplace:https://mp.example" {
+		t.Fatalf("marketplace provenance = %+v", entries[1])
+	}
+}
+
+func TestServerStartLogsContentDigest(t *testing.T) {
+	dir := t.TempDir()
+	res := &Resource{Ref: "mp:tools/mcp/remote", Kind: "mcp", Name: "remote", Revision: "r1", Assessment: "allow"}
+	res.SetOrigin(&Origin{Marketplace: &MarketplaceOrigin{
+		Entry:      config.MarketplaceEntry{URL: "https://mp.example"},
+		RegistryID: "src", Kind: "mcpserver", Name: "remote", Revision: "r1",
+	}})
+	e, _ := testEngine(t, []Resource{*res})
+	e.Log = NewSessionLog(dir, "sess-pin")
+	e.Pool = &observePool{def: &ServerDef{
+		Command: "echo", Digest: "sha256:archive", ContentDigest: "sha256:content",
+	}}
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"mp:tools/mcp/remote"},
+		"code":    `async () => mcp.remote.ping()`,
+	})
+	if _, _, err := e.Execute(context.Background(), args); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	entries, err := ReadSession(e.Log.Path())
+	if err != nil {
+		t.Fatalf("ReadSession: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Event != "server.start" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if entries[0].Digest != "sha256:content" {
+		t.Fatalf("server.start digest = %q, want the resource content digest for pinning", entries[0].Digest)
+	}
+}
+
+func TestResolveServerDefSeparatesArchiveAndContentDigests(t *testing.T) {
+	loader := &FileSkillLoader{Cache: marketplace.NewCache(t.TempDir()), Online: false}
+	srv := ir.NewMcpServer("remote", "echo", []string{"hi"}, nil, nil, ir.SourceRef{})
+	rev, archiveDigest := seedMarketplaceArtifact(t, loader.Cache, "https://mp.example", "src", "mcpserver", "remote", "r1", srv)
+	res := &Resource{Ref: "mp:tools/mcp/remote", Kind: "mcp", Name: "remote", Revision: "r1"}
+	res.SetOrigin(&Origin{Marketplace: &MarketplaceOrigin{
+		Entry:      config.MarketplaceEntry{URL: "https://mp.example"},
+		RegistryID: "src", Kind: "mcpserver", Name: "remote", Revision: "r1",
+	}})
+	def, err := loader.ResolveServerDef(context.Background(), res)
+	if err != nil {
+		t.Fatalf("ResolveServerDef: %v", err)
+	}
+	if def.Command != "echo" {
+		t.Fatalf("def = %+v", def)
+	}
+	if def.Digest != archiveDigest {
+		t.Fatalf("definition digest = %q, want archive digest %q", def.Digest, archiveDigest)
+	}
+	if def.ContentDigest != string(rev.ContentDigest) {
+		t.Fatalf("content digest = %q, want %q", def.ContentDigest, rev.ContentDigest)
+	}
+}
+
+func TestSnapshotRecordsCheckedOutGitCommit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+
+	base := t.TempDir()
+	origin := filepath.Join(base, "reg.git")
+	work := filepath.Join(base, "work")
+	snapshotGit(t, "", "init", "--bare", "--initial-branch=main", origin)
+	snapshotGit(t, "", "init", "--initial-branch=main", work)
+	snapshotGit(t, work, "remote", "add", "origin", origin)
+	writeSnapshotSkill(t, work, "a", "body one")
+	commitA := snapshotGitCommitPush(t, work, "a")
+
+	builder := &SnapshotBuilder{CatalogMode: catalog.LoadModeRefresh}
+	ec := config.EffectiveConfig{Merged: &config.Config{Registries: []config.RegistryEntry{
+		{URL: "file://" + filepath.ToSlash(origin), Ref: "main"},
+	}}}
+	build := func() *Resource {
+		snap, errs := builder.BuildSnapshot(context.Background(), ec)
+		if len(errs) > 0 {
+			t.Fatalf("BuildSnapshot errors: %v", errs)
+		}
+		if len(snap.Resources) != 1 {
+			t.Fatalf("snapshot resources = %+v", snap.Resources)
+		}
+		return &snap.Resources[0]
+	}
+
+	res := build()
+	if res.Revision != commitA {
+		t.Fatalf("snapshot revision = %q, want checked-out commit %q", res.Revision, commitA)
+	}
+
+	writeSnapshotSkill(t, work, "a", "body two")
+	commitB := snapshotGitCommitPush(t, work, "b")
+	res = build()
+	if res.Revision != commitB {
+		t.Fatalf("snapshot revision after advance = %q, want %q", res.Revision, commitB)
+	}
+}
+
+func TestSnapshotOmitsGitRegistryWithoutReadableCommit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+
+	base := t.TempDir()
+	origin := filepath.Join(base, "reg.git")
+	work := filepath.Join(base, "work")
+	snapshotGit(t, "", "init", "--bare", "--initial-branch=main", origin)
+	snapshotGit(t, "", "init", "--initial-branch=main", work)
+	snapshotGit(t, work, "remote", "add", "origin", origin)
+	writeSnapshotSkill(t, work, "a", "body one")
+	snapshotGitCommitPush(t, work, "a")
+
+	builder := &SnapshotBuilder{CatalogMode: catalog.LoadModeCached}
+	ec := config.EffectiveConfig{Merged: &config.Config{Registries: []config.RegistryEntry{
+		{URL: "file://" + filepath.ToSlash(origin), Ref: "main"},
+	}}}
+	snap, errs := builder.BuildSnapshot(context.Background(), ec)
+	if len(errs) == 0 && !snap.Stale {
+		t.Fatalf("BuildSnapshot reported no error or stale state for an unresolvable cached commit")
+	}
+	for _, res := range snap.Resources {
+		if res.Kind == "skill" && res.Name == "a" {
+			t.Fatalf("snapshot advertised unsafe git resource: %+v", res)
+		}
+	}
+}
+
+func TestSnapshotGitContentMatchesAdvertisedCommit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+
+	base := t.TempDir()
+	origin := filepath.Join(base, "reg.git")
+	work := filepath.Join(base, "work")
+	snapshotGit(t, "", "init", "--bare", "--initial-branch=main", origin)
+	snapshotGit(t, "", "init", "--initial-branch=main", work)
+	snapshotGit(t, work, "remote", "add", "origin", origin)
+	writeSnapshotSkill(t, work, "a", "body one")
+	commitA := snapshotGitCommitPush(t, work, "a")
+
+	local := filepath.Join(base, "local")
+	writeSnapshotSkill(t, local, "loc", "local body")
+
+	builder := &SnapshotBuilder{CatalogMode: catalog.LoadModeRefresh}
+	ec := config.EffectiveConfig{Merged: &config.Config{Registries: []config.RegistryEntry{
+		{URL: "file://" + filepath.ToSlash(origin), Ref: "main"},
+		{URL: local},
+	}}}
+	snap, errs := builder.BuildSnapshot(context.Background(), ec)
+	if len(errs) > 0 {
+		t.Fatalf("BuildSnapshot errors: %v", errs)
+	}
+	if len(snap.Resources) != 2 {
+		t.Fatalf("snapshot resources = %+v", snap.Resources)
+	}
+	var resA, resLocal *Resource
+	for i := range snap.Resources {
+		switch snap.Resources[i].Name {
+		case "a":
+			resA = &snap.Resources[i]
+		case "loc":
+			resLocal = &snap.Resources[i]
+		}
+	}
+	if resA == nil || resLocal == nil {
+		t.Fatalf("snapshot resources = %+v", snap.Resources)
+	}
+	if resA.Revision != commitA {
+		t.Fatalf("snapshot revision = %q, want %q", resA.Revision, commitA)
+	}
+	lsc, err := NewFileSkillLoader(true).Load(context.Background(), resLocal)
+	if err != nil || !strings.Contains(lsc.Content, "local body") {
+		t.Fatalf("local registry content = %q, err %v", lsc.Content, err)
+	}
+
+	writeSnapshotSkill(t, work, "a", "body two")
+	snapshotGitCommitPush(t, work, "b")
+	if _, errs := builder.BuildSnapshot(context.Background(), ec); len(errs) > 0 {
+		t.Fatalf("refresh BuildSnapshot errors: %v", errs)
+	}
+
+	sc, err := NewFileSkillLoader(true).Load(context.Background(), resA)
+	if err != nil {
+		t.Fatalf("skills.load: %v", err)
+	}
+	if sc.Revision != commitA {
+		t.Fatalf("loaded revision = %q, want advertised %q", sc.Revision, commitA)
+	}
+	if !strings.Contains(sc.Content, "body one") {
+		t.Fatalf("loaded content does not match advertised commit %q: %q", commitA, sc.Content)
+	}
+}
+
+func snapshotGit(t testing.TB, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@example.com",
+		"GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func snapshotGitCommitPush(t testing.TB, work, message string) string {
+	t.Helper()
+	snapshotGit(t, work, "add", ".")
+	snapshotGit(t, work, "commit", "-m", message)
+	snapshotGit(t, work, "push", "origin", "main")
+	return snapshotGit(t, work, "rev-parse", "HEAD")
+}
+
+func writeSnapshotSkill(t testing.TB, repoDir, name, description string) {
+	t.Helper()
+	skillDir := filepath.Join(repoDir, "skills", name)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: " + name + "\ndescription: " + description + "\n---\n\n# " + name + "\n" + description + "\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedMarketplaceArtifact(t *testing.T, c *marketplace.Cache, baseURL, registryID, kind, name, revision string, resource ir.Resource) (store.AssessedResourceRevision, string) {
+	t.Helper()
+	artifact, err := hccartifact.FromIR(resource)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	artifact.Manifest.RegistryID = registryID
+	raw, archiveDigest, err := hccartifact.Encode(artifact)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate:               store.ResourceCoordinate{Marketplace: "mp", Registry: store.RegistryID(registryID), Kind: kind, Name: name},
+		ContentDigest:            store.RevisionDigest(artifact.Manifest.ContentDigest),
+		AnalyzerVersion:          "test/v1",
+		PolicyDigest:             store.PolicyDigest("sha256:" + strings.Repeat("c", 64)),
+		Decision:                 store.AssessmentDecisionAllow,
+		InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("d", 64)),
+		AssessedAt:               time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("assessment: %v", err)
+	}
+	rev := store.AssessedResourceRevision{
+		ResourceRevision: store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: store.RegistryID(registryID), Kind: kind, Name: name},
+			ContentDigest: store.RevisionDigest(artifact.Manifest.ContentDigest),
+			ArchiveDigest: store.ArchiveDigest(archiveDigest),
+		},
+		Assessment: assessment,
+	}
+	if _, err := c.WriteArtifact(archiveDigest, raw); err != nil {
+		t.Fatalf("WriteArtifact: %v", err)
+	}
+	if err := c.MarkArtifactVerified(archiveDigest); err != nil {
+		t.Fatalf("MarkArtifactVerified: %v", err)
+	}
+	if _, err := c.WriteResourceRevision(baseURL, registryID, kind, name, revision, rev); err != nil {
+		t.Fatalf("WriteResourceRevision: %v", err)
+	}
+	return rev, archiveDigest
 }

@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
 func benchEngine(n int) *Engine {
@@ -54,6 +58,43 @@ func BenchmarkExecuteVMStartup(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if _, _, err := e.Execute(context.Background(), args); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkBuildSnapshot(b *testing.B) {
+	home := b.TempDir()
+	b.Setenv("HOME", home)
+	b.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+
+	base := b.TempDir()
+	origin := filepath.Join(base, "reg.git")
+	work := filepath.Join(base, "work")
+	snapshotGit(b, "", "init", "--bare", "--initial-branch=main", origin)
+	snapshotGit(b, "", "init", "--initial-branch=main", work)
+	snapshotGit(b, work, "remote", "add", "origin", origin)
+	for i := 0; i < 1000; i++ {
+		writeSnapshotSkill(b, work, fmt.Sprintf("skill-%05d", i), "benchmark catalog resource with a realistic description")
+	}
+	snapshotGitCommitPush(b, work, "a")
+
+	ec := config.EffectiveConfig{Merged: &config.Config{Registries: []config.RegistryEntry{
+		{URL: "file://" + filepath.ToSlash(origin), Ref: "main"},
+	}}}
+	if _, errs := (&SnapshotBuilder{CatalogMode: catalog.LoadModeRefresh}).BuildSnapshot(context.Background(), ec); len(errs) > 0 {
+		b.Fatalf("warm BuildSnapshot errors: %v", errs)
+	}
+
+	builder := &SnapshotBuilder{CatalogMode: catalog.LoadModeCached}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		snap, errs := builder.BuildSnapshot(context.Background(), ec)
+		if len(errs) > 0 {
+			b.Fatalf("BuildSnapshot errors: %v", errs)
+		}
+		if len(snap.Resources) != 1000 {
+			b.Fatalf("snapshot resources = %d, want 1000", len(snap.Resources))
 		}
 	}
 }

@@ -342,7 +342,11 @@ func NewHTTP(def *codemode.ServerDef) (*httpClient, error) {
 	default:
 		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "remote MCP endpoint must be https or loopback")
 	}
-	return &httpClient{url: def.URL, headers: def.Headers, hc: &http.Client{}}, nil
+	return &httpClient{url: def.URL, headers: def.Headers, hc: &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return errors.New("redirects are not followed")
+		},
+	}}, nil
 }
 
 func isLoopbackHost(host string) bool {

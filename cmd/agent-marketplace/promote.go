@@ -54,15 +54,27 @@ func runPromote(ctx context.Context, out io.Writer, in io.Reader, ref string, sc
 	if kind == "" {
 		return fmt.Errorf("cannot determine resource kind from ref %q", entry.Ref)
 	}
-	if strings.Contains(entry.Ref, ":") && !strings.HasPrefix(entry.Ref, "local:") {
-
+	if entry.MarketplaceProvenance() {
 		locator := entry.Ref
+		if kind == "mcp" {
+			parts := strings.SplitN(locator, "/", 3)
+			if len(parts) != 3 {
+				return fmt.Errorf("malformed recorded Marketplace ref %q", entry.Ref)
+			}
+			locator = parts[0] + "/mcpserver/" + parts[2]
+		}
 		if entry.Digest != "" {
 			locator += "@" + entry.Digest
 		}
 		return runInstall(ctx, out, in, false, false, []string{locator}, "", false, "", scope, scopeSpecified, "", "", "", "", "", true, "")
 	}
 	name := entry.Ref[strings.LastIndex(entry.Ref, "/")+1:]
+	if entry.Source != "" {
+		return runInstall(ctx, out, in, false, false, []string{name}, "", false, "", scope, scopeSpecified, kind, entry.Source, entry.Revision, entry.SourcePath, "", true, "")
+	}
+	if strings.Contains(entry.Ref, ":") && !strings.HasPrefix(entry.Ref, "local:") {
+		return fmt.Errorf("ref %q has no recorded provenance and cannot be routed safely; reload it through code mode first", entry.Ref)
+	}
 	return runInstall(ctx, out, in, false, false, []string{name}, "", false, "", scope, scopeSpecified, kind, "", "", "", "", true, "")
 }
 

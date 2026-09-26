@@ -257,6 +257,10 @@ func countedNativeFunc(vm *goja.Runtime, fn reflect.Value, counter *int64, limit
 		}
 		if len(outs) == 2 {
 			if e, ok := outs[1].Interface().(error); ok && e != nil {
+				var ce *Error
+				if errors.As(e, &ce) {
+					panic(vm.ToValue(ce))
+				}
 				panic(vm.ToValue(e.Error()))
 			}
 			return vm.ToValue(outs[0].Interface())

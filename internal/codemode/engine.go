@@ -114,8 +114,11 @@ func (e *Engine) Execute(ctx context.Context, argsJSON json.RawMessage) (Result,
 			digest := ""
 			if def != nil {
 				digest = def.Digest
+				if def.ContentDigest != "" {
+					digest = def.ContentDigest
+				}
 			}
-			e.logEvent("server.start", res.Ref, res.Revision, digest)
+			e.logEvent("server.start", res, digest)
 		})
 	}
 
@@ -249,7 +252,7 @@ func (e *Engine) skillsBinding(ctx context.Context, snap *Snapshot) map[string]a
 			if err != nil {
 				return nil, err
 			}
-			e.logEvent("skill.load", res.Ref, res.Revision, content.Digest)
+			e.logEvent("skill.load", res, content.Digest)
 			return map[string]any{
 				"ref": content.Ref, "revision": content.Revision,
 				"digest": content.Digest, "content": content.Content,
@@ -268,7 +271,7 @@ func (e *Engine) skillsBinding(ctx context.Context, snap *Snapshot) map[string]a
 			if err != nil {
 				return "", err
 			}
-			e.logEvent("skill.read", res.Ref, res.Revision, "")
+			e.logEvent("skill.read", res, "")
 			return content, nil
 		},
 	}
@@ -295,12 +298,19 @@ func (e *Engine) gate(ctx context.Context, res *Resource) error {
 	return e.Gate(ctx, res)
 }
 
-func (e *Engine) logEvent(event, ref, revision, digest string) {
-	if e.Log == nil {
+func (e *Engine) logEvent(event string, res *Resource, digest string) {
+	if e.Log == nil || res == nil {
 		return
 	}
-	if err := e.Log.Append(event, ref, revision, digest); err != nil {
-		slog.Warn("code-mode session log append failed", "event", event, "ref", ref, "error", err)
+	entry := SessionEntry{Event: event, Ref: res.Ref, Revision: res.Revision, Digest: digest}
+	if mo := res.MarketplaceOrigin(); mo != nil {
+		entry.Source = marketplaceSourcePrefix + mo.Entry.URL
+	} else if o := res.Origin(); o != nil {
+		entry.Source = o.SourceURL
+		entry.SourcePath = o.SourcePath
+	}
+	if err := e.Log.Append(entry); err != nil {
+		slog.Warn("code-mode session log append failed", "event", event, "ref", res.Ref, "error", err)
 	}
 }
 

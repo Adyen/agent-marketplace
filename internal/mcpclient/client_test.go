@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -209,7 +211,6 @@ func TestSchemaCacheRoundTrip(t *testing.T) {
 	if len(pool.servers) != 0 {
 		t.Fatal("server spawned on cache hit")
 	}
-	_ = filepath.Join
 }
 
 func TestPoolCloseStopsChildren(t *testing.T) {
@@ -314,5 +315,72 @@ func TestStartFailedCoded(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
 		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
 	}
-	_ = fmt.Sprint
+}
+
+func TestHTTPDoesNotFollowRedirects(t *testing.T) {
+	var destHits int32
+	var destAuth []string
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&destHits, 1)
+		destAuth = append(destAuth, r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer dest.Close()
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dest.URL, http.StatusFound)
+	}))
+	defer src.Close()
+
+	secret := "Bearer test-secret-xyz"
+	c, err := NewHTTP(&codemode.ServerDef{URL: src.URL, Headers: map[string]string{"Authorization": secret}})
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	err = c.Initialize(context.Background())
+	if err == nil {
+		t.Fatal("expected the redirect to be refused")
+	}
+	if atomic.LoadInt32(&destHits) != 0 {
+		t.Fatalf("redirected request reached the destination %d times with auth %v", destHits, destAuth)
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "test-secret-xyz") {
+		t.Fatalf("declared header leaked in error: %v", err)
+	}
+}
+
+func TestHTTPDirectRequestSendsDeclaredHeaders(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		var req rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		result := json.RawMessage(`{"protocolVersion":"` + protocolVersion + `","capabilities":{}}`)
+		if req.Method == "tools/list" {
+			result = json.RawMessage(`{"tools":[{"name":"ping"}]}`)
+		}
+		if req.Method == "notifications/initialized" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(rpcReply{JSONRPC: "2.0", ID: req.ID, Result: result})
+	}))
+	defer server.Close()
+
+	c, err := NewHTTP(&codemode.ServerDef{URL: server.URL, Headers: map[string]string{"Authorization": "Bearer test-secret-xyz"}})
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	tools, err := c.ListTools(context.Background())
+	if err != nil {
+		t.Fatalf("ListTools on direct endpoint: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Name != "ping" {
+		t.Fatalf("tools = %+v", tools)
+	}
+	if gotAuth != "Bearer test-secret-xyz" {
+		t.Fatalf("declared header not sent to the configured endpoint: %q", gotAuth)
+	}
 }

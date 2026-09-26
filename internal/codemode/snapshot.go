@@ -36,6 +36,9 @@ type Origin struct {
 	Server *ServerDef
 
 	Marketplace *MarketplaceOrigin
+
+	SourceURL  string
+	SourcePath string
 }
 
 type ServerDef struct {
@@ -45,6 +48,8 @@ type ServerDef struct {
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Digest  string            `json:"digest"`
+
+	ContentDigest string `json:"content_digest,omitempty"`
 }
 
 type Snapshot struct {

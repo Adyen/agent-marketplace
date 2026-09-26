@@ -224,7 +224,8 @@ func (l *FileSkillLoader) ResolveServerDef(ctx context.Context, res *Resource) (
 	return &ServerDef{
 		Command: srv.Command, Args: srv.Args, Env: srv.Env,
 		URL: srv.URL, Headers: srv.Headers,
-		Digest: string(rev.ArchiveDigest),
+		Digest:        string(rev.ArchiveDigest),
+		ContentDigest: string(rev.ContentDigest),
 	}, nil
 }
 

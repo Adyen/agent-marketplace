@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -53,8 +56,72 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 	}
 
 	if len(cfg.Registries) > 0 {
-		result := catalog.LoadRegistriesWithContext(ctx, cfg, b.RepoRoot, mode)
+		hasRemote := false
+		for i := range cfg.Registries {
+			if !cfg.Registries[i].IsLocal() {
+				hasRemote = true
+				break
+			}
+		}
+		var leaseErr error
+		if hasRemote {
+			if release, lerr := cache.AcquireExactGitNamespaceLeaseWithContext(ctx); lerr != nil {
+				leaseErr = fmt.Errorf("exact git namespace lease unavailable: %w", lerr)
+				errs = append(errs, fmt.Errorf("acquire exact git lease: %w", lerr))
+				snap.Stale = true
+			} else {
+				defer release()
+				ctx = cache.ContextWithExactGitNamespaceLease(ctx)
+			}
+		}
+		type exactRegistry struct {
+			revision string
+			root     string
+		}
+		exact := map[string]exactRegistry{}
+		exactFailed := false
+		pins := loadGitPins()
+		pinDelta := map[string]string{}
+		exactSnapshot := catalog.ExactSnapshotFunc(func(entry config.RegistryEntry) (string, string, error) {
+			if leaseErr != nil {
+				exactFailed = true
+				return "", "", leaseErr
+			}
+			canonical, err := lockfile.CanonicalGitConfigURL(entry.URL)
+			if err != nil {
+				exactFailed = true
+				return "", "", err
+			}
+			var oid cache.GitOID
+			var path string
+			if mode == catalog.LoadModeRefresh {
+				oid, err = cache.ResolveExactGitRefWithContext(ctx, canonical, entry.URL, entry.Ref)
+				if err == nil {
+					pinDelta[pinKey(canonical, entry.Ref)] = oid.String()
+					path, err = cache.AcquireExactGitWithContext(ctx, canonical, entry.URL, oid)
+				}
+			} else {
+				var res exactResolution
+				res, err = cachedExactGit(ctx, entry, canonical, pins)
+				oid, path = res.oid, res.path
+			}
+			if err != nil {
+				exactFailed = true
+				return "", "", err
+			}
+			exact[cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)] = exactRegistry{revision: oid.Hex(), root: path}
+			return path, "", nil
+		})
+		result := catalog.LoadRegistriesWithContext(ctx, cfg, b.RepoRoot, mode, catalog.WithExactSnapshots(exactSnapshot))
 		errs = append(errs, result.Errors...)
+		if exactFailed || (hasRemote && mode == catalog.LoadModeCached) {
+			snap.Stale = true
+		}
+		if len(pinDelta) > 0 {
+			if err := mergeGitPins(ctx, pinDelta); err != nil {
+				errs = append(errs, err)
+			}
+		}
 		for i := range cfg.Registries {
 			entry := cfg.Registries[i]
 			key, kerr := cache.RegistryKey(entry, b.RepoRoot)
@@ -65,7 +132,14 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 			if !ok {
 				continue
 			}
-			bundleBase := cache.BaseCachePath(key)
+			revision := entry.Ref
+			contentBase := cache.BaseCachePath(key)
+			exactRoot := ""
+			if info, ok := exact[key]; ok {
+				revision = info.revision
+				contentBase = entry.BundlePath(info.root)
+				exactRoot = info.root
+			}
 			registryLabel := registryLabel(entry)
 			for i := range loaded.Entries {
 				e := loaded.Entries[i]
@@ -75,11 +149,11 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 					Description: e.Description,
 					Tags:        e.Tags,
 					Registry:    registryLabel,
-					Revision:    entry.Ref,
+					Revision:    revision,
 					Assessment:  "allow",
 				}
 				res.Ref = registryLabel + "/" + res.Kind + "/" + res.Name
-				res.origin = registryOrigin(bundleBase, e)
+				res.origin = registryOrigin(contentBase, e, entry, exactRoot)
 				if res.Kind == "mcp" {
 					res.Tools = "unknown"
 				}
@@ -182,6 +256,128 @@ func (b *SnapshotBuilder) applyCachedGate(mc *marketplace.Cache, endpointURL str
 	return true
 }
 
+type exactResolution struct {
+	path string
+	oid  cache.GitOID
+}
+
+func cachedExactGit(ctx context.Context, entry config.RegistryEntry, canonical string, pins map[string]string) (exactResolution, error) {
+	if oid, err := pinnedOID(pins, canonical, entry.Ref); err == nil {
+		if path, oerr := cache.OpenExactGitReadOnlyWithContext(ctx, canonical, oid); oerr == nil {
+			return exactResolution{path: path, oid: oid}, nil
+		}
+		return acquireExactGitFromClone(ctx, entry, canonical, oid)
+	}
+	return acquireExactGitFromClone(ctx, entry, canonical, cache.GitOID{})
+}
+
+func acquireExactGitFromClone(ctx context.Context, entry config.RegistryEntry, canonical string, oid cache.GitOID) (exactResolution, error) {
+	return cache.WithRegistryReadLockWithContext(ctx, []string{entry.URL}, func() (exactResolution, error) {
+		local := cache.RegistryCachePath(entry.URL, entry.Ref)
+		if oid.IsZero() {
+			resolved, err := localCommitOID(local, entry.Ref)
+			if err != nil {
+				return exactResolution{}, err
+			}
+			oid = resolved
+		}
+		path, err := cache.AcquireExactGitWithContext(ctx, canonical, local, oid)
+		if err != nil {
+			return exactResolution{}, err
+		}
+		return exactResolution{path: path, oid: oid}, nil
+	})
+}
+
+func localCommitOID(repoDir, ref string) (cache.GitOID, error) {
+	hexID, err := cache.ResolveRemoteRef(repoDir, ref)
+	if err != nil {
+		return cache.GitOID{}, err
+	}
+	algorithm := ""
+	switch len(hexID) {
+	case 40:
+		algorithm = "sha1"
+	case 64:
+		algorithm = "sha256"
+	default:
+		return cache.GitOID{}, fmt.Errorf("resolved ref %q to unexpected object id %q", ref, hexID)
+	}
+	return lockfile.ParseGitOID(algorithm + ":" + hexID)
+}
+
+func gitPinsPath() (string, error) {
+	root := defaultStateRoot()
+	if root == "" {
+		return "", fmt.Errorf("state root unavailable")
+	}
+	return filepath.Join(root, "agent-marketplace", "codemode-git-pins.json"), nil
+}
+
+func pinKey(canonical, ref string) string {
+	return canonical + "\x00" + ref
+}
+
+func loadGitPins() map[string]string {
+	pins := map[string]string{}
+	path, err := gitPinsPath()
+	if err != nil {
+		return pins
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return pins
+	}
+	_ = json.Unmarshal(raw, &pins)
+	return pins
+}
+
+func saveGitPins(pins map[string]string) error {
+	path, err := gitPinsPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(pins)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".pins-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+func mergeGitPins(ctx context.Context, delta map[string]string) error {
+	_, err := cache.WithCacheMutationLockWithContext(ctx, func() (struct{}, error) {
+		merged := loadGitPins()
+		for k, v := range delta {
+			merged[k] = v
+		}
+		return struct{}{}, saveGitPins(merged)
+	})
+	return err
+}
+
+func pinnedOID(pins map[string]string, canonical, ref string) (cache.GitOID, error) {
+	pinned, ok := pins[pinKey(canonical, ref)]
+	if !ok {
+		return cache.GitOID{}, fmt.Errorf("no resolved commit recorded for %s (ref %q); run a refresh", canonical, ref)
+	}
+	return lockfile.ParseGitOID(pinned)
+}
+
 func normalizeKind(kind string) string {
 	if kind == "mcpserver" {
 		return "mcp"
@@ -211,18 +407,24 @@ func registryLabel(entry config.RegistryEntry) string {
 	return label
 }
 
-func registryOrigin(bundleBase string, e catalog.Entry) *Origin {
-	dir := bundleBase
+func registryOrigin(contentBase string, e catalog.Entry, entry config.RegistryEntry, exactRoot string) *Origin {
+	dir := contentBase
 	file := ""
 	if e.Path != "" {
-		if filepath.IsAbs(e.Path) {
-			dir = filepath.Dir(e.Path)
-		} else {
-			dir = filepath.Join(bundleBase, filepath.Dir(e.Path))
+		p := e.Path
+		if exactRoot != "" && filepath.IsAbs(p) {
+			if rel, err := filepath.Rel(cache.RegistryCachePath(entry.URL, entry.Ref), p); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				p = filepath.Join(exactRoot, rel)
+			}
 		}
-		file = filepath.Base(e.Path)
+		if filepath.IsAbs(p) {
+			dir = filepath.Dir(p)
+		} else {
+			dir = filepath.Join(contentBase, filepath.Dir(p))
+		}
+		file = filepath.Base(p)
 	}
-	o := &Origin{ContentDir: dir, File: file}
+	o := &Origin{ContentDir: dir, File: file, SourceURL: entry.URL, SourcePath: entry.Path}
 	if srv, ok := e.Resource.(*ir.McpServer); ok {
 		o.Server = &ServerDef{
 			Command: srv.Command,
