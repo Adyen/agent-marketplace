@@ -31,6 +31,7 @@ type layerMarketplaceResource struct {
 	revision      store.AssessedResourceRevision
 	raw           []byte
 	archiveDigest string
+	availability  string
 }
 
 type layerMarketplaceServer struct {
@@ -89,7 +90,14 @@ func newLayerMarketplaceServer(t *testing.T) *layerMarketplaceServer {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(resource.revision)
+		response := struct {
+			store.AssessedResourceRevision
+			CurrentAvailability any `json:"current_availability,omitempty"`
+		}{AssessedResourceRevision: resource.revision}
+		if resource.availability != "" {
+			response.CurrentAvailability = map[string]any{"availability": resource.availability}
+		}
+		_ = json.NewEncoder(w).Encode(response)
 	})
 	mux.HandleFunc("/api/v1/artifacts/sha256/", func(w http.ResponseWriter, r *http.Request) {
 		hexDigest := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/sha256/")
