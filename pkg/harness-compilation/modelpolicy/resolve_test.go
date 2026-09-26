@@ -35,7 +35,9 @@ func TestResolve(t *testing.T) {
 		{"no cross provider approximation", "", "gemini", "sonnet", "", "", "", []LossKind{ModelOmitted}},
 		{"exact does not float", "factory", "devin", "claude-sonnet-4-5-20250929", "", "", "", []LossKind{ModelOmitted}},
 		{"floating alias", "", "devin", "sonnet", "", "sonnet", "", nil},
-		{"explicit family pin", "", "factory", "sonnet", "high", "claude-sonnet-4-5-20250929", "high", []LossKind{SelectorPinned}},
+		{"explicit family pin", "", "factory", "sonnet", "high", "claude-sonnet-5", "high", []LossKind{SelectorPinned}},
+		{"factory opus pin", "", "factory", "opus", "", "claude-opus-5-5", "", []LossKind{SelectorPinned}},
+		{"factory haiku pin", "", "factory", "haiku", "", "claude-haiku-4-5-20251001", "", []LossKind{SelectorPinned}},
 		{"concrete portable provider name", "claude", "codex", "gpt-5.6-luna", "medium", "gpt-5.6-luna", "medium", nil},
 		{"qualified provider identity", "", "codex", "openai/gpt-5.6-terra", "high", "gpt-5.6-terra", "high", nil},
 		{"unsupported level", "codex", "factory", "gpt-5.6-luna", "max", "gpt-5.6-luna", "", []LossKind{EffortOmitted}},
@@ -69,6 +71,57 @@ func TestResolveOverrides(t *testing.T) {
 		result, err := Resolve(Request{Target: target.TargetClaude, Model: tc.model, Effort: tc.effort, Overrides: map[string]string{tc.model: tc.replacement}})
 		if err != nil || result.Model != tc.replacement || result.Effort != tc.wantEffort || (len(result.Losses) > 0) != tc.loss {
 			t.Fatalf("override %+v: result=%+v err=%v", tc, result, err)
+		}
+	}
+}
+
+func TestFactoryCatalogDocumentedInventory(t *testing.T) {
+	documented := []string{
+		"claude-fable-5.1", "claude-fable-5",
+		"claude-opus-5-5", "claude-opus-5-5-fast", "claude-opus-5", "claude-opus-5-fast",
+		"claude-opus-4-8", "claude-opus-4-8-fast", "claude-opus-4-7", "claude-opus-4-6",
+		"claude-opus-4-5-20251101", "claude-sonnet-5", "claude-sonnet-4-6",
+		"claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001",
+		"gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+		"gpt-5.6-sol", "gpt-5.6-sol-fast", "gpt-5.6-terra", "gpt-5.6-luna",
+		"gpt-5.5", "gpt-5.5-fast", "gpt-5.5-pro",
+		"gpt-5.4", "gpt-5.4-fast", "gpt-5.4-mini", "gpt-5.4-mini-fast",
+		"gpt-5.3-codex", "gpt-5.3-codex-fast", "gpt-5.2",
+		"gemini-3.1-pro-preview", "gemini-3.8-flash", "gemini-3.7-flash",
+		"gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash-preview",
+		"grok-4.7", "grok-4.6", "grok-4.5",
+		"inkling", "mistral-medium-3.5", "glm-5.3-flash", "glm-5.3", "glm-5.2",
+		"glm-5.2-fast", "kimi-k3", "qwen3.8-max", "nemotron-3-ultra",
+		"deepseek-v4.1-flash", "deepseek-v4-flash-0731", "deepseek-v4-pro",
+		"minimax-m3", "minimax-m2.7", "kimi-k2.5", "glm-5.1",
+	}
+	r, err := shipped()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := r.catalogs[target.TargetFactory]
+	present := map[string]bool{}
+	for _, record := range c.Models {
+		present[record.Model] = true
+	}
+	for _, id := range documented {
+		if !present[id] {
+			t.Errorf("documented Factory model %q missing from shipped catalog", id)
+		}
+	}
+}
+
+func TestFactoryReasoningSubset(t *testing.T) {
+	r, err := shipped()
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{"low": true, "medium": true, "high": true}
+	for id, record := range r.catalogs[target.TargetFactory].Models {
+		for level, encoding := range record.Reasoning {
+			if !allowed[level] || encoding.Effort != level {
+				t.Errorf("factory model %s maps unsupported reasoning %q -> %+v", id, level, encoding)
+			}
 		}
 	}
 }

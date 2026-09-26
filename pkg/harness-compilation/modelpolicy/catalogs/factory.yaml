@@ -1,10 +1,10 @@
 schema: 1
 harness: factory
 evidence:
-  checked: "2026-09-21"
+  checked: "2026-09-26"
   refs:
     - https://docs.factory.ai/harness/subagents
-    - https://docs.factory.ai/docs/models
+    - https://docs.factory.ai/models.md
 surfaces:
   subagent:
     model_field: model
@@ -12,44 +12,185 @@ surfaces:
     omitted_model: inherit
     inherit_model: inherit
 models:
+  anthropic/claude-fable-5.1:
+    model: claude-fable-5.1
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-fable-5:
+    model: claude-fable-5
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-opus-5-5:
+    model: claude-opus-5-5
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-opus-5-5-fast:
+    model: claude-opus-5-5-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
   anthropic/claude-opus-5:
     model: claude-opus-5
-    reasoning:
-      low: {effort: low}
-      medium: {effort: medium}
-      high: {effort: high}
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-opus-5-fast:
+    model: claude-opus-5-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-opus-4-8:
+    model: claude-opus-4-8
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-opus-4-8-fast:
+    model: claude-opus-4-8-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-opus-4-7:
+    model: claude-opus-4-7
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-opus-4-6:
+    model: claude-opus-4-6
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-opus-4-5-20251101:
+    model: claude-opus-4-5-20251101
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
   anthropic/claude-sonnet-5:
     model: claude-sonnet-5
-    reasoning:
-      low: {effort: low}
-      medium: {effort: medium}
-      high: {effort: high}
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-sonnet-4-6:
+    model: claude-sonnet-4-6
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
   anthropic/claude-sonnet-4-5-20250929:
     model: claude-sonnet-4-5-20250929
-    reasoning:
-      low: {effort: low}
-      medium: {effort: medium}
-      high: {effort: high}
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-haiku-4-5-20251001:
+    model: claude-haiku-4-5-20251001
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
   anthropic/claude-opus-4-20250514:
     model: claude-opus-4-20250514
   anthropic/claude-haiku-3-5-20241022:
     model: claude-haiku-3-5-20241022
-  openai/gpt-5.6-luna:
-    model: gpt-5.6-luna
-    reasoning:
-      low: {effort: low}
-      medium: {effort: medium}
-      high: {effort: high}
+  openai/gpt-6-astra:
+    model: gpt-6-astra
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-6-sol:
+    model: gpt-6-sol
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-6-luna:
+    model: gpt-6-luna
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.6-sol:
+    model: gpt-5.6-sol
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.6-sol-fast:
+    model: gpt-5.6-sol-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
   openai/gpt-5.6-terra:
     model: gpt-5.6-terra
-    reasoning:
-      low: {effort: low}
-      medium: {effort: medium}
-      high: {effort: high}
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.6-luna:
+    model: gpt-5.6-luna
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.5:
+    model: gpt-5.5
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.5-fast:
+    model: gpt-5.5-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.5-pro:
+    model: gpt-5.5-pro
+    reasoning: {medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.4:
+    model: gpt-5.4
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.4-fast:
+    model: gpt-5.4-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.4-mini:
+    model: gpt-5.4-mini
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.4-mini-fast:
+    model: gpt-5.4-mini-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.3-codex:
+    model: gpt-5.3-codex
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.3-codex-fast:
+    model: gpt-5.3-codex-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-5.2:
+    model: gpt-5.2
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  google/gemini-3.1-pro-preview:
+    model: gemini-3.1-pro-preview
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  google/gemini-3.8-flash:
+    model: gemini-3.8-flash
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  google/gemini-3.7-flash:
+    model: gemini-3.7-flash
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  google/gemini-3.6-flash:
+    model: gemini-3.6-flash
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  google/gemini-3.5-flash:
+    model: gemini-3.5-flash
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  google/gemini-3-flash-preview:
+    model: gemini-3-flash-preview
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  xai/grok-4.7:
+    model: grok-4.7
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  xai/grok-4.6:
+    model: grok-4.6
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  xai/grok-4.5:
+    model: grok-4.5
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  factory/inkling:
+    model: inkling
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  mistral/mistral-medium-3.5:
+    model: mistral-medium-3.5
+    reasoning: {high: {effort: high}}
+  zai/glm-5.3-flash:
+    model: glm-5.3-flash
+    reasoning: {low: {effort: low}, high: {effort: high}}
+  zai/glm-5.3:
+    model: glm-5.3
+    reasoning: {low: {effort: low}, high: {effort: high}}
+  zai/glm-5.2:
+    model: glm-5.2
+    reasoning: {high: {effort: high}}
+  zai/glm-5.2-fast:
+    model: glm-5.2-fast
+    reasoning: {high: {effort: high}}
+  zai/glm-5.1:
+    model: glm-5.1
+    reasoning: {high: {effort: high}}
+  moonshot/kimi-k3:
+    model: kimi-k3
+    reasoning: {low: {effort: low}, high: {effort: high}}
+  moonshot/kimi-k2.5:
+    model: kimi-k2.5
+    reasoning: {high: {effort: high}}
+  qwen/qwen3.8-max:
+    model: qwen3.8-max
+    reasoning: {low: {effort: low}, medium: {effort: medium}}
+  nvidia/nemotron-3-ultra:
+    model: nemotron-3-ultra
+    reasoning: {high: {effort: high}}
+  deepseek/deepseek-v4.1-flash:
+    model: deepseek-v4.1-flash
+    reasoning: {low: {effort: low}, high: {effort: high}}
+  deepseek/deepseek-v4-flash-0731:
+    model: deepseek-v4-flash-0731
+    reasoning: {low: {effort: low}, high: {effort: high}}
+  deepseek/deepseek-v4-pro:
+    model: deepseek-v4-pro
+    reasoning: {low: {effort: low}, high: {effort: high}}
+  minimax/minimax-m3:
+    model: minimax-m3
+    reasoning: {high: {effort: high}}
+  minimax/minimax-m2.7:
+    model: minimax-m2.7
+    reasoning: {high: {effort: high}}
 families:
   anthropic/sonnet:
-    pin: anthropic/claude-sonnet-4-5-20250929
+    pin: anthropic/claude-sonnet-5
   anthropic/opus:
-    pin: anthropic/claude-opus-4-20250514
+    pin: anthropic/claude-opus-5-5
   anthropic/haiku:
-    pin: anthropic/claude-haiku-3-5-20241022
+    pin: anthropic/claude-haiku-4-5-20251001

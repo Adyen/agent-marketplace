@@ -9,7 +9,7 @@
   "devin-models": {"checked": "2026-09-23", "sha256": "7458271bb8799afc94de84ec17975300acd1279401e553b1ada5f92773547391"},
   "devin-subagents": {"checked": "2026-09-23", "sha256": "c48e72474d74e451a44b6048e9f0563a23a30ba4f2688eb979ddf6ed567d163d"},
   "devin-skills": {"checked": "2026-09-23", "sha256": "bbb3daaab1a67ac61567bdb0945bc3756112b7e9e965420a4f781ec742dbe296"},
-  "factory-models": {"checked": "2026-09-23", "sha256": "179d81bdd77b50dea000e54a3c60678d2490a71b17a6d8e46d5e9e9f9648ab22"},
+  "factory-models": {"checked": "2026-09-26", "sha256": "7e10e9ad7af93be9895423b29d40e667fcf683aa0d043675f7bf96400d17b971"},
   "factory-subagents": {"checked": "2026-09-23", "sha256": "d228d52b4a048f8d2087bb6f7f2b58ebde8fe9c8f8169d77712a6f6d4ae3abe0"},
   "gemini-models": {"checked": "2026-09-23", "sha256": "b04bbff424c81aa5ff173df3f92e425931e1c55db9b8cdaea06a97cb70c27d85"},
   "gemini-subagents": {"checked": "2026-09-23", "sha256": "a9c0179604da39e8368bf3d964433a905fe52f3646c824c6b07f593ab5dbfe51"}

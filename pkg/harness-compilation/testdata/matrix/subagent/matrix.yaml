@@ -108,7 +108,7 @@ cells:
       to: factory
       class: cross
       diagnostics: [ingest.devin.bundle-manifest-synthesized, model.selector-pinned]
-      expectedModel: claude-sonnet-4-5-20250929
+      expectedModel: claude-sonnet-5
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation, tools]
     - from: devin

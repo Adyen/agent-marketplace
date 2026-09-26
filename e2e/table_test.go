@@ -2024,7 +2024,7 @@ registries:
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{"/root/.factory/droids/model-agent.md"},
 				FileContains: map[string]string{
-					"/root/.factory/droids/model-agent.md": "model: claude-sonnet-4-5-20250929",
+					"/root/.factory/droids/model-agent.md": "model: claude-sonnet-5",
 				}},
 		},
 	},
@@ -2331,7 +2331,7 @@ registries:
 					"/root/.cursor/agents/multi-agent.md",
 				},
 				FileContains: map[string]string{
-					"/root/.factory/droids/multi-agent.md": "model: claude-sonnet-4-5-20250929",
+					"/root/.factory/droids/multi-agent.md": "model: claude-sonnet-5",
 					"/root/.cursor/agents/multi-agent.md":  "model: claude-sonnet-4-5-20250929",
 				}},
 		},
@@ -2361,7 +2361,7 @@ registries:
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{"/root/.factory/droids/full-agent.md"},
 				FileContains: map[string]string{
-					"/root/.factory/droids/full-agent.md": "model: claude-sonnet-4-5-20250929",
+					"/root/.factory/droids/full-agent.md": "model: claude-sonnet-5",
 				},
 				FileNotContains: map[string]string{
 					"/root/.factory/droids/full-agent.md": "isolation:",

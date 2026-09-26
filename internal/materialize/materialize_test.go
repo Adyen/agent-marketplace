@@ -1492,8 +1492,8 @@ func TestRunFactorySubagentModelMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read droid: %v", err)
 	}
-	if !strings.Contains(string(body), "model: claude-sonnet-4-5-20250929") {
-		t.Errorf("expected mapped model claude-sonnet-4-5-20250929, got:\n%s", body)
+	if !strings.Contains(string(body), "model: claude-sonnet-5") {
+		t.Errorf("expected mapped model claude-sonnet-5, got:\n%s", body)
 	}
 }
 

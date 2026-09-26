@@ -28,6 +28,62 @@
   want_model: claude-opus-5
   want_effort: high
 
+- name: Sonnet selector pins current Factory sonnet
+  source: claude
+  target: factory
+  model: sonnet
+  want_model: claude-sonnet-5
+  losses: [model.selector-pinned]
+
+- name: Opus selector pins current Factory opus
+  source: claude
+  target: factory
+  model: opus
+  want_model: claude-opus-5-5
+  losses: [model.selector-pinned]
+
+- name: Haiku selector pins current Factory haiku
+  source: claude
+  target: factory
+  model: haiku
+  want_model: claude-haiku-4-5-20251001
+  losses: [model.selector-pinned]
+
+- name: Documented Factory inventory ID resolves cross-harness
+  source: claude
+  target: factory
+  model: grok-4.5
+  want_model: grok-4.5
+
+- name: Restricted reasoning subset keeps supported level
+  source: claude
+  target: factory
+  model: minimax-m3
+  effort: high
+  want_model: minimax-m3
+  want_effort: high
+
+- name: Restricted reasoning subset drops unsupported level
+  source: claude
+  target: factory
+  model: minimax-m3
+  effort: low
+  want_model: minimax-m3
+  losses: [model.reasoning-omitted]
+
+- name: Devin variant UID stays gated cross-harness
+  source: claude
+  target: devin
+  model: gpt-5.6-luna
+  effort: medium
+  losses: [model.unresolved, model.reasoning-omitted]
+
+- name: Devin native variant UID round-trips
+  source: devin
+  target: devin
+  model: gpt-5-6-luna-medium
+  want_model: gpt-5-6-luna-medium
+
 - name: Floating Sonnet to Devin
   source: claude
   target: devin
