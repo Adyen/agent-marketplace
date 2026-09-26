@@ -71,7 +71,8 @@ export default defineConfig({
             {
               text: 'Marketplace operators',
               items: [
-                { text: 'Run a local Marketplace', link: `${DOCS_PATH}tutorials/run-a-local-marketplace` }
+                { text: 'Run a local Marketplace', link: `${DOCS_PATH}tutorials/run-a-local-marketplace` },
+                { text: 'Add your first registry', link: `${DOCS_PATH}tutorials/add-your-first-marketplace-registry` }
               ]
             }
           ]
