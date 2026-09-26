@@ -173,6 +173,10 @@ func TestValidateMarketplaceEntriesAllowsLayeredAliasForSameIdentity(t *testing.
 	if errs := ValidateMarketplaceEntries(entries); len(errs) != 0 {
 		t.Fatalf("same-identity layered alias rejected: %v", errs)
 	}
+	entries[1].Source = RepoCommitted
+	if errs := ValidateMarketplaceEntries(entries); len(errs) != 0 {
+		t.Fatalf("same-identity same-source alias rejected: %v", errs)
+	}
 	entries[0].Source, entries[1].Source = SourceUnset, SourceUnset
 	if errs := ValidateMarketplaceEntries(entries); len(errs) == 0 {
 		t.Fatal("same-file duplicate alias accepted")
