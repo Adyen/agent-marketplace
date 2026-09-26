@@ -42,6 +42,7 @@ type snapshotLoadedMsg struct {
 	catalogs             map[string][]catalog.Entry
 	resolved             []resolver.ResolvedArtifact
 	mergedCfg            *config.Config
+	provisionalCfg       *config.Config
 	configuredRegistries []config.RegistryEntry
 	inventoryResult      *pipeline.ResolveResult
 	materializationModes config.MaterializationModes
@@ -304,8 +305,11 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			BrowsingConfigReady: func(merged *config.Config) {
 				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
 			},
+			ProvisionalConfigReady: func(merged *config.Config) {
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged})
+			},
 			ConfigReady: func(merged *config.Config) {
-				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged, provisionalCfg: merged})
 			},
 		},
 		Resolved: func(result pipeline.InspectionResult) {
@@ -960,6 +964,75 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 	}
 
+	return rows
+}
+
+func buildProvisionalRows(cfg *config.Config) []row {
+	if cfg == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var rows []row
+	add := func(key string, r row) {
+		if _, dup := seen[key]; dup {
+			return
+		}
+		seen[key] = struct{}{}
+		rows = append(rows, r)
+	}
+	for i := range cfg.Registries {
+		entry := &cfg.Registries[i]
+		for _, selected := range resolver.ResourcesSelected(*entry, nil) {
+			add(selected.Kind.String()+"\x00"+selected.Name+"\x00"+entry.CatalogKey, row{
+				Artifact: resolver.ResolvedArtifact{
+					Entry:        catalog.Entry{Kind: selected.Kind, Name: selected.Name, SourceHarness: entry.SourceHarness},
+					RegistryURL:  entry.URL,
+					RegistryPath: entry.Path,
+					Ref:          entry.Ref,
+					V4Kind:       entry.V4Kind,
+					Source:       entry.Source,
+					Required:     entry.Required,
+					CatalogKey:   entry.CatalogKey,
+				},
+				PendingVerification: true,
+				RegistryURL:         entry.URL,
+				RegistryName:        registryDisplayName(entry.URL),
+				RegistryPath:        entry.Path,
+				RegistryRef:         entry.Ref,
+			})
+		}
+	}
+	for i := range cfg.Marketplaces {
+		entry := &cfg.Marketplaces[i]
+		for _, pin := range entry.Resources {
+			kind, ok := mpapi.ToIR(pin.Kind)
+			if !ok {
+				continue
+			}
+			name := marketplaceInstalledName(pin)
+			catalogKey := marketplaceCatalogKey(*entry, pin)
+			add(marketplaceSelectionKey(catalogKey, pin.Kind, name), row{
+				Artifact: resolver.ResolvedArtifact{
+					Entry:                   catalog.Entry{Kind: kind, Name: name},
+					RegistryURL:             entry.URL,
+					RegistryPath:            pin.RegistryID,
+					Ref:                     pin.Revision,
+					Source:                  entry.Source,
+					Required:                entry.Required,
+					CatalogKey:              catalogKey,
+					IsMarketplace:           true,
+					MarketplaceURL:          entry.URL,
+					MarketplaceInstanceID:   entry.InstanceID,
+					MarketplaceAlias:        entry.Alias,
+					MarketplaceRegistryID:   pin.RegistryID,
+					MarketplaceResourceName: pin.Name,
+				},
+				PendingVerification: true,
+				RegistryURL:         entry.URL,
+				RegistryName:        registryDisplayName(entry.URL),
+			})
+		}
+	}
 	return rows
 }
 

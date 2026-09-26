@@ -100,6 +100,13 @@ func TestBrowsingConfigStageRendersCachedRowsBeforeBlockedAcquisition(t *testing
 	case <-time.After(30 * time.Second):
 		t.Fatal("no config stage published while organization acquisition was blocked")
 	}
+	if first.provisionalCfg != nil {
+		select {
+		case first = <-stages:
+		case <-time.After(30 * time.Second):
+			t.Fatal("no browsing config stage after the provisional stage")
+		}
+	}
 	if first.stage != snapshotStageConfig || first.mergedCfg == nil {
 		t.Fatalf("first stage = %+v, want browsing config", first)
 	}

@@ -15,6 +15,7 @@ import (
 // suitable for unit-testing the footer and spinner Update logic.
 func newSpinnerTestModel() Model {
 	m := NewModel("/repo", "/home")
+	m.loading = false
 	m.pane = paneList
 	m.tabStates = newTabStates()
 	return m

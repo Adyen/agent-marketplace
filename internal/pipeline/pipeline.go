@@ -81,6 +81,7 @@ type ResolveOptions struct {
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
 	BrowsingConfigReady     func(*config.Config)
+	ProvisionalConfigReady  func(*config.Config)
 	ConfigReady             func(*config.Config)
 }
 
@@ -403,10 +404,10 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			Errors:       errs,
 		}
 		if loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors) {
-			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady)
+			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, opts.ProvisionalConfigReady)
 		}
 	} else {
-		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady)
+		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, opts.ProvisionalConfigReady)
 	}
 
 	result.Diagnostics = ec.Diagnostics

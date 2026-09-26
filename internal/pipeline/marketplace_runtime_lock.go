@@ -24,14 +24,14 @@ const (
 // LoadEffective loads configuration with explicit organization-lock semantics:
 // online acquisition, strict on-disk evidence, or reuse of verified cached evidence.
 func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
-	ec, _ := loadEffective(ctx, mode, opts, policy, nil)
+	ec, _ := loadEffective(ctx, mode, opts, policy, nil, nil)
 	return ec
 }
 
 // loadEffective also reports whether organization Marketplace state was acquired
 // or reused. Strict loads never consult the transient cache; cached loads never
 // contact the Marketplace.
-func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady func(*config.Config)) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady, provisionalReady func(*config.Config)) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
 	if mode != ConfigLoadOnline && mode != ConfigLoadStrict && mode != ConfigLoadCached {
 		return effectiveConfigError(config.EffectiveConfig{}, fmt.Errorf("invalid config load mode: %d", mode)), transientOrganizationMarketplaceLockUnused
 	}
@@ -87,10 +87,16 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	if err != nil {
 		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
 	}
-	if browsingReady != nil {
+	if provisionalReady != nil || browsingReady != nil {
 		provisional := config.Bind(intent, evidence)
 		if provisional.Merged != nil {
-			browsingReady(browsingMergedConfig(ctx, provisional.Merged, organization.MarketplaceSources()))
+			merged := provisionalMergedConfig(provisional.Merged, organization.MarketplaceSources())
+			if provisionalReady != nil {
+				provisionalReady(merged)
+			}
+			if browsingReady != nil {
+				browsingReady(browsingMergedConfig(ctx, merged))
+			}
 		}
 	}
 	slog.Info("transient organization Marketplace lock acquisition started", "config", organization.Path)
@@ -122,9 +128,24 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 
 const browsingIdentityTimeout = 5 * time.Second
 
-func browsingMergedConfig(ctx context.Context, merged *config.Config, sources []config.MarketplaceSource) *config.Config {
+func provisionalMergedConfig(merged *config.Config, sources []config.MarketplaceSource) *config.Config {
 	out := *merged
-	entries := make([]config.MarketplaceEntry, 0, len(merged.Marketplaces)+len(sources))
+	out.Marketplaces = append([]config.MarketplaceEntry(nil), merged.Marketplaces...)
+	for _, source := range sources {
+		entry := config.MarketplaceEntry{URL: source.URL, Source: config.Organization}
+		for _, request := range source.Requests {
+			entry.Resources = append(entry.Resources, config.MarketplaceResourcePin{
+				RegistryID: request.Registry, Kind: request.MarketplaceKind(), Name: request.Name, Direct: true,
+			})
+		}
+		out.Marketplaces = append(out.Marketplaces, entry)
+	}
+	return &out
+}
+
+func browsingMergedConfig(ctx context.Context, merged *config.Config) *config.Config {
+	out := *merged
+	entries := make([]config.MarketplaceEntry, 0, len(merged.Marketplaces))
 	for _, entry := range merged.Marketplaces {
 		if entry.Source == config.Organization {
 			bound, ok := bindBrowsingInstanceID(ctx, entry)
@@ -136,14 +157,6 @@ func browsingMergedConfig(ctx context.Context, merged *config.Config, sources []
 			continue
 		}
 		entries = append(entries, entry)
-	}
-	for _, source := range sources {
-		bound, ok := bindBrowsingInstanceID(ctx, config.MarketplaceEntry{URL: source.URL, Source: config.Organization})
-		if !ok {
-			slog.Warn("organization Marketplace endpoint excluded from browsing config: identity unavailable", "url", source.URL)
-			continue
-		}
-		entries = append(entries, bound)
 	}
 	out.Marketplaces = entries
 	return &out

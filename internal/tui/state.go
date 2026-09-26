@@ -85,6 +85,8 @@ type row struct {
 	MarketplaceCollectionOnly bool
 	MarketplaceDiscovery      *marketplaceDiscovery
 
+	PendingVerification bool
+
 	// searchableLower is a cached lowercased concatenation of the fields
 	// applyFilter scans (name + tags + registry URL). Populated lazily by
 	// ensureSearchable so applyFilter does not re-allocate this string on
@@ -145,6 +147,9 @@ func (r row) canOverrideMarketplace() bool {
 }
 
 func (r row) Glyph() string {
+	if r.PendingVerification {
+		return "[~]"
+	}
 	if r.IsMalformed {
 		return "[!]"
 	}
@@ -171,6 +176,9 @@ func (r row) Glyph() string {
 }
 
 func (r row) StatusText() string {
+	if r.PendingVerification {
+		return "configured; verification pending"
+	}
 	if r.IsMalformed {
 		return "malformed: " + r.MalformedMsg
 	}
@@ -218,6 +226,7 @@ type Model struct {
 	homeDir             string
 	rows                []row
 	authoritativeRows   []row
+	provisionalRows     []row
 	discoveryRows       []row
 	browseDiscoveryRows []row
 	discoveryOutcomes   []marketplace.DiscoveryOutcome

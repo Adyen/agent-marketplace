@@ -21,6 +21,7 @@ import (
 func helperFlatCursorOnSkill(t *testing.T, r row) Model {
 	t.Helper()
 	m := NewModel("/repo", "/home")
+	m.loading = false
 	m.rows = []row{r}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()

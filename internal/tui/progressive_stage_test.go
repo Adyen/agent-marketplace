@@ -2,11 +2,16 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -216,6 +221,46 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	}
 }
 
+func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
+	m := newTestModel()
+	m.rows = nil
+	m.authoritativeRows = nil
+	m.flatItems = nil
+	m.loading = true
+	generation := m.requests.active(requestSnapshot)
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
+	stages := make(chan snapshotLoadedMsg)
+	close(stages)
+
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, mergedCfg: &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}, stages: stages})
+	m = updated.(Model)
+	var items []mpapi.ResourceListItem
+	for i := range 30 {
+		items = append(items, mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: fmt.Sprintf("remote-%02d", i), Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable})
+	}
+	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: items, Total: len(items), CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	m = updated.(Model)
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d before installed rows, want 0", m.cursor)
+	}
+
+	var installed []row
+	for i := range 20 {
+		installed = append(installed, mkRow(fmt.Sprintf("installed-%02d", i), withGlobal))
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation, mergedCfg: &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}, rows: installed, driftAssessment: driftUnknown, stages: stages})
+	m = updated.(Model)
+	if m.cursor != 0 || m.listOffset != 0 {
+		t.Fatalf("installed rows moved the untouched cursor: cursor=%d offset=%d item=%q", m.cursor, m.listOffset, flatItemKey(m.flatItems[m.cursor]))
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}, rows: installed, driftAssessment: driftReady})
+	m = updated.(Model)
+	if m.cursor != 0 || m.listOffset != 0 {
+		t.Fatalf("final stage moved the untouched cursor: cursor=%d offset=%d", m.cursor, m.listOffset)
+	}
+}
+
 func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -344,6 +389,265 @@ func TestInventoryStageDoesNotCompletePendingToggleReload(t *testing.T) {
 	}
 }
 
+func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
+	m := newTestModel()
+	m.rows = nil
+	m.authoritativeRows = nil
+	m.flatItems = nil
+	m.loading = true
+	generation := m.requests.active(requestSnapshot)
+	stages := make(chan snapshotLoadedMsg)
+	close(stages)
+	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL:    "https://market.example",
+		Source: config.Organization,
+		Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "tools", Kind: "skill", Name: "remote",
+			Revision: "sha256:" + strings.Repeat("a", 64), Direct: true,
+		}},
+	}}}
+
+	updated, cmd := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, stages: stages})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("provisional stage did not schedule the next stage")
+	}
+	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "remote" {
+		t.Fatalf("provisional stage published rows %#v, want the configured remote selection", m.rows)
+	}
+	pending := m.rows[0]
+	if !pending.PendingVerification {
+		t.Fatal("provisional row is not marked verification-pending")
+	}
+	if pending.Glyph() == "[x]" || pending.StatusText() == "enabled" {
+		t.Fatalf("provisional row fabricates installed state: glyph=%q status=%q", pending.Glyph(), pending.StatusText())
+	}
+	if badge := originBadge(pending); badge != "" {
+		t.Fatalf("provisional row fabricates an enabled badge %q", badge)
+	}
+
+	mi, _ := m.applyRowSpaceEligibility(pending)
+	m = mi.(Model)
+	if m.pane == paneToggleModal {
+		t.Fatal("verification-pending row opened the toggle modal before verification")
+	}
+
+	verified := row{Artifact: resolver.ResolvedArtifact{
+		Entry:         catalog.Entry{Kind: ir.KindSkill, Name: "remote"},
+		IsMarketplace: true, MarketplaceInstanceID: "mp", MarketplaceRegistryID: "tools",
+		MarketplaceResourceName: "remote",
+	}, EnabledGlobal: true}
+	updated, _ = m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation, mergedCfg: provisional, rows: []row{verified}, driftAssessment: driftUnknown, stages: stages})
+	m = updated.(Model)
+	if len(m.rows) != 1 || m.rows[0].PendingVerification {
+		t.Fatalf("verified inventory did not replace the provisional row: %#v", m.rows)
+	}
+	mi, _ = m.applyRowSpaceEligibility(m.rows[0])
+	m = mi.(Model)
+	if m.pane != paneToggleModal {
+		t.Fatal("verified row lost toggle eligibility")
+	}
+}
+
+func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
+	m := newTestModel()
+	stale := m.requests.active(requestSnapshot)
+	m.beginRequest(requestSnapshot)
+	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL:       "https://market.example",
+		Resources: []config.MarketplaceResourcePin{{RegistryID: "tools", Kind: "skill", Name: "remote"}},
+	}}}
+
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: stale, provisionalCfg: provisional})
+	m = updated.(Model)
+	for _, r := range m.rows {
+		if r.PendingVerification {
+			t.Fatalf("stale provisional stage published row %#v", r)
+		}
+	}
+}
+
+func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
+	repoRoot, homeDir := progressiveFixture(t)
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/"):
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fixture.Close)
+
+	orgDir := t.TempDir()
+	orgPath := filepath.Join(orgDir, "config.yaml")
+	orgConfig := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  mp: {marketplace: " + fixture.URL + "}\nresources:\n  mp: {include: [tools/skill/remote]}\n"
+	if err := os.WriteFile(orgPath, []byte(orgConfig), 0o600); err != nil {
+		t.Fatalf("write organization config: %v", err)
+	}
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) {
+		return config.LoadOrganizationConfig()
+	}))
+
+	m := newTestModel()
+	m.rows = nil
+	m.authoritativeRows = nil
+	m.flatItems = nil
+	m.loading = true
+	m.width, m.height = 120, 40
+	generation := m.beginRequest(requestSnapshot)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stages := readSnapshotStages(ctx, repoRoot, homeDir, catalogLoadCached, generation)
+	t.Cleanup(func() {
+		unblock()
+		cancel()
+		done := make(chan struct{})
+		go func() {
+			for range stages {
+			}
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Error("stage producer did not finish after release and cancellation")
+		}
+	})
+
+	var first snapshotLoadedMsg
+	select {
+	case first = <-stages:
+	case <-time.After(30 * time.Second):
+		t.Fatal("no provisional config stage published while organization acquisition was blocked")
+	}
+	if first.stage != snapshotStageConfig || first.provisionalCfg == nil {
+		t.Fatalf("first stage = %+v, want provisional configured selections", first)
+	}
+	if len(first.provisionalCfg.Marketplaces) != 1 || len(first.provisionalCfg.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("provisional config lost the configured pin: %#v", first.provisionalCfg.Marketplaces)
+	}
+	if first.mergedCfg != nil {
+		t.Fatal("provisional stage claimed a verified merged config before acquisition")
+	}
+
+	updated, _ := m.Update(first)
+	m = updated.(Model)
+	pendingRow := -1
+	for i, r := range m.rows {
+		if !r.PendingVerification {
+			t.Fatalf("pre-verification row %#v is not marked pending", r.Artifact)
+		}
+		if r.Artifact.Name == "remote" && r.Artifact.IsMarketplace {
+			pendingRow = i
+		}
+	}
+	if pendingRow < 0 {
+		t.Fatalf("configured Marketplace selection did not render pending verification while blocked: %#v", m.rows)
+	}
+	select {
+	case extra, ok := <-stages:
+		t.Fatalf("resolve advanced past acquisition while blocked: %+v closed=%t", extra, !ok)
+	default:
+	}
+	view := m.View()
+	if !strings.Contains(view, "remote") {
+		t.Fatalf("rendered view lacks the pending configured row:\n%s", view)
+	}
+	if strings.Contains(view, "[x] remote") || strings.Contains(view, "[x]  skill remote") {
+		t.Fatalf("pending row claims installed state:\n%s", view)
+	}
+}
+
+func TestAuthoritativeFailureClearsProvisionalRows(t *testing.T) {
+	m := newTestModel()
+	m.rows = nil
+	m.authoritativeRows = nil
+	m.flatItems = nil
+	m.loading = true
+	generation := m.requests.active(requestSnapshot)
+	stages := make(chan snapshotLoadedMsg)
+	close(stages)
+	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: "https://market.example",
+		Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "tools", Kind: "skill", Name: "remote",
+			Revision: "sha256:" + strings.Repeat("a", 64), Direct: true,
+		}},
+	}}}
+
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, stages: stages})
+	m = updated.(Model)
+	if len(m.rows) != 1 || !m.rows[0].PendingVerification {
+		t.Fatalf("provisional stage did not publish pending rows: %#v", m.rows)
+	}
+
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, errs: []error{errors.New("organization Marketplace acquisition failed")}})
+	m = updated.(Model)
+	for _, r := range m.rows {
+		if r.PendingVerification {
+			t.Fatalf("authoritative failure left verification-pending row %#v", r)
+		}
+	}
+	if len(m.errs) == 0 {
+		t.Fatal("authoritative failure dropped the recoverable diagnostics")
+	}
+}
+
+func TestPendingDetailFollowsVerifiedRow(t *testing.T) {
+	m := newTestModel()
+	m.rows = nil
+	m.authoritativeRows = nil
+	m.flatItems = nil
+	generation := m.requests.active(requestSnapshot)
+	stages := make(chan snapshotLoadedMsg)
+	close(stages)
+	revision := "sha256:" + strings.Repeat("a", 64)
+	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: "https://market.example",
+		Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "tools", Kind: "skill", Name: "remote",
+			Revision: revision, Direct: true,
+		}},
+	}}}
+
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, stages: stages})
+	m = updated.(Model)
+	if len(m.rows) != 1 || !m.rows[0].PendingVerification {
+		t.Fatalf("provisional stage did not publish pending rows: %#v", m.rows)
+	}
+	m.pane = paneDetail
+	m.detailKey = rowKey(m.rows[0])
+
+	verified := mkRow("remote", withKind(ir.KindSkill), withGlobal)
+	verified.RegistryURL = "https://market.example"
+	verified.Artifact.RegistryPath = "tools"
+	verified.Artifact.Ref = revision
+	verified.Artifact.IsMarketplace = true
+	verified.Artifact.MarketplaceInstanceID = "mp"
+	verified.Artifact.MarketplaceRegistryID = "tools"
+	verified.Artifact.MarketplaceResourceName = "remote"
+	updated, _ = m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation, mergedCfg: provisional, rows: []row{verified}, driftAssessment: driftUnknown, stages: stages})
+	m = updated.(Model)
+	if m.detailKey == "" {
+		t.Fatal("verified inventory cleared the open detail for the pending selection")
+	}
+	if m.detailKey != rowKey(verified) {
+		t.Fatalf("detail key %q did not follow the verified row %q", m.detailKey, rowKey(verified))
+	}
+}
+
 func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -374,5 +678,75 @@ func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	}
 	if !names["audit"] || !names["remote"] {
 		t.Fatalf("final rows = %#v, want audit plus remote", m.rows)
+	}
+}
+
+func TestSyncKeyBlockedBeforeVerifiedInventory(t *testing.T) {
+	m := newTestModel()
+	m.rows = nil
+	m.authoritativeRows = nil
+	m.flatItems = nil
+	m.loading = true
+	generation := m.requests.active(requestSnapshot)
+	stages := make(chan snapshotLoadedMsg)
+	close(stages)
+
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, mergedCfg: &config.Config{}, stages: stages})
+	m = updated.(Model)
+
+	updated, cmd := m.Update(keyPress('s'))
+	m = updated.(Model)
+	if m.syncing || cmd != nil {
+		t.Fatalf("sync key started a mutation before verified inventory: syncing=%t cmd=%v", m.syncing, cmd)
+	}
+	updated, cmd = m.Update(keyPress('u'))
+	m = updated.(Model)
+	if m.syncing || cmd != nil {
+		t.Fatalf("update key started a mutation before verified inventory: syncing=%t cmd=%v", m.syncing, cmd)
+	}
+
+	updated, _ = m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation, mergedCfg: &config.Config{}, rows: []row{mkRow("audit")}, driftAssessment: driftUnknown, stages: stages})
+	m = updated.(Model)
+	updated, cmd = m.Update(keyPress('s'))
+	m = updated.(Model)
+	if !m.syncing || cmd == nil {
+		t.Fatalf("verified inventory lost sync eligibility: syncing=%t cmd=%v", m.syncing, cmd)
+	}
+}
+
+func TestDiscoveryRowCannotInstallBeforeVerifiedInventory(t *testing.T) {
+	m := newTestModel()
+	m.rows = nil
+	m.authoritativeRows = nil
+	m.flatItems = nil
+	m.loading = true
+	generation := m.requests.active(requestSnapshot)
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
+	stages := make(chan snapshotLoadedMsg)
+	close(stages)
+
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, mergedCfg: &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}, stages: stages})
+	m = updated.(Model)
+	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
+	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	m = updated.(Model)
+
+	target := -1
+	for i, it := range m.flatItems {
+		if it.Kind == flatArtifact && it.Row.MarketplaceDiscovery != nil {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		t.Fatalf("cached discovery row missing before verification: %#v", m.flatItems)
+	}
+	m.cursor = target
+
+	updated, _ = m.Update(keyPress(' '))
+	m = updated.(Model)
+	if m.pane == paneToggleModal {
+		t.Fatal("Space opened the install scope modal on an unverified discovery row")
 	}
 }

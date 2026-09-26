@@ -268,6 +268,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 		}
 	}
 	m.authoritativeRows = msg.rows
+	m.provisionalRows = nil
 	m.rows = msg.rows
 	m.driftReport = msg.driftReport
 	m.mergedCfg = msg.mergedCfg
@@ -354,6 +355,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.requests.active(requestSnapshot) != msg.generation {
 				return m, nil
 			}
+			if msg.provisionalCfg != nil {
+				m.setProvisionalRows(buildProvisionalRows(msg.provisionalCfg))
+			}
+			if msg.mergedCfg == nil {
+				return m, waitSnapshotStages(msg.stages)
+			}
 			m.mergedCfg = msg.mergedCfg
 			return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), waitSnapshotStages(msg.stages))
 		}
@@ -380,6 +387,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
+			m.provisionalRows = nil
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
 			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
@@ -409,6 +417,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
+			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
 			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
@@ -437,6 +446,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		}
 		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
+			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
 			return m, m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...))
 		}
@@ -1104,7 +1114,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.configInvalid {
 			return m, invalidConfigToastCmd()
 		}
-		if m.syncing {
+		if m.loading || m.syncing {
 			return m, nil
 		}
 		if m.driftAssessment == driftReady && m.driftReport.InSync() {
@@ -1124,7 +1134,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.configInvalid {
 			return m, invalidConfigToastCmd()
 		}
-		if m.syncing {
+		if m.loading || m.syncing {
 			return m, nil
 		}
 		m.refreshing = false
@@ -1197,7 +1207,10 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	if !found && hadPrevious {
 		identity := registryIdentityKey(previous.RegistryURL, previous.RegistryRef, previous.RegistryPath)
 		for _, r := range m.rows {
-			if r.UnavailableReason == "" {
+			if r.UnavailableReason == "" && !previous.PendingVerification {
+				continue
+			}
+			if r.PendingVerification {
 				continue
 			}
 			if r.Artifact.Kind != previous.Artifact.Kind || r.Artifact.Name != previous.Artifact.Name {
@@ -1257,7 +1270,7 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 }
 
 func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
-	if m.syncing {
+	if m.loading || m.syncing {
 		return m, nil
 	}
 	if m.configInvalid {
@@ -1265,6 +1278,11 @@ func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
 	}
 	if r.IsMalformed {
 		return m, nil
+	}
+	if r.PendingVerification {
+		return m, func() tea.Msg {
+			return toastMsg{text: "selection is still being verified", duration: 2 * time.Second}
+		}
 	}
 	if r.MarketplaceDiscovery != nil && !marketplaceDiscoveryInstallable(r) {
 		return m, func() tea.Msg {
@@ -1428,7 +1446,10 @@ func (m *Model) enterDetailPane() {
 	m.detailSelectedPath = ""
 	if r, ok := m.selectedRow(); ok {
 		m.detailKey = rowKey(r)
-		if r.UnavailableReason != "" {
+		if r.PendingVerification {
+			m.bundle = nil
+			m.detailViewport.SetContent("Verification pending: " + sanitizeTerminalData(resourceLabel(r), terminalSingleLine) + "\n\nThis selection is configured, but exact-lock and catalog verification have not completed.")
+		} else if r.UnavailableReason != "" {
 			m.bundle = nil
 			m.detailViewport.SetContent(renderDetailFullContent(r, m.previewWidth()))
 		} else if isMarketplaceDetailOnly(r) {

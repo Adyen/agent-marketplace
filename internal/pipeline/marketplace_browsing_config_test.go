@@ -126,6 +126,74 @@ func TestBrowsingConfigReadyPublishesVerifiedEndpointBeforeAcquisition(t *testin
 	}
 }
 
+func TestProvisionalConfigReadyPublishesPinsBeforeAcquisition(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := t.TempDir()
+	dir := t.TempDir()
+
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "review")
+	release := gateMarketplaceAcquisition(t, fake)
+
+	orgPath := filepath.Join(dir, "config.yaml")
+	writeOrganizationMarketplaceConfig(t, orgPath, fake.URL)
+
+	provisionalSeen := make(chan *config.Config, 1)
+	browsingSeen := make(chan *config.Config, 1)
+	resultCh := make(chan ResolveResult, 1)
+	workspace := mustWorkspace(t, repo)
+
+	go func() {
+		resultCh <- Resolve(context.Background(), ResolveOptions{
+			Workspace:     workspace,
+			CatalogMode:   catalog.LoadModeInspect,
+			EffectiveOpts: missingEffectiveOpts(dir, orgPath),
+			ProvisionalConfigReady: func(merged *config.Config) {
+				provisionalSeen <- merged
+			},
+			BrowsingConfigReady: func(merged *config.Config) {
+				browsingSeen <- merged
+			},
+		})
+	}()
+
+	var published *config.Config
+	select {
+	case published = <-provisionalSeen:
+	case <-time.After(30 * time.Second):
+		t.Fatal("no provisional config published while organization Marketplace acquisition was blocked")
+	}
+	select {
+	case <-resultCh:
+		t.Fatal("resolve returned before transient acquisition was released")
+	default:
+	}
+
+	if len(published.Marketplaces) != 1 {
+		t.Fatalf("provisional config marketplaces = %#v", published.Marketplaces)
+	}
+	entry := published.Marketplaces[0]
+	if len(entry.Resources) != 1 {
+		t.Fatalf("provisional endpoint carried %d pins, want the 1 configured selection", len(entry.Resources))
+	}
+	pin := entry.Resources[0]
+	if pin.RegistryID != "source" || pin.Kind != "skill" || pin.Name != "review" {
+		t.Fatalf("provisional pin = %#v, want source/skill/review", pin)
+	}
+
+	release()
+	var result ResolveResult
+	select {
+	case result = <-resultCh:
+	case <-time.After(60 * time.Second):
+		t.Fatal("resolve did not finish after acquisition was released")
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("resolve errors = %v", result.Errors)
+	}
+}
+
 func TestBrowsingConfigReadyNeverPublishesUnsafeConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

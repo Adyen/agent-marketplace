@@ -201,6 +201,9 @@ func (m Model) selectionKeyForRebuild() string {
 	if m.pane == paneDetail && m.detailKey != "" {
 		return "row\x00" + m.detailKey
 	}
+	if m.cursor == 0 {
+		return ""
+	}
 	return m.selectionKey()
 }
 

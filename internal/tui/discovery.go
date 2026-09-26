@@ -320,10 +320,39 @@ func discoveryCoordinate(instanceID, registryID, kind, name string) string {
 	return instanceID + "\x00" + registryID + "\x00" + kind + "\x00" + name
 }
 
+func (m *Model) setProvisionalRows(rows []row) {
+	if m.authoritativeRows != nil {
+		m.provisionalRows = nil
+		return
+	}
+	m.provisionalRows = rows
+	m.mergeDiscoveryRows()
+}
+
+func provisionalCoordinate(r row) string {
+	url := r.Artifact.MarketplaceURL
+	if url == "" {
+		url = r.RegistryURL
+	}
+	if normalized, err := marketplace.NormalizeMarketplaceURL(url); err == nil {
+		url = normalized
+	}
+	return url + "\x00" + r.Artifact.MarketplaceRegistryID + "\x00" + r.Artifact.Kind.String() + "\x00" + r.Artifact.MarketplaceResourceName
+}
+
 func (m *Model) mergeDiscoveryRows() {
 	selection := m.selectionKeyForRebuild()
-	rows := make([]row, 0, len(m.authoritativeRows)+len(m.discoveryRows))
+	rows := make([]row, 0, len(m.authoritativeRows)+len(m.provisionalRows)+len(m.discoveryRows))
 	rows = append(rows, m.authoritativeRows...)
+	pending := make(map[string]struct{}, len(m.provisionalRows))
+	if m.authoritativeRows == nil {
+		for _, r := range m.provisionalRows {
+			if r.Artifact.IsMarketplace {
+				pending[provisionalCoordinate(r)] = struct{}{}
+			}
+		}
+		rows = append(rows, m.provisionalRows...)
+	}
 	enabled := make(map[string]struct{})
 	for _, r := range m.authoritativeRows {
 		if r.IsAvailable || !r.Artifact.IsMarketplace {
@@ -348,6 +377,13 @@ func (m *Model) mergeDiscoveryRows() {
 			continue
 		}
 		if _, ok := enabled[discoveryCoordinate(d.Endpoint.InstanceID, d.Item.RegistryID, d.Item.Kind, d.Item.Name)]; ok {
+			continue
+		}
+		url := d.Endpoint.URL
+		if normalized, err := marketplace.NormalizeMarketplaceURL(url); err == nil {
+			url = normalized
+		}
+		if _, ok := pending[url+"\x00"+d.Item.RegistryID+"\x00"+d.Item.Kind+"\x00"+d.Item.Name]; ok {
 			continue
 		}
 		rows = append(rows, r)
