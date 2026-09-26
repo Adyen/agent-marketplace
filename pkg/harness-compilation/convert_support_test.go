@@ -1004,6 +1004,50 @@ func TestConvertMissingCommaNamedFileDoesNotPublishPrefix(t *testing.T) {
 	}
 }
 
+func TestConvertAssemblesPluginFormRootSkillSupportFiles(t *testing.T) {
+	src := fstest.MapFS{
+		".claude-plugin/plugin.json": &fstest.MapFile{
+			Data: []byte(`{"name":"demo","version":"1.0.0","skills":["./"]}`),
+		},
+		"SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: demo\ndescription: root skill\n---\nBody"),
+		},
+		"scripts/run.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\necho hi\n"),
+			Mode: 0o755,
+		},
+		".git/config": &fstest.MapFile{Data: []byte("[core]")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("plugin-form root skill produced errors: %v", result.Diagnostics)
+	}
+	if artifactByPath(result.Artifacts, "skills/demo/SKILL.md") == nil {
+		t.Fatalf("plugin-form root skill was not converted; artifacts: %v", result.Artifacts)
+	}
+	script := artifactByPath(result.Artifacts, "skills/demo/scripts/run.sh")
+	if script == nil {
+		t.Fatalf("missing root skill support artifact; artifacts: %v", result.Artifacts)
+	}
+	if !bytes.Equal(script.Bytes, []byte("#!/bin/sh\necho hi\n")) {
+		t.Errorf("root support bytes mismatch: %q", script.Bytes)
+	}
+	if script.Mode.Perm() != 0o755 {
+		t.Errorf("root support mode = %o, want 0755", script.Mode.Perm())
+	}
+	for _, a := range result.Artifacts {
+		for _, component := range strings.Split(a.Path, "/") {
+			if component == ".git" {
+				t.Errorf("checkout metadata reached artifact %q", a.Path)
+			}
+		}
+	}
+}
+
 type swappingSupportFS struct {
 	fs.FS
 	inside, outside string
