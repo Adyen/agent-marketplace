@@ -34,17 +34,12 @@ func BenchmarkMarketplaceDiscoveryMerge(b *testing.B) {
 	}
 }
 
-// storeCachedBrowseFixture seeds an isolated discovery cache with one
-// endpoint's first page so cached-first browse benchmarks run without network.
 func storeCachedBrowseFixture(b *testing.B) config.MarketplaceEntry {
 	b.Helper()
 	b.Setenv("XDG_CACHE_HOME", b.TempDir())
 	return seedCachedBrowseFixture(b, config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "market"})
 }
 
-// seedCachedBrowseFixture writes the cached first page for endpoint into the
-// active XDG cache home so benchmarks that own their own environment can warm
-// the discovery cache without network.
 func seedCachedBrowseFixture(b *testing.B, endpoint config.MarketplaceEntry) config.MarketplaceEntry {
 	b.Helper()
 	items := make([]mpapi.ResourceListItem, marketplace.DiscoveryPageLimit)

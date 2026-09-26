@@ -80,10 +80,7 @@ type ResolveOptions struct {
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
-	// ConfigReady, when set, is invoked with the merged configuration once it
-	// has been loaded and validated, before catalog loading begins. It runs on
-	// the caller's goroutine; failing to return quickly delays resolution.
-	ConfigReady func(*config.Config)
+	ConfigReady             func(*config.Config)
 }
 
 type ResolveResult struct {

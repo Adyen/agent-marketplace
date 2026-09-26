@@ -21,10 +21,6 @@ import (
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
-// progressiveFixture builds a directory registry with two selected skills and
-// swaps the layered config loaders to the sandbox. It mirrors the smallest
-// actions_test fixture so the staged reader exercises real config load,
-// catalog resolution, and dry-run assessment.
 func progressiveFixture(t *testing.T) (repoRoot, homeDir string) {
 	t.Helper()
 	repoRoot = t.TempDir()
@@ -81,8 +77,6 @@ func collectSnapshotStages(stages <-chan snapshotLoadedMsg) []snapshotLoadedMsg 
 	return msgs
 }
 
-// The progressive snapshot publishes a validated-config stage, then a verified
-// inventory with drift still pending, and only then the assessed result.
 func TestReadSnapshotStagesDeliversConfigInventoryThenAssessed(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 
@@ -122,7 +116,6 @@ func TestReadSnapshotStagesDeliversConfigInventoryThenAssessed(t *testing.T) {
 	}
 }
 
-// A failed config load still delivers a single fail-closed final stage.
 func TestReadSnapshotStagesInvalidConfigStaysFailClosed(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	if err := os.WriteFile(filepath.Join(homeDir, ".agents", "config.yaml"), []byte("not: [valid\n"), 0o644); err != nil {
@@ -211,7 +204,6 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 		t.Fatalf("config stage did not start Marketplace discovery: loading=%t generation=%d", m.discoveryLoading, m.requests.active(requestDiscovery))
 	}
 
-	// Cached results publish rows while the local snapshot is still loading.
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
 	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}})
@@ -224,8 +216,6 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	}
 }
 
-// The inventory stage makes verified rows navigable and config-only toggles
-// eligible while drift stays explicitly pending.
 func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -262,10 +252,6 @@ func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	}
 }
 
-// Drift assessment is keyed by kind/name against selected rows only. A
-// same-name resource that is merely available from another catalog must not
-// inherit the selected row's drift marker, while unavailable recovery rows
-// keep the drift they already carry.
 func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	key := skill.ResourceKey(ir.KindSkill, "shared")
 	selected := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared", Path: "skills/shared"}, CatalogKey: "selected-cat"}}
@@ -288,7 +274,6 @@ func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	}
 }
 
-// The assessed stage replaces pending inventory rows and drift state.
 func TestFinalStageReplacesPendingInventoryWithAssessment(t *testing.T) {
 	m := newTestModel()
 	m.loading = true
@@ -305,8 +290,6 @@ func TestFinalStageReplacesPendingInventoryWithAssessment(t *testing.T) {
 	}
 }
 
-// A stage from a superseded generation cannot replace newer rows, merged
-// config, or started discovery.
 func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 	m := newTestModel()
 	stale := m.requests.active(requestSnapshot)
@@ -336,8 +319,6 @@ func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 	}
 }
 
-// An inventory delivery must not finish a mutation's pending authoritative
-// reload; only the assessed stage completes it.
 func TestInventoryStageDoesNotCompletePendingToggleReload(t *testing.T) {
 	m := newTestModel()
 	operation, ok := m.beginOperation(operationMutation)
@@ -363,8 +344,6 @@ func TestInventoryStageDoesNotCompletePendingToggleReload(t *testing.T) {
 	}
 }
 
-// Discovery rows published during the config stage survive the assessed
-// rebuild instead of being cleared by late authoritative rows.
 func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil

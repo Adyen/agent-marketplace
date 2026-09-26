@@ -128,14 +128,6 @@ func BenchmarkTUIStartupDiskIO(b *testing.B) {
 	}
 }
 
-// BenchmarkTUIStartupStages measures the progressive startup milestones
-// separately on identical disk-backed fixtures: first_visible runs the real
-// startup path from readSnapshotStages through the config stage and the
-// cached-first Marketplace discovery command it launches until the first
-// cached row is applied and rendered in the model (the still-running
-// inventory/dry-run stages are not awaited), config_ready_prerequisite is the
-// config callback alone, toggle_ready is verified inventory, and
-// fully_assessed is the final snapshot.
 func BenchmarkTUIStartupStages(b *testing.B) {
 	targets := map[string]snapshotStage{
 		"config_ready_prerequisite": snapshotStageConfig,

@@ -24,15 +24,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// snapshotStage identifies which part of a progressive snapshot a delivery
-// carries. The zero value is a complete assessed snapshot, so callers that do
-// not opt into staging keep their single-message behavior.
 type snapshotStage uint8
 
 const (
-	snapshotStageFinal     snapshotStage = iota // complete authoritative result
-	snapshotStageConfig                         // validated config; starts cached Marketplace discovery
-	snapshotStageInventory                      // verified inventory; drift still pending
+	snapshotStageFinal snapshotStage = iota
+	snapshotStageConfig
+	snapshotStageInventory
 )
 
 type snapshotLoadedMsg struct {
@@ -142,8 +139,6 @@ var (
 	readSnapshotForUpdate = readSnapshotForWorkspace
 )
 
-// snapshotStreamClosedMsg is delivered when a staged snapshot channel is
-// drained; it carries no state.
 type snapshotStreamClosedMsg struct{}
 
 func loadSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
@@ -384,9 +379,6 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 	emit(base)
 }
 
-// applyDriftItems returns a copy of the published inventory rows with assessed
-// drift attached, so a stage the model already applied is never mutated behind
-// its back. Rows that already carry drift (unavailable recovery rows) keep it.
 func applyDriftItems(rows []row, driftReport materialize.DriftReport) []row {
 	out := slices.Clone(rows)
 	if len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned) == 0 {

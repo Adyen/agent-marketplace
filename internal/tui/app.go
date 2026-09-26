@@ -178,8 +178,6 @@ func (m Model) Init() tea.Cmd {
 func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	assessment := msg.driftAssessment
 	if msg.stage != snapshotStageFinal {
-		// Intermediate stages carry a pending assessment; never derive a
-		// verdict before the assessed stage lands.
 		m.driftAssessment = assessment
 		m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
 		m.rowsStale = len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
@@ -356,8 +354,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.requests.active(requestSnapshot) != msg.generation {
 				return m, nil
 			}
-			// The merged configuration is validated; cached-first Marketplace
-			// discovery may publish rows before local verification lands.
 			m.mergedCfg = msg.mergedCfg
 			return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), waitSnapshotStages(msg.stages))
 		}
