@@ -420,6 +420,21 @@ func TestSkillSupportFilesExcludeVCSInternals(t *testing.T) {
 		t.Errorf("root support files = %#v, want %v", root.SupportFiles, want)
 	}
 
+	fileFS := fstest.MapFS{
+		"SKILL.md":                {Data: []byte("---\nname: root-skill\n---\nBody")},
+		".git":                    {Data: []byte("gitdir: /tmp/worktree")},
+		"notes.md":                {Data: []byte("notes")},
+		"vendor/lib/.git":         {Data: []byte("gitdir: /tmp/submodule")},
+		"vendor/lib/reference.md": {Data: []byte("reference")},
+	}
+	fileSkill, err := LoadRootSkill(fileFS)
+	if err != nil {
+		t.Fatalf("LoadRootSkill with .git files: %v", err)
+	}
+	if want := []string{"notes.md", "vendor/lib/reference.md"}; !slices.Equal(fileSkill.SupportFiles, want) {
+		t.Errorf("root support files with .git files = %#v, want %v", fileSkill.SupportFiles, want)
+	}
+
 	dirFS := fstest.MapFS{
 		"review/SKILL.md":          {Data: []byte("---\nname: review\ndescription: Review\n---\nBody")},
 		"review/notes.md":          {Data: []byte("notes")},

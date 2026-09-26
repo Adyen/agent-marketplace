@@ -4430,6 +4430,61 @@ func TestPrepareSkillLinkCacheExcludesVCSInternals(t *testing.T) {
 	}
 }
 
+func TestSkillCacheAndVirtualDigestExcludeGitPointers(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		add  func(string) error
+	}{
+		{name: "file", add: func(path string) error {
+			return os.WriteFile(path, []byte("gitdir: ../worktrees/checkout"), 0o644)
+		}},
+		{name: "dangling symlink", add: func(path string) error {
+			return os.Symlink("missing-gitdir", path)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sourceDir := t.TempDir()
+			cacheDir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(sourceDir, "tools"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, data := range map[string]string{"SKILL.md": "source skill", "tools/run.sh": "retained support"} {
+				if err := os.WriteFile(filepath.Join(sourceDir, name), []byte(data), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, parent := range []string{sourceDir, filepath.Join(sourceDir, "tools")} {
+				if err := tc.add(filepath.Join(parent, ".git")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			link := skillLink{sourceDir: sourceDir, cacheDir: cacheDir, artifacts: []artifact.Artifact{{Path: "SKILL.md", Bytes: []byte("compiled skill")}}}
+			digest, err := portableSkillVirtualDigest(link)
+			if err != nil {
+				t.Fatalf("virtual digest: %v", err)
+			}
+			if err := prepareSkillLinkCache(link); err != nil {
+				t.Fatalf("cache preparation: %v", err)
+			}
+			for _, rel := range []string{".git", "tools/.git"} {
+				if _, err := os.Lstat(filepath.Join(cacheDir, rel)); !os.IsNotExist(err) {
+					t.Fatalf("cache entry %s must be absent, got %v", rel, err)
+				}
+			}
+			for name, want := range map[string]string{"SKILL.md": "compiled skill", "tools/run.sh": "retained support"} {
+				got, err := os.ReadFile(filepath.Join(cacheDir, name))
+				if err != nil || string(got) != want {
+					t.Fatalf("cache file %s = %q, %v; want %q", name, got, err, want)
+				}
+			}
+			actual, err := portablePathDigest(cacheDir)
+			if err != nil || digest != actual {
+				t.Fatalf("virtual digest %q differs from cache digest %q: %v", digest, actual, err)
+			}
+		})
+	}
+}
+
 func TestRunFileModePrunesManifestWhenHarnessRootIsAbsent(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Setenv("HOME", t.TempDir())

@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"io/fs"
 	"testing"
 	"testing/fstest"
 
@@ -545,6 +546,73 @@ func TestClaudeIngester_LoadBundle_PluginFormWithRootSkill(t *testing.T) {
 	}
 	if skill.Source.File != "SKILL.md" {
 		t.Errorf("skill source = %q, want SKILL.md", skill.Source.File)
+	}
+}
+
+type rootSkillOpenFS struct {
+	files     fstest.MapFS
+	rootOpens int
+	rootErr   error
+}
+
+func (src *rootSkillOpenFS) Open(name string) (fs.File, error) {
+	if name == "SKILL.md" {
+		src.rootOpens++
+		if src.rootErr != nil {
+			return nil, &fs.PathError{Op: "open", Path: name, Err: src.rootErr}
+		}
+	}
+	return src.files.Open(name)
+}
+
+func TestClaudeIngester_LoadBundle_PluginRootSkillRead(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		rootFile   *fstest.MapFile
+		rootErr    error
+		wantSkill  bool
+		wantFailed bool
+	}{
+		{name: "valid", rootFile: &fstest.MapFile{Data: []byte("---\nname: root-skill\n---\nBody")}, wantSkill: true},
+		{name: "absent"},
+		{name: "unreadable", rootFile: &fstest.MapFile{Data: []byte("---\nname: root-skill\n---\nBody")}, rootErr: fs.ErrPermission, wantFailed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := fstest.MapFS{".claude-plugin/plugin.json": {Data: []byte(`{"name":"test-plugin"}`)}}
+			if tc.rootFile != nil {
+				files["SKILL.md"] = tc.rootFile
+			}
+			src := &rootSkillOpenFS{files: files, rootErr: tc.rootErr}
+			b, err := LoadBundleWithOptions(src, LoadOptions{})
+			if err != nil {
+				t.Fatalf("LoadBundleWithOptions: %v", err)
+			}
+			if src.rootOpens != 1 {
+				t.Errorf("root SKILL.md opens = %d, want 1", src.rootOpens)
+			}
+			wantResources := 0
+			if tc.wantSkill {
+				wantResources = 1
+			}
+			if got := len(b.Resources); got != wantResources {
+				t.Errorf("resources = %d, want %d", got, wantResources)
+			}
+			if tc.wantSkill && len(b.Resources) > 0 && b.Resources[0].Name() != "root-skill" {
+				t.Errorf("root skill name = %q, want root-skill", b.Resources[0].Name())
+			}
+			var failed int
+			for _, d := range b.Diagnostics {
+				if d.Code == diag.CodeIngestClaudeLoadSkillFailed {
+					failed++
+					if d.Severity != diag.SeverityError || d.Source.File != "." {
+						t.Errorf("load failure = %#v, want error at root", d)
+					}
+				}
+			}
+			if (failed == 1) != tc.wantFailed {
+				t.Errorf("load failure diagnostics = %d, want one: %t", failed, tc.wantFailed)
+			}
+		})
 	}
 }
 

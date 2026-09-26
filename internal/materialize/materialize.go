@@ -2761,18 +2761,18 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 			if childRel == "SKILL.md" {
 				continue
 			}
+			// Mirror copySupportFilesExcluding: VCS internals are never
+			// part of the support tree, so the dry-run digest must
+			// exclude them exactly like the real cache copy does.
+			if entry.Name() == ".git" {
+				continue
+			}
 			childPath := filepath.Join(root, entry.Name())
 			info, err := os.Stat(childPath) // copyFile/copyDir follows source links.
 			if err != nil {
 				return err
 			}
 			if info.IsDir() {
-				// Mirror copySupportFilesExcluding: VCS internals are never
-				// part of the support tree, so the dry-run digest must
-				// exclude them exactly like the real cache copy does.
-				if entry.Name() == ".git" {
-					continue
-				}
 				ensureParents(childRel)
 				// copyDir does not chmod an already-created directory, so an
 				// artifact-created parent keeps its existing 0755 mode.
@@ -3363,17 +3363,17 @@ func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, 
 		if childRel == "SKILL.md" || compiled[childRel] {
 			continue
 		}
+		// A root skill's source dir is a whole registry checkout, so
+		// VCS internals must never become harness-visible support
+		// files. Git cannot track a .git directory, so regular skills
+		// are unaffected.
+		if name == ".git" {
+			continue
+		}
 		srcPath := filepath.Join(srcDir, name)
 		dstPath := filepath.Join(dstDir, name)
 
 		if entry.IsDir() {
-			// A root skill's source dir is a whole registry checkout, so
-			// VCS internals must never become harness-visible support
-			// files. Git cannot track a .git directory, so regular skills
-			// are unaffected.
-			if name == ".git" {
-				continue
-			}
 			if err := os.MkdirAll(dstPath, 0o755); err != nil {
 				return fmt.Errorf("create support dir %s: %w", childRel, err)
 			}

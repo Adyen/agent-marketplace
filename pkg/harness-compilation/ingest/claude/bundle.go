@@ -246,8 +246,8 @@ func loadPluginForm(src fs.FS, bareMCP bool) (*ingest.Bundle, error) {
 	// silently drop it. A root duplicate of a skills/ entry is dropped
 	// rather than published twice: skills/ entries load first in sorted
 	// order, so the winner is deterministic.
-	if _, err := fs.ReadFile(src, "SKILL.md"); err == nil {
-		root, err := bundle.LoadRootSkill(src)
+	root, err := bundle.LoadRootSkill(src)
+	if !isNotExist(err) {
 		if err != nil {
 			diags = append(diags, ingest.LoadFailure(diag.CodeIngestClaudeLoadSkillFailed, "root skill", ".", ".", err))
 		} else if skillNames[root.Name()] {
