@@ -1,42 +1,42 @@
 # Sources and resources
 
-Every agent-marketplace v4 configuration is built from two maps that answer two different questions. The `sources` map says where content comes from and how it is acquired. The `resources` map says what to take from each source and with what protections. A source selects nothing on its own, and a resource group cannot name content without a source to load it from.
+A v4 configuration has two maps. `sources` says where content comes from and how to fetch it. `resources` says what to take from each source. The two are joined by name: the group `resources.skills` selects from the source `sources.skills` and from nothing else. A source on its own installs nothing, and a group cannot exist without a source to select from.
 
-This page explains what each concept is, what each does during a `sync`, and how they differ; the [repository configuration reference](../reference/configuration.md) documents every field.
+This page explains what each map does, how they differ, and what happens when you change them. The [repository configuration reference](../reference/configuration.md) lists every field.
 
-## Two maps, two jobs
+## The two maps side by side
 
 ```yaml
 apiVersion: agent-marketplace/v4
 harnesses: [claude]
-sources:                    # WHERE: named acquisition declarations
+sources:                    # where content comes from
   skills:
     git: https://github.com/anthropics/skills.git
     ref: main
     path: skills
-resources:                  # WHAT: selection policy, bound by name
+resources:                  # what to take from it, keyed by source name
   skills:
     include:
       - skill/frontend-design
 ```
 
-The two maps are joined by name. The group `resources.skills` binds to the source `sources.skills`, and its selections are resolved against that source only.
-
 | | `sources` | `resources` |
 |---|---|---|
-| Question answered | Where does content come from? | What do we take from it? |
-| Each entry is called | A source | A resource group |
-| Keyed by | A name you choose | A source name that must exist |
-| Owns | Acquisition: URL, ref, path, source layout | Selection: includes, excludes, tags, protections |
-| Recorded in the lock | Yes, for Git and Marketplace sources | No; selections are re-derived from config every run |
-| Selects anything by itself | No | Yes: `include`, `tags`, and `all` select |
-| Can exist without the other | Yes (see below) | No: `v4.undefined-source` is an error |
+| Question it answers | Where does content come from? | What do we take from it? |
+| One entry is called | A source | A resource group |
+| Keyed by | A name you choose | The name of a declared source |
+| Holds | URL or folder, ref, subdirectory, layout | Includes, excludes, tags, protection, target harnesses |
+| Lockfile | Git commits and Marketplace pins are recorded | Git and directory selections are never recorded; they are read from config on every run |
+| Installs anything alone | No | Yes, through `include`, and through `tags` or `all` for Git and directory sources |
+| Valid without the other | Yes, see [declared but never selected](#declared-but-never-selected) | No, a group without a source fails with `v4.undefined-source` |
 
 ## What a source is
 
-A source is a named declaration under `sources` that says how to reach one body of content. The name must match `[A-Za-z0-9][A-Za-z0-9._-]*` (start with a letter or digit). Each declaration contains exactly one acquisition kind, `git`, `directory`, or `marketplace`; mixing kinds, or adding a field that belongs to another kind, fails with `v4.source-discriminator` or `v4.source-field`.
+A source is one named entry under `sources`. The name must start with a letter or digit and may contain letters, digits, `.`, `_`, and `-`. Each entry declares exactly one kind: `git`, `directory`, or `marketplace`. Declaring two kinds or none fails with `v4.source-discriminator`, and a field that belongs to another kind, such as `ref` on a directory source, fails with `v4.source-field`.
 
-Source names are local configuration references. The installation scope comes from which configuration layer declares the source, and the durable identity comes from what the source points at. Renaming a source changes only the label; the lock, the cache, and the generated files are unaffected because none of them are keyed by name.
+A source name is a label inside one configuration root. The layer that declares the source decides where its resources install (machine or repository), and the URL, ref, and path decide what is fetched. The lock and the cache do not store Git or directory source names, so renaming such a source together with its group leaves both as they were. A Marketplace source is different: its name also becomes the endpoint's alias, which `status` shows in the `ALIAS` column and `search --marketplace <alias>` accepts.
+
+A group can only bind to a source declared in the same root, meaning the file itself or any fragment it includes. A source declared in `.agents/config.yaml` is invisible to `.agents/config.local.yaml`, so a personal file that wants to add or exclude resources repeats the source declaration first. [Personal repository overrides](../how-to/use-personal-repository-overrides.md) shows the pattern.
 
 ### `git`
 
@@ -49,14 +49,14 @@ sources:
     source_harness: claude
 ```
 
-A Git source is a remote repository at one URL:
+A Git source is a repository at one URL.
 
-- `ref` (required) names a branch, tag, or commit. The first `sync` resolves it to one exact commit.
-- That commit is recorded in the layer's lockfile together with a digest of every resource found at the source's roots. Later syncs keep the locked commit even when `ref` has moved; only `update` (or a lock refresh) advances it.
-- `path` narrows discovery to one subdirectory of the repository. The same repository at different paths can be declared as different sources.
-- `source_harness` fixes the layout when the repository's native layout is ambiguous. Omit it to let the CLI autodetect.
+- `ref` is required (`v4.git-ref-required` when missing). It names a branch, tag, or commit, and the first `sync` resolves it to one exact commit.
+- That commit goes into the layer's lockfile along with a digest of every resource found under the source. Later syncs keep installing from the locked commit even after the branch moves. Only `update` advances it.
+- `path` limits discovery to one subdirectory of the repository.
+- `source_harness` names the layout the content is written in, such as `claude` or `cursor`. Leave it out and the CLI detects the layout.
 
-Two source names may hold compatible declarations for the same repository. They remain separate configuration bindings, but compatible Git acquisition is shared: declaring the same URL at two refs produces two lock records, while declaring the same URL and ref twice produces one.
+You can declare the same repository under two names, for example a `stable` source on a tag and an `edge` source on `main`, each with its own group. The lock stores one record per URL and ref: two refs give two records, and two names with the same URL and ref share one.
 
 ### `directory`
 
@@ -66,13 +66,14 @@ sources:
     directory: ./agent-resources
 ```
 
-A directory source is a live local folder:
+A directory source is a folder on disk.
 
-- Content is read from disk on every command. There is no ref, no commit, and no lock record; whatever is in the folder now is what a `sync` sees.
-- In repository `.agents/config.yaml` and `.agents/config.local.yaml` roots, the path resolves relative to the repository root (`directory: .` is the repository itself). In user and organization configs and in included fragments, it resolves relative to the directory of the declaring file.
-- `source_harness` is available when the layout is ambiguous, as for Git sources.
+- The folder is read on every command. It has no ref and no commit, and it never appears in the lock. A `sync` installs whatever the folder holds at that moment.
+- In `.agents/config.yaml` and `.agents/config.local.yaml`, the path is relative to the repository root (`directory: .` is the repository itself). In user and organization configs and in included fragments, it is relative to the file that declares it.
+- `ref` and `path` are rejected. Point `directory` at the subfolder instead.
+- `source_harness` works as it does for Git sources.
 
-Because a directory source is live, it never goes stale: there is no drift to check and nothing to pin. The trade-off is reproducibility: two machines see the same directory source only if their folders hold the same content.
+Because nothing is pinned, a directory source can never be out of date with its lock. The cost is reproducibility: two machines install the same thing only if their folders hold the same files.
 
 ### `marketplace`
 
@@ -87,47 +88,45 @@ resources:
           revision: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-A Marketplace source is a hosted endpoint that curates and serves resources:
+A Marketplace source is a hosted endpoint that serves resources from many registries.
 
-- Every installed resource is pinned to an exact content revision (`sha256:…`) recorded in the layer lock. Resolution fails closed when lock evidence is missing or does not match the requested endpoint, registry, resource, and revision.
-- Marketplace resources use three-part locators, `<registry-slug>/<kind>/<name>`, because one endpoint serves many registries.
-- A Marketplace source can also be declared exclusion-only: a group with `exclude` and nothing else. Such a source needs no lock, never gets a lock record, and suppresses optional selections from the same endpoint. This override is valid only in user configuration.
+- Every installed resource is pinned to an exact content revision in the layer lock. When lock evidence is missing or does not match the requested endpoint, registry, resource, and revision, resolution stops with an error.
+- Locators have three parts, `<registry-slug>/<kind>/<name>`, because one endpoint serves many registries.
+- Groups select through explicit `include` only. The schema accepts `all`, `tags`, `registries`, and group-level `harnesses` on a Marketplace group, but `sync` rejects them today with `v4.marketplace-runtime-unsupported`.
+- An exclude must name one exact `<registry-slug>/<kind>/<name>`. Wildcards and collections are rejected.
+- One layer can hold only one fetching source per endpoint. A second one fails with `v4.marketplace-lock-mismatch`.
+- A group that holds only `exclude` turns the source into an exclusion-only override. It fetches nothing, needs no lock record, and hides optional resources that another layer selects from the same endpoint. This form is valid only in the user configuration; anywhere else it fails with `v4.layer-field`.
 
-See the [hosted Marketplaces explanation](./git-registries-and-hosted-marketplaces.md) for the trust model and the [configuration reference](../reference/configuration.md) for the full Marketplace rules, including `registries` bounds on dynamic selection.
+The [Git registries and hosted Marketplaces explanation](./git-registries-and-hosted-marketplaces.md) covers the trust model, and [installing from a Marketplace](../how-to/install-from-a-marketplace.md) covers the commands.
 
 ### Declared but never selected
 
-A source does not need a resource group. Acquisition and selection are independent, so what happens depends on the kind:
+A source does not need a group. What happens without one depends on the kind:
 
-- A **Git** source with no group is still resolved, acquired, and locked. The commit is recorded and verified on every sync; nothing is selected from it, so nothing materializes.
-- A **Directory** source with no group is still walked on every run. If the folder holds a recognizable layout it is simply not selected from; if it holds nothing recognizable the run fails with an ingestion error, because the source is live and must be readable.
-- A **Marketplace** source with no group behaves like an acquiring source (it needs lock evidence); use the exclusion-only form when you only want to suppress selections.
+- A Git source is still resolved, fetched, and locked. Its commit is checked on every sync, but nothing is installed from it.
+- A directory source is still read on every run. If the folder holds a layout the CLI recognizes, nothing happens. If it does not, the run fails with an ingestion error.
+- A Marketplace source still needs a lock record, just like one with includes. Give it an exclusion-only group if you only want to hide resources.
 
-If you want no acquisition at all, remove the source declaration. If you want acquisition without selection, a source with no group is fine and keeps the content pinned.
+Remove the declaration if you want nothing fetched at all.
 
 ## What a resource is
 
-The word *resource* appears in two roles, and the configuration schema uses it for the second:
-
-1. **A resource** is one installable thing, of one of six kinds. This is what the registry ships and what lands in your harness.
-2. **A resource group** is an entry under the `resources` map: the selection policy bound to one source name.
+The word covers two things. A resource is one installable item, such as a skill: the registry ships it, and a sync writes it into your harness. A resource group is one entry under the `resources` map, the selection rules for one source.
 
 ### The six resource kinds
 
 | Kind | What it is | What a sync writes for it |
 |---|---|---|
 | `skill` | A directory with a `SKILL.md` (name, description, optional metadata) | `skills/<name>/` in each target harness |
-| `command` | A prompt command in the source harness's native format | The target's command path, e.g. `.claude/commands/<name>.md` |
-| `subagent` | A scoped agent definition | The target's agent path, e.g. `.claude/agents/<name>.md` |
-| `hook` | An event hook or hook group | Entries in the target's hook aggregate, e.g. `.claude/hooks/hooks.json` |
-| `mcp` | An MCP server definition | Entries in the target's MCP aggregate, e.g. `.mcp.json` |
-| `collection` | A named bundle of other resources (`collections/<name>/COLLECTION.yaml`) | Nothing; it expands into its members before selection |
+| `command` | A prompt command in the source harness's native format | The target's command path, such as `.claude/commands/<name>.md` |
+| `subagent` | A scoped agent definition | The target's agent path, such as `.claude/agents/<name>.md` |
+| `hook` | An event hook or hook group | Entries in the target's hook file, such as `.claude/hooks/hooks.json` |
+| `mcp` | An MCP server definition | Entries in the target's MCP file, such as `.mcp.json` |
+| `collection` | A named bundle of other resources (`collections/<name>/COLLECTION.yaml`) | Nothing itself; it expands into its members |
 
-Kinds are independent namespaces: a skill and a command may share one name. A collection is the only kind that never materializes itself; including `collection/onboarding` is shorthand for including its members. The [registry layout reference](../reference/registry-layout.md) lists where each kind is discovered, and [harnesses and output paths](../reference/harnesses-and-output-paths.md) lists where each kind lands per target.
+Each kind has its own names, so a skill and a command can share a name. Including `collection/onboarding` is shorthand for including every member of that collection. The [registry layout reference](../reference/registry-layout.md) shows where each kind is found in a registry, and [harnesses and output paths](../reference/harnesses-and-output-paths.md) shows where each kind lands for each harness.
 
 ### Resource groups
-
-Every group is keyed by a source name in the same root and include tree, and holds the selection policy for that one source:
 
 ```yaml
 resources:
@@ -141,81 +140,118 @@ resources:
     required: true
 ```
 
-| Field | What it does |
-|---|---|
-| `include` | Explicit requests, as locator strings or with options. A bare list of locators is equivalent to `include`. |
-| `exclude` | Removes matching non-required selections. `*` excludes everything, `kind/*` excludes one kind. |
-| `tags` | Selects resources whose `metadata.tags` contain a matching tag. |
-| `all` | Selects every resource in the source, every kind. |
-| `registries` | Bounds dynamic (`all`/`tags`) Marketplace selection to named registry slugs. Selects nothing alone. Invalid for Git and directory sources. |
-| `required` | Protects this group's selections from excludes and removal. Selects nothing by itself; a required-only group selects zero resources. |
-| `harnesses` | Narrows the target set for this group's selections. It can only remove targets from the effective set, never add them. |
-
-Locator syntax depends on the source kind: `<kind>/<name>` for Git and directory sources, `<registry-slug>/<kind>/<name>` for Marketplace sources. Supported kinds are `skill`, `command`, `subagent`, `hook`, `mcp`, and `collection`. The same locator may not appear twice in one include list (`v4.duplicate-request`).
-
-Two options can apply to an explicit request:
-
-| Option | Applies to | Effect |
+| Field | What it does | Source kinds |
 |---|---|---|
-| `revision` | Marketplace only | Pins one exact `sha256:<64 hex>` revision of the resource or collection. Invalid on Git and directory sources. |
-| `as` | Skills and commands | Renames the generated output. Collections cannot use `as` because they do not materialize. A renamed Git or directory resource is currently rejected at runtime with `v4.runtime-option`. |
+| `include` | Requests resources by locator, as plain strings or with options. A bare list of locators means the same as `include`. | All |
+| `exclude` | Removes matching resources that are not required. `*` matches everything and `kind/*` matches one kind. | All; Marketplace needs exact locators |
+| `tags` | Selects resources whose `metadata.tags` contain one of the tags. | Git, directory |
+| `all` | Selects every resource of every kind in the source. | Git, directory |
+| `registries` | Limits Marketplace `all` and `tags` selection to named registries. Selects nothing by itself. | Marketplace (rejected by `sync` today) |
+| `required` | Protects this group's selections from excludes and from `remove`. A group with only `required: true` selects nothing. | All |
+| `harnesses` | Narrows which harnesses receive this group's resources. It can remove harnesses from the target set but never add one. | Git, directory |
 
-Selection happens in one pass: candidates are the union of explicit requests, tag matches, and `all`, then collections expand into their members, then excludes apply. A later explicit include can re-enable a resource that an earlier exclude suppressed, except where `required` protection applies. Excludes in a higher-precedence layer can suppress selections from lower layers, but never required ones. The full merge and conflict rules are in [scopes, selection, and precedence](./scopes-selection-and-precedence.md).
+A locator names one resource. Git and directory sources use `<kind>/<name>`, and Marketplace sources use `<registry-slug>/<kind>/<name>`. Listing the same locator twice in one include list fails with `v4.duplicate-request`.
 
-### What selects nothing
+An include can carry two options:
 
-Some declarations are valid but select nothing:
+| Option | Effect |
+|---|---|
+| `revision` | Pins one exact `sha256:<64 hex>` revision. Marketplace only; Git and directory sources reject it. |
+| `as` | Installs the resource under a different name. It works for Marketplace resources other than collections. On Git and directory sources, any name other than the resource's own fails with `v4.runtime-option`. |
 
-- A group with no selection fields (`required: true` alone, `registries` alone, or an empty group) selects nothing.
-- Explicit `tags: []` or `all: false` disables selection inherited through an include, and `harnesses: []` selects no targets.
-- An `exclude` that matches nothing changes nothing.
+### How a group picks resources
 
-## What each half does during a sync
+The candidates are everything named by `include`, matched by `tags`, or covered by `all`. Collections then expand into their members, and excludes remove anything that is not required.
 
-The quick-start example (a Git source named `skills` selecting `skill/frontend-design` for Claude) shows where each map does its work. This is the same pipeline as [how agent-marketplace works](./how-agent-marketplace-works.md), with the steps labeled by the map that drives them:
+Within one file, excludes always apply after includes, whatever order you write the keys in. If one file both includes and excludes `skill/a`, `skill/a` is excluded. Across an include tree the order matters: a fragment merges below the file that includes it, so an include in the including file brings back a resource that the fragment excluded.
 
-1. **Load configuration.** Both maps are read and merged across the four layers.
-2. **Reconcile the lock.** The source's `ref: main` resolves to one commit, and the commit plus a digest of the source's resources is recorded in `.agents/lock.yaml`. Marketplace pins record exact revisions instead.
-3. **Acquire the snapshot.** The exact commit is fetched into the cache and verified against the lock.
-4. **Discover.** The snapshot, or the live directory, or the Marketplace catalog, is walked for resources in the source harness's native layout, restricted to `path` when set.
-5. **Select.** The group's includes, tags, `all`, collection expansion, and excludes decide which discovered resources survive.
-6. **Ingest and compile.** Each selected resource is read into the canonical form, where its content comes from the source, and compiled per target, where its scope and harness set come from the group and its layer.
-7. **Materialize.** Files are written into each target harness. Output no longer selected by any group is pruned; content that changed upstream but is still locked stays at the locked revision.
+Excludes from a higher layer also hide resources selected by a lower layer, with two limits. Required resources are never hidden, and repository or personal-local excludes never reach resources installed at machine scope. [Scopes, selection, and precedence](./scopes-selection-and-precedence.md) has the full rules.
 
-Steps 2 through 4 are driven by the source, step 5 by the group, and steps 6 and 7 by both. The source controls which exact bytes exist; the group controls which of them are installed.
+A few declarations are valid but select nothing: an empty group, a group with only `required: true` or only `registries`, and an exclude that matches nothing. In an including file, `tags: []` or `all: false` switches off tag or all selection inherited from a fragment, and `harnesses: []` means no harness receives the group's resources.
 
-## The differences
+## What happens during a sync
 
-- A source is an acquisition declaration, and a group is a selection policy. Deleting a group stops selection but leaves the source acquired and locked (for Git); deleting a source removes the acquisition and breaks any group still bound to its name.
-- A source's identity is what it points at (URL, ref, path, layout). A group's identity is the source name it binds to. That is why two sources with different names can share one lock record, and why renaming a source breaks its groups (`v4.undefined-source`) without touching the lock.
-- The lock is written from sources; selections are never locked. `sync` re-derives the selected set from the `resources` map every run and prunes whatever is no longer selected.
-- One source name has exactly one declaration per configuration root, and one group binds to exactly one source. To treat one repository differently in two ways, declare it as two sources with two names (for example a `stable` and an `edge` ref) and give each its own group.
-- Names collide only at the resource level. When two sources deliver the same kind and name, one deterministic winner materializes and a warning is reported; required policy wins first, then the higher-precedence layer, then the alphabetically first normalized origin. See [scopes, selection, and precedence](./scopes-selection-and-precedence.md).
+Here is where each map does its work in the quick-start example, a Git source named `skills` with one skill selected for Claude. [How agent-marketplace works](./how-agent-marketplace-works.md) describes the same pipeline in more detail.
 
-## Words that sound alike
+1. Load configuration. Both maps are read and merged across the four layers.
+2. Check the lock. On the first run, or after `ref` changes, `ref: main` resolves to one commit, and that commit is written to `.agents/lock.yaml` with a digest of the resources under the source. On later runs the locked commit is reused. Marketplace sources record pinned revisions instead.
+3. Fetch the snapshot. The locked commit is downloaded into the cache and checked against the lock.
+4. Discover. The snapshot is searched for resources in the source's layout, limited to `path` when set. A directory source is read from disk here, and Marketplace resources come from their pinned revisions.
+5. Select. The group's includes, tags, `all`, collections, and excludes decide which of the discovered resources to install.
+6. Compile. Each selected resource is read from the source and converted for each target harness. The group and the layer that declares it decide which harnesses and which scope.
+7. Write. Files land in each harness's native layout. Output that no group selects any more is removed. Content that changed upstream stays at the locked version.
 
-- **Source** (`sources.<name>`) is the acquisition declaration. **Source harness** (`source_harness`) names the file layout of the source's content, not the place it is fetched from. **Configuration layer** is where a source is declared; the layer, not the name, decides machine versus repository scope.
-- **Resource** is one installable thing. **Resource group** (`resources.<name>`) is selection policy. **Resource locator** (`skill/frontend-design`) is how a group names one resource. **Collection** is a registry-side bundle that a locator can name but that never materializes.
+The source drives steps 2 to 4 and decides which exact files exist. The group drives step 5 and decides which of those files you get. Steps 6 and 7 use both.
+
+## What happens when you change the configuration
+
+A Git lock covers every resource under the source, whether a group selects it or not, so most group edits leave the lock alone.
+
+| You change | Next `sync` | Lock |
+|---|---|---|
+| Add a locator to a Git group's `include` | Installs it from the commit already locked | Unchanged |
+| Remove a locator, or delete the whole group | Removes the generated files | Unchanged; the source stays locked |
+| Delete the source and its group | Removes the generated files | The source's record is dropped |
+| Delete the source but keep its group | Fails with `v4.undefined-source` | Unchanged |
+| Change `ref` | Resolves the new ref and installs from that commit | Rewritten for the new ref |
+| Someone pushes to the branch named in `ref` | Nothing; the locked commit stays installed | Unchanged |
+| Run `agent-marketplace update` | Moves to the ref's current commit; new resources upstream appear in `list`, and the ones your group selects are installed | Commit advanced |
+| Edit files in a directory source | Installs the new content | Not involved |
+| Rename a Git or directory source and its group together | Nothing | Unchanged; the lock stores URLs and refs, not names |
+
+## Editing sources and groups from the command line
+
+You can edit both maps by hand, or let `install` and `remove` write them.
+
+`install <name> --from <url>` adds the source if it is missing, then adds `<kind>/<name>` to its group's `include`. The command names the source after the last segment of the URL, minus any `.git` suffix, so `https://github.com/example-org/team-skills.git` becomes `team-skills`. If another source already has that name, it tries `team-skills-2`, then `team-skills-3`. If the segment is not a valid source name, it falls back to `registry`. Running the command again with the same URL, ref, and path reuses the existing source.
+
+The kind comes from the URL. A local path that does not end in `.git`, such as `./resources`, `/srv/resources`, `~/resources`, or a `file://` path without `.git`, becomes a `directory` source. Anything else, including a local bare repository ending in `.git`, becomes a `git` source that uses `--ref` when you pass one.
+
+Without a resource name, `install --from <url>` writes a group with `all: true`.
+
+`remove <name>` edits only the group. It drops the include and may add an `exclude` to keep the resource out, for example when `all` or `tags` would select it again. The source stays declared, and a Git source stays locked. `remove --from <url>` without a name deletes both the source and its group.
+
+Both commands take `--scope user`, `--scope repo`, or `--scope local` to choose which configuration file they edit. The [command-line reference](../reference/cli.md) lists every flag.
+
+## Terms that are easy to mix up
+
+The word "source" means different things in different places:
+
+- In the configuration file, a source is an entry under `sources`.
+- `source_harness` is the layout the source's files are written in, such as `claude`. It has nothing to do with where the files come from.
+- In `status`, the `SOURCE` column is the configuration layer that declared the item, such as `REPO` or `ORG`. The `REGISTRY` column shows the source URL.
+- In `search`, the `SOURCE` column is the Marketplace registry slug, the first part of a three-part locator.
+
+Your own source names barely appear in command output. `list` has a `REGISTRY` column with a short name taken from the URL, so two sources for the same repository at different refs appear under one registry name. For a Git source, `list` shows what the locked commit contains, and a resource added upstream appears only after `update`. The one place a source name shows up is the `ALIAS` column for Marketplace sources in `status`.
+
+On the resource side, a resource is one installable item, a resource group is the selection rules under `resources.<name>`, a locator such as `skill/frontend-design` is how a group names one resource, and a collection is a bundle a locator can name that never installs as itself.
 
 ## Common mistakes
 
 | Mistake | What you see |
 |---|---|
-| Group key does not match any source name | `v4.undefined-source: resource group references undefined source "…"` |
+| Group name does not match any source | `v4.undefined-source: resource group references undefined source "…"` |
+| A personal-local file excludes from a source declared only in the committed file | `v4.undefined-source`; repeat the source declaration in the local file |
+| Git source without `ref` | `v4.git-ref-required` |
 | Source declares two kinds, or none | `v4.source-discriminator: must declare exactly one of git, directory, marketplace` |
-| `ref` or `path` on a directory source, or any Git field on a Marketplace source | `v4.source-field` |
-| Same source name declared with different values in one root and its includes | `v4.source-conflict` |
+| `ref` or `path` on a directory source, or a Git field on a Marketplace source | `v4.source-field` |
+| One source name declared with different values in a file and its includes | `v4.source-conflict` |
 | The same locator twice in one include list | `v4.duplicate-request` |
-| A Marketplace group with no matching lock record | `v4.marketplace-lock-required`; Marketplace resolution fails closed |
+| Including and excluding one resource in the same file | The exclude wins |
+| `all`, `tags`, `registries`, or `harnesses` on a Marketplace group | `v4.marketplace-runtime-unsupported` |
+| Exclusion-only Marketplace group outside the user configuration | `v4.layer-field` |
+| A Marketplace group without a matching lock record | `v4.marketplace-lock-required` or `v4.marketplace-lock-mismatch` |
 | Renaming a Git or directory resource with `as` | `v4.runtime-option: installed aliases are not supported by the legacy runtime` |
-| Expecting a source to install anything | Nothing materializes; a source only acquires |
-| Expecting a directory source to be pinned | It is live; only Git and Marketplace sources lock |
+| Expecting a new upstream commit after `sync` | `sync` keeps the locked commit; run `update` |
+| Expecting a source to install something by itself | Nothing is installed until a group selects it |
+| Expecting a directory source to be pinned | It is read live; only Git and Marketplace sources lock |
 
 ## Related documentation
 
-- [Repository configuration reference](../reference/configuration.md): every field, exhaustively.
+- [Repository configuration reference](../reference/configuration.md): every field.
 - [How agent-marketplace works](./how-agent-marketplace-works.md): the full sync pipeline.
-- [Scopes, selection, and precedence](./scopes-selection-and-precedence.md): how layers, excludes, and collisions resolve.
+- [Scopes, selection, and precedence](./scopes-selection-and-precedence.md): how layers, excludes, and name collisions resolve.
 - [Git registries and hosted Marketplaces](./git-registries-and-hosted-marketplaces.md): choosing between the two hosted source kinds.
-- [Registry layout reference](../reference/registry-layout.md): where each resource kind is discovered.
-- [Collections reference](../reference/collections.md): the registry-side bundle format.
+- [How to use personal repository overrides](../how-to/use-personal-repository-overrides.md): redeclaring a source in `.agents/config.local.yaml`.
+- [Registry layout reference](../reference/registry-layout.md): where each resource kind is found.
+- [Collections reference](../reference/collections.md): the bundle format.

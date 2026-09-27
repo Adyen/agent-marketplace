@@ -28,7 +28,7 @@ Press `q` to leave the UI for a moment.
 
 ## Point the project at a registry
 
-A registry is a Git repository that holds skills, commands, subagents, hooks, or MCP servers. Declare it as a named v4 `git` source and select resources through the matching resource group:
+A registry is a Git repository that holds skills, commands, subagents, hooks, or MCP servers. Declare it as a named v4 `git` source and select resources through the matching resource group ([sources and resources](./explanation/sources-and-resources.md) explains how the two fit together):
 
 ```bash
 mkdir -p .agents
