@@ -356,11 +356,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if msg.provisionalCfg != nil {
-				rows := msg.provisionalRows
-				if rows == nil {
-					rows = buildProvisionalRows(msg.provisionalCfg, nil, nil)
-				}
-				m.setProvisionalRows(rows)
+				m.setProvisionalRows(msg.provisionalRows)
 			}
 			if msg.mergedCfg == nil {
 				return m, waitSnapshotStages(msg.stages)

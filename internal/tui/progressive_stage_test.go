@@ -415,7 +415,7 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 		}},
 	}}}
 
-	updated, cmd := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, stages: stages})
+	updated, cmd := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil), stages: stages})
 	m = updated.(Model)
 	if cmd == nil {
 		t.Fatal("provisional stage did not schedule the next stage")
@@ -466,7 +466,7 @@ func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 		Resources: []config.MarketplaceResourcePin{{RegistryID: "tools", Kind: "skill", Name: "remote"}},
 	}}}
 
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: stale, provisionalCfg: provisional})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: stale, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil)})
 	m = updated.(Model)
 	for _, r := range m.rows {
 		if r.PendingVerification {
@@ -786,6 +786,53 @@ func TestProvisionalLocalAllTrueRowsRenderOnNormalConfigPath(t *testing.T) {
 	}
 }
 
+func TestExcludedOnlyProvisionalStagePublishesNoRows(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	reg := t.TempDir()
+	writeProvisionalSkill(t, reg, "solo")
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
+		t.Fatalf("mkdir repo agents: %v", err)
+	}
+	repoConfig := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  reg: {directory: " + reg + "}\nresources:\n  reg: {include: [skill/solo]}\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
+		t.Fatalf("write repo config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("skills:\n  exclude:\n    - solo\n"), 0o644); err != nil {
+		t.Fatalf("write local config: %v", err)
+	}
+	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil }))
+	t.Cleanup(swapLoadGlobalConfig(func() (*config.Config, error) { return nil, nil }))
+	t.Cleanup(swapLoadRepoConfig(func() (*config.Config, error) {
+		return config.LoadConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	}))
+	t.Cleanup(swapLoadLocalConfig(func() (*config.LocalConfig, error) {
+		return config.LoadLocalConfigFromPath(filepath.Join(repoRoot, ".agents", "config.local.yaml"))
+	}))
+
+	m := newProvisionalStageModel()
+	generation := m.beginRequest(requestSnapshot)
+
+	msgs := collectSnapshotStages(readSnapshotStages(context.Background(), repoRoot, homeDir, catalogLoadCached, generation))
+	if len(msgs) == 0 || msgs[0].provisionalCfg == nil {
+		t.Fatalf("no provisional config stage produced: %#v", msgs)
+	}
+	provisional := msgs[0]
+	if provisional.provisionalRows != nil {
+		t.Fatalf("excluded-only provisional stage emitted rows %#v, want nil", provisional.provisionalRows)
+	}
+
+	updated, _ := m.Update(provisional)
+	m = updated.(Model)
+	for _, r := range m.rows {
+		if r.PendingVerification {
+			t.Fatalf("excluded selection %q resurrected as a verification-pending row", r.Artifact.Name)
+		}
+	}
+}
+
 func TestProvisionalRegistryScopedLocalExcludesApply(t *testing.T) {
 	repoRoot, homeDir, regA, regB := provisionalLocalAllTrueFixture(t)
 	regC := t.TempDir()
@@ -866,7 +913,7 @@ func TestAuthoritativeFailureClearsProvisionalRows(t *testing.T) {
 		}},
 	}}}
 
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, stages: stages})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil), stages: stages})
 	m = updated.(Model)
 	if len(m.rows) != 1 || !m.rows[0].PendingVerification {
 		t.Fatalf("provisional stage did not publish pending rows: %#v", m.rows)
@@ -901,7 +948,7 @@ func TestPendingDetailFollowsVerifiedRow(t *testing.T) {
 		}},
 	}}}
 
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, stages: stages})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil), stages: stages})
 	m = updated.(Model)
 	if len(m.rows) != 1 || !m.rows[0].PendingVerification {
 		t.Fatalf("provisional stage did not publish pending rows: %#v", m.rows)
