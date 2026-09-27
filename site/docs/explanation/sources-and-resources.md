@@ -1,6 +1,6 @@
 # Sources and resources
 
-A v4 configuration has two maps. `sources` says where content comes from and how to fetch it. `resources` says what to take from each source. The two are joined by name: the group `resources.skills` selects from the source `sources.skills` and from nothing else. A source on its own installs nothing, and a group cannot exist without a source to select from.
+A configuration file (`apiVersion: agent-marketplace/v4`) has two maps, which are [YAML](../glossary.md#yaml) sections of named entries. `sources` says where content comes from and how to fetch it: a Git repository, a folder on your disk, or a hosted [Marketplace](../glossary.md#marketplace). `resources` says what to take from each source. The two are joined by name: the group `resources.skills` selects from the source `sources.skills` and from nothing else. A source on its own installs nothing, and a group cannot exist without a source to select from.
 
 This page explains what each map does, how they differ, and what happens when you change them. The [repository configuration reference](../reference/configuration.md) lists every field.
 
@@ -70,6 +70,7 @@ A directory source is a folder on disk.
 
 - The folder is read on every command. It has no ref and no commit, and it never appears in the lock. A `sync` installs whatever the folder holds at that moment.
 - In `.agents/config.yaml` and `.agents/config.local.yaml`, the path is relative to the repository root (`directory: .` is the repository itself). In user and organization configs and in included fragments, it is relative to the file that declares it.
+- A relative path must stay inside the folder it is resolved against, so `../shared` is rejected. Use an absolute path for a folder outside it.
 - `ref` and `path` are rejected. Point `directory` at the subfolder instead.
 - `source_harness` works as it does for Git sources.
 
@@ -92,7 +93,7 @@ A Marketplace source is a hosted endpoint that serves resources from many regist
 
 - Every installed resource is pinned to an exact content revision in the layer lock. When lock evidence is missing or does not match the requested endpoint, registry, resource, and revision, resolution stops with an error.
 - Locators have three parts, `<registry-slug>/<kind>/<name>`, because one endpoint serves many registries.
-- Groups select through explicit `include` only. The schema accepts `all`, `tags`, `registries`, and group-level `harnesses` on a Marketplace group, but `sync` rejects them today with `v4.marketplace-runtime-unsupported`.
+- Groups select through explicit `include` only. The schema accepts `all`, `tags`, `registries`, and group-level `harnesses` on a Marketplace group, but `sync` rejects them with `v4.marketplace-runtime-unsupported`.
 - An exclude must name one exact `<registry-slug>/<kind>/<name>`. Wildcards and collections are rejected.
 - One layer can hold only one fetching source per endpoint. A second one fails with `v4.marketplace-lock-mismatch`.
 - A group that holds only `exclude` turns the source into an exclusion-only override. It fetches nothing, needs no lock record, and hides optional resources that another layer selects from the same endpoint. This form is valid only in the user configuration; anywhere else it fails with `v4.layer-field`.
@@ -146,7 +147,7 @@ resources:
 | `exclude` | Removes matching resources that are not required. `*` matches everything and `kind/*` matches one kind. | All; Marketplace needs exact locators |
 | `tags` | Selects resources whose `metadata.tags` contain one of the tags. | Git, directory |
 | `all` | Selects every resource of every kind in the source. | Git, directory |
-| `registries` | Limits Marketplace `all` and `tags` selection to named registries. Selects nothing by itself. | Marketplace (rejected by `sync` today) |
+| `registries` | Limits Marketplace `all` and `tags` selection to named registries. Selects nothing by itself. | Marketplace (accepted by the schema, rejected by `sync`) |
 | `required` | Protects this group's selections from excludes and from `remove`. A group with only `required: true` selects nothing. | All |
 | `harnesses` | Narrows which harnesses receive this group's resources. It can remove harnesses from the target set but never add one. | Git, directory |
 
@@ -171,7 +172,7 @@ A few declarations are valid but select nothing: an empty group, a group with on
 
 ## What happens during a sync
 
-Here is where each map does its work in the quick-start example, a Git source named `skills` with one skill selected for Claude. [How agent-marketplace works](./how-agent-marketplace-works.md) describes the same pipeline in more detail.
+The steps below use the quick-start example, a Git source named `skills` with one skill selected for Claude, and show where each map does its work. [How agent-marketplace works](./how-agent-marketplace-works.md) describes the same pipeline in more detail.
 
 1. Load configuration. Both maps are read and merged across the four layers.
 2. Check the lock. On the first run, or after `ref` changes, `ref: main` resolves to one commit, and that commit is written to `.agents/lock.yaml` with a digest of the resources under the source. On later runs the locked commit is reused. Marketplace sources record pinned revisions instead.
@@ -179,7 +180,7 @@ Here is where each map does its work in the quick-start example, a Git source na
 4. Discover. The snapshot is searched for resources in the source's layout, limited to `path` when set. A directory source is read from disk here, and Marketplace resources come from their pinned revisions.
 5. Select. The group's includes, tags, `all`, collections, and excludes decide which of the discovered resources to install.
 6. Compile. Each selected resource is read from the source and converted for each target harness. The group and the layer that declares it decide which harnesses and which scope.
-7. Write. Files land in each harness's native layout. Output that no group selects any more is removed. Content that changed upstream stays at the locked version.
+7. Write. Files land in each harness's native layout. Output the CLI generated earlier that no group selects any more is removed. Content that changed upstream stays at the locked version.
 
 The source drives steps 2 to 4 and decides which exact files exist. The group drives step 5 and decides which of those files you get. Steps 6 and 7 use both.
 

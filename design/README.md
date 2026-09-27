@@ -1,8 +1,8 @@
 # Shared design
 
-`semantic-colors.css` is the framework-neutral source of truth for colors used
-by the landing site and Marketplace UI. Its values come from the landing
-site's light and dark green palettes.
+`semantic-colors.css` is the framework-neutral source of truth for the colors
+that the landing site and the Marketplace UI use. Its values come from the
+landing site's light and dark green palettes.
 
 Each application owns an adapter:
 
@@ -17,18 +17,20 @@ file directly. Do not copy or generate this file into either application, and
 do not import one application's adapter from the other.
 
 Add framework-neutral color roles here. Keep typography, spacing, radii, and
-framework variables in the relevant adapter. Components should consume shared
-roles or adapter tokens instead of introducing raw color literals.
+framework variables in the relevant adapter. Components should use shared roles
+or adapter tokens instead of raw color literals.
 
-Do not place Marketplace surface overrides in this shared file. They belong in
-the Marketplace-only theme so Landing colors remain unchanged.
+Marketplace surface overrides belong in the Marketplace-only theme, not in this
+shared file, so that the landing-site colors stay unchanged.
 
-The default token values are the light palette. Add `dark` to an ancestor to
-select the dark palette. Both applications use it on the document element and
-persist explicit choices under `vitepress-theme-appearance`, so the selected
-theme survives navigation between the landing site and Marketplace.
+The default token values are the light palette. Adding the `dark` class to an
+ancestor selects the dark palette. Both applications set it on the document
+element and store an explicit choice under the `vitepress-theme-appearance`
+key, so the selected theme carries over when you move between the landing site
+and the Marketplace.
 
-VitePress's default theme owns the canonical top navigation, responsive menu,
+The VitePress default theme owns the canonical top navigation, responsive menu,
 and appearance switch. `marketplace-navigation.css` adapts the Nuxt header to
-that baseline. Keep links and theme state in application code, where each
-router and rendering runtime owns its behavior.
+that baseline; the Nuxt adapter imports it. Keep links and theme state in
+application code, where each application's router and rendering runtime
+controls them.

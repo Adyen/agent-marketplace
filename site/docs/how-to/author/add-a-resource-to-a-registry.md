@@ -1,23 +1,27 @@
 # How to add a resource to a registry
 
-Add a new skill or command to a Git registry. Subagent, hook, and MCP files follow source-harness-specific native formats; see the [registry layout reference](../../reference/registry-layout.md).
+Add a new skill or command to a Git [registry](../../glossary.md#registry), check it locally, and publish it. Subagents, hooks, and MCP servers use each harness's own file formats; the [registry layout reference](../../reference/registry-layout.md) lists where they go.
 
 ## Prerequisites
 
-- A Git registry in a supported layout.
+- A Git registry in one of the layouts in the [registry layout reference](../../reference/registry-layout.md).
 - `agent-marketplace` on your `PATH`.
+- Permission to push to the registry repository.
 
-## 1. Choose the correct directory
+## 1. Choose the directory
 
-Resource layouts are source-harness-specific. A portable skill is a directory containing `SKILL.md`:
+`agent-marketplace` reads a registry in the native layout of one [harness](../../glossary.md#harness), called the source harness. A registry with `skills/` or `commands/` at its root is read as the Claude Code layout, which the examples below use:
 
-| Kind | Directory |
+| Kind | Path in a Claude-layout registry |
 |---|---|
-| skill | `skills/<name>/SKILL.md` |
+| skill | `skills/<name>/SKILL.md`, plus any support files in the same folder |
+| command | `commands/<name>.md` |
 
-## 2. Author the resource
+Other layouts put these resources elsewhere. For example, Codex reads skills from `.agents/skills/<name>/`, and Windsurf reads commands from `workflows/<name>.md`. See the [registry layout reference](../../reference/registry-layout.md).
 
-Public `SKILL.md` frontmatter is required and uses top-level `name`, `description`, and optional `license`; `metadata` owns `tags` and `requires`. For a skill:
+## 2. Write the resource
+
+A skill's `SKILL.md` starts with YAML front matter. Use top-level `name` and `description`, and optionally `license`. Put `tags` and `requires` under `metadata`:
 
 ```bash
 mkdir -p skills/code-review
@@ -38,7 +42,9 @@ Review code changes and suggest improvements.
 EOF
 ```
 
-For a Claude source harness, commands are flat Markdown files under `commands/`:
+The name may contain only lowercase letters, digits, and hyphens, and must start with a letter. The [resource metadata reference](../../reference/resource-metadata.md) lists every field.
+
+In the Claude Code layout, a command is a Markdown file under `commands/`. Its name comes from the file name:
 
 ```bash
 mkdir -p commands
@@ -49,11 +55,19 @@ Run the release checklist.
 EOF
 ```
 
-Then set `source_harness: claude` on the registry entry.
+Consumers can set `source_harness: claude` on their source to state the layout explicitly instead of relying on detection.
 
-The `x-agent-marketplace-kind: command` marker belongs to Devin and Codex converted-command layouts, where a command is written as a skill-shaped `SKILL.md`. It is not the universal command format.
+Devin and Codex have no separate command format, so in those layouts a command is a skill-shaped `SKILL.md` with the top-level marker `x-agent-marketplace-kind: command`. Other layouts do not use the marker.
 
-## 3. Validate locally
+## 3. Check it locally
+
+From the registry root, list what `agent-marketplace` discovers:
+
+```bash
+agent-marketplace list --from .
+```
+
+The new resource appears with the status `available`. Then convert it to another harness to catch translation problems:
 
 ```bash
 agent-marketplace convert \
@@ -63,21 +77,26 @@ agent-marketplace convert \
   skills/code-review
 ```
 
-If the conversion emits errors, fix the source before committing.
+A clean conversion ends with a line such as `Written 1, Skipped 0, Removed 0, Diagnostics 0`. Fix any reported diagnostic before you commit. To check every harness in CI, see [How to validate a registry in CI](./validate-a-registry-in-ci.md).
 
-## 4. Commit and tag
+## 4. Commit, tag, and push
 
 ```bash
 git add skills/code-review
 git commit -m "Add code-review skill"
 git tag v1.5.0
+git push origin main v1.5.0
 ```
 
-## 5. Update consumer references
+## 5. Tell consumers how to get it
 
-Consumers who pin `v1.5.0` will pick up the new resource. Consumers on a mutable ref such as `main` will see it on the next `agent-marketplace update`.
+A consumer receives the new resource only if their configuration selects it: by name, by a tag it carries, or with `all: true`.
+
+- A consumer whose source uses `ref: v1.5.0` gets it on the next `agent-marketplace sync`.
+- A consumer on a branch such as `main` gets it after `agent-marketplace update`, which moves their [lockfile](../../glossary.md#lockfile) to the newest commit. A plain `sync` keeps the commit already recorded in the lockfile.
+- A consumer on an older tag has to change the ref. See [How to version and release a registry](./version-and-release-a-registry.md).
 
 ## Troubleshooting
 
-- **`Malformed resource`**: Check the [diagnostics reference](../../reference/diagnostics.md) for the emitted code and fix the corresponding field.
-- **Resource does not appear in `list`**: Verify the directory is under an ingestion root declared in the consumer's registry entry.
+- `list --from .` shows the resource with a status starting with `malformed:`, or a consumer's sync counts it as `Malformed`: the status (or `agent-marketplace sync --verbose` in the consumer project) names a diagnostic code such as `ingest.claude.load-skill-failed` and the reason. See the [diagnostics reference](../../reference/diagnostics.md).
+- The resource does not appear in `list`: check that it sits inside the `path` the consumer's source declares, and in a directory that the registry's layout reads.

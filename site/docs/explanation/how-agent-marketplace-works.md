@@ -1,44 +1,46 @@
 # How agent-marketplace works
 
-`agent-marketplace` is a package manager for AI agent resources. You declare which registries and resources you want in configuration; it resolves them to exact Git commits, compiles each resource into the file format every one of your coding harnesses expects, and writes those files where the harness looks for them.
+`agent-marketplace` installs shared AI agent [resources](../glossary.md#resource), such as skills, commands, and MCP servers, into the coding tools you use. The docs call each of those tools a [harness](../glossary.md#harness): Claude Code, Cursor, Codex, and so on. You list the resources you want in a configuration file. The CLI finds them in a [registry](../glossary.md#registry) (a Git repository or a folder), pins each Git registry to one exact [commit](../glossary.md#commit), converts every resource into the format each harness reads, and writes the result into the folders where that harness looks.
+
+This page follows one `sync` from start to finish, then explains the design choices behind it.
 
 ## A worked example
 
-Suppose `.agents/config.yaml` selects the `frontend-design` skill from Anthropic's public skills repository and targets Claude Code and Cursor. A `sync` does this:
+Suppose `.agents/config.yaml` in your project selects the `frontend-design` skill from Anthropic's public skills repository, and lists Claude Code and Cursor as targets. Running `agent-marketplace sync` does the following:
 
-1. **Load configuration.** Four layers merge, lowest precedence first: organization (`/etc/agent-marketplace/config.yaml`), user (`~/.agents/config.yaml`), repository (`.agents/config.yaml`), and repository-personal (`.agents/config.local.yaml`). The [configuration layers reference](../reference/configuration-layers.md) gives the exact rules.
-2. **Reconcile the lock.** The registry's `ref: main` is resolved to one commit and recorded in `.agents/lock.yaml`, together with a digest of every resource in the registry. If a matching lock already exists, its commit is kept even when `main` has moved on.
-3. **Acquire the snapshot.** The exact commit is fetched into `~/.cache/agent-marketplace/` and verified against the lock's manifest digest.
-4. **Discover and select.** The snapshot is walked for resources in its native layout (here, Claude's `skills/<name>/SKILL.md`). Selectors, tags, collections, excludes, and cross-layer precedence decide that `frontend-design` is the one skill to materialize.
-5. **Ingest into the canonical form.** The `SKILL.md` is parsed into an in-memory description of "a skill named `frontend-design` with this description, body, and support files" that no longer depends on which harness wrote it. Commands, subagents, hooks, and MCP servers each have their own canonical shape.
-6. **Compile per target.** That canonical skill is turned into Claude Code's `.claude/skills/frontend-design/SKILL.md` and Cursor's `.cursor/skills/frontend-design/SKILL.md`. When a target cannot represent something (a field, a hook event, a whole resource kind) the compiler emits a diagnostic with a stable code instead of guessing.
-7. **Materialize.** Files are written atomically. Skills are symlinks into the cache by default; shared aggregate files such as `.mcp.json` are merged entry by entry. Generated output that configuration no longer selects is pruned.
+1. It loads the configuration. Up to four files combine, from lowest to highest priority: organization (`/etc/agent-marketplace/config.yaml`), user (`~/.agents/config.yaml`), repository (`.agents/config.yaml`), and personal-local (`.agents/config.local.yaml`). A higher file overrides a lower one. The [configuration layers reference](../reference/configuration-layers.md) gives the exact rules.
+2. It checks the [lockfile](../glossary.md#lockfile). The source's `ref: main` names a branch, and a branch keeps moving as people push to it. On the first run, `sync` looks up the commit `main` points to right now and records it in `.agents/lock.yaml`, together with a digest (a fingerprint) of every resource under the source. On later runs it reuses that recorded commit, even after `main` has moved on.
+3. It downloads that exact commit into the [cache](../glossary.md#cache) at `~/.cache/agent-marketplace/` and checks the files against the digests in the lock. If they differ, it stops.
+4. It finds the resources. The CLI searches the downloaded files for the folder layout a harness uses, here Claude's `skills/<name>/SKILL.md`. Your selections, tags, collections, and excludes, plus the priority between configuration files, then decide that `frontend-design` is the one skill to install.
+5. It reads each selected resource into a harness-neutral description. `SKILL.md` becomes, in memory, "a skill named `frontend-design` with this description, this body, and these support files", with no trace of which harness's format it came from. Commands, subagents, hooks, and MCP servers each have their own description of this kind.
+6. It converts that description for each target. The skill becomes Claude Code's `.claude/skills/frontend-design/SKILL.md` and Cursor's `.cursor/skills/frontend-design/SKILL.md`. When a target has no way to express something (a field, a hook event, or a whole resource kind), the CLI reports a [diagnostic](../glossary.md#diagnostic) with a fixed code and leaves that part out. It does not guess.
+7. It writes the files into the harness folders. The product calls this step [materialize](../glossary.md#materialize). By default each skill, command, and subagent is a [symlink](../glossary.md#symlink) (a shortcut) to a converted copy in the cache; Factory commands are the exception and are written as regular files. Shared configuration files such as `.mcp.json` hold entries from several places, so the CLI edits only its own entries in them. Output that the CLI generated earlier, and that the configuration no longer selects, is removed.
 
-The same seven steps run for every `sync`, `install`, and `sync --check`; only the last step changes between writing and reporting.
+`install` edits a configuration file and then runs the same steps. `sync --check` runs them without writing anything and reports what is out of date.
 
-## Discovery: how resources are found
+## How resources are found
 
-Discovery looks for each source harness's native layout signatures, not for generic folders. A Claude registry ships subagents as `agents/<name>.md` and MCP servers as a root-level `.mcp.json`; a Codex registry uses `.codex/agents/<name>.toml` and `.codex/config.toml`. `path:` on a registry entry restricts the walk to a subtree, and `source_harness:` fixes the layout when autodetection would be ambiguous. Collections (`collections/<name>/COLLECTION.yaml`) are read in the same pass and expanded into their member resources before selection. The [registry layout reference](../reference/registry-layout.md) lists every recognized path.
+A registry can be written in any harness's layout. The CLI recognizes each layout by its folder and file names. For example, a Claude registry keeps subagents in `agents/<name>.md` and MCP servers in a `.mcp.json` at its root, while a Codex registry uses `.codex/agents/<name>.toml` and `.codex/config.toml`. A source's `path:` limits the search to one subfolder. Its `source_harness:` names the layout when the CLI cannot tell on its own. Collections (`collections/<name>/COLLECTION.yaml`) are read in the same pass and replaced by their member resources before selection. The [registry layout reference](../reference/registry-layout.md) lists every recognized path.
 
-## Compilation: why there is a canonical form
+## Why resources pass through a neutral description
 
-Without a canonical form, supporting seven harnesses would need forty-two pairwise converters. With one, each harness needs an ingester (native → canonical) and a compiler (canonical → native), and any harness can be a source or a destination. The `convert` command exposes the same machinery directly.
+The CLI supports seven harnesses. Converting directly from each one to each other one would take 42 separate converters. With a harness-neutral description in the middle, each harness needs only two pieces: one that reads its format into the description, and one that writes the description back out in its format. Any harness can then be a source or a target. The `convert` command uses the same machinery to convert a folder from one layout to another.
 
-Ingestion is semantic, not byte-exact: a Claude skill compiled back to Claude is byte-stable, but Windsurf has no subagents and Codex hooks accept only some events, so those conversions are lossy by construction. Every lossy case is reported as a diagnostic (`compile.*`, `skill.*`, `hook.*`, and so on) rather than silently dropped; see the [diagnostics reference](../reference/diagnostics.md).
+The conversion keeps meaning, not exact bytes. A Claude skill converted back to Claude comes out unchanged. Some conversions lose information because the target has no equivalent: Windsurf has no subagents, and Codex hooks support only some events. The CLI reports every such loss as a diagnostic (codes such as `compile.*`, `skill.*`, and `hook.*`) instead of dropping it silently. See the [diagnostics reference](../reference/diagnostics.md).
 
 ## Where state lives
 
-| State | Location | Committed? | Safe to delete? |
+| State | Location | Committed to Git? | Safe to delete? |
 |---|---|---|---|
 | Repository selections | `.agents/config.yaml` | yes | no |
-| Repository lock | `.agents/lock.yaml` | yes | regenerated by a writing `sync`, but you lose the exact pin |
+| Repository lock | `.agents/lock.yaml` | yes | a writing `sync` recreates it, but it records whatever commit the ref points to at that moment, so you lose the old pin |
 | Personal selections | `~/.agents/config.yaml`, `~/.agents/lock.yaml` | no | no |
-| Checkout-only overrides | `.agents/config.local.yaml`, `.agents/lock.local.yaml` | gitignored | yes |
-| Cache | `~/.cache/agent-marketplace/` | no | yes; the next `sync` refetches the locked commits, which needs network access |
-| Ownership state for Devin and Codex aggregates | `$XDG_STATE_HOME/agent-marketplace/` | no | no; without it every existing aggregate entry is treated as unmanaged |
-| Generated harness artifacts | Managed symlinks and generated files inside `.claude/`, `.cursor/`, `~/.claude/`, … | gitignored | yes; recreated from config and lock |
+| Personal overrides for one checkout | `.agents/config.local.yaml`, `.agents/lock.local.yaml` | no; when `.agents/config.local.yaml` exists, the CLI adds both to `.gitignore` | the lock yes; deleting the config removes your personal overrides |
+| Cache | `~/.cache/agent-marketplace/` | no | yes; installed symlinks point into it and stay broken until the next `sync` downloads the locked commits again, which needs network access |
+| Ownership state for Devin, Codex, and Gemini MCP entries | `$XDG_STATE_HOME/agent-marketplace/` | no | no; without it, every existing entry in those shared files counts as handwritten |
+| Generated harness files | Symlinks and generated files inside `.claude/`, `.cursor/`, `~/.claude/`, and similar folders | usually not; the CLI does not add them to `.gitignore` | yes; `sync` recreates them from the configuration and lock |
 
-Configuration and lockfiles are the source of truth for declared resources. Cache entries and demonstrably generated harness artifacts can be rebuilt by running `sync`. Never delete durable ownership state or handwritten harness files: deleting ownership state leaves existing aggregate entries unmanaged (refusing collisions and disabling pruning until repaired), and configuration cannot reconstruct handwritten settings or journaled safety backups.
+The configuration files and lockfiles are the record of what you asked for. `sync` can rebuild the cache and the generated harness files from them. Do not delete ownership state or files you wrote by hand. Without ownership state, the CLI treats every existing entry in the files it tracks as handwritten: it keeps them all, refuses to write an entry whose name is already taken, and removes nothing until you repair the state. Your configuration cannot recreate handwritten settings or the safety backups stored next to the ownership state. [Shared configuration ownership](./shared-configuration-ownership.md) explains this in more detail.
 
 ## Related documentation
 

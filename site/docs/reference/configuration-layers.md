@@ -1,58 +1,117 @@
 # Configuration layers reference
 
+Agent Marketplace reads up to four configuration files on every run and combines them. Each file is a layer. This page lists the layers, where each file lives, which fields each layer may set, and how the CLI decides between layers when they disagree. For the fields themselves, see the [repository configuration reference](./configuration.md).
+
 ## Layer order
 
-Layers merge from lowest to highest precedence. A higher layer overrides a lower layer where the rules allow it. Every root uses the v4 source/resource schema.
+Layers merge from lowest to highest precedence. A higher layer overrides a lower layer where the rules below allow it. All four files use the same v4 schema.
 
 | Order | Layer | Configuration file | Generated lock | Purpose |
 |---|---|---|---|---|
 | 1 | Organization | `/etc/agent-marketplace/config.yaml` | `/etc/agent-marketplace/lock.yaml` | Managed machine policy and required resources |
 | 2 | User | `~/.agents/config.yaml` | `~/.agents/lock.yaml` | Personal machine-wide targets and resources |
 | 3 | Repository | `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` | Shared project targets and resources |
-| 4 | Repository personal | `<repo>/.agents/config.local.yaml` | `<repo>/.agents/lock.local.yaml` | Gitignored choices for one checkout |
+| 4 | Repository personal | `<repo>/.agents/config.local.yaml` | `<repo>/.agents/lock.local.yaml` | Choices for one checkout, kept out of Git |
 
-## Authority rules
+Each lock sits next to its configuration file and records only the sources that file declares. See the [lockfiles reference](./lockfiles.md).
+
+`install` and `remove` write to the user, repository, or personal-local file, chosen with `--scope user`, `--scope repo`, or `--scope local`. Consumer commands never edit the organization file. A system administrator deploys it, usually with a configuration management tool.
+
+## Fields each layer may set
+
+Every layer may declare `sources`, `resources`, and `include`. The other top-level fields are limited by layer. A field in the wrong layer fails the whole layer with `v4.layer-field`, and the same rule applies to fragments that the layer includes.
+
+| Field | Organization | User | Repository | Repository personal |
+|---|---|---|---|---|
+| `harnesses` | yes | yes | yes | no |
+| `allowed_registries`, `allowed_marketplaces` | yes | yes | yes | no |
+| `backup` | yes | yes | no | no |
+| `logging` | accepted, not used | yes | no | no |
+| `telemetry` | yes | yes | no | no |
+| `materialization` | no | yes | yes | yes |
+| Exclusion-only Marketplace source | no | yes | no | no |
+
+An exclusion-only Marketplace source is a Marketplace resource group that contains only `exclude`. It lets a user hide optional resources that the organization file selects from the same endpoint. See [Hosted Marketplaces](./configuration.md#hosted-marketplaces).
+
+The organization file accepts a `logging` block, but the CLI configures logging from the user file only. See the [logging reference](./logging.md).
+
+## How layers combine
 
 ### Target harnesses
 
-The effective target list is resolved in project-first order:
+The CLI picks one top-level target list, project first:
 
-1. Repository committed `harnesses`
-2. User personal `harnesses`
-3. Organization `harnesses`
+1. A non-empty `harnesses` list in the repository file.
+2. Otherwise, a non-empty `harnesses` list in the user file.
+3. Otherwise, the organization `harnesses` list.
 
-A resource group's `harnesses` list intersects with the effective list; it cannot add a target that was not already selected.
+Lists are not combined across layers. A resource group's `harnesses` list intersects with this target list, so it can narrow the targets for that group but cannot add a target that is not already selected.
 
 ### Allowlists
 
-- `allowed_registries` can be declared by organization, user, or repository layers. The personal-local layer cannot declare an allowlist.
-- `allowed_marketplaces` can be declared by organization, user, or repository layers. The personal-local layer cannot declare an allowlist.
-- Lower layers cannot relax an allowlist selected by a higher layer.
+`allowed_registries` and `allowed_marketplaces` are checked in the order organization, user, repository, and the first layer that declares the field controls it. Within that layer, the first declaration in include order wins. A later layer or fragment cannot relax or replace it. The personal-local file cannot declare either field.
 
-### Source and resource groups
+### Sources and resource groups
 
-- A v4 root declares named `sources` and `resources` maps.
-- Every resource group key must identify a source in the same root or include tree.
-- A resource group's `include`, `exclude`, `tags`, `all`, `required`, and `harnesses` fields are composed in include order.
-- An explicit empty `tags: []` or `harnesses: []` is an override, not an omitted field.
-- `required: true` protects selected resources but does not select resources by itself.
+- Every layer declares its own `sources` and `resources` maps.
+- Every resource group key must name a source declared in the same file or its include tree. A layer cannot refer to a source declared by another layer.
+- Resources selected by every layer are installed together. Name collisions between layers are resolved as described in [Name collisions](./configuration.md#name-collisions).
+- `required: true` protects a group's selections from exclusions and from `remove`, but it does not select anything by itself.
 
-### Telemetry
+### Backup, logging, and telemetry
 
-The `telemetry` block is eligible in the organization and user layers, including fragments included by those layers. Repository, local, and their included fragments cannot declare telemetry. Included fragments can contain only the fields that their containing layer allows.
+These fields control machine-wide behavior, so repository files cannot change them.
 
-### `include`
+- `backup` merges field by field from the organization file and then the user file. A value set in the user file wins over the organization value for the same field.
+- `logging` comes from the user file only.
+- `telemetry` is read from the organization and user files. See the [telemetry reference](./telemetry.md) for how the two combine.
 
-Every layer supports local-file `include`. Included fragments merge below the file that includes them. Shared fragments expand once per include branch; only an ancestor repeated on the current branch is a cycle. Glob patterns, remote URLs, YAML aliases, and YAML merge keys are not supported.
+### Materialization
 
-## Layer-specific notes
+`materialization` decides whether generated skills, commands, and subagents are [symlinks](../glossary.md#symlink) or regular files.
 
-- Every v4 root, including `config.local.yaml`, declares `apiVersion: agent-marketplace/v4`.
-- An included fragment may omit `apiVersion` and inherits v4 from its root.
-- Organization includes require root-owned, non-symlink files and directories with no group or other write permission.
-- The organization lock is intentionally absent in some managed setups; an absent lock leaves that layer mutable, while a present lock is exact and fail-closed.
+| File | Affects repository output | Affects machine output |
+|---|---|---|
+| User | yes, as the default | yes |
+| Repository | yes | no |
+| Repository personal | yes | no |
+| Organization | not allowed | not allowed |
+
+For repository output, the repository personal file wins over the repository file, which wins over the user file. Machine output uses only the user file.
+
+## `include`
+
+Every layer supports local-file `include`. Included fragments merge below the file that includes them: in a list, the first fragment merges first, each later fragment merges over the earlier ones, and the including file merges last. Fields keep their own merge rules, which the [repository configuration reference](./configuration.md#include) lists.
+
+A fragment shared by two branches of the include tree is loaded once for each branch. Only a file that includes one of its own ancestors is a cycle (`v4.include-cycle`). Glob patterns, remote URLs, YAML aliases, and YAML merge keys are not supported. An included fragment may omit `apiVersion` and inherits v4 from its root.
+
+Included fragments can contain only the fields that their layer allows. A fragment included by the repository file cannot set `telemetry`, for example.
+
+### Organization trust rules
+
+The organization file applies to every user on the machine, so the CLI checks file ownership and Unix permissions to confirm that only the system administrator can change it:
+
+- `/etc/agent-marketplace/config.yaml` must be a regular file, not a symlink, owned by root, and not writable by group or others.
+- The `/etc/agent-marketplace` directory must be owned by root, not a symlink, and not writable by group or others.
+- Every included file must meet the same file rules. Every directory above an included file, up to the filesystem root, must meet the same directory rules. The CLI checks each path as written, before it resolves symlinks or `..` segments.
+- When the organization file declares Git or Marketplace sources, a deployed `/etc/agent-marketplace/lock.yaml` must meet the same file rules and declare `scope: organization`.
+
+A file or directory that breaks a rule fails the organization layer with an `organization.trust.*` diagnostic, such as `organization.trust.include.writable` or `organization.trust.ancestor.symlink`.
+
+System symlink aliases do not get an exception. On macOS, `/etc`, `/var`, and `/tmp` are symlinks, so write organization include paths with the physical location, such as `/private/etc/agent-marketplace/profiles/company.yaml`.
+
+User, repository, and personal-local files and their includes have no ownership or permission requirements.
+
+## Organization lock
+
+Some managed setups never deploy an organization lock. The CLI supports that permanently:
+
+- When `/etc/agent-marketplace/lock.yaml` is absent, the organization layer stays unlocked. Online runs, including `sync --check`, resolve the organization's Marketplace requests into a verified lock held in memory for that run and never write `/etc`.
+- When the lock is present, it is exact. The CLI installs only what it records, and it stops with an error, without touching the lock, when the lock no longer matches the organization file.
+- `lock` and `lock --check` without `--scope` cover the user, repository, and personal-local locks, and `lock --check` also checks the organization lock. Only `lock --scope organization`, run by an administrator who can write `/etc/agent-marketplace`, creates or updates the organization lock.
 
 ## Related documentation
 
 - [Repository configuration reference](./configuration.md)
+- [Lockfiles reference](./lockfiles.md)
 - [Scopes, selection, and precedence](../explanation/scopes-selection-and-precedence.md)

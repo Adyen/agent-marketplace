@@ -49,9 +49,11 @@ export default defineConfig({
     sidebar: {
       [DOCS_PATH]: [
         { text: 'Overview', link: DOCS_PATH },
+        { text: 'Terminal basics', link: `${DOCS_PATH}terminal-basics` },
         { text: 'Install', link: `${DOCS_PATH}install` },
         { text: 'Quick start', link: `${DOCS_PATH}quick-start` },
         { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
+        { text: 'Glossary', link: `${DOCS_PATH}glossary` },
         {
           text: 'Tutorials',
           items: [
@@ -119,6 +121,7 @@ export default defineConfig({
               items: [
                 { text: 'Deploy a production Marketplace', link: `${DOCS_PATH}how-to/operator/deploy-a-production-marketplace` },
                 { text: 'Enable and use the admin panel', link: `${DOCS_PATH}how-to/operator/enable-and-use-the-admin-panel` },
+                { text: 'Test locally with Compose', link: `${DOCS_PATH}how-to/operator/test-locally-with-compose` },
                 { text: 'Configure a reverse proxy', link: `${DOCS_PATH}how-to/operator/configure-a-reverse-proxy` },
                 { text: 'Connect a private registry', link: `${DOCS_PATH}how-to/operator/connect-a-private-registry` },
                 { text: 'Back up and restore a Marketplace', link: `${DOCS_PATH}how-to/operator/back-up-and-restore` },

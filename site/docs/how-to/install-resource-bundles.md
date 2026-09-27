@@ -1,11 +1,12 @@
 # How to install resource bundles
 
-Install a named collection of resources, or all resources from a registry, in one command.
+Install a named [collection](../glossary.md#collection) of resources, or every resource in a registry, with one command.
 
 ## Prerequisites
 
 - `agent-marketplace` on your `PATH`.
-- A configured registry that exposes collections, or a registry whose bundle you want to install.
+- For a collection: a configured registry that publishes one.
+- For a whole registry: its URL, and a repository with `.agents/config.yaml`.
 
 ## 1. List available collections
 
@@ -16,29 +17,35 @@ agent-marketplace list --kind collection
 Expected output:
 
 ```text
-REGISTRY  KIND       NAME                 TAGS  STATUS
-example   collection  platform-onboarding        available
+REGISTRY  KIND        NAME                 TAGS (metadata)  STATUS
+example   collection  platform-onboarding                   available
 ```
 
 ## 2. Install a collection
 
-Install a collection in repository scope:
+Install the collection in repository scope, the default:
 
 ```bash
 agent-marketplace install platform-onboarding
 ```
 
-Verify the selection:
+The CLI adds `collection/platform-onboarding` to the source that publishes it in `.agents/config.yaml`, then syncs. It prints:
+
+```text
+Installed collection platform-onboarding in this repo
+```
+
+Check the selection:
 
 ```bash
 agent-marketplace status
 ```
 
-Under **SYNCED RESOURCES**, the collection's members appear as separate entries with a `Via` annotation naming the collection.
+Under `SYNCED RESOURCES`, each member of the collection appears as its own row, and the `VIA` column shows `collection:platform-onboarding`.
 
 ## 3. Install all resources from a registry
 
-For a one-time ad-hoc install of an entire registry tree:
+To install everything in a registry folder that is not configured yet:
 
 ```bash
 agent-marketplace install \
@@ -47,9 +54,11 @@ agent-marketplace install \
   --path resources
 ```
 
-This writes a registry entry to `.agents/config.yaml` with all discovered resources selected.
+The CLI adds the registry as a source in `.agents/config.yaml`, selects all of its resources with `all: true`, and syncs. Add `--scope user` or `--scope local` to write to a different configuration file.
+
+If the last folder name in `--path` matches a resource name, the CLI installs only that resource.
 
 ## Troubleshooting
 
-- **`platform-onboarding not found`**: The collection is not published in any configured registry. Check the registry `path` and `ref`.
-- **Unwanted members are installed**: Remove a member with `agent-marketplace remove <member-name>`. The collection stays selected and the exclusion is recorded in the same scope.
+- If the CLI reports `resource or collection "platform-onboarding" not found in configured registries`, no configured registry publishes that collection. Check the registry's `path` and `ref`.
+- If you do not want one of the members, remove it with `agent-marketplace remove <member-name>`. The collection stays selected, and the CLI adds an exclusion for that member to the same configuration file.
