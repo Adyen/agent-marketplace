@@ -450,7 +450,7 @@ func TestMarketplaceInstallReloadHardDiagnosticFailsWithUsableConfig(t *testing.
 	}
 }
 
-func TestLowRiskMarketplaceDiscoveryPreparesBeforePreviewAndCommitsSamePlan(t *testing.T) {
+func TestLowRiskMarketplaceDiscoveryCommitsPreparedPlanWithoutConsent(t *testing.T) {
 	repo := t.TempDir()
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -481,37 +481,29 @@ func TestLowRiskMarketplaceDiscoveryPreparesBeforePreviewAndCommitsSamePlan(t *t
 
 	m := newTestModel()
 	m.repoRoot = repo
-	updated, cmd := m.startDiscoveryInstall(row, scopeProject)
+	updated, prepareCmd := m.startDiscoveryInstall(row, scopeProject)
 	m = updated.(Model)
-	if cmd == nil {
+	if prepareCmd == nil {
 		t.Fatal("install did not start asynchronous preparation")
 	}
-	updated, _ = m.Update(cmd())
+	updated, commitCmd := m.Update(prepareCmd())
 	m = updated.(Model)
-	if m.pane != paneMarketplaceConsent || m.marketplacePreparedInstall != prepared {
-		t.Fatalf("low-risk preparation did not open verified preview: pane=%v prepared=%p", m.pane, m.marketplacePreparedInstall)
+	if m.pane == paneMarketplaceConsent {
+		t.Fatal("no-findings preparation opened a consent prompt")
+	}
+	if commitCmd == nil {
+		t.Fatal("no-findings preparation did not schedule commit")
 	}
 	if got, err := os.ReadFile(configPath); err != nil || string(got) != string(original) {
-		t.Fatalf("configuration changed before confirmation: %q err=%v", got, err)
+		t.Fatalf("configuration changed before commit: %q err=%v", got, err)
 	}
-	updated, _ = m.handleMarketplaceConsentKey(keyPress('n'))
+	updated, reloadCmd := m.Update(commitCmd().(discoveryInstallMsg))
 	m = updated.(Model)
-	if got, err := os.ReadFile(configPath); err != nil || string(got) != string(original) {
-		t.Fatalf("configuration changed after cancellation: %q err=%v", got, err)
-	}
-
-	updated, cmd = m.startDiscoveryInstall(row, scopeProject)
-	m = updated.(Model)
-	updated, _ = m.Update(cmd())
-	m = updated.(Model)
-	updated, cmd = m.handleMarketplaceConsentKey(keyPress('y'))
-	m = updated.(Model)
-	if cmd == nil {
-		t.Fatal("confirmation did not schedule commit")
-	}
-	_ = cmd()
 	if committed != prepared {
 		t.Fatalf("commit got plan %p, want exact prepared plan %p", committed, prepared)
+	}
+	if reloadCmd == nil || m.marketplaceInstallReload == 0 {
+		t.Fatal("successful direct commit did not schedule authoritative reload")
 	}
 }
 
@@ -665,7 +657,9 @@ func TestMarketplaceConsentPreviewScrollsAtSupportedMinimum(t *testing.T) {
 		"security: high-risk capability requires review",
 		"provenance: registry_url=https://market.example path=skills/review generator=scanner\x1b]52;c;bad\a",
 	}, "\n")
-	updated, _ := m.Update(discoveryInstallMsg{operation: operation, prepared: &pipeline.PreparedMarketplaceInstall{}, preview: preview})
+	prepared := &pipeline.PreparedMarketplaceInstall{}
+	consent := &pipeline.MarketplaceConsentError{Preview: preview, Prepared: prepared, Err: errors.New("risk acceptance required")}
+	updated, _ := m.Update(discoveryInstallMsg{operation: operation, prepared: prepared, preview: preview, err: consent})
 	m = updated.(Model)
 
 	initial := m.View()

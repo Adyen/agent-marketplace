@@ -7,8 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 func writeIncludeConfig(t *testing.T, path, data string) {
@@ -324,88 +322,5 @@ func TestLoadRootConfigFromPathDoesNotExposeIncludedEntries(t *testing.T) {
 	}
 	if got, want := registryURLs(cfg), []string{"/root"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root registries = %v, want %v", got, want)
-	}
-}
-
-func TestDisableResourceWithShadowFallbackDoesNotEditIncludedRegistry(t *testing.T) {
-	dir := t.TempDir()
-	child := filepath.Join(dir, "child.yaml")
-	root := filepath.Join(dir, "config.yaml")
-	childData := "registries:\n  - url: git@example.com:team.git\n    ref: main\n    skills: {include: [owned-by-child]}\n"
-	writeIncludeConfig(t, child, childData)
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\n")
-
-	if err := DisableResourceWithShadowFallback(root, "git@example.com:team.git", "", "main", ir.KindSkill, "owned-by-child"); err != nil {
-		t.Fatal(err)
-	}
-	gotChild, err := os.ReadFile(child)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(gotChild) != childData {
-		t.Fatalf("included file changed:\n%s", gotChild)
-	}
-	rootCfg, err := LoadRootConfigFromPath(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rootCfg.Registries) != 1 || !stringSliceContains(rootCfg.Registries[0].Skills.Exclude, "owned-by-child") {
-		t.Fatalf("root shadow entry = %#v", rootCfg.Registries)
-	}
-	gotRoot, err := os.ReadFile(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(gotRoot), "include: child.yaml") {
-		t.Fatalf("root include was not preserved:\n%s", gotRoot)
-	}
-}
-
-func TestDisableDuplicateRootAndIncludedResourceRetainsExclusion(t *testing.T) {
-	dir := t.TempDir()
-	includedPath := filepath.Join(dir, "child.yaml")
-	root := filepath.Join(dir, "config.yaml")
-	includedData := "registries:\n  - path: /registry\n    skills: [shared]\n"
-	writeIncludeConfig(t, includedPath, includedData)
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\nregistries:\n  - path: /registry\n    skills: [shared]\n")
-	if err := DisableResourceWithShadowFallback(root, "/registry", "", "", ir.KindSkill, "shared"); err != nil {
-		t.Fatal(err)
-	}
-	rootCfg, err := LoadRootConfigFromPath(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rootCfg.Registries) != 1 || !stringSliceContains(rootCfg.Registries[0].Skills.Exclude, "shared") || stringSliceContains(rootCfg.Registries[0].Skills.Include, "shared") {
-		t.Fatalf("root registry = %#v, want exclusion without selection", rootCfg.Registries)
-	}
-	gotIncluded, err := os.ReadFile(includedPath)
-	if err != nil || string(gotIncluded) != includedData {
-		t.Fatalf("included config changed: %v\n%s", err, gotIncluded)
-	}
-}
-
-func TestEditorPreservesIncludeAndMutatesOnlyRoot(t *testing.T) {
-	dir := t.TempDir()
-	child := filepath.Join(dir, "child.yaml")
-	root := filepath.Join(dir, "config.yaml")
-	childData := "registries:\n  - path: /child\n    skills: {include: [old]}\n"
-	writeIncludeConfig(t, child, childData)
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\nregistries:\n  - path: /root\n")
-	if err := AddSkillsToRegistryInConfig(root, "/root", "", []string{"new"}); err != nil {
-		t.Fatal(err)
-	}
-	gotChild, err := os.ReadFile(child)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(gotChild) != childData {
-		t.Fatalf("included file changed:\n%s", gotChild)
-	}
-	gotRoot, err := os.ReadFile(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(gotRoot), "include: child.yaml") || !strings.Contains(string(gotRoot), "new") {
-		t.Fatalf("root edit did not preserve include/target root:\n%s", gotRoot)
 	}
 }

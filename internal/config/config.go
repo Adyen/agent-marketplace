@@ -131,7 +131,7 @@ type Layer struct {
 // fields on LocalConfig and RegistryEntry. Adding a new kind requires:
 // 1) Adding a field to LocalConfig
 // 2) Adding a field to RegistryEntry
-// 3) Adding a case to SelectorForKind/SelectorForKindPtr (used by entryResourcesForKind)
+// 3) Adding a case to SelectorForKind/SelectorForKindPtr
 // Use this slice (AllKinds) for iteration instead of hard-coding 5-field patterns.
 var AllKinds = []ir.ResourceKind{
 	ir.KindSkill,

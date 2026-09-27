@@ -98,6 +98,37 @@ func BenchmarkBuildRows(b *testing.B) {
 	})
 }
 
+func BenchmarkAppendUnavailableSelectionRows(b *testing.B) {
+	const registryCount = 20
+	cfg := &config.Config{}
+	catalogs := make(map[string]catalogInfo, registryCount/2)
+	resolveErrs := make([]error, 0, registryCount/2)
+	for i := range registryCount {
+		catalogKey := fmt.Sprintf("catalog-%02d", i)
+		url := fmt.Sprintf("git@example.com:org/registry-%02d.git", i)
+		name := fmt.Sprintf("missing-%02d", i)
+		cfg.Registries = append(cfg.Registries, config.RegistryEntry{
+			URL: url, Ref: "main", Path: "resources", Source: config.RepoCommitted, CatalogKey: catalogKey,
+			Skills: config.KindSelector{Include: []string{name}},
+		})
+		if i%2 == 0 {
+			catalogs[catalogKey] = catalogInfo{}
+			resolveErrs = append(resolveErrs, &resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: name, URL: url, Ref: "main", Path: "resources"})
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	var rows []row
+	for range b.N {
+		rows = appendUnavailableSelectionRows(nil, cfg, nil, resolveErrs, catalogs)
+	}
+	b.StopTimer()
+	if len(rows) != registryCount {
+		b.Fatalf("rows = %d, want %d", len(rows), registryCount)
+	}
+}
+
 // BenchmarkBuildRowsLargeMixed covers hundreds to thousands of resources
 // across registries, kinds, drift states, local excludes, and same-name
 // resources.

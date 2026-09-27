@@ -174,7 +174,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       expectedAlphaSkillContent: alphaSkillContent,
       expectedBetaSkillContent: betaSkillContent,
       expectedRepoConfig,
-      expectedLocalConfig: `registries:\n  - url: ${registryURL}\n    ref: main\n    path: skills\n    skills:\n      include:\n        - alpha-skill\n`,
+      expectedLocalConfig: `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\n    source_harness: claude\nresources:\n  fixture:\n    include:\n      - skill/alpha-skill\n`,
       orgConfigPath,
       orgLockPath,
       expectedOrgConfig,

@@ -148,8 +148,6 @@ only to the existing `internal/config`, `internal/resolver`,
 `internal/cache`, `internal/sync`, `internal/skill`, and the new
 `internal/drift` packages. Concretely:
 
-- `space` -> `config.AddSkillToConfig` / `config.AddExcludeToConfig` —
-  the same calls `install`/`remove` use today.
 - `s` -> `sync.Run`.
 - `u` -> the logic currently in `update.go`.
 
