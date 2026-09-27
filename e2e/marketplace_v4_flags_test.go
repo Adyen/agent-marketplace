@@ -1,9 +1,7 @@
 package e2e_test
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,7 +72,7 @@ func TestMarketplaceRevocationOverrideAgainstV4UserConfig(t *testing.T) {
 	}
 	cfg := fixture.cfg
 	cfg.Revocations.RegistryIDs = []string{"behavior-source-id"}
-	if err := worker.EnsureRevocations(context.Background(), worker.Deps{Config: cfg, MetadataStore: fixture.meta, BlobStore: fixture.blobs}); err != nil {
+	if err := worker.EnsureRevocations(t.Context(), worker.Deps{Config: cfg, MetadataStore: fixture.meta, BlobStore: fixture.blobs}); err != nil {
 		t.Fatalf("reconcile revocation: %v", err)
 	}
 	fixture.setHandler(mpapi.NewServer(cfg, fixture.meta, fixture.blobs).PublicHandler())
@@ -106,17 +104,12 @@ func TestConvertFlagsThroughTheBinary(t *testing.T) {
 	if preview.ExitCode != 0 {
 		t.Fatalf("convert --autodetect --dry-run failed (exit %d):\n%s", preview.ExitCode, preview.Combined)
 	}
-	if _, err := os.Stat(out); !os.IsNotExist(err) {
-		t.Fatalf("convert --dry-run wrote %s: %v", out, err)
-	}
-	stale := filepath.Join(out, "stale.txt")
+	env.AssertFileAbsent("/workspace/factory-out")
 	env.WriteFile("/workspace/factory-out/stale.txt", "stale")
 	converted := env.RunAM("convert", "--autodetect", "--to", "factory", "--out", out, "--sync", source)
 	if converted.ExitCode != 0 || !strings.Contains(converted.Combined, "Converted claude -> factory") {
 		t.Fatalf("convert --autodetect --sync failed (exit %d):\n%s", converted.ExitCode, converted.Combined)
 	}
 	env.AssertFileExists("/workspace/factory-out/skills/demo-skill/SKILL.md")
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatalf("convert --sync kept stale output: %v", err)
-	}
+	env.AssertFileAbsent("/workspace/factory-out/stale.txt")
 }
