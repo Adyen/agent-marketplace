@@ -192,11 +192,15 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				continue
 			}
 
-			files, err := fileSetForResource(dir, entry)
+			files, modes, err := fileSetForResource(dir, entry)
 			if err != nil {
 				return rev, fmt.Errorf("support files for %s %q: %w", kind, entry.Name, err)
 			}
-			r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, files, nil)
+			var archiveSupport map[string]hccartifact.SupportFile
+			if registry.Acquisition == store.AcquisitionMirror {
+				archiveSupport = archiveSupportFiles(files, modes)
+			}
+			r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, files, archiveSupport, nil)
 			if err != nil {
 				return rev, fmt.Errorf("build %s %q: %w", kind, entry.Name, err)
 			}
@@ -335,7 +339,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 
 		savedURL, savedRef, savedKey, savedPath := c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = "", "", "", ""
-		r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, nil, directResults)
+		r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, nil, nil, directResults)
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = savedURL, savedRef, savedKey, savedPath
 		if err != nil {
 			return artifact.BuildResult{}, nil, fmt.Errorf("build collection %q: %w", name, err)
@@ -688,7 +692,7 @@ func registryEntryPath(dir string, root store.RegistryRoot, entry catalog.Entry)
 // buildResource analyzes one catalog entry and builds its artifact. License
 // policy is deliberately not an input here: analysis is independent of it, and
 // the license decision is taken once, afterwards, in applyPolicyToResult.
-func buildResource(ctx context.Context, registry store.Registry, root store.RegistryRoot, entry catalog.Entry, origin, commit string, policy analyze.Policy, limits config.Limits, files analyze.FileSet, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
+func buildResource(ctx context.Context, registry store.Registry, root store.RegistryRoot, entry catalog.Entry, origin, commit string, policy analyze.Policy, limits config.Limits, files analyze.FileSet, archiveSupport map[string]hccartifact.SupportFile, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
 	opts := analyze.DefaultOptions()
 	opts.Policy = policy
 	opts.Registry = analyze.Registry{
@@ -713,7 +717,7 @@ func buildResource(ctx context.Context, registry store.Registry, root store.Regi
 		}
 		return artifact.BuildCollectionManifest(ctx, r, memberResults, opts)
 	case hccir.Resource:
-		return artifact.BuildResourceArtifact(ctx, r, files, opts)
+		return artifact.BuildResourceArtifact(ctx, r, files, archiveSupport, opts)
 	default:
 		return artifact.BuildResult{}, fmt.Errorf("unknown resource type %T", entry.Resource)
 	}
@@ -841,10 +845,11 @@ func supportFileDigests(files analyze.FileSet) map[string]string {
 	return digests
 }
 
-func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, error) {
+func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, map[string]bool, error) {
 	files := make(analyze.FileSet)
+	modes := make(map[string]bool)
 	if entry.Path == "" {
-		return files, nil
+		return files, modes, nil
 	}
 
 	resFile := entry.Path
@@ -854,37 +859,53 @@ func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, error
 	resRoot := filepath.Dir(resFile)
 	relRoot, err := filepath.Rel(dir, resRoot)
 	if err != nil || relRoot == ".." || strings.HasPrefix(relRoot, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("resource registry escapes registry directory: %q", entry.Path)
+		return nil, nil, fmt.Errorf("resource registry escapes registry directory: %q", entry.Path)
 	}
 
 	supportFiles, err := supportFilesFor(entry.Resource)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	seen := make(map[string]struct{}, len(supportFiles))
 	for _, rel := range supportFiles {
 		normalized, err := validateSupportRelativePath(rel)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if _, exists := seen[normalized]; exists {
-			return nil, fmt.Errorf("duplicate support file path: %q", rel)
+			return nil, nil, fmt.Errorf("duplicate support file path: %q", rel)
 		}
 		seen[normalized] = struct{}{}
 		filePath := filepath.Join(resRoot, filepath.FromSlash(normalized))
 		if err := rejectSymlinkPath(resRoot, filePath); err != nil {
-			return nil, fmt.Errorf("support file %q: %w", rel, err)
+			return nil, nil, fmt.Errorf("support file %q: %w", rel, err)
 		}
 		data, err := readBoundedFile(filePath, 2*1024*1024)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return nil, fmt.Errorf("support file %q is missing", rel)
+				return nil, nil, fmt.Errorf("support file %q is missing", rel)
 			}
-			return nil, fmt.Errorf("read support file %q: %w", rel, err)
+			return nil, nil, fmt.Errorf("read support file %q: %w", rel, err)
+		}
+		info, err := os.Stat(filePath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("stat support file %q: %w", rel, err)
 		}
 		files[normalized] = data
+		modes[normalized] = info.Mode().Perm()&0o111 != 0
 	}
-	return files, nil
+	return files, modes, nil
+}
+
+func archiveSupportFiles(files analyze.FileSet, modes map[string]bool) map[string]hccartifact.SupportFile {
+	if len(files) == 0 {
+		return nil
+	}
+	support := make(map[string]hccartifact.SupportFile, len(files))
+	for name, data := range files {
+		support[name] = hccartifact.SupportFile{Data: data, Executable: modes[name]}
+	}
+	return support
 }
 
 func resourceInfo(r hccir.Resource) (extra map[string]any, supportFiles []string, err error) {

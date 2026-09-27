@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"reflect"
 	"sort"
@@ -25,11 +26,17 @@ const (
 	CanonicalPayloadDir       = "resource"
 	CanonicalAssetsDir        = "assets"
 	CanonicalLicensesDir      = "licenses"
+	CanonicalSupportDir       = "support"
 	CanonicalArtifactSchemaV1 = "v1"
 	ContentDigestPrefix       = "sha256"
 	archiveDigestValueLen     = 71 // len("sha256:") + 64 hex characters
 	archiveDigestPlaceholder  = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 )
+
+type SupportFile struct {
+	Data       []byte
+	Executable bool
+}
 
 // CanonicalArtifact is the in-memory representation of a deterministic,
 // self-describing Marketplace artifact. It is encoded as a tar.gz archive.
@@ -38,7 +45,8 @@ type CanonicalArtifact struct {
 	Payload    []byte
 	Assets     map[string][]byte // relative path -> bytes
 	Licenses   map[string][]byte // relative path -> bytes
-	rawArchive []byte            // optional: populated by Decode
+	Support    map[string]SupportFile
+	rawArchive []byte // optional: populated by Decode
 }
 
 // CanonicalManifest describes the artifact payload and provenance.
@@ -148,6 +156,7 @@ type archiveEntry struct {
 	path string
 	data []byte
 	dir  bool
+	mode int64
 }
 
 // encodeArtifact writes a deterministic gzip-compressed tar archive.
@@ -175,9 +184,13 @@ func encodeArtifact(a CanonicalArtifact) ([]byte, error) {
 	}
 
 	for _, e := range entries {
+		mode := e.mode
+		if mode == 0 {
+			mode = 0o644
+		}
 		hdr := &tar.Header{
 			Name:     e.path,
-			Mode:     0o644,
+			Mode:     mode,
 			Size:     int64(len(e.data)),
 			ModTime:  time.Time{},
 			Uid:      0,
@@ -246,10 +259,30 @@ func (a CanonicalArtifact) buildEntries() ([]archiveEntry, error) {
 		}
 	}
 
+	if len(a.Support) > 0 {
+		entries = append(entries, archiveEntry{path: CanonicalSupportDir, dir: true})
+		keys := sortedKeys(a.Support)
+		for _, k := range keys {
+			if err := ValidateSupportPath(k); err != nil {
+				return nil, fmt.Errorf("invalid support path: %w", err)
+			}
+			member, err := supportMemberName(k)
+			if err != nil {
+				return nil, err
+			}
+			support := a.Support[k]
+			mode := int64(0o644)
+			if support.Executable {
+				mode = 0o755
+			}
+			entries = append(entries, archiveEntry{path: path.Join(CanonicalSupportDir, member), data: support.Data, mode: mode})
+		}
+	}
+
 	return entries, nil
 }
 
-func sortedKeys(m map[string][]byte) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -275,6 +308,49 @@ func validateArchiveMemberPath(p string) error {
 		return fmt.Errorf("nested archive member path: %s", p)
 	}
 	return nil
+}
+
+func ValidateSupportPath(p string) error {
+	if p == "" || p == "." || strings.Contains(p, "\\") {
+		return fmt.Errorf("invalid support path: %s", p)
+	}
+	if p == "SKILL.md" {
+		return fmt.Errorf("support path %s collides with the compiled skill manifest", p)
+	}
+	if path.IsAbs(p) || strings.HasPrefix(p, "/") {
+		return fmt.Errorf("absolute support path: %s", p)
+	}
+	if path.Clean(p) != p {
+		return fmt.Errorf("unclean support path: %s", p)
+	}
+	for _, part := range strings.Split(p, "/") {
+		if part == ".." {
+			return fmt.Errorf("support path traversal: %s", p)
+		}
+	}
+	return nil
+}
+
+func supportMemberName(p string) (string, error) {
+	if err := ValidateSupportPath(p); err != nil {
+		return "", err
+	}
+	member := url.PathEscape(p)
+	if strings.Contains(member, "/") {
+		return "", fmt.Errorf("support member path %q is not flat", member)
+	}
+	return member, nil
+}
+
+func supportPathFromMember(member string) (string, error) {
+	rel, err := url.PathUnescape(member)
+	if err != nil {
+		return "", fmt.Errorf("invalid support member %q: %w", member, err)
+	}
+	if err := ValidateSupportPath(rel); err != nil {
+		return "", fmt.Errorf("invalid support member %q: %w", member, err)
+	}
+	return rel, nil
 }
 
 // Decode reads a canonical artifact archive and returns the parsed artifact plus
@@ -328,6 +404,18 @@ func Decode(r io.Reader) (CanonicalArtifact, []byte, error) {
 						a.Licenses = make(map[string][]byte)
 					}
 					a.Licenses[base] = data
+				case CanonicalSupportDir:
+					rel, err := supportPathFromMember(base)
+					if err != nil {
+						return CanonicalArtifact{}, nil, err
+					}
+					if a.Support == nil {
+						a.Support = make(map[string]SupportFile)
+					}
+					if _, dup := a.Support[rel]; dup {
+						return CanonicalArtifact{}, nil, fmt.Errorf("duplicate support member %q", rel)
+					}
+					a.Support[rel] = SupportFile{Data: data, Executable: hdr.Mode&0o111 != 0}
 				}
 			}
 		case tar.TypeDir:
@@ -516,6 +604,21 @@ func (a CanonicalArtifact) ValidateArchive(limits *ArchiveLimits) error {
 		}
 		if int64(len(data)) > limits.MaxAssetBytes {
 			return fmt.Errorf("license %s exceeds max bytes %d", name, limits.MaxAssetBytes)
+		}
+	}
+
+	countSupport := int64(len(a.Support))
+	if countSupport > limits.MaxAssetFiles {
+		return fmt.Errorf("too many support files: %d > %d", countSupport, limits.MaxAssetFiles)
+	}
+	for name, support := range a.Support {
+		totalFiles++
+		totalSize += int64(len(support.Data))
+		if err := ValidateSupportPath(name); err != nil {
+			return fmt.Errorf("invalid support path: %w", err)
+		}
+		if int64(len(support.Data)) > limits.MaxAssetBytes {
+			return fmt.Errorf("support %s exceeds max bytes %d", name, limits.MaxAssetBytes)
 		}
 	}
 

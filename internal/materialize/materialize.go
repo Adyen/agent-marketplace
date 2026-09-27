@@ -2061,7 +2061,16 @@ func linkedComponents(groups map[string]*skillLinkGroup) map[string]bool {
 
 func materializationSourcePath(resolved resolver.ResolvedArtifact) string {
 	if resolved.IsMarketplace {
-		return resolved.Path
+		if resolved.Path == "" {
+			return ""
+		}
+		if info, err := os.Stat(resolved.Path); err == nil && info.IsDir() {
+			return resolved.Path
+		}
+		if filepath.Base(resolved.Path) == "artifact.tar.gz" {
+			return ""
+		}
+		return filepath.Dir(resolved.Path)
 	}
 	var source string
 	switch resource := resolved.Resource.(type) {

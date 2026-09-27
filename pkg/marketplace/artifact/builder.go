@@ -40,7 +40,7 @@ type BuildResult struct {
 // BuildResourceArtifact analyzes a resource, extracts capabilities, and produces a
 // canonical tar.gz artifact. Analyzer findings and policy decisions are returned
 // alongside, but are not embedded in or allowed to suppress the intrinsic archive.
-func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.FileSet, opts analyze.Options) (BuildResult, error) {
+func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.FileSet, archiveSupport map[string]hccartifact.SupportFile, opts analyze.Options) (BuildResult, error) {
 	if r == nil {
 		return BuildResult{}, fmt.Errorf("nil resource")
 	}
@@ -51,6 +51,9 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 	base, err := hccartifact.FromIR(r)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("from IR: %w", err)
+	}
+	if len(archiveSupport) > 0 {
+		base.Support = archiveSupport
 	}
 
 	engine := analyze.NewEngine()

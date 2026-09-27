@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -523,9 +524,17 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		cache.InvalidateArtifactVerified(archiveDigest)
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
+	stagedDir, err := stageMirrorResource(cache, archiveDigest, resource, ca)
+	if err != nil {
+		cache.InvalidateArtifactVerified(archiveDigest)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+	}
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
 	artifact.Path = cache.ArtifactPath(archiveDigest)
+	if stagedDir != "" {
+		artifact.Path = stagedDir
+	}
 
 	if !verified {
 		if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
@@ -533,6 +542,77 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		}
 	}
 	return artifact, ca, nil
+}
+
+func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca hccartifact.CanonicalArtifact) (string, error) {
+	skill, ok := resource.(*ir.Skill)
+	if !ok {
+		return "", nil
+	}
+	declared := make(map[string]string, len(skill.SupportFiles))
+	for _, d := range skill.SupportFiles {
+		rel, err := normalizeMirrorSupportPath(d)
+		if err != nil {
+			return "", fmt.Errorf("invalid declared support file %q: %w", d, err)
+		}
+		declared[rel] = d
+	}
+	for rel := range ca.Support {
+		if _, ok := declared[rel]; !ok {
+			return "", fmt.Errorf("marketplace artifact %s carries undeclared support file %q", digest, rel)
+		}
+	}
+	for rel, d := range declared {
+		if _, ok := ca.Support[rel]; !ok {
+			return "", fmt.Errorf("marketplace artifact %s does not contain declared support file %q", digest, d)
+		}
+	}
+	if len(ca.Support) == 0 {
+		return "", nil
+	}
+	dir := cache.MirrorResourceDir(digest)
+	staged, err := cachefs.WithCacheMutationLock(func() (string, error) {
+		if err := validateCacheDirectory(cache.root, dir); err != nil {
+			return "", fmt.Errorf("validate mirror resource staging path: %w", err)
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return "", err
+		}
+		if err := ensureCacheDirectory(cache.root, dir); err != nil {
+			return "", err
+		}
+		paths := make([]string, 0, len(ca.Support))
+		for rel := range ca.Support {
+			paths = append(paths, rel)
+		}
+		sort.Strings(paths)
+		for _, rel := range paths {
+			target := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := ensureCacheDirectory(cache.root, filepath.Dir(target)); err != nil {
+				return "", err
+			}
+			mode := os.FileMode(0o644)
+			if ca.Support[rel].Executable {
+				mode = 0o755
+			}
+			if err := writeAtomic(cache.root, target, ca.Support[rel].Data, mode, ""); err != nil {
+				return "", fmt.Errorf("stage support file %q: %w", rel, err)
+			}
+		}
+		return dir, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return staged, nil
+}
+
+func normalizeMirrorSupportPath(p string) (string, error) {
+	p = strings.ReplaceAll(p, "\\", "/")
+	if err := hccartifact.ValidateSupportPath(p); err != nil {
+		return "", err
+	}
+	return p, nil
 }
 
 func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (artifact resolver.ResolvedArtifact, canonical hccartifact.CanonicalArtifact, retErr error) {
