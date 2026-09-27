@@ -617,8 +617,12 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 	}
 
 	for _, bump := range bumps {
-		if _, err := config.UpdateRegistryRefInConfig(configPath, bump.URL, bump.OldRef, bump.NewRef); err != nil {
+		updated, err := config.UpdateRegistryRefInConfig(configPath, bump.URL, bump.OldRef, bump.NewRef)
+		if err != nil {
 			return nil, err
+		}
+		if updated == 0 {
+			return nil, fmt.Errorf("bump %s from %s to %s: no registry or source in the root config file matches it", bump.URL, bump.OldRef, bump.NewRef)
 		}
 	}
 
