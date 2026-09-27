@@ -15,7 +15,7 @@ func TestCodeModeJourney(t *testing.T) {
 	env.WriteFile("/workspace/registry/fake-mcp.sh", `#!/bin/sh
 while IFS= read -r line; do
   tmp=${line#*\"id\":}
-  id=${tmp%%[^0-9]*}
+  id=${tmp%%[!0-9]*}
   [ -z "$id" ] && continue
   case "$line" in
     *tools/list*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"ping","description":"pong"}]}}\n' "$id" ;;
