@@ -80,6 +80,10 @@ Add a standalone test function in a separate file when:
 
 Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents. Keep `Desc` fields as Given/When/Then descriptions.
 
+#### Command coverage guard
+
+Every public command and flag must succeed in at least one E2E invocation against a legacy (v2/v3) configuration and at least one against a v4 configuration; commands that never read the layered client configuration (`completion`, `help`, `convert`, `serve`) need one successful invocation. The `e2e`-tagged binary records each invocation's command, flags, starting `apiVersion` per layer, and outcome, and a complete passing `make e2e` run fails when a requirement is uncovered. A new command or flag therefore needs E2E tests for both schemas. `e2e/testdata/command-coverage-gaps.txt` lists pre-existing gaps (burn-down: #363); the guard also fails when a listed gap is covered, so remove the entry with the test that covers it and never add entries for new surface.
+
 ### TUI test ownership
 
 Go tests under `internal/tui` own model state, asynchronous behavior, rendering contracts, and terminal-guard details. Go E2E tests own configuration and filesystem policy matrices. `tools/tui-qa` owns a small set of direct real-terminal user journeys and must not duplicate those matrices or introduce a separate inventory, classifier, result authority, or retry system.
