@@ -82,7 +82,7 @@ Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`
 
 #### Command coverage guard
 
-Every public command and flag must succeed in at least one E2E invocation against a legacy (v2/v3) configuration and at least one against a v4 configuration; commands that never read the layered client configuration (`completion`, `help`, `convert`, `serve`) need one successful invocation. The `e2e`-tagged binary records each invocation's command, flags, starting `apiVersion` per layer, and outcome, and a complete passing `make e2e` run fails when a requirement is uncovered. A new command or flag therefore needs E2E tests for both schemas. `e2e/testdata/command-coverage-gaps.txt` lists pre-existing gaps (burn-down: #363); the guard also fails when a listed gap is covered, so remove the entry with the test that covers it and never add entries for new surface.
+Every public command and flag must succeed in at least one E2E invocation against a legacy (v2/v3) configuration and at least one against a v4 configuration; commands that never read the layered client configuration (`completion`, `help`, `convert`, `serve`) need one successful invocation. The `e2e`-tagged binary records each invocation's command, flags, starting `apiVersion` per layer, and outcome, and a complete passing `make e2e` run fails when a requirement is uncovered. A new command or flag therefore needs E2E tests for both schemas. `e2e/testdata/command-coverage-gaps.txt` is empty now that the pre-existing gaps are closed (#363); the guard also fails when a listed entry is covered, and new surface must never be added there.
 
 ### TUI test ownership
 

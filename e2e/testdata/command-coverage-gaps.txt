@@ -3,27 +3,6 @@
 # or any (the command never reads the layered client configuration).
 #
 # command_coverage_test.go fails when an uncovered requirement is missing from
-# this list, and when a listed entry is covered or no longer public, so this
-# list can only shrink. Do not add entries for new commands or flags; add the
-# E2E test. Burn-down: https://github.com/Adyen/agent-marketplace/issues/363
-convert --autodetect [any]
-convert --dry-run [any]
-convert --sync [any]
-doctor --repair [v4]
-doctor --yes [v4]
-install --accept-risk [legacy]
-install --accept-risk [v4]
-install --as [v4]
-install --marketplace [v4]
-search --limit [v4]
-search --offset [v4]
-serve --config [any]
-serve --role [any]
-serve [any]
-serve adopt --actor [any]
-serve adopt --config [any]
-serve adopt --confirm-maintenance [any]
-serve adopt --idempotency-key [any]
-serve adopt --reason [any]
-serve adopt [any]
-sync --allow-revoked [v4]
+# this list, and when a listed entry is covered or no longer public. The list
+# is empty: every public command and flag has E2E coverage. Keep it that way;
+# a new command or flag needs E2E tests for both schemas, not an entry here.
