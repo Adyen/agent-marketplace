@@ -77,16 +77,17 @@ type materializePlan struct {
 }
 
 type skillLink struct {
-	name         string
-	target       string
-	cacheDir     string
-	artifacts    []artifact.Artifact
-	sourceDir    string          // absolute path to the original skill directory on disk
-	kind         ir.ResourceKind // kind of the resource (skill, subagent, command, …)
-	resourceName string          // canonical resource name without file extension
-	machineScope bool            // true when installed to machine-wide (user) scope
-	registryURL  string          // URL of the source registry
-	registryPath string          // sub-directory path within the registry (may be empty)
+	name            string
+	target          string
+	cacheDir        string
+	artifacts       []artifact.Artifact
+	sourceDir       string // absolute path to the original skill directory on disk
+	declaredSupport []string
+	kind            ir.ResourceKind // kind of the resource (skill, subagent, command, …)
+	resourceName    string          // canonical resource name without file extension
+	machineScope    bool            // true when installed to machine-wide (user) scope
+	registryURL     string          // URL of the source registry
+	registryPath    string          // sub-directory path within the registry (may be empty)
 }
 
 type skillLinkGroup struct {
@@ -869,11 +870,30 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				if info, err := os.Stat(sourceDir); err == nil && !info.IsDir() {
 					sourceDir = filepath.Dir(sourceDir)
 				}
+				var declaredSupport []string
+				if w.skill.IsMarketplace {
+					if s, ok := w.skill.Resource.(*ir.Skill); ok {
+						declaredSupport = s.SupportFiles
+					}
+				}
+				if len(declaredSupport) > 0 && sourceDir == "" {
+					blocked.blockResource(key, w)
+					markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+					allDiags = append(allDiags, diag.Diagnostic{
+						Code:     "materialize.support-source.missing",
+						Severity: diag.SeverityError,
+						Target:   string(w.target),
+						Resource: w.skill.Name,
+						Message:  fmt.Sprintf("marketplace resource %q declares support files but its staged source %q is unavailable; keeping the previous installation", w.skill.Name, w.skill.Path),
+					})
+					continue
+				}
 				addSkillLink(skillLinks, key, installDirRel, skillLink{
-					name:      w.skill.Name,
-					target:    cachedSkillDir(w.target, w.skill, compiledSkillArtifacts),
-					artifacts: compiledSkillArtifacts,
-					sourceDir: sourceDir,
+					name:            w.skill.Name,
+					target:          cachedSkillDir(w.target, w.skill, compiledSkillArtifacts),
+					artifacts:       compiledSkillArtifacts,
+					sourceDir:       sourceDir,
+					declaredSupport: declaredSupport,
 					// The link records the real resource kind, so a `remove`
 					// hint for a colliding Devin command says --kind command
 					// even though the output shape is a skill directory.
@@ -2059,12 +2079,30 @@ func linkedComponents(groups map[string]*skillLinkGroup) map[string]bool {
 	return components
 }
 
+func verifyDeclaredSupportFiles(sourceDir string, declared []string) error {
+	for _, rel := range declared {
+		path := filepath.Join(sourceDir, filepath.FromSlash(rel))
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("declared support file %q is unavailable under %s: %w", rel, sourceDir, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("declared support file %q under %s is a directory", rel, sourceDir)
+		}
+	}
+	return nil
+}
+
 func materializationSourcePath(resolved resolver.ResolvedArtifact) string {
 	if resolved.IsMarketplace {
 		if resolved.Path == "" {
 			return ""
 		}
-		if info, err := os.Stat(resolved.Path); err == nil && info.IsDir() {
+		info, err := os.Stat(resolved.Path)
+		if err != nil {
+			return ""
+		}
+		if info.IsDir() {
 			return resolved.Path
 		}
 		if filepath.Base(resolved.Path) == "artifact.tar.gz" {
@@ -2849,6 +2887,11 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		return nil
 	}
 	if link.sourceDir != "" {
+		if len(link.declaredSupport) > 0 {
+			if err := verifyDeclaredSupportFiles(link.sourceDir, link.declaredSupport); err != nil {
+				return "", err
+			}
+		}
 		if err := addSupport(link.sourceDir, ""); err != nil {
 			return "", err
 		}
@@ -3344,10 +3387,27 @@ func prepareSkillLinkCache(link skillLink) error {
 		for _, a := range link.artifacts {
 			compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
 		}
+		if len(link.declaredSupport) > 0 {
+			staging, err := os.MkdirTemp(filepath.Dir(cacheDir), ".support-staging-")
+			if err != nil {
+				return err
+			}
+			defer func() { _ = os.RemoveAll(staging) }()
+			if err := copySupportFilesExcluding(link.sourceDir, staging, compiled, "", false); err != nil {
+				return err
+			}
+			if err := verifyDeclaredSupportFiles(staging, link.declaredSupport); err != nil {
+				return err
+			}
+			if err := pruneSkillCacheSupportFiles(cacheDir, compiled); err != nil {
+				return err
+			}
+			return copySupportFilesExcluding(staging, cacheDir, compiled, "", false)
+		}
 		if err := pruneSkillCacheSupportFiles(cacheDir, compiled); err != nil {
 			return err
 		}
-		if copyErr := copySupportFilesExcluding(link.sourceDir, cacheDir, compiled, ""); copyErr != nil {
+		if copyErr := copySupportFilesExcluding(link.sourceDir, cacheDir, compiled, "", true); copyErr != nil {
 			return copyErr
 		}
 	}
@@ -3401,13 +3461,13 @@ func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) erro
 // SKILL.md artifact. It remains a small convenience wrapper for callers that
 // do not need to protect additional compiled artifact paths.
 func copySupportFiles(srcDir, dstDir string) error {
-	return copySupportFilesExcluding(srcDir, dstDir, nil, "")
+	return copySupportFilesExcluding(srcDir, dstDir, nil, "", true)
 }
 
-func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, rel string) error {
+func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, rel string, missingOK bool) error {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) && missingOK {
 			return nil
 		}
 		return fmt.Errorf("read source skill dir %s: %w", srcDir, err)
@@ -3439,7 +3499,7 @@ func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, 
 			if err := os.MkdirAll(dstPath, 0o755); err != nil {
 				return fmt.Errorf("create support dir %s: %w", childRel, err)
 			}
-			if err := copySupportFilesExcluding(srcPath, dstPath, compiled, childRel); err != nil {
+			if err := copySupportFilesExcluding(srcPath, dstPath, compiled, childRel, missingOK); err != nil {
 				return fmt.Errorf("copy support dir %s: %w", childRel, err)
 			}
 			continue
