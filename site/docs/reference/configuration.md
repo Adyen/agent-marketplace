@@ -2,7 +2,7 @@
 
 The committed `.agents/config.yaml` file declares which sources a repository uses, which resources it selects, and which coding harnesses receive those resources. Agent Marketplace uses the v4 source/resource schema for every configuration layer. A configuration file can compose local YAML fragments with the `include` field.
 
-For task-oriented guidance, see [How to adopt agent-marketplace in a repository](../how-to/adopt-agent-marketplace-in-a-repository.md) and [How to keep resources reproducible](../how-to/keep-resources-reproducible.md).
+For task-oriented guidance, see [How to adopt agent-marketplace in a repository](../how-to/adopt-agent-marketplace-in-a-repository.md) and [How to keep resources reproducible](../how-to/keep-resources-reproducible.md). The [sources and resources explanation](../explanation/sources-and-resources.md) covers what each map is and how they differ.
 
 Agent Marketplace treats configuration as the source of selection policy and generated layer locks as the exact acquisition record for remote Git and hosted Marketplace requirements. Normal readers adapt v4 sources to the runtime requirement model. Named Git and directory selections can be edited through v4-aware CLI and TUI paths; unsupported legacy-only editors refuse to rewrite a v4 root. You can also edit `sources` and `resources` declarations directly.
 

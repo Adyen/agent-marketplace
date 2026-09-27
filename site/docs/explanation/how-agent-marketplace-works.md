@@ -42,6 +42,7 @@ Configuration and lockfiles are the source of truth for declared resources. Cach
 
 ## Related documentation
 
+- [Sources and resources](./sources-and-resources.md)
 - [Scopes, selection, and precedence](./scopes-selection-and-precedence.md)
 - [Reproducibility and lockfiles](./reproducibility-and-lockfiles.md)
 - [Native harness materialization](./native-harness-materialization.md)
