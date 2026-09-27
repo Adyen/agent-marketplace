@@ -1038,3 +1038,80 @@ func testConfig(tb testing.TB, repoDir string) config.Config {
 		},
 	}
 }
+
+// A single-skill plugin repository whose SKILL.md lives at the root (the
+// github.com/blader/humanizer shape) must ingest its root skill instead of
+// silently producing an empty revision.
+func TestBuildRegistryRevisionIngestsRootSkillPluginManifest(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		".claude-plugin/plugin.json": `{"name":"humanizer","version":"3.0.0","skills":["./"]}`,
+		"SKILL.md":                   "---\nname: humanizer\ndescription: Rewrite AI-sounding text\nlicense: MIT\n---\nBody\n",
+		"agents/openai.yaml":         "mode: overwrite\n",
+		"README.md":                  "# Humanizer\n",
+	}
+	for name, body := range files {
+		if err := os.MkdirAll(filepath.Join(repo, filepath.Dir(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range [][]string{
+		{"git", "init", "-q", "--initial-branch=main"},
+		{"git", "config", "user.email", "test@example.com"},
+		{"git", "config", "user.name", "Test"},
+		{"git", "add", "."},
+		{"git", "commit", "-q", "-m", "initial"},
+	} {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", c, err, out)
+		}
+	}
+	commit, err := repoCommit(repo)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+	source := store.Registry{
+		ID:          "src-test",
+		Slug:        "humanizer-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repo},
+		Acquisition: store.AcquisitionMirror,
+		License:     "MIT",
+		Roots:       []store.RegistryRoot{{Path: "."}},
+	}
+
+	rev, err := BuildRegistryRevision(context.Background(), testConfig(t, repo), "mp-test", source, repo, commit)
+	if err != nil {
+		t.Fatalf("BuildRegistryRevision: %v", err)
+	}
+	if len(rev.Resources) != 1 {
+		t.Fatalf("resources = %d, want 1: %#v", len(rev.Resources), rev.Resources)
+	}
+	skill := resourceRevisionFor(t, rev.Resources, "skill")
+	if skill.Coordinate.Name != "humanizer" {
+		t.Fatalf("skill name = %q, want humanizer", skill.Coordinate.Name)
+	}
+	for _, occurrence := range rev.ResourceOccurrences {
+		if occurrence.Coordinate.Kind != "skill" || occurrence.SourcePath != "SKILL.md" {
+			t.Errorf("skill source path = %q, want SKILL.md", occurrence.SourcePath)
+		}
+	}
+	// The root skill's support files are the repository files alongside
+	// SKILL.md, never VCS internals.
+	manifest := string(rev.ManifestPayload)
+	if !strings.Contains(manifest, "README.md") {
+		t.Errorf("root skill support files did not include README.md: %s", manifest)
+	}
+	if strings.Contains(manifest, ".git") {
+		t.Errorf("root skill support files leaked VCS internals: %s", manifest)
+	}
+}

@@ -18,7 +18,7 @@ A Marketplace adds what plain Git cannot:
 
 - **Curation.** Only registries the operator approves appear, and the operator can revoke a registry, a resource, or one revision.
 - **Policy.** License allowlists, size limits, and hidden-content rules are enforced at ingestion, before consumers ever see a resource.
-- **Review before install.** Every install shows a verified preview (digest, license, findings, capabilities, provenance) and stops for consent when the artifact has warning findings or active capabilities.
+- **Review before install.** Every install is prepared from a verified revision (digest, license, findings, capabilities, provenance). Security findings require consent; capability metadata remains visible but does not independently gate installation.
 - **Availability.** In mirror mode the consumer never needs to reach the registry origin.
 
 ### Endpoint identity

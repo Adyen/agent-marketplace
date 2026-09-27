@@ -259,7 +259,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	// stale-selection warnings) still drives the exit code below: pruning
 	// proceeding does not make the run successful.
 	if pruneStale && len(staleSelections) > 0 {
-		pruned, err := prunePhase(out, repoRoot, &syncResult, staleSelections)
+		pruned, err := prunePhase(ctx, out, repoRoot, &syncResult, staleSelections)
 		if err != nil {
 			slog.Error("sync stale-prune failed", "repo_root", repoRoot, "strict", strict, "error", err)
 			allErrs := append([]error{}, errs...)
@@ -410,7 +410,15 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	isOffline := len(offline) > 0 && offline[0]
 	localDir := config.FindLocalConfigDir()
 	var lockWarnings []error
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true, offline: isOffline, check: true, warningSink: &lockWarnings})
+	configLoadMode := pipeline.ConfigLoadStrict
+	if !isOffline {
+		configLoadMode = pipeline.ConfigLoadCached
+	}
+	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{
+		locked: true, offline: isOffline, check: true,
+		allowTransientOrganization: !isOffline,
+		warningSink:                &lockWarnings,
+	})
 	if err != nil {
 		return err
 	}
@@ -427,7 +435,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	resolveOpts := pipeline.ResolveOptions{
 		RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
-		ConfigLoadMode: pipeline.ConfigLoadStrict,
+		ConfigLoadMode: configLoadMode,
 	}
 	resolveOpts.RequireTargetSet = true
 	if localDir != "" && localDir != repoRoot {
@@ -756,7 +764,7 @@ func dedupStaleSelections(stale []*resolver.SelectedNotFoundError) []*resolver.S
 // The "Pruned N ...; re-syncing..." line is deliberately NOT printed here: the
 // caller has to name this pass's errors between the per-selection lines and
 // the re-sync announcement, so it owns that line.
-func prunePhase(out io.Writer, repoRoot string, syncResult *pipeline.SyncResult, stale []*resolver.SelectedNotFoundError) (int, error) {
+func prunePhase(ctx context.Context, out io.Writer, repoRoot string, syncResult *pipeline.SyncResult, stale []*resolver.SelectedNotFoundError) (int, error) {
 	if !syncResult.CatalogTrusted() {
 		slog.Warn("prune-stale skipped: catalog not trustworthy",
 			"stale_selections", len(stale),
@@ -767,7 +775,7 @@ func prunePhase(out io.Writer, repoRoot string, syncResult *pipeline.SyncResult,
 	slog.Info("pruning stale selections",
 		"stale_selections", len(stale),
 		"materialize_errors", len(syncResult.MaterializeErrors))
-	pruned, pruneErrs := pruneStaleSelections(repoRoot, stale)
+	pruned, pruneErrs, fatal := pruneStaleSelections(ctx, repoRoot, stale)
 	for _, p := range pruned {
 		if _, err := fmt.Fprintf(out, "pruned stale %s %q from config\n", skill.KindLabel(p.Kind), p.Name); err != nil {
 			return 0, err
@@ -778,7 +786,7 @@ func prunePhase(out io.Writer, repoRoot string, syncResult *pipeline.SyncResult,
 			return 0, err
 		}
 	}
-	return len(pruned), nil
+	return len(pruned), fatal
 }
 
 // printSupersededErrors names the errors THIS pass counted, on the one path
@@ -835,64 +843,104 @@ func printPruneSkipped(out io.Writer, stale []*resolver.SelectedNotFoundError, t
 //
 // Only direct selections (Via == "") are pruned. Collection-sourced stale
 // skills are left as warnings with enriched remediation hints.
-func pruneStaleSelections(repoRoot string, stale []*resolver.SelectedNotFoundError) ([]prunedStale, []error) {
+func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolver.SelectedNotFoundError) ([]prunedStale, []error, error) {
 	configPath := config.ProjectConfigPath(repoRoot)
 
 	var pruned []prunedStale
 	var errs []error
 
-	for _, snf := range dedupStaleSelections(stale) {
-		// A direct selection (Via == "") can be written in either of two
-		// places: a registry entry's include list, or the TOP-LEVEL per-kind
-		// include list. DisableResourceWithShadowFallback only knows the
-		// first; handed a top-level selection it finds the name in no entry's
-		// include and falls through to ADDING AN EXCLUDE — so the selection
-		// stayed in the file while the CLI printed "pruned stale ... from
-		// config", and the resource became permanently suppressed if it ever
-		// came back upstream. Clear the top-level list ourselves and treat
-		// that as the whole prune. Pinned by
-		// TestSyncPruneStaleRemovesTopLevelSelection.
-		topLevel, inEntry, err := selectionSites(configPath, snf)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("prune %s %q: %w", skill.KindLabel(snf.Kind), snf.Name, err))
-			continue
-		}
-		if topLevel {
-			if err := config.RemoveResourceFromConfig(configPath, snf.Kind, snf.Name); err != nil {
-				errs = append(errs, fmt.Errorf("prune %s %q: %w", skill.KindLabel(snf.Kind), snf.Name, err))
+	fatal := pipeline.MutateLayer(ctx, pipeline.LayerMutationTarget{
+		RepoRoot:       repoRoot,
+		LocalConfigDir: config.FindLocalConfigDir(),
+		ConfigPath:     configPath,
+		Source:         config.RepoCommitted,
+		Reconcile:      reconcileCommandDependencies,
+	}, func(m *pipeline.LayerMutation) error {
+		for _, snf := range dedupStaleSelections(stale) {
+			label := skill.KindLabel(snf.Kind)
+			locator := config.ResourceLocator{Kind: snf.Kind, Name: snf.Name}
+			topLevel, entry, inEntry, siteErr := selectionSites(configPath, snf)
+			if siteErr != nil {
+				errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, siteErr))
 				continue
 			}
-		}
-		// Skip the registry-scoped editor only when the top-level list was the
-		// SOLE home of this selection: with nothing left to remove from an
-		// include list it would write an exclude instead, which suppresses the
-		// resource for good rather than merely dropping a dangling selection.
-		if !topLevel || inEntry {
-			if err := config.DisableResourceWithShadowFallback(configPath, snf.URL, snf.Path, snf.Ref, snf.Kind, snf.Name); err != nil {
-				errs = append(errs, fmt.Errorf("prune %s %q: %w", skill.KindLabel(snf.Kind), snf.Name, err))
+			inherited, inhErr := m.UnboundIncludeInherited(locator)
+			if inhErr != nil {
+				errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, inhErr))
 				continue
 			}
+			if inherited {
+				errs = append(errs, fmt.Errorf("prune %s %q: config.edit.include-owned: selection is declared in an included fragment", label, snf.Name))
+				continue
+			}
+			removed := false
+			if inEntry {
+				binding, found, bindErr := m.LookupRegistry(entry)
+				if bindErr != nil {
+					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, bindErr))
+					continue
+				}
+				if found {
+					if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionRemoveInclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+						errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
+						continue
+					}
+					removed = true
+				}
+			} else if strings.TrimSpace(snf.URL) != "" {
+				// The root file does not select this resource under a registry
+				// entry, so there is nothing here to remove: selectionSites
+				// would have reported inEntry. The edit is still attempted so
+				// that a selection owned by an included fragment is refused by
+				// name instead of being reported as undeclared.
+				binding, found, bindErr := m.LookupRegistry(config.RegistryEntry{URL: snf.URL, Ref: snf.Ref, Path: snf.Path})
+				if bindErr != nil {
+					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, bindErr))
+					continue
+				}
+				if found {
+					if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionRemoveInclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+						errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
+						continue
+					}
+				}
+			}
+			if topLevel {
+				if err := m.RemoveUnboundInclude(locator); err != nil {
+					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
+					continue
+				}
+				removed = true
+			}
+			if !removed {
+				errs = append(errs, fmt.Errorf("prune %s %q: selection is not declared in %s", label, snf.Name, configPath))
+				continue
+			}
+			pruned = append(pruned, prunedStale{Kind: snf.Kind, Name: snf.Name})
 		}
-		pruned = append(pruned, prunedStale{Kind: snf.Kind, Name: snf.Name})
+		return nil
+	})
+	if fatal != nil {
+		return nil, nil, fatal
 	}
-	return pruned, errs
+	return pruned, errs, nil
 }
 
 // selectionSites reports where a direct selection is actually written in the
-// repo config: in the TOP-LEVEL per-kind include list, in the include list of
-// the registry entry the resolver blamed, or both. The registry-scoped editors
-// can only see the second, so the prune has to ask before deciding which edit
-// to make.
-func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (topLevel bool, inEntry bool, err error) {
-	cfg, err := config.LoadConfigFromPath(configPath)
+// repo config ROOT file: in the TOP-LEVEL per-kind include list, in the
+// include list of a registry entry matching the blamed URL, or both. The
+// registry-scoped editors can only see the second, so the prune has to ask
+// before deciding which edit to make.
+func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (topLevel bool, entry config.RegistryEntry, inEntry bool, err error) {
+	cfg, err := config.LoadRootConfigFromPath(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return false, false, nil
+			return false, config.RegistryEntry{}, false, nil
 		}
-		return false, false, err
+		return false, config.RegistryEntry{}, false, err
 	}
 	if cfg == nil {
-		return false, false, nil
+		return false, config.RegistryEntry{}, false, nil
 	}
 	for _, candidate := range cfg.SelectorForKind(snf.Kind).Include {
 		if strings.TrimSpace(candidate) == snf.Name {
@@ -901,16 +949,21 @@ func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (top
 		}
 	}
 	wantURL := config.NormalizeGitURL(strings.TrimSpace(snf.URL))
-	for _, entry := range cfg.Registries {
-		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != wantURL {
+	for _, candidate := range cfg.Registries {
+		if config.NormalizeGitURL(strings.TrimSpace(candidate.URL)) != wantURL {
 			continue
 		}
-		for _, candidate := range entry.SelectorForKind(snf.Kind).Include {
-			if strings.TrimSpace(candidate) == snf.Name {
-				inEntry = true
-				break
+		if p := strings.TrimSpace(snf.Path); p != "" && config.NormalizeRegistryPath(candidate.Path) != config.NormalizeRegistryPath(p) {
+			continue
+		}
+		if r := strings.TrimSpace(snf.Ref); r != "" && strings.TrimSpace(candidate.Ref) != r {
+			continue
+		}
+		for _, selected := range candidate.SelectorForKind(snf.Kind).Include {
+			if strings.TrimSpace(selected) == snf.Name {
+				return topLevel, candidate, true, nil
 			}
 		}
 	}
-	return topLevel, inEntry, nil
+	return topLevel, config.RegistryEntry{}, false, nil
 }

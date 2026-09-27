@@ -230,7 +230,7 @@ func TestMarketplaceInstallFlagsKeepExactInstalledName(t *testing.T) {
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			consumer := fixture.newConsumer(t, fixture.server.URL)
-			result := consumer.RunAM("install", "behavior-source/"+tc.kind+"/"+tc.name, "--marketplace", "behavior", "--as", tc.alias, "--accept-risk", "--verbose", "--scope", "repo")
+			result := consumer.RunAM("install", "behavior-source/"+tc.kind+"/"+tc.name, "--marketplace", "behavior", "--as", tc.alias, "--verbose", "--scope", "repo")
 			if result.ExitCode != 0 {
 				t.Fatalf("Marketplace flag install failed (exit %d):\n%s", result.ExitCode, result.Combined)
 			}

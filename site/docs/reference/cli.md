@@ -115,7 +115,7 @@ Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` colu
 
 ## `install`
 
-Adds selections to one writable config layer and syncs harness output. A named resource from a configured Git or directory source, or from `--from <registry>` with an optional `--ref` and `--path`, can be selected in a v4 destination; an ad hoc registry becomes a named v4 `git` or `directory` source, and a relative directory stays relative in repository and personal-local configs so committed sources remain portable. Installing every resource from an ad hoc registry into a v4 destination is refused; name the resource or declare an `all: true` resource group. Other legacy-only editing paths, including some bulk, tag, and hosted Marketplace operations, may still refuse v4 destinations with `v4.writer-opt-in` or a source-specific diagnostic; a refusal leaves the authored configuration unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+Adds selections to one writable config layer and syncs harness output. A named resource from a configured Git or directory source, or from `--from <registry>` with an optional `--ref` and `--path`, can be selected in a v4 destination; an ad hoc registry becomes a named v4 `git` or `directory` source, and a relative directory stays relative in repository and personal-local configs so committed sources remain portable. Installing every resource from an ad hoc registry into a v4 destination declares the source with an `all: true` resource group. Other legacy-only editing paths, including some bulk, tag, and hosted Marketplace operations, may still refuse v4 destinations with `v4.writer-opt-in` or a source-specific diagnostic; a refusal leaves the authored configuration unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace install <resource-name> [flags]
@@ -146,15 +146,15 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
 | `--marketplace` | alias or endpoint URL | no | locator prefix | Resolves a Marketplace resource locator against the selected endpoint. Valid only for one Marketplace resource. |
 | `--as` | safe local name | no | resource name | Changes the generated local name while retaining the Marketplace coordinate. |
-| `--accept-risk` | boolean | no | `false` | Accepts the verified revision's warning findings and active capabilities. |
+| `--accept-risk` | boolean | no | `false` | Accepts security findings for the verified revision. |
 | `--yes` | boolean | no | `false` | Automation spelling of `--accept-risk`. |
 | `--verbose` | boolean | no | `false` | Shows the complete collection inventory and technical Marketplace preview, including revisions, digests, acquisition details, and provenance. |
 
 A Marketplace endpoint lookup verifies its well-known identity and canonical URL. To use the endpoint from a v4 root, declare a named `marketplace` source and add an exact request to its `resources` group; keep the matching verified layer lock next to the configuration.
 
-A Marketplace install resolves and verifies the exact artifact before changing config. The default output shows a summary of its source, findings, capabilities, and up to ten collection members. Add `--verbose` to see all collection members, the digest, license, provenance, and acquisition mode. You cannot install rejected or revoked resources. In non-interactive use, pass `--accept-risk` or `--yes` to accept warning findings and active capabilities for that verified invocation only.
+A Marketplace install resolves and verifies the exact artifact before changing config. The default output shows a summary of its source, findings, capabilities, and up to ten collection members. Add `--verbose` to see all collection members, the digest, license, provenance, and acquisition mode. You cannot install rejected or revoked resources. In non-interactive use, pass `--accept-risk` or `--yes` to accept findings for that verified invocation only; capability metadata alone does not require either flag.
 
-In an interactive terminal, warning findings and active capabilities produce an `Install despite these risks? [y/N]:` prompt. Accepting commits the exact prepared revision and prints only the result. Non-interactive execution still requires `--accept-risk` or `--yes` and returns a nonzero exit code without consent.
+In an interactive terminal, security findings produce an `Install despite these risks? [y/N]:` prompt. Capabilities remain visible but do not independently trigger consent. Accepting commits the exact prepared revision and prints only the result. Non-interactive execution requires `--accept-risk` or `--yes` only when findings exist.
 
 Successful Marketplace installs print a concise confirmation:
 
@@ -244,7 +244,7 @@ Normal synchronization prints counts for installed, removed, malformed, and fail
 Installed 3  Removed 1  Malformed 0  Errors 0
 ```
 
-With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. `--check` is read-only across config, locks, caches, transaction state, and materialized output: it neither recovers pending transactions nor fetches a cold exact snapshot, and reports `lock.snapshot-unavailable` when required snapshot bytes are absent. `--prune-stale` cannot be combined with `--locked` or `--offline` because pruning changes configuration.
+With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. `--check` is read-only across config, locks, transaction state, and materialized output: it neither recovers pending transactions nor fetches a cold exact snapshot, and reports `lock.snapshot-unavailable` when required snapshot bytes are absent. `--prune-stale` cannot be combined with `--locked` or `--offline` because pruning changes configuration.
 
 Pending dependency transactions cause `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` to fail with `dependency.recovery-required` before loading configuration or registry state. These commands leave config, locks, journal evidence, and transaction-state permissions unchanged. Run a writing `sync` or `lock` without those flags to recover, then retry the inspection. An absent transaction-state directory does not require recovery and is not created by inspection.
 
@@ -585,7 +585,7 @@ agent-marketplace tui
 
 The command resolves the repository root from the current directory and uses the current user's home directory for machine-scoped configuration and output. It renders configured resources before network discovery, loads up to 50 results from each Marketplace, and starts federated Marketplace search 250 milliseconds after search input settles. Discovery cache entries are fresh for five minutes and may be used as stale fallback for up to 24 hours.
 
-Marketplace installation verifies the exact revision and displays its findings, capabilities, provenance, and digest before confirmation. Blocked and revoked resources remain visible but cannot be installed.
+Marketplace installation verifies the exact revision before committing. Security findings display the verified preview and require confirmation; capability metadata alone does not. Blocked and revoked resources remain visible but cannot be installed.
 
 ## `completion`
 

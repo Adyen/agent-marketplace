@@ -9,7 +9,7 @@
 | Repository | `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` |
 | Repository personal | `<repo>/.agents/config.local.yaml` | `<repo>/.agents/lock.local.yaml` |
 
-Each lock belongs to the configuration layer that declares the source. The repository lock is committed with `.agents/config.yaml`; the personal-local lock is ignored. An absent organization lock intentionally leaves that external layer mutable. Normal online non-check runs resolve explicit organization Marketplace requests through a verified in-memory lock without writing `/etc`; offline and check-only runs require a deployed lock. A present organization lock is exact and fail-closed.
+Each lock belongs to the configuration layer that declares the source. The repository lock is committed with `.agents/config.yaml`; the personal-local lock is ignored. An absent organization lock intentionally leaves that external layer mutable. Normal online runs, including `sync --check`, resolve explicit organization Marketplace requests through a verified in-memory lock without writing `/etc`; offline runs and `lock --check` require a deployed lock. A present organization lock is exact and fail-closed.
 
 ## Git lock records
 
@@ -55,7 +55,7 @@ Mirror records carry the compiled archive digest. Index-only records carry the e
 - Normal sync retains compatible exact commits and minimally reconciles stale writable locks.
 - `sync --locked` requires fresh locks and forbids configuration or lock writes.
 - `sync --check` is read-only and exits `1` if anything is out of sync.
-- An absent organization lock leaves that layer intentionally unlocked. Explicit Marketplace requests use a transient verified lock during normal online non-check runs and never create the organization lock.
+- An absent organization lock leaves that layer intentionally unlocked. Explicit Marketplace requests use a transient verified lock during online runs, including `sync --check`, and never create the organization lock.
 
 ## Do not edit by hand
 

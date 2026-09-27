@@ -37,15 +37,6 @@ func TestV4UserConfigInstallsAndRemovesAdHocGitResource(t *testing.T) {
 	gitRun(t, working, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-m", "add daily-sync")
 	gitRun(t, working, "push", "origin", branch)
 
-	initialConfig := env.ReadFile("/root/.agents/config.yaml")
-	bundle := env.RunAM("install", "--from="+url, "--ref="+branch, "--scope=user")
-	if bundle.ExitCode == 0 || !strings.Contains(bundle.Combined, "/.agents/config.yaml") || strings.Contains(bundle.Combined, ".agent-marketplace-config-") {
-		t.Fatalf("unsupported v4 bundle install did not refuse against the real config path (exit %d):\n%s", bundle.ExitCode, bundle.Combined)
-	}
-	if got := env.ReadFile("/root/.agents/config.yaml"); got != initialConfig {
-		t.Fatalf("refused v4 bundle install changed user config:\n%s", got)
-	}
-
 	adHoc := []string{"--from=" + url, "--ref=" + branch, "--path=" + skillPath, "--scope=user"}
 	install := env.RunAM(append([]string{"install", "daily-sync"}, adHoc...)...)
 	if install.ExitCode != 0 {

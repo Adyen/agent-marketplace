@@ -44,7 +44,7 @@ func TestPlanProjectsEquivalentRoots(t *testing.T) {
 		if reverse {
 			wanted[0], wanted[1] = wanted[1], wanted[0]
 		}
-		current := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example.com/repo", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{
+		current := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example.com/repo", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{
 			{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)},
 			{Path: "skills", SourceHarness: "factory", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)},
 		}}}}
