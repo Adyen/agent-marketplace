@@ -329,3 +329,50 @@ func TestServeReindexUnknownRegistryDoesNotCreateRegistryState(t *testing.T) {
 		t.Fatalf("registry state error = %v, want %v", err, store.ErrNotFound)
 	}
 }
+
+// An operator adopts catalog settings during a maintenance window with every
+// audit field supplied, and retrying with the same idempotency key succeeds.
+func TestServeAdoptRecordsMaintenanceThroughTheBinary(t *testing.T) {
+	env := newEnv(t)
+	env.WriteFile("/workspace/marketplace.yaml", `apiVersion: agent-marketplace.io/marketplace/v1
+instance:
+  id: e2e-adopt-mp
+  name: E2E Adopt Marketplace
+  canonical_url: https://example.com
+storage:
+  metadata:
+    driver: sqlite
+    dsn: marketplace.db
+  blobs:
+    driver: filesystem
+    path: blobs
+acquisition_default: mirror
+refresh:
+  interval: 1h
+policy:
+  hidden_content: reject
+  license_allowlist: [MIT]
+registries:
+  - id: src-adopt
+    slug: adopt-source
+    origin: https://github.com/example/registry.git
+    ref: main
+    roots:
+      - path: .agents
+        source_harness: factory
+management:
+  mode: database
+  allowed_origins:
+    - https://github.com
+`)
+	args := []string{"serve", "adopt", "--config", "marketplace.yaml", "--actor", "e2e-operator", "--reason", "E2E maintenance adoption", "--idempotency-key", "e2e-adopt-1", "--confirm-maintenance"}
+	for attempt := range 2 {
+		adopted := env.RunAM(args...)
+		if adopted.ExitCode != 0 || !strings.Contains(adopted.Combined, "revision 1") {
+			t.Fatalf("serve adopt attempt %d did not accept revision 1 (exit %d):\n%s", attempt+1, adopted.ExitCode, adopted.Combined)
+		}
+	}
+	if refused := env.RunAM("serve", "adopt", "--config", "marketplace.yaml", "--actor", "e2e-operator", "--reason", "unconfirmed", "--idempotency-key", "e2e-adopt-2"); refused.ExitCode == 0 {
+		t.Fatalf("serve adopt ran without --confirm-maintenance:\n%s", refused.Combined)
+	}
+}
