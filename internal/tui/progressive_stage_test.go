@@ -86,17 +86,25 @@ func TestReadSnapshotStagesDeliversConfigInventoryThenAssessed(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 
 	msgs := collectSnapshotStages(readSnapshotStages(context.Background(), repoRoot, homeDir, catalogLoadCached, 7))
-	if len(msgs) != 3 {
-		t.Fatalf("staged snapshot produced %d messages, want config+inventory+final: %#v", len(msgs), msgs)
+	if len(msgs) != 4 {
+		t.Fatalf("staged snapshot produced %d messages, want provisional+config+inventory+final: %#v", len(msgs), msgs)
 	}
 	for _, msg := range msgs {
 		if msg.generation != 7 {
 			t.Fatalf("stage %d carried generation %d, want 7", msg.stage, msg.generation)
 		}
 	}
-	configStage, inventory, final := msgs[0], msgs[1], msgs[2]
+	provisional, configStage, inventory, final := msgs[0], msgs[1], msgs[2], msgs[3]
+	if provisional.stage != snapshotStageConfig || provisional.provisionalCfg == nil || provisional.mergedCfg != nil {
+		t.Fatalf("first stage = %+v, want provisional configured selections", provisional)
+	}
+	for _, r := range provisional.provisionalRows {
+		if !r.PendingVerification {
+			t.Fatalf("provisional stage published non-pending row %#v", r.Artifact)
+		}
+	}
 	if configStage.stage != snapshotStageConfig || configStage.mergedCfg == nil {
-		t.Fatalf("first stage = %+v, want validated config", configStage)
+		t.Fatalf("second stage = %+v, want validated config", configStage)
 	}
 	if len(configStage.rows) != 0 {
 		t.Fatalf("config stage published %d rows before inventory", len(configStage.rows))
@@ -591,15 +599,16 @@ func drainStagesAfterRelease(t *testing.T, unblock func(), cancel context.Cancel
 	})
 }
 
-func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T) {
-	repoRoot := t.TempDir()
-	homeDir := t.TempDir()
+func provisionalLocalAllTrueFixture(t *testing.T) (repoRoot, homeDir, regA, regB string) {
+	t.Helper()
+	repoRoot = t.TempDir()
+	homeDir = t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	regA := t.TempDir()
+	regA = t.TempDir()
 	writeProvisionalSkill(t, regA, "alpha")
 	writeProvisionalSkill(t, regA, "beta")
-	regB := t.TempDir()
+	regB = t.TempDir()
 	for _, name := range []string{"gamma", "delta", "sigma"} {
 		writeProvisionalSkill(t, regB, name)
 	}
@@ -636,14 +645,32 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 	t.Cleanup(swapLoadLocalConfig(func() (*config.LocalConfig, error) {
 		return config.LoadLocalConfigFromPath(filepath.Join(repoRoot, ".agents", "config.local.yaml"))
 	}))
-	unblock := blockedOrganizationMarketplace(t)
+	return repoRoot, homeDir, regA, regB
+}
 
+func newProvisionalStageModel() Model {
 	m := newTestModel()
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
 	m.width, m.height = 120, 40
+	return m
+}
+
+func pendingRowNames(rows []row) map[string]ir.ResourceKind {
+	got := make(map[string]ir.ResourceKind, len(rows))
+	for _, r := range rows {
+		got[r.Artifact.Name] = r.Artifact.Kind
+	}
+	return got
+}
+
+func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T) {
+	repoRoot, homeDir, _, _ := provisionalLocalAllTrueFixture(t)
+	unblock := blockedOrganizationMarketplace(t)
+
+	m := newProvisionalStageModel()
 	generation := m.beginRequest(requestSnapshot)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -672,13 +699,12 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 		"deploy": ir.KindCommand,
 		"remote": ir.KindSkill,
 	}
-	got := make(map[string]ir.ResourceKind)
 	for _, r := range m.rows {
 		if !r.PendingVerification {
 			t.Fatalf("pre-verification row %#v is not marked pending", r.Artifact)
 		}
-		got[r.Artifact.Name] = r.Artifact.Kind
 	}
+	got := pendingRowNames(m.rows)
 	for name, kind := range want {
 		if got[name] != kind {
 			t.Fatalf("configured %s %q missing from provisional rows while acquisition blocked: %#v", kind, name, m.rows)
@@ -693,6 +719,133 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 	case extra, ok := <-stages:
 		t.Fatalf("resolve advanced past acquisition while blocked: %+v closed=%t", extra, !ok)
 	default:
+	}
+}
+
+func TestProvisionalLocalAllTrueRowsRenderOnNormalConfigPath(t *testing.T) {
+	repoRoot, homeDir, _, _ := provisionalLocalAllTrueFixture(t)
+	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil }))
+
+	m := newProvisionalStageModel()
+	generation := m.beginRequest(requestSnapshot)
+
+	msgs := collectSnapshotStages(readSnapshotStages(context.Background(), repoRoot, homeDir, catalogLoadCached, generation))
+	if len(msgs) < 2 {
+		t.Fatalf("normal config path produced %d stages, want a provisional stage before the merged config", len(msgs))
+	}
+	provisional := msgs[0]
+	if provisional.stage != snapshotStageConfig || provisional.provisionalCfg == nil {
+		t.Fatalf("first stage = %+v, want provisional configured selections", provisional)
+	}
+
+	updated, _ := m.Update(provisional)
+	m = updated.(Model)
+	want := map[string]ir.ResourceKind{
+		"alpha":  ir.KindSkill,
+		"beta":   ir.KindSkill,
+		"sigma":  ir.KindSkill,
+		"deploy": ir.KindCommand,
+	}
+	for _, r := range m.rows {
+		if !r.PendingVerification {
+			t.Fatalf("pre-verification row %#v is not marked pending", r.Artifact)
+		}
+	}
+	got := pendingRowNames(m.rows)
+	for name, kind := range want {
+		if got[name] != kind {
+			t.Fatalf("configured %s %q missing from provisional rows on the normal config path: %#v", kind, name, m.rows)
+		}
+	}
+	for _, excluded := range []string{"gamma", "delta"} {
+		if _, present := got[excluded]; present {
+			t.Fatalf("excluded resource %q rendered a provisional row", excluded)
+		}
+	}
+	if provisional.mergedCfg != nil {
+		t.Fatal("provisional stage claimed a verified merged config")
+	}
+
+	var mergedStage snapshotLoadedMsg
+	for _, msg := range msgs[1:] {
+		if msg.stage == snapshotStageConfig && msg.mergedCfg != nil {
+			mergedStage = msg
+			break
+		}
+	}
+	if mergedStage.mergedCfg == nil {
+		t.Fatal("no merged config stage followed the provisional stage")
+	}
+	updated, _ = m.Update(mergedStage)
+	m = updated.(Model)
+	got = pendingRowNames(m.rows)
+	for name := range want {
+		if _, present := got[name]; !present {
+			t.Fatalf("merged config stage downgraded provisional row %q: %#v", name, m.rows)
+		}
+	}
+}
+
+func TestProvisionalRegistryScopedLocalExcludesApply(t *testing.T) {
+	repoRoot, homeDir, regA, regB := provisionalLocalAllTrueFixture(t)
+	regC := t.TempDir()
+	for _, reg := range []string{regA, regB, regC} {
+		writeProvisionalSkill(t, reg, "shared")
+	}
+	repoConfig := "apiVersion: agent-marketplace/v4\nsources:\n  regb: {directory: " + regB + "}\n  regc: {directory: " + regC + "}\nresources:\n  regb: {all: true}\n  regc: {all: true}\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
+		t.Fatalf("write repo config: %v", err)
+	}
+	localConfig := "registries:\n  - url: " + regA + "\n    skills: {exclude: [shared]}\n  - url: " + regB + "\n    skills: {exclude: [shared]}\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte(localConfig), 0o644); err != nil {
+		t.Fatalf("write local config: %v", err)
+	}
+	unblock := blockedOrganizationMarketplace(t)
+
+	m := newProvisionalStageModel()
+	generation := m.beginRequest(requestSnapshot)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stages := readSnapshotStages(ctx, repoRoot, homeDir, catalogLoadCached, generation)
+	drainStagesAfterRelease(t, unblock, cancel, stages)
+
+	var first snapshotLoadedMsg
+	select {
+	case first = <-stages:
+	case <-time.After(30 * time.Second):
+		t.Fatal("no provisional config stage published while organization acquisition was blocked")
+	}
+	if first.stage != snapshotStageConfig || first.provisionalCfg == nil {
+		t.Fatalf("first stage = %+v, want provisional configured selections", first)
+	}
+
+	updated, _ := m.Update(first)
+	m = updated.(Model)
+	type scopedName struct {
+		name string
+		url  string
+	}
+	got := make(map[scopedName]bool)
+	for _, r := range m.rows {
+		if !r.PendingVerification {
+			t.Fatalf("pre-verification row %#v is not marked pending", r.Artifact)
+		}
+		got[scopedName{r.Artifact.Name, r.RegistryURL}] = true
+	}
+	for _, want := range []scopedName{
+		{"shared", regA},
+		{"alpha", regA},
+		{"beta", regA},
+		{"sigma", regB},
+		{"deploy", regB},
+		{"shared", regC},
+	} {
+		if !got[want] {
+			t.Fatalf("pending row %q from %q missing: %#v", want.name, want.url, m.rows)
+		}
+	}
+	if got[scopedName{"shared", regB}] {
+		t.Fatalf("registry-scoped local exclude did not hide %q from %q: %#v", "shared", regB, m.rows)
 	}
 }
 

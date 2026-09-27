@@ -363,6 +363,14 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	if opts.Offline || opts.CatalogMode == catalog.LoadModeCachedNoFetch {
 		loadMode = ConfigLoadStrict
 	}
+	provisionalEmitted := false
+	provisionalReady := opts.ProvisionalConfigReady
+	if provisionalReady != nil {
+		provisionalReady = func(merged *config.Config, local *config.LocalConfig) {
+			provisionalEmitted = true
+			opts.ProvisionalConfigReady(merged, local)
+		}
+	}
 	useLoaders := opts.Loaders.Org != nil || opts.Loaders.Global != nil || opts.Loaders.Repo != nil || opts.Loaders.Local != nil
 	if useLoaders {
 		loaders := opts.Loaders
@@ -404,10 +412,10 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			Errors:       errs,
 		}
 		if loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors) {
-			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, opts.ProvisionalConfigReady)
+			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady)
 		}
 	} else {
-		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, opts.ProvisionalConfigReady)
+		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady)
 	}
 
 	result.Diagnostics = ec.Diagnostics
@@ -507,6 +515,9 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		return result, releaseExactLease
 	}
 	result.MaterializationModes = materializationModes
+	if provisionalReady != nil && mergedCfg != nil && !provisionalEmitted {
+		provisionalReady(mergedCfg, ec.Local)
+	}
 	if opts.ConfigReady != nil && mergedCfg != nil {
 		opts.ConfigReady(mergedCfg)
 	}

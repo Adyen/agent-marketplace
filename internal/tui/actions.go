@@ -186,7 +186,7 @@ func refreshSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir 
 // buffered past the maximum number of stages, so a reader that stops
 // consuming after a superseded generation cannot block the writer.
 func readSnapshotStagesForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode, generation requestGeneration) <-chan snapshotLoadedMsg {
-	stages := make(chan snapshotLoadedMsg, 4)
+	stages := make(chan snapshotLoadedMsg, 5)
 	go func() {
 		defer close(stages)
 		emit := func(msg snapshotLoadedMsg) {
@@ -310,7 +310,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged, provisionalRows: buildProvisionalRows(merged, local, provisionalLocalCatalogs(merged, ws.LocalConfigDir()))})
 			},
 			ConfigReady: func(merged *config.Config) {
-				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged, provisionalCfg: merged})
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
 			},
 		},
 		Resolved: func(result pipeline.InspectionResult) {
@@ -997,7 +997,7 @@ func provisionalLocalCatalogs(cfg *config.Config, repoRoot string) map[int]provi
 	return catalogs
 }
 
-func provisionalLocallyExcluded(localCfg *config.LocalConfig, kind ir.ResourceKind, name string, entry config.RegistryEntry) bool {
+func provisionalLocallyExcluded(localCfg *config.LocalConfig, mergedIdentities map[string]struct{}, kind ir.ResourceKind, name string, entry config.RegistryEntry) bool {
 	if localCfg == nil || entry.Required || entry.Source.IsMachineScope() {
 		return false
 	}
@@ -1005,7 +1005,23 @@ func provisionalLocallyExcluded(localCfg *config.LocalConfig, kind ir.ResourceKi
 	if selector.ExcludeAll {
 		return true
 	}
-	return slices.Contains(selector.Exclude, strings.TrimSpace(name))
+	trimmed := strings.TrimSpace(name)
+	if slices.Contains(selector.Exclude, trimmed) {
+		return true
+	}
+	entryIdentity := registryIdentityKey(entry.URL, entry.Ref, entry.Path)
+	for i := range localCfg.Registries {
+		re := &localCfg.Registries[i]
+		scoped := re.SelectorForKind(kind)
+		if !scoped.ExcludeAll && !slices.Contains(scoped.Exclude, trimmed) {
+			continue
+		}
+		identity := registryIdentityKey(re.URL, re.Ref, re.Path)
+		if _, present := mergedIdentities[identity]; !present || identity == entryIdentity {
+			return true
+		}
+	}
+	return false
 }
 
 func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, locals map[int]provisionalLocalCatalog) []row {
@@ -1014,6 +1030,10 @@ func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 	}
 	seen := make(map[string]struct{})
 	var rows []row
+	mergedIdentities := make(map[string]struct{}, len(cfg.Registries))
+	for i := range cfg.Registries {
+		mergedIdentities[registryIdentityKey(cfg.Registries[i].URL, cfg.Registries[i].Ref, cfg.Registries[i].Path)] = struct{}{}
+	}
 	add := func(key string, r row) {
 		if _, dup := seen[key]; dup {
 			return
@@ -1031,7 +1051,7 @@ func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 			}
 		}
 		for _, selected := range resolver.ResourcesSelected(entry, catalogEntries) {
-			if provisionalLocallyExcluded(localCfg, selected.Kind, selected.Name, entry) {
+			if provisionalLocallyExcluded(localCfg, mergedIdentities, selected.Kind, selected.Name, entry) {
 				continue
 			}
 			add(selected.Kind.String()+"\x00"+selected.Name+"\x00"+entry.CatalogKey, row{
