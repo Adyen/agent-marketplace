@@ -310,6 +310,14 @@ func marketplacePinRequired(entry config.MarketplaceEntry) bool {
 	return entry.Required
 }
 
+// cachedRevisionUsable reports whether a cached revision can be used without
+// revalidation. Cached metadata drops EffectiveAvailability, so a cached
+// rejection may hide a current exposure grant: online modes revalidate it,
+// while CachedNoFetch stays fail-closed.
+func cachedRevisionUsable(rev store.AssessedResourceRevision, mode resolver.MarketplaceResolveMode) bool {
+	return mode == resolver.MarketplaceResolveModeCachedNoFetch || enforceMarketplaceAssessment(rev) == nil
+}
+
 func enforceMarketplaceAssessment(rev store.AssessedResourceRevision) error {
 	if rev.Assessment.Decision == store.AssessmentDecisionReject && rev.EffectiveAvailability != string(mpapi.AvailabilityOperatorExposed) {
 		return fmt.Errorf("assessment rejected revision")
@@ -934,13 +942,15 @@ func (r *Resolver) getIndexOnlyResourceRevision(ctx context.Context, client *Cli
 		if err != nil {
 			return store.AssessedResourceRevision{}, fmt.Errorf("read cached index-only revision: %w", err)
 		}
-		if ok {
+		if ok && cachedRevisionUsable(rev, mode) {
 			return rev, nil
 		}
-		if mode == resolver.MarketplaceResolveModeCachedNoFetch {
-			return store.AssessedResourceRevision{}, fmt.Errorf("missing cached index-only revision metadata for exact registry occurrence")
+		if !ok {
+			if mode == resolver.MarketplaceResolveModeCachedNoFetch {
+				return store.AssessedResourceRevision{}, fmt.Errorf("missing cached index-only revision metadata for exact registry occurrence")
+			}
+			return store.AssessedResourceRevision{}, fmt.Errorf("index-only revision metadata is missing from cache")
 		}
-		return store.AssessedResourceRevision{}, fmt.Errorf("index-only revision metadata is missing from cache")
 	}
 	if client == nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("index-only online resolution requires a Marketplace client")
@@ -967,14 +977,16 @@ func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cach
 		if err != nil {
 			return store.AssessedResourceRevision{}, fmt.Errorf("read cached revision: %w", err)
 		}
-		if ok {
+		if ok && cachedRevisionUsable(rev, mode) {
 			return rev, nil
 		}
-		if mode == resolver.MarketplaceResolveModeCached {
-			return store.AssessedResourceRevision{}, fmt.Errorf("resource revision not in cache")
-		}
-		if mode == resolver.MarketplaceResolveModeCachedNoFetch {
-			return store.AssessedResourceRevision{}, fmt.Errorf("resource revision metadata is missing from cache")
+		if !ok {
+			if mode == resolver.MarketplaceResolveModeCached {
+				return store.AssessedResourceRevision{}, fmt.Errorf("resource revision not in cache")
+			}
+			if mode == resolver.MarketplaceResolveModeCachedNoFetch {
+				return store.AssessedResourceRevision{}, fmt.Errorf("resource revision metadata is missing from cache")
+			}
 		}
 	}
 

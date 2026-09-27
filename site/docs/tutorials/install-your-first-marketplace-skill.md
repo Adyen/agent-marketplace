@@ -127,7 +127,7 @@ Installed review in this repo
 
 The command saves an exact content pin under `marketplaces[].resources` in `.agents/config.yaml` and synchronizes the Claude Code output. You do not need a separate `sync` command to install it.
 
-This lesson uses a skill that needs no risk acceptance. If installation stops for findings or active capabilities, do not add a blanket approval flag just to finish the tutorial. Review the preview with your operator; the [hosted Marketplace how-to](../how-to/install-from-a-marketplace.md#_4-review-findings-and-capabilities) covers explicit consent outside this lesson.
+This lesson uses a skill with no security findings, so installation proceeds without a confirmation prompt. If a resource has findings, review the verified preview with your operator rather than adding a blanket approval flag just to finish the tutorial. Capability metadata alone does not trigger consent. The [hosted Marketplace how-to](../how-to/install-from-a-marketplace.md#_4-review-findings-and-capabilities) covers explicit consent when findings are present.
 
 ## 5. Verify the installed revision and file
 

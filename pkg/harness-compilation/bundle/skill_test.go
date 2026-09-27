@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"slices"
 	"testing"
 	"testing/fstest"
 
@@ -392,5 +393,59 @@ func TestLoadRootSkill_SourceRef(t *testing.T) {
 	wantRef := ir.SourceRef{File: "SKILL.md", Line: 1}
 	if skill.Source != wantRef {
 		t.Errorf("source: got %+v, want %+v", skill.Source, wantRef)
+	}
+}
+
+// TestSkillSupportFilesExcludeVCSInternals pins the discovery boundary for
+// root skills: a repository that IS a skill carries its own files as support
+// files, but VCS internals (.git) are never skill content — a marketplace
+// clone keeps .git on disk, and publishing object databases into installable
+// archives (or reading multi-megabyte pack files as bounded support reads)
+// is both wrong and a hard failure waiting to happen.
+func TestSkillSupportFilesExcludeVCSInternals(t *testing.T) {
+	rootFS := fstest.MapFS{
+		"SKILL.md":                {Data: []byte("---\nname: root-skill\ndescription: Root skill\n---\nBody")},
+		"notes.md":                {Data: []byte("notes")},
+		".git/config":             {Data: []byte("[core]")},
+		".git/HEAD":               {Data: []byte("ref: refs/heads/main")},
+		"vendor/lib/.git/config":  {Data: []byte("[core]")},
+		"vendor/lib/reference.md": {Data: []byte("reference")},
+	}
+
+	root, err := LoadRootSkill(rootFS)
+	if err != nil {
+		t.Fatalf("LoadRootSkill: %v", err)
+	}
+	if want := []string{"notes.md", "vendor/lib/reference.md"}; !slices.Equal(root.SupportFiles, want) {
+		t.Errorf("root support files = %#v, want %v", root.SupportFiles, want)
+	}
+
+	fileFS := fstest.MapFS{
+		"SKILL.md":                {Data: []byte("---\nname: root-skill\n---\nBody")},
+		".git":                    {Data: []byte("gitdir: /tmp/worktree")},
+		"notes.md":                {Data: []byte("notes")},
+		"vendor/lib/.git":         {Data: []byte("gitdir: /tmp/submodule")},
+		"vendor/lib/reference.md": {Data: []byte("reference")},
+	}
+	fileSkill, err := LoadRootSkill(fileFS)
+	if err != nil {
+		t.Fatalf("LoadRootSkill with .git files: %v", err)
+	}
+	if want := []string{"notes.md", "vendor/lib/reference.md"}; !slices.Equal(fileSkill.SupportFiles, want) {
+		t.Errorf("root support files with .git files = %#v, want %v", fileSkill.SupportFiles, want)
+	}
+
+	dirFS := fstest.MapFS{
+		"review/SKILL.md":          {Data: []byte("---\nname: review\ndescription: Review\n---\nBody")},
+		"review/notes.md":          {Data: []byte("notes")},
+		"review/.git/config":       {Data: []byte("[core]")},
+		"review/references/api.md": {Data: []byte("api")},
+	}
+	dir, err := LoadSkill(dirFS, "review")
+	if err != nil {
+		t.Fatalf("LoadSkill: %v", err)
+	}
+	if want := []string{"notes.md", "references/api.md"}; !slices.Equal(dir.SupportFiles, want) {
+		t.Errorf("directory support files = %#v, want %v", dir.SupportFiles, want)
 	}
 }

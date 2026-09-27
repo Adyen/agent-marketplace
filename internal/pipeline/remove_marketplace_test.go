@@ -27,8 +27,10 @@ func TestRemoveMarketplaceCollectionRollbackRestoresExactSelectors(t *testing.T)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err = removeMarketplaceAndSync(ctx, repoRoot, configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
+	_, err = commitMarketplaceConfigRemoval(configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
 		return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, "https://market.example", "mp", collection)
+	}, func() ([]error, error) {
+		return nil, ctx.Err()
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("remove error = %v, want cancellation", err)

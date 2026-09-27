@@ -12,10 +12,10 @@ On first launch, choose your target harnesses and press `enter` to save an edita
 1. Open **Registry** (`2`) to browse sources, or **Scope** (`1`) to see where resources are selected. Use `/` to search and `esc` to clear it.
 2. Press `enter` on a resource to inspect it. Local resources open a file browser. For a Marketplace resource you haven't installed, the TUI shows metadata without downloading the artifact. Installed Marketplace resources can show files from their trusted cached bundles. If the cached files are missing, sync can restore them.
 3. Press `space` to choose a scope. Check the current selection before toggling it for user, project, or local scope. Required resources cannot be excluded.
-4. For a new Marketplace resource, review the verified revision preview and confirm the installation scope. Installation requires this check even if the resource appears in search. You can inspect blocked and revoked rows but cannot install them.
+4. Selecting a new Marketplace resource verifies its exact revision before installation. The TUI shows the verified preview and asks for confirmation when security findings exist; with no findings, it installs the prepared revision without an extra prompt. Capability metadata alone does not trigger consent. You can inspect blocked and revoked rows but cannot install them.
 5. Press `s` to sync pending changes, then check **Status** (`3`) and diagnostics (`e`). Fix any errors before relying on the generated output.
 
-The TUI saves selection changes to config as soon as you accept them. They remain saved if you quit without syncing; "pending" means the output still needs a sync. Marketplace installation has a separate verification and confirmation step.
+The TUI saves selection changes to config as soon as you accept them. They remain saved if you quit without syncing; "pending" means the output still needs a sync. Marketplace installation always verifies the exact revision, and requires a separate confirmation only when findings exist.
 
 ## Hosted Marketplace discovery
 
@@ -29,7 +29,7 @@ The TUI shows at most 50 results per endpoint and query, with no pagination. Nar
 - `s` syncs dependencies and generated output with your selections. A healthy Git lock stays at its recorded revision even if its branch has moved.
 - `u` upgrades Git locks in all writable scopes and syncs output. The help label says "update caches", but this action can also change lockfiles and installed resources. Use CLI `update --scope repo` to limit an update to the repository.
 
-If a layer has no lock, the TUI may browse its current source content and show a warning. An invalid existing lock blocks that fallback. If the TUI cannot load the current local state, you can still inspect resources, but must fix the load error before changing selections.
+If a layer has no lock, the TUI may browse its current source content and show a warning. An invalid existing lock blocks that fallback. A configuration load error blocks selection changes until you fix it with `E`. Catalog, resolution, and materialization failures keep the loaded rows inspectable; rows that can normally be toggled still open the scope modal, including eligible selections shown as unavailable, while drift remains failed.
 
 ## Navigation
 

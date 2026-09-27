@@ -45,7 +45,7 @@ registries:
 	}
 	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
 	firstBytes, first := readLifecycleLock(t, lockPath)
-	if first.APIVersion != "agent-marketplace-lock/v1" || first.Scope != "repo" {
+	if first.APIVersion != "agent-marketplace-lock/v2" || first.Scope != "repo" {
 		t.Fatalf("unexpected lock header: %+v\n%s", first, firstBytes)
 	}
 	if len(first.Registries) != 1 || !strings.HasPrefix(first.Registries[0].Commit, "sha1:") {

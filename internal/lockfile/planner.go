@@ -89,8 +89,8 @@ func Plan(requirements Requirements, current *Document, operation Operation) (Re
 	if operation != OperationSync && operation != OperationUpgrade {
 		return ResolutionPlan{}, coded(CodeInvalidDocument, "invalid lock operation")
 	}
-	plan := ResolutionPlan{Desired: Document{APIVersion: APIVersionV1, Scope: requirements.Scope}}
-	old := Document{APIVersion: APIVersionV1, Scope: requirements.Scope}
+	plan := ResolutionPlan{Desired: Document{APIVersion: APIVersionV2, Scope: requirements.Scope}}
+	old := Document{APIVersion: APIVersionV2, Scope: requirements.Scope}
 	if current != nil {
 		normalized, err := Normalize(*current)
 		if err != nil {
@@ -101,10 +101,7 @@ func Plan(requirements Requirements, current *Document, operation Operation) (Re
 		}
 		old = normalized
 	}
-	if old.APIVersion == APIVersionV2 {
-		plan.Desired.APIVersion = APIVersionV2
-		plan.Desired.Marketplaces = old.Marketplaces
-	}
+	plan.Desired.Marketplaces = old.Marketplaces
 
 	gitRequirements, err := coalesceGitRequirements(requirements.Git)
 	if err != nil {

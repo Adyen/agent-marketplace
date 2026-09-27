@@ -101,7 +101,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		writeAdminJSON(w, r, http.StatusOK, struct {
 			Valid    bool     `json:"valid"`
 			Warnings []string `json:"warnings"`
-		}{true, []string{"Static validation only; repository acquisition has not been previewed."}})
+		}{true, []string{}})
 		return
 	}
 	key, ok := singleAdminHeader(r, "Idempotency-Key")

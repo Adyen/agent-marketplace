@@ -21,7 +21,7 @@ func renderFooter(m Model) string {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" syncing..."))
 	} else if m.refreshing {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterRefreshing.Render(" refreshing cache..."))
-	} else if m.driftAssessment != driftReady {
+	} else if m.driftAssessment != driftReady || m.hasUnavailableRows() {
 		leftParts = append(leftParts, styleDriftPending.Render("~ drift unavailable"))
 	} else if m.driftReport.InSync() {
 		leftParts = append(leftParts, styleDriftOK.Render("~ in sync"))
@@ -110,11 +110,24 @@ func renderErrorFooter(m Model) string {
 	return styleFooterError.Render(status) + " " + actions
 }
 
+func rowsHaveUnavailable(rows []row) bool {
+	for _, r := range rows {
+		if r.UnavailableReason != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) hasUnavailableRows() bool {
+	return rowsHaveUnavailable(m.rows)
+}
+
 func (m Model) failuresOrDrift() bool {
 	if len(m.errs) > 0 {
 		return true
 	}
-	return m.driftAssessment == driftFailed || (m.driftAssessment == driftReady && !m.driftReport.InSync())
+	return m.driftAssessment == driftFailed || m.hasUnavailableRows() || (m.driftAssessment == driftReady && !m.driftReport.InSync())
 }
 
 // fitFooterGroups adapts a separator-joined footer segment (actions joined

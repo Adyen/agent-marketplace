@@ -10,8 +10,8 @@ import (
 )
 
 // A brownfield repository commits a Git lock written by the last pre-v4
-// release. Replacing the binary must keep that exact revision, and the lock
-// readable by teammates still on the old release, until an explicit update.
+// release. Replacing the binary must keep that exact revision while upgrading
+// the writable lock to v2 on reconciliation.
 func TestPreV4GitLockUpgrade(t *testing.T) {
 	if os.Getenv("AM_E2E_PRE_V4_BINARY") == "" {
 		t.Skip("historical executable is supplied by the dedicated upgrade gate")
@@ -57,16 +57,24 @@ func TestPreV4GitLockUpgrade(t *testing.T) {
 	must(historical, "sync")
 	assertInstalled("review", "Historical review")
 	committed := readLock()
+	must(historical, "sync", "--check")
 	registry.publish("review", "Upstream moved on")
 
+	must(candidate, "sync", "--locked")
+	assertInstalled("review", "Historical review")
+	if got := readLock(); !bytes.Equal(got, committed) {
+		t.Fatalf("locked sync rewrote the pre-v4 committed lock:\nbefore:\n%s\nafter:\n%s", committed, got)
+	}
+	must(candidate, "sync")
+	assertInstalled("review", "Historical review")
+	upgraded := expectV2GitLockUpgrade(t, committed, readLock())
 	for _, args := range [][]string{{"sync", "--locked"}, {"sync"}, {"sync", "--check"}} {
 		must(candidate, args...)
 		assertInstalled("review", "Historical review")
-		if got := readLock(); !bytes.Equal(got, committed) {
-			t.Fatalf("candidate %v rewrote the pre-v4 committed lock:\nbefore:\n%s\nafter:\n%s", args, committed, got)
+		if got := readLock(); !bytes.Equal(got, upgraded) {
+			t.Fatalf("candidate %v rewrote the upgraded lock:\nbefore:\n%s\nafter:\n%s", args, upgraded, got)
 		}
 	}
-	must(historical, "sync", "--check")
 
 	must(candidate, "update", "--scope", "repo")
 	assertInstalled("review", "Upstream moved on")
@@ -88,4 +96,17 @@ func TestPreV4GitLockUpgrade(t *testing.T) {
 	}
 	must(candidate, "sync", "--check")
 	assertInstalled("review", "Upstream moved on")
+}
+
+func expectV2GitLockUpgrade(t *testing.T, original, actual []byte) []byte {
+	t.Helper()
+	v1 := []byte("apiVersion: agent-marketplace-lock/v1\n")
+	if bytes.Count(original, v1) != 1 {
+		t.Fatalf("historical lock does not declare v1 exactly once:\n%s", original)
+	}
+	expected := bytes.Replace(original, v1, []byte("apiVersion: agent-marketplace-lock/v2\n"), 1)
+	if !bytes.Equal(actual, expected) {
+		t.Fatalf("lock upgrade changed more than the version:\nbefore:\n%s\nafter:\n%s", original, actual)
+	}
+	return expected
 }

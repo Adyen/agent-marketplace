@@ -97,9 +97,6 @@ func Normalize(input Document) (Document, error) {
 			return Document{}, coded(CodeUnsupportedVersion, "apiVersion %q cannot contain Marketplace records; use %q", doc.APIVersion, APIVersionV2)
 		}
 	case APIVersionV2:
-		if len(doc.Marketplaces) == 0 {
-			return Document{}, coded(CodeInvalidDocument, "apiVersion %q requires at least one Marketplace record", doc.APIVersion)
-		}
 	default:
 		return Document{}, coded(CodeUnsupportedVersion, "unsupported apiVersion %q", doc.APIVersion)
 	}
