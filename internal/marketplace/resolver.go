@@ -551,11 +551,10 @@ func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca h
 	}
 	declared := make(map[string]string, len(skill.SupportFiles))
 	for _, d := range skill.SupportFiles {
-		rel, err := normalizeMirrorSupportPath(d)
-		if err != nil {
+		if err := hccartifact.ValidateSupportPath(d); err != nil {
 			return "", fmt.Errorf("invalid declared support file %q: %w", d, err)
 		}
-		declared[rel] = d
+		declared[d] = d
 	}
 	for rel := range ca.Support {
 		if _, ok := declared[rel]; !ok {
@@ -605,14 +604,6 @@ func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca h
 		return "", err
 	}
 	return staged, nil
-}
-
-func normalizeMirrorSupportPath(p string) (string, error) {
-	p = strings.ReplaceAll(p, "\\", "/")
-	if err := hccartifact.ValidateSupportPath(p); err != nil {
-		return "", err
-	}
-	return p, nil
 }
 
 func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (artifact resolver.ResolvedArtifact, canonical hccartifact.CanonicalArtifact, retErr error) {

@@ -263,12 +263,9 @@ func (a CanonicalArtifact) buildEntries() ([]archiveEntry, error) {
 		entries = append(entries, archiveEntry{path: CanonicalSupportDir, dir: true})
 		keys := sortedKeys(a.Support)
 		for _, k := range keys {
-			if err := ValidateSupportPath(k); err != nil {
-				return nil, fmt.Errorf("invalid support path: %w", err)
-			}
 			member, err := supportMemberName(k)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("invalid support path: %w", err)
 			}
 			support := a.Support[k]
 			mode := int64(0o644)

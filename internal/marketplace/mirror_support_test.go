@@ -396,6 +396,44 @@ func TestMirrorSkillMissingSupportFailsClosed(t *testing.T) {
 	}
 }
 
+func TestMirrorSkillBackslashSupportPathRejected(t *testing.T) {
+	isolateHarnessState(t)
+	cache := NewCache(t.TempDir())
+
+	support := map[string]hccartifact.SupportFile{
+		"scripts/run.sh": {Data: []byte("#!/bin/sh\necho mirror-support\n"), Executable: true},
+	}
+	canonical := mirrorSkillCanonical(t, []string{`scripts\run.sh`})
+	server, contentDigest := serveCanonicalMirror(t, canonical, support)
+	_, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	cfg := mirrorConsumerConfig(server.URL, contentDigest)
+
+	r := &Resolver{Cache: cache}
+	resolved, errs := r.Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
+	if len(errs) == 0 {
+		t.Fatalf("expected resolution to reject backslash declared support path, got artifacts %#v", resolved)
+	}
+	found := false
+	for _, err := range errs {
+		if strings.Contains(err.Error(), `scripts\run.sh`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("resolution errors do not name the invalid declared support path: %v", errs)
+	}
+	marker := filepath.Join(filepath.Dir(cache.ArtifactPath(archiveDigest)), "verified.marker")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("verified marker written for rejected artifact: %v", err)
+	}
+	if _, err := os.Stat(cache.MirrorResourceDir(archiveDigest)); !os.IsNotExist(err) {
+		t.Fatalf("support staging directory written for rejected artifact: %v", err)
+	}
+}
+
 func TestMirrorSkillUndeclaredSupportFailsClosed(t *testing.T) {
 	isolateHarnessState(t)
 	cache := NewCache(t.TempDir())
