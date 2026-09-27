@@ -31,7 +31,7 @@ func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 // loadEffective also reports whether organization Marketplace state was acquired
 // or reused. Strict loads never consult the transient cache; cached loads never
 // contact the Marketplace.
-func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady, provisionalReady func(*config.Config)) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady func(*config.Config), provisionalReady func(*config.Config, *config.LocalConfig)) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
 	if mode != ConfigLoadOnline && mode != ConfigLoadStrict && mode != ConfigLoadCached {
 		return effectiveConfigError(config.EffectiveConfig{}, fmt.Errorf("invalid config load mode: %d", mode)), transientOrganizationMarketplaceLockUnused
 	}
@@ -92,7 +92,7 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 		if provisional.Merged != nil {
 			merged := provisionalMergedConfig(provisional.Merged, organization.MarketplaceSources())
 			if provisionalReady != nil {
-				provisionalReady(merged)
+				provisionalReady(merged, provisional.Local)
 			}
 			if browsingReady != nil {
 				browsingReady(browsingMergedConfig(ctx, merged))

@@ -149,7 +149,7 @@ func TestProvisionalConfigReadyPublishesPinsBeforeAcquisition(t *testing.T) {
 			Workspace:     workspace,
 			CatalogMode:   catalog.LoadModeInspect,
 			EffectiveOpts: missingEffectiveOpts(dir, orgPath),
-			ProvisionalConfigReady: func(merged *config.Config) {
+			ProvisionalConfigReady: func(merged *config.Config, _ *config.LocalConfig) {
 				provisionalSeen <- merged
 			},
 			BrowsingConfigReady: func(merged *config.Config) {

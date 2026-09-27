@@ -81,7 +81,7 @@ type ResolveOptions struct {
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
 	BrowsingConfigReady     func(*config.Config)
-	ProvisionalConfigReady  func(*config.Config)
+	ProvisionalConfigReady  func(*config.Config, *config.LocalConfig)
 	ConfigReady             func(*config.Config)
 }
 

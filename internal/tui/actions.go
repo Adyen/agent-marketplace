@@ -43,6 +43,7 @@ type snapshotLoadedMsg struct {
 	resolved             []resolver.ResolvedArtifact
 	mergedCfg            *config.Config
 	provisionalCfg       *config.Config
+	provisionalRows      []row
 	configuredRegistries []config.RegistryEntry
 	inventoryResult      *pipeline.ResolveResult
 	materializationModes config.MaterializationModes
@@ -305,8 +306,8 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			BrowsingConfigReady: func(merged *config.Config) {
 				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
 			},
-			ProvisionalConfigReady: func(merged *config.Config) {
-				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged})
+			ProvisionalConfigReady: func(merged *config.Config, local *config.LocalConfig) {
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged, provisionalRows: buildProvisionalRows(merged, local, provisionalLocalCatalogs(merged, ws.LocalConfigDir()))})
 			},
 			ConfigReady: func(merged *config.Config) {
 				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged, provisionalCfg: merged})
@@ -967,7 +968,47 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	return rows
 }
 
-func buildProvisionalRows(cfg *config.Config) []row {
+type provisionalLocalCatalog struct {
+	entry   config.RegistryEntry
+	entries []catalog.Entry
+}
+
+func provisionalLocalCatalogs(cfg *config.Config, repoRoot string) map[int]provisionalLocalCatalog {
+	if cfg == nil {
+		return nil
+	}
+	var indexes []int
+	localOnly := &config.Config{}
+	for i := range cfg.Registries {
+		if cfg.Registries[i].IsLocal() {
+			indexes = append(indexes, i)
+			localOnly.Registries = append(localOnly.Registries, cfg.Registries[i])
+		}
+	}
+	if len(indexes) == 0 {
+		return nil
+	}
+	result := catalog.LoadRegistries(localOnly, repoRoot, catalog.LoadModeCachedNoFetch, catalog.WithDiscoverFunc(discoverCatalog))
+	catalogs := make(map[int]provisionalLocalCatalog, len(indexes))
+	for pos, idx := range indexes {
+		entry := localOnly.Registries[pos]
+		catalogs[idx] = provisionalLocalCatalog{entry: entry, entries: result.Catalogs[entry.CatalogKey].Entries}
+	}
+	return catalogs
+}
+
+func provisionalLocallyExcluded(localCfg *config.LocalConfig, kind ir.ResourceKind, name string, entry config.RegistryEntry) bool {
+	if localCfg == nil || entry.Required || entry.Source.IsMachineScope() {
+		return false
+	}
+	selector := localCfg.SelectorForKind(kind)
+	if selector.ExcludeAll {
+		return true
+	}
+	return slices.Contains(selector.Exclude, strings.TrimSpace(name))
+}
+
+func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, locals map[int]provisionalLocalCatalog) []row {
 	if cfg == nil {
 		return nil
 	}
@@ -981,8 +1022,18 @@ func buildProvisionalRows(cfg *config.Config) []row {
 		rows = append(rows, r)
 	}
 	for i := range cfg.Registries {
-		entry := &cfg.Registries[i]
-		for _, selected := range resolver.ResourcesSelected(*entry, nil) {
+		entry := cfg.Registries[i]
+		var catalogEntries []catalog.Entry
+		if entry.IsLocal() {
+			if loaded, ok := locals[i]; ok {
+				entry = loaded.entry
+				catalogEntries = loaded.entries
+			}
+		}
+		for _, selected := range resolver.ResourcesSelected(entry, catalogEntries) {
+			if provisionalLocallyExcluded(localCfg, selected.Kind, selected.Name, entry) {
+				continue
+			}
 			add(selected.Kind.String()+"\x00"+selected.Name+"\x00"+entry.CatalogKey, row{
 				Artifact: resolver.ResolvedArtifact{
 					Entry:        catalog.Entry{Kind: selected.Kind, Name: selected.Name, SourceHarness: entry.SourceHarness},

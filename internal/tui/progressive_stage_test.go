@@ -469,36 +469,7 @@ func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 
 func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
-
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
-		case strings.HasPrefix(r.URL.Path, "/api/v1/"):
-			select {
-			case <-release:
-			case <-r.Context().Done():
-			}
-			http.NotFound(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(fixture.Close)
-
-	orgDir := t.TempDir()
-	orgPath := filepath.Join(orgDir, "config.yaml")
-	orgConfig := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  mp: {marketplace: " + fixture.URL + "}\nresources:\n  mp: {include: [tools/skill/remote]}\n"
-	if err := os.WriteFile(orgPath, []byte(orgConfig), 0o600); err != nil {
-		t.Fatalf("write organization config: %v", err)
-	}
-	config.SetTestOrganizationConfigPath(t, orgPath)
-	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) {
-		return config.LoadOrganizationConfig()
-	}))
+	unblock := blockedOrganizationMarketplace(t)
 
 	m := newTestModel()
 	m.rows = nil
@@ -510,21 +481,7 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stages := readSnapshotStages(ctx, repoRoot, homeDir, catalogLoadCached, generation)
-	t.Cleanup(func() {
-		unblock()
-		cancel()
-		done := make(chan struct{})
-		go func() {
-			for range stages {
-			}
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(15 * time.Second):
-			t.Error("stage producer did not finish after release and cancellation")
-		}
-	})
+	drainStagesAfterRelease(t, unblock, cancel, stages)
 
 	var first snapshotLoadedMsg
 	select {
@@ -567,6 +524,175 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	}
 	if strings.Contains(view, "[x] remote") || strings.Contains(view, "[x]  skill remote") {
 		t.Fatalf("pending row claims installed state:\n%s", view)
+	}
+}
+
+func writeProvisionalSkill(t *testing.T, root, name string) {
+	t.Helper()
+	dir := filepath.Join(root, "skills", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir skill %s: %v", name, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: "+name+"\ndescription: "+name+" workflow\n---\n# "+name+"\n"), 0o644); err != nil {
+		t.Fatalf("write skill %s: %v", name, err)
+	}
+}
+
+func blockedOrganizationMarketplace(t *testing.T) (unblock func()) {
+	t.Helper()
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock = func() { releaseOnce.Do(func() { close(release) }) }
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/"):
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fixture.Close)
+
+	orgDir := t.TempDir()
+	orgPath := filepath.Join(orgDir, "config.yaml")
+	orgConfig := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  mp: {marketplace: " + fixture.URL + "}\nresources:\n  mp: {include: [tools/skill/remote]}\n"
+	if err := os.WriteFile(orgPath, []byte(orgConfig), 0o600); err != nil {
+		t.Fatalf("write organization config: %v", err)
+	}
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) {
+		return config.LoadOrganizationConfig()
+	}))
+	return unblock
+}
+
+func drainStagesAfterRelease(t *testing.T, unblock func(), cancel context.CancelFunc, stages <-chan snapshotLoadedMsg) {
+	t.Helper()
+	t.Cleanup(func() {
+		unblock()
+		cancel()
+		done := make(chan struct{})
+		go func() {
+			for range stages {
+			}
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Error("stage producer did not finish after release and cancellation")
+		}
+	})
+}
+
+func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	regA := t.TempDir()
+	writeProvisionalSkill(t, regA, "alpha")
+	writeProvisionalSkill(t, regA, "beta")
+	regB := t.TempDir()
+	for _, name := range []string{"gamma", "delta", "sigma"} {
+		writeProvisionalSkill(t, regB, name)
+	}
+	if err := os.MkdirAll(filepath.Join(regB, "commands"), 0o755); err != nil {
+		t.Fatalf("mkdir commands: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(regB, "commands", "deploy.md"), []byte("---\nname: deploy\ndescription: Deploy workflow\n---\n# Deploy\n"), 0o644); err != nil {
+		t.Fatalf("write command: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
+		t.Fatalf("mkdir home agents: %v", err)
+	}
+	globalConfig := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  rega: {directory: " + regA + "}\nresources:\n  rega: {all: true}\n"
+	if err := os.WriteFile(filepath.Join(homeDir, ".agents", "config.yaml"), []byte(globalConfig), 0o644); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
+		t.Fatalf("mkdir repo agents: %v", err)
+	}
+	repoConfig := "apiVersion: agent-marketplace/v4\nsources:\n  regb: {directory: " + regB + "}\nresources:\n  regb: {all: true, exclude: [skill/delta]}\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
+		t.Fatalf("write repo config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("skills:\n  exclude:\n    - gamma\n"), 0o644); err != nil {
+		t.Fatalf("write local config: %v", err)
+	}
+	t.Cleanup(swapLoadGlobalConfig(func() (*config.Config, error) {
+		return config.LoadConfigFromPath(filepath.Join(homeDir, ".agents", "config.yaml"))
+	}))
+	t.Cleanup(swapLoadRepoConfig(func() (*config.Config, error) {
+		return config.LoadConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	}))
+	t.Cleanup(swapLoadLocalConfig(func() (*config.LocalConfig, error) {
+		return config.LoadLocalConfigFromPath(filepath.Join(repoRoot, ".agents", "config.local.yaml"))
+	}))
+	unblock := blockedOrganizationMarketplace(t)
+
+	m := newTestModel()
+	m.rows = nil
+	m.authoritativeRows = nil
+	m.flatItems = nil
+	m.loading = true
+	m.width, m.height = 120, 40
+	generation := m.beginRequest(requestSnapshot)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stages := readSnapshotStages(ctx, repoRoot, homeDir, catalogLoadCached, generation)
+	drainStagesAfterRelease(t, unblock, cancel, stages)
+
+	var first snapshotLoadedMsg
+	select {
+	case first = <-stages:
+	case <-time.After(30 * time.Second):
+		t.Fatal("no provisional config stage published while organization acquisition was blocked")
+	}
+	if first.stage != snapshotStageConfig || first.provisionalCfg == nil {
+		t.Fatalf("first stage = %+v, want provisional configured selections", first)
+	}
+	if first.mergedCfg != nil {
+		t.Fatal("provisional stage claimed a verified merged config before acquisition")
+	}
+
+	updated, _ := m.Update(first)
+	m = updated.(Model)
+	want := map[string]ir.ResourceKind{
+		"alpha":  ir.KindSkill,
+		"beta":   ir.KindSkill,
+		"sigma":  ir.KindSkill,
+		"deploy": ir.KindCommand,
+		"remote": ir.KindSkill,
+	}
+	got := make(map[string]ir.ResourceKind)
+	for _, r := range m.rows {
+		if !r.PendingVerification {
+			t.Fatalf("pre-verification row %#v is not marked pending", r.Artifact)
+		}
+		got[r.Artifact.Name] = r.Artifact.Kind
+	}
+	for name, kind := range want {
+		if got[name] != kind {
+			t.Fatalf("configured %s %q missing from provisional rows while acquisition blocked: %#v", kind, name, m.rows)
+		}
+	}
+	for _, excluded := range []string{"gamma", "delta"} {
+		if _, present := got[excluded]; present {
+			t.Fatalf("excluded resource %q rendered a provisional row", excluded)
+		}
+	}
+	select {
+	case extra, ok := <-stages:
+		t.Fatalf("resolve advanced past acquisition while blocked: %+v closed=%t", extra, !ok)
+	default:
 	}
 }
 

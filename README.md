@@ -148,11 +148,13 @@ editor, `e` shows errors and warnings, `?` lists every binding, and `q` quits.
 The [TUI reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/tui.md)
 has the full list.
 
-Once the configuration validates, explicit configured selections appear marked
-verification-pending. They carry no installed or enabled claim until exact-lock
-and catalog verification replaces them with verified rows. Cached Marketplace
-results, up to the first 50 from each configured Marketplace, may also appear
-while verification runs. Drift status is assessed afterward.
+Once the configuration validates, the locally configured selection set appears
+marked verification-pending, including local-directory `all:true` selections
+with configured excludes applied. They carry no installed or enabled claim
+until exact-lock and catalog verification replaces them with verified rows.
+Cached Marketplace results, up to the first 50 from each configured
+Marketplace, may also appear while verification runs. Drift status is assessed
+afterward.
 `/` filters loaded rows as you type. After 250 ms without input, it also searches
 the configured Marketplaces. This does not change the command-line `search`
 interface. Discovery has no pagination, so use search to narrow large result
