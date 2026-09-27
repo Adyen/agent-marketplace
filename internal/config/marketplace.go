@@ -204,7 +204,7 @@ func ValidateMarketplaceEntries(entries []MarketplaceEntry) []error {
 		normalizedURL, normalizeErr := urlutil.NormalizeEndpointURL(e.URL)
 		current := aliasUse{index: i, url: normalizedURL, instanceID: e.InstanceID, source: e.Source, valid: normalizeErr == nil}
 		if previous, ok := aliases[e.Alias]; ok {
-			if previous.valid && current.valid && previous.source != SourceUnset && current.source != SourceUnset && previous.source != current.source && previous.url == current.url && previous.instanceID == current.instanceID {
+			if previous.valid && current.valid && previous.source != SourceUnset && current.source != SourceUnset && previous.url == current.url && previous.instanceID == current.instanceID {
 				continue
 			}
 			errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q duplicates marketplaces[%d].alias", i, e.Alias, previous.index))

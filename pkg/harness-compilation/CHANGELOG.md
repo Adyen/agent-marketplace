@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### The Claude plugin form no longer drops a root-level SKILL.md
+
+`LoadBundleWithOptions` selects the plugin form for both `.claude-plugin/plugin.json` manifests and bare plugin layouts, and that form only scanned `skills/` subdirectories. A repository that IS a single skill (root `SKILL.md`, no `skills/` tree) therefore ingested zero resources with no diagnostic — the layout Claude Code documents for manifest `"skills": ["./"]` and that `github.com/blader/humanizer` ships. The plugin form now loads a root `SKILL.md` through `bundle.LoadRootSkill` when one exists. A root skill whose frontmatter name duplicates a `skills/` entry is dropped with the new warning `ingest.claude.duplicate-root-skill`; the `skills/` entry wins deterministically because it loads first in sorted order. Skill support files no longer include `.git` directories at any depth: a root skill's directory is the whole checkout, a marketplace clone keeps `.git` on disk, and VCS internals were being published into installable archives and fed to bounded support reads.
+
+The consumer-side materializer walkers (`copySupportFilesExcluding` and the `--check` virtual digest in `internal/materialize`) now skip `.git` directories the same way. Previously a root skill's compiled cache copy contained the registry's entire `.git` object database, exposed to every workspace through the harness symlink and copied again by file-mode materialization; stale copies are pruned on the next sync's existing reconcile pass.
+
 ### Validated native-layout descriptors now cover Codex, Devin, and Claude
 
 `target/native_layout.go` now carries a complete `NativeLayout` descriptor for
