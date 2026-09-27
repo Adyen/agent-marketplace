@@ -43,7 +43,7 @@ func UpdateRegistryRefInConfig(configPath, url, oldRef, newRef string) (int, err
 
 	updated := 0
 	bump := func(urlNode, refNode *yaml.Node) {
-		if urlNode == nil || refNode == nil || refNode.Kind != yaml.ScalarNode {
+		if urlNode == nil || urlNode.Kind != yaml.ScalarNode || refNode == nil || refNode.Kind != yaml.ScalarNode {
 			return
 		}
 		if NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(url) || strings.TrimSpace(refNode.Value) != oldRef {

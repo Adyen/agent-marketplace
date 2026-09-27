@@ -83,6 +83,43 @@ func TestTargetedUpdateBumpMovesOnlyTheNamedSource(t *testing.T) {
 	}
 }
 
+// Config edits never rewrite included fragments, so update --bump leaves a
+// ref declared in one untouched, says so, and still succeeds.
+func TestUpdateBumpReportsRefsDeclaredInIncludedFiles(t *testing.T) {
+	for _, schema := range []string{"v2", "v4"} {
+		t.Run(schema, func(t *testing.T) {
+			env := newEnv(t)
+			env.InitGitRepo()
+			included := cloneRegistry(t, env, "bump-included")
+			included.publishSkill("target", "target v1.0", "v1.0")
+			included.publishSkill("target", "target v1.1", "v1.1")
+			env.WriteGlobalConfig("apiVersion: agent-marketplace/" + schema + "\nharnesses: [factory]\n")
+			fragment := fmt.Sprintf("sources:\n  target: {git: '%s', ref: v1.0}\nresources:\n  target: {include: [skill/target]}\n", included.url)
+			root := "apiVersion: agent-marketplace/v4\ninclude: shared.yaml\n"
+			if schema == "v2" {
+				fragment = fmt.Sprintf("registries:\n  - url: %s\n    ref: v1.0\n    skills: [target]\n", included.url)
+				root = "apiVersion: agent-marketplace/v2\ninclude: shared.yaml\nregistries: []\n"
+			}
+			env.WriteFile("/workspace/.agents/shared.yaml", fragment)
+			env.WriteFile("/workspace/.agents/config.yaml", root)
+			env.AssertExitCode(env.RunAM("sync"), 0)
+
+			bump := env.RunAM("update", "--bump")
+			if bump.ExitCode != 0 || !strings.Contains(bump.Combined, "declared in an included config file") {
+				t.Fatalf("update --bump did not report the included ref (exit %d):\n%s", bump.ExitCode, bump.Combined)
+			}
+			if got := env.ReadFile("/workspace/.agents/shared.yaml"); got != fragment {
+				t.Fatalf("update --bump rewrote the included fragment:\n%s", got)
+			}
+			if got := env.ReadFile("/workspace/.agents/config.yaml"); got != root {
+				t.Fatalf("update --bump changed the root config:\n%s", got)
+			}
+			env.AssertFileContains("/workspace/.factory/skills/target/SKILL.md", "target v1.0")
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+		})
+	}
+}
+
 // lock --upgrade advances only the source a --registry/--ref/--path or a
 // --kind/name target selects, and never rewrites the authored config.
 func TestTargetedLockUpgradeAdvancesOnlyTheSelectedSource(t *testing.T) {
@@ -144,7 +181,11 @@ func lockedCommitFor(t *testing.T, lock, url string) string {
 		t.Fatalf("lock does not record %s:\n%s", url, lock)
 	}
 	for _, line := range strings.Split(after, "\n") {
-		if key, value, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && key == "commit" {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- url:") {
+			break
+		}
+		if key, value, ok := strings.Cut(trimmed, ":"); ok && key == "commit" {
 			return strings.TrimSpace(value)
 		}
 	}
