@@ -209,8 +209,8 @@ func TestE2EOrganizationMarketplaceAcquisitionFailure(t *testing.T) {
 				t.Fatalf("doctor --repair acted without the organization's selection (exit %d):\n%s", repair.ExitCode, repair.Combined)
 			}
 			gc := env.RunAM("gc")
-			if gc.ExitCode == 0 {
-				t.Fatalf("gc ran without verified organization evidence:\n%s", gc.Combined)
+			if gc.ExitCode == 0 || !strings.Contains(gc.Combined, "acquire transient organization Marketplace lock") {
+				t.Fatalf("gc did not refuse for the failed organization acquisition (exit %d):\n%s", gc.ExitCode, gc.Combined)
 			}
 			env.AssertFileAbsent("/etc/agent-marketplace/lock.yaml")
 
