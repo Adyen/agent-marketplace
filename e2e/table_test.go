@@ -4819,7 +4819,7 @@ harnesses:
 			{Args: []string{"list", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, OutContains: []string{"adhoc-skill"}},
 			{Args: []string{"install", "adhoc-skill", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/adhoc-skill/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "path: skills"}},
 			{Args: []string{"remove", "adhoc-skill", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}},
-			{Args: []string{"sync", "--verbose"}, MustPass: true},
+			{Args: []string{"sync", "--verbose"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}},
 		},
 	},
@@ -4830,7 +4830,7 @@ harnesses:
 		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n",
 		RepoCfg:    "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:v2-prune}}\n    ref: main\n    skills: [review, deleted-skill]\n",
 		Steps: []Step{
-			{Args: []string{"sync", "--prune-stale", "--strict", "--verbose"}, MustPass: true, OutContains: []string{`pruned stale skill "deleted-skill"`}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "deleted-skill"}},
+			{Args: []string{"sync", "--prune-stale", "--strict", "--verbose"}, MustPass: true, OutContains: []string{`pruned stale skill "deleted-skill"`}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "review"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "deleted-skill"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
@@ -4841,7 +4841,7 @@ harnesses:
 		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
 		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:v4-prune}}', ref: main}\nresources:\n  tools: {include: [skill/review, skill/deleted-skill]}\n",
 		Steps: []Step{
-			{Args: []string{"sync", "--prune-stale", "--strict", "--verbose"}, MustPass: true, OutContains: []string{`pruned stale skill "deleted-skill"`}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "deleted-skill"}},
+			{Args: []string{"sync", "--prune-stale", "--strict", "--verbose"}, MustPass: true, OutContains: []string{`pruned stale skill "deleted-skill"`}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "skill/review"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "deleted-skill"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
