@@ -116,6 +116,11 @@ func writeUpdateOutput(out io.Writer, result *pipeline.UpdateResult, bump bool) 
 	} else if _, err := fmt.Fprintf(out, "Updated %d registries\n", result.UpdatedRegistries); err != nil {
 		return err
 	}
+	for _, skipped := range result.SkippedBumps {
+		if _, err := fmt.Fprintf(out, "Ref bump skipped for %s: %s -> %s is declared in an included config file; update it there\n", marketplace.QuoteTerminal(skipped.URL), marketplace.QuoteTerminal(skipped.OldRef), marketplace.QuoteTerminal(skipped.NewRef)); err != nil {
+			return err
+		}
+	}
 	if _, err := fmt.Fprintf(out, "Marketplace pins: updated %d, skipped %d\n", result.UpdatedMarketplacePins, result.SkippedMarketplacePins); err != nil {
 		return err
 	}

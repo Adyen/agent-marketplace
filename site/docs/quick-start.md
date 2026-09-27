@@ -28,7 +28,7 @@ Press `q` to leave the UI for a moment.
 
 ## Point the project at a registry
 
-A registry is a Git repository that holds skills, commands, subagents, hooks, or MCP servers. Declare it as a named v4 `git` source and select resources through the matching resource group:
+A registry is a Git repository that holds skills, commands, subagents, hooks, or MCP servers. Declare it as a named v4 `git` source and select resources through the matching resource group ([sources and resources](./explanation/sources-and-resources.md) explains how the two fit together):
 
 ```bash
 mkdir -p .agents
@@ -135,4 +135,5 @@ On a fresh CI runner, run `agent-marketplace sync --locked` to download the exac
 - [User journeys](./explanation/user-journeys.md): share your setup with a team, keep it updated, or remove resources and recover from errors.
 - [TUI reference](./reference/tui.md): every key binding and modal action.
 - [Command-line reference](./reference/cli.md): `list`, `install`, `remove`, `sync`, `update`, `status`, and every flag.
+- [Sources and resources](./explanation/sources-and-resources.md): what the `sources` and `resources` maps each do.
 - [Repository configuration reference](./reference/configuration.md): every v4 source, resource-group, harness, and materialization field.

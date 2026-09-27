@@ -80,6 +80,7 @@ type UpdateDependencyReconciler func(context.Context, string, string, []RefBump,
 type UpdateResult struct {
 	UpdatedRegistries      int
 	Bumps                  []RefBump
+	SkippedBumps           []RefBump
 	MarketplacePins        []MarketplacePinUpdate
 	UpdatedMarketplacePins int
 	SkippedMarketplacePins int
@@ -176,7 +177,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 		plan.Updated = true
 	}
-	var bumps []RefBump
+	var bumps, skippedBumps []RefBump
 	if opts.Bump {
 		for _, layer := range ec.PresentLayers() {
 			if !layer.Source.IsWritable() {
@@ -197,11 +198,12 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 			if err != nil {
 				return nil, err
 			}
-			layerBumps, err := bumpRepoRegistryRefs(ctx, configPath, &config.Config{Registries: registries}, opts.BumpTarget)
+			layerBumps, layerSkipped, err := bumpRepoRegistryRefs(ctx, configPath, &config.Config{Registries: registries}, opts.BumpTarget)
 			if err != nil {
 				return nil, err
 			}
 			bumps = append(bumps, layerBumps...)
+			skippedBumps = append(skippedBumps, layerSkipped...)
 		}
 	}
 
@@ -220,6 +222,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		return nil, err
 	}
 	result = updateResult(updatedRegistries, bumps, plans)
+	result.SkippedBumps = skippedBumps
 	slog.Info("update end", "updated_registries", updatedRegistries, "bumps", len(bumps), "marketplace_updated", result.UpdatedMarketplacePins, "marketplace_skipped", result.SkippedMarketplacePins)
 	return result, nil
 }
@@ -554,16 +557,16 @@ func bumpScopeSelected(scopes map[lockfile.Scope]bool, scope lockfile.Scope) boo
 	return scopes[scope]
 }
 
-func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *config.Config, target *UpdateTarget) (bumps []RefBump, retErr error) {
+func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *config.Config, target *UpdateTarget) (bumps, skipped []RefBump, retErr error) {
 	if repoCfg == nil || len(repoCfg.Registries) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	wantedURL := ""
 	if target != nil && strings.TrimSpace(target.Registry) != "" {
 		var err error
 		wantedURL, err = canonicalUpdateRegistryURL(target.Registry)
 		if err != nil {
-			return nil, fmt.Errorf("canonicalize update registry target: %w", err)
+			return nil, nil, fmt.Errorf("canonicalize update registry target: %w", err)
 		}
 	}
 
@@ -589,12 +592,12 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 
 		cachePath, err := cache.CloneOrPull(entry.URL, entry.Ref)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		newRef, ok, err := discoverTagBump(cachePath, entry.Ref)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !ok {
 			continue
@@ -603,7 +606,7 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 		key := entry.URL + "\x00" + entry.Ref
 		if existing, exists := planned[key]; exists {
 			if existing != newRef {
-				return nil, fmt.Errorf("conflicting bump targets for %s@%s: %s vs %s", entry.URL, entry.Ref, existing, newRef)
+				return nil, nil, fmt.Errorf("conflicting bump targets for %s@%s: %s vs %s", entry.URL, entry.Ref, existing, newRef)
 			}
 			continue
 		}
@@ -616,13 +619,21 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 		})
 	}
 
+	applied := bumps[:0]
 	for _, bump := range bumps {
-		if _, err := config.UpdateRegistryRefInConfig(configPath, bump.URL, bump.OldRef, bump.NewRef); err != nil {
-			return nil, err
+		updated, err := config.UpdateRegistryRefInConfig(configPath, bump.URL, bump.OldRef, bump.NewRef)
+		if err != nil {
+			return nil, nil, err
 		}
+		if updated == 0 {
+			slog.Warn("update bump skipped: ref is declared outside the root config file", "url", bump.URL, "old_ref", bump.OldRef, "new_ref", bump.NewRef)
+			skipped = append(skipped, bump)
+			continue
+		}
+		applied = append(applied, bump)
 	}
 
-	return bumps, nil
+	return applied, skipped, nil
 }
 
 func canonicalUpdateRegistryURL(raw string) (string, error) {

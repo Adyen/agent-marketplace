@@ -75,6 +75,7 @@ Exact descriptions of commands, files, and fields.
 Why it is designed this way.
 
 - [How agent-marketplace works](./explanation/how-agent-marketplace-works.md)
+- [Sources and resources](./explanation/sources-and-resources.md)
 - [Scopes, selection, and precedence](./explanation/scopes-selection-and-precedence.md)
 - [Native harness materialization](./explanation/native-harness-materialization.md)
 - [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md)
