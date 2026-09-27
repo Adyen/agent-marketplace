@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -10,10 +11,16 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/devincli"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // This file is the command-level half of bead agent-marketplace-npwr (B4): the
@@ -274,5 +281,67 @@ func TestDoctorRepairIsRefusedWhileAnotherProcessHoldsTheLock(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatalf("a refused repair changed the user's aggregate:\n--- want ---\n%s\n--- got ---\n%s", before, after)
+	}
+}
+
+func TestDoctorRepairStopsAtFirstPolicyChangeAcrossTargets(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, _ := devinDoctorEnv(t)
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin, codex]\nregistries: []\n")
+	devinPath, selection := prepareTwoDevinConflicts(t, repoRoot)
+	codexPath := filepath.Join(repoRoot, ".codex", "config.toml")
+	writeFile(t, codexPath, "[mcp_servers.codex-conflict]\ncommand = 'handwritten'\n")
+	selection = append(selection, resolver.ResolvedArtifact{
+		Entry:     catalog.Entry{Name: "codex-conflict", Resource: ir.NewMcpServer("codex-conflict", "generated", nil, nil, nil, ir.SourceRef{})},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetCodex},
+	})
+	if _, err := materialize.Run(context.Background(), repoRoot, selection); err != nil {
+		t.Fatalf("seed sync: %v", err)
+	}
+	before := map[string][]byte{}
+	for _, path := range []string{devinPath, codexPath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = data
+	}
+	stdinReader, stdinWriter := io.Pipe()
+	watcher := newPromptWatcher()
+	done := make(chan error, 1)
+	go func() {
+		done <- runDoctor(doctorOptions{
+			out: watcher, in: stdinReader, isTTY: true, repair: true,
+			probe:   staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+			resolve: staticResolve(selection),
+		})
+	}()
+
+	select {
+	case <-watcher.promptCh:
+	case err := <-done:
+		t.Fatalf("doctor finished before confirmation: %v\n%s", err, watcher.String())
+	}
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin, codex, factory]\nregistries: []\n")
+	if _, err := stdinWriter.Write([]byte("y\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdinWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("doctor did not reject changed selection policy: %v\n%s", err, watcher.String())
+	}
+	if got := strings.Count(watcher.String(), "[y/N]"); got != 1 {
+		t.Fatalf("repair prompted %d times after the policy changed, want 1:\n%s", got, watcher.String())
+	}
+	for path, data := range before {
+		if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, data) {
+			t.Fatalf("doctor changed %s after the policy changed: %v\n%s", path, err, after)
+		}
 	}
 }
