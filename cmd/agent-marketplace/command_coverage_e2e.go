@@ -118,6 +118,11 @@ func recordE2EInvocation(root, cmd *cobra.Command, schemas map[string]string, er
 	if dir == "" || cmd == nil {
 		return
 	}
+	// Printing help does not exercise the command, so it cannot count as
+	// coverage.
+	if help := cmd.Flags().Lookup("help"); help != nil && help.Changed {
+		return
+	}
 	invocation := e2eInvocation{Command: e2eCommandPath(root, cmd), Flags: []string{}, OK: err == nil, Schemas: schemas}
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
 		owner := cmd

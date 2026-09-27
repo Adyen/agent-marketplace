@@ -279,3 +279,21 @@ func TestCommandCoverageGuardRejectsNewAndStaleGaps(t *testing.T) {
 		t.Fatalf("a gap for a command that no longer exists was not reported: %v", stale)
 	}
 }
+
+func TestCommandCoverageRecorderIgnoresHelpRequests(t *testing.T) {
+	env := newEnv(t)
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	dir := t.TempDir()
+	record := map[string]string{"AGENT_MARKETPLACE_E2E_INVOCATION_DIR": dir}
+	for _, args := range [][]string{{"sync", "--help"}, {"gc", "-h"}} {
+		env.AssertExitCode(env.RunAMWithEnv(record, args...), 0)
+	}
+	if invocations, err := readCommandInvocations(dir); err != nil || len(invocations) != 0 {
+		t.Fatalf("help requests were recorded as coverage: %v %+v", err, invocations)
+	}
+	env.AssertExitCode(env.RunAMWithEnv(record, "status"), 0)
+	invocations, err := readCommandInvocations(dir)
+	if err != nil || len(invocations) != 1 || invocations[0].Command != "status" || !invocations[0].OK || schemaClass(invocations[0].Schemas) != "v4" {
+		t.Fatalf("status was not recorded as one successful v4 invocation: %v %+v", err, invocations)
+	}
+}
