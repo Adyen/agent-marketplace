@@ -500,6 +500,7 @@ func (e *Env) subprocessEnv() []string {
 		// Devin CLI) cannot change assertion outcomes.
 		"PATH="+e.path,
 		"AGENT_MARKETPLACE_V3_ORG_CONFIG="+filepath.Join(e.etc, "config.yaml"),
+		"AGENT_MARKETPLACE_E2E_INVOCATION_DIR="+e2eInvocationDir,
 	)
 	return filtered
 }

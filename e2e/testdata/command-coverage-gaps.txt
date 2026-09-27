@@ -1,0 +1,8 @@
+# Public commands and flags that have no successful E2E invocation with the
+# named configuration schema: legacy (v2/v3 layers only), v4 (v4 layers only),
+# or any (the command never reads the layered client configuration).
+#
+# command_coverage_test.go fails when an uncovered requirement is missing from
+# this list, and when a listed entry is covered or no longer public. The list
+# is empty: every public command and flag has E2E coverage. Keep it that way;
+# a new command or flag needs E2E tests for both schemas, not an entry here.

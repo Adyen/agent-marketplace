@@ -86,6 +86,7 @@ func compatibilityEnv(e *Env) []string {
 		"SHELL=/bin/sh", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_TEMPLATE_DIR=" + filepath.Join(e.home, ".git-template"),
 		"AGENT_MARKETPLACE_V3_ORG_CONFIG=" + filepath.Join(e.etc, "config.yaml"),
+		"AGENT_MARKETPLACE_E2E_INVOCATION_DIR=" + e2eInvocationDir,
 	}
 }
 

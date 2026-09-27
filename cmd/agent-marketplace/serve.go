@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -42,7 +45,8 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 				return fmt.Errorf("load operator config: %w", err)
 			}
 
-			ctx := cmd.Context()
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
 			meta, blobs, err := mpconfig.OpenStores(ctx, cfg)
 			if err != nil {
 				slog.Error("serve failed", "reason", "open stores", "error", err)
@@ -151,7 +155,8 @@ registry is provided, all configured registries are reindexed.`,
 				return err
 			}
 
-			ctx := cmd.Context()
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
 			meta, blobs, err := mpconfig.OpenStores(ctx, cfg)
 			if err != nil {
 				slog.Error("reindex failed", "reason", "open stores", "error", err)

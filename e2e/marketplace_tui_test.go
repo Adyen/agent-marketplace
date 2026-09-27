@@ -151,7 +151,8 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForMarketplaceTUI(t, &output, func(string) bool {
-		return consumer.CheckFileContains("/workspace/.agents/config.local.yaml", "behavior-source/skill/skill-one")
+		return consumer.CheckFileContains("/workspace/.agents/config.local.yaml", "behavior-source/skill/skill-one") &&
+			consumer.CheckFileContains("/workspace/.agents/lock.local.yaml", digest)
 	})
 	config := consumer.ReadFile("/workspace/.agents/config.local.yaml")
 	for _, value := range []string{"apiVersion: agent-marketplace/v4", "marketplace:", fixture.server.URL, "behavior-source/skill/skill-one"} {
