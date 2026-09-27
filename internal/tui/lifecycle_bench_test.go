@@ -169,7 +169,7 @@ func BenchmarkTUIStartupStages(b *testing.B) {
 				stages := readSnapshotStages(context.Background(), repo, home, catalogLoadCached, 1)
 				var cfgMsg snapshotLoadedMsg
 				for candidate := range stages {
-					if candidate.stage == snapshotStageConfig {
+					if candidate.stage == snapshotStageConfig && candidate.mergedCfg != nil {
 						cfgMsg = candidate
 						break
 					}
@@ -282,7 +282,7 @@ func BenchmarkTUIStartupStages(b *testing.B) {
 			stages := readSnapshotStages(context.Background(), repo, home, catalogLoadCached, 1)
 			var cfgMsg snapshotLoadedMsg
 			for candidate := range stages {
-				if candidate.stage == snapshotStageConfig {
+				if candidate.stage == snapshotStageConfig && candidate.mergedCfg != nil {
 					cfgMsg = candidate
 					break
 				}
