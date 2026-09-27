@@ -156,6 +156,7 @@ export default defineConfig({
           text: 'Explanation',
           items: [
             { text: 'How agent-marketplace works', link: `${DOCS_PATH}explanation/how-agent-marketplace-works` },
+            { text: 'Sources and resources', link: `${DOCS_PATH}explanation/sources-and-resources` },
             { text: 'Scopes, selection, and precedence', link: `${DOCS_PATH}explanation/scopes-selection-and-precedence` },
             { text: 'Native harness materialization', link: `${DOCS_PATH}explanation/native-harness-materialization` },
             { text: 'Reproducibility and lockfiles', link: `${DOCS_PATH}explanation/reproducibility-and-lockfiles` },
