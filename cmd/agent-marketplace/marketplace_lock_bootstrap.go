@@ -47,7 +47,7 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		}
 		desired = append(desired, dependencytxn.DesiredFile{Path: layer.LockPath, Expected: layer.expected, ExpectedMode: layer.expectedMode, Bytes: data, Mode: mode})
 	}
-	reads, err := effectiveReadAssertions(ec, nil)
+	reads, err := effectiveReadAssertions(ec, nil, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -62,8 +62,8 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	return len(desired), nil
 }
 
-// marketplaceLockBootstrap is a writable layer whose lock is absent or still a
-// Git-only v1 document. An existing v1 lock keeps its Git registries and is
+// marketplaceLockBootstrap is a writable layer whose lock is absent or has no
+// Marketplace records. An existing lock keeps its Git registries and is
 // replaced only if its generation is unchanged at commit.
 type marketplaceLockBootstrap struct {
 	marketplacelock.Layer
@@ -123,7 +123,7 @@ func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfi
 		if err != nil {
 			return nil, nil, err
 		}
-		if exists && current.APIVersion != lockfile.APIVersionV1 {
+		if exists && len(current.Marketplaces) > 0 {
 			continue
 		}
 		var registries []lockfile.GitRegistry

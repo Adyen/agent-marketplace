@@ -180,27 +180,41 @@ How it works from a user's point of view:
   gitignored. Persistent transaction coordination handles live under the XDG
   state directory (`$XDG_STATE_HOME`, default `~/.local/state`), outside repositories.
 
-A minimal committed repo config looks like this — note that the resource
-selection lives **inside** the registry entry, namespaced by `url` + `ref`
-(+ optional `path`). A project may also declare a top-level `harnesses:` list;
-when omitted, the target set falls back to `~/.agents/config.yaml` or
-`/etc/agent-marketplace/config.yaml`:
+A minimal committed repo config looks like this — each `sources:` entry names a
+Git or directory origin, and the matching `resources:` group selects from it.
+Resource locators are `kind/name`. A project may also declare a top-level
+`harnesses:` list; when omitted, the target set falls back to
+`~/.agents/config.yaml` or `/etc/agent-marketplace/config.yaml`:
 
 ```yaml
 # .agents/config.yaml  (committed)
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 
-registries:
-  - url: git@gitlab.example.com:example-org/infra-skills.git
+sources:
+  infra:
+    git: git@gitlab.example.com:example-org/infra-skills.git
     ref: main
     path: skills              # subdirectory inside the registry (optional)
     source_harness: claude    # layout of the registry content (optional; autodetected)
+resources:
+  infra:
+    include: [skill/vm-lifecycle, skill/k8s-basics, command/deploy-service, subagent/incident-responder]
+```
+
+Existing v2/v3 configs keep working: every v2/v3 layer still loads through the
+legacy reader, mutations warn once with `config.legacy-deprecated`, and
+`agent-marketplace migrate` converts them. A v2 file for contrast:
+
+```yaml
+# legacy v2 — migrate with `agent-marketplace migrate --scope repo`
+apiVersion: agent-marketplace/v2
+registries:
+  - url: git@gitlab.example.com:example-org/infra-skills.git
+    ref: main
+    path: skills
+    source_harness: claude
     skills:
       include: [vm-lifecycle, k8s-basics]
-    commands:
-      include: [deploy-service]
-    subagents:
-      include: [incident-responder]
 ```
 
 The full precedence and selection rules — including edge cases and error
@@ -242,55 +256,42 @@ which subtree you are in.)
 
 ## Selecting resources: opt-in and opt-out
 
-Every registry entry carries its own `include`/`exclude` selectors per resource
-kind. Because selection is attached to the registry, the resource is always
-fully qualified by its source (`url` + `ref` + `path`).
+Every `resources:` group carries `include`/`exclude` locators and `tags`.
+Because selection is attached to a named source, the resource is always fully
+qualified by its origin (`git`/`directory`/`marketplace` + `ref`/`path`).
 
 ```yaml
-registries:
-  - url: git@gitlab.example.com:example-org/infra-skills.git
-    ref: main
-    skills:
-      include: [vm-lifecycle, k8s-basics]   # opt IN to these specific skills
-      exclude: [legacy-vm-flow]             # opt OUT (e.g. pulled in by a tag)
-    tags:
-      - k8s                                 # opt in to everything tagged k8s
+resources:
+  infra:
+    include: [skill/vm-lifecycle, skill/k8s-basics]   # opt IN to these specific skills
+    exclude: [skill/legacy-vm-flow]                   # opt OUT (e.g. pulled in by a tag)
+    tags: [k8s]                                       # opt in to everything tagged k8s
 ```
 
-Each kind selector (always written inside a registry entry) accepts two
-equivalent forms:
+An exclusion suppresses a matching selection; a later include can re-enable the
+same resource. See [`docs/PRECEDENCE.md`](./docs/PRECEDENCE.md) for the full
+decision order.
 
-```yaml
-# Shorthand list form -> treated as "include"
-skills: [vm-lifecycle, k8s-basics]
-
-# Map form -> explicit include and exclude
-skills:
-  include: [vm-lifecycle, k8s-basics]
-  exclude: [legacy-vm-flow]
-```
-
-### Machine-wide opt-in with `required` and `default`
+### Machine-wide opt-in with `required` and `all`
 
 A registry entry in a machine-wide layer can mark its resources as automatically
 selected:
 
 ```yaml
 # ~/.agents/config.yaml  (or /etc/agent-marketplace/config.yaml for the organization layer)
-registries:
-  - url: git@gitlab.example.com:example-org/security-skills.git
-    ref: main
-    required: true     # always materialized; CANNOT be excluded at any layer
-
-  - url: git@gitlab.example.com:example-org/shared-skills.git
-    ref: main
-    default: true      # auto-selected, but a higher layer can opt out
+# `security` and `shared` are named git sources declared in the same file
+resources:
+  security:
+    all: true
+    required: true
+  shared:
+    all: true
 ```
 
 - **`required: true`** — mandatory; immune to every `exclude` at every layer.
   This is how org-wide security standards are enforced.
-- **`default: true`** — every resource is selected automatically. A higher-
-  precedence layer can exclude individual repo-scoped resources.
+- **`all: true`** — every resource the source offers is selected automatically.
+  A higher-precedence layer can exclude individual repo-scoped resources.
 - **Neither** — resources are only selected when explicitly listed in an
   `include` or matched by `tags`.
 
@@ -299,38 +300,37 @@ registries:
 The gitignored local file (`.agents/config.local.yaml`) is your per-repo
 personal layer. It supports **three** things:
 
-1. **Top-level excludes** — suppress a non-required, repo-scoped resource by
-   name, no matter which eligible registry provides it:
+1. **Per-source excludes** — suppress a non-required resource from a named
+   source in this checkout:
 
 ```yaml
 # .agents/config.local.yaml  (gitignored — personal)
-skills:
-  exclude: [deprecated-legacy-skill]   # by name, across all registries
-mcp:
-  exclude: [noisy-mcp-server]
+resources:
+  infra:
+    exclude: [skill/deprecated-legacy-skill, mcp/noisy-mcp-server]
 ```
 
-2. **Per-registry selectors** — scope an include or exclude to a specific
-   registry entry:
+2. **Per-source selectors** — scope an include or exclude to a specific source:
 
 ```yaml
 # .agents/config.local.yaml  (gitignored — personal)
-registries:
-  - url: git@gitlab.example.com:example-team/infra-skills.git
-    ref: main
-    skills:
-      exclude: [noisy-skill]  # only from this registry
+resources:
+  infra:
+    exclude: [skill/noisy-skill]  # only from this source
 ```
 
-3. **Adding a personal registry** — add a registry just for your checkout,
+3. **Adding a personal source** — add a source just for your checkout,
    without committing it for the whole team or adding it globally:
 
 ```yaml
 # .agents/config.local.yaml  (gitignored — personal)
-registries:
-  - url: git@gitlab.example.com:my/personal-skills.git
+sources:
+  personal:
+    git: git@gitlab.example.com:my/personal-skills.git
     ref: main
-    default: true
+resources:
+  personal:
+    all: true
 ```
 
 ```bash
@@ -338,12 +338,12 @@ agent-marketplace install --from git@gitlab.example.com:my/personal-skills.git -
 agent-marketplace sync   # re-materialize with your local registry included
 ```
 
-Or equivalently, write the `registries:` block by hand and then `sync`.
+Or equivalently, write the `sources:`/`resources:` block by hand and then `sync`.
 
-**Note:** Top-level selectors in local config are applied *globally* (across all
-eligible repo-scoped registries), unlike `registries:`-scoped selectors which
-only affect the entry they're on. Use `registries:`-scoped selectors when you
-want precise control; use top-level `exclude` as a broad repo-checkout veto.
+**Note:** V4 selectors are always scoped to a named source — there is no
+source-free selector. In a legacy v2/v3 local config, top-level `exclude`
+selectors still apply *globally* across eligible repo-scoped registries as a
+broad checkout veto; migrate to v4 to get per-source control.
 
 After editing any config layer by hand, run `agent-marketplace sync` to
 reconcile the generated files, or `agent-marketplace sync --check` to verify
@@ -394,7 +394,7 @@ add it to the effective target set:
 
 ```yaml
 # ~/.agents/config.yaml
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses: [factory, codex]
 ```
 
@@ -454,7 +454,7 @@ Devin CLI is a harness target. Select it the same way as any other target:
 
 ```yaml
 # ~/.agents/config.yaml
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses: [factory, devin]
 ```
 
@@ -641,27 +641,20 @@ a `ref`, and participates in lockfiles. A `ref` on an accepted local directory
 is ignored rather than making it remote:
 
 ```yaml
-registries:
-  - url: ./local-skills        # resolved relative to the repo root
+sources:
+  local:
+    directory: ./local-skills   # resolved relative to the declaring config file
     source_harness: claude
-    skills:
-      include: [my-custom-skill]
+resources:
+  local:
+    include: [skill/my-custom-skill]
 ```
 
-For a local-path registry, `path` may also be used as the registry location when
-`url` is omitted:
-
-```yaml
-registries:
-  - path: /tmp/local-skills    # `path` is the URL/location alias here
-    skills:
-      include: [my-custom-skill]
-```
-
-When `url` is present, `path` instead means a subdirectory within that registry.
 Local registries are read directly from disk (no clone or fetch), are excluded
 from `update` and Git lockfiles, and show `local` as their cache freshness in
-`status`.
+`status`. In legacy v2/v3 configs, `path` may also be used as the registry
+location when `url` is omitted, and when `url` is present `path` instead means
+a subdirectory within that registry.
 
 ---
 
@@ -693,9 +686,16 @@ through config-and-lock publication, so garbage collection cannot remove a new
 snapshot before its lock becomes reachable. Config edits made by install, remove,
 update, and the TUI publish config and lock state as one dependency transaction.
 
-Locking in this foundation applies only to Git registries. Plain filesystem
-registries stay live, and hosted Marketplace lock schema, acquisition adapters,
-and integration are not implemented.
+Lock v2 is the sole write format, including Git-only layers; a writable v1 lock
+upgrades on the next reconciliation, and a read-only organization v1 lock is
+accepted with a `lock.version-deprecated` warning. Lock v2 also carries the
+exact Marketplace endpoint/registry/resource/selection records used by v4
+layers. Plain filesystem registries stay live and unlocked.
+
+**Compatibility limit:** `agent-marketplace` v4.0.8 rejects Git-only v2 locks
+(without Marketplace records). Before committing a Git-only v2 lock, ensure
+all consuming clients, including CI, use a build containing PR #320. Add a
+numeric minimum client version here once that build is released.
 
 ---
 

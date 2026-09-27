@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -416,6 +417,29 @@ func TestMigrateConfigFilesToV4MarketplaceExistingLock(t *testing.T) {
 				}
 			},
 		},
+		"v2 git-only lock gains Marketplace records preserving git records": {
+			lockBytes: gitLock(lockfile.APIVersionV2),
+			assertLock: func(t *testing.T, data []byte) {
+				doc, err := lockfile.Decode(data)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if doc.APIVersion != lockfile.APIVersionV2 || doc.Scope != lockfile.ScopeRepo || len(doc.Registries) != 1 || len(doc.Marketplaces) != 1 {
+					t.Fatalf("merged lock = %#v", doc)
+				}
+				original, err := lockfile.Decode(gitLock(lockfile.APIVersionV2))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(doc.Registries, original.Registries) {
+					t.Fatalf("git records changed: got %#v, want %#v", doc.Registries, original.Registries)
+				}
+				mp := doc.Marketplaces[0]
+				if mp.URL != "https://market.example" || mp.InstanceID != "mp" || len(mp.Resources) != 1 || mp.Resources[0].Name != "review" {
+					t.Fatalf("Marketplace records = %#v", mp)
+				}
+			},
+		},
 		"identical v2 lock accepted": {
 			lockBytes: encodeLock(t, lockfile.Document{
 				APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
@@ -479,6 +503,10 @@ func TestMigrateConfigFilesToV4MarketplaceExistingLock(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("migration failed: %v", err)
+			}
+			parsed, err := LoadV4ConfigFromPath(path)
+			if err != nil || parsed.APIVersion != APIVersionV4 || len(parsed.Groups) != 1 {
+				t.Fatalf("migrated config = %#v, err = %v", parsed, err)
 			}
 			tc.assertLock(t, mustReadFile(t, lockPath))
 		})

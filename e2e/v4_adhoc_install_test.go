@@ -37,15 +37,6 @@ func TestV4UserConfigInstallsAndRemovesAdHocGitResource(t *testing.T) {
 	gitRun(t, working, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-m", "add daily-sync")
 	gitRun(t, working, "push", "origin", branch)
 
-	initialConfig := env.ReadFile("/root/.agents/config.yaml")
-	bundle := env.RunAM("install", "--from="+url, "--ref="+branch, "--scope=user")
-	if bundle.ExitCode == 0 || !strings.Contains(bundle.Combined, "/.agents/config.yaml") || strings.Contains(bundle.Combined, ".agent-marketplace-config-") {
-		t.Fatalf("unsupported v4 bundle install did not refuse against the real config path (exit %d):\n%s", bundle.ExitCode, bundle.Combined)
-	}
-	if got := env.ReadFile("/root/.agents/config.yaml"); got != initialConfig {
-		t.Fatalf("refused v4 bundle install changed user config:\n%s", got)
-	}
-
 	adHoc := []string{"--from=" + url, "--ref=" + branch, "--path=" + skillPath, "--scope=user"}
 	install := env.RunAM(append([]string{"install", "daily-sync"}, adHoc...)...)
 	if install.ExitCode != 0 {
@@ -130,4 +121,85 @@ func TestAdHocGitPathTrailingSlashIntoV4UserConfig(t *testing.T) {
 		t.Fatalf("remove with trailing-slash --path failed (exit %d):\n%s", remove.ExitCode, remove.Combined)
 	}
 	env.AssertFileAbsent("/root/.factory/skills/review")
+}
+
+// A user installs a skill from a feature branch into each scope. When the
+// branch advances, plain sync keeps the locked commit, update moves to the new
+// commit, and removal by name alone clears it.
+func TestV4AdHocBranchSourceKeepsPinUntilUpdate(t *testing.T) {
+	configs := map[string]string{
+		"user":  "/root/.agents/config.yaml",
+		"repo":  "/workspace/.agents/config.yaml",
+		"local": "/workspace/.agents/config.local.yaml",
+	}
+	for _, tc := range []struct{ scope, skill, lock string }{
+		{scope: "user", skill: "/root/.factory/skills/daily-sync/SKILL.md", lock: "/root/.agents/lock.yaml"},
+		{scope: "repo", skill: "/workspace/.factory/skills/daily-sync/SKILL.md", lock: "/workspace/.agents/lock.yaml"},
+		{scope: "local", skill: "/workspace/.factory/skills/daily-sync/SKILL.md", lock: "/workspace/.agents/lock.local.yaml"},
+	} {
+		t.Run(tc.scope, func(t *testing.T) {
+			env := newEnv(t)
+			env.InitGitRepo()
+			env.MustRunAM("init", "--harnesses", "factory")
+			url := env.CreateBareRepo("branch-source", map[string]string{"README.md": "registry"})
+			working := filepath.Join(t.TempDir(), "working")
+			gitRun(t, "", "clone", strings.TrimPrefix(url, "file://"), working)
+			gitRun(t, working, "checkout", "-b", "feature")
+			push := func(body string) {
+				t.Helper()
+				file := filepath.Join(working, "skills", "daily-sync", "SKILL.md")
+				if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, []byte("---\nname: daily-sync\ndescription: Daily sync\n---\n\n"+body+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				gitRun(t, working, "add", "-A")
+				gitRun(t, working, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-m", body)
+				gitRun(t, working, "push", "origin", "feature")
+			}
+			push("First revision")
+
+			install := env.RunAM("install", "daily-sync", "--from", url, "--ref", "feature", "--path", "skills/daily-sync", "--scope", tc.scope)
+			if install.ExitCode != 0 {
+				t.Fatalf("install from a feature branch into %s scope failed (exit %d):\n%s", tc.scope, install.ExitCode, install.Combined)
+			}
+			env.AssertFileContains(tc.skill, "First revision")
+			for scope, path := range configs {
+				data, err := os.ReadFile(env.mustResolvePath(path))
+				if err != nil && !os.IsNotExist(err) {
+					t.Fatalf("read %s config: %v", scope, err)
+				}
+				if recorded := strings.Contains(string(data), url) && strings.Contains(string(data), "feature"); recorded != (scope == tc.scope) {
+					t.Fatalf("%s config records the feature-branch source = %v after a %s-scope install:\n%s", scope, recorded, tc.scope, data)
+				}
+			}
+			pinned := env.ReadFile(tc.lock)
+
+			push("Second revision")
+			env.AssertExitCode(env.RunAM("sync"), 0)
+			env.AssertFileContains(tc.skill, "First revision")
+			if got := env.ReadFile(tc.lock); got != pinned {
+				t.Fatalf("plain sync moved the %s-scope lock:\nbefore:\n%s\nafter:\n%s", tc.scope, pinned, got)
+			}
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+
+			env.AssertExitCode(env.RunAM("update"), 0)
+			env.AssertFileContains(tc.skill, "Second revision")
+			if env.ReadFile(tc.lock) == pinned {
+				t.Fatalf("update left the %s-scope lock on the first revision:\n%s", tc.scope, pinned)
+			}
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+			if status := env.RunAM("status"); status.ExitCode != 0 || !strings.Contains(status.Combined, "daily-sync") {
+				t.Fatalf("status after update did not report daily-sync (exit %d):\n%s", status.ExitCode, status.Combined)
+			}
+
+			remove := env.RunAM("remove", "daily-sync")
+			if remove.ExitCode != 0 {
+				t.Fatalf("remove by name from %s scope failed (exit %d):\n%s", tc.scope, remove.ExitCode, remove.Combined)
+			}
+			env.AssertFileAbsent(tc.skill)
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+		})
+	}
 }

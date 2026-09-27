@@ -297,8 +297,13 @@ func RegistrySelectionKey(entry RegistryEntry, index int) string {
 // NormalizeGitURL normalizes a git remote URL for comparison.
 // Strips trailing ".git" suffix and trailing slashes so that equivalent URLs
 // (e.g. "git@host:repo" and "git@host:repo.git") are treated as the same.
+// Hostless file URLs ("file:///abs/path") compare equal to the absolute local
+// path they name; file URLs with a host keep their URL form.
 func NormalizeGitURL(url string) string {
 	u := strings.TrimRight(strings.TrimSpace(url), "/")
+	if strings.HasPrefix(strings.ToLower(u), "file:///") {
+		u = u[len("file://"):]
+	}
 	u = strings.TrimSuffix(u, ".git")
 	return u
 }

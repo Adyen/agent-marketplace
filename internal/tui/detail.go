@@ -310,6 +310,10 @@ func attachDetailSources(rows []row, byPath map[string]*detailSourceSnapshot) {
 // wrapped in a markdown code block before being rendered through glamour,
 // so it displays with syntax highlighting instead of a raw minified blob.
 func renderDetailFullContent(r row, width int) string {
+	if r.UnavailableReason != "" {
+		return "Resource unavailable: " + sanitizeTerminalData(r.UnavailableReason, terminalSingleLine) +
+			"\n\nNo verified content is available. Press space to change this selection."
+	}
 	if r.Artifact.IsMarketplace {
 		// Marketplace rows never read a registry-relative source path.
 		// Discovery-only rows render bounded index metadata; installed rows

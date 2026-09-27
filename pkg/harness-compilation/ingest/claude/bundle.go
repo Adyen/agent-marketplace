@@ -229,13 +229,37 @@ func loadPluginForm(src fs.FS, bareMCP bool) (*ingest.Bundle, error) {
 	if err != nil && !isNotExist(err) {
 		return nil, fmt.Errorf("ingest/claude: walk skills: %w", err)
 	}
+	skillNames := make(map[string]bool, len(skillDirs))
 	for _, dir := range skillDirs {
 		skill, err := bundle.LoadSkill(src, dir)
 		if err != nil {
 			diags = append(diags, ingest.LoadFailure(diag.CodeIngestClaudeLoadSkillFailed, "skill", dir, dir, err))
 			continue
 		}
+		skillNames[skill.Name()] = true
 		resources = append(resources, skill)
+	}
+
+	// 1b. Root skill: a SKILL.md at the bundle root. Claude Code plugin
+	// manifests declare this form with "skills": ["./"] and load it directly
+	// (a repository that IS one skill), so the plugin form must not
+	// silently drop it. A root duplicate of a skills/ entry is dropped
+	// rather than published twice: skills/ entries load first in sorted
+	// order, so the winner is deterministic.
+	root, err := bundle.LoadRootSkill(src)
+	if !isNotExist(err) {
+		if err != nil {
+			diags = append(diags, ingest.LoadFailure(diag.CodeIngestClaudeLoadSkillFailed, "root skill", ".", ".", err))
+		} else if skillNames[root.Name()] {
+			diags = append(diags, diag.Diagnostic{
+				Code:     diag.CodeIngestClaudeDuplicateRootSkill,
+				Severity: diag.SeverityWarning,
+				Message:  fmt.Sprintf("root SKILL.md declares name %q already loaded from skills/; the skills/ entry is kept", root.Name()),
+				Source:   diag.SourceRef{File: "SKILL.md", Line: 1},
+			})
+		} else {
+			resources = append(resources, root)
+		}
 	}
 
 	// 2. Commands
