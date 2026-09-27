@@ -4785,6 +4785,66 @@ harnesses:
 			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
+	{
+		Name:       "v4_repo/install_selectors_list_and_maintenance_flags",
+		Desc:       "Given a v4 user config and a v4 repository config that declares a Git source with nothing selected, When listing the registry ad hoc and installing by tag, by kind with --all and --registry, and by name with --kind and --verbose, Then every selection lands in the v4 repository config, and the sync, migrate, and deinit flags succeed against it",
+		Registries: []RegistryDef{{Name: "v4-selectors", Skills: []Skill{{Name: "review", Description: "Review changes", Tags: []string{"k8s"}}, {Name: "deploy", Description: "Deploy"}}, Commands: []Command{{Name: "cmd-one", Description: "Command one", Command: "echo one"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:v4-selectors}}', ref: main}\n",
+		Steps: []Step{
+			{Args: []string{"list", "--from", "{{REG:v4-selectors}}", "--ref", "main", "--path", "skills", "--kind", "skill"}, MustPass: true, OutContains: []string{"review", "deploy"}, OutNotContains: []string{"cmd-one"}},
+			{Args: []string{"install", "--tag", "k8s"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "k8s"}},
+			{Args: []string{"install", "--all", "--kind", "command", "--registry", "{{REG:v4-selectors}}"}, MustPass: true, FilesExist: []string{"/workspace/.factory/commands/cmd-one.md"}},
+			{Args: []string{"install", "deploy", "--kind", "skill", "--verbose"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/deploy/SKILL.md"}},
+			{Args: []string{"list", "--kind", "command"}, MustPass: true, OutContains: []string{"cmd-one"}, OutNotContains: []string{"deploy"}},
+			{Args: []string{"sync", "--verbose", "--no-backup"}, MustPass: true},
+			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "registries:"}},
+			{Args: []string{"migrate", "--dry-run", "--to", "v4", "--scope", "user"}, MustPass: true, PathsUnchanged: []string{"/root/.agents/config.yaml"}},
+			{Args: []string{"migrate", "--harnesses", "factory", "--scope", "user"}, MustPass: true, PathsUnchanged: []string{"/root/.agents/config.yaml"}},
+			{Args: []string{"deinit", "--scope", "repo", "--dry-run"}, MustPass: true, OutContains: []string{"Would remove"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"deinit", "--scope", "repo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/review"}, FilesExist: []string{"/workspace/.agents/config.yaml"}},
+		},
+	},
+	{
+		Name: "v2_repo/adhoc_path_and_registry_flags",
+		Desc: "Given a legacy v2 user and repository config, When installing everything from one configured registry and installing, listing, and removing a resource from an ad hoc registry path, Then each step succeeds and the repository config stays v2",
+		Registries: []RegistryDef{
+			{Name: "v2-flags", Skills: []Skill{{Name: "review", Description: "Review changes"}, {Name: "deploy", Description: "Deploy"}}},
+			{Name: "v2-adhoc", Skills: []Skill{{Name: "adhoc-skill", Description: "Ad hoc skill"}}},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:v2-flags}}\n    ref: main\n",
+		Steps: []Step{
+			{Args: []string{"install", "--all", "--registry", "{{REG:v2-flags}}"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md", "/workspace/.factory/skills/deploy/SKILL.md"}},
+			{Args: []string{"list", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, OutContains: []string{"adhoc-skill"}},
+			{Args: []string{"install", "adhoc-skill", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/adhoc-skill/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "path: skills"}},
+			{Args: []string{"remove", "adhoc-skill", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}},
+			{Args: []string{"sync", "--verbose"}, MustPass: true},
+			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}},
+		},
+	},
+	{
+		Name:       "v2_repo/prune_stale_strict",
+		Desc:       "Given a legacy v2 repository config that selects a skill the registry no longer has, When syncing with --prune-stale --strict --verbose, Then the stale selection is pruned from the config and the remaining skill materializes",
+		Registries: []RegistryDef{{Name: "v2-prune", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:v2-prune}}\n    ref: main\n    skills: [review, deleted-skill]\n",
+		Steps: []Step{
+			{Args: []string{"sync", "--prune-stale", "--strict", "--verbose"}, MustPass: true, OutContains: []string{`pruned stale skill "deleted-skill"`}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "deleted-skill"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	{
+		Name:       "v4_repo/prune_stale_strict",
+		Desc:       "Given a v4 repository config that selects a skill the registry no longer has, When syncing with --prune-stale --strict --verbose, Then the stale selection is pruned from the config and the remaining skill materializes",
+		Registries: []RegistryDef{{Name: "v4-prune", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:v4-prune}}', ref: main}\nresources:\n  tools: {include: [skill/review, skill/deleted-skill]}\n",
+		Steps: []Step{
+			{Args: []string{"sync", "--prune-stale", "--strict", "--verbose"}, MustPass: true, OutContains: []string{`pruned stale skill "deleted-skill"`}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "deleted-skill"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
 }
 
 // ---------- parallelism configuration ----------

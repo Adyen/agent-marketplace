@@ -192,3 +192,19 @@ func lockedCommitFor(t *testing.T, lock, url string) string {
 	t.Fatalf("lock records no commit after %s:\n%s", url, lock)
 	return ""
 }
+
+// The legacy structural remediation (migrate --to v2) takes its user
+// harnesses from --harnesses when no user config exists yet.
+func TestLegacyMigrateRemediationUsesExplicitHarnesses(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.WriteRepoConfig("apiVersion: agent-marketplace/v2\nregistries: []\n")
+	result := env.RunAM("migrate", "--to", "v2", "--harnesses", "factory,cursor")
+	if result.ExitCode != 0 {
+		t.Fatalf("migrate --to v2 --harnesses failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	user := env.ReadFile("/root/.agents/config.yaml")
+	if !strings.Contains(user, "factory") || !strings.Contains(user, "cursor") {
+		t.Fatalf("remediated user config does not use the explicit harnesses:\n%s", user)
+	}
+}
