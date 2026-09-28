@@ -133,7 +133,10 @@ func runMake(t *testing.T, env []string, args ...string) (string, error) {
 		cmd.Env = append(cmd.Env, e)
 	}
 	out, err := cmd.CombinedOutput()
-	data, _ := os.ReadFile(log)
+	data, readErr := os.ReadFile(log)
+	if readErr != nil && (args[0] != "-n" || !os.IsNotExist(readErr)) {
+		t.Fatal(readErr)
+	}
 	return string(data) + string(out), err
 }
 
