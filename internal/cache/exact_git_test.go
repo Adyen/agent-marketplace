@@ -450,20 +450,29 @@ func TestExactGitRejectsObjectFormatMismatch(t *testing.T) {
 	}
 }
 
-func TestExactGitRejectsEscapingSymlink(t *testing.T) {
+// Symlink safety is enforced per configured root by sourcerevision; an unsafe
+// link elsewhere in the repository must not make the whole snapshot unusable.
+func TestExactGitAcquiresSnapshotWithEscapingOrDanglingSymlink(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := newExactGitRepository(t, "sha1")
 	work := filepath.Join(filepath.Dir(repo), "work")
 	if err := os.Symlink("../outside", filepath.Join(work, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	gitTest(t, work, "add", "escape")
+	if err := os.Symlink("/nonexistent/.factory/settings.json", filepath.Join(work, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, work, "add", "escape", "dangling")
 	gitTest(t, work, "commit", "-m", "symlink")
 	gitTest(t, work, "push", "origin", "HEAD:main")
 
-	oid := resolveExactGitRefForTest(t, "https://example.invalid/symlink", repo, "main")
-	if _, err := AcquireExactGit("https://example.invalid/symlink", repo, oid); !errors.Is(err, ErrExactGitSnapshotUntrusted) {
-		t.Fatalf("AcquireExactGit(symlink) error = %v, want ErrExactGitSnapshotUntrusted", err)
+	canonical := "https://example.invalid/symlink"
+	oid := resolveExactGitRefForTest(t, canonical, repo, "main")
+	if _, err := AcquireExactGit(canonical, repo, oid); err != nil {
+		t.Fatalf("AcquireExactGit(unsafe symlink outside any root): %v", err)
+	}
+	if _, err := AcquireExactGit(canonical, repo, oid); err != nil {
+		t.Fatalf("AcquireExactGit(reuse snapshot): %v", err)
 	}
 }
 

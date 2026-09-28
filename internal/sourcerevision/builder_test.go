@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -154,6 +155,29 @@ func TestBuildRejectsTraversalAndSymlinkEscape(t *testing.T) {
 		_, err := Build(Input{SnapshotRoot: snapshot, RootPath: "safe", SourceHarness: "factory"})
 		if !errors.Is(err, ErrPathEscape) {
 			t.Fatalf("Build error = %v, want ErrPathEscape", err)
+		}
+	})
+
+	t.Run("unsafe symlink outside configured root is ignored", func(t *testing.T) {
+		root := filepath.Join(snapshot, "scoped")
+		writeFixture(t, filepath.Join(root, ".factory", "skills", "ok", "SKILL.md"), "---\nname: ok\n---\nbody\n")
+		if err := os.MkdirAll(filepath.Join(snapshot, ".factory"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("/nonexistent/settings.json", filepath.Join(snapshot, ".factory", "settings.json")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Build(Input{SnapshotRoot: snapshot, RootPath: "scoped", SourceHarness: "factory"}); err != nil {
+			t.Fatalf("Build(scoped root) error = %v", err)
+		}
+		_, err := Build(Input{SnapshotRoot: snapshot, SourceHarness: "factory"})
+		if !errors.Is(err, ErrPathEscape) {
+			t.Fatalf("Build(repository root) error = %v, want ErrPathEscape", err)
+		}
+		for _, want := range []string{`".factory/settings.json"`, `"/nonexistent/settings.json"`, "remove it from the registry"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("Build error %q does not mention %s", err, want)
+			}
 		}
 	})
 
