@@ -148,7 +148,10 @@ func (r row) canOverrideMarketplace() bool {
 
 func (r row) Glyph() string {
 	if r.PendingVerification {
-		return "[~]"
+		if r.IsAvailable {
+			return "[ ]"
+		}
+		return "[x]"
 	}
 	if r.IsMalformed {
 		return "[!]"
@@ -177,7 +180,13 @@ func (r row) Glyph() string {
 
 func (r row) StatusText() string {
 	if r.PendingVerification {
-		return "configured; verification pending"
+		switch {
+		case r.IsExcluded:
+			return "excluded; verification pending"
+		case r.IsAvailable:
+			return "available; verification pending"
+		}
+		return "enabled in config; verification pending"
 	}
 	if r.IsMalformed {
 		return "malformed: " + r.MalformedMsg

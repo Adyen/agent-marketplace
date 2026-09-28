@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -307,7 +308,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
 			},
 			ProvisionalConfigReady: func(merged *config.Config, local *config.LocalConfig) {
-				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged, provisionalRows: buildProvisionalRows(merged, local, provisionalLocalCatalogs(merged, ws.LocalConfigDir()))})
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged, provisionalRows: buildProvisionalRows(withCachedCollectionLeaves(merged, marketplace.DefaultCache()), local, provisionalLocalCatalogs(merged, ws.LocalConfigDir()), provisionalHarnessDefaults())})
 			},
 			ConfigReady: func(merged *config.Config) {
 				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
@@ -468,6 +469,15 @@ func configHarnesses(cfg *config.Config) []string {
 		return nil
 	}
 	return append([]string(nil), cfg.Harnesses...)
+}
+
+// provisionalHarnessDefaults reads the layer harness defaults verified
+// inventory uses, so pending rows render the same harness badges. A layer that
+// fails to load contributes nothing; verification reports the failure.
+func provisionalHarnessDefaults() map[config.Source][]string {
+	globalCfg, _ := loadGlobalConfig()
+	repoCfg, _ := loadRepoConfig()
+	return harnessDefaultsBySource(globalCfg, repoCfg)
 }
 
 func harnessDefaultsBySource(globalCfg, repoCfg *config.Config) map[config.Source][]string {
@@ -681,12 +691,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	harnessSourceBySeenKey := make(map[string]string, totalCatalogEntries)
 	harnessSourceByKeyURL := make(map[string]string, totalCatalogEntries)
 
-	layerHarnesses := layerHarnessDefaults(cfg)
-	for _, defaults := range harnessDefaults {
-		for source, harnesses := range defaults {
-			layerHarnesses[source] = append([]string(nil), harnesses...)
-		}
-	}
+	layerHarnesses := layerHarnessDefaults(cfg, harnessDefaults...)
 
 	if cfg != nil {
 		for i := range cfg.Registries {
@@ -868,44 +873,16 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		})
 	}
 
-	if cfg != nil && len(cfg.MarketplaceExclusions) > 0 {
-		for _, entry := range cfg.Marketplaces {
-			if entry.Source != config.Organization || entry.Required {
-				continue
-			}
-			for _, pin := range entry.Resources {
-				kind, ok := mpapi.ToIR(pin.Kind)
-				if !ok || kind == ir.KindCollection {
-					continue
-				}
-				name := marketplaceInstalledName(pin)
-				key := skill.ResourceKey(kind, name)
-				catalogKey := marketplaceCatalogKey(entry, pin)
-				seenKey := key + "\x01" + catalogKey
-				if !slices.ContainsFunc(cfg.MarketplaceExclusions, func(exclusion config.MarketplaceExclusion) bool {
-					return exclusion.Source == config.UserPersonal && exclusion.Matches(entry, pin)
-				}) {
-					continue
-				}
-				if _, exists := seen[seenKey]; exists {
-					continue
-				}
-				seen[seenKey] = struct{}{}
-				selections := marketplaceSelectionsByArtifact[marketplaceSelectionKey(catalogKey, pin.Kind, name)]
-				rows = append(rows, row{
-					Artifact: resolver.ResolvedArtifact{
-						Entry: catalog.Entry{Kind: kind, Name: name}, RegistryURL: entry.URL,
-						RegistryPath: pin.RegistryID, Ref: pin.Revision, Source: entry.Source,
-						CatalogKey: catalogKey, IsMarketplace: true, MarketplaceURL: entry.URL,
-						MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name,
-					},
-					IsAvailable: true, IsExcluded: true, ExcludedByUser: true, EnabledGlobal: true,
-					RegistryURL: entry.URL, RegistryName: registryDisplayName(entry.URL),
-					MarketplaceSelections: selections, MarketplaceCollectionOnly: marketplaceCollectionOnly(selections),
-				})
-			}
+	forEachUserExcludedOrganizationPin(cfg, func(pin config.MarketplaceResourcePin, excluded row) {
+		seenKey := skill.ResourceKey(excluded.Artifact.Kind, excluded.Artifact.Name) + "\x01" + excluded.Artifact.CatalogKey
+		if _, exists := seen[seenKey]; exists {
+			return
 		}
-	}
+		seen[seenKey] = struct{}{}
+		excluded.MarketplaceSelections = marketplaceSelectionsByArtifact[marketplaceSelectionKey(excluded.Artifact.CatalogKey, pin.Kind, excluded.Artifact.Name)]
+		excluded.MarketplaceCollectionOnly = marketplaceCollectionOnly(excluded.MarketplaceSelections)
+		rows = append(rows, excluded)
+	})
 
 	// Add available skills not in resolved, using the resolver's collision
 	// winners so the catalog view matches materialization selection.
@@ -968,6 +945,90 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	return rows
 }
 
+// forEachUserExcludedOrganizationPin visits optional organization Marketplace
+// leaves suppressed by a user exclusion. Both startup stages render them as
+// unchecked Global rows so verification does not insert them mid-list.
+func forEachUserExcludedOrganizationPin(cfg *config.Config, visit func(config.MarketplaceResourcePin, row)) {
+	if cfg == nil || len(cfg.MarketplaceExclusions) == 0 {
+		return
+	}
+	for _, entry := range cfg.Marketplaces {
+		if entry.Source != config.Organization || entry.Required {
+			continue
+		}
+		for _, pin := range entry.Resources {
+			kind, ok := mpapi.ToIR(pin.Kind)
+			if !ok || kind == ir.KindCollection || !slices.ContainsFunc(cfg.MarketplaceExclusions, func(exclusion config.MarketplaceExclusion) bool {
+				return exclusion.Source == config.UserPersonal && exclusion.Matches(entry, pin)
+			}) {
+				continue
+			}
+			name := marketplaceInstalledName(pin)
+			visit(pin, row{
+				Artifact: resolver.ResolvedArtifact{
+					Entry: catalog.Entry{Kind: kind, Name: name}, RegistryURL: entry.URL,
+					RegistryPath: pin.RegistryID, Ref: pin.Revision, Source: entry.Source,
+					CatalogKey: marketplaceCatalogKey(entry, pin), IsMarketplace: true, MarketplaceURL: entry.URL,
+					MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name,
+				},
+				IsAvailable: true, IsExcluded: true, ExcludedByUser: true, EnabledGlobal: true,
+				RegistryURL: entry.URL, RegistryName: registryDisplayName(entry.URL),
+			})
+		}
+	}
+}
+
+// withCachedCollectionLeaves returns cfg with each Marketplace collection pin
+// whose leaves are not pinned yet expanded from its locally verified cached
+// manifest, so pending rows take the positions verified inventory will give
+// them before acquisition. It never fetches, and the copy only feeds
+// provisional rows.
+func withCachedCollectionLeaves(cfg *config.Config, cache *marketplace.Cache) *config.Config {
+	if cfg == nil {
+		return nil
+	}
+	out := cfg
+	for i, entry := range cfg.Marketplaces {
+		pinned := make(map[string]struct{})
+		for _, pin := range entry.Resources {
+			for _, selection := range pin.SelectedBy.List() {
+				pinned[selection.RegistryID+"\x00"+selection.Name] = struct{}{}
+			}
+		}
+		var leaves []config.MarketplaceResourcePin
+		for _, pin := range entry.Resources {
+			if _, ok := pinned[pin.RegistryID+"\x00"+pin.Name]; ok || pin.Kind != mpapi.KindCollection {
+				continue
+			}
+			members, ok := cache.CachedCollectionLeaves(entry.URL, pin.RegistryID, pin.Name, pin.Revision)
+			if !ok {
+				continue
+			}
+			selectedBy := config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: pin.RegistryID, Name: pin.Name, Revision: pin.Revision}})
+			for _, member := range members {
+				slug := member.RegistryID
+				if member.RegistryID == pin.RegistryID && pin.RegistrySlug != "" {
+					slug = pin.RegistrySlug
+				}
+				leaves = append(leaves, config.MarketplaceResourcePin{
+					RegistryID: member.RegistryID, RegistrySlug: slug, Kind: member.Kind, Name: member.Name,
+					Revision: member.Revision, Digest: member.Revision, Acquisition: config.MarketplaceAcquisitionMirror, SelectedBy: selectedBy,
+				})
+			}
+		}
+		if len(leaves) == 0 {
+			continue
+		}
+		if out == cfg {
+			clone := *cfg
+			clone.Marketplaces = slices.Clone(cfg.Marketplaces)
+			out = &clone
+		}
+		out.Marketplaces[i].Resources = append(slices.Clone(entry.Resources), leaves...)
+	}
+	return out
+}
+
 type provisionalLocalCatalog struct {
 	entry   config.RegistryEntry
 	entries []catalog.Entry
@@ -1024,18 +1085,31 @@ func provisionalLocallyExcluded(localCfg *config.LocalConfig, kind ir.ResourceKi
 	return false
 }
 
-func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, locals map[int]provisionalLocalCatalog) []row {
+func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, locals map[int]provisionalLocalCatalog, harnessDefaults ...map[config.Source][]string) []row {
 	if cfg == nil {
 		return nil
 	}
-	seen := make(map[string]struct{})
+	layerHarnesses := layerHarnessDefaults(cfg, harnessDefaults...)
+	seen := make(map[string]int)
 	var rows []row
 	add := func(key string, r row) {
-		if _, dup := seen[key]; dup {
+		i, dup := seen[key]
+		if !dup {
+			i = len(rows)
+			seen[key] = i
+			rows = append(rows, r)
+		}
+		if r.IsAvailable {
 			return
 		}
-		seen[key] = struct{}{}
-		rows = append(rows, r)
+		switch r.Artifact.Source {
+		case config.Organization, config.UserPersonal:
+			rows[i].EnabledGlobal = true
+		case config.RepoCommitted:
+			rows[i].EnabledProject = true
+		case config.RepoPersonal:
+			rows[i].EnabledLocal = true
+		}
 	}
 	for i := range cfg.Registries {
 		entry := cfg.Registries[i]
@@ -1061,19 +1135,27 @@ func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 					Required:     entry.Required,
 					CatalogKey:   entry.CatalogKey,
 				},
+				// Verified inventory expands collections into members and
+				// lists the collection itself as available.
+				IsAvailable:         selected.Kind == ir.KindCollection,
 				PendingVerification: true,
 				RegistryURL:         entry.URL,
 				RegistryName:        registryDisplayName(entry.URL),
 				RegistryPath:        entry.Path,
 				RegistryRef:         entry.Ref,
+				Harnesses:           slices.Clone(entry.Harnesses),
+				HarnessSource:       harnessSourceLabel(entry, layerHarnesses[entry.Source]),
 			})
 		}
 	}
 	for i := range cfg.Marketplaces {
 		entry := &cfg.Marketplaces[i]
 		for _, pin := range entry.Resources {
+			if cfg.MarketplacePinExcluded(*entry, pin) {
+				continue
+			}
 			kind, ok := mpapi.ToIR(pin.Kind)
-			if !ok {
+			if !ok || kind == ir.KindCollection {
 				continue
 			}
 			name := marketplaceInstalledName(pin)
@@ -1094,13 +1176,34 @@ func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 					MarketplaceRegistryID:   pin.RegistryID,
 					MarketplaceResourceName: pin.Name,
 				},
-				PendingVerification: true,
-				RegistryURL:         entry.URL,
-				RegistryName:        registryDisplayName(entry.URL),
+				PendingVerification:       true,
+				MarketplaceCollectionOnly: !pin.Direct && pin.SelectedBy != "",
+				RegistryURL:               entry.URL,
+				RegistryName:              registryDisplayName(entry.URL),
 			})
 		}
 	}
-	return rows
+	forEachUserExcludedOrganizationPin(cfg, func(pin config.MarketplaceResourcePin, excluded row) {
+		excluded.PendingVerification = true
+		add(marketplaceSelectionKey(excluded.Artifact.CatalogKey, pin.Kind, excluded.Artifact.Name), excluded)
+	})
+	return withoutShadowedCollectionMembers(rows)
+}
+
+// withoutShadowedCollectionMembers drops enabled, optional collection-only
+// members whose resource name another enabled selection already provides;
+// verified inventory resolves that collision to the configured selection.
+func withoutShadowedCollectionMembers(rows []row) []row {
+	configured := make(map[string]struct{}, len(rows))
+	for _, r := range rows {
+		if !r.IsAvailable && !r.MarketplaceCollectionOnly {
+			configured[skill.ResourceKey(r.Artifact.Kind, r.Artifact.Name)] = struct{}{}
+		}
+	}
+	return slices.DeleteFunc(rows, func(r row) bool {
+		_, shadowed := configured[skill.ResourceKey(r.Artifact.Kind, r.Artifact.Name)]
+		return shadowed && !r.IsAvailable && !r.Artifact.Required && r.MarketplaceCollectionOnly
+	})
 }
 
 const unavailableCatalogReason = "selection is unavailable because its catalog failed to load"
@@ -1311,16 +1414,22 @@ func targetsToHarnesses(targets []hcc.Target) []string {
 	return harnesses
 }
 
-func layerHarnessDefaults(cfg *config.Config) map[config.Source][]string {
+// layerHarnessDefaults returns each layer's default harness list, taken from
+// its first registry entry unless an explicit layer default overrides it.
+func layerHarnessDefaults(cfg *config.Config, overrides ...map[config.Source][]string) map[config.Source][]string {
 	defaults := make(map[config.Source][]string)
-	if cfg == nil {
-		return defaults
-	}
-	for _, entry := range cfg.Registries {
-		if _, ok := defaults[entry.Source]; ok {
-			continue
+	if cfg != nil {
+		for _, entry := range cfg.Registries {
+			if _, ok := defaults[entry.Source]; ok {
+				continue
+			}
+			defaults[entry.Source] = append([]string(nil), entry.Harnesses...)
 		}
-		defaults[entry.Source] = append([]string(nil), entry.Harnesses...)
+	}
+	for _, override := range overrides {
+		for source, harnesses := range override {
+			defaults[source] = append([]string(nil), harnesses...)
+		}
 	}
 	return defaults
 }

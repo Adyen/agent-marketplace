@@ -341,7 +341,7 @@ func provisionalCoordinate(r row) string {
 }
 
 func (m *Model) mergeDiscoveryRows() {
-	selection := m.selectionKeyForRebuild()
+	selection := m.captureRebuildAnchor()
 	rows := make([]row, 0, len(m.authoritativeRows)+len(m.provisionalRows)+len(m.discoveryRows))
 	rows = append(rows, m.authoritativeRows...)
 	pending := make(map[string]struct{}, len(m.provisionalRows))

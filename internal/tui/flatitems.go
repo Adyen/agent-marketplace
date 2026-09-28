@@ -207,8 +207,23 @@ func (m Model) selectionKeyForRebuild() string {
 	return m.selectionKey()
 }
 
-func (m *Model) restoreSelectionAfterRebuild(key string) {
-	m.restoreSelectionKey(key)
+// rebuildAnchor is the item under the cursor and its line within the
+// viewport, so rows inserted above it by a rebuild do not shift it on screen.
+type rebuildAnchor struct {
+	key  string
+	line int
+}
+
+func (m Model) captureRebuildAnchor() rebuildAnchor {
+	return rebuildAnchor{key: m.selectionKeyForRebuild(), line: m.cursor - m.listOffset}
+}
+
+func (m *Model) restoreSelectionAfterRebuild(anchor rebuildAnchor) {
+	if !m.restoreSelectionKey(anchor.key) {
+		return
+	}
+	m.listOffset = m.cursor - anchor.line
+	m.clampListOffset()
 }
 
 // recomputeView is called after any input change (rows/filter/fold/tab). It

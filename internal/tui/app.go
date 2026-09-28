@@ -253,7 +253,7 @@ func snapshotAcceptanceError(msg snapshotLoadedMsg) error {
 }
 
 func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
-	selection := m.selectionKeyForRebuild()
+	selection := m.captureRebuildAnchor()
 	listOffset := m.listOffset
 	selectionAfterDisable := m.selectionAfterDisable
 	m.selectionAfterDisable = ""

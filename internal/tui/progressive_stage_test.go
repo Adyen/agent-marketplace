@@ -22,8 +22,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 func progressiveFixture(t *testing.T) (repoRoot, homeDir string) {
@@ -226,6 +228,38 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	}
 	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "remote" {
 		t.Fatalf("cached Marketplace row not visible during local verification: %#v", m.rows)
+	}
+}
+
+func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.T) {
+	m := newProvisionalStageModel()
+	generation := m.requests.active(requestSnapshot)
+	stages := make(chan snapshotLoadedMsg)
+	close(stages)
+	var provisional []row
+	for i := range 30 {
+		provisional = append(provisional, mkRow(fmt.Sprintf("g-%02d", i), withGlobal, func(r *row) { r.PendingVerification = true }))
+	}
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: &config.Config{}, provisionalRows: provisional, stages: stages})
+	m = updated.(Model)
+	if !m.restoreSelectionKey("row\x00" + rowKey(provisional[25])) {
+		t.Fatal("fixture row g-25 is not selectable")
+	}
+	const line = 10
+	m.listOffset = m.cursor - line
+	selected := m.selectionKey()
+
+	verified := make([]row, 0, 35)
+	for i := range 5 {
+		verified = append(verified, mkRow(fmt.Sprintf("a-%02d", i), withGlobal))
+	}
+	for i := range 30 {
+		verified = append(verified, mkRow(fmt.Sprintf("g-%02d", i), withGlobal))
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation, mergedCfg: &config.Config{}, rows: verified, driftAssessment: driftUnknown, stages: stages})
+	m = updated.(Model)
+	if m.selectionKey() != selected || m.cursor-m.listOffset != line {
+		t.Fatalf("selection %q moved to %q on screen line %d, want line %d", selected, m.selectionKey(), m.cursor-m.listOffset, line)
 	}
 }
 
@@ -433,11 +467,11 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	if !pending.PendingVerification {
 		t.Fatal("provisional row is not marked verification-pending")
 	}
-	if pending.Glyph() == "[x]" || pending.StatusText() == "enabled" {
-		t.Fatalf("provisional row fabricates installed state: glyph=%q status=%q", pending.Glyph(), pending.StatusText())
+	if pending.Glyph() != "[x]" || pending.StatusText() != "enabled in config; verification pending" {
+		t.Fatalf("provisional row did not show configuration separately from verification: glyph=%q status=%q", pending.Glyph(), pending.StatusText())
 	}
-	if badge := originBadge(pending); badge != "" {
-		t.Fatalf("provisional row fabricates an enabled badge %q", badge)
+	if badge := originBadge(pending); badge != "G" {
+		t.Fatalf("provisional row lost its configured scope badge %q", badge)
 	}
 
 	mi, _ := m.applyRowSpaceEligibility(pending)
@@ -460,6 +494,161 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	m = mi.(Model)
 	if m.pane != paneToggleModal {
 		t.Fatal("verified row lost toggle eligibility")
+	}
+}
+
+func TestProvisionalStageDoesNotCheckExcludedMarketplacePin(t *testing.T) {
+	m := newProvisionalStageModel()
+	cfg := &config.Config{
+		Marketplaces: []config.MarketplaceEntry{{
+			URL: "https://market.example", Source: config.Organization,
+			Resources: []config.MarketplaceResourcePin{
+				{RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "audit", Direct: true},
+				{RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "review", Direct: true},
+			},
+		}},
+		MarketplaceExclusions: []config.MarketplaceExclusion{{URL: "https://market.example", Locator: "tools/skill/review", Source: config.UserPersonal}},
+	}
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: m.requests.active(requestSnapshot), provisionalCfg: cfg, provisionalRows: buildProvisionalRows(cfg, nil, nil)})
+	m = updated.(Model)
+	if len(m.rows) != 2 || m.rows[0].Artifact.Name != "audit" || m.rows[0].Glyph() != "[x]" || originBadge(m.rows[0]) != "G" {
+		t.Fatalf("early enabled state should check only the effective configured pin: %#v", m.rows)
+	}
+	excluded := m.rows[1]
+	if excluded.Artifact.Name != "review" || !excluded.PendingVerification || excluded.Glyph() != "[ ]" || excluded.StatusText() != "excluded; verification pending" || originBadge(excluded) != "G" {
+		t.Fatalf("excluded organization pin should hold its unchecked Global position while pending: glyph=%q status=%q badge=%q row=%#v", excluded.Glyph(), excluded.StatusText(), originBadge(excluded), excluded)
+	}
+	mi, _ := m.applyRowSpaceEligibility(excluded)
+	if mi.(Model).pane == paneToggleModal {
+		t.Fatal("verification-pending excluded row opened the toggle modal before verification")
+	}
+}
+
+func scopeLayout(rows []row) []string {
+	var layout []string
+	for _, item := range buildTree(rows, tabScope, nil) {
+		if item.Kind == flatSection {
+			layout = append(layout, item.SectionPath)
+			continue
+		}
+		layout = append(layout, item.Row.Artifact.Kind.String()+"/"+item.Row.Artifact.Name+" "+originBadge(item.Row))
+	}
+	return layout
+}
+
+func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
+	audit := config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "audit", Direct: true}
+	review := config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "review", Direct: true}
+	market := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Source: config.Organization, Resources: []config.MarketplaceResourcePin{audit, review}}
+	cfg := &config.Config{
+		Marketplaces:          []config.MarketplaceEntry{market},
+		MarketplaceExclusions: []config.MarketplaceExclusion{{URL: "https://market.example", Locator: "tools/skill/review", Source: config.UserPersonal}},
+		Registries: []config.RegistryEntry{{
+			URL: "./plugins/local", Source: config.RepoCommitted, CatalogKey: "local-key",
+			Collections: config.KindSelector{Include: []string{"bundle"}},
+		}},
+	}
+	catalogs := map[string]catalog.LoadedCatalog{"local-key": {Entries: []catalog.Entry{{Kind: ir.KindCollection, Name: "bundle"}}}}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry: catalog.Entry{Kind: ir.KindSkill, Name: "audit"}, RegistryURL: market.URL, Source: config.Organization,
+		CatalogKey: marketplaceCatalogKey(market, audit), IsMarketplace: true, MarketplaceURL: market.URL,
+		MarketplaceInstanceID: market.InstanceID, MarketplaceRegistryID: "tools", MarketplaceResourceName: "audit",
+	}}
+
+	verified := scopeLayout(buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{}))
+	provisional := scopeLayout(buildProvisionalRows(cfg, nil, nil))
+	if !slices.Equal(provisional, verified) {
+		t.Fatalf("verified inventory reshuffles the provisional layout:\nprovisional: %q\nverified:    %q", provisional, verified)
+	}
+}
+
+func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testing.T) {
+	cache := marketplace.NewCache(t.TempDir())
+	const url = "https://market.example"
+	leafRevision := "sha256:" + strings.Repeat("a", 64)
+	payload, digest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
+		SchemaVersion: hccartifact.CollectionSchemaV1, Name: "bundle", SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
+		Members: []hccartifact.CollectionMemberEntry{
+			{Kind: "skill", Name: "audit", RegistryID: "tools", Revision: leafRevision},
+			{Kind: "mcpserver", Name: "hub", RegistryID: "tools", Revision: leafRevision},
+			{Kind: "skill", Name: "review", RegistryID: "tools", Revision: leafRevision},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := tuiAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "tools", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(digest)})
+	if _, err := cache.WriteResourceRevision(url, "tools", "collection", "bundle", digest, revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteCollectionManifest(digest, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkCollectionVerified(digest); err != nil {
+		t.Fatal(err)
+	}
+
+	placeholder := "sha256:" + strings.Repeat("0", 64)
+	collection := config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: "collection", Name: "bundle", Revision: placeholder, Digest: placeholder, Direct: true}
+	exclusions := []config.MarketplaceExclusion{{URL: url, Locator: "tools/skill/review", Source: config.UserPersonal}}
+	preAcquisition := &config.Config{MarketplaceExclusions: exclusions, Marketplaces: []config.MarketplaceEntry{{URL: url, InstanceID: "bootstrap", Source: config.Organization, Resources: []config.MarketplaceResourcePin{collection}}}}
+
+	selectedBy := config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "tools", Name: "bundle", Revision: digest}})
+	leaf := func(kind, name string) config.MarketplaceResourcePin {
+		return config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: kind, Name: name, Revision: leafRevision, Digest: leafRevision, SelectedBy: selectedBy}
+	}
+	acquired := config.MarketplaceEntry{URL: url, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{leaf("skill", "audit"), leaf("mcpserver", "hub"), leaf("skill", "review")}}
+	verifiedCfg := &config.Config{MarketplaceExclusions: exclusions, Marketplaces: []config.MarketplaceEntry{acquired}}
+	var resolved []resolver.ResolvedArtifact
+	for _, pin := range acquired.Resources[:2] {
+		kind, _ := mpapi.ToIR(pin.Kind)
+		resolved = append(resolved, resolver.ResolvedArtifact{
+			Entry: catalog.Entry{Kind: kind, Name: pin.Name}, RegistryURL: url, Source: config.Organization,
+			CatalogKey: marketplaceCatalogKey(acquired, pin), IsMarketplace: true, MarketplaceURL: url,
+			MarketplaceInstanceID: acquired.InstanceID, MarketplaceRegistryID: "tools", MarketplaceResourceName: pin.Name,
+		})
+	}
+
+	rows := buildProvisionalRows(withCachedCollectionLeaves(preAcquisition, cache), nil, nil)
+	verified := scopeLayout(buildRows(verifiedCfg, nil, resolved, nil, materialize.DriftReport{}))
+	if provisional := scopeLayout(rows); !slices.Equal(provisional, verified) {
+		t.Fatalf("cached collection members do not hold their verified positions:\nprovisional: %q\nverified:    %q", provisional, verified)
+	}
+	glyphs := map[string]string{}
+	for _, r := range rows {
+		glyphs[r.Artifact.Name] = r.Glyph()
+	}
+	if glyphs["audit"] != "[x]" || glyphs["hub"] != "[x]" || glyphs["review"] != "[ ]" {
+		t.Fatalf("pending member glyphs = %v, want audit/hub checked and excluded review unchecked", glyphs)
+	}
+	if len(preAcquisition.Marketplaces[0].Resources) != 1 {
+		t.Fatal("cache expansion mutated the validated configuration")
+	}
+}
+
+func TestProvisionalCollectionMemberYieldsToConfiguredSelectionOfSameName(t *testing.T) {
+	member := config.MarketplaceResourcePin{
+		RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "audit", Revision: "sha256:" + strings.Repeat("a", 64),
+		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "tools", Name: "bundle", Revision: "sha256:" + strings.Repeat("b", 64)}}),
+	}
+	cfg := &config.Config{
+		Registries:   []config.RegistryEntry{{URL: "https://git.example/resources.git", Source: config.UserPersonal, CatalogKey: "resources", Skills: config.KindSelector{Include: []string{"audit"}}}},
+		Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", Source: config.Organization, Resources: []config.MarketplaceResourcePin{member}}},
+	}
+	rows := buildProvisionalRows(cfg, nil, nil)
+	if len(rows) != 1 || rows[0].Artifact.IsMarketplace {
+		t.Fatalf("collection member should yield to the configured selection that verified inventory keeps: %#v", rows)
+	}
+}
+
+func TestProvisionalRowsCarryRegistryOverrideHarnessBadge(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL: "https://git.example/skills.git", Source: config.RepoCommitted, CatalogKey: "skills", Harnesses: []string{"codex"},
+		Skills: config.KindSelector{Include: []string{"audit"}},
+	}}}
+	rows := buildProvisionalRows(cfg, nil, nil, map[config.Source][]string{config.RepoCommitted: {"claude"}})
+	if len(rows) != 1 || harnessBadge(rows[0]) != "{Codex}" {
+		t.Fatalf("pending row lacks the harness badge verified inventory renders: %#v", rows)
 	}
 }
 
@@ -542,8 +731,14 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	if !strings.Contains(view, "verifying resources...") || strings.Contains(view, "loading resources...") {
 		t.Fatalf("rendered view lacks verification progress while acquisition is blocked:\n%s", view)
 	}
-	if strings.Contains(view, "[x] remote") || strings.Contains(view, "[x]  skill remote") {
-		t.Fatalf("pending row claims installed state:\n%s", view)
+	if m.rows[pendingRow].Glyph() != "[x]" || originBadge(m.rows[pendingRow]) != "G" {
+		t.Fatalf("configured remote selection should show an early enabled check and scope badge: glyph=%q badge=%q", m.rows[pendingRow].Glyph(), originBadge(m.rows[pendingRow]))
+	}
+	if status := m.rows[pendingRow].StatusText(); !strings.Contains(status, "verification pending") || !strings.Contains(status, "enabled in config") {
+		t.Fatalf("early checked row does not distinguish configuration from installation: %q", status)
+	}
+	if !strings.Contains(view, "[x]") || !strings.Contains(view, "remote G") {
+		t.Fatalf("configured selection does not render an early checked badge:\n%s", view)
 	}
 }
 
@@ -711,9 +906,13 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 		"deploy": ir.KindCommand,
 		"remote": ir.KindSkill,
 	}
+	badges := map[string]string{"alpha": "G", "beta": "G", "sigma": "P", "deploy": "P", "remote": "G"}
 	for _, r := range m.rows {
 		if !r.PendingVerification {
 			t.Fatalf("pre-verification row %#v is not marked pending", r.Artifact)
+		}
+		if r.Glyph() != "[x]" || originBadge(r) != badges[r.Artifact.Name] {
+			t.Fatalf("configured %q has glyph %q and scope %q, want checked %q", r.Artifact.Name, r.Glyph(), originBadge(r), badges[r.Artifact.Name])
 		}
 	}
 	got := pendingRowNames(m.rows)
