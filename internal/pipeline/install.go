@@ -722,8 +722,9 @@ func clearInstallExcludes(repoRoot string, entry config.RegistryEntry, kind ir.R
 
 // installRegistrySelection returns every entry without a filter. With a
 // --registry filter it returns one entry for the one physical source the
-// filter names, preferring the entry declared in the target layer: the same
-// source declared in several layers, or spelled differently, is not ambiguous.
+// filter names, preferring the target layer's entry and then the highest
+// precedence one: the same source declared in several layers, or spelled
+// differently, is not ambiguous.
 func installRegistrySelection(registries []config.RegistryEntry, registryFilter string, target config.Source) ([]config.RegistryEntry, error) {
 	registryFilter = strings.TrimSpace(registryFilter)
 	if registryFilter == "" {
@@ -743,7 +744,7 @@ func installRegistrySelection(registries []config.RegistryEntry, registryFilter 
 		if current, seen := chosen[key]; !seen {
 			sources = append(sources, key)
 			chosen[key] = entry
-		} else if current.Source != target && entry.Source == target {
+		} else if preferInstallRegistryEntry(current, entry, target) {
 			chosen[key] = entry
 		}
 	}
@@ -754,6 +755,20 @@ func installRegistrySelection(registries []config.RegistryEntry, registryFilter 
 		return nil, fmt.Errorf("registry %q matches %d configured entries with different refs or paths: %s; install --all --registry needs exactly one, so install those resources by name or remove one of the entries", registryFilter, len(sources), describeInstallRegistrySources(matched))
 	}
 	return []config.RegistryEntry{chosen[sources[0]]}, nil
+}
+
+// preferInstallRegistryEntry reports whether candidate should represent a
+// source instead of current: the target layer's entry wins, then the entry
+// with the higher layer and file precedence, whose attributes the resolver
+// would apply.
+func preferInstallRegistryEntry(current, candidate config.RegistryEntry, target config.Source) bool {
+	if (candidate.Source == target) != (current.Source == target) {
+		return candidate.Source == target
+	}
+	if candidate.Source != current.Source {
+		return candidate.Source > current.Source
+	}
+	return candidate.FilePrecedence > current.FilePrecedence
 }
 
 func installRegistryURLKey(raw string) string {
