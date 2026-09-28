@@ -4,6 +4,7 @@ import {
   INSTALL_COMMAND,
   MARKETPLACE_PATH,
 } from '../../../shared/site'
+import ActionLink from '../components/ActionLink.vue'
 import CommandBar from '../components/CommandBar.vue'
 import TuiPreview from '../components/TuiPreview.vue'
 </script>
@@ -27,22 +28,19 @@ import TuiPreview from '../components/TuiPreview.vue'
           <CommandBar :command="INSTALL_COMMAND" class="install" />
 
           <div class="actions">
-            <a
-              class="action primary"
-              :href="MARKETPLACE_PATH"
-              target="_self"
-            >
+            <ActionLink class="hero-action" :href="MARKETPLACE_PATH">
               Browse Marketplace
-            </a>
-            <a
-              class="action secondary"
+            </ActionLink>
+            <ActionLink
+              class="hero-action"
               :href="GITHUB_REPOSITORY_URL"
+              variant="outline"
               target="_blank"
               rel="noreferrer"
             >
               View on GitHub
               <span aria-hidden="true">↗</span>
-            </a>
+            </ActionLink>
           </div>
         </div>
 
@@ -60,7 +58,6 @@ import TuiPreview from '../components/TuiPreview.vue'
 
 <style scoped>
 .hero {
-  --hero-accent: var(--vp-c-brand-1);
   position: relative;
   z-index: 1;
   overflow: hidden;
@@ -106,7 +103,7 @@ h1 {
   font-size: clamp(56px, 5.2vw, 72px);
   line-height: 0.99;
   letter-spacing: -0.052em;
-  font-weight: 750;
+  font-weight: var(--am-font-bold);
 }
 
 .h1-sub {
@@ -114,7 +111,7 @@ h1 {
   margin-top: 20px;
   color: var(--am-hero-text-muted);
   font-size: clamp(23px, 2.1vw, 29px);
-  font-weight: 520;
+  font-weight: var(--am-font-medium);
   line-height: 1.32;
   letter-spacing: -0.025em;
 }
@@ -134,71 +131,14 @@ h1 {
   margin-top: 14px;
 }
 
-.action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 46px;
-  padding: 0 19px;
-  border: 1px solid transparent;
-  border-radius: var(--am-radius-lg);
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 1;
-  text-decoration: none;
-  transition:
-    border-color 0.16s ease,
-    background-color 0.16s ease,
-    color 0.16s ease,
-    transform 0.16s ease;
-}
-
-.action:hover {
-  transform: translateY(-1px);
-}
-
-.action:focus-visible {
-  outline: 2px solid var(--hero-accent);
-  outline-offset: 3px;
-}
-
-.primary {
-  border-color: var(--am-color-action-primary);
-  background: var(--am-color-action-primary);
-  color: var(--am-color-text-on-action);
-}
-
-.primary:hover {
-  border-color: var(--am-color-action-hover);
-  background: var(--am-color-action-hover);
-}
-
-.secondary {
-  border-color: var(--am-hero-ring);
-  background: var(--am-hero-surface);
-  color: var(--am-hero-text);
-}
-
-.secondary:hover {
-  border-color: var(--hero-accent);
-  background: var(--am-accent-soft);
-  color: var(--am-hero-text);
-}
-
 .install {
-  --am-technical-font-size: 14px;
+  --am-technical-font-size: var(--am-text-body-sm);
   --am-technical-padding: 15px;
   margin-top: 30px;
   padding-block: 9px;
   box-shadow:
     0 20px 50px -30px color-mix(in srgb, var(--am-color-bg-canvas) 90%, transparent),
     inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 3%, transparent);
-}
-
-.install :deep(.copy) {
-  padding: 8px 12px;
-  font-size: 12px;
 }
 
 .product-stage {
@@ -210,7 +150,7 @@ h1 {
 .preview-caption {
   margin: 12px 20px 2px;
   color: var(--am-hero-text-muted);
-  font-size: 13.5px;
+  font-size: var(--am-text-supporting);
   line-height: 1.5;
 }
 
@@ -250,24 +190,15 @@ h1 {
     font-size: 16px;
   }
 
-  .action {
+  .hero-action {
     flex: 1;
   }
 
   .install {
-    --am-technical-font-size: 12px;
+    --am-technical-font-size: var(--am-text-supporting);
     padding-block: 7px;
   }
 
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .action {
-    transition: none;
-  }
-
-  .action:hover {
-    transform: none;
-  }
-}
 </style>

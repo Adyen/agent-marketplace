@@ -58,7 +58,7 @@ defineExpose({
     0 0 52px var(--am-accent-soft)
   );
   color: var(--am-terminal-text);
-  font-family: var(--vp-font-family-mono);
+  font-family: var(--am-terminal-font-family, var(--vp-font-family-mono)), monospace;
   font-size: var(--am-terminal-font-size, 14px);
   line-height: var(--am-terminal-line-height, 1.5);
 }
@@ -72,7 +72,7 @@ defineExpose({
   border-bottom: 1px solid var(--am-terminal-border);
   background: var(--am-terminal-bg-raised);
   color: var(--am-terminal-muted);
-  font-size: 12px;
+  font-size: var(--am-text-supporting);
 }
 
 .window-controls {
@@ -105,7 +105,7 @@ defineExpose({
 .terminal-status {
   grid-column: 3;
   justify-self: end;
-  color: var(--am-terminal-status-color, var(--am-terminal-warning));
+  color: var(--am-terminal-warning);
   white-space: nowrap;
 }
 

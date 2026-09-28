@@ -147,7 +147,7 @@ const installCommand = computed(
   background: transparent;
   color: var(--vp-c-text-2);
   font-size: 15px;
-  font-weight: 550;
+  font-weight: var(--am-font-medium);
   cursor: pointer;
 }
 
@@ -176,24 +176,20 @@ h3 {
   margin: 0 0 7px;
   color: var(--vp-c-text-1);
   font-size: 20px;
-  font-weight: 650;
-}
-
-.default-tag,
-.lock {
-  padding: 2px 5px;
-  border-radius: 4px;
-  font-family: var(--vp-font-family-mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  line-height: 1;
-  text-transform: uppercase;
+  font-weight: var(--am-font-semibold);
 }
 
 .default-tag {
+  padding: 2px 5px;
   border: 1px solid var(--am-border);
+  border-radius: 4px;
   color: var(--vp-c-text-2);
+  font-family: var(--vp-font-family-mono), monospace;
+  font-size: 10px;
+  font-weight: var(--am-font-semibold);
+  letter-spacing: 0.05em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .scope-detail > p {
@@ -223,9 +219,9 @@ h3 {
 .scope-outcome dt {
   margin-bottom: 5px;
   color: var(--am-code-muted);
-  font-family: var(--vp-font-family-mono);
+  font-family: var(--vp-font-family-mono), monospace;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: var(--am-font-semibold);
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
@@ -234,18 +230,18 @@ h3 {
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--am-code-text);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--am-text-supporting);
+  font-weight: var(--am-font-semibold);
 }
 
 .scope-outcome code {
   color: var(--vp-c-brand-1);
-  font-family: var(--vp-font-family-mono);
-  font-size: 12.5px;
+  font-family: var(--vp-font-family-mono), monospace;
+  font-size: var(--am-text-supporting);
 }
 
 .scope-command {
-  --am-technical-font-size: 14px;
+  --am-technical-font-size: var(--am-text-body-sm);
   width: 100%;
   margin-top: 20px;
 }
@@ -281,9 +277,9 @@ h3 {
   gap: 7px;
   margin-bottom: 4px;
   color: var(--vp-c-brand-1);
-  font-family: var(--vp-font-family-mono);
+  font-family: var(--vp-font-family-mono), monospace;
   font-size: 10px;
-  font-weight: 650;
+  font-weight: var(--am-font-semibold);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -301,7 +297,7 @@ h3 {
 .policy-copy p {
   margin: 0;
   color: var(--vp-c-text-2);
-  font-size: 14px;
+  font-size: var(--am-text-body-sm);
   line-height: 1.5;
 }
 
