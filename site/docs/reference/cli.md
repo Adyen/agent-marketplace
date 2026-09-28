@@ -264,6 +264,8 @@ Installed 3  Removed 1  Malformed 0  Errors 0
 
 The counts are colored on a terminal. Set `NO_COLOR`, `CLICOLOR=0`, or `TERM=dumb` to turn color off.
 
+If `~/.agents/config.yaml` does not exist, a plain `sync` creates it the way `agent-marketplace init --harnesses factory,windsurf` would: a v4 config with only `apiVersion` and `harnesses: [factory, windsurf]`. An existing user config is never read or changed by this step, and `--check`, `--locked`, and `--offline` skip it.
+
 With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
 
 If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. Run a plain `sync` or `lock` (without those flags) to finish the recovery, then retry. A missing transaction-state directory needs no recovery, and these commands do not create it.
