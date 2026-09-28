@@ -125,6 +125,9 @@ png="$output_dir/browse-inspect-final.png"
 rm -f -- "$gif" "$png"
 
 run_tt run --session "$session" --backend xtermjs --cols 100 --rows 30 --restart "$wrapper"
+run_tt expect text --session "$session" --timeout 30000 'Configuration migration required'
+run_tt type --session "$session" l
+run_tt expect text --session "$session" --timeout 5000 'Config left unchanged'
 run_tt expect text --session "$session" --timeout 30000 beta-skill
 run_tt expect text --session "$session" --timeout 30000 alpha-skill
 run_tt expect text --session "$session" --timeout 30000 --whitespace normalize '~ in sync'
