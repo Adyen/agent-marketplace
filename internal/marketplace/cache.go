@@ -292,6 +292,9 @@ func (c *Cache) endpointArchiveDigests(endpoint string) (map[string]struct{}, er
 				if err := json.Unmarshal(raw, &rev); err != nil {
 					return nil, fmt.Errorf("decode endpoint metadata %q: %w", p, err)
 				}
+				if filepath.Base(filepath.Dir(dir)) == "collection" {
+					continue
+				}
 				if err := validateSHA256Digest(string(rev.ArchiveDigest)); err != nil {
 					return nil, fmt.Errorf("endpoint metadata %q has invalid archive digest: %w", p, err)
 				}

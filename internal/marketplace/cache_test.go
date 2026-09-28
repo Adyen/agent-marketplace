@@ -899,6 +899,24 @@ func TestGCUnionRetainsDigestSharedAcrossLayers(t *testing.T) {
 	}
 }
 
+func TestGCEndpointRootIgnoresVirtualCollectionArchive(t *testing.T) {
+	c := NewCache(t.TempDir())
+	endpoint := "https://marketplace.invalid"
+	contentDigest := "sha256:" + strings.Repeat("1", 64)
+	if _, err := c.WriteResourceRevision(endpoint, "src", "collection", "bundle", contentDigest, assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "bundle"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+	})); err != nil {
+		t.Fatalf("WriteResourceRevision: %v", err)
+	}
+	orphanArchive := writeOrphanArtifact(t, c)
+
+	result, err := c.GarbageCollect(false, GCRoots{UnlockedEndpoints: []string{endpoint}})
+	if err != nil || len(result.Removed) != 1 || result.Removed[0] != filepath.Dir(c.ArtifactPath(orphanArchive)) {
+		t.Fatalf("GarbageCollect = %v, %v; want virtual collection metadata ignored and orphan removed", result.Removed, err)
+	}
+}
+
 func TestGCEndpointRootRejectsMalformedMetadata(t *testing.T) {
 	c := NewCache(t.TempDir())
 	metadataPath := c.MetadataPath("https://marketplace.invalid", "src", "skill", "review", "sha256:"+strings.Repeat("1", 64))
