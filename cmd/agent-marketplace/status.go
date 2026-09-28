@@ -114,12 +114,23 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		Workspace:          ws,
-		CatalogMode:        catalog.LoadModeInspect,
-		ReadOnlyExactLocks: true,
+	// Use the resolved scope policy for dry-run drift detection. status exists
+	// to explain misconfiguration, so an invalid mode or a failed drift probe
+	// is reported as an error row rather than suppressing every other
+	// diagnostic. File mode returns manifest and containment problems here as
+	// hard errors.
+	inspection, releaseExactLease := pipeline.Inspect(ctx, pipeline.InspectOptions{
+		Resolve: pipeline.ResolveOptions{
+			Workspace:          ws,
+			CatalogMode:        catalog.LoadModeInspect,
+			ReadOnlyExactLocks: true,
+		},
+		DryRun:                         runStatusMaterialize,
+		SkipMaterializeOnResolveErrors: true,
 	})
 	defer releaseExactLease()
+	result := inspection.ResolveResult
+	dryRunReport := inspection.Report
 
 	catalogEntries := make(map[string][]catalog.Entry, len(result.CatalogLoad.Catalogs))
 	for k, v := range result.CatalogLoad.Catalogs {
@@ -137,24 +148,8 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			}
 		}
 	}
-	// Use the resolved scope policy for dry-run drift detection. status exists
-	// to explain misconfiguration, so an invalid mode or a failed drift probe
-	// is reported as an error row rather than suppressing every other
-	// diagnostic. File mode returns manifest and containment problems here as
-	// hard errors.
-	var materializeErrs []error
-	modes, err := config.ResolveMaterializationModes(result.GlobalCfg, result.RepoCfg, result.LocalCfg)
-	if err != nil {
-		materializeErrs = append(materializeErrs, err)
-	}
-	var dryRunReport *materialize.Report
-	if len(result.Errors) == 0 && err == nil {
-		var dryRunErr error
-		dryRunReport, dryRunErr = runStatusMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
-		if dryRunErr != nil {
-			slog.Warn("status drift check failed", "error", dryRunErr)
-			materializeErrs = append(materializeErrs, dryRunErr)
-		}
+	if inspection.MaterializeErr != nil {
+		slog.Warn("status drift check failed", "error", inspection.MaterializeErr)
 	}
 
 	// Build orphaned rows from files that would be removed.
@@ -238,7 +233,17 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		}
 	}
 
-	errorRows := buildErrorRows(materializeErrs, result.Errors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
+	inspectionErrors := make([]error, 0, len(inspection.Issues))
+	for _, issue := range inspection.Issues {
+		if issue.Severity != pipeline.IssueError {
+			continue
+		}
+		if issue.Category == pipeline.IssueMaterialization && pipeline.IsPromotedDiagnostic(issue.Err) {
+			continue
+		}
+		inspectionErrors = append(inspectionErrors, issue.Err)
+	}
+	errorRows := buildErrorRows(inspectionErrors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
 
 	targetHarnesses := make([]string, len(result.TargetHarnesses))
 	for i, t := range result.TargetHarnesses {
@@ -250,9 +255,14 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		return fmt.Errorf("resolve harness target roots: %w", err)
 	}
 
+	statusWarnings := slices.Clone(result.Warnings)
+	for _, issue := range inspection.IssuesOf(pipeline.IssueWarning, pipeline.IssueMaterialization) {
+		statusWarnings = append(statusWarnings, issue.Err)
+	}
+
 	if err := writeStatusSections(out, statusView{
 		diag:                result.Diagnostics,
-		warnings:            result.Warnings,
+		warnings:            statusWarnings,
 		statusRows:          statusRows,
 		locallyExcluded:     locallyExcluded,
 		localRegistries:     localRegistries,
@@ -270,11 +280,13 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		return err
 	}
 
-	if len(result.Errors) > 0 {
-		return errors.Join(result.Errors...)
+	var failureErrs []error
+	for _, issue := range inspection.Issues {
+		if issue.Severity == pipeline.IssueError {
+			failureErrs = append(failureErrs, issue.Err)
+		}
 	}
-
-	return nil
+	return errors.Join(failureErrs...)
 }
 
 func splitRequirementWarnings(errs []error) ([]requirementRow, []error) {

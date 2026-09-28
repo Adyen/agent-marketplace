@@ -94,6 +94,8 @@ var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as wa
 var discoverSyncWorkspace = pipeline.DiscoverWorkspace
 var ensureGlobalConfigForSync = config.EnsureGlobalConfig
 
+var runSyncCheckMaterialize = materialize.Run
+
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
@@ -459,14 +461,16 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 		ConfigLoadMode: configLoadMode,
 	}
 	resolveOpts.RequireTargetSet = true
-	resolvedResult := pipeline.Resolve(ctx, resolveOpts)
-
 	// Use materialize in dry-run mode to check for drift; the Workspace derives
 	// the same materialization root the real sync would write beneath.
-	report, matErr := materialize.Run(ctx, ws.MaterializeRoot(), resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
-	if matErr != nil {
-		return matErr
-	}
+	inspection, inspectRelease := pipeline.Inspect(ctx, pipeline.InspectOptions{
+		Resolve: resolveOpts,
+		DryRun:  runSyncCheckMaterialize,
+	})
+	defer inspectRelease()
+	resolvedResult := inspection.ResolveResult
+	report := inspection.Report
+	matErr := inspection.MaterializeErr
 
 	// Surface every warning the run produced, not just the ineffective-subdir
 	// ones. --check used to recompute AncestorMaterializedExcludeWarnings and
@@ -480,7 +484,11 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	// Warnings do not affect drift detection or the --check exit code.
 	// Concat, not append: appending to resolvedResult.Warnings could write into
 	// its spare capacity and mutate the caller's slice.
-	allWarnings := slices.Concat(lockWarnings, resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult))
+	var materializeWarnings []error
+	for _, issue := range inspection.IssuesOf(pipeline.IssueWarning, pipeline.IssueMaterialization) {
+		materializeWarnings = append(materializeWarnings, issue.Err)
+	}
+	allWarnings := slices.Concat(lockWarnings, resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult), materializeWarnings)
 	for _, warning := range dedupIssues(allWarnings) {
 		if _, err := fmt.Fprintf(out, "warning: %v\n", warning); err != nil {
 			return err
@@ -499,9 +507,13 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	if err := writeGroupedWarnings(out, requirementWarnings, false); err != nil {
 		return err
 	}
-	errorRows := buildErrorRows(resolvedResult.Errors)
+	checkErrs := slices.Clone(resolvedResult.Errors)
+	if matErr != nil {
+		checkErrs = append(checkErrs, matErr)
+	}
+	errorRows := buildErrorRows(resolvedResult.Errors, []error{matErr})
 
-	summaryErr := writeSyncCheckSummary(out, report, errorRows, resolvedResult.Errors)
+	summaryErr := writeSyncCheckSummary(out, report, errorRows, checkErrs)
 	if strict && len(requirementWarnings) > 0 {
 		return errors.Join(summaryErr, errStrictUnmetPrerequisites)
 	}
@@ -527,16 +539,19 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 // harness set configured", which is both the most common cause and the one with
 // an actionable remedy.
 func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows []errorRow, configErrs []error) error {
-	if report.InSync() && len(errorRows) == 0 {
+	inSync := report != nil && report.InSync()
+	if inSync && len(errorRows) == 0 {
 		return nil
 	}
 
-	pendingCount := report.TotalWritten() + report.TotalRemoved()
-
+	pendingCount := 0
 	var errorDiags []diag.Diagnostic
-	for _, d := range report.Diags {
-		if d.IsError() {
-			errorDiags = append(errorDiags, d)
+	if report != nil {
+		pendingCount = report.TotalWritten() + report.TotalRemoved()
+		for _, d := range report.Diags {
+			if d.IsError() {
+				errorDiags = append(errorDiags, d)
+			}
 		}
 	}
 
