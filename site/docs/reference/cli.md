@@ -266,7 +266,7 @@ The counts are colored on a terminal. Set `NO_COLOR`, `CLICOLOR=0`, or `TERM=dum
 
 If `~/.agents/config.yaml` does not exist, a plain `sync` creates it the way `agent-marketplace init --harnesses factory,windsurf` would: a v4 config with only `apiVersion` and `harnesses: [factory, windsurf]`. An existing user config is never read or changed by this step, and `--check`, `--locked`, and `--offline` skip it.
 
-With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
+With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1, including a dry-run materialization failure, which is printed as an `error:` line alongside the run's warnings. Warning-severity materialization diagnostics are printed as `warning:` lines and do not affect the exit status. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
 
 If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. Run a plain `sync` or `lock` (without those flags) to finish the recovery, then retry. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
@@ -320,11 +320,11 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `ORPHANED FILES` | Generated files that a sync would remove. |
 | `NAME COLLISIONS` | Registry overlap and resource-name collision diagnostics. |
 | `UNMET REQUIREMENTS` | Advisory [resource prerequisites](./resource-prerequisites.md) and install hints. |
-| `WARNINGS` | Configuration and resolution warnings, with a remediation hint where one exists. |
+| `WARNINGS` | Configuration, resolution, and materialization warnings, with a remediation hint where one exists. |
 | `DRIFT` | `In sync`, the number of files to write and remove, or `Unknown (exact registry view incomplete)`. |
-| `ERRORS` | Configuration, catalog, or drift-inspection failures. |
+| `ERRORS` | Configuration, catalog, materialization, or drift-inspection failures. |
 
-Fatal resolution errors return exit status 1 after the report is printed.
+Fatal resolution and error-severity materialization diagnostics return exit status 1 after the report is printed; warning-severity diagnostics do not affect the exit status.
 
 ## Configuration authoring
 

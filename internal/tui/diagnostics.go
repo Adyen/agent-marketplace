@@ -1,9 +1,10 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
+
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
 type diagnosticSeverity uint8
@@ -81,17 +82,20 @@ func snapshotDiagnostic(severity diagnosticSeverity, category diagnosticCategory
 }
 
 func stableDiagnosticKey(err error) string {
-	if err == nil {
-		return "<nil>"
+	return pipeline.IssueDedupKey(err)
+}
+
+func diagnosticCategoryFor(category pipeline.IssueCategory) diagnosticCategory {
+	switch category {
+	case pipeline.IssueConfig:
+		return diagnosticConfig
+	case pipeline.IssueCatalog:
+		return diagnosticCatalog
+	case pipeline.IssueMaterialization:
+		return diagnosticMaterialization
+	default:
+		return diagnosticResolution
 	}
-	type keyer interface{ DedupKey() string }
-	var keyed keyer
-	if errors.As(err, &keyed) {
-		if key := keyed.DedupKey(); key != "" {
-			return key
-		}
-	}
-	return fmt.Sprintf("%T\x00%s", err, err.Error())
 }
 
 func diagnosticIdentity(d tuiDiagnostic) string {

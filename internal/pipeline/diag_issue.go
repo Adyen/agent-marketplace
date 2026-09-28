@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -122,6 +123,11 @@ func diagDedupKey(d diag.Diagnostic, issue *diagIssue) string {
 // to remove. Exporting the promotion is what makes the invariant enforceable
 // instead of aspirational.
 func PromoteDiagnostic(d diag.Diagnostic) error { return newDiagIssue(d) }
+
+func IsPromotedDiagnostic(err error) bool {
+	var promoted *diagIssue
+	return errors.As(err, &promoted)
+}
 
 // DedupIssues drops later occurrences of the same underlying problem while
 // preserving order. Errors that expose DedupKey() are collapsed on that
