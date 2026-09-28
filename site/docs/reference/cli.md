@@ -172,13 +172,15 @@ A successful Marketplace install prints a short confirmation:
 ✓ Installed coderabbit-skills · 3 skills
 ```
 
-Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. Missing prerequisites are reported as warnings; `install` does not install them for you.
+Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. The line lists only resources that the resulting configuration selects. A tag or bundle install keeps any existing exclusion and names the resources it left out, for example `Not installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly`. Installing a resource by name clears its exclusion. Missing prerequisites are reported as warnings; `install` does not install them for you.
 
 For configured Git registries, discovery uses the exact locked inventory of every layer that already has a valid lock. A registry can bootstrap from its branch or tag only when its own configuration layer has no lock. A missing lock in one layer does not make content that appeared after another layer's lock installable.
 
 ## `remove`
 
 Removes an explicit selection, or records an exclusion when the resource was selected some other way (for example, by a collection or a registry default). It then syncs output. Required organization resources cannot be removed or excluded.
+
+`--from` and `--ref` follow the same rule, so an explicit selection in the target config is dropped. If a selected collection also provides the resource, it stays installed through the collection until a second `remove` excludes it from the collection.
 
 For hosted Marketplace pins, removing a direct resource clears its direct selection but keeps it if a collection still includes it. Removing a collection clears that collection and removes the members no longer kept by anything else. You can remove a resource installed with `--as` by either its local name or its canonical Marketplace name. A name that matches more than one direct pin is refused.
 
