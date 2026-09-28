@@ -1509,8 +1509,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	}
 	editEntry = removalEditEntry(editEntry, fromURL, selectedPath, shadowRef)
 	operation := config.SelectionExclude
-	if entryInTarget && !requiresShadow && strings.TrimSpace(shadowRef) == "" &&
-		removalDropsInclude(editEntry, resolvedKind, name) {
+	if entryInTarget && !requiresShadow && removalDropsInclude(editEntry, resolvedKind, name) {
 		operation = config.SelectionRemoveInclude
 	}
 	if err := editRemoveLayer(func(m *LayerMutation) error {
