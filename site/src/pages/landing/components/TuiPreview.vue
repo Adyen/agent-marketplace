@@ -27,7 +27,7 @@ const registries = [
     aria-label="Agent Marketplace terminal UI showing resources grouped by registry and their configured harnesses"
   >
     <template #status>
-      <span class="ready"><i aria-hidden="true"></i> ready</span>
+      <span class="preview-status">Preview</span>
     </template>
 
     <div class="screen">
@@ -85,7 +85,7 @@ const registries = [
   --tui-green: var(--am-terminal-accent);
   --tui-orange: var(--am-terminal-warning);
   --tui-selection: var(--am-terminal-selection);
-  --am-terminal-font-size: 13.5px;
+  --am-terminal-font-size: var(--am-text-body-sm);
 }
 
 .activity {
@@ -95,18 +95,9 @@ const registries = [
   gap: 12px;
 }
 
-.ready {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--tui-green);
-}
-
-.ready i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
+.preview-status {
+    color: var(--am-terminal-muted);
+    font-weight: var(--am-font-semibold);
 }
 
 .pending,
@@ -143,7 +134,7 @@ const registries = [
   min-width: 0;
   overflow: hidden;
   color: var(--tui-text);
-  font-weight: 600;
+  font-weight: var(--am-font-semibold);
 }
 
 .registry-title span {
@@ -198,7 +189,7 @@ const registries = [
 
 .details dt {
   color: var(--tui-cyan);
-  font-weight: 600;
+  font-weight: var(--am-font-semibold);
 }
 
 .details dd {
@@ -225,7 +216,7 @@ kbd {
 
 @media (max-width: 680px) {
   .terminal {
-    --am-terminal-font-size: 12px;
+    --am-terminal-font-size: var(--am-text-supporting);
   }
 
   .panes {
