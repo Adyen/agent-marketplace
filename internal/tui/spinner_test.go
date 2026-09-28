@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -145,6 +146,39 @@ func TestUpdateStopsSpinnerTickWhenIdle(t *testing.T) {
 		t.Fatalf("expected no tick command when idle, got non-nil cmd")
 	}
 	_ = um
+}
+
+func TestSpinnerContinuesDuringStartupAssessment(t *testing.T) {
+	m := newSpinnerTestModel()
+	generation := m.requests.active(requestSnapshot)
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation})
+	m = updated.(Model)
+	if m.loading {
+		t.Fatal("inventory must remain usable during assessment")
+	}
+	updated, cmd := m.Update(spinner.TickMsg{Time: time.Now(), ID: m.spinner.ID()})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("spinner stopped before startup assessment finished")
+	}
+	m.errs = []error{errors.New("catalog failed")}
+	if footer := renderFooter(m); !strings.Contains(footer, "verifying resources...") || !strings.Contains(footer, "! 1 errors") {
+		t.Fatalf("error footer hid startup progress or error: %q", footer)
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation - 1, driftAssessment: driftReady})
+	m = updated.(Model)
+	if footer := renderFooter(m); !strings.Contains(footer, "verifying resources...") {
+		t.Fatalf("stale completion stopped startup progress: %q", footer)
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, driftAssessment: driftFailed})
+	m = updated.(Model)
+	if footer := renderFooter(m); strings.Contains(footer, "verifying resources...") {
+		t.Fatalf("failed assessment still shows startup progress: %q", footer)
+	}
+	_, cmd = m.Update(spinner.TickMsg{Time: time.Now(), ID: m.spinner.ID()})
+	if cmd != nil {
+		t.Fatal("spinner kept ticking after failed assessment")
+	}
 }
 
 func TestInitBatchesSpinnerTick(t *testing.T) {

@@ -241,6 +241,7 @@ type Model struct {
 	filterActive        bool
 	searchInput         textinput.Model
 	loading             bool
+	assessmentPending   bool
 
 	pane                pane
 	driftReport         materialize.DriftReport

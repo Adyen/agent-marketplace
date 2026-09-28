@@ -369,6 +369,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.loading = false
+			m.assessmentPending = true
 			m.applySnapshotStatus(msg)
 			m.applySnapshotData(msg)
 			return m, waitSnapshotStages(msg.stages)
@@ -377,6 +378,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
+		m.assessmentPending = false
 		m.applySnapshotStatus(msg)
 		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(msg)
@@ -408,6 +410,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshing = false
+		m.assessmentPending = false
 		m.applySnapshotStatus(msg.snapshotLoadedMsg)
 		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(msg.snapshotLoadedMsg)
@@ -435,6 +438,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 		}
 		m.loading = false
+		m.assessmentPending = false
 		m.syncing = false
 		m.refreshing = false
 		m.applySnapshotStatus(snapshot)
@@ -756,7 +760,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		// Only keep ticking while there is in-flight work.
-		if m.loading || m.syncing || m.refreshing || m.discoveryLoading {
+		if m.loading || m.assessmentPending || m.syncing || m.refreshing || m.discoveryLoading {
 			return m, cmd
 		}
 		return m, nil

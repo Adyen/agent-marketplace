@@ -298,6 +298,9 @@ func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	if m.driftAssessment != driftUnknown {
 		t.Fatalf("inventory stage assessed drift early: %d", m.driftAssessment)
 	}
+	if footer := renderFooter(m); !strings.Contains(footer, "verifying resources...") || !strings.Contains(footer, m.spinner.View()) {
+		t.Fatalf("inventory stage lost startup progress: %q", footer)
+	}
 	mi, _ := m.applyRowSpaceEligibility(m.rows[0])
 	m = mi.(Model)
 	if m.pane != paneToggleModal {
@@ -340,6 +343,9 @@ func TestFinalStageReplacesPendingInventoryWithAssessment(t *testing.T) {
 	m = updated.(Model)
 	if m.driftAssessment != driftReady || len(m.rows) != 2 {
 		t.Fatalf("final stage did not apply assessment: drift=%d rows=%#v", m.driftAssessment, m.rows)
+	}
+	if footer := renderFooter(m); strings.Contains(footer, "verifying resources...") {
+		t.Fatalf("completed assessment still shows startup progress: %q", footer)
 	}
 }
 
@@ -484,8 +490,11 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	m.width, m.height = 120, 40
+	m.width, m.height = 80, 24
 	generation := m.beginRequest(requestSnapshot)
+	if footer := renderFooter(m); !strings.Contains(footer, "loading resources...") || strings.Contains(footer, "verifying resources...") {
+		t.Fatalf("startup before configured rows has incorrect status: %q", footer)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stages := readSnapshotStages(ctx, repoRoot, homeDir, catalogLoadCached, generation)
@@ -529,6 +538,9 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "remote") {
 		t.Fatalf("rendered view lacks the pending configured row:\n%s", view)
+	}
+	if !strings.Contains(view, "verifying resources...") || strings.Contains(view, "loading resources...") {
+		t.Fatalf("rendered view lacks verification progress while acquisition is blocked:\n%s", view)
 	}
 	if strings.Contains(view, "[x] remote") || strings.Contains(view, "[x]  skill remote") {
 		t.Fatalf("pending row claims installed state:\n%s", view)

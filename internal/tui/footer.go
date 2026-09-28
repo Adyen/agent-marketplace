@@ -7,6 +7,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func (m Model) verifyingResources() bool {
+	return m.assessmentPending || (m.loading && len(m.provisionalRows) > 0)
+}
+
 func renderFooter(m Model) string {
 	if len(m.errs) > 0 {
 		return renderErrorFooter(m)
@@ -16,11 +20,17 @@ func renderFooter(m Model) string {
 	// Animated spinner + status indicator for in-flight work.
 	// When no in-flight flags are set, the spinner is not rendered.
 	if m.loading {
-		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" loading resources..."))
+		status := " loading resources..."
+		if m.verifyingResources() {
+			status = " verifying resources..."
+		}
+		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(status))
 	} else if m.syncing {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" syncing..."))
 	} else if m.refreshing {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterRefreshing.Render(" refreshing cache..."))
+	} else if m.assessmentPending {
+		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" verifying resources..."))
 	} else if m.driftAssessment != driftReady || m.hasUnavailableRows() {
 		leftParts = append(leftParts, styleDriftPending.Render("~ drift unavailable"))
 	} else if m.driftReport.InSync() {
@@ -88,6 +98,9 @@ func renderErrorFooter(m Model) string {
 	}
 	budget := m.width - ansi.StringWidth(actions) - 1
 	status := fmt.Sprintf("! %d errors", len(m.errs))
+	if m.verifyingResources() {
+		status = m.spinner.View() + " verifying resources... · " + status
+	}
 	if budget > ansi.StringWidth(status)+2 {
 		latest := ""
 		if err := m.errs[len(m.errs)-1]; err != nil {
