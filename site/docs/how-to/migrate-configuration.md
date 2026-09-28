@@ -47,7 +47,7 @@ Preview all writable layers without writing:
 agent-marketplace migrate --dry-run
 ```
 
-V4 migration targets user, repository, and repository-personal config layers; use `--scope user`, `--scope repo`, or `--scope local` to limit the transaction. It refuses include trees, hosted Marketplace selections without proven pin provenance, collection-derived aliases that cannot be represented, and other lossy inputs without changing bytes. It never edits organization configuration. Git- and directory-only conversion leaves locks unchanged; a proven Marketplace conversion creates or upgrades the owning layer lock to `agent-marketplace-lock/v2` atomically with the config in one journaled transaction.
+V4 migration targets user, repository, and repository-personal config layers; use `--scope user`, `--scope repo`, or `--scope local` to limit the transaction. Add `--harnesses claude,factory` to give a migrated user config that has no `harnesses` list its target set; a user config that already declares a different list, is out of scope, or does not exist makes the command fail before anything is written. It refuses include trees, hosted Marketplace selections without proven pin provenance, collection-derived aliases that cannot be represented, and other lossy inputs without changing bytes. It never edits organization configuration. Git- and directory-only conversion leaves locks unchanged; a proven Marketplace conversion creates or upgrades the owning layer lock to `agent-marketplace-lock/v2` atomically with the config in one journaled transaction.
 
 Interactive CLI startup and the TUI ask before migrating, and only about the user-personal legacy root; non-interactive runs and the other writable layers leave legacy files unchanged. To convert any writable root explicitly, run the command below; you can also pass `--to v4`:
 
@@ -74,7 +74,7 @@ A file that is already valid v2 or v3 is left byte-for-byte unchanged by this fl
 agent-marketplace migrate --to v2 --harnesses claude,factory
 ```
 
-`--harnesses` is only used when the user config needs a list and has none; an existing user list wins. On a terminal without `--harnesses`, the command prompts. A non-interactive invocation without a usable target harness set fails rather than guessing.
+`--harnesses` is only written when the user config needs a list and has none. If the user config already declares a different list, the command fails instead of ignoring the flag; an identical list is accepted. `--dry-run` and `--scope` are rejected with `--to v2`, because this flow always writes every layer. On a terminal without `--harnesses`, the command prompts. A non-interactive invocation without a usable target harness set fails rather than guessing.
 
 ### Convert v1 by hand
 
@@ -172,6 +172,7 @@ Included fragments may omit `apiVersion`; they inherit v4 from the root. They ar
 - `v4.source-discriminator`: Keep exactly one of `git`, `directory`, or `marketplace` in each source declaration.
 - `v4.runtime-option`: Remove unsupported options such as a non-default `as` alias for a Git or directory resource.
 - `lock.snapshot-unavailable`: Restore the exact Git snapshot or run a writing lock operation before retrying the check.
+- `v4.migration-harnesses`: `--harnesses` could not be applied. Edit the user config's existing `harnesses` list directly, include the user config in `--scope`, or create a user config with `agent-marketplace init --harnesses …`.
 - `v4.migration-marketplace-evidence`: A Marketplace pin's verified cache evidence is missing or inconsistent. Run a normal legacy `sync` to fetch and verify the endpoint's metadata and artifacts, then rerun `migrate`. Do not write lock or trust data by hand.
 - No startup migration prompt: Interactive CLI startup and the TUI ask, and only about the user-personal root; non-interactive runs leave v2/v3 files alone. Some legacy-only editing forms can still be used without migration. Run `agent-marketplace migrate --dry-run` to preview a conversion before deciding to migrate.
 - A local config still contains `harnesses`: The v2 structural-remediation flow removes it, because the target set is machine-wide and lives in the user or repository config.

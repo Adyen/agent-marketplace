@@ -322,9 +322,9 @@ agent-marketplace migrate [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--to` | string | no | `v4` | Target schema: `v4` or `v2`. |
-| `--scope` | string | no | `all` | V4 writable layer: `all`, `user`, `repo`, or `local`. |
-| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. |
-| `--harnesses` | comma-separated strings | v2 only | none | Target harnesses for legacy structural remediation. |
+| `--scope` | string | no | `all` | V4 writable layer: `all`, `user`, `repo`, or `local`. Rejected with `--to v2`, which always covers every layer. |
+| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. Rejected with `--to v2`, which always writes. |
+| `--harnesses` | comma-separated strings | no | none | Target harnesses for the user config. Written when the migrated user config has none; accepted when they equal the list it already declares; otherwise refused, including when `--scope` excludes the user config or no user config exists. |
 
 The `--to v4` spelling is accepted as an alias. V4 migration refuses lossy inputs and incomplete Marketplace provenance without changing files; proven Marketplace conversions create or upgrade the owning v2 lock atomically with the migrated config. Organization configuration is never edited.
 

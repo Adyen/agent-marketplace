@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -683,5 +684,63 @@ func TestMigrateConfigFilesToV4AllScopePublishesNothingWhenOneLayerIsUnsupported
 	}
 	if got := readConfigString(t, repoLockPath); got != "lock-before-repo" {
 		t.Fatalf("repo lock changed after refusal: %q", got)
+	}
+}
+
+func TestMigrateConfigFilesToV4WithHarnessesAppliesOrRefuses(t *testing.T) {
+	const (
+		legacyWithout = "apiVersion: agent-marketplace/v2\nregistries: []\n"
+		legacyFactory = "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"
+		currentWith   = "apiVersion: agent-marketplace/v4\nharnesses: [cursor, factory]\n"
+		currentNone   = "apiVersion: agent-marketplace/v4\n"
+	)
+	for _, tc := range []struct {
+		name, user string
+		scope      V4MigrationScope
+		harnesses  []string
+		dryRun     bool
+		wantErr    string
+		wantUser   string
+	}{
+		{name: "fills a converted user config", user: legacyWithout, scope: V4MigrationUser, harnesses: []string{" cursor", "cursor"}, wantUser: "cursor"},
+		{name: "accepts the same list in another order", user: legacyFactory, scope: V4MigrationAll, harnesses: []string{"factory"}, wantUser: "factory"},
+		{name: "refuses a different list on a converted user config", user: legacyFactory, scope: V4MigrationUser, harnesses: []string{"cursor"}, wantErr: "already declares harnesses factory"},
+		{name: "accepts an already-v4 user config with the same set", user: currentWith, scope: V4MigrationUser, harnesses: []string{"factory", "cursor"}},
+		{name: "refuses an already-v4 user config with another set", user: currentWith, scope: V4MigrationUser, harnesses: []string{"cursor"}, wantErr: "already declares harnesses cursor, factory"},
+		{name: "refuses an already-v4 user config without harnesses", user: currentNone, scope: V4MigrationUser, harnesses: []string{"cursor"}, wantErr: "declares no harnesses"},
+		{name: "refuses when the user config is out of scope", user: legacyWithout, scope: V4MigrationRepo, harnesses: []string{"cursor"}, wantErr: `scope "repo" does not include the user config`},
+		{name: "refuses when there is no user config", scope: V4MigrationAll, harnesses: []string{"cursor"}, wantErr: "init --harnesses cursor"},
+		{name: "refuses unknown harnesses", user: legacyWithout, scope: V4MigrationUser, harnesses: []string{"not-a-harness"}, wantErr: "not-a-harness"},
+		{name: "dry run writes nothing", user: legacyWithout, scope: V4MigrationUser, harnesses: []string{"cursor"}, dryRun: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			userPath := filepath.Join(dir, "user.yaml")
+			if tc.user != "" {
+				writeV2Config(t, userPath, tc.user)
+			}
+			_, err := MigrateConfigFilesToV4WithHarnesses(context.Background(), MigratePaths{User: userPath}, tc.scope, tc.dryRun, nil, tc.harnesses)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if tc.user == "" {
+				if _, statErr := os.Stat(userPath); !os.IsNotExist(statErr) {
+					t.Fatalf("migration created a user config: %v", statErr)
+				}
+				return
+			}
+			got := readConfigString(t, userPath)
+			if tc.wantUser == "" {
+				if got != tc.user {
+					t.Fatalf("user config changed to:\n%s", got)
+				}
+			} else if !strings.Contains(got, "apiVersion: agent-marketplace/v4") || !strings.Contains(got, tc.wantUser) {
+				t.Fatalf("migrated user config lacks %q:\n%s", tc.wantUser, got)
+			}
+		})
 	}
 }
