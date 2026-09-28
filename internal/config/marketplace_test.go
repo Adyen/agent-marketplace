@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -180,6 +181,36 @@ func TestValidateMarketplaceEntriesAllowsLayeredAliasForSameIdentity(t *testing.
 	entries[0].Source, entries[1].Source = SourceUnset, SourceUnset
 	if errs := ValidateMarketplaceEntries(entries); len(errs) == 0 {
 		t.Fatal("same-file duplicate alias accepted")
+	}
+}
+
+func TestValidateMarketplaceEntriesTreatsAProvisionalInstanceAsUnknown(t *testing.T) {
+	organization := MarketplaceEntry{URL: "https://market.example", InstanceID: lockfile.ProvisionalMarketplaceInstanceID, Alias: "org", Source: Organization}
+	for _, tc := range []struct {
+		name   string
+		layer  MarketplaceEntry
+		wantOK bool
+	}{
+		{"same URL with a verified instance", MarketplaceEntry{URL: "https://market.example/", InstanceID: "behavior-marketplace", Alias: "org", Source: UserPersonal}, true},
+		{"another URL", MarketplaceEntry{URL: "https://other.example", InstanceID: "behavior-marketplace", Alias: "org", Source: UserPersonal}, false},
+		{"same file", MarketplaceEntry{URL: "https://market.example", InstanceID: "behavior-marketplace", Alias: "org"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := []MarketplaceEntry{organization, tc.layer}
+			if tc.name == "same file" {
+				entries[0].Source = SourceUnset
+			}
+			if errs := ValidateMarketplaceEntries(entries); (len(errs) == 0) != tc.wantOK {
+				t.Fatalf("ValidateMarketplaceEntries = %v, want accepted %t", errs, tc.wantOK)
+			}
+		})
+	}
+	verified := []MarketplaceEntry{
+		{URL: "https://market.example", InstanceID: "behavior-marketplace", Alias: "org", Source: Organization},
+		{URL: "https://market.example", InstanceID: "other-instance", Alias: "org", Source: UserPersonal},
+	}
+	if errs := ValidateMarketplaceEntries(verified); len(errs) == 0 {
+		t.Fatal("two verified instances for one alias were accepted")
 	}
 }
 
