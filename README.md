@@ -1004,12 +1004,13 @@ Read [`CODING_STANDARDS.md`](./CODING_STANDARDS.md) before changing code, and
 
 ```bash
 make build          # build the local binary
-make test           # run root-module tests (TEST_PACKAGES / TEST_FLAGS narrow them)
-make test-fast      # the same tests in -short mode
+make test           # short-mode tests for packages changed vs origin/main (TEST_PACKAGES / TEST_FLAGS override)
+make test-fast      # alias of make test
+make test-full      # the previous behavior: all root-module tests, no -short
 make lint           # tidy, gofmt, go vet, golangci-lint (rewrites files)
 make ci-lint        # the same checks without rewriting files, as CI runs them
-make validate-fast  # short-mode tests, ci-lint, and build
-make validate       # tests, ci-lint, and build
+make validate-fast  # alias of make validate
+make validate       # short-mode selected tests, ci-lint, and build
 make validate-full  # fresh full tests, ci-lint, build, E2E, compatibility checks, TUI QA
 make validate-e2e   # E2E and configuration-compatibility scenarios in one run
 make e2e            # run the end-to-end suite (see below)
@@ -1018,8 +1019,13 @@ make release        # cross-compile darwin-arm64/amd64 and linux-amd64/arm64 int
 ```
 
 While you iterate, run the affected package first, for example
-`make test-fast TEST_PACKAGES=./internal/resolver TEST_FLAGS="-run TestResolve -count=1"`,
-and run the full gates once before you hand off. `make lint` rewrites files, so
+`make test TEST_PACKAGES=./internal/resolver TEST_FLAGS="-run TestResolve -count=1"`,
+and run the full gates once before you hand off. Without `TEST_PACKAGES`,
+`make test` asks `tools/test-local` for the packages changed since the merge
+base with `origin/main` (staged, unstaged, untracked, and committed work);
+paths it cannot map to a root-module package fall back to `./...`, e2e-module
+changes are never selected, and reverse dependencies are left to `make
+test-full` and CI's witnessed run. `make lint` rewrites files, so
 do not run it at the same time as other checks.
 
 ### E2E tests

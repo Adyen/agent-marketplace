@@ -47,7 +47,8 @@ Then skim:
 
 ```bash
 make build           # CGO_ENABLED=0 go build -> ./agent-marketplace
-make test            # go test ./...
+make test            # go test -short on packages changed vs origin/main
+make test-full       # go test ./... (full suite, no -short)
 make lint            # go mod tidy + go fmt + go vet + golangci-lint if present
 make ci-lint         # non-destructive equivalent used in CI
 
@@ -64,6 +65,13 @@ make build && ./agent-marketplace
 For local TUI QA or verification of a user-interaction change, follow
 [Local TUI QA](#local-tui-qa-real-terminal) below; a smoke launch or Go test
 run does not exercise the real-terminal journeys.
+
+Without `TEST_PACKAGES`, `make test` runs `-short` tests for the root-module
+packages `tools/test-local` selects as changed since the merge base with
+`origin/main` (committed, staged, unstaged, untracked). Unmappable paths fall
+back to `./...`, e2e changes are never selected, and reverse dependencies are
+left to `make test-full` and CI's witnessed run; set `TEST_PACKAGES` (or
+`TEST_LOCAL_BASE`) to override.
 
 Pre-commit runs `make test`, `make lint`, `make build`. If `go fmt`
 modifies files during lint, re-stage and commit again.
