@@ -511,7 +511,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	if matErr != nil {
 		checkErrs = append(checkErrs, matErr)
 	}
-	errorRows := buildErrorRows(resolvedResult.Errors, []error{matErr})
+	errorRows := buildErrorRows(checkErrs)
 
 	summaryErr := writeSyncCheckSummary(out, report, errorRows, checkErrs)
 	if strict && len(requirementWarnings) > 0 {
