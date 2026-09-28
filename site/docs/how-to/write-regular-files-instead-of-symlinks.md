@@ -1,6 +1,6 @@
 # How to write regular files instead of symlinks
 
-Switch from the default symlink mode to regular files for repository output.
+By default, sync installs skills as [symlinks](../glossary.md#symlink) that point into the CLI's cache. Switch to file mode to write regular copies into the repository instead.
 
 ## Prerequisites
 
@@ -16,9 +16,11 @@ materialization:
   mode: file
 ```
 
+`mode` accepts `symlink` (the default) or `file`. In `.agents/config.yaml` or `.agents/config.local.yaml`, the setting changes only this repository's output. In `~/.agents/config.yaml`, it sets the default for your machine-wide output and for every repository that does not set its own.
+
 ## 2. Override one target
 
-If one harness needs a different mode, use `targets`:
+If one harness needs a different mode, set it under `targets`:
 
 ```yaml
 materialization:
@@ -33,18 +35,18 @@ materialization:
 agent-marketplace sync
 ```
 
-The CLI writes regular directories and files instead of links for the configured targets. It tracks managed paths in `.agents/materialization-manifest.yaml` so stale files can be removed safely.
+For the harnesses in file mode, sync writes regular folders and files where it would otherwise create links. It records the paths it wrote in `.agents/materialization-manifest.yaml` (for machine-wide output, `~/.agent-marketplace/materialization-manifest.yaml`), so a later sync removes only files it wrote. If you edit one of those files and the resource is later deselected, sync keeps your edited copy and prints a `materialize.collision.user-owned` warning.
 
 ## When to use file mode
 
-- The harness or toolchain does not follow symlinks.
-- The build process needs the resource contents in the working tree.
-- You want to inspect or archive the generated files without resolving links.
+- Your harness or another tool does not follow symlinks.
+- Your build needs the resource contents inside the working tree.
+- You want to inspect or archive the generated files without following links.
 
-## Shared configuration is not affected
+## Shared configuration files are not affected
 
-This setting controls generated resource files and trees. Shared aggregate files such as `.codex/hooks.json`, `.devin/hooks.v1.json`, and `.devin/mcp_config.json` retain their ownership reconciliation rules in either mode.
+This setting controls resource files and folders. Shared configuration files that collect entries from several sources, such as `.codex/hooks.json`, `.devin/hooks.v1.json`, and `.devin/mcp_config.json`, follow the same ownership rules in either mode.
 
 ## Troubleshooting
 
-- **Generated files still contain symlinks**: A `targets` override may still be using `symlink` for that harness. Check `.agents/config.yaml`.
+- If some generated files are still symlinks, a `targets` entry may set `symlink` for that harness. Check `.agents/config.yaml`, `.agents/config.local.yaml`, and `~/.agents/config.yaml`.

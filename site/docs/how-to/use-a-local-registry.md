@@ -1,13 +1,13 @@
 # How to use a local registry
 
-Use a directory on the local machine as a registry.
+Use a folder on your computer as a [registry](../glossary.md#registry), for example while you write your own skills.
 
 ## Prerequisites
 
-- A local directory containing resources in a supported harness layout.
+- A local folder containing resources in a supported harness layout.
 - `agent-marketplace` on your `PATH`.
 
-## 1. Add the local directory to a configuration layer
+## 1. Add the local folder to a configuration file
 
 Declare a `directory` source in `.agents/config.yaml`:
 
@@ -22,9 +22,9 @@ resources:
       - skill/local-review
 ```
 
-In repository `.agents/config.yaml` and `.agents/config.local.yaml` roots, relative paths resolve from the repository root. Use `directory: .` for the repository itself, `directory: ./skills` for its `skills/` directory, or `directory: ./resources/skills` for a nested registry. These paths stay portable when another developer clones the repository.
+In the repository files `.agents/config.yaml` and `.agents/config.local.yaml`, a relative path starts at the repository root, not at the `.agents` folder. Use `directory: .` for the repository itself, `directory: ./skills` for its `skills/` folder, or `directory: ./resources/skills` for a deeper folder. These paths keep working when a teammate clones the repository somewhere else.
 
-In user/organization configs and included fragments, relative paths resolve from the directory containing the declaring file. Relative paths and symlinks cannot escape the applicable base directory; absolute directory paths retain their existing meaning.
+In `~/.agents/config.yaml`, in the organization configuration, and in included fragments, a relative path starts at the folder that contains the file. A relative path, and any symlink along it, must stay inside that starting folder. Absolute paths such as `/home/me/agent-resources` are used exactly as written. The CLI does not expand `~`, so write the full path to a folder in your home directory. A `directory` source accepts `source_harness`, but not `ref` or `path`.
 
 ## 2. Sync
 
@@ -32,23 +32,23 @@ In user/organization configs and included fragments, relative paths resolve from
 agent-marketplace sync
 ```
 
-Local registries are read live and are not represented in `.agents/lock.yaml`.
+Sync reads the folder as it is at that moment. Directory sources never appear in `.agents/lock.yaml`.
 
-## 3. Verify the materialization
+## 3. Verify the result
 
 ```bash
 agent-marketplace status
 ```
 
-Under **LOCAL REGISTRIES**, the local entry appears with its resolved path.
+Under `SYNCED RESOURCES`, the resource's `REGISTRY` column shows the resolved absolute path of the folder, and its `CACHE` column shows `local`.
 
 ## Boundaries
 
-- User-wide configuration cannot contain repository-relative paths.
-- Directory sources are live, unlocked, and unversioned.
-- Directory sources are not checked against `allowed_registries`.
+- A relative path in `~/.agents/config.yaml` starts at `~/.agents`, so it cannot point into a repository by a repository-relative path.
+- Directory sources are read live and have no lock or version. Every sync picks up the folder's current contents.
+- `allowed_registries` does not apply to directory sources.
 
 ## Troubleshooting
 
-- **`path` cannot escape repository root**: Use an absolute path, a home-relative path, or a path that stays within the repository.
-- **Resources are not discovered**: Ensure the directory contains a recognized harness layout or set `source_harness` explicitly.
+- If sync reports `v4.directory-path` with `relative directory source must remain within its source base directory`, the relative path leaves the repository (or the folder of the declaring file). Use an absolute path, or move the resources inside that folder.
+- If no resources are discovered, check that the folder uses a recognized harness layout, or set `source_harness` on the source.
