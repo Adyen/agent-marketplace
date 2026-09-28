@@ -775,15 +775,13 @@ jobs:
             echo
             cat benchmark-summary.txt
             echo
+            echo '<details><summary>Workload notes</summary>'
+            echo
             echo 'TUI startup measures 200 selected skills across three harnesses, including disk reads, exact-lock verification, drift checks, and rendering; fixtures begin without materialized output. Toggle transaction measures config/lock publication across four Git registries without sync or reload. Editor-and-reload measures 200 directory resources without dependency reconciliation. Marketplace browse measures 50 fresh disk-cached results, not installed-pin resolution or HTTP latency.'
-            echo
-            echo '<details><summary>Benchstat excerpt (full output in artifacts)</summary>'
-            echo
-            head -n 100 benchmark-stat.txt | sed 's/^/    /'
             echo
             echo '</details>'
             echo
-            echo '_Informational only; benchmark changes do not fail CI._'
+            echo "_Informational only; benchmark changes do not fail CI. Full benchstat output and profiles are in the [\`tui-performance-evidence\` artifact](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})._"
           } > benchmark-comment.md
           cat benchmark-comment.md >> "$GITHUB_STEP_SUMMARY"
 

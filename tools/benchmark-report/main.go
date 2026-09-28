@@ -11,8 +11,24 @@ import (
 	"strings"
 )
 
+const (
+	alpha     = 0.05
+	threshold = 10.0
+)
+
 type samples struct {
 	time, bytes, allocs []float64
+}
+
+type delta struct {
+	pct, p float64
+	ok     bool
+}
+
+type comparison struct {
+	key                 string
+	base, head          samples
+	time, bytes, allocs delta
 }
 
 func main() {
@@ -87,19 +103,139 @@ func readSamples(in io.Reader) (map[string]samples, error) {
 }
 
 func median(values []float64) float64 {
-	slices.Sort(values)
-	middle := len(values) / 2
-	if len(values)%2 == 0 {
-		return (values[middle-1] + values[middle]) / 2
+	sorted := slices.Sorted(slices.Values(values))
+	middle := len(sorted) / 2
+	if len(sorted)%2 == 0 {
+		return (sorted[middle-1] + sorted[middle]) / 2
 	}
-	return values[middle]
+	return sorted[middle]
 }
 
-func metric(values []float64, scale float64, decimals int) string {
+// mannWhitneyP returns the two-sided Mann-Whitney U p-value using the normal
+// approximation with tie and continuity corrections.
+func mannWhitneyP(a, b []float64) float64 {
+	type sample struct {
+		value float64
+		first bool
+	}
+	all := make([]sample, 0, len(a)+len(b))
+	for _, v := range a {
+		all = append(all, sample{v, true})
+	}
+	for _, v := range b {
+		all = append(all, sample{v, false})
+	}
+	slices.SortFunc(all, func(x, y sample) int { return compareFloat(x.value, y.value) })
+	n := float64(len(all))
+	rankSum, ties := 0.0, 0.0
+	for i := 0; i < len(all); {
+		j := i
+		for j < len(all) && all[j].value == all[i].value {
+			j++
+		}
+		rank, t := float64(i+j+1)/2, float64(j-i)
+		ties += t*t*t - t
+		for _, s := range all[i:j] {
+			if s.first {
+				rankSum += rank
+			}
+		}
+		i = j
+	}
+	n1, n2 := float64(len(a)), float64(len(b))
+	u := rankSum - n1*(n1+1)/2
+	variance := n1 * n2 / 12 * ((n + 1) - ties/(n*(n-1)))
+	if variance <= 0 {
+		return 1
+	}
+	z := math.Max(0, math.Abs(u-n1*n2/2)-0.5) / math.Sqrt(variance)
+	return math.Erfc(z / math.Sqrt2)
+}
+
+func compareFloat(x, y float64) int {
+	switch {
+	case x < y:
+		return -1
+	case x > y:
+		return 1
+	}
+	return 0
+}
+
+func compare(before, after []float64) delta {
+	if len(before) == 0 || len(after) == 0 {
+		return delta{}
+	}
+	b, a := median(before), median(after)
+	pct := 0.0
+	switch {
+	case b != 0:
+		pct = 100 * (a/b - 1)
+	case a != 0:
+		pct = math.Inf(1)
+	}
+	return delta{pct: pct, p: mannWhitneyP(before, after), ok: true}
+}
+
+func (d delta) notable() bool {
+	return d.ok && d.p < alpha && math.Abs(d.pct) >= threshold
+}
+
+func (d delta) String() string {
+	switch {
+	case !d.ok:
+		return "—"
+	case d.p >= alpha || math.Abs(d.pct) < 0.05:
+		return "~"
+	case math.IsInf(d.pct, 1):
+		return "+∞"
+	case d.notable():
+		return fmt.Sprintf("**%+.1f%%**", d.pct)
+	}
+	return fmt.Sprintf("%+.1f%%", d.pct)
+}
+
+func (c comparison) deltas() []delta { return []delta{c.time, c.bytes, c.allocs} }
+
+func (c comparison) notable() bool { return slices.ContainsFunc(c.deltas(), delta.notable) }
+
+func (c comparison) regression() bool {
+	return slices.ContainsFunc(c.deltas(), func(d delta) bool { return d.notable() && d.pct > 0 })
+}
+
+func duration(values []float64) string {
 	if len(values) == 0 {
 		return "—"
 	}
-	return fmt.Sprintf("%.*f", decimals, median(values)/scale)
+	ns := median(values)
+	for _, unit := range []struct {
+		scale float64
+		name  string
+	}{{1e9, "s"}, {1e6, "ms"}, {1e3, "µs"}} {
+		if ns >= unit.scale {
+			return fmt.Sprintf("%.3g %s", ns/unit.scale, unit.name)
+		}
+	}
+	return fmt.Sprintf("%.3g ns", ns)
+}
+
+func escape(key string) string {
+	return strings.NewReplacer("|", "&#124;", "<", "&lt;", ">", "&gt;").Replace(key)
+}
+
+func writeTable(out *strings.Builder, rows []comparison) {
+	out.WriteString("| Benchmark | Base time | Head time | Time | B/op | allocs/op |\n|---|---:|---:|---:|---:|---:|\n")
+	for _, c := range rows {
+		fmt.Fprintf(out, "| %s | %s | %s | %s | %s | %s |\n", escape(c.key),
+			duration(c.base.time), duration(c.head.time), c.time, c.bytes, c.allocs)
+	}
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, word)
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }
 
 func report(baseReader, headReader io.Reader, out io.Writer) error {
@@ -124,26 +260,54 @@ func report(baseReader, headReader io.Reader, out io.Writer) error {
 		}
 	}
 	slices.Sort(keys)
-	var table strings.Builder
-	table.WriteString("| Action | Base ms/op | Head ms/op | Time change | Base → head B/op | Base → head allocs/op | Samples base/head |\n|---|---:|---:|---:|---:|---:|---:|\n")
+	var all, notable []comparison
+	var added, removed []string
+	var timeChanges []float64
+	regressions := 0
 	for _, key := range keys {
 		before, after := base[key], head[key]
-		change := "n/a"
+		c := comparison{key: key, base: before, head: after,
+			time: compare(before.time, after.time), bytes: compare(before.bytes, after.bytes), allocs: compare(before.allocs, after.allocs)}
+		all = append(all, c)
 		switch {
 		case len(before.time) == 0:
-			change = "new"
+			added = append(added, fmt.Sprintf("`%s` (%s)", key, duration(after.time)))
 		case len(after.time) == 0:
-			change = "removed"
-		case median(before.time) != 0:
-			change = fmt.Sprintf("%+.1f%%", 100*(median(after.time)/median(before.time)-1))
+			removed = append(removed, fmt.Sprintf("`%s`", key))
+		default:
+			timeChanges = append(timeChanges, c.time.pct)
 		}
-		label := strings.NewReplacer("|", "&#124;", "<", "&lt;", ">", "&gt;").Replace(key)
-		fmt.Fprintf(&table, "| %s | %s | %s | %s | %s → %s | %s → %s | %d/%d |\n", label,
-			metric(before.time, 1e6, 3), metric(after.time, 1e6, 3), change,
-			metric(before.bytes, 1, 0), metric(after.bytes, 1, 0),
-			metric(before.allocs, 1, 0), metric(after.allocs, 1, 0), len(before.time), len(after.time))
+		if c.notable() {
+			notable = append(notable, c)
+			if c.regression() {
+				regressions++
+			}
+		}
 	}
-	table.WriteString("\nMedians of repeated samples; time changes are descriptive, not significance tests. See benchstat below for confidence intervals. New benchmarks have no base comparison.\n")
-	_, err = io.WriteString(out, table.String())
+	slices.SortStableFunc(notable, func(x, y comparison) int { return compareFloat(y.time.pct, x.time.pct) })
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "**%s, %s** of %d compared benchmarks (≥%.0f%% change, p<%.2f)",
+		plural(regressions, "regression"), plural(len(notable)-regressions, "improvement"), len(timeChanges), threshold, alpha)
+	if len(timeChanges) > 0 {
+		fmt.Fprintf(&b, " · median time change %+.1f%%", median(timeChanges))
+	}
+	b.WriteString("\n\n")
+	if len(notable) > 0 {
+		b.WriteString("### Notable changes\n\n")
+		writeTable(&b, notable)
+		b.WriteString("\n")
+	}
+	if len(added) > 0 {
+		fmt.Fprintf(&b, "**New:** %s\n\n", strings.Join(added, ", "))
+	}
+	if len(removed) > 0 {
+		fmt.Fprintf(&b, "**Removed:** %s\n\n", strings.Join(removed, ", "))
+	}
+	fmt.Fprintf(&b, "<details><summary>All %d benchmarks</summary>\n\n", len(all))
+	writeTable(&b, all)
+	b.WriteString("\n</details>\n\n")
+	fmt.Fprintf(&b, "Times are medians. Changes compare base and head medians; `~` means no significant change (Mann-Whitney U, p≥%.2f, or under 0.05%%). Bold changes are notable. A uniform median time change across all benchmarks usually indicates runner noise rather than a code change.\n", alpha)
+	_, err = io.WriteString(out, b.String())
 	return err
 }
