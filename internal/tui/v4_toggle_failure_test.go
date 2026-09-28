@@ -27,9 +27,13 @@ func TestV4ToggleFailureKeepsInvalidConfigBytesThroughStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	act := toggleAction{skillName: "alpha", kind: ir.KindSkill, scope: scopeGlobal, enable: true, registryURL: filepath.Join(t.TempDir(), "registry"), registryKind: config.V4SourceDirectory}
+	workspace, err := pipeline.NewWorkspace(repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	reconciled := false
-	msg, ok := runDependencyScopedToggle(context.Background(), repo, act, func(ctx context.Context, root string, mutation func(pipeline.ConfigPathMapper) error) error {
-		return pipeline.MutateConfigWithDependencies(ctx, root, root, mutation, func(context.Context, string, string, bool, []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
+	msg, ok := runDependencyScopedToggle(context.Background(), workspace, act, func(ctx context.Context, ws pipeline.Workspace, mutation func(pipeline.ConfigPathMapper) error) error {
+		return pipeline.MutateConfigWithDependencies(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mutation, func(context.Context, string, string, bool, []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
 			reconciled = true
 			return pipeline.DependencyLockView{}, nil
 		})

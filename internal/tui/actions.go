@@ -257,7 +257,7 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 	// an exact-lock acquisition error — must surface diagnostics and return
 	// here, before detail capture or dry-run materialization can act on an
 	// invalid root and mask the original error.
-	if len(resolvedResult.Errors) > 0 {
+	if len(resolvedResult.Errors) > 0 && len(resolvedResult.CatalogErrors) == 0 && len(resolvedResult.ResolveErrors) == 0 {
 		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticResolution, resolvedResult.Errors...)
 		base.diagnostics = deduplicateDiagnostics(diagnostics)
 		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
