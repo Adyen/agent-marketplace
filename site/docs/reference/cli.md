@@ -466,6 +466,27 @@ agent-marketplace serve reindex [registry-slug-or-id] --config <path>
 
 With no registry argument, the command reindexes every configured registry. With one slug or ID, it reindexes only that registry. It applies revocations before acquisition and performs a store readiness check after processing.
 
+### `serve reset`
+
+Resets one registry's generated catalog during a maintenance window. It accepts exactly one registry slug or ID; there is no all-registry default.
+
+```text
+agent-marketplace serve reset <registry-slug-or-id> --config <path> --dry-run
+agent-marketplace serve reset <registry-slug-or-id> --config <path> --confirm-maintenance
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--config` | path | yes | none | Marketplace operator YAML file. |
+| `--dry-run` | boolean | no | `false` | Reports affected row counts without resetting catalog data. Takes precedence over `--confirm-maintenance`. |
+| `--confirm-maintenance` | boolean | for reset | `false` | Confirms all API/workers are stopped, metadata is backed up, and controllable shared caches are invalidated. |
+
+Reset deletes the selected registry's resource revisions, assessments, collections, occurrence and publication history, current catalog pointers, and blob-ownership references in one metadata transaction. Its refresh status becomes unknown. Registry settings, managed configuration and administrative history, policies, revocations, other registries, and all blob bytes remain intact. Shared blobs are not deleted. Database-managed mode resolves the selector from managed configuration rather than stale operator YAML.
+
+The command refuses a destructive reset while any job holds a live lease, but cannot verify external process shutdown or cache invalidation. The registry is unavailable until a subsequent `serve reindex <registry-slug-or-id> --config <path>` succeeds; reindexing is not automatic. References from other registries may be unavailable until rebuilding completes, and historical revisions absent from the current source are not recovered by reindexing. Existing locks and cached revision metadata may need refreshing. Reset does not make older clients compatible with newer artifact contents.
+
+Both modes open the configured stores, including normal schema initialization. Output begins with `Would reset catalog` or `Reset catalog`, followed by per-table row counts. The command returns nonzero on invalid arguments, missing confirmation, an unknown registry, live job leases, or a storage failure; a failed metadata transaction rolls back the reset.
+
 ### `serve adopt`
 
 Adopts catalog settings during a controlled maintenance window, establishing database configuration authority.

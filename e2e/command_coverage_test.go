@@ -43,6 +43,7 @@ var schemaIndependentCommands = map[string]string{
 	"serve":                 "runs the Marketplace server from its own --config",
 	"serve adopt":           "maintains the Marketplace server from its own --config",
 	"serve reindex":         "maintains the Marketplace server from its own --config",
+	"serve reset":           "maintains the Marketplace server from its own --config",
 }
 
 type commandTree struct {

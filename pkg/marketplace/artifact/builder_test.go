@@ -21,7 +21,7 @@ func TestBuildResourceArtifact(t *testing.T) {
 		"README.md": []byte("# Review\n"),
 	}
 
-	result, err := BuildResourceArtifact(ctx, s, files, opts)
+	result, err := BuildResourceArtifact(ctx, s, files, nil, opts)
 	if err != nil {
 		t.Fatalf("BuildResourceArtifact: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestBuildResourceArtifactRejects(t *testing.T) {
 
 	s := ir.NewSkill("review", "Review", "\u202Ehidden", nil, nil, ir.SourceRef{})
 
-	result, err := BuildResourceArtifact(ctx, s, nil, opts)
+	result, err := BuildResourceArtifact(ctx, s, nil, nil, opts)
 	if err != nil {
 		t.Fatalf("BuildResourceArtifact: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
 	warnOpts := analyze.DefaultOptions()
 	warnOpts.Version = "analyzer-v1"
 	warnOpts.Registry = analyze.Registry{RegistryURL: "https://example.com/one.git", Ref: "main", Path: "skills/review", ID: "one", Slug: "one", License: "MIT"}
-	warn, err := BuildResourceArtifact(context.Background(), s, nil, warnOpts)
+	warn, err := BuildResourceArtifact(context.Background(), s, nil, nil, warnOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
 	rejectOpts.Version = "analyzer-v2"
 	rejectOpts.Policy = analyze.Policy{Name: "strict", Outcomes: map[string]string{analyze.FindingToolGrant: analyze.OutcomeReject}}
 	rejectOpts.Registry = analyze.Registry{RegistryURL: "https://example.com/two.git", Ref: "release", Path: "other/review", ID: "two", Slug: "two", License: "Apache-2.0"}
-	rejected, err := BuildResourceArtifact(context.Background(), s, nil, rejectOpts)
+	rejected, err := BuildResourceArtifact(context.Background(), s, nil, nil, rejectOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestBuildCollectionManifest(t *testing.T) {
 	opts.Registry = analyze.Registry{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "registry-id"}
 
 	s := ir.NewSkill("review", "Review", "Body", nil, nil, ir.SourceRef{})
-	skillResult, err := BuildResourceArtifact(ctx, s, nil, opts)
+	skillResult, err := BuildResourceArtifact(ctx, s, nil, nil, opts)
 	if err != nil {
 		t.Fatalf("BuildResourceArtifact: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestBuildCollectionManifestIgnoresMemberAssessment(t *testing.T) {
 	opts.Registry = analyze.Registry{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "registry-id"}
 
 	acceptedSkill := ir.NewSkill("review", "Review", "Body", nil, nil, ir.SourceRef{})
-	accepted, err := BuildResourceArtifact(ctx, acceptedSkill, nil, opts)
+	accepted, err := BuildResourceArtifact(ctx, acceptedSkill, nil, nil, opts)
 	if err != nil {
 		t.Fatalf("BuildResourceArtifact accepted: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestBuildCollectionManifestIgnoresMemberAssessment(t *testing.T) {
 	}
 
 	rejectedSkill := ir.NewSkill("bad", "Bad", "\u202Ehidden", nil, nil, ir.SourceRef{})
-	rejected, err := BuildResourceArtifact(ctx, rejectedSkill, nil, opts)
+	rejected, err := BuildResourceArtifact(ctx, rejectedSkill, nil, nil, opts)
 	if err != nil {
 		t.Fatalf("BuildResourceArtifact rejected: %v", err)
 	}

@@ -341,6 +341,10 @@ func (c *Cache) ArtifactPath(digest string) string {
 	return filepath.Join(c.root, "artifacts", safeDigest(digest), "artifact.tar.gz")
 }
 
+func (c *Cache) MirrorResourceDir(digest string) string {
+	return filepath.Join(c.root, "compiled", "marketplace-artifacts", safeDigest(digest))
+}
+
 // IndexOnlyArtifactPath returns the cache path for an artifact reconstructed
 // from one exact registry occurrence.
 func (c *Cache) IndexOnlyArtifactPath(identity IndexOnlyIdentity, digest string) string {

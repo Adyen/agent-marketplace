@@ -109,13 +109,26 @@ as a deterministic `tar.gz` archive containing:
 - `resource/<kind>.json` canonical payload
 - optional `assets/<relative-path>` files
 - optional `licenses/<relative-path>` files
+- optional `support/<url-escaped-relative-path>` files carrying the declared
+  support bytes and executable modes of a mirrored skill; declared paths may
+  be flat or nested and are url-escaped into member names
+
+`support/` members remain within artifact schema v1 but change the archive
+digest; because `archive_digest` is immutable per content digest, they can
+only ship under a new content revision. Clients predating `support/` members
+fail canonical digest validation on such archives rather than silently
+installing them. An already-published artifact that declares support files but
+does not carry `support/` members cannot be repaired in place; consumers MUST
+fail closed, preserving any last-good installation, until a new content
+revision or an index-only source supplies the bytes.
 
 #### Scenario: Canonical artifact round-trip
 
 - **WHEN** a `CanonicalArtifact` is built from any selectable IR resource
   (`skill`, `command`, `subagent`, `hook`, or `mcpserver`)
 - **THEN** `Encode` MUST return a deterministic `tar.gz` archive and an archive digest
-- **AND** `Decode` MUST restore the manifest, payload, assets, and licenses
+- **AND** `Decode` MUST restore the manifest, payload, assets, licenses, and
+  support files
 - **AND** `VerifyContentDigest`, `VerifyArchiveDigest`, and `ValidateArchive`
   MUST pass for the decoded artifact
 
