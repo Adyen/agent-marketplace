@@ -18,7 +18,7 @@ func BenchmarkBuildResourceArtifact(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := BuildResourceArtifact(ctx, s, files, opts)
+		_, err := BuildResourceArtifact(ctx, s, files, nil, opts)
 		if err != nil {
 			b.Fatal(err)
 		}

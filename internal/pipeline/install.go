@@ -84,7 +84,11 @@ func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
 
 // InstallResult holds the outcome of an install operation.
 type InstallResult struct {
-	Installed                    []string
+	Installed []string
+	// NotSelected names resources the install asked for that the effective
+	// configuration still does not select, for example because an exclusion
+	// wins, so they were not installed.
+	NotSelected                  []string
 	IsCollection                 bool
 	CollectionLabel              string
 	RequirementWarnings          []error
@@ -525,15 +529,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	if err != nil {
 		return nil, err
 	}
-	requirementWarnings, err := syncAfterInstall(ctx, repoRoot, installedResources, silentSyncOptsForInstall(opts)...)
-	if err != nil {
-		return nil, err
-	}
-
-	return &InstallResult{
-		Installed:           installed,
-		RequirementWarnings: requirementWarnings,
-	}, nil
+	return syncInstalledResources(ctx, repoRoot, installed, installedResources, silentSyncOptsForInstall(opts)...)
 }
 
 func resourceIdentities(kind ir.ResourceKind, names []string) []resourceIdentity {
@@ -579,6 +575,45 @@ func expandInstalledCollectionResources(installed []resourceIdentity, available 
 		expanded = append(expanded, members...)
 	}
 	return expanded, nil
+}
+
+// syncInstalledResources syncs after an install and reports the named
+// resources the final resolution selected separately from those it did not.
+func syncInstalledResources(ctx context.Context, repoRoot string, names []string, resources []resourceIdentity, opts ...silentSyncOpt) (*InstallResult, error) {
+	var resolved []resolver.ResolvedArtifact
+	requirementWarnings, err := syncAfterInstall(ctx, repoRoot, resources, append(slices.Clip(opts), withResolvedCapture(&resolved))...)
+	if err != nil {
+		return nil, err
+	}
+	installed, notSelected := partitionInstalledNames(names, resources, resolved)
+	return &InstallResult{Installed: installed, NotSelected: notSelected, RequirementWarnings: requirementWarnings}, nil
+}
+
+// partitionInstalledNames keeps a name as installed when the resolution
+// selected it in any of its installed kinds; a name without a known kind is
+// kept rather than reported as unselected without evidence.
+func partitionInstalledNames(names []string, resources []resourceIdentity, resolved []resolver.ResolvedArtifact) (installed, notSelected []string) {
+	selected := make(map[resourceIdentity]bool, len(resolved))
+	for _, artifact := range resolved {
+		selected[resourceIdentity{kind: artifact.Kind, name: strings.TrimSpace(artifact.Name)}] = true
+	}
+	kinds := make(map[string][]ir.ResourceKind, len(resources))
+	for _, resource := range resources {
+		kinds[strings.TrimSpace(resource.name)] = append(kinds[strings.TrimSpace(resource.name)], resource.kind)
+	}
+	for _, name := range names {
+		trimmed := strings.TrimSpace(name)
+		found := len(kinds[trimmed]) == 0
+		for _, kind := range kinds[trimmed] {
+			found = found || selected[resourceIdentity{kind: kind, name: trimmed}]
+		}
+		if found {
+			installed = append(installed, name)
+		} else {
+			notSelected = append(notSelected, name)
+		}
+	}
+	return installed, notSelected
 }
 
 func syncAfterInstall(ctx context.Context, repoRoot string, installed []resourceIdentity, opts ...silentSyncOpt) ([]error, error) {
@@ -1189,14 +1224,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		if err := clearInstallExcludes(repoRoot, binding.Entry, match.kind, resourceName, opts.configStaging); err != nil {
 			return nil, err
 		}
-		requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: resourceName}}, silentSyncOptsForInstall(opts)...)
-		if err != nil {
-			return nil, err
-		}
-		return &InstallResult{
-			Installed:           []string{resourceName},
-			RequirementWarnings: requirementWarnings,
-		}, nil
+		return syncInstalledResources(ctx, repoRoot, []string{resourceName}, []resourceIdentity{{kind: match.kind, name: resourceName}}, silentSyncOptsForInstall(opts)...)
 	}
 
 	// No name arg: try to infer a single resource name from the URL path.
@@ -1226,14 +1254,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 				if err := clearInstallExcludes(repoRoot, binding.Entry, match.kind, inferredName, opts.configStaging); err != nil {
 					return nil, err
 				}
-				requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: inferredName}}, silentSyncOptsForInstall(opts)...)
-				if err != nil {
-					return nil, err
-				}
-				return &InstallResult{
-					Installed:           []string{inferredName},
-					RequirementWarnings: requirementWarnings,
-				}, nil
+				return syncInstalledResources(ctx, repoRoot, []string{inferredName}, []resourceIdentity{{kind: match.kind, name: inferredName}}, silentSyncOptsForInstall(opts)...)
 			}
 		}
 		// Inferred name not found — fall through to bundle mode.
@@ -1281,14 +1302,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err != nil {
 		return nil, err
 	}
-	requirementWarnings, err := syncAfterInstall(ctx, repoRoot, installedResources, silentSyncOptsForInstall(opts)...)
-	if err != nil {
-		return nil, err
-	}
-	return &InstallResult{
-		Installed:           allInstalled,
-		RequirementWarnings: requirementWarnings,
-	}, nil
+	return syncInstalledResources(ctx, repoRoot, allInstalled, installedResources, silentSyncOptsForInstall(opts)...)
 }
 
 func adHocEntryMatchesBinding(candidate, bound config.RegistryEntry) bool {

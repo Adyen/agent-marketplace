@@ -58,7 +58,23 @@ func TestMain(m *testing.M) {
 		log.Fatalf("e2e: build binary: %v", err)
 	}
 
+	e2eInvocationDir, err = os.MkdirTemp("", "agent-marketplace-e2e-invocations-")
+	if err != nil {
+		_ = os.RemoveAll(binaryDir)
+		log.Fatalf("e2e: create invocation directory: %v", err)
+	}
+
 	code := m.Run()
+	if code == 0 {
+		if err := checkCommandCoverage(binaryPath); err != nil {
+			log.Printf("e2e: %v", err)
+			code = 1
+		}
+	}
+	if err := os.RemoveAll(e2eInvocationDir); err != nil {
+		slog.Error("e2e: remove invocation directory", "path", e2eInvocationDir, "err", err)
+		code = 1
+	}
 	if err := os.RemoveAll(binaryDir); err != nil {
 		slog.Error("e2e: remove binary", "path", binaryPath, "err", err)
 		code = 1
