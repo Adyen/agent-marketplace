@@ -1,38 +1,42 @@
 # Shared configuration ownership
 
-`agent-marketplace` can manage parts of Devin and Codex configuration files, but it must not delete or overwrite user-authored entries. Ownership records make that safe.
+Some harnesses keep hooks and MCP servers in one shared file instead of one file per resource. Devin uses `mcp_config.json`, Codex uses `.codex/hooks.json` and `.codex/config.toml`, and Gemini keeps MCP servers in `.gemini/settings.json`. You may have written entries in those files yourself. `agent-marketplace` adds and updates its own entries there, and it must never delete or overwrite yours. To tell the two apart, it keeps a record of the entries it wrote. The docs call that record [ownership state](../glossary.md#ownership-state).
 
-## Why ownership is outside the files
+This page covers Devin, Codex, and Gemini MCP servers. Other harnesses mark managed entries inside the file instead; [native harness materialization](./native-harness-materialization.md#shared-configuration-files) explains the difference.
 
-An in-file `_managed_by` marker can be written by any tool, so it cannot prove that a user did not add it. `agent-marketplace` keeps durable ownership in XDG state under `$XDG_STATE_HOME/agent-marketplace/` (default `~/.local/state/agent-marketplace/`) instead.
+## Why ownership is recorded outside the files
+
+A marker such as `"_managed_by": "agent-marketplace"` inside a file proves nothing: any tool or person can copy it into an entry. If the CLI trusted it, a handwritten entry that happened to carry the marker could be deleted. So for these harnesses the CLI writes no marker. It stores ownership in its state folder, `$XDG_STATE_HOME/agent-marketplace/` (by default `~/.local/state/agent-marketplace/`). That folder is outside your projects and outside the cache, so clearing the cache has no effect on ownership.
 
 ## What the state records
 
-For each canonical target root, the ownership journal records which aggregate files the CLI wrote, the content hash at the time of writing, and the operation generation.
+The state is kept separately for each harness folder, such as a project's `.devin/` or your `~/.codex/`. For each shared file in that folder, it records which entries the CLI wrote and a fingerprint (digest) of each entry's value as written. Each change also increases a generation number, which lets the CLI detect two processes writing at once. The record holds names, digests, and generation numbers, not the commands, URLs, or secrets inside your entries.
 
-## Fail closed
+Before each change to one of these files, the CLI saves a copy of the file as it was. It does this even when you have turned configured backups off, and keeps the five newest copies of each file.
 
-When ownership state is missing or corrupt, every existing aggregate entry is treated as unmanaged. The CLI then:
+## When the state is missing or damaged
 
-- preserves every existing entry;
-- refuses collisions with generated entries; and
-- prunes nothing.
+If the ownership state is missing or cannot be read, the CLI has no proof that it wrote anything. It then treats every existing entry as yours, and during `sync` it:
 
-This avoids deleting hand-written configuration when the state is lost.
+- keeps every existing entry,
+- refuses to write an entry whose name is already taken, and
+- removes nothing.
 
-## Adoptions, orphans, and conflicts
+The worst result is a stale entry you delete by hand. A handwritten entry is never lost. A problem in one file, such as invalid JSON in `mcp_config.json`, blocks only that file; the other files are still updated.
 
-`agent-marketplace doctor --repair` handles three cases:
+## Repairing ownership
 
-- **Exact match**: the existing entry matches the desired one; the CLI can adopt it.
-- **Orphan**: the entry was generated but is no longer selected; it can be removed.
-- **Conflict**: the key matches but the value differs; the user must confirm replacement.
+`agent-marketplace doctor --repair` shows what it can fix in the Devin and Codex files and, when run in a [terminal](../glossary.md#terminal), asks before each change. It recognizes three situations:
 
-Replacements take a fresh safety backup first and never happen with `--yes` alone.
+- An existing entry is exactly what the CLI would write. Recording it as managed changes no bytes in the file, so `--yes` can do this without asking.
+- An entry the CLI wrote earlier is no longer selected, and a saved backup or a recorded change proves the CLI wrote it. The CLI can remove it.
+- An entry you did not install through the CLI has the same name as a selected resource but a different value. The CLI can replace it with the selected version.
 
-## Serialized mutations
+Removing or replacing an entry deletes content, so the CLI asks you about each entry separately and saves a fresh backup first, even with `--yes`. Without a terminal, `--repair` only previews, unless `--yes` lets it adopt exact matches. [How to repair owned shared configuration](../how-to/repair-owned-shared-configuration.md) walks through a repair.
 
-Devin aggregate updates use advisory `flock(2)` per canonical root. `flock` normally serializes concurrent writers for the same open file description. When `flock` is unavailable, the ownership store falls back to compare-and-swap on the journal generation. `ownership.generation-conflict` occurs only when the fallback detects a conflict, not merely because `flock` is absent.
+## Two processes at once
+
+Two `sync` runs, in two terminals or in a script, could try to edit the same file at the same moment. Every change to one harness folder's ownership state takes an advisory file lock (`flock(2)`) for that folder, so only one process edits it at a time. The operating system releases the lock when the process exits, even after a crash, so a leftover lock cannot block later runs. On a file system that does not support these locks, the CLI falls back to comparing generation numbers: if another process changed the state in the meantime, the change is refused with `ownership.generation-conflict`, and nothing is overwritten. The CLI reports that code only when it detects such a conflict, not merely because locking is unavailable.
 
 ## Related documentation
 

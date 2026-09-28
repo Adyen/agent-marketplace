@@ -1,54 +1,65 @@
 # Environment variables reference
 
+This page lists the environment variables that `agent-marketplace` reads and what each one changes. You only need them to override a setting for one run, in CI, or on a machine where you cannot edit the config file. To set one for a single command, put it in front of the command, for example `AGENT_MARKETPLACE_LOG_LEVEL=debug agent-marketplace sync`.
+
 ## Logging
 
 | Variable | Effect |
 |---|---|
-| `AGENT_MARKETPLACE_LOG_ENABLED` | Enable or disable logging (`true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`). |
-| `AGENT_MARKETPLACE_LOG_LEVEL` | Set the log level (`debug`, `info`, `warn`, `error`). |
-| `AGENT_MARKETPLACE_LOG_FILE` | Override the log file path. `~` and `$VAR` are expanded. |
-| `AGENT_MARKETPLACE_LOG_MAX_SIZE_MB` | Rotate when the file exceeds this size in MB. |
-| `AGENT_MARKETPLACE_LOG_MAX_BACKUPS` | Number of rotated files to keep (`0` keeps all). |
-| `AGENT_MARKETPLACE_LOG_MAX_AGE_DAYS` | Delete rotated files older than this (`0` keeps all). |
-| `AGENT_MARKETPLACE_LOG_COMPRESS` | Compress rotated files. |
-| `AGENT_MARKETPLACE_DEBUG` | Force `debug` level and mirror logs to standard error, like `--debug`. |
+| `AGENT_MARKETPLACE_LOG_ENABLED` | Turns file logging on or off. Accepts `true`/`false`, `1`/`0`, `yes`/`no`, or `on`/`off`. Other values are ignored. |
+| `AGENT_MARKETPLACE_LOG_LEVEL` | Sets the log level: `debug`, `info`, `warn` (or `warning`), or `error`. Any other value means `info`. |
+| `AGENT_MARKETPLACE_LOG_FILE` | Sets the log file path. `~` and `$VAR` are expanded. |
+| `AGENT_MARKETPLACE_LOG_MAX_SIZE_MB` | Rotates the file when it grows past this many megabytes. Must be a positive integer; other values are ignored. |
+| `AGENT_MARKETPLACE_LOG_MAX_BACKUPS` | Number of rotated files to keep. `0` keeps all of them. Negative or non-integer values are ignored. |
+| `AGENT_MARKETPLACE_LOG_MAX_AGE_DAYS` | Deletes rotated files older than this many days. `0` keeps all of them. Negative or non-integer values are ignored. |
+| `AGENT_MARKETPLACE_LOG_COMPRESS` | Compresses rotated files. Accepts the same values as `AGENT_MARKETPLACE_LOG_ENABLED`. |
+| `AGENT_MARKETPLACE_DEBUG` | When true, forces the `debug` level and mirrors logs to standard error, like `--debug`. Accepts the same values as `AGENT_MARKETPLACE_LOG_ENABLED`. |
+
+See the [logging reference](./logging.md) for defaults and the config file equivalents.
 
 ## Telemetry
 
 | Variable | Effect |
 |---|---|
-| `AGENT_MARKETPLACE_TELEMETRY_LEVEL` | Set the telemetry level (`off`, `basic`, `detailed`). |
-| `AGENT_MARKETPLACE_TELEMETRY_ENDPOINT` | Set the OTLP/HTTP endpoint. |
-| `AGENT_MARKETPLACE_TELEMETRY_COMMUNITY_REPORTING` | Send the basic schema to the project endpoint (`true`/`false`). |
+| `AGENT_MARKETPLACE_TELEMETRY_LEVEL` | Sets the telemetry level: `off`, `basic`, or `detailed`. `diagnostic` is rejected because it is a per-run flag (`--diagnostic`). Ignored when the organization config has a `telemetry` block. |
+| `AGENT_MARKETPLACE_TELEMETRY_ENDPOINT` | Sets the OTLP/HTTP endpoint. Ignored when organization policy sets an endpoint. An endpoint that differs from the one in your user config drops the user config's `headers`. |
+| `AGENT_MARKETPLACE_TELEMETRY_COMMUNITY_REPORTING` | Sends the basic schema to the project endpoint (`true` or `false`, or another value Go's `strconv.ParseBool` accepts, such as `1` or `0`). Ignored when organization policy sets `community_reporting`. |
 
-Fields that an organization policy locks cannot be overridden by these variables. Standard `OTEL_*` variables are ignored.
+An invalid value makes telemetry resolution fail; `telemetry` subcommands then exit with an error, and other commands log a warning and run without telemetry. Standard `OTEL_*` variables are ignored; the CLI logs a warning when it sees one. See the [telemetry reference](./telemetry.md).
 
 ## Runtime
 
 | Variable | Effect |
 |---|---|
-| `AGENT_MARKETPLACE_NO_TUI` | A non-empty value disables the TUI and prints help on a bare invocation. |
-| `AGENT_MARKETPLACE_OWNERSHIP_LOCK_TIMEOUT` | Override the per-root ownership lock wait (a Go duration such as `60s`; default 30s). `0` fails immediately when another process holds the lock. |
-| `EDITOR` | Editor launched by the TUI `E` key. |
-| `NO_COLOR`, `CLICOLOR=0`, `TERM=dumb` | Disable colored `sync` output. |
+| `AGENT_MARKETPLACE_NO_TUI` | Any non-empty value stops a bare `agent-marketplace` from starting the TUI; it prints help instead. |
+| `AGENT_MARKETPLACE_OWNERSHIP_LOCK_TIMEOUT` | How long a command waits for another process that is updating the same Devin or Codex shared configuration files. Takes a Go duration such as `60s` or `500ms`; the default is `30s`. `0` fails immediately when another process holds the lock. A negative or unparseable value is an error. |
+| `EDITOR` | Editor the TUI `E` key opens. It may include arguments, for example `code --wait`. Defaults to `vi` when unset. |
+| `NO_COLOR`, `CLICOLOR=0`, `TERM=dumb` | Turn off colored `sync` and `install` output. `NO_COLOR` works when set to any value, even an empty one. |
 
 ## Paths
 
 | Variable | Effect |
 |---|---|
-| `HOME` | Base for `~/.agents`, `~/.cache/agent-marketplace`, `~/.agent-marketplace`, and every harness machine root. |
-| `XDG_STATE_HOME` | Base for durable ownership state, safety backups, and diagnostic payloads (`$XDG_STATE_HOME/agent-marketplace/`; default `~/.local/state/agent-marketplace/`). Must be absolute to take effect. |
-| `CODEX_HOME` | Relocates only the Codex `.codex` machine partition (subagents, hooks, MCP). Must be absolute; a relative value is a diagnostic error. Skills stay under `~/.agents`. |
+| `HOME` | Base for `~/.agents` (user config and lock), `~/.cache/agent-marketplace` (cache), `~/.agent-marketplace` (logs, backups, and materialization manifest), and every harness machine root. |
+| `XDG_STATE_HOME` | Base for durable state under `$XDG_STATE_HOME/agent-marketplace/`: ownership records and safety backups, dependency-transaction records (`dependencies/`), and telemetry state (`telemetry/`, which holds the installation ID, queue, and diagnostic payloads). Defaults to `~/.local/state/agent-marketplace/`. Set it to an absolute path. Ownership and telemetry state ignore a relative value and use the default, but dependency transactions refuse it with the error `XDG_STATE_HOME must be absolute`. |
+| `CODEX_HOME` | Moves only the Codex `.codex` machine folder (subagents, hooks, and MCP servers). Must be absolute; a relative value is an error. Codex skills stay under `~/.agents`. |
 
-The cache always lives at `~/.cache/agent-marketplace/`; `XDG_CACHE_HOME` is not consulted.
+The cache is always `~/.cache/agent-marketplace/`; `XDG_CACHE_HOME` is not used. The user config is always `~/.agents/config.yaml` and the organization config is always `/etc/agent-marketplace/config.yaml`; no variable moves them. See the [filesystem layout reference](./filesystem-layout.md).
 
 ## Git
 
-Registry acquisition shells out to `git`, so the usual Git environment applies (`GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_CONFIG_NOSYSTEM`, `XDG_CONFIG_HOME/git`). Credentials are never read from `agent-marketplace` configuration.
+Registry acquisition runs the `git` program with a reduced environment:
+
+- Of the `GIT_*` variables, only `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_SSL_CERT`, `GIT_SSL_KEY`, `GIT_SSL_CAINFO`, `GIT_SSL_CAPATH`, `GIT_ASKPASS`, `GIT_HTTP_PROXY`, `GIT_HTTPS_PROXY`, and `GIT_NO_PROXY` are passed through. All other `GIT_*` variables are removed. Variables that do not start with `GIT_`, such as `SSH_AUTH_SOCK` and `HTTPS_PROXY`, pass through unchanged.
+- The CLI sets `GIT_TERMINAL_PROMPT=0`, so Git never stops to ask for a password. It sets `GIT_ASKPASS=echo` when you have not set `GIT_ASKPASS`.
+- It sets `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, so your Git config files are not applied as a whole.
+- For HTTP(S) remotes, it copies only the authentication settings (`credential.helper`, `credential.username`, `credential.useHttpPath`, `http.sslCAInfo`, `http.sslCAPath`, `http.sslCert`, `http.sslKey`, `http.sslCertPasswordProtected`, and `http.extraHeader`, including URL-specific forms) from your system and global Git config. The global config is the file named by `GIT_CONFIG_GLOBAL`, or `$XDG_CONFIG_HOME/git/config` (default `~/.config/git/config`) and `~/.gitconfig`. A true `GIT_CONFIG_NOSYSTEM` skips the system config. The command refuses with `git.auth-config-untrusted` if such a file uses `include`, is writable by group or others, or is owned by someone other than you or root.
+
+Credentials are never read from `agent-marketplace` configuration.
 
 ## Precedence
 
-Environment variables override values from `~/.agents/config.yaml`. Logging is read from the user layer only (see the [logging reference](./logging.md)); telemetry fields locked by organization policy win over both user configuration and environment.
+Environment variables override the matching values in `~/.agents/config.yaml`. Logging reads only the user config (see the [logging reference](./logging.md)). For telemetry, organization policy wins over both the user config and these variables, as described in the table above.
 
 ## Related documentation
 
