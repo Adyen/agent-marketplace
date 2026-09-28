@@ -22,6 +22,38 @@ func newSpinnerTestModel() Model {
 	return m
 }
 
+func TestStartupProgressSurvivesFooterCrowding(t *testing.T) {
+	for _, width := range []int{50, 60, 80, 100, 120} {
+		for _, assessment := range []bool{false, true} {
+			for _, withError := range []bool{false, true} {
+				m := newSpinnerTestModel()
+				m.width, m.height = width, 24
+				m.loading = !assessment
+				m.assessmentPending = assessment
+				m.provisionalRows = []row{{}}
+				m.warnings = []error{errors.New("warning")}
+				m.discoveryErrs = []error{errors.New("discovery failed")}
+				m.toast, m.toastExp = "saved", time.Now().Add(time.Minute)
+				if withError {
+					m.errs = []error{errors.New("catalog failed")}
+				}
+				view := m.View()
+				if !strings.Contains(view, "verifying resources...") {
+					t.Errorf("width=%d assessment=%t error=%t hides progress:\n%s", width, assessment, withError, view)
+				}
+				footer := renderFooter(m)
+				if !strings.Contains(footer, m.spinner.View()) || !strings.Contains(footer, "quit") {
+					t.Errorf("footer lost spinner or quit hint: %q", footer)
+				}
+				if withError && !strings.Contains(footer, "! 1 errors") {
+					t.Errorf("footer lost error count: %q", footer)
+				}
+				assertTerminalBounds(t, view, width, m.height)
+			}
+		}
+	}
+}
+
 func TestFooterShowsSpinnerWhenLoading(t *testing.T) {
 	m := newSpinnerTestModel()
 	m.loading = true

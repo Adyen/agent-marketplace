@@ -64,6 +64,10 @@ func renderFooter(m Model) string {
 		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("⚠ %d warnings", len(m.warnings))))
 	}
 
+	priority := ""
+	if m.verifyingResources() {
+		priority, leftParts = leftParts[0], leftParts[1:]
+	}
 	status := strings.Join(leftParts, "  ")
 	if compactTerminalLayout(m) {
 		actions := "?:help · s:sync · q:quit"
@@ -76,7 +80,7 @@ func renderFooter(m Model) string {
 		if m.toast != "" && !m.toastExp.IsZero() {
 			status = styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
 		}
-		return footerWithRight(status, actions, m.width)
+		return footerWithPriority(priority, status, actions, m.width)
 	}
 
 	bindings := m.keys.ShortHelp()
@@ -88,7 +92,7 @@ func renderFooter(m Model) string {
 	if m.toast != "" && !m.toastExp.IsZero() {
 		right += " · " + styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
 	}
-	return footerWithRight(strings.Join(leftParts, "  "), right, m.width)
+	return footerWithPriority(priority, strings.Join(leftParts, "  "), right, m.width)
 }
 
 func renderErrorFooter(m Model) string {
@@ -96,11 +100,12 @@ func renderErrorFooter(m Model) string {
 	if m.filterActive {
 		actions = "enter apply · esc cancel · q quit"
 	}
-	budget := m.width - ansi.StringWidth(actions) - 1
 	status := fmt.Sprintf("! %d errors", len(m.errs))
 	if m.verifyingResources() {
 		status = m.spinner.View() + " verifying resources... · " + status
+		actions = fitFooterGroups(actions, " · ", max(0, m.width-ansi.StringWidth(status)-1))
 	}
+	budget := m.width - ansi.StringWidth(actions) - 1
 	if budget > ansi.StringWidth(status)+2 {
 		latest := ""
 		if err := m.errs[len(m.errs)-1]; err != nil {
@@ -177,6 +182,18 @@ func fitFooterGroups(s, separator string, width int) string {
 		return ansi.Truncate(groups[len(groups)-1], width, "…")
 	}
 	return strings.Join(kept, separator)
+}
+
+func footerWithPriority(priority, left, right string, width int) string {
+	if priority == "" {
+		return footerWithRight(left, right, width)
+	}
+	priority = ansi.Truncate(priority, max(0, width), "…")
+	rest := footerWithRight(left, right, width-ansi.StringWidth(priority)-1)
+	if rest == "" {
+		return priority
+	}
+	return priority + " " + rest
 }
 
 func footerWithRight(left, right string, width int) string {
