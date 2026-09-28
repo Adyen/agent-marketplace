@@ -518,7 +518,7 @@ func TestOfflineSyncUserExclusionRemovesOwnCollectionMember(t *testing.T) {
 		Repo:  func() (*config.Config, error) { return &config.Config{}, nil },
 		Local: func() (*config.LocalConfig, error) { return &config.LocalConfig{}, nil },
 	}
-	result := Sync(context.Background(), ResolveOptions{RepoRoot: t.TempDir(), NoBackup: true, Offline: true, Loaders: loaders})
+	result := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, t.TempDir()), NoBackup: true, Offline: true, Loaders: loaders})
 	if len(result.Errors) != 0 {
 		t.Fatalf("sync errors = %v", result.Errors)
 	}
@@ -555,7 +555,7 @@ func TestOfflineSyncUserMarketplaceExclusionSuppressesOptionalOrganizationMember
 		}
 	}
 
-	result := Sync(context.Background(), ResolveOptions{RepoRoot: repoRoot, NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
+	result := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
 	if len(result.Errors) != 0 {
 		t.Fatalf("optional organization sync errors = %v", result.Errors)
 	}
@@ -567,7 +567,7 @@ func TestOfflineSyncUserMarketplaceExclusionSuppressesOptionalOrganizationMember
 	}
 
 	orgEntry.Required = true
-	result = Sync(context.Background(), ResolveOptions{RepoRoot: repoRoot, NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
+	result = Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
 	if len(result.Errors) != 0 {
 		t.Fatalf("required organization sync errors = %v", result.Errors)
 	}
