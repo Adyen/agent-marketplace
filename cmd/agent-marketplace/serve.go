@@ -116,7 +116,7 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 	cmd.Flags().StringVar(&role, "role", "all", "Server role (worker|api|all)")
 	_ = cmd.MarkFlagRequired("config")
 
-	cmd.AddCommand(newServeReindexCmd(), newServeAdoptCmd())
+	cmd.AddCommand(newServeReindexCmd(), newServeAdoptCmd(), newServeResetCmd())
 	return cmd
 }
 
