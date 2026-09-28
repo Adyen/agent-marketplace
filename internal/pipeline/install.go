@@ -373,13 +373,13 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		if opts.Scope != ScopeRepo {
 			return nil, fmt.Errorf("--all is only supported with --scope repo (or no --scope)")
 		}
-		selectedEntries, err := installRegistrySelection(discoveryCfg.Registries, opts.Registry)
+		selectedEntries, err := installRegistrySelection(discoveryCfg.Registries, opts.Registry, config.RepoCommitted)
 		if err != nil {
 			return nil, err
 		}
 		if hasKind {
 			// Filter to the specified kind only.
-			installed, err = allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, kind)
+			installed, err = allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, config.RepoCommitted, kind)
 			if err != nil {
 				return nil, err
 			}
@@ -392,7 +392,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			var allInstalled []string
 			var steps []func(*LayerMutation) error
 			for _, k := range config.AllKinds {
-				names, err := allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, k)
+				names, err := allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, config.RepoCommitted, k)
 				if err != nil {
 					// If no resources of this kind exist, skip silently.
 					// Propagate all other errors (e.g. collisions).
@@ -720,30 +720,110 @@ func clearInstallExcludes(repoRoot string, entry config.RegistryEntry, kind ir.R
 	})
 }
 
-func installRegistrySelection(registries []config.RegistryEntry, registryFilter string) ([]config.RegistryEntry, error) {
+// installRegistrySelection returns every entry without a filter. With a
+// --registry filter it returns one entry for the one physical source the
+// filter names, preferring the entry declared in the target layer: the same
+// source declared in several layers, or spelled differently, is not ambiguous.
+func installRegistrySelection(registries []config.RegistryEntry, registryFilter string, target config.Source) ([]config.RegistryEntry, error) {
 	registryFilter = strings.TrimSpace(registryFilter)
+	if registryFilter == "" {
+		return append([]config.RegistryEntry(nil), registries...), nil
+	}
 
-	selectedEntries := make([]config.RegistryEntry, 0, len(registries))
+	wanted := installRegistryURLKey(registryFilter)
+	var matched []config.RegistryEntry
+	chosen := map[string]config.RegistryEntry{}
+	var sources []string
 	for _, entry := range registries {
-		if registryFilter != "" && strings.TrimSpace(entry.URL) != registryFilter {
+		if installRegistryURLKey(entry.URL) != wanted {
 			continue
 		}
-		selectedEntries = append(selectedEntries, entry)
+		matched = append(matched, entry)
+		key := installRegistrySourceKey(entry)
+		if current, seen := chosen[key]; !seen {
+			sources = append(sources, key)
+			chosen[key] = entry
+		} else if current.Source != target && entry.Source == target {
+			chosen[key] = entry
+		}
 	}
-
 	switch {
-	case registryFilter != "" && len(selectedEntries) == 0:
-		return nil, fmt.Errorf("registry %q not found in repo config", registryFilter)
-	case registryFilter != "" && len(selectedEntries) > 1:
-		return nil, fmt.Errorf("registry %q matches multiple configured entries; rerun without --registry or keep only one matching repo registry entry", registryFilter)
+	case len(matched) == 0:
+		return nil, fmt.Errorf("registry %q is not declared in any config layer", registryFilter)
+	case len(sources) > 1:
+		return nil, fmt.Errorf("registry %q matches %d configured entries with different refs or paths: %s; install --all --registry needs exactly one, so install those resources by name or remove one of the entries", registryFilter, len(sources), describeInstallRegistrySources(matched))
 	}
-	return selectedEntries, nil
+	return []config.RegistryEntry{chosen[sources[0]]}, nil
 }
 
-func allDiscoveredResourceNames(registries []config.RegistryEntry, catalogs map[string]catalog.LoadedCatalog, registryFilter string, kind ir.ResourceKind) ([]string, error) {
+func installRegistryURLKey(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if canonical, err := canonicalUpdateRegistryURL(trimmed); err == nil {
+		return canonical
+	}
+	return trimmed
+}
+
+func installRegistrySourceKey(entry config.RegistryEntry) string {
+	return installRegistryURLKey(entry.URL) + "\x00" + strings.TrimSpace(entry.Ref) + "\x00" + installRegistryPathLabel(entry.Path)
+}
+
+func installRegistryPathLabel(raw string) string {
+	if trimmed := strings.Trim(filepath.ToSlash(strings.TrimSpace(raw)), "/"); trimmed != "." {
+		return trimmed
+	}
+	return ""
+}
+
+// describeInstallRegistrySources lists each distinct source once, with its
+// ref, path, and the config layers that declare it.
+func describeInstallRegistrySources(entries []config.RegistryEntry) string {
+	var order []string
+	layers := map[string][]string{}
+	labels := map[string]string{}
+	for _, entry := range entries {
+		key := installRegistrySourceKey(entry)
+		if _, seen := labels[key]; !seen {
+			order = append(order, key)
+			label := "repository root"
+			if trimmed := installRegistryPathLabel(entry.Path); trimmed != "" {
+				label = "path " + trimmed
+			}
+			if ref := strings.TrimSpace(entry.Ref); ref != "" {
+				label = "ref " + ref + ", " + label
+			}
+			labels[key] = label
+		}
+		if layer := installRegistryLayerLabel(entry.Source); !slices.Contains(layers[key], layer) {
+			layers[key] = append(layers[key], layer)
+		}
+	}
+	descriptions := make([]string, 0, len(order))
+	for _, key := range order {
+		descriptions = append(descriptions, labels[key]+" in the "+strings.Join(layers[key], " and "))
+	}
+	return strings.Join(descriptions, "; ")
+}
+
+func installRegistryLayerLabel(source config.Source) string {
+	switch source {
+	case config.Organization:
+		return "organization config"
+	case config.UserPersonal:
+		return "user config"
+	case config.RepoCommitted:
+		return "repository config"
+	case config.RepoPersonal:
+		return "personal-local config"
+	default:
+		return "config"
+	}
+}
+
+func allDiscoveredResourceNames(registries []config.RegistryEntry, catalogs map[string]catalog.LoadedCatalog, registryFilter string, target config.Source, kind ir.ResourceKind) ([]string, error) {
 	registryFilter = strings.TrimSpace(registryFilter)
 
-	selectedEntries, err := installRegistrySelection(registries, registryFilter)
+	selectedEntries, err := installRegistrySelection(registries, registryFilter, target)
 	if err != nil {
 		return nil, err
 	}

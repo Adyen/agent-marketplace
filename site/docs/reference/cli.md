@@ -140,7 +140,7 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`; also disambiguates a named registry resource. |
 | `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Mutually exclusive with a resource name, `--all`, `--from`, and Marketplace locators. |
 | `--all` | boolean | no | `false` | Installs every discovered registry resource of the selected kind. Valid only in `repo` scope. |
-| `--registry` | string | no | all configured registries | Limits `--all` to one configured Git registry URL. |
+| `--registry` | string | no | all configured registries | Limits `--all` to one configured registry. The URL is matched the way `update` and `lock` match it, so a `.git` suffix or trailing slash does not matter, and it is looked up in every config layer. The same source declared in several layers counts once. Entries with the same URL but different refs or paths are refused, and the error lists them. |
 | `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the registry bundle. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
