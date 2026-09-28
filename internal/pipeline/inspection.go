@@ -34,14 +34,6 @@ type InspectionIssue struct {
 	Err      error
 }
 
-func (i InspectionIssue) Remediation() string {
-	var remediable resolver.Remediable
-	if !errors.As(i.Err, &remediable) {
-		return ""
-	}
-	return remediable.Remediation()
-}
-
 type InspectionResult struct {
 	ResolveResult
 	Report         *materialize.Report
@@ -102,7 +94,7 @@ func skipInspectionDryRun(resolved ResolveResult, onAnyError bool) bool {
 	return len(resolved.CatalogErrors) == 0 && len(resolved.ResolveErrors) == 0
 }
 
-func IsSoftResolveIssue(err error) bool {
+func isSoftResolveIssue(err error) bool {
 	return resolver.IsSoftSelectedNotFound(err) ||
 		resolver.IsSoftSelectedMalformed(err) ||
 		resolver.IsNameCollision(err) ||
@@ -139,7 +131,7 @@ func buildInspection(resolved ResolveResult, report *materialize.Report, matErr 
 		add(IssueWarning, IssueCatalog, malformedResourceError(malformed))
 	}
 	for _, err := range resolved.ResolveErrors {
-		if IsSoftResolveIssue(err) {
+		if isSoftResolveIssue(err) {
 			add(IssueWarning, IssueResolution, err)
 			continue
 		}
