@@ -83,6 +83,21 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 		if err := s.Close(); err != nil {
 			t.Fatalf("Close %d: %v", i, err)
 		}
+		db, err := sql.Open("pgx", dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, table := range map[string]string{
+			"idx_resource_revisions_content":  "resource_revisions",
+			"idx_current_assessments_content": "current_resource_assessments",
+		} {
+			var def string
+			err := db.QueryRow("SELECT indexdef FROM pg_indexes WHERE schemaname=$1 AND indexname=$2 AND tablename=$3", schema, name, table).Scan(&def)
+			if err != nil || strings.Contains(def, "UNIQUE") || !strings.Contains(def, "(marketplace_id, content_digest)") {
+				t.Fatalf("index %s on %s: def=%q err=%v, want non-unique (marketplace_id, content_digest)", name, table, def, err)
+			}
+		}
+		_ = db.Close()
 	}
 	dropSchema(t, dsn, schema)
 }

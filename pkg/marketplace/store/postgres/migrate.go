@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(true), store.ManagedRuntimeSchema, store.ManagedPreviewSchema}
+var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(true), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migration3}
 
 const migrationTable = "marketplace_metadata_v2_schema_migrations"
 
@@ -227,4 +227,9 @@ INSERT INTO catalog_versions (singleton, version) VALUES (1, 0);
 // from direct resource members.
 const migration2 = `
 ALTER TABLE collection_revisions ADD COLUMN includes TEXT NOT NULL DEFAULT '[]';
+`
+
+const migration3 = `
+CREATE INDEX idx_resource_revisions_content ON resource_revisions(marketplace_id, content_digest);
+CREATE INDEX idx_current_assessments_content ON current_resource_assessments(marketplace_id, content_digest);
 `
