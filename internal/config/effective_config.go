@@ -517,7 +517,7 @@ func loadEffectiveLocal(localDir, override string, overlays map[string][]byte) L
 }
 
 func readEffectiveLayer(path string, overlays map[string][]byte) (string, []byte, error) {
-	canonical, err := canonicalEffectiveLayerPath(path)
+	canonical, err := canonicalConfigPathTolerateMissing(path)
 	if err != nil {
 		return "", nil, err
 	}
@@ -531,27 +531,4 @@ func readEffectiveLayer(path string, overlays map[string][]byte) (string, []byte
 	}
 	data, err := readConfigFile(path)
 	return canonical, data, err
-}
-
-func canonicalEffectiveLayerPath(path string) (string, error) {
-	current, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("resolve config path %q: %w", path, err)
-	}
-	missing := []string{}
-	for {
-		canonical, err := filepath.EvalSymlinks(current)
-		if err == nil {
-			for i := len(missing) - 1; i >= 0; i-- {
-				canonical = filepath.Join(canonical, missing[i])
-			}
-			return filepath.Clean(canonical), nil
-		}
-		parent := filepath.Dir(current)
-		if !errors.Is(err, os.ErrNotExist) || parent == current {
-			return "", fmt.Errorf("resolve config path %q: %w", path, err)
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-	}
 }

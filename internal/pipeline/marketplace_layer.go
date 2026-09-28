@@ -366,19 +366,12 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 }
 
 func marketplaceLayerLockPath(configPath string) (string, error) {
-	paths, err := config.ResolveConfigLockPaths(configPath)
+	resolve := config.ResolveConfigLockPaths
+	if _, err := os.Lstat(configPath); errors.Is(err, os.ErrNotExist) {
+		resolve = config.ResolveConfigLockPathsTolerateMissing
+	}
+	paths, err := resolve(configPath)
 	if err != nil {
-		if _, statErr := os.Lstat(configPath); errors.Is(statErr, os.ErrNotExist) {
-			dir, dirErr := filepath.EvalSymlinks(filepath.Dir(configPath))
-			if dirErr != nil {
-				return "", err
-			}
-			lock, lockErr := lockfile.PathForConfig(filepath.Join(dir, filepath.Base(configPath)))
-			if lockErr != nil {
-				return "", lockErr
-			}
-			return dependencytxn.ValidateDestination(filepath.Clean(lock))
-		}
 		return "", err
 	}
 	return dependencytxn.ValidateDestination(filepath.Clean(paths.CanonicalLock))

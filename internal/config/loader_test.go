@@ -864,3 +864,43 @@ harnesses:
 		t.Fatalf("expected v3 repo harnesses [factory], got %#v", cfg.Harnesses)
 	}
 }
+
+// A config root that does not exist yet must get one canonical name however
+// many of its directories are missing, so staged edits, the loader, and lock
+// reconciliation agree on it. The home here is reached through a symlink, as
+// it is under macOS /tmp and /var.
+func TestCanonicalConfigPathTolerateMissingResolvesTheDeepestExistingAncestor(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolvedReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ path, want string }{
+		{filepath.Join(link, "config.yaml"), filepath.Join(resolvedReal, "config.yaml")},
+		{filepath.Join(link, ".agents", "config.yaml"), filepath.Join(resolvedReal, ".agents", "config.yaml")},
+		{filepath.Join(link, "a", "b", "config.yaml"), filepath.Join(resolvedReal, "a", "b", "config.yaml")},
+	} {
+		got, err := canonicalConfigPathTolerateMissing(tc.path)
+		if err != nil || got != tc.want {
+			t.Fatalf("canonicalConfigPathTolerateMissing(%q) = %q, %v; want %q", tc.path, got, err, tc.want)
+		}
+		if err := os.MkdirAll(filepath.Dir(tc.path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(tc.path, []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		existing, err := canonicalConfigPath(tc.path)
+		if err != nil || existing != got {
+			t.Fatalf("name after creating %q = %q, %v; want the pre-creation name %q", tc.path, existing, err, got)
+		}
+	}
+}
