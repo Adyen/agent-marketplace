@@ -1,64 +1,83 @@
 # How to remove agent-marketplace safely
 
-Remove `agent-marketplace` artifacts from a repository or machine without deleting your own files.
+Remove the files `agent-marketplace` generated in a repository or on your machine without deleting your own files. The `deinit` command does the removal. You choose what it covers with `--scope`:
+
+| Scope | What `deinit` removes | What `--purge-config` also deletes |
+|---|---|---|
+| `user` (the default) | Machine-wide generated output, plus cached registry clones that your organization's configuration does not use | `~/.agents/config.yaml` and `~/.agents/lock.yaml` |
+| `repo` | Generated output in the current repository | `.agents/config.yaml` and `.agents/lock.yaml` |
+| `local` | The same repository output as `repo` | `.agents/config.local.yaml` and `.agents/lock.local.yaml` |
+
+## Prerequisites
+
+- `agent-marketplace` on your `PATH`. If you are new to the terminal, read [Terminal basics](../terminal-basics.md) first.
+- For repository removal, a terminal open inside the repository.
+- Optional: run `agent-marketplace backup create` first if you want an archive of the machine-wide harness folders before anything is removed. `deinit` does not create one for you. See [How to back up and restore machine resources](./back-up-and-restore-machine-resources.md).
 
 ## Remove from a repository
 
-1. Preview what `deinit` would remove in the repository scope:
+1. Preview what `deinit` would remove:
 
-```bash
-agent-marketplace deinit --scope repo --dry-run
-```
+   ```bash
+   agent-marketplace deinit --scope repo --dry-run
+   ```
 
-2. Run the scoped `deinit`:
+   The preview lists the generated files and folders and ends with a line such as `Would remove 4 managed artifact(s)`. Nothing changes on disk.
 
-```bash
-agent-marketplace deinit --scope repo
-```
+2. Run the removal:
 
-This removes generated harness output. It does not delete `.agents/config.yaml`, `.agents/lock.yaml`, `.agents/config.local.yaml`, `.agents/lock.local.yaml`, organization policy, the repository itself, or durable machine state.
+   ```bash
+   agent-marketplace deinit --scope repo
+   ```
 
-3. Only purge the repository config and lock when you intend to:
+   This deletes the generated [harness](../glossary.md#harness) output in the repository and nothing else. Your configuration files, lockfiles, organization policy, and the durable ownership state on your machine stay in place, so a later `agent-marketplace sync` can put everything back.
 
-```bash
-agent-marketplace deinit --scope repo --purge-config
-```
+3. Delete the repository configuration too, but only if you no longer want it:
 
-This removes `.agents/config.yaml` and `.agents/lock.yaml` in the repository. It does not remove `.agents/config.local.yaml` or `.agents/lock.local.yaml`; those require `--scope local`.
+   ```bash
+   agent-marketplace deinit --scope repo --purge-config
+   ```
 
-4. Commit any remaining `.gitignore` or tracked changes.
+   This also deletes `.agents/config.yaml` and `.agents/lock.yaml`, and removes the `.agents` folder if it is left empty. It does not touch `.agents/config.local.yaml` or `.agents/lock.local.yaml`; delete those with `--scope local --purge-config`. Files that your configuration pulls in with `include` are not deleted.
+
+4. Run `git status`, review the deleted files, and commit the changes you want to keep.
 
 ## Remove from a machine
 
-1. Preview what `deinit` would remove in the user scope:
+1. Preview the machine-wide removal:
 
-```bash
-agent-marketplace deinit --scope user --dry-run
-```
+   ```bash
+   agent-marketplace deinit --scope user --dry-run
+   ```
 
-2. Run scoped `deinit`:
+   The preview lists the generated output and each cache folder it would delete (`Would remove cache ...`).
 
-```bash
-agent-marketplace deinit --scope user
-```
+2. Run the removal:
 
-This removes generated machine output and orphaned caches that are not resolvable from the current organization lock. It does not delete durable ownership and backup state.
+   ```bash
+   agent-marketplace deinit --scope user
+   ```
 
-3. Only purge the config intentionally:
+   This deletes the machine-wide generated output and the cached registry clones under `~/.cache/agent-marketplace/` that your organization's configuration does not use. That includes clones your repositories still use; the next `sync` in each repository downloads them again. Resources that your organization's configuration still selects stay installed, together with the cache they need; if one of them is missing, `deinit` writes it again.
 
-```bash
-agent-marketplace deinit --scope user --purge-config
-```
+3. Delete your personal configuration, but only if you no longer want it:
 
-This removes `~/.agents/config.yaml` and `~/.agents/lock.yaml`.
+   ```bash
+   agent-marketplace deinit --scope user --purge-config
+   ```
 
-## What `deinit` never does
+   This also deletes `~/.agents/config.yaml` and `~/.agents/lock.yaml`.
 
-- It never removes durable ownership state under `${XDG_STATE_HOME:-$HOME/.local/state}/agent-marketplace/`.
-- It never removes hand-authored harness files, comments, or unrelated settings.
-- It never deletes aggregates or ownership state by hand.
+## What `deinit` leaves alone
+
+- The durable state folder `${XDG_STATE_HOME:-$HOME/.local/state}/agent-marketplace/`, which holds the [ownership state](../glossary.md#ownership-state) and safety backups for shared configuration files.
+- Backup archives under `~/.agent-marketplace/backups/`.
+- Files you wrote yourself inside harness folders, and handwritten entries, comments, and unrelated settings in shared configuration files such as `.mcp.json`.
+- The organization configuration and lock under `/etc/agent-marketplace/`.
+- Internal transaction files that `--purge-config` uses to coordinate its deletions.
 
 ## Troubleshooting
 
-- **Generated directories remain after `deinit`**: run `agent-marketplace status` to see which scope still owns them.
-- **An invalid organization lock blocks teardown**: the organization administrator must repair or regenerate the organization lock. Repository users must not remove or edit organization policy.
+- `deinit` prints `warning: could not read config`: your configuration could not be loaded, so `deinit` assumed the default installation mode. Output that was installed in the other mode (symlinks versus regular files) may remain. Fix the configuration and run `deinit` again.
+- `error: could not resolve organization-owned artifacts; refusing teardown`: a user-scope `deinit` must work out which resources the organization still requires before it removes anything, and it stops without changes when it cannot. If the organization lock is invalid, the organization administrator has to repair or regenerate it. Do not remove or edit organization policy yourself.
+- Generated folders remain after `deinit`: run `agent-marketplace status` to see which scope still selects them. Repository output needs `--scope repo`, and machine output needs `--scope user`.

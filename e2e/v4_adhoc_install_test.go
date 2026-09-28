@@ -37,15 +37,6 @@ func TestV4UserConfigInstallsAndRemovesAdHocGitResource(t *testing.T) {
 	gitRun(t, working, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-m", "add daily-sync")
 	gitRun(t, working, "push", "origin", branch)
 
-	initialConfig := env.ReadFile("/root/.agents/config.yaml")
-	bundle := env.RunAM("install", "--from="+url, "--ref="+branch, "--scope=user")
-	if bundle.ExitCode == 0 || !strings.Contains(bundle.Combined, "/.agents/config.yaml") || strings.Contains(bundle.Combined, ".agent-marketplace-config-") {
-		t.Fatalf("unsupported v4 bundle install did not refuse against the real config path (exit %d):\n%s", bundle.ExitCode, bundle.Combined)
-	}
-	if got := env.ReadFile("/root/.agents/config.yaml"); got != initialConfig {
-		t.Fatalf("refused v4 bundle install changed user config:\n%s", got)
-	}
-
 	adHoc := []string{"--from=" + url, "--ref=" + branch, "--path=" + skillPath, "--scope=user"}
 	install := env.RunAM(append([]string{"install", "daily-sync"}, adHoc...)...)
 	if install.ExitCode != 0 {
@@ -114,6 +105,108 @@ func TestAdHocRelativeDirectoryParityAcrossSchemas(t *testing.T) {
 	}
 }
 
+const gitLabProject = "example-org/ai-projects/awesome-ai"
+
+// gitLabSSH seeds a bare repository at gitLabProject (main plus an optional
+// branch) and returns a GIT_SSH_COMMAND environment that serves it to
+// git@gitlab.example.com URLs. Users paste SSH remotes and GitLab tree URLs,
+// which resolve to SSH remotes, and this runs both without a network.
+func gitLabSSH(t *testing.T, env *Env, main map[string]string, branch string, branchFiles map[string]string) map[string]string {
+	t.Helper()
+	url := env.CreateBareRepo(gitLabProject, main)
+	if branch != "" {
+		working := filepath.Join(t.TempDir(), "working")
+		gitRun(t, "", "clone", strings.TrimPrefix(url, "file://"), working)
+		gitRun(t, working, "checkout", "-b", branch)
+		for path, content := range branchFiles {
+			file := filepath.Join(working, filepath.FromSlash(path))
+			if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		gitRun(t, working, "add", "-A")
+		gitRun(t, working, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-m", "add "+branch)
+		gitRun(t, working, "push", "origin", branch)
+	}
+	// Named ssh so Git treats it as OpenSSH; the last argument is the remote
+	// command, e.g. git-upload-pack 'example-org/ai-projects/awesome-ai.git'.
+	ssh := filepath.Join(t.TempDir(), "ssh")
+	script := "#!/bin/sh\nfor arg; do command=$arg; done\ncd '" + env.repos + "' && exec sh -c \"git ${command#git-}\"\n"
+	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{"GIT_SSH_COMMAND": ssh}
+}
+
+// A user pastes the GitLab SSH remote with a branch and a nested skill path
+// into the v4 user config that init creates (v4.0.8 failed with
+// v4.writer-opt-in).
+func TestV4UserConfigInstallsFromSSHRemoteBranchAndPath(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.MustRunAM("init", "--harnesses", "factory")
+	const (
+		branch    = "add-skill-daily-sync"
+		skillPath = "teams/unified_platform/plugins/identity_platform/skills/daily-sync"
+	)
+	ssh := gitLabSSH(t, env, map[string]string{"README.md": "registry"}, branch, map[string]string{
+		skillPath + "/SKILL.md": "---\nname: daily-sync\ndescription: Daily sync\n---\n\nDaily sync body\n",
+	})
+	remote := "git@gitlab.example.com:" + gitLabProject + ".git"
+	adHoc := []string{"--from=" + remote, "--ref=" + branch, "--path=" + skillPath, "--scope=user"}
+
+	install := env.RunAMWithEnv(ssh, append([]string{"install", "daily-sync"}, adHoc...)...)
+	if install.ExitCode != 0 {
+		t.Fatalf("install from SSH remote into v4 user config failed (exit %d):\n%s", install.ExitCode, install.Combined)
+	}
+	env.AssertFileContains("/root/.factory/skills/daily-sync/SKILL.md", "Daily sync body")
+	userConfig := env.ReadFile("/root/.agents/config.yaml")
+	for _, want := range []string{"apiVersion: agent-marketplace/v4", "git: " + remote, "ref: " + branch, "path: " + skillPath, "skill/daily-sync"} {
+		if !strings.Contains(userConfig, want) {
+			t.Fatalf("v4 user config missing %q:\n%s", want, userConfig)
+		}
+	}
+	env.AssertExitCode(env.RunAMWithEnv(ssh, "sync", "--check"), 0)
+
+	remove := env.RunAMWithEnv(ssh, append([]string{"remove", "daily-sync"}, adHoc...)...)
+	if remove.ExitCode != 0 {
+		t.Fatalf("remove through SSH remote from v4 user config failed (exit %d):\n%s", remove.ExitCode, remove.Combined)
+	}
+	env.AssertFileAbsent("/root/.factory/skills/daily-sync")
+	env.AssertExitCode(env.RunAMWithEnv(ssh, "sync", "--check"), 0)
+}
+
+// A user pastes a GitLab tree URL for a skills directory without naming a
+// resource; the v4 user config declares the source with an all: true group
+// (v4.0.8 failed with v4.writer-opt-in).
+func TestV4UserConfigInstallsEveryResourceFromGitLabTreeURL(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.MustRunAM("init", "--harnesses", "factory")
+	const skills = "teams/ops/plugins/professional-services/performance-optimization/skills"
+	ssh := gitLabSSH(t, env, map[string]string{
+		skills + "/perf-profiling/SKILL.md": "---\nname: perf-profiling\ndescription: Profiling\n---\n\nProfiling body\n",
+		skills + "/perf-tuning/SKILL.md":    "---\nname: perf-tuning\ndescription: Tuning\n---\n\nTuning body\n",
+	}, "", nil)
+
+	install := env.RunAMWithEnv(ssh, "install", "--from", "https://gitlab.example.com/"+gitLabProject+"/-/tree/main/"+skills, "--scope", "user")
+	if install.ExitCode != 0 {
+		t.Fatalf("install from GitLab tree URL into v4 user config failed (exit %d):\n%s", install.ExitCode, install.Combined)
+	}
+	env.AssertFileContains("/root/.factory/skills/perf-profiling/SKILL.md", "Profiling body")
+	env.AssertFileContains("/root/.factory/skills/perf-tuning/SKILL.md", "Tuning body")
+	userConfig := env.ReadFile("/root/.agents/config.yaml")
+	for _, want := range []string{"apiVersion: agent-marketplace/v4", "git: git@gitlab.example.com:" + gitLabProject, "ref: main", "path: " + skills, "all: true"} {
+		if !strings.Contains(userConfig, want) {
+			t.Fatalf("v4 user config missing %q:\n%s", want, userConfig)
+		}
+	}
+	env.AssertExitCode(env.RunAMWithEnv(ssh, "sync", "--check"), 0)
+}
+
 // A trailing slash on --path names the same registry subdirectory.
 func TestAdHocGitPathTrailingSlashIntoV4UserConfig(t *testing.T) {
 	env := newEnv(t)
@@ -130,4 +223,85 @@ func TestAdHocGitPathTrailingSlashIntoV4UserConfig(t *testing.T) {
 		t.Fatalf("remove with trailing-slash --path failed (exit %d):\n%s", remove.ExitCode, remove.Combined)
 	}
 	env.AssertFileAbsent("/root/.factory/skills/review")
+}
+
+// A user installs a skill from a feature branch into each scope. When the
+// branch advances, plain sync keeps the locked commit, update moves to the new
+// commit, and removal by name alone clears it.
+func TestV4AdHocBranchSourceKeepsPinUntilUpdate(t *testing.T) {
+	configs := map[string]string{
+		"user":  "/root/.agents/config.yaml",
+		"repo":  "/workspace/.agents/config.yaml",
+		"local": "/workspace/.agents/config.local.yaml",
+	}
+	for _, tc := range []struct{ scope, skill, lock string }{
+		{scope: "user", skill: "/root/.factory/skills/daily-sync/SKILL.md", lock: "/root/.agents/lock.yaml"},
+		{scope: "repo", skill: "/workspace/.factory/skills/daily-sync/SKILL.md", lock: "/workspace/.agents/lock.yaml"},
+		{scope: "local", skill: "/workspace/.factory/skills/daily-sync/SKILL.md", lock: "/workspace/.agents/lock.local.yaml"},
+	} {
+		t.Run(tc.scope, func(t *testing.T) {
+			env := newEnv(t)
+			env.InitGitRepo()
+			env.MustRunAM("init", "--harnesses", "factory")
+			url := env.CreateBareRepo("branch-source", map[string]string{"README.md": "registry"})
+			working := filepath.Join(t.TempDir(), "working")
+			gitRun(t, "", "clone", strings.TrimPrefix(url, "file://"), working)
+			gitRun(t, working, "checkout", "-b", "feature")
+			push := func(body string) {
+				t.Helper()
+				file := filepath.Join(working, "skills", "daily-sync", "SKILL.md")
+				if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, []byte("---\nname: daily-sync\ndescription: Daily sync\n---\n\n"+body+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				gitRun(t, working, "add", "-A")
+				gitRun(t, working, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-m", body)
+				gitRun(t, working, "push", "origin", "feature")
+			}
+			push("First revision")
+
+			install := env.RunAM("install", "daily-sync", "--from", url, "--ref", "feature", "--path", "skills/daily-sync", "--scope", tc.scope)
+			if install.ExitCode != 0 {
+				t.Fatalf("install from a feature branch into %s scope failed (exit %d):\n%s", tc.scope, install.ExitCode, install.Combined)
+			}
+			env.AssertFileContains(tc.skill, "First revision")
+			for scope, path := range configs {
+				data, err := os.ReadFile(env.mustResolvePath(path))
+				if err != nil && !os.IsNotExist(err) {
+					t.Fatalf("read %s config: %v", scope, err)
+				}
+				if recorded := strings.Contains(string(data), url) && strings.Contains(string(data), "feature"); recorded != (scope == tc.scope) {
+					t.Fatalf("%s config records the feature-branch source = %v after a %s-scope install:\n%s", scope, recorded, tc.scope, data)
+				}
+			}
+			pinned := env.ReadFile(tc.lock)
+
+			push("Second revision")
+			env.AssertExitCode(env.RunAM("sync"), 0)
+			env.AssertFileContains(tc.skill, "First revision")
+			if got := env.ReadFile(tc.lock); got != pinned {
+				t.Fatalf("plain sync moved the %s-scope lock:\nbefore:\n%s\nafter:\n%s", tc.scope, pinned, got)
+			}
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+
+			env.AssertExitCode(env.RunAM("update"), 0)
+			env.AssertFileContains(tc.skill, "Second revision")
+			if env.ReadFile(tc.lock) == pinned {
+				t.Fatalf("update left the %s-scope lock on the first revision:\n%s", tc.scope, pinned)
+			}
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+			if status := env.RunAM("status"); status.ExitCode != 0 || !strings.Contains(status.Combined, "daily-sync") {
+				t.Fatalf("status after update did not report daily-sync (exit %d):\n%s", status.ExitCode, status.Combined)
+			}
+
+			remove := env.RunAM("remove", "daily-sync")
+			if remove.ExitCode != 0 {
+				t.Fatalf("remove by name from %s scope failed (exit %d):\n%s", tc.scope, remove.ExitCode, remove.Combined)
+			}
+			env.AssertFileAbsent(tc.skill)
+			env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+		})
+	}
 }

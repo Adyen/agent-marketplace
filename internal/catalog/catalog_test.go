@@ -1255,3 +1255,42 @@ func TestOverlappingEntryWarningRedactsURLCredentials(t *testing.T) {
 		t.Fatalf("OverlappingEntryWarning.Error() did not redact both URLs: %s", got)
 	}
 }
+
+// TestDiscoverRootSkillWithPluginManifest verifies that a single-skill plugin
+// repository whose SKILL.md lives at the root (the github.com/blader/humanizer
+// shape) is discovered through the same catalog path list, status, and the TUI
+// use.
+func TestDiscoverRootSkillWithPluginManifest(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		".claude-plugin/plugin.json": `{"name":"humanizer","skills":["./"]}`,
+		"SKILL.md":                   "---\nname: humanizer\ndescription: Rewrite AI-sounding text\n---\nBody\n",
+		"README.md":                  "# Humanizer\n",
+	}
+	for name, body := range files {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	loaded, err := Discover(dir, "")
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(loaded.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1: %#v", len(loaded.Entries), loaded.Entries)
+	}
+	entry := loaded.Entries[0]
+	if entry.Kind != ir.KindSkill {
+		t.Fatalf("entry kind = %v, want Skill", entry.Kind)
+	}
+	if entry.Name != "humanizer" {
+		t.Fatalf("entry name = %q, want humanizer", entry.Name)
+	}
+	if entry.Path != filepath.Join(dir, "SKILL.md") {
+		t.Fatalf("entry path = %q, want %q", entry.Path, filepath.Join(dir, "SKILL.md"))
+	}
+}

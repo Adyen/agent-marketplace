@@ -74,7 +74,6 @@ func TestStrictDecodeRejectsUnsafeOrAmbiguousYAML(t *testing.T) {
 		"unknown": valid + "surprise: true\n", "duplicate": valid + "scope: repo\n",
 		"alias": valid + "registries: &r []\ncopy: *r\n", "merge": valid + "registries:\n  - <<: {url: https://x/a, ref: main}\n",
 		"multi document": valid + "---\n" + valid, "conflict": valid + "<<<<<<< ours\n=======\n>>>>>>> theirs\n",
-		"version": "apiVersion: agent-marketplace-lock/v2\nscope: repo\n",
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -147,7 +146,7 @@ func TestPathMapping(t *testing.T) {
 }
 
 func TestPlanMinimalRetainsAndRemoves(t *testing.T) {
-	old := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example/a", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}, {URL: "https://example/orphan", Ref: "main", Commit: mustOID(t, sha1a)}}}
+	old := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example/a", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}, {URL: "https://example/orphan", Ref: "main", Commit: mustOID(t, sha1a)}}}
 	reqs := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example/a.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills", SourceHarness: "claude"}}}, {URL: "https://example/new", Ref: "main"}}}
 	plan, err := Plan(reqs, &old, OperationSync)
 	if err != nil {
@@ -159,7 +158,7 @@ func TestPlanMinimalRetainsAndRemoves(t *testing.T) {
 }
 
 func TestPlanUnchangedAndUpgradeSelection(t *testing.T) {
-	locked := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example/a", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}}}
+	locked := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example/a", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}}}
 	requirements := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example/a.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills", SourceHarness: "claude"}}}}}
 	plan, err := Plan(requirements, &locked, OperationSync)
 	if err != nil || plan.Changed() || len(plan.Retained) != 1 || !reflect.DeepEqual(plan.Desired, locked) {
@@ -173,7 +172,7 @@ func TestPlanUnchangedAndUpgradeSelection(t *testing.T) {
 }
 
 func TestPlanAutodetectedGitHarnessMatchesExistingRoot(t *testing.T) {
-	current := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example.com/repo", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "factory", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}}}
+	current := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example.com/repo", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "factory", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}}}
 	requirements := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example.com/repo.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills"}}}}}
 	plan, err := Plan(requirements, &current, OperationSync)
 	if err != nil || plan.Changed() || len(plan.Retained) != 1 || plan.Desired.Registries[0].Roots[0].SourceHarness != "factory" {

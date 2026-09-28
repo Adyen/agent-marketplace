@@ -76,6 +76,9 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 		resolveOpts.LocalConfigDir = o.LocalConfigDir
 	}
 	syncResult := Sync(ctx, resolveOpts)
+	if o.resolved != nil {
+		*o.resolved = syncResult.Resolved
+	}
 	err := errors.Join(syncResult.Errors...)
 	if err != nil && o.DependencyCommitted {
 		err = &DependencyCommittedSyncError{Err: err}
@@ -97,9 +100,15 @@ type silentSyncOptions struct {
 	DependencyCommitted     bool
 	MarketplaceMode         *resolver.MarketplaceResolveMode
 	marketplaceInstall      *marketplace.PreparedInstall
+	resolved                *[]resolver.ResolvedArtifact
 }
 
 type silentSyncOpt func(*silentSyncOptions)
+
+// withResolvedCapture stores the sync's final resolution in dst.
+func withResolvedCapture(dst *[]resolver.ResolvedArtifact) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.resolved = dst }
+}
 
 func withMarketplaceInstall(plan *marketplace.PreparedInstall) silentSyncOpt {
 	return func(o *silentSyncOptions) { o.marketplaceInstall = plan }

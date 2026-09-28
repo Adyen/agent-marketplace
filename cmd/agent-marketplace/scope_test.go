@@ -284,6 +284,64 @@ skills:
 	}
 }
 
+func TestInstallV4ClearsSourceBoundLocalExclusion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("TMPDIR", t.TempDir())
+
+	origin, working := createBareRepoWithWorkingClone(t, "v4-local-exclude.git")
+	writeSkill(t, working, "resurrect-skill", "Resurrect skill", []string{"scope"})
+	commitAndPushAll(t, working, "Add resurrect-skill")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  main: {git: file://"+origin+", ref: main}\n")
+	localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+	writeConfig(t, localPath, "apiVersion: agent-marketplace/v4\nsources:\n  main: {git: file://"+origin+", ref: main}\nresources:\n  main: {exclude: [skill/resurrect-skill]}\n")
+	localBefore, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--scope", "repo", "resurrect-skill")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, output)
+	}
+	localAfter, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(localAfter) == string(localBefore) {
+		t.Fatalf("install did not clear v4 local source-bound exclusion:\n%s", localAfter)
+	}
+	localCfg, err := config.LoadV4ConfigFromPath(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group := localCfg.Groups["main"]; len(group.Exclude) != 0 {
+		t.Fatalf("local exclusion still suppresses installed skill: %v", group.Exclude)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".claude", "skills", "resurrect-skill", "SKILL.md")); err != nil {
+		t.Fatalf("installed skill not materialized: %v", err)
+	}
+	cfg, err := config.LoadV4ConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var locators []string
+	for _, group := range cfg.Groups {
+		for _, req := range group.Include {
+			locators = append(locators, req.Locator)
+		}
+	}
+	if len(locators) != 1 || locators[0] != "skill/resurrect-skill" {
+		t.Fatalf("repo locators = %v", locators)
+	}
+}
+
 func TestInstallScopeRepoRemovesRepoExclude(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -540,8 +598,17 @@ registries:
 	if err != nil {
 		t.Fatalf("load local config: %v", err)
 	}
-	if localCfg == nil || !containsStr(ksExclude(localCfg.Skills), "vm-lifecycle") {
-		t.Fatalf("expected vm-lifecycle in personal exclude, got: %v", localCfg)
+	if localCfg == nil || len(localCfg.Registries) != 1 {
+		t.Fatalf("expected one source-bound personal registry entry, got: %v", localCfg)
+	}
+	if !strings.HasSuffix(localCfg.Registries[0].URL, origin) {
+		t.Fatalf("personal exclude bound to %q, want the removed skill's source %q", localCfg.Registries[0].URL, origin)
+	}
+	if !containsStr(ksExclude(localCfg.Registries[0].Skills), "vm-lifecycle") {
+		t.Fatalf("expected vm-lifecycle in the personal source exclude, got: %v", localCfg.Registries[0])
+	}
+	if containsStr(ksExclude(localCfg.Skills), "vm-lifecycle") {
+		t.Fatalf("personal exclude written at top level instead of the source: %v", localCfg.Skills)
 	}
 
 	// The repo config must remain unchanged (no removal from skills list,
@@ -784,7 +851,12 @@ registries:
 			}
 			var localExclude []string
 			if localCfg != nil {
-				localExclude = localCfg.Skills.Exclude
+				if len(localCfg.Skills.Exclude) != 0 {
+					t.Fatalf("personal exclude written at top level instead of the source: %v", localCfg.Skills.Exclude)
+				}
+				for _, reg := range localCfg.Registries {
+					localExclude = append(localExclude, reg.Skills.Exclude...)
+				}
 			}
 
 			if containsStr(repoSkills, "repo-scope-skill") != tc.expectRepoHasSkill {
@@ -884,7 +956,12 @@ registries:
 			}
 			var localExclude []string
 			if localCfg != nil {
-				localExclude = localCfg.Skills.Exclude
+				if len(localCfg.Skills.Exclude) != 0 {
+					t.Fatalf("personal exclude written at top level instead of the source: %v", localCfg.Skills.Exclude)
+				}
+				for _, reg := range localCfg.Registries {
+					localExclude = append(localExclude, reg.Skills.Exclude...)
+				}
 			}
 
 			if containsStr(globalSkills, "user-scope-skill") != tc.expectUserHasSkill {
@@ -946,7 +1023,7 @@ registries: []
 	}
 	foundURL := false
 	for _, entry := range localCfg.Registries {
-		if strings.TrimSpace(entry.URL) == origin {
+		if strings.TrimSpace(entry.URL) == "file://"+origin {
 			foundURL = true
 			if !containsStr(entry.Skills.Include, "local-from-skill") {
 				t.Fatalf("expected local-from-skill in registry entry skills.include, got %v", entry.Skills.Include)
@@ -954,7 +1031,7 @@ registries: []
 		}
 	}
 	if !foundURL {
-		t.Fatalf("expected registry with URL %q in local config, got entries: %v", origin, localCfg.Registries)
+		t.Fatalf("expected registry with URL %q in local config, got entries: %v", "file://"+origin, localCfg.Registries)
 	}
 
 	// Repo config must NOT have the registry entry.
@@ -971,7 +1048,7 @@ registries: []
 	// Skill must be materialized after sync.
 	assertSymlinkTarget(t,
 		filepath.Join(repoRoot, ".agents", "skills", "local-from-skill"),
-		filepath.Join(cache.RegistryCachePath(origin, "main"), "local-from-skill"),
+		filepath.Join(cache.RegistryCachePath("file://"+origin, "main"), "local-from-skill"),
 	)
 }
 

@@ -84,11 +84,19 @@ func TestPreV4DuplicateRefUpgrade(t *testing.T) {
 			t.Fatalf("%s: locked second changed to %q", stage, got)
 		}
 	}
+	must(candidate, "sync", "--locked")
+	assertParity("candidate locked sync")
+	if got := read(lockPath); !bytes.Equal(got, committed) {
+		t.Fatalf("locked sync rewrote the duplicate-ref lock:\nbefore:\n%s\nafter:\n%s", committed, got)
+	}
+	must(candidate, "sync")
+	assertParity("candidate plain sync")
+	upgraded := expectV2GitLockUpgrade(t, committed, read(lockPath))
 	for _, args := range [][]string{{"sync", "--locked"}, {"sync"}, {"sync", "--check"}} {
 		must(candidate, args...)
 		assertParity(fmt.Sprintf("candidate %v", args))
-		if got := read(lockPath); !bytes.Equal(got, committed) {
-			t.Fatalf("candidate %v rewrote the duplicate-ref lock:\nbefore:\n%s\nafter:\n%s", args, committed, got)
+		if got := read(lockPath); !bytes.Equal(got, upgraded) {
+			t.Fatalf("candidate %v rewrote the upgraded duplicate-ref lock:\nbefore:\n%s\nafter:\n%s", args, upgraded, got)
 		}
 	}
 
@@ -97,7 +105,7 @@ func TestPreV4DuplicateRefUpgrade(t *testing.T) {
 		if got := read(repoConfig); !bytes.Equal(got, before) {
 			t.Fatalf("refused duplicate-ref migration changed the repository config:\n%s\noutput:\n%s", got, output)
 		}
-		if got := read(lockPath); !bytes.Equal(got, committed) {
+		if got := read(lockPath); !bytes.Equal(got, upgraded) {
 			t.Fatalf("refused duplicate-ref migration changed the lock:\n%s", got)
 		}
 		t.Logf("duplicate-ref migration refused safely:\n%s", output)

@@ -294,13 +294,31 @@ The artifact is a deterministic tar.gz identified by SHA-256 over the exact arch
 ```text
 manifest.json
 resource/<canonical payload>
-assets/<contained support files>
+assets/<contained resource assets>
 licenses/<applicable license and notice files>
+support/<declared skill support files, bytes and executable modes>
 ```
+
+`assets/` members are unrelated to skill support: `support/` is the canonical
+home for declared skill support bytes. Mirrored skills that declare support
+files — flat or nested relative paths — carry their bytes under `support/`;
+the canonical payload still declares their relative paths. A consumer
+installing from a verified cached artifact stages only the declared skill
+content and support files — the `artifact.tar.gz` archive and its sibling
+verification marker are cache bookkeeping and are never installed into the
+resource, in symlink or file mode. An older verified artifact that declares
+support files but lacks `support/` members fails closed with an error naming
+the missing bytes and preserves the last-good installation. Adding `support/`
+members changes the archive digest, and `archive_digest` is immutable per
+content digest, so a published revision cannot gain support members in place:
+they ship only under a new content revision or via an index-only source.
+Clients built before `support/` members existed reject such archives during
+canonical digest validation rather than silently installing them. Index-only
+acquisition is unchanged.
 
 The versioned manifest records only intrinsic resource data: kind, name, canonical content digest, supported schema version, and capability metadata. Registry occurrence metadata, analyzer findings, policy decisions, and revocation stay outside the archive in their respective immutable records or live control-plane state, avoiding both self-reference and duplicate artifacts across commits and reassessments.
 
-The payload preserves resource semantics and supporting files, not source-layout accidents. Original source paths are provenance metadata only. Clients decode the canonical form and compile it into selected harness targets.
+The payload preserves resource semantics and declared support-file paths, not source-layout accidents or support bytes, which live in `support/` members. Original source paths are provenance metadata only. Clients decode the canonical form and compile it into selected harness targets.
 
 Archive construction and extraction forbid:
 

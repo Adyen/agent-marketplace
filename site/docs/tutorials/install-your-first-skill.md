@@ -1,26 +1,30 @@
 # Install your first skill for Claude Code
 
-Install Anthropic's `frontend-design` skill for Claude Code. The skill will be available machine-wide to projects that use your personal Claude Code target.
+In this tutorial you install Anthropic's `frontend-design` skill for Claude Code. You install it for your user, so it is available in every project where Claude Code uses your personal setup.
 
-You will use a public GitHub repository as the registry, save the selection in your user configuration, and verify the generated Claude Code skill.
+You will use a public GitHub repository as the [registry](../glossary.md#registry), save the selection in your personal configuration file, and check the skill that `agent-marketplace` writes for Claude Code. Everything happens on the command line.
 
 ## Before you begin
 
 You need:
 
-- Claude Code;
-- Git; and
-- `agent-marketplace` on your `PATH`. Download a published binary from [GitHub Releases](https://github.com/Adyen/agent-marketplace/releases), or follow the [source build instructions](https://github.com/Adyen/agent-marketplace#build-from-source).
+- Claude Code.
+- Git. Run `git --version` to check. [Terminal basics](../terminal-basics.md#install-git) explains how to install it.
+- `agent-marketplace` on your `PATH`. [Install](../install.md) explains how.
 
-Confirm that the CLI is available:
+If you rarely use a terminal, read [Terminal basics](../terminal-basics.md) first.
+
+Check that the program is available:
 
 ```bash
 agent-marketplace --help
 ```
 
-A skill contains instructions that your coding agent follows. Review third-party skills before installing them. You can inspect the [`frontend-design` source](https://github.com/anthropics/skills/tree/main/skills/frontend-design) used in this tutorial.
+You should see a list of commands that includes `init`, `list`, `status`, and `sync`. If the terminal answers `command not found`, the program isn't on your `PATH` yet; go back to [Install](../install.md).
 
-Run the tutorial from your home directory. This prevents a repository's own harness settings from overriding your personal target:
+A [skill](../glossary.md#skill) is a set of instructions that your coding agent follows. Review third-party skills before you install them. You can read the [`frontend-design` source](https://github.com/anthropics/skills/tree/main/skills/frontend-design) used in this tutorial.
+
+Run the tutorial from your home folder. A project folder can have its own harness settings that override your personal ones, and your home folder has none:
 
 ```bash
 cd ~
@@ -28,29 +32,42 @@ cd ~
 
 ## 1. Select Claude Code as your harness
 
-Agent Marketplace needs to know which coding harness should receive installed resources. Initialize a personal configuration that targets Claude Code:
+`agent-marketplace` needs to know which coding tool, or [harness](../glossary.md#harness), should receive the resources you install. Create a personal configuration that targets Claude Code:
 
 ```bash
 agent-marketplace init --harnesses claude
 ```
 
-The command creates `~/.agents/config.yaml` and reports its path:
+The command creates `~/.agents/config.yaml` and prints its path:
 
 ```text
 Initialized user personal config: <home>/.agents/config.yaml
 ```
 
-Check the effective target:
+If it prints `User personal config already initialized.` instead, you already have a personal configuration. Step 3 replaces that file, and the `sync` after it removes anything your old configuration installed into your personal harness folders. Copy the configuration and its lockfile first so you can [put them back](#restore-your-previous-configuration) later. The second command prints an error if you have no lockfile, which is fine:
+
+```bash
+cp ~/.agents/config.yaml ~/.agents/config.yaml.bak
+cp ~/.agents/lock.yaml ~/.agents/lock.yaml.bak
+```
+
+Check which harness is selected:
 
 ```bash
 agent-marketplace status
 ```
 
-Under **TARGET HARNESS SET**, confirm that the target is `claude` and its source is `USER` before continuing.
+Under `TARGET HARNESS SET`, confirm that the target is `claude` and its source is `USER`:
+
+```text
+TARGET HARNESS SET
+TARGET HARNESSES  SOURCE
+claude            USER
+```
 
 ## 2. Browse the skill
 
-Use the public HTTPS clone URL to inspect the skill without changing your configuration:
+List what the registry offers without changing your configuration. The command uses the repository's public HTTPS address:
 
 ```bash
 agent-marketplace list \
@@ -59,18 +76,18 @@ agent-marketplace list \
   --path skills/frontend-design
 ```
 
-The results should contain an available skill named `frontend-design`:
+`--ref main` reads the `main` branch. `--path` limits the search to the folder that holds this skill. The command downloads the repository into a local [cache](../glossary.md#cache) the first time, which can take a few seconds. The result should contain an available skill named `frontend-design`:
 
 ```text
 REGISTRY  KIND   NAME             TAGS (metadata)  STATUS
 skills    skill  frontend-design                   available
 ```
 
-The `--ref` option selects the `main` branch. The `--path` option limits discovery to the directory that contains this skill.
+If the command fails with an error about `git`, check that Git is installed and that you can reach GitHub.
 
-## 3. Select the skill in v4 configuration
+## 3. Select the skill in your configuration
 
-Edit the v4 user configuration so it declares the Git source and the resource request:
+Replace your personal configuration with one that declares the Git source and asks for the skill. Copy the whole block, including the final `EOF` line:
 
 ```bash
 cat > ~/.agents/config.yaml <<'EOF'
@@ -89,68 +106,80 @@ resources:
 EOF
 ```
 
-Synchronize the generated Claude Code files:
+`sources` gives the registry the name `anthropic-skills`. `resources` asks for one skill from that source.
+
+Write the skill into Claude Code's folders:
 
 ```bash
 agent-marketplace sync
 ```
 
-Expected output:
+You should see:
 
 ```text
-Installed 1  Removed 0  Malformed 0  Errors 0
+Installed 2  Removed 0  Malformed 0  Errors 0
+  → ~/.claude/.claude-plugin (1 written), ~/.claude/skills (1 written)
 ```
 
-## 4. Verify the installation
+"Installed" counts files written: the skill, and a Claude Code manifest that lists installed skills. If `Errors` is not `0`, read the lines below the summary. They usually name the setting or the registry that failed.
 
-Check the effective configuration and generated resources:
+## 4. Check the installation
 
 ```bash
 agent-marketplace status
 ```
 
-First find the user entry under **EXACT REGISTRY LOCKS**; it shows the declared `main` ref and the exact commit used for this installation. Then find the `frontend-design` row under **SYNCED RESOURCES**. It should report:
+Look at these tables in the output:
 
-- kind: `skill`;
-- harness: `claude`;
-- source: `USER`;
-- registry: `https://github.com/anthropics/skills.git`; and
-- ref: `main`.
+- `EXACT REGISTRY LOCKS` has a `USER` row for `https://github.com/anthropics/skills`. It shows the `main` ref and the exact [commit](../glossary.md#commit) this installation used.
+- `SYNCED RESOURCES` has a `frontend-design` row with kind `skill`, harness `claude`, source `USER`, registry `https://github.com/anthropics/skills.git`, and ref `main`.
+- `HARNESS TARGETS` shows Claude Code's machine root as `default=<home>/.claude`.
+- `DRIFT` says `In sync`.
 
-The **HARNESS TARGETS** section should show Claude Code's machine root as `~/.claude`. The generated skill is available at:
+The skill is now at:
 
 ```text
 ~/.claude/skills/frontend-design/SKILL.md
 ```
 
-Agent Marketplace normally creates this skill directory as a link to its compiled cache. Manage it through Agent Marketplace rather than editing the generated file.
+`agent-marketplace` normally creates this skill folder as a [symlink](../glossary.md#symlink) (a shortcut) to its cache. Don't edit the file there. Change the configuration and run `sync` instead.
 
 ## 5. Use the skill
 
-Start a new Claude Code session so it discovers the new skill. Then give it a frontend task, for example:
+Start a new Claude Code session so it finds the new skill. Then give it a frontend task, for example:
 
 ```text
 Create a distinctive landing page for a neighborhood film photography club.
 Use the frontend-design skill and explain the visual direction before building it.
 ```
 
-Claude Code can now use the installed guidance when planning and implementing the design.
+Claude Code follows the skill's guidance when it plans and builds the design.
 
 ## What happened
 
-You completed three operations:
+You did three things:
 
 1. selected Claude Code as the target harness;
-2. added Anthropic's repository and the `frontend-design` selection to your user configuration; and
-3. materialized the skill in Claude Code's native user directory.
+2. added Anthropic's repository and the `frontend-design` selection to your personal configuration; and
+3. ran `sync`, which wrote the skill into Claude Code's personal folder and recorded the commit in `~/.agents/lock.yaml`.
 
-For reproducible setups, use a stable tag or commit as the registry ref. The [reproducibility and lockfiles explanation](../explanation/reproducibility-and-lockfiles.md) describes how the lock keeps the exact Git acquisition.
+This tutorial follows the repository's `main` branch to keep the first installation simple. The [lockfile](../glossary.md#lockfile) keeps you on the recorded commit until you run `agent-marketplace update`. For setups that other people reproduce, set the registry ref to a release tag or a commit. The [reproducibility and lockfiles explanation](../explanation/reproducibility-and-lockfiles.md) describes how the lockfile works.
+
+## Restore your previous configuration
+
+If you made copies in step 1, put them back and sync:
+
+```bash
+cp ~/.agents/config.yaml.bak ~/.agents/config.yaml
+cp ~/.agents/lock.yaml.bak ~/.agents/lock.yaml
+agent-marketplace sync
+```
+
+This reinstalls what your old configuration selected. It also removes `frontend-design` again, unless your old configuration selected it too.
 
 ## Next steps
 
 - [Install your first skill from an online Marketplace](./install-your-first-marketplace-skill.md) to learn the hosted catalog workflow.
 - Learn the everyday [`list`, `install`, `remove`, `sync`, and `update` commands](../reference/cli.md).
-- [Add agent-marketplace to a repository](https://github.com/Adyen/agent-marketplace/blob/main/docs/adoption-guide.md) to share selections with a team.
+- [Adopt agent-marketplace in a repository](../how-to/adopt-agent-marketplace-in-a-repository.md) to share selections with a team.
 - Read the [configuration reference](../reference/configuration.md) when you need to edit `.agents/config.yaml` directly.
-
-The tutorial follows the repository's `main` branch for an approachable first installation. For reproducible setups, configure a stable tag or commit as the registry ref.

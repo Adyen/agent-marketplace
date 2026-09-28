@@ -22,7 +22,7 @@ func BenchmarkMergeInstallBindingsInMemory(b *testing.B) {
 	digest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
 	for _, count := range []int{1, 16} {
 		b.Run(fmt.Sprintf("registries=%d", count), func(b *testing.B) {
-			base := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}
+			base := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo}
 			for i := range count {
 				base.Registries = append(base.Registries, lockfile.GitRegistry{
 					URL: fmt.Sprintf("https://example.invalid/registry-%d", i), Ref: "main", Commit: commit,

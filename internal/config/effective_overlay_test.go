@@ -44,6 +44,41 @@ func TestLoadEffectiveFileOverlaysRetainRealPaths(t *testing.T) {
 	}
 }
 
+func TestLoadEffectiveV4MissingLocalOverlayThroughAlias(t *testing.T) {
+	dir := t.TempDir()
+	actual := filepath.Join(dir, "actual")
+	if err := os.MkdirAll(filepath.Join(actual, ".agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "alias")
+	if err := os.Symlink(actual, alias); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(actual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := LocalConfigPath(alias)
+	canonical := LocalConfigPath(resolved)
+	if _, err := os.Stat(local); !os.IsNotExist(err) {
+		t.Fatalf("local config already exists: %v", err)
+	}
+	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+		RepoRoot: alias, LocalConfigDir: alias,
+		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
+		GlobalPath:       filepath.Join(dir, "missing-user.yaml"),
+		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
+		LocalPath:        local,
+		FileOverlays:     map[string][]byte{canonical: []byte("apiVersion: agent-marketplace/v4\n")},
+	})
+	if len(ec.Errors) != 0 || ec.Local == nil || ec.Local.APIVersion != APIVersionV4 {
+		t.Fatalf("v4 local overlay not loaded: local=%#v errors=%v", ec.Local, ec.Errors)
+	}
+	if _, err := os.Stat(local); !os.IsNotExist(err) {
+		t.Fatalf("overlay wrote local config: %v", err)
+	}
+}
+
 func TestLoadEffectiveV4RootUsesSuppliedOverlay(t *testing.T) {
 	dir := t.TempDir()
 	user := filepath.Join(dir, "user.yaml")
