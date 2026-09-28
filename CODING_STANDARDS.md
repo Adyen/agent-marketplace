@@ -43,6 +43,15 @@ Apply the existing benchmark requirements to added validation on hot paths. Repo
 - Isolate tests from the developer's machine. Use temporary directories and scoped environment variables; default unit tests must not read or mutate the real home directory or depend on optional third-party executables or external network services.
 - Follow the E2E test selection rules below: prefer declarative cases for standard setup/run/assert workflows and standalone tests only when the framework cannot express the setup.
 
+### Property-based tests
+
+- Use [`pgregory.net/rapid`](https://pkg.go.dev/pgregory.net/rapid) for structured invariants on internally consistent values (configs, documents, IR, ownership state). Use native Go fuzzing for raw-byte parser boundaries instead.
+- Property oracles must be independently authored, like expected values in example tests: derive them from the contract, never by re-running the production algorithm under test.
+- Constrain generated inputs per case so each subtest covers the interesting region by construction; do not generate broadly and then filter most inputs away.
+- Assert with `errors.Is`/`errors.As` and stable diagnostic codes, as elsewhere; do not match error prose.
+- Rapid is test-only. The `go list -deps` graph guard in `cmd/agent-marketplace` enforces that Rapid never links into the shipped binary; production code must not import it.
+- Never commit Rapid failfiles (`testdata/rapid/` is ignored). When a run shrinks a counterexample, convert it into a plain example regression test in the same change as its fix.
+
 ### E2E test suite
 
 The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Registry fixtures are local bare Git repositories reached through `file://` URLs, so the suite runs directly on Ubuntu in CI; local runs use Docker by default for additional host isolation.

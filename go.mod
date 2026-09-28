@@ -38,6 +38,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.57.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (
