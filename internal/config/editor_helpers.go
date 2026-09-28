@@ -152,55 +152,28 @@ func isLocalConfigPath(configPath string) bool {
 	return strings.HasSuffix(filepath.Clean(configPath), "config.local.yaml")
 }
 
-// EnsureGlobalConfig creates the user-level config skeleton at
-// ~/.agents/config.yaml if it does not already exist. The skeleton carries
-// only the required global fields (apiVersion, harnesses); logging is left
-// out so the file stays clean, and the logging runtime falls back to its
-// code defaults unless the user opts in with an explicit logging block. See
-// docs/logging.md for the override keys.
+// EnsureGlobalConfig creates the user-level config at ~/.agents/config.yaml
+// when it does not exist, the same way init does: a v4 root with the default
+// harnesses and nothing else. Logging is left out so the file stays clean, and
+// the logging runtime falls back to its code defaults unless the user opts in
+// with an explicit logging block (see docs/logging.md for the override keys).
+// An existing file, even a dangling symlink, is never read or rewritten.
 func EnsureGlobalConfig() error {
 	configPath, err := GlobalConfigPath()
 	if err != nil {
 		return err
 	}
-	doc, mode, err := readOrInitConfig(configPath)
-	if err != nil {
+	_, err = os.Lstat(configPath)
+	switch {
+	case err == nil:
+		return nil
+	case !errors.Is(err, os.ErrNotExist):
 		return err
 	}
-
-	var data []byte
-	if !isEmptyConfigDocument(doc) {
-		var encoded bytes.Buffer
-		encoder := yaml.NewEncoder(&encoded)
-		encoder.SetIndent(2)
-		if err := encoder.Encode(doc); err != nil {
-			return fmt.Errorf("encode config %q: %w", configPath, err)
-		}
-		if err := encoder.Close(); err != nil {
-			return fmt.Errorf("close yaml encoder for %q: %w", configPath, err)
-		}
-		data = encoded.Bytes()
-	}
-
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return fmt.Errorf("create config directory for %q: %w", configPath, err)
-	}
-
-	// Exclusively create the file so concurrent runs cannot clobber a config
-	// another process is writing. If it already exists, this is a no-op.
-	f, err := os.OpenFile(configPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil
-		}
-		return fmt.Errorf("create config %q: %w", configPath, err)
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write config %q: %w", configPath, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close config %q: %w", configPath, err)
+	// InitializeUserPersonalAtPath creates the file exclusively, so a
+	// concurrent run that creates it first is not an error.
+	if _, err := InitializeUserPersonalAtPath(configPath, DefaultHarnesses()); err != nil && !errors.Is(err, ErrAlreadyInitialized) {
+		return err
 	}
 	return nil
 }

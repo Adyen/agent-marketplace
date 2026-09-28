@@ -573,6 +573,46 @@ func TestSetHarnessesInConfigRejectsInvalidV4DocumentWithoutWriting(t *testing.T
 	}
 }
 
+func TestEnsureGlobalConfigLeavesAnExistingConfigAlone(t *testing.T) {
+	for _, existing := range []string{
+		"apiVersion: agent-marketplace/v2\nharnesses: [claude]\nregistries: []\n",
+		"apiVersion: agent-marketplace/v4\nharnesses: [cursor]\n",
+		"",
+	} {
+		homeDir := t.TempDir()
+		t.Setenv("HOME", homeDir)
+		globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
+		if err := os.MkdirAll(filepath.Dir(globalPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustWriteFile(t, globalPath, []byte(existing))
+		if err := EnsureGlobalConfig(); err != nil {
+			t.Fatalf("EnsureGlobalConfig with an existing config: %v", err)
+		}
+		data, err := os.ReadFile(globalPath)
+		if err != nil || string(data) != existing {
+			t.Fatalf("EnsureGlobalConfig rewrote an existing config to %q (err %v)", data, err)
+		}
+	}
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(globalPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(homeDir, "dotfiles", "agents.yaml")
+	if err := os.Symlink(target, globalPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureGlobalConfig(); err != nil {
+		t.Fatalf("EnsureGlobalConfig with a dangling symlink: %v", err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("EnsureGlobalConfig wrote through a dangling symlink: %v", err)
+	}
+}
+
 func TestEnsureGlobalConfigCreatesSkeletonWithDefaults(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -592,12 +632,15 @@ func TestEnsureGlobalConfigCreatesSkeletonWithDefaults(t *testing.T) {
 	}
 	content := string(data)
 	for _, needle := range []string{
-		"apiVersion: agent-marketplace/v2",
+		"apiVersion: agent-marketplace/v4",
 		"harnesses:",
 	} {
 		if !strings.Contains(content, needle) {
 			t.Fatalf("expected skeleton to contain %q, got:\n%s", needle, content)
 		}
+	}
+	if _, err := LoadV4ConfigFromPath(globalPath); err != nil {
+		t.Fatalf("generated skeleton is not a valid v4 config: %v\n%s", err, content)
 	}
 	// Logging is intentionally omitted from the skeleton; the runtime falls
 	// back to code defaults unless the user opts in.
