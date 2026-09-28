@@ -2,7 +2,7 @@
 
 Date: 2026-09-23
 
-Status: **Written design for review.** The operator agreed the separation and the requirement that GC work normally without an organization lock. This document specifies the first implementation slice; it does not claim implementation, authorize dispatch, or approve merging other PRs.
+Status: **Implemented at `57087a51d4f565fcd64e4c7e57dda8b52e0a580b`.** The operator agreed the separation and the requirement that GC work normally without an organization lock. This document specifies the first implementation slice; it does not authorize dispatch or approve merging other PRs.
 
 Baseline: `27675b3bc71ed336020ed7069125af93e055583c` on `rework-architecture`, matching remote `main` at investigation time. PR291 also has active work beyond its published head; its final revision remains an integration input.
 

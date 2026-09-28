@@ -2,7 +2,7 @@
 
 Date: 2026-09-23
 
-Status: **Implementation in progress.** WP0 is complete at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`; WP1 is implemented by `agent-marketplace-cgxc.8.2`; WP2 is implemented by `agent-marketplace-cgxc.8.3`; WP3 is implemented by `agent-marketplace-cgxc.8.4`. WP4-WP5 remain planned.
+Status: **Implementation in progress.** WP0 is complete at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`; WP1 is implemented by `agent-marketplace-cgxc.8.2`; WP2 is implemented by `agent-marketplace-cgxc.8.3`; WP3 is implemented by `agent-marketplace-cgxc.8.4`. WP4 is implemented by `agent-marketplace-cgxc.8.5`; WP5 is implemented by `agent-marketplace-cgxc.8.6` at `57087a51d4f565fcd64e4c7e57dda8b52e0a580b`.
 
 Baseline: WP1 is based on `agent-marketplace-cgxc.8.1` at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`, which is based on main `1d092d7d13a8a2340973f3e13d5980a137b7b4ee`. PR291 was closed unmerged and contributes nothing.
 
