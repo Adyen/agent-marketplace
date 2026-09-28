@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -601,6 +603,60 @@ func TestListFromDoesNotAcquireConfiguredMarketplace(t *testing.T) {
 		t.Fatalf("expected local-skill in list output, got:\n%s", output)
 	}
 	if got := requests.Load(); got != 0 {
+		t.Fatalf("list --from made %d requests to the configured Marketplace", got)
+	}
+}
+
+func TestListFromHonorsAllowlistFromUnbindableV4Layer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	allowedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not a git endpoint", http.StatusNotFound)
+	}))
+	defer allowedServer.Close()
+	var deniedRequests atomic.Int32
+	deniedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		deniedRequests.Add(1)
+		http.Error(w, "not a git endpoint", http.StatusNotFound)
+	}))
+	defer deniedServer.Close()
+
+	var marketplaceRequests atomic.Int32
+	marketplace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		marketplaceRequests.Add(1)
+		http.Error(w, "unavailable", http.StatusInternalServerError)
+	}))
+	defer marketplace.Close()
+
+	orgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nallowed_registries:\n  - "+regexp.QuoteMeta(strings.TrimPrefix(allowedServer.URL, "http://"))+"/\nsources:\n  hosted: {marketplace: "+marketplace.URL+"}\nresources:\n  hosted: {include: [tools/skill/review]}\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nallowed_registries: [never\\.allowed\\.example]\n")
+
+	withWorkingDir(t, t.TempDir())
+
+	_, err := executeCommand("list", "--from", allowedServer.URL+"/repo.git", "--ref", "main")
+	if err == nil || strings.Contains(err.Error(), "blocked by allowed_registries") {
+		t.Fatalf("allowlist-permitted --from error = %v, want a fetch failure past allowlist validation", err)
+	}
+	if !strings.Contains(err.Error(), "clone registry") {
+		t.Fatalf("allowlist-permitted --from error = %v, want clone failure proving catalog load was reached", err)
+	}
+
+	_, err = executeCommand("list", "--from", deniedServer.URL+"/repo.git", "--ref", "main")
+	if err == nil || !strings.Contains(err.Error(), "blocked by allowed_registries") {
+		t.Fatalf("denied --from error = %v, want blocked by allowed_registries", err)
+	}
+	if got := deniedRequests.Load(); got != 0 {
+		t.Fatalf("denied --from URL reached the network %d times", got)
+	}
+	if got := marketplaceRequests.Load(); got != 0 {
 		t.Fatalf("list --from made %d requests to the configured Marketplace", got)
 	}
 }
