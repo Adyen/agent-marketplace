@@ -358,7 +358,7 @@ resources:
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
 
-	if err := runTUIDependencyLifecycle(context.Background(), repo, false); err != nil {
+	if err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
@@ -571,7 +571,7 @@ resources:
 	repo := t.TempDir()
 	repoPath := filepath.Join(repo, ".agents", "config.yaml")
 	opts := pipeline.ResolveOptions{
-		RepoRoot: repo,
+		Workspace: mustWorkspace(t, repo),
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,

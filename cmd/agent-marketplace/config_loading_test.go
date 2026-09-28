@@ -90,7 +90,7 @@ func TestRootConfigLoadingModes(t *testing.T) {
 				{Offline: true},
 				{CatalogMode: catalog.LoadModeCachedNoFetch},
 			} {
-				resolveOpts.RepoRoot = repo
+				resolveOpts.Workspace = mustWorkspace(t, repo)
 				result := pipeline.Resolve(ctx, resolveOpts)
 				if !marketplacelock.HasRequiredError(result.Errors) {
 					t.Fatalf("strict resolve reused warm cache: %v", result.Errors)
