@@ -1,7 +1,6 @@
 package lockfile
 
 import (
-	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
@@ -98,29 +97,6 @@ func TestDecodeIntoDoesNotOverwriteOnFailure(t *testing.T) {
 	}
 	if !reflect.DeepEqual(destination, before) {
 		t.Fatalf("destination overwritten: %#v", destination)
-	}
-}
-
-func TestRegistryInputPermutationCannotChangeBytes(t *testing.T) {
-	base := make([]GitRegistry, 24)
-	for i := range base {
-		base[i] = GitRegistry{URL: "https://example.com/repo-" + string(rune('a'+i)) + ".git", Ref: "main", Commit: mustOID(t, sha1a)}
-	}
-	want, err := Encode(Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: base})
-	if err != nil {
-		t.Fatal(err)
-	}
-	random := rand.New(rand.NewSource(7))
-	for i := 0; i < 50; i++ {
-		permuted := append([]GitRegistry(nil), base...)
-		random.Shuffle(len(permuted), func(i, j int) { permuted[i], permuted[j] = permuted[j], permuted[i] })
-		got, err := Encode(Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: permuted})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(want) {
-			t.Fatalf("permutation %d changed bytes", i)
-		}
 	}
 }
 

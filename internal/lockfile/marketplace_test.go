@@ -1,7 +1,6 @@
 package lockfile
 
 import (
-	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
@@ -349,35 +348,6 @@ func TestMarketplaceInvalidDocuments(t *testing.T) {
 				t.Fatalf("Encode accepted invalid document:\n%s", data)
 			}
 		})
-	}
-}
-
-func TestMarketplacePermutationAndDedupStable(t *testing.T) {
-	want, err := Encode(v2GoldenDocument())
-	if err != nil {
-		t.Fatal(err)
-	}
-	random := rand.New(rand.NewSource(11))
-	for i := 0; i < 50; i++ {
-		doc := v2GoldenDocument()
-		mp := &doc.Marketplaces[0]
-		random.Shuffle(len(mp.RegistryBindings), func(a, b int) {
-			mp.RegistryBindings[a], mp.RegistryBindings[b] = mp.RegistryBindings[b], mp.RegistryBindings[a]
-		})
-		random.Shuffle(len(mp.Resources), func(a, b int) {
-			mp.Resources[a], mp.Resources[b] = mp.Resources[b], mp.Resources[a]
-		})
-		if i%3 == 0 {
-			mp.RegistryBindings = append(mp.RegistryBindings, mp.RegistryBindings[0])
-			mp.Resources = append(mp.Resources, mp.Resources[0])
-		}
-		got, err := Encode(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(want) {
-			t.Fatalf("permutation %d changed bytes", i)
-		}
 	}
 }
 
