@@ -112,7 +112,7 @@ func Provisional(v4 *config.V4Config, scope lockfile.Scope) (lockfile.Document, 
 	for _, group := range marketplaceSourceRequests(v4) {
 		sourceName := group.name
 		source := v4.Sources[sourceName]
-		entry := lockfile.MarketplaceLock{URL: source.CanonicalURL, InstanceID: "bootstrap"}
+		entry := lockfile.MarketplaceLock{URL: source.CanonicalURL, InstanceID: lockfile.ProvisionalMarketplaceInstanceID}
 		requests := group.requests
 		bindings := make(map[string]string, len(requests))
 		entry.Resources = make([]lockfile.MarketplaceResourceLock, 0, len(requests))
