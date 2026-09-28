@@ -340,23 +340,17 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 }
 
 func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
-	effective := pipeline.LoadEffective(ctx, pipeline.ConfigLoadCached, config.LoadEffectiveOptions{
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
-	}, nil)
+	})
 	seen := make(map[string]struct{})
-	for _, layer := range effective.PresentLayers() {
-		var entries []config.RegistryEntry
-		if layer.Config != nil {
-			entries = layer.Config.Registries
-		} else if layer.Local != nil {
-			entries = layer.Local.Registries
+	for _, source := range []config.Source{config.Organization, config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {
+		layer := intent.Layers[source]
+		if !layer.Present() || layer.Err() != nil {
+			continue
 		}
-		for _, entry := range entries {
-			for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindCollection} {
-				for _, name := range entry.SelectorForKind(kind).Include {
-					seen[fmt.Sprintf("%s %q", skill.KindLabel(kind), name)] = struct{}{}
-				}
-			}
+		for _, selection := range layer.ExplicitSelections() {
+			seen[fmt.Sprintf("%s %q", skill.KindLabel(selection.Kind), selection.Name)] = struct{}{}
 		}
 	}
 	labels := make([]string, 0, len(seen))

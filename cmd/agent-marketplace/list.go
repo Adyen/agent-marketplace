@@ -187,16 +187,14 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	// Resolve web URLs into git URL + ref + path. Explicit flags win.
 	fromURL, fromRef, fromPath, _ = pipeline.ResolveFromURL(fromURL, fromRef, fromPath)
 
-	// Validate the ad-hoc URL against the effective allowlist before any
-	// network access. LoadEffective also validates the existing configured
-	// layers and returns their resolved allowlist.
-	ec := pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{}, nil)
-	config.LogManagedDiagnostics(ec.Diagnostics)
-	for _, w := range ec.Warnings {
+	// Validate the ad-hoc URL against the allowlist resolved by ReadIntent
+	// before any network access.
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{})
+	for _, w := range intent.Warnings {
 		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))) //nolint:errcheck // best-effort warning on stderr
 	}
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
-	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil {
+	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, intent.AllowedRegistries()); err != nil {
 		return err
 	}
 

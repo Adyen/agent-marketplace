@@ -1,14 +1,49 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
+
+func TestConfiguredSelectionLabelsReadsIntentWithoutLocks(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
+	defer server.Close()
+
+	repo := t.TempDir()
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  local: {directory: resources}
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  local: {include: [skill/keep]}
+  hosted: {include: [tools/skill/review]}
+`)
+
+	labels := configuredSelectionLabels(context.Background(), repo, repo)
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("selection label read made %d Marketplace requests", got)
+	}
+	if !slices.Contains(labels, `skill "keep"`) {
+		t.Fatalf("labels = %v, want the directory-source selection kept without an acquisition lock", labels)
+	}
+}
 
 func TestSyncSummaryUsesTextLabelsInsteadOfEmoji(t *testing.T) {
 	if isolateCommandTest(t) {
