@@ -179,32 +179,36 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 		return invalidWorkspaceSnapshot(err)
 	}
 	repoRoot := ws.RepoRoot()
-	resolvedResult, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		Workspace:     ws,
-		CatalogMode:   tuiCatalogLoadMode(mode),
-		SkipInventory: true,
-		EffectiveOpts: config.LoadEffectiveOptions{
-			OrganizationPath: config.OrganizationConfigPath(),
-			GlobalPath:       filepath.Join(homeDir, ".agents", "config.yaml"),
-			RepoPath:         config.ProjectConfigPath(repoRoot),
-			LocalPath:        config.LocalConfigPath(ws.LocalConfigDir()),
-		},
-		Loaders: pipeline.Loaders{
-			Org:    loadOrgConfig,
-			Global: loadGlobalConfig,
-			Repo:   loadRepoConfig,
-			Local: func() (*config.LocalConfig, error) {
-				return loadLocalConfig(ws.LocalConfigDir())
+	inspection, releaseExactLease := pipeline.Inspect(ctx, pipeline.InspectOptions{
+		Resolve: pipeline.ResolveOptions{
+			Workspace:     ws,
+			CatalogMode:   tuiCatalogLoadMode(mode),
+			SkipInventory: true,
+			EffectiveOpts: config.LoadEffectiveOptions{
+				OrganizationPath: config.OrganizationConfigPath(),
+				GlobalPath:       filepath.Join(homeDir, ".agents", "config.yaml"),
+				RepoPath:         config.ProjectConfigPath(repoRoot),
+				LocalPath:        config.LocalConfigPath(ws.LocalConfigDir()),
 			},
+			Loaders: pipeline.Loaders{
+				Org:    loadOrgConfig,
+				Global: loadGlobalConfig,
+				Repo:   loadRepoConfig,
+				Local: func() (*config.LocalConfig, error) {
+					return loadLocalConfig(ws.LocalConfigDir())
+				},
+			},
+			CatalogOption: []catalog.LoadOption{
+				catalog.WithCloneOrPull(cloneOrPull),
+				catalog.WithDiscoverFunc(discoverCatalog),
+			},
+			ReadOnlyExactLocks:        true,
+			AllowMissingReadOnlyLocks: true,
 		},
-		CatalogOption: []catalog.LoadOption{
-			catalog.WithCloneOrPull(cloneOrPull),
-			catalog.WithDiscoverFunc(discoverCatalog),
-		},
-		ReadOnlyExactLocks:        true,
-		AllowMissingReadOnlyLocks: true,
+		DryRun: runMaterialize,
 	})
 	defer releaseExactLease()
+	resolvedResult := inspection.ResolveResult
 
 	base := snapshotLoadedMsg{
 		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
@@ -226,30 +230,26 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 	}
 
 	var diagnostics []tuiDiagnostic
-	diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticConfig, resolvedResult.Warnings...)
+	for _, issue := range inspection.Issues {
+		severity := diagnosticWarning
+		if issue.Severity == pipeline.IssueError {
+			severity = diagnosticError
+		}
+		diagnostics = appendSnapshotDiagnostics(diagnostics, severity, diagnosticCategoryFor(issue.Category), issue.Err)
+	}
+
 	if len(resolvedResult.ConfigErrors) > 0 {
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticConfig, resolvedResult.ConfigErrors...)
 		base.diagnostics = deduplicateDiagnostics(diagnostics)
 		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
 		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
 		return base
 	}
 
-	var catalogOverlapWarnings []error
 	var hardCatalogFailure bool
-	if len(resolvedResult.CatalogErrors) > 0 {
-		var hardErrs []error
-		for _, err := range resolvedResult.CatalogErrors {
-			if catalog.IsOverlapWarning(err) {
-				catalogOverlapWarnings = append(catalogOverlapWarnings, err)
-			} else {
-				hardErrs = append(hardErrs, err)
-			}
-		}
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, catalogOverlapWarnings...)
-		if len(hardErrs) > 0 {
-			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticCatalog, hardErrs...)
+	for _, err := range resolvedResult.CatalogErrors {
+		if !catalog.IsOverlapWarning(err) {
 			hardCatalogFailure = true
+			break
 		}
 	}
 
@@ -258,7 +258,6 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 	// here, before detail capture or dry-run materialization can act on an
 	// invalid root and mask the original error.
 	if len(resolvedResult.Errors) > 0 && len(resolvedResult.CatalogErrors) == 0 && len(resolvedResult.ResolveErrors) == 0 {
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticResolution, resolvedResult.Errors...)
 		base.diagnostics = deduplicateDiagnostics(diagnostics)
 		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
 		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
@@ -272,36 +271,11 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 	for _, resolved := range resolvedResult.Resolved {
 		resolvedNames = append(resolvedNames, skill.ResourceKey(resolved.Kind, resolved.Name))
 	}
-	dryRunReport, dryRunErr := runMaterialize(ctx, ws.MaterializeRoot(), resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
+	dryRunReport := inspection.Report
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
 	driftState := driftReady
-	if hardCatalogFailure || dryRunReport == nil || dryRunErr != nil {
+	if hardCatalogFailure || dryRunReport == nil || !inspection.Healthy() {
 		driftState = driftFailed
-	}
-
-	for _, malformed := range resolvedResult.CatalogLoad.Malformed {
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, fmt.Errorf("malformed skill %q (%s): %w", malformed.DirName, malformed.Path, malformed.Error))
-	}
-	for _, err := range resolvedResult.ResolveErrors {
-		if isSoftResolutionIssue(err) {
-			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticResolution, err)
-		} else {
-			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticResolution, err)
-			driftState = driftFailed
-		}
-	}
-	if dryRunReport != nil {
-		for _, diagnostic := range dryRunReport.Diags {
-			severity := diagnosticWarning
-			if diagnostic.IsError() {
-				severity = diagnosticError
-				driftState = driftFailed
-			}
-			diagnostics = appendSnapshotDiagnostics(diagnostics, severity, diagnosticMaterialization, pipeline.PromoteDiagnostic(diagnostic))
-		}
-	}
-	if dryRunErr != nil {
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticMaterialization, dryRunErr)
 	}
 
 	rowCfg := resolvedResult.LoadedCfg
@@ -371,10 +345,6 @@ func captureSnapshotDetailSources(resolved []resolver.ResolvedArtifact, catalogs
 		}
 	}
 	return detailSources
-}
-
-func isSoftResolutionIssue(err error) bool {
-	return resolver.IsSoftSelectedNotFound(err) || resolver.IsSoftSelectedMalformed(err) || resolver.IsNameCollision(err) || resolver.IsWarning(err)
 }
 
 func configHarnesses(cfg *config.Config) []string {
