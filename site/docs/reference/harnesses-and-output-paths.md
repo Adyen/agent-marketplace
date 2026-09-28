@@ -1,6 +1,8 @@
 # Harnesses and output paths reference
 
-The roots and per-kind paths are derived from `pkg/harness-compilation/target` and `internal/harness/roots.go`.
+This page lists the [harnesses](../glossary.md#harness) Agent Marketplace supports and the exact files `sync` writes for each one. Use it to find where an installed skill, command, subagent, hook, or MCP server ended up, or to decide which paths to add to `.gitignore`.
+
+The roots and per-kind paths come from `pkg/harness-compilation/target` and `internal/harness/roots.go` in the source code.
 
 ## Supported harness identifiers
 
@@ -14,9 +16,11 @@ The roots and per-kind paths are derived from `pkg/harness-compilation/target` a
 | Devin CLI | `devin` |
 | Codex | `codex` |
 
-Unknown identifiers are rejected. Target names are lowercase.
+Use these identifiers in `harnesses:` lists, in `source_harness:`, and with `convert --from` and `convert --to`. Identifiers are lowercase. An unknown identifier in a v4 configuration fails with `v4.harness`, and `convert` rejects one with an error that lists the valid names.
 
 ## Roots
+
+Each harness has a repository root and a machine root. Resources selected by the repository and personal-local files go under the repository root. Resources selected by the user and organization files go under the machine root in your home directory.
 
 | Harness | Repository root | Machine root |
 |---|---|---|
@@ -28,9 +32,13 @@ Unknown identifiers are rejected. Target names are lowercase.
 | Devin CLI | `<repo>/.devin` | `~/.config/devin` |
 | Codex | `<repo>/.agents` (skills, commands) and `<repo>/.codex` (subagents, hooks, mcp) | `~/.agents` (skills, commands) and `~/.codex` or `$CODEX_HOME` (subagents, hooks, mcp) |
 
-`$CODEX_HOME` must be absolute and relocates only the `.codex` machine partition; it never moves the skill partition.
+Codex splits its files across two roots. When `CODEX_HOME` is set, it replaces `~/.codex` for machine subagents, hooks, and MCP servers. It never moves skills, which stay in `~/.agents`. `CODEX_HOME` must be an absolute path; a relative value stops the run with an error.
+
+Claude Code MCP servers are the one exception to these roots. They go to `<repo>/.mcp.json` or to the `mcpServers` member of `~/.claude.json`.
 
 ## Output paths by harness
+
+In the tables below, a skill path ending in `SKILL.md` means the skill is a folder named `<name>` that contains `SKILL.md` and any files that come with it. A path followed by "under `key`" is one member of a shared JSON file.
 
 ### Claude Code
 
@@ -42,15 +50,21 @@ Unknown identifiers are rejected. Target names are lowercase.
 | hook | `.claude/hooks/hooks.json` | `~/.claude/hooks/hooks.json` |
 | mcp | `<repo>/.mcp.json` | `~/.claude.json` under `mcpServers` |
 
+Sync also lists installed skills and subagents in `.claude/.claude-plugin/plugin.json` (machine: `~/.claude/.claude-plugin/plugin.json`), under `skills` and `agents`.
+
 ### Codex
 
 | Kind | Repository path | Machine path |
 |---|---|---|
 | skill | `.agents/skills/<name>/SKILL.md` | `~/.agents/skills/<name>/SKILL.md` |
-| command | `.agents/skills/<name>/SKILL.md` | `~/.agents/skills/<name>/SKILL.md` |
+| command | `.agents/skills/<name>/SKILL.md` (with `x-agent-marketplace-kind: command`) | `~/.agents/skills/<name>/SKILL.md` |
 | subagent | `.codex/agents/<name>.toml` | `~/.codex/agents/<name>.toml` or `$CODEX_HOME/agents/<name>.toml` |
 | hook | `.codex/hooks.json` | `~/.codex/hooks.json` or `$CODEX_HOME/hooks.json` |
-| mcp | `.codex/config.toml` | `~/.codex/config.toml` or `$CODEX_HOME/config.toml` |
+| mcp | `.codex/config.toml` under `mcp_servers` | `~/.codex/config.toml` or `$CODEX_HOME/config.toml` under `mcp_servers` |
+
+Codex has no separate command format, so each command is installed as a skill whose `SKILL.md` front matter carries `x-agent-marketplace-kind: command`.
+
+When sync changes `.codex/hooks.json` or `.codex/config.toml` in a repository, it prints `materialize.codex.trust-review` because Codex may ask you to review the changed hooks or MCP servers before it uses them. `sync --check` prints `materialize.codex.trust-review-pending` when such a change is waiting. Agent Marketplace never edits Codex trust settings and never adds Codex paths to `.gitignore`.
 
 ### Cursor
 
@@ -72,7 +86,7 @@ Unknown identifiers are rejected. Target names are lowercase.
 | hook | `.devin/hooks.v1.json` | `~/.config/devin/config.json` under `hooks` |
 | mcp | `.devin/mcp_config.json` | `~/.config/devin/mcp_config.json` |
 
-Devin aggregate ownership is stored in XDG state, not inside the generated files.
+Like Codex, Devin receives commands as skills marked with `x-agent-marketplace-kind: command`.
 
 ### Factory Droid
 
@@ -84,7 +98,7 @@ Devin aggregate ownership is stored in XDG state, not inside the generated files
 | hook | `.factory/hooks/hooks.json` | `~/.factory/hooks/hooks.json` |
 | mcp | `.factory/mcp.json` | `~/.factory/mcp.json` |
 
-Factory commands are materialized as regular files rather than symlinks because the Droid CLI does not follow symlinked command files.
+Factory commands are always regular files, even in symlink mode, because the Droid CLI does not follow symlinked command files.
 
 ### Gemini CLI
 
@@ -96,24 +110,34 @@ Factory commands are materialized as regular files rather than symlinks because 
 | hook | `.gemini/settings.json` under `hooks` | `~/.gemini/settings.json` under `hooks` |
 | mcp | `.gemini/settings.json` under `mcpServers` | `~/.gemini/settings.json` under `mcpServers` |
 
-The Gemini compiler also emits a `gemini-extension.json` fragment, but that is a compilation artifact: native installation routes its `mcpServers` entries into the scope's `settings.json` and never installs `gemini-extension.json` itself.
+Hooks and MCP servers share one `settings.json` per scope. The Gemini compiler also produces a `gemini-extension.json` file, but sync does not install it. Its `mcpServers` entries go into `settings.json` instead.
 
 ### Windsurf
 
 | Kind | Repository path | Machine path |
 |---|---|---|
 | skill | `.windsurf/skills/<name>/SKILL.md` | `~/.codeium/windsurf/skills/<name>/SKILL.md` |
-| command | `.windsurf/workflows/<name>` | `~/.codeium/windsurf/global_workflows/<name>` |
-| hook | `.windsurf/hooks/<name>` | `~/.codeium/windsurf/hooks/<name>` |
+| command | `.windsurf/workflows/<name>.md` | `~/.codeium/windsurf/global_workflows/<name>.md` |
+| hook | `.windsurf/hooks.json` | `~/.codeium/windsurf/hooks.json` |
 | mcp | `.windsurf/mcp_config.json` | `~/.codeium/windsurf/mcp_config.json` |
 
-Windsurf's repository install root is the repository itself, so the `.windsurf/` prefix is present. The machine install root is already `~/.codeium/windsurf`, so the same files have no prefix.
+Files that a hook needs, such as the script it runs, go to `.windsurf/hook-support/` in a repository and `~/.codeium/windsurf/hook-support/` on the machine. An existing `.windsurf/hooks/` folder (machine: `~/.codeium/windsurf/hooks/`) from older output is left untouched.
 
-## Link modes
+Windsurf has no subagents. Sync skips them for this harness and prints `subagent.windsurf.no-primitive`.
 
-In the default `symlink` mode, skills and converted commands are links into the registry cache. Factory commands are always copied. Shared aggregate files such as `.codex/hooks.json` and `.devin/mcp_config.json` are reconciled in either mode.
+The Windsurf repository root is the repository itself, so repository paths start with `.windsurf/`. The machine root is already `~/.codeium/windsurf`, so machine paths have no such prefix, and machine commands go to `global_workflows` because that is where Windsurf looks for machine-wide workflows.
+
+## Symlinks and regular files
+
+In the default `symlink` mode, skills, commands, and subagents are symlinks into the compiled cache at `~/.cache/agent-marketplace/compiled/<harness>/`. Factory commands are the exception and are always copied. In `file` mode, sync writes regular files and folders for every harness. See [How to write regular files instead of symlinks](../how-to/write-regular-files-instead-of-symlinks.md).
+
+Shared files, such as `hooks.json`, `.mcp.json`, `settings.json`, `.codex/config.toml`, and `.devin/mcp_config.json`, hold entries from several sources as well as entries you wrote yourself. They are always regular files in both modes. Sync edits them in place, adds and removes only the entries it installed, and keeps your own entries, comments, and unrelated settings. How it tells its entries apart depends on the harness:
+
+- Claude Code, Factory Droid, Cursor, and Windsurf files, and Gemini CLI hooks, mark each installed entry with `"_managed_by": "agent-marketplace"`.
+- Devin CLI and Codex files, and Gemini CLI MCP servers, contain no marker. Sync records which entries it owns in state files under `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`). If that record is missing or damaged, sync treats every existing entry as yours, removes nothing, and refuses to overwrite an entry with the same name. See the [filesystem layout reference](./filesystem-layout.md).
 
 ## Related documentation
 
 - [How to configure multiple harnesses](../how-to/configure-multiple-harnesses.md)
 - [How to write regular files instead of symlinks](../how-to/write-regular-files-instead-of-symlinks.md)
+- [Filesystem layout reference](./filesystem-layout.md)

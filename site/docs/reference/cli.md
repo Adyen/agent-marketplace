@@ -1,8 +1,10 @@
 # Command-line reference
 
-The `agent-marketplace` command reads layered configuration, including local files named by each layer's `include` field, discovers registry resources, and materializes those resources into harness-native layouts.
+This page lists every `agent-marketplace` command, its flags, defaults, output, and exit status. Use it when you need the exact behavior of a command. If you are new to the terminal, start with [terminal basics](../terminal-basics.md) and the [quick start](../quick-start.md).
 
-For configuration fields, include syntax, and precedence, see the [repository configuration reference](configuration.md).
+The `agent-marketplace` command reads your layered configuration (including local files named by each layer's `include` field), finds the resources in each configured registry, and writes them into the folders each [harness](../glossary.md#harness) reads. The docs call that last step materialization.
+
+For configuration fields, include syntax, and precedence, see the [configuration reference](configuration.md).
 
 ## Command syntax
 
@@ -11,23 +13,25 @@ agent-marketplace [global flags]
 agent-marketplace <command> [arguments] [flags]
 ```
 
-A bare invocation starts the terminal UI when standard input is a terminal. In a non-terminal context it prints help. Setting `AGENT_MARKETPLACE_NO_TUI` to a non-empty value also makes a bare invocation print help.
+Running `agent-marketplace` with no command starts the terminal UI when standard input is a terminal. Otherwise it prints help. Setting `AGENT_MARKETPLACE_NO_TUI` to any non-empty value also makes a bare invocation print help.
+
+Before most commands run, the CLI checks whether the user config (`~/.agents/config.yaml`) still uses a legacy v2 or v3 schema. When standard input is a terminal, it lists the file and asks `Migrate these configuration files to v4 now? [Y/n]:`. Pressing Enter or answering `y` migrates. Answering `n` continues with the legacy reader, and any other answer stops the command with `unknown response`. A refused migration prints a warning and also continues. Without a terminal, the CLI logs a warning and changes nothing. The check does not run for `init`, `migrate`, `convert`, `serve`, `telemetry`, `tui`, `doctor`, or `--version`. The bare terminal UI shows its own migration prompt instead. Repository and personal-local configs are migrated only by an explicit [`migrate`](#migrate).
 
 ## Global flags
 
-Global flags are accepted by every command.
+Every command accepts these flags.
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--debug` | boolean | no | `false` | Enables debug logging and mirrors logs to standard error. |
-| `--diagnostic` | boolean | no | `false` | Captures a diagnostic telemetry payload for review for the current invocation. |
-| `--diagnostic-accept-sensitive-data` | boolean | no | `false` | Acknowledges that a diagnostic payload may contain sensitive data. |
+| `--diagnostic` | boolean | no | `false` | Captures a diagnostic telemetry payload for this invocation so you can review it before it is sent. Capture needs the effective telemetry level `detailed`; at other levels it is turned off. See the [telemetry reference](telemetry.md#diagnostic-payloads). |
+| `--diagnostic-accept-sensitive-data` | boolean | no | `false` | Acknowledges that a diagnostic payload may contain sensitive data. Without a terminal, diagnostic export and `telemetry preview --level diagnostic` require it. |
 | `-h`, `--help` | boolean | no | `false` | Prints help for the selected command. |
-| `--version` | boolean | no | `false` | Prints the CLI version. This flag belongs to the root command. |
+| `--version` | boolean | no | `false` | Prints the CLI version, for example `v4.0.9`. This flag belongs to the root command only. |
 
 ## Resource kinds
 
-Flags named `--kind` accept the following values unless a command states otherwise:
+Flags named `--kind` accept these values unless a command says otherwise:
 
 | Value | Resource |
 |---|---|
@@ -36,25 +40,25 @@ Flags named `--kind` accept the following values unless a command states otherwi
 | `subagent` | Subagent definition |
 | `hook` | Harness hook |
 | `mcp` | MCP server definition |
-| `collection` | Named resource collection; accepted only by `list` |
+| `collection` | Named group of resources. `list`, `search`, and `remove` accept it as a `--kind` value; `install` takes a collection by name. |
 
-When `install` or `remove` receives a name shared by multiple resource kinds, `--kind` selects the intended kind.
+When `install` or `remove` gets a name that more than one resource kind uses, `--kind` selects the one you mean.
 
 ## Configuration scopes
 
 `install`, `remove`, and `deinit` use these scope names:
 
-| Scope | Configuration file | Materialization scope |
+| Scope | Configuration file | Where output goes |
 |---|---|---|
-| `repo` | `<repo>/.agents/config.yaml` | Repository |
-| `user` | `~/.agents/config.yaml` | Machine |
-| `local` | `<repo>/.agents/config.local.yaml` | Repository, personal to the checkout |
+| `repo` | `<repo>/.agents/config.yaml` | The repository |
+| `user` | `~/.agents/config.yaml` | Your machine (home directory) |
+| `local` | `<repo>/.agents/config.local.yaml` | The repository, personal to your checkout |
 
-Resource installation defaults to `repo`, and endpoint registration defaults to `user`. When you remove a named resource without `--scope`, the command chooses a scope from the selection it finds. `remove --from` defaults to `repo`; `deinit` defaults to `user`.
+Installing a resource defaults to `repo`, and registering a Marketplace endpoint defaults to `user`. When you remove a named resource without `--scope`, the command picks the scope from the selection it finds. `remove --from` defaults to `repo`, and `deinit` defaults to `user`.
 
 ## `init`
 
-Creates a minimal v4 user config with an explicit harness list. Initialization adds no sources or resources and leaves an existing user config unchanged. Named Git and directory resource selections can subsequently be edited with the v4-aware CLI or TUI paths; other legacy-only editors still refuse unsupported v4 edits.
+Creates a minimal v4 user config (`~/.agents/config.yaml`) with an explicit harness list. It adds no sources or resources. If the file already exists, `init` leaves it unchanged and prints `User personal config already initialized.` You can later edit named Git and directory resource selections with the v4-aware CLI and TUI paths. Other legacy-only editors still refuse edits they cannot make to a v4 file.
 
 ```text
 agent-marketplace init [flags]
@@ -62,11 +66,11 @@ agent-marketplace init [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--harnesses` | comma-separated strings | non-terminal only | none | Target harnesses. Accepted values: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, and `windsurf`. |
+| `--harnesses` | comma-separated strings | without a terminal | none | Target harnesses. Accepted values: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, and `windsurf`. |
 
-Without `--harnesses`, terminal execution detects installed harnesses and prompts for confirmation or editing. Non-terminal execution requires `--harnesses`. Interactive creation also requests telemetry consent unless organization policy already fixes the telemetry level.
+Without `--harnesses`, `init` detects installed harnesses, prints `Detected harnesses: ...`, and asks `Use these? [Y/n/e to edit]:`. Without a terminal, `--harnesses` is required. When `init` creates the file interactively, it also asks `Enable basic telemetry? [Y/n]:`, unless organization policy already sets the telemetry level.
 
-Output for a newly created file has this form:
+A new file produces this output:
 
 ```text
 Initialized user personal config: <home>/.agents/config.yaml
@@ -74,7 +78,7 @@ Initialized user personal config: <home>/.agents/config.yaml
 
 ## `list`
 
-Lists discovered resources from configured registries or from one ad hoc registry. The command does not edit configuration. A configured target harness set is optional; its absence produces a warning rather than an error.
+Lists the resources found in your configured registries, or in one ad hoc registry. It does not edit configuration. A target harness set is optional here; without one, `list` prints a warning to standard error and continues.
 
 ```text
 agent-marketplace list [flags]
@@ -83,13 +87,13 @@ agent-marketplace list [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--kind` | string | no | all kinds | Filters by `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection`. |
-| `--from` | string | no | configured registries | Uses an ad hoc Git URL, GitHub web URL, or GitLab web URL without writing it to configuration. |
+| `--from` | string | no | configured registries | Reads an ad hoc Git URL, GitHub web URL, or GitLab web URL without writing it to configuration. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
 
-The table columns are `REGISTRY`, `KIND`, `NAME`, `TAGS (metadata)`, and `STATUS`. Configured-registry statuses include `available`, `enabled`, `required (org)`, and malformed-resource details. Ad hoc resources have status `available`.
+The table columns are `REGISTRY`, `KIND`, `NAME`, `TAGS (metadata)`, and `STATUS`. Resources from configured registries have status `available`, `enabled`, or `required (org)`. A resource that failed validation has status `malformed: <reason>`. Valid ad hoc resources have status `available`, and ones that fail validation show `malformed: <reason>`.
 
-When configured output is out of sync, the command appends a summary with this form:
+When configured output is out of sync, the command appends a summary like this:
 
 ```text
 3 resources out of sync — run 'agent-marketplace sync'
@@ -97,7 +101,7 @@ When configured output is out of sync, the command appends a summary with this f
 
 ## `search`
 
-Searches hosted Marketplace endpoints without editing configuration. An empty query lists the endpoint's default result page.
+Searches hosted [Marketplace](../glossary.md#marketplace) endpoints. It does not edit configuration. An empty query returns the endpoint's default result page.
 
 ```text
 agent-marketplace search [query] [flags]
@@ -108,17 +112,20 @@ agent-marketplace search [query] [flags]
 | `--marketplace` | alias, URL, or `all` | no | all configured | Searches one configured alias, one configured or ad hoc HTTP(S) endpoint, or every configured endpoint. |
 | `--kind` | string | no | all kinds | Filters by `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection`. |
 | `--output` | string | no | `table` | `table` or `json`. JSON includes successful results and per-endpoint errors. |
-| `--limit` | non-negative integer | no | server default `100` | Maximum results after federating endpoint responses. |
-| `--offset` | non-negative integer | no | `0` | Result offset after federating endpoint responses. |
+| `--limit` | non-negative integer | no | server default `100` | Maximum results after combining endpoint responses. |
+| `--offset` | non-negative integer | no | `0` | Result offset after combining endpoint responses. |
 
-Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` columns. Relevance scores determine ordering but are not printed. Searches across multiple endpoints succeed when at least one endpoint returns results; failed endpoints produce warnings and appear under `errors` in JSON. An explicitly selected single endpoint failure returns an error.
+Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` columns. Results are ordered by relevance, but the scores are not printed. When you search several endpoints, each failed endpoint prints `warning: <marketplace>: <error>` and appears under `errors` in JSON. The command fails only when no endpoint returned results and at least one endpoint reported an error. When you select a single endpoint with `--marketplace` and it fails, the command returns that error.
 
 ## `install`
 
-Adds selections to one writable config layer and syncs harness output. A named resource from a configured Git or directory source, or from `--from <registry>` with an optional `--ref` and `--path`, can be selected in a v4 destination; an ad hoc registry becomes a named v4 `git` or `directory` source, and a relative directory stays relative in repository and personal-local configs so committed sources remain portable. Installing every resource from an ad hoc registry into a v4 destination declares the source with an `all: true` resource group. Other legacy-only editing paths, including some bulk, tag, and hosted Marketplace operations, may still refuse v4 destinations with `v4.writer-opt-in` or a source-specific diagnostic; a refusal leaves the authored configuration unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+Adds selections to one writable config layer, then syncs harness output.
+
+You can select a named resource from a configured Git or directory source, or from `--from <registry>` with optional `--ref` and `--path`. In a v4 destination, an ad hoc registry becomes a named v4 `git` or `directory` source. A relative directory stays relative in repository and personal-local configs, so committed sources keep working on other machines. Installing every resource from an ad hoc registry into a v4 destination declares the source with an `all: true` resource group. `install` edits both v4 and legacy (v2 or v3) destinations. A change to a legacy destination prints a `config.legacy-deprecated` warning. If an edit is refused, your configuration stays unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace install <resource-name> [flags]
+agent-marketplace install <collection-name> [flags]
 agent-marketplace install <marketplace-endpoint> [--scope user|repo|local]
 agent-marketplace install <marketplace-locator> [flags]
 agent-marketplace install --marketplace <alias-or-url> <resource-locator> [flags]
@@ -127,7 +134,7 @@ agent-marketplace install --all [flags]
 agent-marketplace install --from <registry> [<resource-name>] [flags]
 ```
 
-Marketplace locators have one of these forms:
+Marketplace [locators](../glossary.md#locator) have one of these forms:
 
 ```text
 alias:registry/kind/name[@sha256:<64 lowercase hex>]
@@ -137,41 +144,45 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--scope` | string | no | endpoint: `user`; resource: `repo` | Configuration layer: `repo`, `user`, or `local`. |
-| `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`; also disambiguates a named registry resource. |
-| `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Mutually exclusive with a resource name, `--all`, `--from`, and Marketplace locators. |
-| `--all` | boolean | no | `false` | Installs every discovered registry resource of the selected kind. Valid only in `repo` scope. |
-| `--registry` | string | no | all configured registries | Limits `--all` to one configured Git registry URL. |
-| `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the registry bundle. |
+| `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`, and disambiguates a named registry resource. |
+| `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Works only in `repo` scope (or with no `--scope`). Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
+| `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Works only in `repo` scope (or with no `--scope`). |
+| `--registry` | string | no | all configured registries | Limits `--all` to one configured registry URL. Requires `--all`. |
+| `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the whole registry. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
 | `--marketplace` | alias or endpoint URL | no | locator prefix | Resolves a Marketplace resource locator against the selected endpoint. Valid only for one Marketplace resource. |
-| `--as` | safe local name | no | resource name | Changes the generated local name while retaining the Marketplace coordinate. |
+| `--as` | safe local name | no | resource name | Installs the resource under a different local name while keeping its Marketplace coordinate. |
 | `--accept-risk` | boolean | no | `false` | Accepts security findings for the verified revision. |
-| `--yes` | boolean | no | `false` | Automation spelling of `--accept-risk`. |
-| `--verbose` | boolean | no | `false` | Shows the complete collection inventory and technical Marketplace preview, including revisions, digests, acquisition details, and provenance. |
+| `--yes` | boolean | no | `false` | Same as `--accept-risk`, for automation. |
+| `-v`, `--verbose` | boolean | no | `false` | Shows every collection member and the technical Marketplace preview: revisions, digests, acquisition details, and provenance (where the artifact came from). |
 
-A Marketplace endpoint lookup verifies its well-known identity and canonical URL. To use the endpoint from a v4 root, declare a named `marketplace` source and add an exact request to its `resources` group; keep the matching verified layer lock next to the configuration.
+`--as`, `--accept-risk`, and `--yes` work only with a single Marketplace resource. With `--marketplace <url>`, pass the full resource URL as the locator. In the current release, a short `registry/kind/name` locator combined with an endpoint URL fails with an `invalid browser locator` error, so use the full URL or an alias. If you pass a GitHub or GitLab web URL that names a branch or tag as the resource name, the command stops and tells you to use `--from` instead.
 
-A Marketplace install resolves and verifies the exact artifact before changing config. The default output shows a summary of its source, findings, capabilities, and up to ten collection members. Add `--verbose` to see all collection members, the digest, license, provenance, and acquisition mode. You cannot install rejected or revoked resources. In non-interactive use, pass `--accept-risk` or `--yes` to accept findings for that verified invocation only; capability metadata alone does not require either flag.
+Registering a Marketplace endpoint checks the endpoint's well-known identity and canonical URL, then prints `Added Marketplace <url> to <config path>`, or `Marketplace <url> is already configured in <config path>` when the same identity is already present in that scope or a broader one. In a v4 configuration, registering the endpoint adds a named `marketplace` source for it. Installing a resource from that endpoint adds an exact request to the source's `resources` group and records the verified revision in the lock file of the same layer.
 
-In an interactive terminal, security findings produce an `Install despite these risks? [y/N]:` prompt. Capabilities remain visible but do not independently trigger consent. Accepting commits the exact prepared revision and prints only the result. Non-interactive execution requires `--accept-risk` or `--yes` only when findings exist.
+A Marketplace install resolves and verifies the exact artifact before it changes any config. The default output summarizes the source, security findings, capabilities, and up to ten collection members. Add `--verbose` to see all members, the digest, license, provenance, and acquisition mode. Rejected and revoked resources cannot be installed.
 
-Successful Marketplace installs print a concise confirmation:
+When the verified artifact has security findings and standard input is a terminal, the command prints the preview and asks `Install despite these risks? [y/N]:`. Accepting installs the exact prepared revision. Without a terminal, pass `--accept-risk` or `--yes` to accept the findings for that one invocation. Capabilities are shown, but on their own they never require consent.
+
+A successful Marketplace install prints a short confirmation:
 
 ```text
 ✓ Installed frontend-design
 ✓ Installed coderabbit-skills · 3 skills
 ```
 
-Configured Git registry installs retain their scope-specific confirmation, such as `Installed frontend-design in this repo`. The confirmation lists only resources the resulting configuration actually selects: a tag or bundle install keeps an existing exclusion, and names what it did not install with `Not installed: <names>; the effective configuration does not select …`. Installing a resource by name clears its exclusion. Unmet resource prerequisites are reported as warnings and do not install prerequisite resources automatically.
+Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. Missing prerequisites are reported as warnings; `install` does not install them for you.
 
-For configured Git registries, discovery stays on the exact inventory of every layer that already has a valid lock. A registry may bootstrap from its mutable ref only when its own configuration layer has no lock; a missing lock in one layer does not make another layer's post-lock content installable.
+For configured Git registries, discovery uses the exact locked inventory of every layer that already has a valid lock. A registry can bootstrap from its branch or tag only when its own configuration layer has no lock. A missing lock in one layer does not make content that appeared after another layer's lock installable.
 
 ## `remove`
 
-Removes an explicit selection or records an exclusion, then synchronizes materialized output. An explicit selection in the target config is dropped, whether or not `--from` and `--ref` name its entry. If a selected collection also provides the resource, it stays installed through that collection until a second `remove` excludes it as a collection member. An exclusion is recorded directly when `all`/`default`, tags, a required policy, or an entry in another layer or an included file would keep selecting the resource. For hosted Marketplace pins, removing a direct resource clears its direct selection while preserving any collection ownership; removing a collection clears that collection selector and prunes leaves no longer retained. A hosted resource installed with `--as` can be removed by either its local name or canonical Marketplace name; a name that identifies more than one direct pin is refused. Required organization resources cannot be removed or excluded.
+Removes an explicit selection, or records an exclusion when the resource was selected some other way (for example, by a collection or a registry default). It then syncs output. Required organization resources cannot be removed or excluded.
 
-Named removals and collection-member exclusions of Git or directory resources use the v4-aware editor whenever the destination layer is v4, including resources declared by a legacy organization, repository, or local layer, and sync the resulting selection. Other legacy-only removal paths can still refuse a v4 destination; refusals name the real config file. Hosted sources have further restrictions; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+For hosted Marketplace pins, removing a direct resource clears its direct selection but keeps it if a collection still includes it. Removing a collection clears that collection and removes the members no longer kept by anything else. You can remove a resource installed with `--as` by either its local name or its canonical Marketplace name. A name that matches more than one direct pin is refused.
+
+When the destination layer is v4, named removals and collection-member exclusions of Git or directory resources use the v4-aware editor, including resources declared by a legacy organization, repository, or local layer. Other legacy-only removal paths can still refuse a v4 destination; the refusal names the real config file. Hosted sources have further restrictions; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace remove <resource-name> [flags]
@@ -180,24 +191,27 @@ agent-marketplace remove --from <registry> [<resource-name>] [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--scope` | string | no | inferred for a name; `repo` with `--from` | Configuration layer: `repo`, `user`, or `local`. Specifying a scope leaves selections in other scopes unchanged. |
-| `--kind` | string | no | inferred | Selects `skill`, `command`, `subagent`, `hook`, or `mcp` when a name is ambiguous. |
-| `--from` | string | no | configured registries | Targets an ad hoc registry entry. Without a resource name, removes or excludes the entire entry for the selected scope. |
-| `--ref` | string | no | none | Refines the registry entry selected by `--from`. Requires `--from`. |
-| `--path` | string | no | none | Refines the registry entry selected by `--from`. Requires `--from`. |
+| `--scope` | string | no | inferred for a name; `repo` with `--from` | Configuration layer: `repo`, `user`, or `local`. Choosing a scope leaves selections in other scopes unchanged. |
+| `--kind` | string | no | inferred | Selects `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection` when a name is ambiguous. |
+| `--from` | string | no | configured registries | Targets an ad hoc registry entry. Without a resource name, removes or excludes the whole entry for the selected scope. |
+| `--ref` | string | no | none | Narrows the registry entry selected by `--from`. Requires `--from`. |
+| `--path` | string | no | none | Narrows the registry entry selected by `--from`. Requires `--from`. |
 
-Success output distinguishes removed selections, exclusions, collections, and registry entries:
+The output says what happened:
 
 ```text
 Removed frontend-design
+Removed collection web-development
 Excluded frontend-design (provided by web-development)
 Removed registry entry https://github.com/example/resources.git
 Excluded all resources from https://github.com/example/resources.git (local scope)
 ```
 
+When the command chose the user config on its own, it adds a line such as `(excluded in /home/me/.agents/config.yaml — applies across all repos)`.
+
 ## `lock`
 
-Resolves remote Git requirements to exact commits and verified source manifests in generated, layer-owned locks. With the default `all` scope it writes user, repository, and personal-local locks; organization locks are written only when selected explicitly.
+Resolves remote Git requirements to exact commits and verified source manifests, and writes them to the [lockfile](../glossary.md#lockfile) owned by each config layer. With the default `all` scope it writes the user, repository, and personal-local locks. It writes the organization lock only when you select `--scope organization`.
 
 ```text
 agent-marketplace lock [resource ...] [flags]
@@ -205,23 +219,25 @@ agent-marketplace lock [resource ...] [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--scope` | string | no | `all` | Lock scope: `user`, `repo`, `local`, `all`, or `organization`. |
-| `--check` | boolean | no | `false` | Reports whether selected locks would change without writing. A required change returns exit status 1. |
-| `--upgrade` | boolean | no | `false` | Refreshes all or targeted Git resolutions to their current refs. |
-| `--registry` | string | conditionally | none | Targets a configured Git registry during `--upgrade`. |
+| `--scope` | string | no | `all` | Lock scope: `user`, `repo`, `local`, `all`, or `organization`. With `--check`, `all` also checks the organization lock. |
+| `--check` | boolean | no | `false` | Reports whether the selected locks would change, without writing. A needed change returns exit status 1 with `lock.change-required` (or `lock.version-upgrade-required` for a v1 lock). |
+| `--upgrade` | boolean | no | `false` | Refreshes all or targeted Git resolutions to the current commit of their refs. |
+| `--registry` | string | conditionally | none | Targets one configured Git registry during `--upgrade`. |
 | `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
 | `--path` | string | no | none | Narrows `--registry` to a locked source root. |
 | `--kind` | string | conditionally | none | Resource kind for named `--registry` upgrade targets. |
 
-Resource names and the registry targeting flags require `--upgrade`; names also require `--registry` and `--kind`. A resource-level upgrade expands to its containing Git source because the commit is the atomic acquisition unit.
+Resource names and the targeting flags (`--registry`, `--ref`, `--path`, `--kind`) require `--upgrade`. Names, `--ref`, `--path`, and `--kind` also require `--registry`, and names require `--kind`. Upgrading one resource upgrades its whole Git source, because the commit is the smallest unit the CLI fetches.
 
-`lock --check` inspects existing config, lock, and exact-snapshot bytes without transaction recovery, remote resolution, or cache population. A fresh lock whose exact snapshot is absent from a cold cache reports `lock.snapshot-unavailable`; a stale or missing lock reports the required change without fetching it. A writing reconciliation holds the shared exact-cache lease from before its first snapshot acquisition or verification through config-and-lock publication, preventing garbage collection from deleting a new snapshot before the published lock makes it reachable.
+On success the command prints `Locks: <n> changed`.
 
-The generated paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock ignored. An absent organization lock leaves that layer intentionally unlocked: online consumer commands may use mutable Git acquisition or resolve explicit Marketplace requests through a verified in-memory lock, but do not create the organization lock. Offline Marketplace resolution requires a deployed lock. A present organization lock is exact and fail-closed; malformed, untrusted, or mismatched state is not downgraded to transient acquisition. Plain directory registries are live and are not represented in these locks.
+`lock --check` reads the existing config, lock, and exact snapshot files. It does not recover pending transactions, contact remotes, or fill the cache. A fresh lock whose exact snapshot is missing from a cold cache reports `lock.snapshot-unavailable`. A stale or missing lock reports the needed change without fetching it. A writing run holds the shared exact-cache lease from before its first snapshot fetch or check until the config and lock are published, so `gc` cannot delete a new snapshot before the published lock references it.
+
+The lockfile paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock out of Git. Some organizations never deploy an organization lock, and the CLI supports that permanently. In that case online commands may fetch organization Git sources from their current ref, or resolve explicit Marketplace requests into a verified lock held only in memory, but they never create the organization lock. Offline Marketplace resolution needs a deployed lock. A present organization lock is exact: if it is malformed, untrusted, or mismatched, commands refuse to continue and change nothing. Plain directory registries are read live and never appear in these locks.
 
 ## `sync`
 
-Resolves selected resources from exact Git snapshots and reconciles native harness output with configuration. Organization requirements use mutable acquisition when that externally managed layer intentionally has no lock.
+Resolves the selected resources from exact Git snapshots and brings native harness output in line with configuration. When the organization layer has no lock, its requirements are fetched from their current refs.
 
 ```text
 agent-marketplace sync [flags]
@@ -229,91 +245,98 @@ agent-marketplace sync [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--check` | boolean | no | `false` | Computes lock and output drift without reconciling either. Returns exit status 1 when state is out of sync. |
+| `--check` | boolean | no | `false` | Computes lock and output [drift](../glossary.md#drift) without fixing either. Returns exit status 1 when anything is out of sync. |
 | `--locked` | boolean | no | `false` | Requires fresh lockfiles and forbids config or lock writes. |
-| `--offline` | boolean | no | `false` | Uses only trusted local Git and Marketplace caches and never contacts remote endpoints; implies locked dependency behavior. Cached revocation data may be stale. |
-| `--allow-revoked` | exact Marketplace revision target; repeatable | no | none | Allows one revoked pin for this execution: `marketplace/registry/kind/name@sha256:<64 lowercase hex>`. Cannot be combined with `--check`. |
-| `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories. Mandatory shared-aggregate safety backups are unaffected. |
-| `--strict` | boolean | no | `false` | Promotes selected-but-missing and selected-but-malformed warnings to errors. |
-| `--prune-stale` | boolean | no | `false` | Removes direct, non-required stale selections from configuration after catalogs load successfully, then synchronizes again. Cannot be combined with `--locked` or `--offline`. |
-| `-v`, `--verbose` | boolean | no | `false` | Prints affected files and malformed-resource details instead of summary-only output. |
+| `--offline` | boolean | no | `false` | Uses only trusted local Git and Marketplace caches and never contacts a remote endpoint; lock behavior is the same as `--locked`. Cached revocation data may be stale. |
+| `--allow-revoked` | exact Marketplace revision; repeatable | no | none | Allows one revoked pin for this run: `marketplace/registry/kind/name@sha256:<64 lowercase hex>`. Cannot be combined with `--check`. |
+| `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories. The mandatory safety backups of shared configuration files still happen. |
+| `--strict` | boolean | no | `false` | Turns "selected but not found" and "found but failed to load" warnings into errors. |
+| `--prune-stale` | boolean | no | `false` | After catalogs load successfully, removes direct, non-required selections that no longer exist from configuration, then syncs again. Cannot be combined with `--locked` or `--offline`. |
+| `-v`, `--verbose` | boolean | no | `false` | Prints affected files per target and malformed-resource details instead of only the summary. |
 
-Normal synchronization prints counts for installed, removed, malformed, and failed resources:
+A normal sync prints counts for installed, removed, malformed, and failed resources:
 
 ```text
 Installed 3  Removed 1  Malformed 0  Errors 0
 ```
 
-With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. `--check` is read-only across config, locks, transaction state, and materialized output: it neither recovers pending transactions nor fetches a cold exact snapshot, and reports `lock.snapshot-unavailable` when required snapshot bytes are absent. `--prune-stale` cannot be combined with `--locked` or `--offline` because pruning changes configuration.
+The counts are colored on a terminal. Set `NO_COLOR`, `CLICOLOR=0`, or `TERM=dumb` to turn color off.
 
-Pending dependency transactions cause `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` to fail with `dependency.recovery-required` before loading configuration or registry state. These commands leave config, locks, journal evidence, and transaction-state permissions unchanged. Run a writing `sync` or `lock` without those flags to recover, then retry the inspection. An absent transaction-state directory does not require recovery and is not created by inspection.
+With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
+
+If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. Run a plain `sync` or `lock` (without those flags) to finish the recovery, then retry. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
 ## `update`
 
-Advances selected Git locks and synchronizes enabled resources. Without targeting flags it updates all writable scopes.
+Moves the selected Git locks to the current commit of their refs and syncs enabled resources. Without targeting flags it updates all writable scopes.
 
 ```text
-agent-marketplace update [flags]
+agent-marketplace update [resource ...] [flags]
 ```
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--bump` | boolean | no | `false` | Rewrites eligible registry refs to newer matching tags before advancing locks. |
-| `--scope` | string | no | `all` | Update scope: `user`, `repo`, `local`, or `all`. |
-| `--registry` | string | no | none | Targets a configured Git registry. |
+| `--bump` | boolean | no | `false` | Rewrites eligible registry refs to newer matching tags before updating locks. Only legacy v2/v3 `registries:` entries are rewritten. For v4 `sources:` the count is reported but the ref is not changed. |
+| `--scope` | string | no | `all` | Update scope: `user`, `repo`, `local`, or `all`. `organization` is refused. |
+| `--registry` | string | no | none | Targets one configured Git registry. |
 | `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
 | `--path` | string | no | none | Narrows `--registry` to a locked source root. |
 | `--kind` | string | conditionally | none | Resource kind for named registry targets. |
 
-Output reports the number of refreshed Git registries and, with `--bump`, the number of rewritten refs. Marketplace mirror pins are independently checked for newer usable revisions; index-only pins and organization-required pins are reported as skipped when the consumer cannot rewrite them.
+Resource names, `--ref`, `--path`, and `--kind` require `--registry`, and names require `--kind`.
+
+The output reports how many Git registries were refreshed and, with `--bump`, how many refs were rewritten. The command also checks Marketplace mirror pins for newer usable revisions. It reports index-only pins and organization-required pins as skipped, because it cannot rewrite them. Marketplace values are printed quoted:
 
 ```text
 Updated 2 registries, bumped 1 refs
 Marketplace pins: updated 1, skipped 1
-Marketplace https://marketplace.example.com source/skill/review: updated sha256:... -> sha256:...
+Marketplace "https://marketplace.example.com" "source"/"skill"/"review": updated "sha256:..." -> "sha256:..."
 ```
 
 ## `status`
 
-Reports effective configuration, selected resources, target harnesses, roots, registry refs, cache freshness, source layers, drift, exclusions, collisions, unmet requirements, and errors. It inspects state without reconciling output.
+Reports the effective configuration, selected resources, target harnesses, output roots, registry refs, cache freshness, source layers, drift, exclusions, collisions, unmet requirements, and errors. It only reads; it never changes output.
 
 ```text
 agent-marketplace status
 ```
 
-The report can contain these sections:
+The report prints these sections in this order. Sections other than `TARGET HARNESS SET`, `SYNCED RESOURCES`, and `DRIFT` appear only when they have content.
 
 | Section | Contents |
 |---|---|
+| `MANAGED INSTALLATION` | Present when an organization config manages the installation: its path and validation result. |
 | `TARGET HARNESS SET` | Effective harness list and the configuration layer that supplied it. |
-| `EXACT REGISTRY LOCKS` | Source layer, canonical Git origin, declared ref, exact commit, and immutable snapshot path. |
-| `MARKETPLACE PINS` | Endpoint identity, registry, resource coordinate, installed name, exact revision and digest, acquisition mode, source layer, revocation/current state, cache state, and update availability. |
+| `EXACT REGISTRY LOCKS` | Source layer, canonical Git origin, declared ref, exact commit, and whether the cached snapshot is `available` or `missing`. |
+| `SYNCED RESOURCES` | Resource kind, name, harness, source, collection origin (`VIA`), target path, registry, ref, and cache state. |
+| `MARKETPLACE PINS` | Endpoint identity, registry, resource coordinate, installed name, exact revision and digest, acquisition mode, source layer, revocation and current state, cache state, and update availability. |
 | `HARNESS TARGETS` | Target capabilities and resolved repository and machine roots. |
-| `SYNCED RESOURCES` | Resource kind, name, harness, target path, registry, ref, cache state, source, and collection origin. |
-| `LOCALLY EXCLUDED` | Resources removed by repository-personal exclusions. |
+| `LOCALLY EXCLUDED` | Resources removed by exclusions in a legacy v2 or v3 `.agents/config.local.yaml`. Exclusions in a v4 local file do not appear here. |
 | `LOCAL REGISTRIES` | Registry entries declared in repository-personal configuration. |
-| `ORPHANED SYMLINKS` | Generated links that a sync would remove. |
+| `ORPHANED FILES` | Generated files that a sync would remove. |
 | `NAME COLLISIONS` | Registry overlap and resource-name collision diagnostics. |
 | `UNMET REQUIREMENTS` | Advisory resource prerequisites and install hints. |
+| `WARNINGS` | Configuration and resolution warnings, with a remediation hint where one exists. |
+| `DRIFT` | `In sync`, the number of files to write and remove, or `Unknown (exact registry view incomplete)`. |
 | `ERRORS` | Configuration, catalog, or drift-inspection failures. |
 
 Fatal resolution errors return exit status 1 after the report is printed.
 
 ## Configuration authoring
 
-The CLI reads v4 roots and adapts their `sources` and `resources` model for discovery, status, synchronization, and materialization. A root must declare `apiVersion: agent-marketplace/v4`; included fragments may omit `apiVersion` and inherit v4 from the root.
+The CLI reads v4 roots and uses their `sources` and `resources` model for discovery, status, sync, and output. A root must declare `apiVersion: agent-marketplace/v4`. Included fragments may omit `apiVersion` and inherit v4 from the root.
 
-Source kinds are explicit:
+Each source declares its kind:
 
 - `git` sources require `ref` and use the owning layer's exact Git lock.
-- `directory` sources are live and never acquire a Git lock. Relative paths in repository `.agents/config.yaml` and `.agents/config.local.yaml` roots use the repository root; user/organization configs and included fragments use the declaring directory.
+- `directory` sources are read live and never get a Git lock. Relative paths in the repository `.agents/config.yaml` and `.agents/config.local.yaml` roots are resolved from the repository root. User and organization configs and included fragments resolve them from the directory of the file that declares them.
 - `marketplace` sources require a matching verified layer lock for explicit requests.
 
-Use the [v4 configuration reference](configuration.md) to write source declarations and resource groups directly. Named Git and directory selections also have v4-aware CLI and TUI editors; unsupported legacy-only editors fail closed. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Writable-layer locks can be generated online for explicit hosted requests; an intentionally absent organization lock permits verified transient online acquisition without an organization write. Offline transient acquisition, hosted update/rebind, dynamic-selector snapshots, and general hosted editing remain unsupported.
+Use the [configuration reference](configuration.md) to write source declarations and resource groups by hand. Named Git and directory selections also have v4-aware CLI and TUI editors; editors that cannot handle v4 refuse and change nothing. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Writable-layer locks can be generated online for explicit hosted requests. When the organization lock is intentionally absent, the CLI fetches and verifies organization Marketplace requests online without writing an organization lock. Offline acquisition without a lock, hosted update or rebind, dynamic-selector snapshots, and general hosted editing are not supported.
 
 ## `migrate`
 
-Converts representable legacy user, repository, and repository-personal configuration to the v4 source/resource schema. Migration is transactional, preserves v2/v3 reads when declined or refused, and uses verified local Marketplace cache evidence without network access. Use `--to v2` for legacy structural remediation.
+Converts legacy user, repository, and repository-personal configuration to the v4 source/resource schema, where the old file can be represented in v4. Migration is transactional: it validates every selected file before writing any. If you decline or migration refuses, the v2/v3 files stay readable. It uses verified local Marketplace cache evidence and never uses the network. Use `--to v2` only for the legacy structural-remediation flow.
 
 ```text
 agent-marketplace migrate [flags]
@@ -322,15 +345,17 @@ agent-marketplace migrate [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--to` | string | no | `v4` | Target schema: `v4` or `v2`. |
-| `--scope` | string | no | `all` | V4 writable layer: `all`, `user`, `repo`, or `local`. |
+| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. |
 | `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. |
-| `--harnesses` | comma-separated strings | v2 only | none | Target harnesses for legacy structural remediation. |
+| `--harnesses` | comma-separated strings | v2 only | none | Target harnesses for legacy structural remediation. Without a terminal, `--to v2` requires it when the user config needs a harness list. |
 
-The `--to v4` spelling is accepted as an alias. V4 migration refuses lossy inputs and incomplete Marketplace provenance without changing files; proven Marketplace conversions create or upgrade the owning v2 lock atomically with the migrated config. Organization configuration is never edited.
+`--to v4` is accepted as an explicit spelling of the default. V4 migration refuses input that would lose information, include trees, and Marketplace entries without complete verified cache evidence, and it changes no files when it refuses. Migration does not promise to keep comments or formatting. Git and directory-only conversion leaves locks unchanged. A Marketplace entry with verified evidence creates or upgrades the owning layer lock to `agent-marketplace-lock/v2`, published together with the migrated config in one transaction. Organization configuration is never edited.
+
+The output names each migrated file, for example `Migrated user personal config: <path>` (or `Would migrate ...` with `--dry-run`). When nothing needs migrating, it prints `No legacy config files require v4 migration`.
 
 ## `convert`
 
-Ingests one harness layout and writes an equivalent layout for another harness. Conversion does not edit marketplace configuration.
+Reads one harness layout and writes an equivalent layout for another harness. It does not edit Agent Marketplace configuration.
 
 ```text
 agent-marketplace convert --from <harness> --to <harness> <path> [flags]
@@ -343,19 +368,19 @@ agent-marketplace convert --autodetect --to <harness> <path> [flags]
 | `--autodetect` | boolean | no | `false` | Detects the source harness from layout markers instead of requiring `--from`. |
 | `--to` | string | yes | none | Target harness. Accepts the same seven values as `--from`. |
 | `--out` | path | no | `<path>-<to>` | Output directory. |
-| `--sync` | boolean | no | `false` | Uses sync write mode and prunes stale output files. Without it, conversion uses overwrite mode. |
+| `--sync` | boolean | no | `false` | Uses sync write mode and deletes stale output files. Without it, conversion overwrites files and deletes nothing. |
 | `--dry-run` | boolean | no | `false` | Reports planned writes without changing output files. |
 
-Output includes the resolved source, target, output directory, and operation counts:
+The output names the source, target, output directory, and operation counts:
 
 ```text
 Converted claude -> factory into plugin-factory
 Written 4, Skipped 0, Removed 0, Diagnostics 0
 ```
 
-A partial conversion writes complete resources, reports skipped resources and diagnostics, suppresses unsafe pruning when applicable, and returns exit status 1. Source and output paths are canonicalized, including existing symlinks. Conversion refuses equal, nested, or ancestor relationships before reading or mutating either tree, including with `--sync`.
+A partial conversion writes the resources that converted completely, prints `skipped <kind> "<name>" (<codes>)` for each skipped resource, skips pruning (`pruning was skipped because the conversion was partial`), and returns exit status 1. The command resolves source and output paths, including existing symlinks, and refuses when they are equal or one contains the other. It checks this before reading or changing either tree, including with `--sync`.
 
-Codex conversion refuses a destination that already contains shared `.codex/hooks.json` or `.codex/config.toml` configuration. Devin conversion also refuses an existing shared destination (`mcp_config.json`, `hooks.v1.json`, or the user `config.json` hook aggregate) rather than adopting or merging it. Both targets stage all artifacts, validate staged aggregate syntax, publish with guarded hard links, and roll back only artifacts published by that transaction when publication fails. One-shot conversion does not create durable aggregate-ownership state and never adopts a destination; sync also does not adopt pre-existing entries. Only explicit `doctor --repair` may adopt an entry, and only when its bytes exactly match the desired generated value. Missing or corrupt ownership state remains fail-closed.
+Codex conversion refuses a destination that already contains shared `.codex/hooks.json` or `.codex/config.toml` files. Devin conversion also refuses a destination that already contains `mcp_config.json`, `hooks.v1.json`, or `config.json`, instead of merging into it. For both targets the command stages every file, validates the staged shared files, publishes them, and on failure rolls back only the files that this run published. One-shot conversion creates no [ownership state](../glossary.md#ownership-state) and never takes ownership of existing entries. `sync` does not take ownership of pre-existing entries either. Only an explicit `doctor --repair` can, and only when an entry's bytes exactly match the value sync would generate. Missing or corrupt ownership state makes sync refuse to change shared entries.
 
 ## `doctor`
 
@@ -367,16 +392,18 @@ agent-marketplace doctor [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--repair` | boolean | no | `false` | Previews recovery actions for Devin and Codex shared-aggregate ownership state and, on a terminal, requests confirmation for applicable actions. |
-| `--yes` | boolean | no | `false` | With `--repair`, adopts byte-identical desired entries without prompting. It never automatically removes or replaces entries. |
+| `--repair` | boolean | no | `false` | Previews recovery actions for the ownership state of Devin and Codex shared configuration files and, on a terminal, asks you to confirm each one. |
+| `--yes` | boolean | no | `false` | With `--repair`, adopts entries that exactly match the desired value without prompting. It never removes or replaces an entry. |
 
-`--repair` classifies exact adoption matches, evidence-backed orphan candidates, and unmanaged value conflicts. Non-terminal execution is preview-only unless `--yes` can perform safe, byte-neutral adoption. Orphan removal and conflict replacement always require per-entry terminal confirmation and a fresh backup. `--yes` without `--repair` is an error.
+`doctor` detects a locally installed Devin CLI and reports whether it meets the 3000.3 compatibility floor. It recommends selecting the `devin` harness when a Devin CLI is installed but no harness list contains it. `sync` never needs a Devin binary, so none of these findings blocks it.
 
-Compatibility findings do not block synchronization. Repair failures, corrupt ownership state, and unparseable aggregate files return exit status 1.
+`--repair` covers `hooks.v1.json`, `config.json#hooks`, `mcp_config.json`, `.codex/hooks.json`, and `.codex/config.toml`. It sorts candidates into three groups: exact matches it can adopt, orphans it has evidence for (entries a completed sync wrote that are no longer wanted), and unmanaged entries whose key matches a selected resource but whose value differs. It lists every file it inspected, including files with nothing to repair, and it never edits harness lists. Without a terminal, it only previews, unless `--yes` can do byte-identical adoption. Removing an orphan or replacing a conflicting entry always needs a per-entry confirmation on a terminal, and the command takes a fresh backup first. `--yes` without `--repair` is an error.
+
+Compatibility findings do not block `sync`. Repair failures, corrupt ownership state, and unparseable shared files return exit status 1.
 
 ## `backup`
 
-Manages backups of machine-scope harness output.
+Manages backups of machine-scope harness output. Backups live in `~/.agent-marketplace/backups/`.
 
 ```text
 agent-marketplace backup <command>
@@ -384,17 +411,17 @@ agent-marketplace backup <command>
 
 ### `backup create`
 
-Creates an on-demand backup for currently managed machine paths and applies configured backup rotation.
+Creates an on-demand backup of the machine paths Agent Marketplace currently manages, then applies the configured backup rotation.
 
 ```text
 agent-marketplace backup create
 ```
 
-When backups are disabled, the command exits successfully after printing `Backup is disabled in config; skipping.` When no machine paths are managed, it prints `No managed paths to back up.`
+On success it prints `Backup created for: <targets>`. When backups are disabled in config, it prints `Backup is disabled in config; skipping.` and exits successfully. When no machine paths are managed, it prints `No managed paths to back up.` If configuration cannot be resolved, it prints each error and exits with status 1.
 
 ### `backup list`
 
-Prints the backup directory followed by backup timestamps grouped by harness target.
+Prints `Backups directory: <path>`, then the backup timestamps grouped by harness target. With no backups, it prints `No backups found.`
 
 ```text
 agent-marketplace backup list
@@ -402,7 +429,7 @@ agent-marketplace backup list
 
 ### `backup restore`
 
-Overlays the latest backup onto the selected machine harness root. Existing unrelated files are preserved.
+Copies the latest backup over the selected machine harness root. Files that are not in the backup stay in place.
 
 ```text
 agent-marketplace backup restore --target <harness>
@@ -412,15 +439,24 @@ agent-marketplace backup restore --target <harness>
 |---|---|:---:|---|---|
 | `-t`, `--target` | string | yes | none | Harness target: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, or `windsurf`. |
 
-The command refuses a non-directory target root and a target root that is a symbolic link.
+On success it prints `Overlay-restored <target> from backup <timestamp>`. The command refuses a target root that is not a directory or is a symbolic link, and creates the root when it does not exist.
 
 ## `gc`
 
-Removes mutable and exact Git cache entries and unreferenced hosted Marketplace artifacts that are no longer reachable from validated configuration and active locks in the **current context**: organization, user, current repository, and personal-local layers, including their applicable includes. Exact Git snapshots are retained by locked source and commit; Git object stores are retained by canonical source URL from either a lock or configuration, including organization sources with no organization lock. Marketplace blobs, manifests, revision metadata, and index-only occurrence snapshots are retained by exact configured pins. Unreferenced object stores and abandoned staging directories are collected. Protected derived-cache namespaces and persistent coordination locks are retained.
+Removes cache entries that are no longer reachable from the validated configuration and active locks in the current context: the organization, user, current repository, and personal-local layers, including their includes. This covers mutable and exact Git cache entries and unreferenced hosted Marketplace artifacts.
 
-The cache is shared across repositories, but `gc` does not inventory other repositories. Running it in repository A can evict a source used only by repository B. Later use in B may require reacquisition from the remote and can fail offline or if the remote no longer serves the locked commit. Use `--dry-run` to inspect current-context eviction before deleting.
+What `gc` keeps:
 
-Pending dependency-transaction recovery runs first and holds the shared exact-cache lease while publishing recovered config and lock state. Collection then takes the exclusive exact-cache lease before mutable-cache exclusion and reloads all applicable configuration layers and their locks before deriving reachability. Missing required locks, malformed configuration or locks, and untrusted locks block destructive collection; a present organization lock must also match its configuration.
+- Exact Git snapshots referenced by a locked source and commit.
+- Git object stores whose canonical source URL appears in a lock or in configuration, including organization sources with no organization lock.
+- Marketplace blobs, manifests, revision metadata, and index-only occurrence snapshots referenced by exact configured pins.
+- Protected derived-cache namespaces and persistent coordination locks.
+
+It removes unreferenced object stores and abandoned staging directories.
+
+The cache is shared by all your repositories, but `gc` only looks at the current one. Running it in repository A can delete a source that only repository B uses. B then has to fetch it again, which fails offline or when the remote no longer has the locked commit. Run `--dry-run` first to see what would be deleted.
+
+`gc` first finishes any pending dependency-transaction recovery, holding the shared exact-cache lease while it publishes the recovered config and lock state. It then takes the exclusive exact-cache lease and reloads every applicable configuration layer and lock before deciding what is reachable. Missing required locks, malformed configuration or locks, and untrusted locks block deletion. A present organization lock must also match its configuration.
 
 ```text
 agent-marketplace gc [flags]
@@ -430,12 +466,14 @@ agent-marketplace gc [flags]
 |---|---|:---:|---|---|
 | `--dry-run` | boolean | no | `false` | Lists cache entries that would be removed without deleting them. |
 
-The final line reports the number of affected entries:
+The command prints one line per removed entry, followed by two totals:
 
 ```text
 Removed 2 cache entries
-Would remove 2 cache entries
+Removed 1 marketplace artifact directories
 ```
+
+With `--dry-run`, each line starts with `Would remove` instead.
 
 ## `serve`
 
@@ -450,11 +488,11 @@ agent-marketplace serve --config <path> [--role api|worker|all]
 | `--config` | path | yes | none | Marketplace operator YAML file. |
 | `--role` | string | no | `all` | `api` runs the public and operations listeners, `worker` runs background indexing, and `all` runs both. |
 
-Startup opens the configured stores, ensures the Marketplace instance exists, and applies configured revocations before either role becomes ready. The command runs until its context is cancelled or a role fails.
+At startup the command opens the configured stores, makes sure the Marketplace instance exists, and applies configured revocations before either role reports ready. It runs until it is cancelled or a role fails.
 
 ### `serve reindex`
 
-Enqueues and processes refresh work outside the scheduler.
+Queues and processes refresh work outside the scheduler.
 
 ```text
 agent-marketplace serve reindex [registry-slug-or-id] --config <path>
@@ -464,7 +502,7 @@ agent-marketplace serve reindex [registry-slug-or-id] --config <path>
 |---|---|:---:|---|---|
 | `--config` | path | yes | none | Marketplace operator YAML file. |
 
-With no registry argument, the command reindexes every configured registry. With one slug or ID, it reindexes only that registry. It applies revocations before acquisition and performs a store readiness check after processing.
+With no registry argument, the command reindexes every configured registry. With one slug or ID, it reindexes only that registry. It applies revocations before fetching and checks store readiness after processing.
 
 ### `serve reset`
 
@@ -489,7 +527,7 @@ Both modes open the configured stores, including normal schema initialization. O
 
 ### `serve adopt`
 
-Adopts catalog settings during a controlled maintenance window, establishing database configuration authority.
+Adopts catalog settings during a controlled maintenance window and records the database as the configuration authority.
 
 ```text
 agent-marketplace serve adopt --config <path> --actor <id> --reason <text> --idempotency-key <key> --confirm-maintenance
@@ -499,15 +537,15 @@ agent-marketplace serve adopt --config <path> --actor <id> --reason <text> --ide
 |---|---|:---:|---|---|
 | `--actor` | string | yes | none | Operator identity recorded in the maintenance audit. |
 | `--config` | path | yes | none | Path to the Marketplace operator config file. |
-| `--confirm-maintenance` | boolean | no | `false` | Confirms all API and worker processes are stopped, backups exist, and shared caches are invalidated. |
+| `--confirm-maintenance` | boolean | yes | `false` | Confirms all API and worker processes are stopped, backups exist, and shared caches are invalidated. The command refuses to run without it. |
 | `--idempotency-key` | string | yes | none | Stable key reused when retrying this adoption. |
 | `--reason` | string | yes | none | Reason recorded in the adoption audit. |
 
-All API and worker processes must be stopped, and database and blob storage backups must be created before running adoption. Requires `management.mode: database` in the configuration file.
+Before running adoption, stop every API and worker process and back up the database and blob storage. The command does not check either. The configuration file must set `management.mode: database`. On success it prints `Adopted marketplace configuration at revision <n>.`
 
 ## `deinit`
 
-Removes marketplace-managed artifacts for one scope. User scope also removes orphaned registry caches while preserving currently resolvable organization-owned machine artifacts. A present organization lock is inspected exactly and any invalid lock blocks teardown. When the organization lock is absent, normal deinit may refresh the mutable registry to preserve its output and cache; `--dry-run` is inspection-only, so an uncached unlocked organization registry produces a warning rather than a fetch. Configuration files remain unless `--purge-config` is set.
+Removes the files Agent Marketplace manages for one scope. User scope also removes orphaned registry caches, but keeps the machine output that organization requirements still resolve to. A present organization lock is read exactly, and an invalid lock stops the teardown. When the organization lock is absent, a normal `deinit` may fetch the organization registry to keep its output and cache. `--dry-run` never fetches, so an uncached, unlocked organization registry produces a warning. Configuration files stay unless you pass `--purge-config`.
 
 ```text
 agent-marketplace deinit [flags]
@@ -515,15 +553,17 @@ agent-marketplace deinit [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--scope` | string | no | `user` | Teardown scope: `user`, `repo`, or `local`. `repo` and `local` both target repository-scoped artifacts. |
-| `--purge-config` | boolean | no | `false` | Also removes the configuration file and its owning generated YAML lock for the selected scope, including an orphaned lock. Other layers and included fragments are preserved. Stable transaction coordination files and unrelated recovery journals are retained; an overlapping pending transaction blocks purge until recovered. |
-| `--dry-run` | boolean | no | `false` | Reports artifacts, caches, configuration files, and generated YAML locks that would be removed without deleting them. |
+| `--scope` | string | no | `user` | Teardown scope: `user`, `repo`, or `local`. `repo` and `local` both remove repository-scoped output. |
+| `--purge-config` | boolean | no | `false` | Also deletes the scope's configuration file and the lockfile it owns, including an orphaned lock. Other layers and included fragments stay. Transaction coordination files and unrelated recovery records stay. A pending transaction that touches these files blocks the purge until it is recovered. |
+| `--dry-run` | boolean | no | `false` | Reports the output, caches, configuration files, and lockfiles that would be removed, without deleting them. |
 
-Unreadable configuration does not block teardown. In that case the command reports a warning, applies default materialization-mode assumptions, and notes that artifacts created in another mode may remain.
+The output reports `Removed <n> managed artifact(s)` (or `Would remove ...` with `--dry-run`), or `No managed artifacts to remove`, followed by each removed cache and purged file.
+
+Unreadable configuration does not stop the teardown. The command prints a warning, assumes the default materialization mode, and notes that output created in another mode may remain.
 
 ## `telemetry`
 
-Reads and modifies user telemetry preferences and local telemetry state. Organization policy can impose a minimum level or lock an endpoint.
+Reads and changes your telemetry preference and local telemetry state. When an organization config sets a telemetry level, that level applies instead of your preference, and the organization can also lock the endpoint. See the [telemetry reference](telemetry.md).
 
 ```text
 agent-marketplace telemetry <command>
@@ -531,17 +571,17 @@ agent-marketplace telemetry <command>
 
 ### `telemetry status`
 
-Prints the effective level and source, endpoint hostname and source, header references, retention policy, community-reporting state, management status, installation ID, queue statistics, retained diagnostic count, last delivery failure, and organization-locked fields.
+Prints the effective level and its source, the endpoint hostname, header references, retention policy, community-reporting state, whether the installation is managed, the installation ID, queue statistics, the number of retained diagnostic payloads, the last delivery failure, and any fields locked by the organization.
 
 ```text
 agent-marketplace telemetry status
 ```
 
-Header values are not printed.
+Header values are never printed.
 
 ### `telemetry enable`
 
-Sets the user telemetry level and optionally a user-managed OTLP/HTTP endpoint. The user configuration must already exist.
+Sets your telemetry level, and optionally a user-managed OTLP/HTTP endpoint. The user config must already exist; otherwise the command tells you to run `agent-marketplace init` first.
 
 ```text
 agent-marketplace telemetry enable --level <level> [--endpoint <url>]
@@ -549,24 +589,24 @@ agent-marketplace telemetry enable --level <level> [--endpoint <url>]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--level` | string | yes | none | `basic` or `detailed`. `off` is rejected; `telemetry disable` represents that state. |
-| `--endpoint` | URL string | no | existing effective endpoint | Stores a user endpoint unless organization policy locks it. |
+| `--level` | string | yes | none | `basic` or `detailed`. `off` is rejected; use `telemetry disable` instead. |
+| `--endpoint` | URL string | no | existing effective endpoint | Stores a user endpoint. Refused when organization policy sets the endpoint. |
 
-A requested level below an organization-required level is rejected.
+A level lower than the organization's level is rejected. On success the command prints `Telemetry enabled at "<level>"`.
 
 ### `telemetry disable`
 
-Sets the user telemetry preference to `off`.
+Sets your telemetry preference to `off` and prints `Telemetry disabled for user preference.`
 
 ```text
 agent-marketplace telemetry disable
 ```
 
-Organization policy can keep the effective level active; the command reports that state after storing the user preference.
+If organization policy keeps telemetry on, the command also prints `Organization policy keeps telemetry active at "<level>".`
 
 ### `telemetry preview`
 
-Writes a representative payload locally without sending it.
+Writes a representative payload to a local file without sending it.
 
 ```text
 agent-marketplace telemetry preview --level <level>
@@ -576,11 +616,11 @@ agent-marketplace telemetry preview --level <level>
 |---|---|:---:|---|---|
 | `--level` | string | yes | none | Preview level: `basic`, `detailed`, or `diagnostic`. |
 
-A diagnostic preview requires terminal confirmation. In non-terminal execution it requires the global `--diagnostic-accept-sensitive-data` flag. Output identifies the local payload path and resolved destination metadata.
+A diagnostic preview asks for confirmation on a terminal. Without a terminal, it requires the global `--diagnostic-accept-sensitive-data` flag. The output prints `Preview payload written to <path>` with the level, endpoint host, retention policy, and header references.
 
 ### `telemetry purge`
 
-Removes queued telemetry records and retained diagnostic payloads. It does not reset the installation ID or change telemetry preferences.
+Removes queued telemetry records and retained diagnostic payloads, then prints how many of each it removed. It does not reset the installation ID or change telemetry preferences.
 
 ```text
 agent-marketplace telemetry purge
@@ -588,29 +628,27 @@ agent-marketplace telemetry purge
 
 ### `telemetry reset-id`
 
-Replaces the installation ID and purges pending telemetry associated with the old ID.
+Replaces the installation ID and purges pending telemetry tied to the old ID. The output prints `Installation ID reset. New ID: <id>`.
 
 ```text
 agent-marketplace telemetry reset-id
 ```
 
-Output includes the newly generated installation ID.
-
 ## `tui`
 
-Launches the interactive terminal UI for browsing Git registries and hosted Marketplaces, editing selections, selecting harnesses, and synchronizing.
+Starts the interactive terminal UI for browsing Git registries and hosted Marketplaces, editing selections, choosing harnesses, and syncing. See the [terminal UI reference](tui.md) for keys and screens.
 
 ```text
 agent-marketplace tui
 ```
 
-The command resolves the repository root from the current directory and uses the current user's home directory for machine-scoped configuration and output. It renders configured resources before network discovery, loads up to 50 results from each Marketplace, and starts federated Marketplace search 250 milliseconds after search input settles. Discovery cache entries are fresh for five minutes and may be used as stale fallback for up to 24 hours.
+The command finds the repository root from the current directory and uses your home directory for machine-scope configuration and output. It shows configured resources before any network discovery, loads up to 50 results from each Marketplace, and starts a Marketplace search 250 milliseconds after you stop typing. Discovery results stay fresh for five minutes and can be shown as stale results for up to 24 hours when an endpoint fails.
 
-Marketplace installation verifies the exact revision before committing. Security findings display the verified preview and require confirmation; capability metadata alone does not. Blocked and revoked resources remain visible but cannot be installed.
+Marketplace installation verifies the exact revision before saving it. Security findings show the verified preview and require confirmation; capability metadata alone does not. Blocked and revoked resources stay visible but cannot be installed.
 
 ## `completion`
 
-Generates shell completion scripts through Cobra's built-in completion commands.
+Generates shell completion scripts with Cobra's built-in completion commands.
 
 ```text
 agent-marketplace completion bash [--no-descriptions]
@@ -621,17 +659,17 @@ agent-marketplace completion powershell [--no-descriptions]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--no-descriptions` | boolean | no | `false` | Omits command and flag descriptions from generated completions. |
+| `--no-descriptions` | boolean | no | `false` | Leaves command and flag descriptions out of the generated completions. |
 
-The generated script is written to standard output.
+The script is written to standard output.
 
 ## Exit statuses
 
 | Status | Condition |
 |---:|---|
-| `0` | The command completed successfully. Warnings such as an absent target set for `list`, unmet advisory prerequisites, or non-blocking compatibility findings do not change this status. |
+| `0` | The command succeeded. Warnings, such as a missing target set for `list`, unmet advisory prerequisites, or non-blocking compatibility findings, do not change this status. |
 | `1` | Argument validation, configuration loading, registry access, resolution, conversion, materialization, repair, backup, or filesystem work returned an error. |
-| `1` | `sync --check` detected drift. |
-| `1` | `sync --strict` encountered a selected resource that was missing or malformed. |
+| `1` | `sync --check` found drift, or `lock --check` found a lock that would change. |
+| `1` | `sync --strict` found a selected resource that was missing or malformed. |
 
-The CLI does not define additional command-specific numeric statuses. Cobra argument errors and runtime errors are printed to standard error; command reports and normal results are printed to standard output.
+The CLI defines no other numeric statuses. Argument and runtime errors are printed to standard error. Reports and normal results are printed to standard output.

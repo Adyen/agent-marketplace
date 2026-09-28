@@ -1,8 +1,8 @@
 # Resource metadata reference
 
-Public skill authoring uses YAML frontmatter in `SKILL.md`. The frontmatter is required for the CLI to read the declared `name`, `description`, and `metadata`. Subagent, hook, and MCP files follow their source harness's native schema; see the [registry layout reference](./registry-layout.md).
+This page lists the front matter fields `agent-marketplace` reads from a `SKILL.md`: the YAML block between two `---` lines at the top of the file. Registry authors use it to name, describe, tag, and license skills. Subagent, hook, and MCP files follow their source harness's native schema; see the [registry layout reference](./registry-layout.md).
 
-## Skill `SKILL.md` frontmatter
+## Skill `SKILL.md` front matter
 
 ```yaml
 ---
@@ -23,33 +23,43 @@ metadata:
 Review code changes and suggest improvements.
 ```
 
+The CLI also loads a `SKILL.md` without front matter. It then uses the folder name as the name and leaves the description empty. The [Agent Skills specification](https://agentskills.io/specification) requires both `name` and `description`, so always include them.
+
+A `SKILL.md` whose front matter is not valid YAML, or whose name breaks the naming rule below, is reported as malformed with a diagnostic such as `ingest.claude.load-skill-failed` and is not installed.
+
 ## Top-level fields
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | string | yes | Resource name. Overrides the directory name. |
-| `description` | string | yes | Short description used by search and listings. |
-| `license` | string | no | Declared SPDX-like license. |
-| `x-agent-marketplace-kind` | string | no | Devin/Codex converted-command marker. Set to `command` inside a skill-shaped `SKILL.md` for those targets; other command formats do not use this field. |
+| `name` | string | Required by the specification. The CLI falls back to the folder name, except for a `SKILL.md` at the registry root, which must declare it. | Resource name. Takes precedence over the folder name. Must start with a lowercase letter and contain only lowercase letters, digits, and hyphens. |
+| `description` | string | Required by the specification. The CLI accepts an empty value. | Short description shown with the resource. |
+| `license` | string | no | Declared license, usually an SPDX identifier such as `Apache-2.0`. The consumer CLI carries it along unchanged. A hosted Marketplace reads it (or `metadata.license`) for its license policy and falls back to the license configured for the registry. |
+| `x-agent-marketplace-kind` | string | no | Devin and Codex converted-command marker. Set to `command` inside a skill-shaped `SKILL.md` in those layouts; other command formats do not use this field. |
 | `metadata` | map | no | Holds `tags` and `requires`. |
+
+Harness-specific skill fields such as `allowed-tools`, `model`, and `argument-hint` are also read and translated for each target harness where it has an equivalent. The [field matrix](https://github.com/Adyen/agent-marketplace/blob/main/pkg/harness-compilation/field-matrix.md) lists them. Other unknown fields are kept and passed through.
 
 ## `metadata` fields
 
 | Field | Type | Description |
 |---|---|---|
-| `metadata.tags` | list of strings | Tags used for tag-based selection. |
-| `metadata.requires` | list | Advisory prerequisites. |
+| `metadata.tags` | list of strings | Tags used for tag-based selection. Matching is exact and case-sensitive after surrounding whitespace is trimmed. Items that are not strings are ignored. |
+| `metadata.requires` | list | Advisory prerequisites. Each item is a map (below) or a string. |
+
+Commands and subagents written as Markdown with front matter read `metadata.tags` and `metadata.requires` from the same place.
 
 ## `requires` item
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `kind` | string | `skill` | Resource kind. |
+| `kind` | string | `skill` | Resource kind: `skill`, `command`, `subagent`, `hook`, or `mcp`. `collection` is not accepted. |
 | `name` | string | required | Required resource name. |
-| `registry` | string | none | Provider hint. |
-| `path` | string | none | Provider path hint. |
+| `registry` | string | none | Registry hint, used as `--from` in the suggested install command. |
+| `path` | string | none | Path hint, used as `--path` in the suggested install command. |
 
-Satisfaction is by the `(kind, name)` pair. `registry` and `path` are remediation hints.
+A string item is shorthand: `mcp:docs-server` means kind `mcp` and name `docs-server`, and a string without a colon names a skill.
+
+A prerequisite is met when a resource with the same kind and name is selected in the same run, from any source or configuration layer. `registry` and `path` are remediation hints and do not restrict where the resource comes from. An unmet prerequisite produces a warning, never an error. Items with an unknown kind or without a `name` are skipped, and the CLI writes a warning to its log file.
 
 ## Command marker
 
@@ -67,11 +77,11 @@ x-agent-marketplace-kind: command
 Run the release checklist.
 ```
 
-This marker belongs to Devin/Codex converted-command layouts. Other command formats, such as Claude's `commands/<name>.md`, do not use it.
+This marker belongs to Devin and Codex converted-command layouts. Other command formats, such as Claude's `commands/<name>.md`, do not use it.
 
 ## Non-skill resources
 
-Subagent, hook, and MCP files use source-harness-specific native formats. The [registry layout reference](./registry-layout.md) lists the supported source paths and link alternatives.
+Subagent, hook, and MCP files use source-harness-specific native formats. The [registry layout reference](./registry-layout.md) lists the supported source paths.
 
 ## Related documentation
 
