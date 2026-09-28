@@ -40,12 +40,16 @@ func TestInstallMarketplaceEndpointAddsItToUserConfig(t *testing.T) {
 	if output != "Added Marketplace "+server.URL+" to "+configPath+"\n" {
 		t.Fatalf("output = %q", output)
 	}
-	cfg, err := config.LoadConfigFromPath(configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("load user config: %v", err)
+		t.Fatalf("read user config: %v", err)
 	}
-	if len(cfg.Marketplaces) != 1 || cfg.Marketplaces[0].URL != server.URL || cfg.Marketplaces[0].InstanceID != "marketplace-instance" || len(cfg.Marketplaces[0].Resources) != 0 {
-		t.Fatalf("marketplaces = %#v", cfg.Marketplaces)
+	if !strings.Contains(string(data), "marketplace: "+server.URL) || strings.Contains(string(data), "marketplaces:") {
+		t.Fatalf("user config:\n%s", data)
+	}
+	doc := readLockDocument(t, filepath.Join(homeDir, ".agents", "lock.yaml"))
+	if len(doc.Marketplaces) != 1 || doc.Marketplaces[0].URL != server.URL || doc.Marketplaces[0].InstanceID != "marketplace-instance" || len(doc.Marketplaces[0].Resources) != 0 {
+		t.Fatalf("endpoint lock = %#v", doc.Marketplaces)
 	}
 }
 
@@ -126,8 +130,16 @@ func TestInstallMarketplaceEndpointUsesExplicitRepoAndLocalScopes(t *testing.T) 
 			if err != nil {
 				t.Fatalf("read %s config: %v", scope, err)
 			}
-			if !strings.Contains(string(data), "instance_id: marketplace-instance") {
+			if !strings.Contains(string(data), "marketplace: "+server.URL) || strings.Contains(string(data), "marketplaces:") {
 				t.Fatalf("config = %s", data)
+			}
+			lockName := "lock.yaml"
+			if scope == "local" {
+				lockName = "lock.local.yaml"
+			}
+			doc := readLockDocument(t, filepath.Join(workspace, ".agents", lockName))
+			if len(doc.Marketplaces) != 1 || doc.Marketplaces[0].InstanceID != "marketplace-instance" {
+				t.Fatalf("%s endpoint lock = %#v", scope, doc.Marketplaces)
 			}
 			if _, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml")); !os.IsNotExist(err) {
 				t.Fatalf("user config should not be written, stat error = %v", err)
@@ -739,8 +751,11 @@ registries:
 		t.Fatalf("expected repo config to load after tag install: %v", err)
 	}
 
-	if !reflect.DeepEqual(cfg.Tags, []string{"k8s"}) {
-		t.Fatalf("expected repo config to include installed tag, got %#v", cfg.Tags)
+	if len(cfg.Tags) != 0 {
+		t.Fatalf("expected no top-level tag, got %#v", cfg.Tags)
+	}
+	if len(cfg.Registries) != 1 || !reflect.DeepEqual(cfg.Registries[0].Tags, []string{"k8s"}) {
+		t.Fatalf("expected registry-scoped tag, got %#v", cfg.Registries)
 	}
 
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "k8s-app-onboarding"), filepath.Join(cache.RegistryCachePath(origin, "main"), "k8s-app-onboarding"))
@@ -2008,5 +2023,32 @@ registries: []
 	}
 	if data, readErr := os.ReadFile(repoConfig); readErr == nil && strings.Contains(string(data), "local-registry") {
 		t.Fatalf("local registry with missing path leaked into repo config:\n%s", string(data))
+	}
+}
+
+func TestWriteInstallResultReportsUnselectedResources(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name   string
+		result pipeline.InstallResult
+		want   string
+	}{
+		{"mixed", pipeline.InstallResult{Installed: []string{"cmd-one", "deploy"}, NotSelected: []string{"review"}},
+			"Installed cmd-one, deploy in this repo\nNot installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly\n"},
+		{"none installed", pipeline.InstallResult{NotSelected: []string{"review", "lint\x1b[31m"}},
+			"Not installed: review, lint\\x1b[31m; the effective configuration does not select them (for example, an exclusion wins). Install by name to select explicitly\n"},
+		{"all installed", pipeline.InstallResult{Installed: []string{"review"}}, "Installed review in this repo\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := writeInstallResult(&out, &tc.result, pipeline.ScopeRepo, false, false); err != nil {
+				t.Fatal(err)
+			}
+			if got := out.String(); got != tc.want {
+				t.Fatalf("output = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

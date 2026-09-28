@@ -55,12 +55,15 @@ type lockMode struct {
 	ignoreBlocked        bool
 	reconcileUnselected  bool
 	stagedConfigEdits    []pipeline.StagedConfigEdit
+	stagedLockEdits      []pipeline.StagedLockEdit
 	commitReads          []dependencytxn.ReadAssertion
 	commitScope          dependencytxn.CommitScope
 	prepareInstall       *preparedInstallLocks
 	reuseInstall         *preparedInstallLocks
 	warningSink          *[]error
 	marketplacePolicy    resolver.MarketplaceRevocationPolicy
+
+	allowTransientOrganization bool
 }
 
 type lockReconcileStats struct {
@@ -109,8 +112,9 @@ type upgradeTargetSpec struct {
 }
 
 type upgradeTargetResult struct {
-	selection lockfile.UpgradeSelection
-	notices   []string
+	selection       lockfile.UpgradeSelection
+	notices         []string
+	checkUpgradeErr *lockLifecycleError
 }
 
 type exactLockSet struct {
@@ -168,6 +172,9 @@ func newLockCmd() *cobra.Command {
 				return err
 			}
 			if check && changed > 0 {
+				if result.checkUpgradeErr != nil {
+					return result.checkUpgradeErr
+				}
 				return &lockLifecycleError{Code: "lock.change-required", Err: errors.New("lock files would change")}
 			}
 			if err := writeGroupedWarnings(cmd.OutOrStdout(), warnings, false); err != nil {
@@ -508,6 +515,18 @@ func validateStagedConfigPathIdentity(edit pipeline.StagedConfigEdit) (string, e
 	return destination, nil
 }
 
+func validateStagedLockPathIdentity(edit pipeline.StagedLockEdit) (string, error) {
+	destination := filepath.Clean(edit.Path)
+	if edit.Path == "" || !filepath.IsAbs(destination) {
+		return "", fmt.Errorf("%w: staged lock destination %q is not an absolute path", dependencytxn.ErrGenerationConflict, edit.Path)
+	}
+	validated, err := dependencytxn.ValidateDestination(destination)
+	if err != nil {
+		return "", fmt.Errorf("validate staged lock destination %s: %w", edit.Path, err)
+	}
+	return validated, nil
+}
+
 func prepareExactLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (catalog.LoadOption, int, error) {
 	option, changed, _, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
 	return option, changed, err
@@ -567,7 +586,7 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 		}
 		snapshots[layer.Source] = configTransactionSnapshot{path: participantPath, generation: generation, expectedMode: expectedMode, bytes: raw, mode: mode, reads: layer.Reads}
 	}
-	reads, err := effectiveReadAssertions(ec, nil)
+	reads, err := effectiveReadAssertions(ec, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -577,7 +596,7 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 	return snapshots, nil
 }
 
-func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit) ([]dependencytxn.ReadAssertion, error) {
+func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, stagedLocks map[string]pipeline.StagedLockEdit) ([]dependencytxn.ReadAssertion, error) {
 	byAlias := make(map[string]dependencytxn.ReadAssertion)
 	byPath := make(map[string]string)
 	for _, layer := range ec.PresentLayers() {
@@ -596,14 +615,16 @@ func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeli
 			byPath[read.Path] = read.Digest
 			expected := dependencytxn.Generation{Exists: true, Digest: read.Digest}
 			if read.Overlay {
-				if staged == nil {
+				if staged == nil && stagedLocks == nil {
 					continue
 				}
-				edit, exists := staged[read.Path]
-				if !exists || dependencytxn.Digest(edit.Bytes) != read.Digest {
+				if edit, exists := staged[read.Path]; exists && dependencytxn.Digest(edit.Bytes) == read.Digest {
+					expected = edit.Expected
+				} else if lockEdit, exists := stagedLocks[read.Path]; exists && dependencytxn.Digest(lockEdit.Bytes) == read.Digest {
+					expected = lockEdit.Expected
+				} else {
 					return nil, fmt.Errorf("%w: unmatched config overlay at %s", dependencytxn.ErrGenerationConflict, read.Path)
 				}
-				expected = edit.Expected
 			}
 			assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath, Expected: expected}
 			if previous, exists := byAlias[read.RequestedPath]; exists && previous != assertion {
@@ -633,10 +654,6 @@ func sameConfigSnapshots(left, right map[config.Source]configTransactionSnapshot
 	return true
 }
 
-func loadStableEffective(ctx context.Context, options config.LoadEffectiveOptions) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
-	return loadStableEffectiveWith(ctx, options, config.LoadEffective)
-}
-
 func loadStableEffectiveWith(ctx context.Context, options config.LoadEffectiveOptions, load func(context.Context, config.LoadEffectiveOptions) config.EffectiveConfig) (config.EffectiveConfig, map[config.Source]configTransactionSnapshot, error) {
 	probe := load(ctx, options)
 	before, err := snapshotEffectiveConfigs(probe, options.FileOverlays)
@@ -657,9 +674,6 @@ func loadStableEffectiveWith(ctx context.Context, options config.LoadEffectiveOp
 type exactLockLeaseFunc func(context.Context) (func(), error)
 
 func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (resultOption catalog.LoadOption, changed int, resultLease exactLockLeaseFunc, resultErr error) {
-	if !mode.check && !mode.offline && !mode.locked {
-		ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
-	}
 	started := time.Now()
 	modeName := lockModeName(mode)
 	scopes := selectedLockScopes(mode)
@@ -684,7 +698,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	if err := prepareDependencyTransactions(ctx, mode.readOnlyDependencies()); err != nil {
 		return nil, 0, nil, err
 	}
-	overlays := make(map[string][]byte, len(mode.stagedConfigEdits))
+	overlays := make(map[string][]byte, len(mode.stagedConfigEdits)+len(mode.stagedLockEdits))
 	stagedEdits := make(map[string]pipeline.StagedConfigEdit, len(mode.stagedConfigEdits))
 	for _, edit := range mode.stagedConfigEdits {
 		destination, err := validateStagedConfigPathIdentity(edit)
@@ -698,26 +712,43 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		stagedEdits[destination] = edit
 		overlays[destination] = edit.Bytes
 	}
+	stagedLocks := make(map[string]pipeline.StagedLockEdit, len(mode.stagedLockEdits))
+	for _, edit := range mode.stagedLockEdits {
+		destination, err := validateStagedLockPathIdentity(edit)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		if _, duplicate := stagedLocks[destination]; duplicate {
+			return nil, 0, nil, fmt.Errorf("%w: duplicate staged lock destination %s", dependencytxn.ErrGenerationConflict, destination)
+		}
+		if _, collision := stagedEdits[destination]; collision {
+			return nil, 0, nil, fmt.Errorf("%w: staged lock destination %s collides with a staged config edit", dependencytxn.ErrGenerationConflict, destination)
+		}
+		edit.Path = destination
+		stagedLocks[destination] = edit
+		overlays[destination] = edit.Bytes
+	}
 	loadOptions := config.LoadEffectiveOptions{
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
 		FileOverlays: overlays,
 	}
-	loadEffective := config.LoadEffective
-	if !mode.check && mode.reuseInstall != nil {
-		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
-			return pipeline.LoadEffectiveOnlineCached(ctx, opts, mode.marketplacePolicy)
-		}
+	loadMode := pipeline.ConfigLoadStrict
+	if mode.allowTransientOrganization && !mode.offline {
+		loadMode = pipeline.ConfigLoadOnline
+	} else if !mode.check && mode.reuseInstall != nil {
+		loadMode = pipeline.ConfigLoadCached
 	} else if !mode.check && !mode.offline && !mode.locked {
-		loadEffective = func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
-			return pipeline.LoadEffectiveOnline(ctx, opts, mode.marketplacePolicy)
-		}
+		loadMode = pipeline.ConfigLoadOnline
+	}
+	loadEffective := func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+		return pipeline.LoadEffective(ctx, loadMode, opts, mode.marketplacePolicy)
 	}
 	ec, configSnapshots, err := loadStableEffectiveWith(ctx, loadOptions, loadEffective)
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && mode.commitScope == nil
-	if canBootstrapMarketplace && marketplacelock.HasRequiredError(ec.Errors) {
+	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && len(mode.stagedLockEdits) == 0 && mode.commitScope == nil
+	if canBootstrapMarketplace && (marketplacelock.HasRequiredError(ec.Errors) || marketplacelock.HasMismatchError(ec.Errors)) {
 		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects, mode.marketplacePolicy)
 		if err != nil {
 			return nil, 0, nil, err
@@ -729,6 +760,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 	}
 	consumed := make(map[string]int, len(stagedEdits))
+	consumedLocks := make(map[string]int, len(stagedLocks))
 	for source, snapshot := range configSnapshots {
 		if !source.IsWritable() {
 			continue
@@ -793,6 +825,8 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 	}
 	organizationRequiresLock := false
+	var checkUpgradeErr *lockLifecycleError
+	checkHasDrift := false
 	// Exact snapshot acquisition, verification, and dependency publication form
 	// one GC-critical section. Preserve the lock order: namespace before
 	// dependency transaction destinations.
@@ -858,7 +892,11 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			return nil, changed, nil, loadErr
 		}
-		if len(remote) > 0 {
+		stagedLock, hasStagedLock := stagedLocks[lockPath]
+		if hasStagedLock && !layer.Source.IsWritable() {
+			hasStagedLock = false
+		}
+		if len(remote) > 0 || exists || hasStagedLock {
 			lockExpectations[lockPath] = generation
 			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
 			if stateErr != nil {
@@ -866,7 +904,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			lockModes[lockPath] = currentMode
 		}
-		if len(remote) == 0 && !exists {
+		if len(remote) == 0 && !exists && !hasStagedLock {
 			continue
 		}
 		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
@@ -899,6 +937,14 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		if mode.check {
 			fresh := exists && current != nil && unselectedLayerIsFresh(scope, remote, *current)
+			if fresh && current.APIVersion == lockfile.APIVersionV1 && !implicitOrg && !mode.locked {
+				if checkUpgradeErr == nil {
+					checkUpgradeErr = &lockLifecycleError{Code: "lock.version-upgrade-required", Scope: scope, Path: lockPath, Err: errors.New("lock schema upgrade to v2 required")}
+				}
+				fresh = false
+			} else if !fresh {
+				checkHasDrift = true
+			}
 			if !fresh {
 				if mode.locked {
 					return nil, changed, nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
@@ -913,6 +959,17 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			continue
 		}
 
+		if hasStagedLock {
+			consumedLocks[lockPath]++
+			stagedDoc, decodeErr := lockfile.Decode(stagedLock.Bytes)
+			if decodeErr == nil {
+				decodeErr = lockfile.ValidateScope(stagedDoc, scope)
+			}
+			if decodeErr != nil {
+				return nil, changed, nil, &lockLifecycleError{Code: "lock.invalid", Scope: scope, Path: lockPath, Err: decodeErr}
+			}
+			current = &stagedDoc
+		}
 		operation := lockfile.OperationSync
 		if mode.upgrade && selected && !implicitOrg {
 			operation = lockfile.OperationUpgrade
@@ -927,11 +984,14 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if gitDesired.err != nil {
 			return nil, changed, nil, gitDesired.err
 		}
+		if exists && current != nil && current.APIVersion == lockfile.APIVersionV1 && writableV1RequiresUpgrade(scope, mode) {
+			gitFresh = false
+		}
 		doc := gitDesired.doc
 		if mode.prepareInstall != nil {
 			mode.prepareInstall.documents[lockPath] = doc
 		}
-		fresh := exists && gitFresh
+		fresh := exists && gitFresh && !hasStagedLock
 		if !fresh {
 			if mode.locked && !implicitOrg || implicitOrg && exists || !selected && !mode.upgrade {
 				return nil, changed, nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
@@ -943,7 +1003,11 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 					return nil, changed, nil, err
 				}
 				lockDesired[lockPath] = data
-				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: 0o644})
+				fileMode := lockModes[lockPath]
+				if !generation.Exists {
+					fileMode = 0o644
+				}
+				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: fileMode})
 			}
 		}
 		layerChangedCount := 0
@@ -952,6 +1016,11 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		slog.Debug("lock layer reconciled", "scope", scope, "operation", operation, "retained", gitDesired.stats.retained, "acquired", gitDesired.stats.acquired, "changed", layerChangedCount)
 		snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: doc})
+	}
+	for path := range stagedLocks {
+		if consumedLocks[path] != 1 {
+			return nil, changed, nil, fmt.Errorf("%w: staged lock %s matched %d effective writable layers", dependencytxn.ErrGenerationConflict, path, consumedLocks[path])
+		}
 	}
 	for _, job := range snapshots {
 		if len(job.doc.Registries) > 0 {
@@ -996,7 +1065,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 				return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
 			}
 		}
-		reads, err := effectiveReadAssertions(ec, stagedEdits)
+		reads, err := effectiveReadAssertions(ec, stagedEdits, stagedLocks)
 		if err != nil {
 			return nil, changed, nil, err
 		}
@@ -1104,6 +1173,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		mode.prepareInstall.release = releaseSnapshotLease
 		releaseSnapshotLease = nil
 	}
+	if mode.upgradeResult != nil && !checkHasDrift {
+		mode.upgradeResult.checkUpgradeErr = checkUpgradeErr
+	}
 	return option, changed, resultLease, nil
 }
 
@@ -1135,8 +1207,16 @@ func runRegistryJobs(count int, run func(int) error) error {
 	return err
 }
 
+func gitReconciliationDocument(scope lockfile.Scope, current *lockfile.Document) lockfile.Document {
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: scope}
+	if current != nil {
+		doc.Marketplaces = current.Marketplaces
+	}
+	return doc
+}
+
 func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
-	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
+	doc := gitReconciliationDocument(scope, current)
 	stats := lockReconcileStats{}
 	old := map[string]lockfile.GitRegistry{}
 	if current != nil {
@@ -1272,6 +1352,13 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 		registry.Roots = append(registry.Roots, root)
 	}
 	return registry, nil
+}
+
+func writableV1RequiresUpgrade(scope lockfile.Scope, mode lockMode) bool {
+	if mode.readOnlyDependencies() {
+		return false
+	}
+	return scope != lockfile.ScopeOrganization || mode.explicitOrganization
 }
 
 func unselectedLayerIsFresh(_ lockfile.Scope, registries []config.RegistryEntry, doc lockfile.Document) bool {
@@ -1426,6 +1513,13 @@ func loadLayerLock(path string, scope lockfile.Scope) (*lockfile.Document, depen
 	}
 	if err != nil {
 		return nil, generation, true, &lockLifecycleError{Code: "lock.invalid", Scope: scope, Path: path, Err: err}
+	}
+	if doc.APIVersion == lockfile.APIVersionV1 {
+		slog.Warn("lock file uses the deprecated v1 schema; the next writable reconciliation upgrades it to v2",
+			slog.String("code", "lock.version-deprecated"),
+			slog.String("path", path),
+			slog.String("scope", string(scope)),
+		)
 	}
 	return &doc, generation, true, nil
 }

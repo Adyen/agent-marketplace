@@ -1,15 +1,15 @@
 # Deploy Agent Marketplace on Kubernetes
 
-This guide shows how to deploy the Agent Marketplace service with the reusable Helm chart in this directory. The chart defaults to one all-in-one Deployment, with optional web and documentation frontends. Use split mode for external shared storage and separate API and worker scaling.
+This guide deploys the Agent Marketplace service with the reusable Helm chart in this directory. By default the chart renders one all-in-one Deployment (`mode: all`), and it can add the web and documentation frontends. Use `mode: split` when you have external shared storage and want to scale the API and worker separately.
 
 ## Prerequisites
 
-Before starting, ensure:
+Before starting, check that:
 
 - Helm 3 is available.
-- Container images for the API/worker binary and any enabled frontend are available to the cluster.
-- A Marketplace operator configuration is prepared, or the default example configuration is suitable for a local SQLite/filesystem deployment.
-- A private authentication and TLS boundary is available in front of public routes. The application does not provide authentication or authorization.
+- The cluster can pull the Marketplace image and the image for each frontend you enable. `Dockerfile.marketplace` builds two targets: `api`, and `worker`, which adds Git. The `all` and `worker` roles run acquisition and need an image built from the `worker` target. The top-level `image` applies to every Marketplace role; in split mode you can point `api.image` at an image built from the `api` target.
+- A Marketplace operator configuration is ready, or the default example configuration is enough for a local SQLite/filesystem deployment.
+- A private authentication and TLS boundary is available in front of the public routes. The public application routes have no authentication or authorization.
 
 ## 1. Choose the storage topology
 
@@ -55,7 +55,9 @@ config:
     registries: []
 ```
 
-Do not put a literal DSN or other credentials in `values.yaml`. Use a Secret manager or an existing Kubernetes Secret.
+Do not put a literal DSN or other credentials in `values.yaml`. Use a secret manager or an existing Kubernetes Secret.
+
+The chart's container ports are fixed at 8080 (`http`) and 9090 (`operations`), so keep `listen` and `operations_listen` on those ports. `operations_listen` must bind an address the kubelet can reach, such as `0.0.0.0:9090`, because the probes call `/readyz` on it. Keep that port off the Ingress.
 
 ## 2. Configure images and optional frontends
 
@@ -80,11 +82,11 @@ site:
     tag: "1.0.0"
 ```
 
-The web container receives an internal API base automatically. The API Service exposes the public `http` port and a named `operations` port (`service.api.operationsPort`, default 9090). The operations port is for private monitoring and health endpoints only; it is not reachable through the Ingress.
+The chart sets the web container's internal API base (`NUXT_API_BASE_INTERNAL`) to the API Service. The API Service exists in both modes; in `mode: all` it selects the all-in-one pods. It exposes the public `http` port and a named `operations` port (`service.api.operationsPort`, default 9090). The operations port is for private monitoring and health endpoints only, and the Ingress does not route to it.
 
 ## 3. Configure the ingress boundary
 
-Supply the hostname, TLS secret, ingress class, and authentication annotations for the ingress or gateway used by your cluster. The chart does not invent these values:
+Supply the hostname, TLS secret, ingress class, and authentication annotations for the ingress or gateway your cluster uses. The chart has no defaults for these values:
 
 ```yaml
 ingress:
@@ -119,13 +121,17 @@ ingress:
           port: 8080
 ```
 
-Do not route `/readyz` or `/metrics` through the public ingress. If a monitoring system needs `/metrics`, enable `serviceMonitor` or configure an equivalent private monitoring path. The rendered ServiceMonitor is named after the API component (for example `agent-marketplace-api` when `fullnameOverride: agent-marketplace` is set) and scrapes the named `operations` Service port.
+With these paths, a request for exactly `/marketplace` (no trailing slash) falls through to the site service. The [reverse proxy contract](../../../docs/marketplace-reverse-proxy.md) requires a redirect from `/marketplace` to `/marketplace/`. An Ingress path cannot redirect by itself, so add that redirect with your ingress controller's or gateway's own mechanism.
+
+Do not route `/readyz` or `/metrics` through the public ingress. If a monitoring system needs `/metrics`, enable `serviceMonitor` or configure an equivalent private monitoring path. The rendered ServiceMonitor is named after the API component (for example `agent-marketplace-api` when `fullnameOverride: agent-marketplace` is set). It selects the API Service and scrapes its named `operations` port, so it covers the all-in-one pods in `mode: all` and the API pods in split mode. Worker pods have no metrics listener.
+
+To limit which pods can reach the API, all-in-one, web, and site pods, set `networkPolicy.enabled: true`. The policy allows traffic from the same namespace (`networkPolicy.allowSameNamespace`, default `true`) and from each namespace in `networkPolicy.ingressNamespaces`.
 
 ## 4. Tune workload behavior per component
 
 Each workload block (`api`, `worker`, `all`, `web`, `site`) accepts the same optional keys:
 
-- `strategy`: the Deployment `spec.strategy`. For example, give the API a zero-unavailable rolling update while the singleton worker uses `Recreate`:
+- `strategy`: the Deployment `spec.strategy`. For example, give the API a rolling update with zero unavailable pods while the single worker uses `Recreate`:
   ```yaml
   api:
     strategy:
@@ -144,7 +150,7 @@ Each workload block (`api`, `worker`, `all`, `web`, `site`) accepts the same opt
       runAsUser: 1000
       runAsGroup: 1000
   ```
-- `extraVolumes` / `extraVolumeMounts`: appended after the global `extraVolumes`/`extraVolumeMounts` for that component only. Use them to attach a CA bundle Secret to just the API and worker:
+- `extraVolumes` / `extraVolumeMounts`: appended after the global `extraVolumes`/`extraVolumeMounts` for that component only. Use them to attach a CA bundle Secret to only the API and worker:
   ```yaml
   api:
     extraVolumes:
@@ -157,9 +163,11 @@ Each workload block (`api`, `worker`, `all`, `web`, `site`) accepts the same opt
         readOnly: true
   ```
 
-The API and `all` roles also render an optional `startupProbe` (`<role>.probes.startup`, enabled by default) that polls `/readyz` on the `operations` port so a slow-starting API is not killed by its liveness probe. The worker has no HTTP listener and renders no HTTP probes.
+The API and `all` roles also render a `startupProbe` (`<role>.probes.startup`, enabled by default). It polls `/readyz` on the `operations` port so the liveness probe does not kill an API that starts slowly. The API and `all` roles check liveness with `/healthz` on the `http` port and readiness with `/readyz` on the `operations` port. The worker has no HTTP listener, and its probes are disabled by default.
 
-When the chart manages the ConfigMap (`config.enabled: true` and no `config.existingConfigMap`), the API, worker, and `all` pods carry a `checksum/config` pod annotation computed from the rendered ConfigMap. Changing `config.content` therefore rolls those pods automatically. Set `config.nameOverride` to pin the ConfigMap name, and `config.key` to change both the data key and the mounted `subPath`.
+When the chart manages the ConfigMap (`config.enabled: true` and no `config.existingConfigMap`), the API, worker, and `all` pods carry a `checksum/config` annotation computed from the rendered ConfigMap. A change to `config.content` therefore restarts those pods. Set `config.nameOverride` to pin the ConfigMap name, and `config.key` to change both the data key and the mounted `subPath`. The chart mounts the configuration at `config.mountPath` (default `/etc/agent-marketplace/config.yaml`), which is the path the default `args` pass to `--config`.
+
+The API reads operator configuration such as revocations when it starts, so a change takes effect only after every API pod restarts with the new configuration; a reindex does not apply it. The checksum annotation handles the restart for a chart-managed ConfigMap. With `config.existingConfigMap`, restart the pods yourself, for example with `kubectl rollout restart`.
 
 ## 5. Render and apply the chart
 
@@ -183,18 +191,21 @@ helm upgrade --install marketplace deploy/helm/agent-marketplace \
 
 ## 6. Verify the deployment
 
-Verify that API readiness and frontend routes are reachable from the appropriate private or authenticated paths:
+Verify that API readiness and the frontend routes are reachable from the appropriate private or authenticated paths:
 
 ```bash
 kubectl get deployments,services,pods -n marketplace
 kubectl describe deployment marketplace-agent-marketplace-api -n marketplace
 ```
 
-The API readiness and startup probes should use `/readyz` on the operations port. The API Service should expose the application HTTP port plus the named `operations` port for private monitoring; the Ingress still exposes only the intended public routes. Worker pods do not have an HTTP listener; observe their process state and logs instead of adding an HTTP probe.
+The Deployment name ends in the role: `-api` and `-worker` in split mode, and `-all` in the default `mode: all` (for example `marketplace-agent-marketplace-all`).
+
+The API readiness and startup probes should use `/readyz` on the operations port. The API Service should expose the application HTTP port plus the named `operations` port for private monitoring, and the Ingress should expose only the intended public routes. Worker pods have no HTTP listener, so check their process state and logs instead of adding an HTTP probe.
 
 ## Troubleshooting
 
-- **API pods fail before becoming ready**: inspect the mounted operator configuration and confirm the configured database/blob drivers and Secret references match.
-- **Worker pods restart**: check outbound access to configured registry origins and object storage, then inspect the worker logs for acquisition or indexing errors.
-- **The web UI cannot reach the API**: confirm the API Service is enabled and that the web deployment can resolve the generated API Service name.
-- **Metrics are unavailable**: keep the operations listener private and configure `serviceMonitor.enabled: true` or a private monitoring route; do not add `/metrics` to the public ingress.
+- If API pods fail before becoming ready, inspect the mounted operator configuration and confirm that the configured database and blob drivers match the Secret references.
+- If worker pods restart, check outbound access to the configured registry origins and object storage, then look in the worker logs for acquisition or indexing errors.
+- If acquisition cannot run Git, the pod is probably using an image built from the `api` target. The `worker` and `all` roles need an image built from the `worker` target.
+- If the web UI cannot reach the API, confirm that the API Service is rendered and that the web Deployment can resolve the generated API Service name.
+- If metrics are unavailable, keep the operations listener private and set `serviceMonitor.enabled: true`, or configure a private monitoring route. Do not add `/metrics` to the public ingress.

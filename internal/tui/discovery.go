@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -57,9 +58,14 @@ func pipelineScope(s scope) pipeline.Scope {
 	}
 }
 
+func marketplaceDiscoveryInstallable(r row) bool {
+	d := r.MarketplaceDiscovery
+	return d != nil && (d.Item.Availability == mpapi.AvailabilityAvailable || d.Item.Availability == mpapi.AvailabilityOperatorExposed)
+}
+
 func discoveryInstallOptions(repoRoot string, r row, s scope) (pipeline.InstallOptions, error) {
 	d := r.MarketplaceDiscovery
-	if d == nil || d.Item.Availability != "available" {
+	if !marketplaceDiscoveryInstallable(r) {
 		return pipeline.InstallOptions{}, errors.New("marketplace resource is not installable")
 	}
 	if d.Item.Revision == "" || d.Item.ContentDigest == "" {
@@ -154,6 +160,15 @@ func (m *Model) setMarketplaceConsentPreview(preview string) {
 	m.resizeMarketplaceConsentViewport(true)
 }
 
+func (m *Model) clearMarketplaceConsent() {
+	m.finishOperation(m.marketplaceInstallOperation)
+	m.marketplaceInstallOperation = 0
+	m.marketplacePreparedInstall = nil
+	m.marketplaceInstallPreview = ""
+	m.marketplaceConsentViewport.SetContent("")
+	m.marketplaceConsentViewport.GotoTop()
+}
+
 func renderMarketplaceConsent(m Model) string {
 	return styleConfirmTitle.Render("Verified Marketplace install") + "\nInstall this exact verified revision?\n" + m.marketplaceConsentViewport.View()
 }
@@ -165,12 +180,7 @@ func (m Model) handleMarketplaceConsentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		return m, commitDiscoveryInstall(ctxOrBackground(m.ctx), m.marketplaceInstallOperation, m.marketplaceInstallOptions, m.marketplacePreparedInstall)
 	case "n", "N", "esc":
 		m.pane = paneList
-		m.finishOperation(m.marketplaceInstallOperation)
-		m.marketplaceInstallOperation = 0
-		m.marketplacePreparedInstall = nil
-		m.marketplaceInstallPreview = ""
-		m.marketplaceConsentViewport.SetContent("")
-		m.marketplaceConsentViewport.GotoTop()
+		m.clearMarketplaceConsent()
 		return m, nil
 	}
 	if key.Matches(msg, m.keys.Top) {
@@ -382,13 +392,14 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 			discovery := &marketplaceDiscovery{Endpoint: outcome.Endpoint, Item: item, CacheState: outcome.CacheState, ObservedAt: outcome.ObservedAt}
 			rows = append(rows, row{
 				Artifact: resolver.ResolvedArtifact{
-					Entry:                 catalog.Entry{Kind: kind, Name: item.Name, Description: item.Description, Tags: tags},
-					CatalogKey:            "marketplace-discovery:" + outcome.Endpoint.InstanceID + ":" + item.RegistryID + ":" + item.Revision + ":" + item.ContentDigest,
-					IsMarketplace:         true,
-					MarketplaceURL:        outcome.Endpoint.URL,
-					MarketplaceInstanceID: outcome.Endpoint.InstanceID,
-					MarketplaceAlias:      outcome.Endpoint.Alias,
-					MarketplaceRegistryID: item.RegistryID,
+					Entry:                   catalog.Entry{Kind: kind, Name: item.Name, Description: item.Description, Tags: tags},
+					CatalogKey:              "marketplace-discovery:" + outcome.Endpoint.InstanceID + ":" + item.RegistryID + ":" + item.Revision + ":" + item.ContentDigest,
+					IsMarketplace:           true,
+					MarketplaceURL:          outcome.Endpoint.URL,
+					MarketplaceInstanceID:   outcome.Endpoint.InstanceID,
+					MarketplaceAlias:        outcome.Endpoint.Alias,
+					MarketplaceRegistryID:   item.RegistryID,
+					MarketplaceResourceName: item.Name,
 				},
 				IsAvailable:          true,
 				RegistryURL:          outcome.Endpoint.URL,

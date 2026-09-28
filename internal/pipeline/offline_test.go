@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -421,6 +422,157 @@ func TestOfflineSyncPreservesExactMarketplaceSelectorsOnFailure(t *testing.T) {
 	}
 	if string(got) != string(original) {
 		t.Fatalf("offline sync changed exact selectors:\nbefore:\n%s\nafter:\n%s", original, got)
+	}
+}
+
+// seedOfflineMarketplaceBundle caches a verified "bundle" collection whose
+// members are the given skills and returns its expanded Marketplace entry.
+// Only members listed in cached get a verified artifact, so resolving any other
+// member offline fails.
+func seedOfflineMarketplaceBundle(t *testing.T, members []string, cached ...string) config.MarketplaceEntry {
+	t.Helper()
+	mpCache := marketplace.DefaultCache()
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}
+	leafDigests := make(map[string]string, len(members))
+	manifestMembers := make([]hccartifact.CollectionMemberEntry, 0, len(members))
+	for _, name := range members {
+		resource := ir.NewSkill(name, name+" description", "Body for "+name+".", nil, nil, ir.SourceRef{})
+		canonical, err := hccartifact.FromIR(resource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contentDigest := canonical.Manifest.ContentDigest
+		leafDigests[name] = contentDigest
+		manifestMembers = append(manifestMembers, hccartifact.CollectionMemberEntry{Kind: "skill", Name: name, RegistryID: "src", Revision: contentDigest})
+		if !slices.Contains(cached, name) {
+			continue
+		}
+		canonical.Manifest.RegistryID = "src"
+		canonical.Manifest.Revision = contentDigest
+		raw, archiveDigest, err := hccartifact.Encode(canonical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mpCache.WriteArtifact(archiveDigest, raw); err != nil {
+			t.Fatal(err)
+		}
+		if err := mpCache.MarkArtifactVerified(archiveDigest); err != nil {
+			t.Fatal(err)
+		}
+		revision := testAssessedResourceRevision(t, store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: name},
+			ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+		}, store.AssessmentDecisionAllow, nil)
+		if _, err := mpCache.WriteResourceRevision(entry.URL, "src", "skill", name, contentDigest, revision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifestRaw, rootDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
+		SchemaVersion:    hccartifact.CollectionSchemaV1,
+		Name:             "bundle",
+		Members:          manifestMembers,
+		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mpCache.WriteCollectionManifest(rootDigest, manifestRaw); err != nil {
+		t.Fatal(err)
+	}
+	if err := mpCache.MarkCollectionVerified(rootDigest); err != nil {
+		t.Fatal(err)
+	}
+	rootRevision := testAssessedResourceRevision(t, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "bundle"},
+		ContentDigest: store.RevisionDigest(rootDigest),
+	}, store.AssessmentDecisionAllow, nil)
+	if _, err := mpCache.WriteResourceRevision(entry.URL, "src", "collection", "bundle", rootDigest, rootRevision); err != nil {
+		t.Fatal(err)
+	}
+
+	selection := config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "src", Name: "bundle", Revision: rootDigest}})
+	entry.Resources = []config.MarketplaceResourcePin{{RegistryID: "src", Kind: "collection", Name: "bundle", Revision: rootDigest, Digest: rootDigest, Direct: true}}
+	for _, name := range members {
+		entry.Resources = append(entry.Resources, config.MarketplaceResourcePin{RegistryID: "src", RegistrySlug: "src", Kind: "skill", Name: name, Revision: leafDigests[name], Digest: leafDigests[name], SelectedBy: selection})
+	}
+	return entry
+}
+
+// A user who installs a collection and excludes one member gets the remaining
+// members only; the excluded member is never acquired, so its absence from the
+// offline cache cannot fail the run.
+func TestOfflineSyncUserExclusionRemovesOwnCollectionMember(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	entry := seedOfflineMarketplaceBundle(t, []string{"review", "audit", "lint", "docs"}, "audit", "lint", "docs")
+	loaders := Loaders{
+		Org: func() (*config.Config, error) { return &config.Config{}, nil },
+		Global: func() (*config.Config, error) {
+			return &config.Config{
+				APIVersion: config.APIVersionV2, Harnesses: []string{"factory"},
+				Marketplaces:          []config.MarketplaceEntry{entry},
+				MarketplaceExclusions: []config.MarketplaceExclusion{{URL: entry.URL, Locator: "src/skill/review"}},
+			}, nil
+		},
+		Repo:  func() (*config.Config, error) { return &config.Config{}, nil },
+		Local: func() (*config.LocalConfig, error) { return &config.LocalConfig{}, nil },
+	}
+	result := Sync(context.Background(), ResolveOptions{RepoRoot: t.TempDir(), NoBackup: true, Offline: true, Loaders: loaders})
+	if len(result.Errors) != 0 {
+		t.Fatalf("sync errors = %v", result.Errors)
+	}
+	for _, name := range []string{"audit", "lint", "docs"} {
+		if _, err := os.Stat(filepath.Join(home, ".factory", "skills", name, "SKILL.md")); err != nil {
+			t.Fatalf("collection member %s was not materialized: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review")); !os.IsNotExist(err) {
+		t.Fatalf("excluded collection member materialized (stat err = %v)", err)
+	}
+}
+
+func TestOfflineSyncUserMarketplaceExclusionSuppressesOptionalOrganizationMember(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	repoRoot := t.TempDir()
+	entry := seedOfflineMarketplaceBundle(t, []string{"review", "audit"}, "review", "audit")
+	orgEntry := entry
+	loaders := func(org config.MarketplaceEntry) Loaders {
+		return Loaders{
+			Org: func() (*config.Config, error) {
+				return &config.Config{Marketplaces: []config.MarketplaceEntry{org}}, nil
+			},
+			Global: func() (*config.Config, error) {
+				return &config.Config{
+					APIVersion: config.APIVersionV2, Harnesses: []string{"factory"},
+					MarketplaceExclusions: []config.MarketplaceExclusion{{URL: entry.URL, Locator: "src/skill/review"}},
+				}, nil
+			},
+			Repo:  func() (*config.Config, error) { return &config.Config{}, nil },
+			Local: func() (*config.LocalConfig, error) { return &config.LocalConfig{}, nil },
+		}
+	}
+
+	result := Sync(context.Background(), ResolveOptions{RepoRoot: repoRoot, NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
+	if len(result.Errors) != 0 {
+		t.Fatalf("optional organization sync errors = %v", result.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "audit", "SKILL.md")); err != nil {
+		t.Fatalf("sibling collection member was not materialized: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review")); !os.IsNotExist(err) {
+		t.Fatalf("excluded optional organization member materialized (stat err = %v)", err)
+	}
+
+	orgEntry.Required = true
+	result = Sync(context.Background(), ResolveOptions{RepoRoot: repoRoot, NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
+	if len(result.Errors) != 0 {
+		t.Fatalf("required organization sync errors = %v", result.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("required organization member was suppressed: %v", err)
 	}
 }
 

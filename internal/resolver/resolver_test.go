@@ -1395,6 +1395,31 @@ func TestResolveMarketplaceCollisionsPreserveInstanceAndSourceIdentity(t *testin
 	}
 }
 
+func TestResolveUserMarketplaceExcludeOnlySuppressesMatchingOptionalOrganizationPin(t *testing.T) {
+	endpoint := "https://market.example"
+	org := config.MarketplaceEntry{URL: endpoint, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{
+		{RegistryID: "src", RegistrySlug: "tools", Kind: "skill", Name: "review"},
+		{RegistryID: "src", RegistrySlug: "tools", Kind: "skill", Name: "audit"},
+	}}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{org}, MarketplaceExclusions: []config.MarketplaceExclusion{{URL: endpoint, Locator: "tools/skill/review", Source: config.UserPersonal}}}
+	mp := staticMarketplaceResolver{artifacts: []ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}, Source: config.Organization, IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceRegistryID: "src", CatalogKey: config.MarketplaceCatalogKey(org, org.Resources[0])},
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "audit"}, Source: config.Organization, IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceRegistryID: "src", CatalogKey: config.MarketplaceCatalogKey(org, org.Resources[1])},
+	}}
+	resolved, errs := Resolve(cfg, nil, nil, WithMarketplaceResolver(mp))
+	if len(errs) != 0 || len(resolved) != 1 || resolved[0].Name != "audit" {
+		t.Fatalf("resolved = %#v, errors = %v; want only audit", resolved, errs)
+	}
+	org.Required = true
+	cfg.Marketplaces[0] = org
+	mp.artifacts[0].Required = true
+	mp.artifacts[1].Required = true
+	resolved, errs = Resolve(cfg, nil, nil, WithMarketplaceResolver(mp))
+	if len(errs) != 0 || len(resolved) != 2 {
+		t.Fatalf("required organization resources = %#v, errors = %v; want both protected", resolved, errs)
+	}
+}
+
 func TestResolveLocalExcludeRespectsMarketplaceRequiredOwnership(t *testing.T) {
 	for _, tt := range []struct {
 		name         string
@@ -1403,7 +1428,8 @@ func TestResolveLocalExcludeRespectsMarketplaceRequiredOwnership(t *testing.T) {
 		wantResolved bool
 		wantWarnings int
 	}{
-		{name: "organization pin is protected", source: config.Organization, required: true, wantResolved: true, wantWarnings: 1},
+		{name: "organization required pin is protected", source: config.Organization, required: true, wantResolved: true, wantWarnings: 1},
+		{name: "organization optional pin remains machine scoped", source: config.Organization, required: false, wantResolved: true, wantWarnings: 1},
 		{name: "user pin remains machine scoped", source: config.UserPersonal, required: false, wantResolved: true, wantWarnings: 1},
 		{name: "repo pin can be excluded", source: config.RepoCommitted, required: false, wantResolved: false, wantWarnings: 0},
 	} {

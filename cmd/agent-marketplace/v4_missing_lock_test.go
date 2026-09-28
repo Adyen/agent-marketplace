@@ -394,6 +394,7 @@ resources:
 `)
 	userPath := filepath.Join(home, ".agents", "config.yaml")
 	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := t.TempDir()
 	opts := pipeline.ResolveOptions{
 		RepoRoot: repo,
@@ -402,6 +403,12 @@ resources:
 			GlobalPath:       userPath,
 			RepoPath:         filepath.Join(repo, ".agents", "config.yaml"),
 			LocalPath:        filepath.Join(repo, ".agents", "config.local.yaml"),
+		},
+		Loaders: pipeline.Loaders{
+			Org:    config.LoadOrganizationConfig,
+			Global: func() (*config.Config, error) { return config.LoadConfigFromPath(userPath) },
+			Repo:   func() (*config.Config, error) { return nil, nil },
+			Local:  func() (*config.LocalConfig, error) { return nil, nil },
 		},
 	}
 	ctx := pipeline.WithTransientOrganizationMarketplaceLockCache(context.Background())
@@ -414,6 +421,167 @@ resources:
 	if got := requests.Load(); got != 5 {
 		t.Fatalf("two matching resolves made %d Marketplace requests, want one five-request invocation-scoped acquisition", got)
 	}
+}
+
+func TestTransientOrganizationMarketplaceLockSurvivesSelectionConfigEdits(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	requests, userPath, repoPath, ctx, opts := newTransientOrganizationMarketplaceResolveFixture(t)
+	if result := pipeline.Resolve(ctx, opts); errors.Join(result.Errors...) != nil {
+		t.Fatalf("initial resolve: %v", errors.Join(result.Errors...))
+	}
+	first := requests.Load()
+	if first != 5 {
+		t.Fatalf("initial resolve made %d Marketplace requests, want 5", first)
+	}
+
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n# harmless selection-layer edit\n")
+	writeConfig(t, repoPath, "apiVersion: agent-marketplace/v4\n")
+	result := pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatalf("resolve after selection config edits: %v", err)
+	}
+	if got := requests.Load(); got != first {
+		t.Fatalf("selection config edits changed Marketplace request count from %d to %d, want no new requests", first, got)
+	}
+}
+
+func TestTransientOrganizationMarketplaceLockReacquiresWhenTargetHarnessesChange(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	requests, userPath, _, ctx, opts := newTransientOrganizationMarketplaceResolveFixture(t)
+	if result := pipeline.Resolve(ctx, opts); errors.Join(result.Errors...) != nil {
+		t.Fatalf("initial resolve: %v", errors.Join(result.Errors...))
+	}
+	first := requests.Load()
+	if first != 5 {
+		t.Fatalf("initial resolve made %d Marketplace requests, want 5", first)
+	}
+
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory, claude]\n")
+	result := pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatalf("resolve after target harness change: %v", err)
+	}
+	if got := requests.Load(); got <= first {
+		t.Fatalf("target harness change did not reacquire: Marketplace requests changed from %d to %d", first, got)
+	}
+}
+
+func TestTransientOrganizationMarketplaceLockReacquiresWhenOrganizationConfigChanges(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	requests, _, _, ctx, opts := newTransientOrganizationMarketplaceResolveFixture(t)
+	if result := pipeline.Resolve(ctx, opts); errors.Join(result.Errors...) != nil {
+		t.Fatalf("initial resolve: %v", errors.Join(result.Errors...))
+	}
+	first := requests.Load()
+	if first != 5 {
+		t.Fatalf("initial resolve made %d Marketplace requests, want 5", first)
+	}
+
+	orgPath := opts.EffectiveOpts.OrganizationPath
+	orgConfig, err := os.ReadFile(orgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orgPath, append(orgConfig, []byte("# organization policy edit\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatalf("resolve after organization config change: %v", err)
+	}
+	if got := requests.Load(); got <= first {
+		t.Fatalf("organization config change did not reacquire: Marketplace requests changed from %d to %d", first, got)
+	}
+}
+
+func TestTransientOrganizationMarketplaceLockFailsClosedWhenTargetHarnessesChangeDuringAcquisition(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	mutated := make(chan error, 1)
+	var once atomic.Bool
+	requests, _, _, ctx, opts := newTransientOrganizationMarketplaceResolveFixtureWithHook(t, func(userPath string) {
+		if !once.CompareAndSwap(false, true) {
+			return
+		}
+		mutated <- os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory, claude]\n"), 0o644)
+	})
+
+	result := pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("resolve error = %v, want generation conflict", err)
+	}
+	if mutationErr := <-mutated; mutationErr != nil {
+		t.Fatalf("mutate user config: %v", mutationErr)
+	}
+	raced := requests.Load()
+
+	result = pipeline.Resolve(ctx, opts)
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatalf("resolve after raced acquisition: %v", err)
+	}
+	if got := requests.Load(); got <= raced {
+		t.Fatalf("resolve after raced acquisition reused its result: Marketplace requests changed from %d to %d", raced, got)
+	}
+}
+
+func newTransientOrganizationMarketplaceResolveFixture(t *testing.T) (*atomic.Int32, string, string, context.Context, pipeline.ResolveOptions) {
+	t.Helper()
+	return newTransientOrganizationMarketplaceResolveFixtureWithHook(t, nil)
+}
+
+// onRequest runs inside each Marketplace request, before the response, so it
+// can edit the user config while an acquisition is in flight.
+func newTransientOrganizationMarketplaceResolveFixtureWithHook(t *testing.T, onRequest func(userPath string)) (*atomic.Int32, string, string, context.Context, pipeline.ResolveOptions) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() {
+		requests.Add(1)
+		if onRequest != nil {
+			onRequest(userPath)
+		}
+	})
+	t.Cleanup(server.Close)
+
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	repo := t.TempDir()
+	repoPath := filepath.Join(repo, ".agents", "config.yaml")
+	opts := pipeline.ResolveOptions{
+		RepoRoot: repo,
+		EffectiveOpts: config.LoadEffectiveOptions{
+			OrganizationPath: orgPath,
+			GlobalPath:       userPath,
+			RepoPath:         repoPath,
+			LocalPath:        filepath.Join(repo, ".agents", "config.local.yaml"),
+		},
+		Loaders: pipeline.Loaders{
+			Org:    config.LoadOrganizationConfig,
+			Global: func() (*config.Config, error) { return config.LoadConfigFromPath(userPath) },
+			Repo:   func() (*config.Config, error) { return nil, nil },
+			Local:  func() (*config.LocalConfig, error) { return nil, nil },
+		},
+	}
+	return &requests, userPath, repoPath, pipeline.WithTransientOrganizationMarketplaceLockCache(context.Background()), opts
 }
 
 func TestSyncNeverReplacesPresentOrganizationMarketplaceLockTransiently(t *testing.T) {
@@ -522,37 +690,92 @@ resources:
 	}
 }
 
-func TestSyncCheckDoesNotAcquireMissingOrganizationMarketplaceLock(t *testing.T) {
+func TestSyncCheckAcquiresMissingOrganizationMarketplaceLockTransiently(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests.Add(1)
-	}))
+	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
 	defer server.Close()
 	authority := t.TempDir()
 	orgPath := filepath.Join(authority, "config.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+	orgConfig := []byte(`apiVersion: agent-marketplace/v4
 sources:
-  hosted: {marketplace: `+server.URL+`}
+  hosted: {marketplace: ` + server.URL + `}
 resources:
   hosted: {include: [tools/skill/review]}
 `)
+	if err := os.WriteFile(orgPath, orgConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(authority, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(authority, 0o700) })
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	withWorkingDir(t, t.TempDir())
 
-	if output, err := executeCommand("sync", "--check"); err == nil {
-		t.Fatalf("sync --check unexpectedly acquired a transient organization lock:\n%s", output)
+	materialized := filepath.Join(home, ".factory", "skills", "review", "SKILL.md")
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed sync: %v\n%s", err, output)
 	}
-	if requests.Load() != 0 {
-		t.Fatalf("sync --check made %d Marketplace requests", requests.Load())
+	materializedBefore, readErr := os.ReadFile(materialized)
+	statBefore, statErr := os.Stat(materialized)
+	if readErr != nil || statErr != nil {
+		t.Fatalf("seed sync did not materialize review: %v, %v", readErr, statErr)
+	}
+	stateRoot := filepath.Join(home, "state", "agent-marketplace")
+	stateBefore := stateTreeSnapshot(t, stateRoot)
+	requests.Store(0)
+
+	output, err := executeCommand("sync", "--check")
+	if err != nil {
+		t.Fatalf("sync --check: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "out of sync") {
+		t.Fatalf("sync --check reported drift on synchronized output:\n%s", output)
+	}
+	if got := requests.Load(); got == 0 {
+		t.Fatal("sync --check made no Marketplace requests; transient organization evidence was not acquired")
+	}
+	if after, readErr := os.ReadFile(orgPath); readErr != nil || string(after) != string(orgConfig) {
+		t.Fatalf("sync --check changed organization config: %v", readErr)
 	}
 	if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("sync --check created organization lock: %v", err)
+	}
+	materializedAfter, readErr := os.ReadFile(materialized)
+	statAfter, statErr := os.Stat(materialized)
+	if readErr != nil || statErr != nil || string(materializedAfter) != string(materializedBefore) || !statAfter.ModTime().Equal(statBefore.ModTime()) {
+		t.Fatalf("sync --check changed materialized output: %v, %v", readErr, statErr)
+	}
+	if stateAfter := stateTreeSnapshot(t, stateRoot); stateAfter != stateBefore {
+		t.Fatalf("sync --check changed durable state:\nbefore:\n%s\nafter:\n%s", stateBefore, stateAfter)
+	}
+
+	if err := os.RemoveAll(filepath.Dir(materialized)); err != nil {
+		t.Fatal(err)
+	}
+	output, err = executeCommand("sync", "--check")
+	if err == nil || !strings.Contains(err.Error(), "out of sync") {
+		t.Fatalf("sync --check after deleting output error = %v, want drift\n%s", err, output)
+	}
+	if strings.Contains(err.Error(), "marketplace-lock-required") || strings.Contains(output, "marketplace-lock-required") {
+		t.Fatalf("drift check reported a lock requirement instead of drift: %v\n%s", err, output)
+	}
+	if after, readErr := os.ReadFile(orgPath); readErr != nil || string(after) != string(orgConfig) {
+		t.Fatalf("drift check changed organization config: %v", readErr)
+	}
+	if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("sync --check created organization lock: %v", err)
+	}
+	if stateAfter := stateTreeSnapshot(t, stateRoot); stateAfter != stateBefore {
+		t.Fatalf("drift check changed durable state:\nbefore:\n%s\nafter:\n%s", stateBefore, stateAfter)
 	}
 }
 
@@ -791,23 +1014,30 @@ func TestLockCreatesMissingEndpointOnlyV4MarketplaceLock(t *testing.T) {
 	}
 }
 
-func newV4MarketplaceLockServer(t *testing.T) *httptest.Server {
+func newV4MarketplaceLockServer(t testing.TB) *httptest.Server {
 	return newV4MarketplaceLockServerWithHook(t, nil)
 }
 
-func newV4MarketplaceLockServerWithHook(t *testing.T, hook func()) *httptest.Server {
+func newV4MarketplaceLockServerWithHook(t testing.TB, hook func()) *httptest.Server {
 	return newV4MarketplaceLockServerWithRevision(t, hook, nil)
 }
 
-func newV4MarketplaceLockServerWithRevision(t *testing.T, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
+func newV4MarketplaceLockServerWithRevision(t testing.TB, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
 	return newV4MarketplaceLockServerWithOptions(t, "mp", "review", hook, mutate)
 }
 
-func newV4MarketplaceLockServerWithIdentity(t *testing.T, instanceID, resourceName string) *httptest.Server {
+func newV4MarketplaceLockServerWithIdentity(t testing.TB, instanceID, resourceName string) *httptest.Server {
 	return newV4MarketplaceLockServerWithOptions(t, instanceID, resourceName, nil, nil)
 }
 
-func newV4MarketplaceLockServerWithOptions(t *testing.T, instanceID, resourceName string, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
+func newV4MarketplaceLockServerWithOptions(t testing.TB, instanceID, resourceName string, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
+	return newV4MarketplaceServer(t, instanceID, resourceName, false, hook, mutate)
+}
+
+// newV4MarketplaceServer serves one skill revision. selfCanonical makes the
+// well-known document advertise the test server's own address, which endpoint
+// installs require; the lock fixtures instead pin a fixed canonical URL.
+func newV4MarketplaceServer(t testing.TB, instanceID, resourceName string, selfCanonical bool, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
 	t.Helper()
 	canonical, err := hccartifact.FromIR(ir.NewSkill(resourceName, "Review", "Review carefully.", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -834,7 +1064,11 @@ func newV4MarketplaceLockServerWithOptions(t *testing.T, instanceID, resourceNam
 		}
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com"))
+			canonical := "https://example.com"
+			if selfCanonical {
+				canonical = "http://" + r.Host
+			}
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, canonical))
 		case r.URL.Path == "/api/v1/registries/tools" || r.URL.Path == "/api/v1/registries/src":
 			_ = json.NewEncoder(w).Encode(registry)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/"+resourceName) || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"+resourceName):

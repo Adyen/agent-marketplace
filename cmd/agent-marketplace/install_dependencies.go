@@ -68,7 +68,7 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 }
 
 func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, plan *preparedInstallLocks) ([]dependencytxn.ReadAssertion, error) {
-	reads, err := effectiveReadAssertions(ec, staged)
+	reads, err := effectiveReadAssertions(ec, staged, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func mergeInstallBindings(base lockfile.Document, scope lockfile.Scope, bindings
 			byIdentity[identity] = merged
 		}
 	}
-	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
+	doc := gitReconciliationDocument(scope, &base)
 	for _, registry := range byIdentity {
 		doc.Registries = append(doc.Registries, registry)
 	}

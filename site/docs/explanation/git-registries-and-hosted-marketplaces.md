@@ -1,43 +1,45 @@
 # Git registries and hosted Marketplaces
 
-`agent-marketplace` can acquire resources from plain Git registries and from a hosted Marketplace. They solve different problems and a consumer can use both at once.
+`agent-marketplace` can get resources from two kinds of place: a plain Git [registry](../glossary.md#registry) and a hosted [Marketplace](../glossary.md#marketplace). They solve different problems, and one configuration can use both.
 
 ## Git registries
 
-A Git registry is any Git repository that contains resources in a supported harness layout. The consumer names a URL, ref, and optional path; the CLI resolves the ref to an exact commit, records it in a lockfile, and materializes from that commit.
+A Git registry is any Git repository that holds resources in a supported harness layout. You give the CLI a URL, a [ref](../glossary.md#ref) (a branch, tag, or commit), and optionally a path inside the repository. The CLI resolves the ref to one exact [commit](../glossary.md#commit), records that commit in a [lockfile](../glossary.md#lockfile), and writes the resources from that commit into your harness folders.
 
-Git registries need nothing but Git. Trust rests on the transport (SSH keys or HTTPS credentials you already have) and on the committed lock, which pins the commit and a digest of every resource so that a rewritten branch cannot change what a `sync` produces.
+A Git registry needs nothing except Git. Access works through the SSH keys or HTTPS credentials you already use. The lockfile records the commit and a digest of every resource, so if someone rewrites the branch, a later `sync` still produces the same files.
 
-Identity in a Git registry is the tuple `(registry URL, ref, path, kind, name)`. The installed name is the resource's own name. When two registries select the same kind and name, the CLI picks a deterministic winner and warns; see [Scopes, selection, and precedence](./scopes-selection-and-precedence.md).
+A resource in a Git registry is identified by the registry URL, the ref, the path, its kind, and its name. It installs under its own name. When two registries offer the same kind and name, the CLI picks one winner by fixed rules and prints a warning; see [Scopes, selection, and precedence](./scopes-selection-and-precedence.md).
 
 ## Hosted Marketplaces
 
-A hosted Marketplace is an HTTP service that an operator runs. It clones approved registries, ingests their resources, applies license and content policy, computes content digests, and serves a searchable catalog plus immutable artifacts. Consumers search it and install exact revisions.
+A hosted Marketplace is a web service that an operator runs for a team or company. It clones the registries the operator approved, reads their resources, applies license and content policy, computes a content digest for each resource, and serves a searchable catalog with downloadable artifacts. You search it and install exact revisions.
 
-A Marketplace adds what plain Git cannot:
+A Marketplace adds things plain Git cannot give you:
 
-- **Curation.** Only registries the operator approves appear, and the operator can revoke a registry, a resource, or one revision.
-- **Policy.** License allowlists, size limits, and hidden-content rules are enforced at ingestion, before consumers ever see a resource.
-- **Review before install.** Every install shows a verified preview (digest, license, findings, capabilities, provenance) and stops for consent when the artifact has warning findings or active capabilities.
-- **Availability.** In mirror mode the consumer never needs to reach the registry origin.
+- Curation: only approved registries appear, and the operator can revoke a whole registry, one resource, or one revision.
+- Policy: license allowlists, size limits, and hidden-content rules run when the Marketplace reads a registry, before anyone can install from it.
+- Review before install: the CLI shows the verified revision (digest, license, security findings, capabilities, and where it came from) before it installs. Security findings need your consent. Capabilities are shown but do not require consent on their own.
+- Availability: in `mirror` mode you never need access to the registry itself.
+
+The [Marketplace trust model](./marketplace-trust-model.md) explains these checks in more detail.
 
 ### Endpoint identity
 
-A Marketplace endpoint is identified by its canonical URL and an `instance_id` published at `/.well-known/agent-marketplace.json`. `agent-marketplace install <url>` fetches that document, verifies both, and records them in configuration. Later commands re-verify the `instance_id`, so a URL that starts pointing at a different deployment is refused rather than trusted. An optional `alias` gives shorter locators.
+A Marketplace endpoint is identified by its canonical URL and by an `instance_id` published at `/.well-known/agent-marketplace.json`. `agent-marketplace install <url>` reads that document, checks both values, and records them. Later commands check the `instance_id` again, so if the URL starts pointing at a different deployment, the CLI refuses it. An alias gives the endpoint a short name for locators.
 
 ### Resource identity, revisions, and installed names
 
-A Marketplace resource has three separate identities:
+A Marketplace resource has three separate identifiers:
 
 | Identity | Example | Purpose |
 |---|---|---|
-| Coordinate | `team-marketplace/shared-agents/skill/review` | Which resource this is: `instance_id/registry/kind/name` |
-| Revision | `sha256:0123…` | Which exact content: a SHA-256 digest of the canonical resource, immutable once published |
-| Archive digest | `sha256:89ab…` | Which exact bytes the Marketplace served for that revision |
+| Coordinate | `team-marketplace/shared-agents/skill/review` | Which resource this is: `instance_id/registry/kind/name`. |
+| Revision | `sha256:0123…` | Which exact content: a SHA-256 digest of the resource. It never changes after the Marketplace publishes it. |
+| Archive digest | `sha256:89ab…` | Which exact bytes the Marketplace serves for that revision. |
 
-The consumer pins the coordinate and revision in `marketplaces[].resources`. Updating the resource in its registry produces a new revision; the old one stays retrievable and pinned consumers keep getting it until they run `update`.
+The CLI records the coordinate and the exact revision when you install. When the resource changes in its registry, the Marketplace publishes a new revision. The old one stays available, and you keep getting it until you run `update`.
 
-Separately from all three, the **installed name** is the directory or file name the resource takes in your harness layout. It defaults to the resource name, but `install --as <name>` changes it, for example to avoid a collision with a Git-registry skill of the same name. The coordinate is unchanged; only the generated path differs.
+The installed name is a fourth, separate thing: the folder or file name the resource gets in your harness layout. It defaults to the resource name. `install --as <name>` (or the `as` option in a configuration file) changes it, for example to avoid a clash with a Git-registry skill of the same name. The coordinate stays the same; only the generated path changes.
 
 ### Locators
 
@@ -48,33 +50,33 @@ Separately from all three, the **installed name** is the directory or file name 
 | URL | `https://host/r/<registry>/<kind>/<name>` |
 | URL, exact | `https://host/r/<registry>/<kind>/<name>/revisions/sha256:<64 hex>` |
 
-`<kind>` uses the protocol spelling: `mcpserver`, not `mcp`. Details are in the [locators reference](../reference/marketplace-resource-locators.md).
+`<kind>` uses the Marketplace spelling: `mcpserver`, not `mcp`. The [locators reference](../reference/marketplace-resource-locators.md) has the full rules.
 
 ### Mirror and index-only acquisition
 
-The operator chooses, per registry or as an instance default, where the consumer gets the bytes:
+The operator decides, for each registry or as a default for the instance, where you download the content from:
 
 | | `mirror` | `index-only` |
 |---|---|---|
-| Who serves the artifact | The Marketplace | The registry origin (the consumer fetches the exact commit) |
-| What the Marketplace publishes | Metadata plus the archive | Metadata plus the exact commit and source-manifest digest |
-| Consumer verification | Archive digest and content digest of the downloaded artifact | Content digest of the resource re-ingested from the exact commit, checked against the recorded manifest digest |
-| Consumer pin fields | `digest` (+ `archive` digest in metadata) | `digest`, `registry_commit`, `registry_manifest_digest` |
-| Good for | Speed, availability, audit of served bytes, no origin access needed | Registries that may not be mirrored for license or policy reasons; keeping a direct relationship with the origin; smaller Marketplace storage |
+| Who serves the content | The Marketplace | The registry's own Git server (the CLI fetches the exact commit) |
+| What the Marketplace publishes | Metadata and the archive | Metadata, the exact commit, and a digest of the registry's source manifest |
+| What the CLI checks | The archive digest and content digest of the downloaded artifact | The content digest of the resource read from the exact commit, against the recorded manifest digest |
+| What the lockfile records | Revision, content digest, and archive digest | The same, plus the registry commit, the source-manifest digest, and the resource's path |
+| Good for | Speed, availability, an audit trail of the bytes served, no access to the registry needed | Registries that may not be mirrored for license or policy reasons, keeping a direct link to the registry, smaller Marketplace storage |
 
-Both modes install through the same locators and produce the same harness output. Only the pin fields and the network path differ.
+Both modes use the same locators and produce the same files in your harness. Only the recorded fields and the download path differ.
 
 ## Choosing between them
 
 | Question | Git registry | Hosted Marketplace |
 |---|---|---|
 | Who can publish? | Anyone with a Git repository | Only registries the operator approves |
-| What pins the content? | Commit in `.agents/lock.yaml` | Content digest in `.agents/config.yaml` |
-| Where is policy enforced? | Nowhere; you review what you install | At ingestion, by the operator |
-| What infrastructure is needed? | None beyond Git | An API, a worker, a database, a blob store, and a proxy |
-| Can content be pulled after the fact? | No; a locked commit stays installable while the origin serves it | Yes; revocation blocks installs and fails `sync --check` |
+| What pins the content? | A commit in the lockfile (for example `.agents/lock.yaml`) | A content digest in the lockfile |
+| Where is policy enforced? | Nowhere; you review what you install | When the Marketplace reads the registry, by the operator's rules |
+| What infrastructure is needed? | Git only | An API, a worker, a database, a blob store, and a reverse proxy |
+| Can content be withdrawn later? | No; a locked commit stays installable while the Git server still has it | Yes; revocation blocks installs and makes `sync --check` fail |
 
-Git registries appear under `registries` and use lockfiles; Marketplace pins appear under `marketplaces`. A repository can carry both.
+In a v4 configuration, both are named entries under `sources:`: a Git registry uses a `git:` URL and a Marketplace uses a `marketplace:` URL. The resources you pick from each go under `resources:`, and each configuration layer's lockfile records the exact commits and revisions. Older v2 and v3 configurations list Git registries under `registries` and store Marketplace pins in the configuration file under `marketplaces`. See [Sources and resources](./sources-and-resources.md) for the v4 format.
 
 ## Related documentation
 

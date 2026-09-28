@@ -10,6 +10,52 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type MarketplaceExclusion struct {
+	URL     string `yaml:"-"`
+	Locator string `yaml:"-"`
+	Source  Source `yaml:"-"`
+}
+
+// Matches reports whether the exclusion suppresses pin. A user exclusion
+// overrides an optional organization pin; any exclusion also removes a
+// collection-selected member of its own layer's selection, because an exclude
+// takes precedence over the collection include. Required entries are immune.
+func (x MarketplaceExclusion) Matches(entry MarketplaceEntry, pin MarketplaceResourcePin) bool {
+	if entry.Required {
+		return false
+	}
+	organizationOverride := x.Source == UserPersonal && entry.Source == Organization
+	ownCollectionMember := x.Source == entry.Source && !pin.Direct
+	if !organizationOverride && !ownCollectionMember {
+		return false
+	}
+	if x.URL != entry.URL {
+		canonical, err := NormalizeMarketplaceURL(entry.URL)
+		if err != nil || x.URL != canonical {
+			return false
+		}
+	}
+	kind := pin.Kind
+	if kind == api.KindMcpServer {
+		kind = "mcp"
+	}
+	return x.Locator == pin.RegistrySlug+"/"+kind+"/"+pin.Name
+}
+
+// MarketplacePinExcluded reports whether any configured exclusion suppresses
+// pin of entry.
+func (c *Config) MarketplacePinExcluded(entry MarketplaceEntry, pin MarketplaceResourcePin) bool {
+	if c == nil {
+		return false
+	}
+	for _, exclusion := range c.MarketplaceExclusions {
+		if exclusion.Matches(entry, pin) {
+			return true
+		}
+	}
+	return false
+}
+
 // MarketplaceEntry is one configured marketplace endpoint and optional exact pins.
 type MarketplaceEntry struct {
 	URL        string                   `yaml:"url"`
@@ -17,6 +63,7 @@ type MarketplaceEntry struct {
 	Alias      string                   `yaml:"alias,omitempty"`
 	Resources  []MarketplaceResourcePin `yaml:"resources,omitempty"`
 	Source     Source                   `yaml:"-"`
+	Required   bool                     `yaml:"-"`
 }
 
 // MarketplaceResourcePin is an exact Marketplace resource coordinate and digest.
@@ -157,7 +204,7 @@ func ValidateMarketplaceEntries(entries []MarketplaceEntry) []error {
 		normalizedURL, normalizeErr := urlutil.NormalizeEndpointURL(e.URL)
 		current := aliasUse{index: i, url: normalizedURL, instanceID: e.InstanceID, source: e.Source, valid: normalizeErr == nil}
 		if previous, ok := aliases[e.Alias]; ok {
-			if previous.valid && current.valid && previous.source != SourceUnset && current.source != SourceUnset && previous.source != current.source && previous.url == current.url && previous.instanceID == current.instanceID {
+			if previous.valid && current.valid && previous.source != SourceUnset && current.source != SourceUnset && previous.url == current.url && previous.instanceID == current.instanceID {
 				continue
 			}
 			errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q duplicates marketplaces[%d].alias", i, e.Alias, previous.index))

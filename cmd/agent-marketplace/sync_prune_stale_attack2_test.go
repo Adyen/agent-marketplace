@@ -28,11 +28,9 @@ func pruneFixture(t *testing.T, bareName string, configBody func(origin string) 
 }
 
 // ATTACK B1: the stale selection lives in the TOP-LEVEL `skills:` list, not in
-// a per-registry include. pruneStaleSelections calls
-// DisableResourceWithShadowFallback, which only knows how to edit per-registry
-// includes; when the name is not in the entry's include it falls through to
-// "add an exclude". The CLI then prints `pruned stale skill "gone" from
-// config` while the selection is still there.
+// a per-registry include. A prune that only edits per-registry includes, or
+// that falls back to appending an exclude, would print `pruned stale skill
+// "gone" from config` while the selection is still there.
 func TestSyncPruneStaleRemovesTopLevelSelection(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

@@ -44,6 +44,54 @@ func TestParseUpgradeTargetsAllowsWholeRegistryWithoutKind(t *testing.T) {
 	}
 }
 
+func TestLockUpgradeTargetsExactRefAndPath(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "qualified-lock.git")
+	writeSkill(t, working, "review", "Review", nil)
+	commitAndPushAll(t, working, "seed")
+	repo := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: "+origin+"\n    ref: main\n    path: skills\n    skills: {include: [review]}\n")
+	withWorkingDir(t, repo)
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
+		t.Fatalf("initial lock failed: %v\n%s", err, output)
+	}
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	initial, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, working, "review", "Updated review", nil)
+	commitAndPushAll(t, working, "update")
+	output, err := executeCommand("lock", "--scope", "repo", "--upgrade", "--registry", origin, "--ref", "main", "--path", "skills")
+	if err != nil {
+		t.Fatalf("qualified lock failed: %v\n%s", err, output)
+	}
+	locked, err := os.ReadFile(lockPath)
+	if err != nil || string(locked) == string(initial) {
+		t.Fatalf("qualified lock did not advance its exact source: %q, %v", locked, err)
+	}
+	if got, err := os.ReadFile(configPath); err != nil || string(got) != string(before) {
+		t.Fatalf("lock rewrote authored config: %q, %v", got, err)
+	}
+	if output, err := executeCommand("lock", "--upgrade", "--registry", origin, "--ref", "missing", "--path", "skills"); err == nil {
+		t.Fatalf("unconfigured ref unexpectedly upgraded: %s", output)
+	}
+	if got, err := os.ReadFile(lockPath); err != nil || string(got) != string(locked) {
+		t.Fatalf("failed qualified lock changed lock evidence: %q, %v", got, err)
+	}
+}
+
 func TestLockUpgradeGitNameExpandsContainingSource(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

@@ -120,8 +120,8 @@ func newInstallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref (branch/tag/sha) for --from registry; requires --from")
 	cmd.Flags().StringVar(&fromPath, "path", "", "Subdirectory within the --from registry; requires --from")
 	cmd.Flags().StringVar(&installedName, "as", "", "Install a Marketplace resource under this local name")
-	cmd.Flags().BoolVar(&acceptRisk, "accept-risk", false, "Accept Marketplace findings and active capabilities")
-	cmd.Flags().BoolVar(&assumeYes, "yes", false, "Accept Marketplace findings and active capabilities (automation)")
+	cmd.Flags().BoolVar(&acceptRisk, "accept-risk", false, "Accept Marketplace security findings for this verified revision")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "Accept Marketplace security findings in automation")
 	cmd.Flags().StringVar(&marketplace, "marketplace", "", "Marketplace alias or endpoint for a Marketplace locator")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show full Marketplace resource and security details")
 
@@ -129,7 +129,6 @@ func newInstallCmd() *cobra.Command {
 }
 
 func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, verbose bool, args []string, tag string, installAll bool, registry string, scope pipeline.Scope, scopeSpecified bool, kindFilter, fromURL, fromRef, fromPath, installedName string, acceptRisk bool, marketplace string) error {
-	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
@@ -336,7 +335,19 @@ func writeInstallResult(out io.Writer, result *pipeline.InstallResult, scope pip
 		_, err := fmt.Fprintf(out, "Installed collection %s %s\n", terminalSafeText(result.CollectionLabel), pipeline.InstallScopeLabel(scope))
 		return err
 	}
-	_, err := fmt.Fprintf(out, "Installed %s %s\n", terminalSafeText(strings.Join(result.Installed, ", ")), pipeline.InstallScopeLabel(scope))
+	if len(result.Installed) > 0 {
+		if _, err := fmt.Fprintf(out, "Installed %s %s\n", terminalSafeText(strings.Join(result.Installed, ", ")), pipeline.InstallScopeLabel(scope)); err != nil {
+			return err
+		}
+	}
+	if len(result.NotSelected) == 0 {
+		return nil
+	}
+	pronoun := "it"
+	if len(result.NotSelected) > 1 {
+		pronoun = "them"
+	}
+	_, err := fmt.Fprintf(out, "Not installed: %s; the effective configuration does not select %s (for example, an exclusion wins). Install by name to select explicitly\n", terminalSafeText(strings.Join(result.NotSelected, ", ")), pronoun)
 	return err
 }
 

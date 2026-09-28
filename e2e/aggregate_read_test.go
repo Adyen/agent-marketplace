@@ -21,6 +21,7 @@ func TestE2EOwnedAggregatesRejectUnsafeLeaves(t *testing.T) {
 		for _, leaf := range []struct{ name, path, sibling string }{{"mcp", target.mcp, target.hook}, {"hook", target.hook, target.mcp}} {
 			for _, kind := range []string{"fifo", "fifo-link", "regular-link", "dangling-link", "hard-link"} {
 				t.Run(target.name+"/"+leaf.name+"/"+kind, func(t *testing.T) {
+					t.Parallel()
 					env := newEnv(t)
 					env.InitGitRepo()
 					files := RegistryFilesEx(nil, nil, nil, []MCPServer{{Name: "fixture", Command: "fixture-server"}})

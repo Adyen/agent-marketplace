@@ -25,8 +25,9 @@ type transientOrganizationMarketplaceLockCache struct {
 }
 
 type cachedTransientOrganizationMarketplaceLock struct {
-	data  []byte
-	reads []dependencytxn.ReadAssertion
+	data   []byte
+	reads  []dependencytxn.ReadAssertion
+	inputs string
 }
 
 type transientOrganizationMarketplaceLockUse uint8
@@ -38,8 +39,11 @@ const (
 )
 
 // WithTransientOrganizationMarketplaceLockCache reuses verified in-memory
-// organization acquisition evidence while every policy read and lock absence
-// assertion still matches. It never weakens a deployed lock.
+// organization acquisition evidence while organization config reads, the
+// effective target harnesses and registry and Marketplace allowlists, and the
+// lock-absence assertion still match. Selection edits in user, repository, or
+// local configs do not invalidate it because acquisition does not read them.
+// It never weakens a deployed lock.
 func WithTransientOrganizationMarketplaceLockCache(ctx context.Context) context.Context {
 	if transientOrganizationMarketplaceLockCacheFrom(ctx) != nil {
 		return ctx
@@ -48,19 +52,33 @@ func WithTransientOrganizationMarketplaceLockCache(ctx context.Context) context.
 	return context.WithValue(ctx, transientOrganizationMarketplaceLockCacheKey{}, cache)
 }
 
-// LoadEffectiveOnline loads effective configuration for an online consumer,
-// resolving an intentionally absent organization Marketplace lock in memory.
-func LoadEffectiveOnline(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
-	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, true)
+type ConfigLoadMode uint8
+
+const (
+	ConfigLoadOnline ConfigLoadMode = iota
+	ConfigLoadStrict
+	ConfigLoadCached
+)
+
+// LoadEffective loads configuration with explicit organization-lock semantics:
+// online acquisition, strict on-disk evidence, or reuse of verified cached evidence.
+func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
+	ec, _ := loadEffective(ctx, mode, opts, policy)
 	return ec
 }
 
-// LoadEffectiveOnlineCached reloads effective configuration with organization
-// Marketplace state acquired earlier in the same online operation, without
-// contacting the Marketplace again.
-func LoadEffectiveOnlineCached(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
-	ec, _ := loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, false)
-	return ec
+// loadEffective also reports whether organization Marketplace state was acquired
+// or reused. Strict loads never consult the transient cache; cached loads never
+// contact the Marketplace.
+func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+	switch mode {
+	case ConfigLoadOnline, ConfigLoadCached:
+		return loadEffectiveWithTransientOrganizationLock(ctx, opts, policy, mode == ConfigLoadOnline)
+	case ConfigLoadStrict:
+		return config.LoadEffective(ctx, opts), transientOrganizationMarketplaceLockUnused
+	default:
+		return effectiveConfigError(config.EffectiveConfig{}, fmt.Errorf("invalid config load mode: %d", mode)), transientOrganizationMarketplaceLockUnused
+	}
 }
 
 func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, allowAcquire bool) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
@@ -82,8 +100,10 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 	}
 	cache := transientOrganizationMarketplaceLockCacheFrom(ctx)
 	if cache != nil {
-		if data, reads, ok := cache.load(layer.LockPath); ok {
-			if err := dependencytxn.ValidateReadAssertions(reads); err == nil {
+		if data, reads, inputs, ok := cache.load(layer.LockPath); ok {
+			if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
+				cache.delete(layer.LockPath)
+			} else {
 				cachedOpts := opts
 				cachedOpts.OrganizationRuntimeLock = data
 				cachedEC := config.LoadEffective(ctx, cachedOpts)
@@ -94,10 +114,14 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 					cache.delete(layer.LockPath)
 					return effectiveConfigError(cachedEC, fmt.Errorf("%w: organization Marketplace inputs changed while reusing transient acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
 				}
-				slog.Info("reused transient organization Marketplace lock acquisition", "config", orgPath)
-				return cachedEC, transientOrganizationMarketplaceLockReused
+				if transientOrganizationMarketplaceInputs(cachedEC) != inputs {
+					cache.delete(layer.LockPath)
+					slog.Info("transient organization Marketplace lock inputs changed; reacquiring", "config", orgPath)
+				} else {
+					slog.Info("reused transient organization Marketplace lock acquisition", "config", orgPath)
+					return cachedEC, transientOrganizationMarketplaceLockReused
+				}
 			}
-			cache.delete(layer.LockPath)
 		}
 	}
 	if !allowAcquire {
@@ -110,12 +134,17 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 	if len(provisionalEC.Errors) > 0 {
 		return provisionalEC, transientOrganizationMarketplaceLockUnused
 	}
+	inputs := transientOrganizationMarketplaceInputs(provisionalEC)
 	reads, err := transientMarketplaceReadAssertions(provisionalEC, layer.LockPath)
 	if err != nil {
 		return effectiveConfigError(provisionalEC, fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
 	}
 
 	slog.Info("transient organization Marketplace lock acquisition started", "config", orgPath)
+	// Cache reuse revalidates only organization reads, lock absence, and
+	// transientOrganizationMarketplaceInputs. Any other effective-config value
+	// passed to this acquisition must be added there, or a cached result could
+	// be reused after that value changes.
 	mpResolver := marketplace.NewResolver()
 	mpResolver.AllowedRegistries = provisionalEC.Allowed
 	exact, err := marketplacelock.Resolve(ctx, mpResolver, layer, provisionalEC.TargetHarnesses, policy)
@@ -140,8 +169,13 @@ func loadEffectiveWithTransientOrganizationLock(ctx context.Context, opts config
 	if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
 		return effectiveConfigError(finalEC, fmt.Errorf("%w: organization Marketplace inputs changed while validating transient acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
 	}
+	// The read assertions cover only the organization layer, so a user,
+	// repository, or local edit to these inputs during acquisition is caught here.
+	if transientOrganizationMarketplaceInputs(finalEC) != inputs {
+		return effectiveConfigError(finalEC, fmt.Errorf("%w: target harnesses or allowlists changed during transient organization Marketplace acquisition", dependencytxn.ErrGenerationConflict)), transientOrganizationMarketplaceLockUnused
+	}
 	if cache != nil {
-		cache.store(layer.LockPath, exactData, reads)
+		cache.store(layer.LockPath, exactData, reads, inputs)
 	}
 	slog.Info("transient organization Marketplace lock acquisition completed", "config", orgPath, "resources", marketplaceLockResourceCount(exact))
 	return finalEC, transientOrganizationMarketplaceLockAcquired
@@ -155,23 +189,24 @@ func transientOrganizationMarketplaceLockCacheFrom(ctx context.Context) *transie
 	return cache
 }
 
-func (c *transientOrganizationMarketplaceLockCache) load(path string) ([]byte, []dependencytxn.ReadAssertion, bool) {
+func (c *transientOrganizationMarketplaceLockCache) load(path string) ([]byte, []dependencytxn.ReadAssertion, string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.path != path {
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	entry := c.entry
-	return append([]byte(nil), entry.data...), append([]dependencytxn.ReadAssertion(nil), entry.reads...), true
+	return append([]byte(nil), entry.data...), append([]dependencytxn.ReadAssertion(nil), entry.reads...), entry.inputs, true
 }
 
-func (c *transientOrganizationMarketplaceLockCache) store(path string, data []byte, reads []dependencytxn.ReadAssertion) {
+func (c *transientOrganizationMarketplaceLockCache) store(path string, data []byte, reads []dependencytxn.ReadAssertion, inputs string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.path = path
 	c.entry = cachedTransientOrganizationMarketplaceLock{
-		data:  append([]byte(nil), data...),
-		reads: append([]dependencytxn.ReadAssertion(nil), reads...),
+		data:   append([]byte(nil), data...),
+		reads:  append([]dependencytxn.ReadAssertion(nil), reads...),
+		inputs: inputs,
 	}
 }
 
@@ -213,7 +248,7 @@ func (r transientOrganizationMarketplaceResolver) ResolveWithPolicy(ctx context.
 }
 
 func transientMarketplaceReadAssertions(ec config.EffectiveConfig, lockPath string) ([]dependencytxn.ReadAssertion, error) {
-	byRequested, err := configReadAssertions(ec, false)
+	byRequested, err := configReadAssertions(config.EffectiveConfig{Organization: ec.Organization}, false)
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +270,10 @@ func transientMarketplaceReadAssertions(ec config.EffectiveConfig, lockPath stri
 	}
 	sort.Slice(reads, func(i, j int) bool { return reads[i].RequestedPath < reads[j].RequestedPath })
 	return reads, nil
+}
+
+func transientOrganizationMarketplaceInputs(ec config.EffectiveConfig) string {
+	return fmt.Sprintf("harnesses=%q allowed-nil=%t allowed=%q allowed-marketplaces-nil=%t allowed-marketplaces=%q", ec.TargetHarnesses, ec.Allowed == nil, ec.Allowed, ec.AllowedMarketplaces == nil, ec.AllowedMarketplaces)
 }
 
 func effectiveConfigError(ec config.EffectiveConfig, err error) config.EffectiveConfig {

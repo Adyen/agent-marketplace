@@ -35,7 +35,12 @@ var rootLogState struct {
 
 func main() {
 	cmd := newRootCmd()
+	if writeE2ECommandTree(cmd) {
+		return
+	}
+	schemas := e2eConfigSchemas()
 	execCmd, execErr := cmd.ExecuteC()
+	recordE2EInvocation(cmd, execCmd, schemas, execErr)
 	finishTelemetry(execCmd, execErr)
 	if execErr != nil {
 		finishRootLogging(execErr)
@@ -59,6 +64,7 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SetContext(pipeline.WithTransientOrganizationMarketplaceLockCache(cmd.Context()))
 			rootTUI := cmd == rootCmd && !showVersion && !noTUI && os.Getenv("AGENT_MARKETPLACE_NO_TUI") == "" && term.IsTerminal(os.Stdin.Fd())
 			if err := maybePromptV4Migration(cmd, rootTUI, showVersion); err != nil {
 				return err

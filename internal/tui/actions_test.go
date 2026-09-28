@@ -1042,6 +1042,17 @@ func TestBuildRowsKeepsMarketplaceKindsSeparate(t *testing.T) {
 	}
 }
 
+func TestBuildRowsKeepsExcludedOptionalOrganizationMarketplaceLeafToggleable(t *testing.T) {
+	pin := config.MarketplaceResourcePin{RegistryID: "source-id", RegistrySlug: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: "sha256:" + strings.Repeat("a", 64),
+		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "collections", Name: "bundle", Revision: "v1"}})}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", InstanceID: "market-id", Source: config.Organization, Resources: []config.MarketplaceResourcePin{pin}}},
+		MarketplaceExclusions: []config.MarketplaceExclusion{{URL: "https://market.example", Locator: "source-id/skill/review", Source: config.UserPersonal}}}
+	rows := buildRows(cfg, nil, nil, nil, materialize.DriftReport{})
+	if len(rows) != 1 || !rows[0].IsExcluded || !rows[0].canOverrideMarketplace() || !rows[0].ExcludedByUser || !rows[0].MarketplaceCollectionOnly {
+		t.Fatalf("excluded organization Marketplace leaf = %#v", rows)
+	}
+}
+
 func TestBuildRowsMarksCollectionOnlyMarketplaceLeaf(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("c", 64)
 	pin := config.MarketplaceResourcePin{

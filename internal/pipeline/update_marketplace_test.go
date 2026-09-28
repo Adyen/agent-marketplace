@@ -19,8 +19,16 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func testMarketplaceUpdateReconcile(_ context.Context, _, _ string, _ []RefBump, edits []StagedConfigEdit) (DependencyLockView, error) {
+func testMarketplaceUpdateReconcile(_ context.Context, _, _ string, _ []RefBump, edits []StagedConfigEdit, lockEdits []StagedLockEdit) (DependencyLockView, error) {
 	for _, edit := range edits {
+		if err := os.MkdirAll(filepath.Dir(edit.Path), 0o755); err != nil {
+			return DependencyLockView{}, err
+		}
+		if err := os.WriteFile(edit.Path, edit.Bytes, edit.Mode); err != nil {
+			return DependencyLockView{}, err
+		}
+	}
+	for _, edit := range lockEdits {
 		if err := os.MkdirAll(filepath.Dir(edit.Path), 0o755); err != nil {
 			return DependencyLockView{}, err
 		}
@@ -351,16 +359,18 @@ func TestUpdateRequiresTargetBeforePreparingChangedMarketplacePin(t *testing.T) 
 	}
 }
 
-func TestPlanMarketplaceUpdateSkipsOrganizationPinAsRequired(t *testing.T) {
+func TestPlanMarketplaceUpdateSkipsExternallyManagedOrganizationPin(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, false)
-	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{fixture.pin}}
-	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}}
-	plans, err := planMarketplaceUpdates(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot}, ec)
-	if err != nil {
-		t.Fatalf("plan organization pin: %v", err)
-	}
-	if len(plans) != 1 || !plans[0].Skipped || !plans[0].Required || plans[0].Reason == "" {
-		t.Fatalf("organization plan = %#v, want required skip", plans)
+	for _, required := range []bool{false, true} {
+		entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.Organization, Required: required, Resources: []config.MarketplaceResourcePin{fixture.pin}}
+		ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}}
+		plans, err := planMarketplaceUpdates(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot}, ec)
+		if err != nil {
+			t.Fatalf("plan organization pin: %v", err)
+		}
+		if len(plans) != 1 || !plans[0].Skipped || plans[0].Required != required || plans[0].Reason == "" {
+			t.Fatalf("organization plan = %#v, want skipped with required=%t", plans, required)
+		}
 	}
 }
 

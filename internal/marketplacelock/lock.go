@@ -33,9 +33,17 @@ type Layer struct {
 // HasRequiredError reports whether errs contain a v4 Marketplace lock
 // requirement.
 func HasRequiredError(errs []error) bool {
+	return hasLockErrorCode(errs, "v4.marketplace-lock-required")
+}
+
+func HasMismatchError(errs []error) bool {
+	return hasLockErrorCode(errs, "v4.marketplace-lock-mismatch")
+}
+
+func hasLockErrorCode(errs []error, code string) bool {
 	for _, err := range errs {
 		var validation *config.V4ValidationError
-		if errors.As(err, &validation) && validation.Code == "v4.marketplace-lock-required" {
+		if errors.As(err, &validation) && validation.Code == code {
 			return true
 		}
 	}
@@ -93,12 +101,7 @@ func OrganizationProvisional(configPath string) (Layer, []byte, bool, error) {
 // HasMarketplaceSource reports whether a v4 tree needs Marketplace lock
 // hydration.
 func HasMarketplaceSource(v4 *config.V4Config) bool {
-	for _, source := range v4.Sources {
-		if source.Kind == config.V4SourceMarketplace {
-			return true
-		}
-	}
-	return false
+	return len(sortedMarketplaceSources(v4)) > 0
 }
 
 // Provisional returns a structurally valid placeholder lock. It is used only
@@ -122,7 +125,7 @@ func Provisional(v4 *config.V4Config, scope lockfile.Scope) (lockfile.Document, 
 			resource := lockfile.MarketplaceResourceLock{
 				RegistryName:  request.Registry,
 				RegistryID:    request.Registry,
-				Kind:          request.Kind,
+				Kind:          request.MarketplaceKind(),
 				Name:          request.Name,
 				Revision:      revision,
 				ContentDigest: lockfile.Digest(revision),
@@ -166,7 +169,7 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			plan, err := marketplaceResolver.PrepareLocatorWithResourceLimit(ctx, entry, marketplace.MarketplaceLocator{
 				URL:      entry.URL,
 				Registry: request.Registry,
-				Kind:     request.Kind,
+				Kind:     request.MarketplaceKind(),
 				Name:     request.Name,
 				Revision: request.Options.Revision,
 				Digest:   request.Options.Revision,
@@ -230,8 +233,8 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 
 func sortedMarketplaceSources(v4 *config.V4Config) []string {
 	names := make([]string, 0, len(v4.Sources))
-	for name, source := range v4.Sources {
-		if source.Kind == config.V4SourceMarketplace {
+	for name := range v4.Sources {
+		if v4.AcquiresMarketplace(name) {
 			names = append(names, name)
 		}
 	}

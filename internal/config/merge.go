@@ -29,6 +29,10 @@ func MergeLayers(layers []Layer) *Config {
 			entry.Source = layer.Source
 			merged.Marketplaces = append(merged.Marketplaces, entry)
 		}
+		for _, exclusion := range layer.Config.MarketplaceExclusions {
+			exclusion.Source = layer.Source
+			merged.MarketplaceExclusions = append(merged.MarketplaceExclusions, exclusion)
+		}
 
 		// Collections are cumulative across layers (include from all layers
 		// is unioned; exclude from higher-precedence layers overrides, but
@@ -293,8 +297,13 @@ func RegistrySelectionKey(entry RegistryEntry, index int) string {
 // NormalizeGitURL normalizes a git remote URL for comparison.
 // Strips trailing ".git" suffix and trailing slashes so that equivalent URLs
 // (e.g. "git@host:repo" and "git@host:repo.git") are treated as the same.
+// Hostless file URLs ("file:///abs/path") compare equal to the absolute local
+// path they name; file URLs with a host keep their URL form.
 func NormalizeGitURL(url string) string {
 	u := strings.TrimRight(strings.TrimSpace(url), "/")
+	if strings.HasPrefix(strings.ToLower(u), "file:///") {
+		u = u[len("file://"):]
+	}
 	u = strings.TrimSuffix(u, ".git")
 	return u
 }

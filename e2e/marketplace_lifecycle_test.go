@@ -180,6 +180,95 @@ func (f *marketplaceBehaviorFixture) reindex(t *testing.T, cfg mpconfig.Config) 
 	}
 }
 
+func TestOrganizationMarketplaceCollectionMemberUserOverride(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("organization member", true))
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	organization := fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  org: {marketplace: %s}
+resources:
+  org:
+    include: [behavior-source/collection/behavior-bundle]
+`, fixture.server.URL)
+	consumer.WriteOrgConfig(organization)
+	result := consumer.RunAM("sync")
+	if result.ExitCode != 0 {
+		t.Fatalf("optional organization collection sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "organization member")
+	consumer.WriteGlobalConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  company: {marketplace: %s}
+resources:
+  company:
+    exclude: [behavior-source/skill/skill-one]
+`, fixture.server.URL))
+	result = consumer.RunAM("sync")
+	if result.ExitCode != 0 {
+		t.Fatalf("user override sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertFileAbsent("/root/.factory/skills/skill-one")
+	consumer.AssertFileContains("/root/.factory/commands/command-one.md", "echo behavior")
+	consumer.WriteOrgConfig(organization + "    required: true\n")
+	result = consumer.RunAM("sync")
+	if result.ExitCode != 0 {
+		t.Fatalf("required organization collection sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "organization member")
+}
+
+func TestMarketplaceInstallFlagsKeepExactInstalledName(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Named install", false))
+	for _, tc := range []struct {
+		kind, name, alias, output, original, body string
+	}{
+		{"skill", "skill-one", "review-copy", "/workspace/.factory/skills/review-copy/SKILL.md", "/workspace/.factory/skills/skill-one", "Named install"},
+		{"command", "command-one", "invoke-copy", "/workspace/.factory/commands/invoke-copy.md", "/workspace/.factory/commands/command-one.md", "echo behavior"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			consumer := fixture.newConsumer(t, fixture.server.URL)
+			result := consumer.RunAM("install", "behavior-source/"+tc.kind+"/"+tc.name, "--marketplace", "behavior", "--as", tc.alias, "--verbose", "--scope", "repo")
+			if result.ExitCode != 0 {
+				t.Fatalf("Marketplace flag install failed (exit %d):\n%s", result.ExitCode, result.Combined)
+			}
+			if !consumer.CheckFileExists(tc.output) {
+				t.Fatalf("aliased installation produced no %s: output=%s config=%s", tc.alias, result.Combined, consumer.ReadFile("/workspace/.agents/config.yaml"))
+			}
+			consumer.AssertFileContains(tc.output, tc.body)
+			if tc.kind == "skill" {
+				consumer.AssertFileContains(tc.output, "name: "+tc.alias)
+			}
+			consumer.AssertFileAbsent(tc.original)
+			config := consumer.ReadFile("/workspace/.agents/config.yaml")
+			if !strings.Contains(config, "installed_name: "+tc.alias) || !strings.Contains(config, "kind: "+tc.kind) {
+				t.Fatalf("exact Marketplace install lost the local alias: %s", config)
+			}
+			if !strings.Contains(result.Combined, "Marketplace install preview") {
+				t.Fatalf("--verbose omitted the verified Marketplace preview: %s", result.Combined)
+			}
+			consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
+			repeat := consumer.RunAM("install", "behavior-source/"+tc.kind+"/"+tc.name, "--marketplace", "behavior", "--as", tc.alias, "--yes", "--scope", "repo")
+			if repeat.ExitCode != 0 || consumer.ReadFile("/workspace/.agents/config.yaml") != config {
+				t.Fatalf("repeat aliased install changed selection: exit=%d output=%s", repeat.ExitCode, repeat.Combined)
+			}
+			consumer.AssertExitCode(consumer.RunAM("sync", "--offline"), 0)
+			consumer.AssertFileContains(tc.output, tc.body)
+			removed := consumer.RunAM("remove", tc.alias, "--kind", tc.kind, "--scope", "repo")
+			if removed.ExitCode != 0 {
+				t.Fatalf("remove by installed alias failed (exit %d):\n%s", removed.ExitCode, removed.Combined)
+			}
+			consumer.AssertFileAbsent(tc.output)
+			if config := consumer.ReadFile("/workspace/.agents/config.yaml"); strings.Contains(config, "installed_name: "+tc.alias) {
+				t.Fatalf("remove by installed alias retained the pin: %s", config)
+			}
+			consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
+		})
+	}
+}
+
 func TestMarketplacePinRemainsExactUntilUpdateAndWorksOffline(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("version one", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
@@ -387,4 +476,107 @@ func TestMarketplaceCollectionSelectorLifecycle(t *testing.T) {
 	}
 	consumer.AssertRepoFactorySkillAbsent("skill-one")
 	consumer.AssertFileAbsent("/workspace/.factory/commands/command-one.md")
+}
+
+// The organization config declares its Marketplace under an alias and
+// selects a collection without deploying a lock, and init creates a v4 user
+// config. A user installs a hosted MCP server through that alias into the
+// user config (v4.0.8 failed with v4.writer-opt-in).
+func TestOrganizationMarketplaceAliasInstallsMCPServerIntoV4UserConfig(t *testing.T) {
+	files := marketplaceBehaviorFiles("Behavior body", true)
+	files[".mcp.json"] = MergeMCPFile([]MCPServer{{Name: "sonarqube", Command: "echo", Args: []string{"sonarqube"}}})
+	fixture := newMarketplaceBehaviorFixture(t, files)
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.MustRunAM("init", "--harnesses", "factory")
+	consumer.WriteOrgConfigWithMode(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  org:
+    marketplace: %s
+allowed_marketplaces:
+  - '^http://127\.0\.0\.1:[0-9]+$'
+resources:
+  org:
+    include:
+      - behavior-source/collection/behavior-bundle
+`, fixture.server.URL), 0o644)
+
+	result := consumer.RunAM("install", "org:behavior-source/mcpserver/sonarqube", "--scope", "user", "--yes")
+	if result.ExitCode != 0 {
+		t.Fatalf("install through the organization Marketplace alias into v4 user config failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	userConfig := consumer.ReadFile("/root/.agents/config.yaml")
+	for _, want := range []string{"apiVersion: agent-marketplace/v4", "marketplace: " + fixture.server.URL, "behavior-source/mcp/sonarqube"} {
+		if !strings.Contains(userConfig, want) {
+			t.Fatalf("v4 user config missing %q:\n%s", want, userConfig)
+		}
+	}
+	if strings.Contains(userConfig, "marketplaces:") {
+		t.Fatalf("v4 user config gained the legacy marketplaces key:\n%s", userConfig)
+	}
+	consumer.AssertFileContains("/root/.agents/lock.yaml", "sonarqube")
+	consumer.AssertFileContains("/root/.factory/mcp.json", "sonarqube")
+	consumer.AssertFileAbsent("/etc/agent-marketplace/lock.yaml")
+	consumer.AssertExitCode(consumer.RunAM("sync"), 0)
+	consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
+}
+
+// With the deployed organization shape and a v4 user config from init, a
+// hosted MCP server installed into a repository without a config lives in a
+// new v4 repository root and lock, survives update, and removes cleanly while
+// the organization lock stays absent.
+func TestOrganizationMarketplaceAliasRepositoryLifecycle(t *testing.T) {
+	files := marketplaceBehaviorFiles("Behavior body", true)
+	files[".mcp.json"] = MergeMCPFile([]MCPServer{{Name: "sonarqube", Command: "echo", Args: []string{"sonarqube"}}})
+	fixture := newMarketplaceBehaviorFixture(t, files)
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.MustRunAM("init", "--harnesses", "factory")
+	consumer.WriteOrgConfigWithMode(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  org:
+    marketplace: %s
+allowed_marketplaces:
+  - '^http://127\.0\.0\.1:[0-9]+$'
+resources:
+  org:
+    include:
+      - behavior-source/collection/behavior-bundle
+`, fixture.server.URL), 0o644)
+
+	result := consumer.RunAM("install", "org:behavior-source/mcpserver/sonarqube", "--scope", "repo", "--yes")
+	if result.ExitCode != 0 {
+		t.Fatalf("install through the organization alias into repo scope failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	repoConfig := consumer.ReadFile("/workspace/.agents/config.yaml")
+	for _, want := range []string{"apiVersion: agent-marketplace/v4", "marketplace: " + fixture.server.URL, "behavior-source/mcp/sonarqube"} {
+		if !strings.Contains(repoConfig, want) {
+			t.Fatalf("new repository config missing %q:\n%s", want, repoConfig)
+		}
+	}
+	consumer.AssertFileContains("/workspace/.agents/lock.yaml", "sonarqube")
+	consumer.AssertFileContains("/workspace/.factory/mcp.json", "sonarqube")
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "Behavior body")
+	consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
+
+	for _, args := range [][]string{{"update"}, {"sync", "--check"}, {"status"}, {"doctor"}} {
+		consumer.AssertExitCode(consumer.RunAM(args...), 0)
+	}
+
+	result = consumer.RunAM("remove", "sonarqube", "--scope", "repo")
+	if result.ExitCode != 0 {
+		t.Fatalf("remove from the v4 repository config failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	data, err := os.ReadFile(consumer.mustResolvePath("/workspace/.factory/mcp.json"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read the repository MCP config after removal: %v", err)
+	}
+	if strings.Contains(string(data), "sonarqube") {
+		t.Fatalf("removed MCP server is still materialized:\n%s", data)
+	}
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "Behavior body")
+	for _, args := range [][]string{{"gc"}, {"sync", "--check"}} {
+		consumer.AssertExitCode(consumer.RunAM(args...), 0)
+	}
+	consumer.AssertFileAbsent("/etc/agent-marketplace/lock.yaml")
 }

@@ -29,7 +29,7 @@ func BenchmarkPlanUnchanged(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	doc := Document{APIVersion: APIVersionV1, Scope: ScopeRepo}
+	doc := Document{APIVersion: APIVersionV2, Scope: ScopeRepo}
 	requirements := Requirements{Scope: ScopeRepo}
 	for i := 0; i < 100; i++ {
 		url := fmt.Sprintf("https://git.example.com/team/repo-%03d", i)

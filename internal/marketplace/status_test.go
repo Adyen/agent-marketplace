@@ -54,7 +54,7 @@ func TestInspectPreservesPinStates(t *testing.T) {
 		{RegistryID: "src", RegistrySlug: "source-slug", Kind: "skill", Name: "unavailable", Revision: "v1", Digest: contentDigest},
 	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
-		URL: server.URL, InstanceID: "mp", Alias: "hostile\talias", Source: config.Organization, Resources: pins,
+		URL: server.URL, InstanceID: "mp", Alias: "hostile\talias", Source: config.Organization, Required: true, Resources: pins,
 	}}}
 
 	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
@@ -87,6 +87,17 @@ func TestInspectPreservesPinStates(t *testing.T) {
 	for _, pin := range inspection.Pins {
 		if pin.UpdateAvailable || (pin.Name != "revoked" && pin.LatestQueried) {
 			t.Fatalf("pin %q claimed incorrect latest information: %#v", pin.Name, pin)
+		}
+	}
+}
+
+func TestPinStatusFollowsExplicitOrganizationPolicy(t *testing.T) {
+	pin := config.MarketplaceResourcePin{RegistryID: "source", Kind: "skill", Name: "review"}
+	for _, required := range []bool{false, true} {
+		entry := config.MarketplaceEntry{URL: "https://market.example", Source: config.Organization, Required: required}
+		status, artifact, ok := newPinStatus(entry, pin, nil)
+		if !ok || status.Required != required || artifact.Required != required {
+			t.Fatalf("required=%t: pin status = %#v, artifact = %#v", required, status, artifact)
 		}
 	}
 }
@@ -148,7 +159,7 @@ func TestInspectCachedNoFetchUsesOnlyCachedState(t *testing.T) {
 	defer server.Close()
 
 	cache := NewCache(t.TempDir())
-	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Source: config.Organization, Required: true, Resources: []config.MarketplaceResourcePin{
 		{RegistryID: "src", Kind: "skill", Name: "cached", Revision: "v1", Digest: contentDigest},
 		{RegistryID: "src", Kind: "skill", Name: "missing", Revision: "v1", Digest: "sha256:" + strings.Repeat("a", 64)},
 	}}

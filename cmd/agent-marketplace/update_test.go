@@ -545,10 +545,7 @@ func TestUpdateBumpSkipsOrganization(t *testing.T) {
 			if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
 				t.Fatalf("organization lock created: %v", err)
 			}
-			residue, err := filepath.Glob(filepath.Join(stagingRoot, ".agent-marketplace-config-*"))
-			if err != nil || len(residue) != 0 {
-				t.Fatalf("config staging residue = %v, %v", residue, err)
-			}
+			assertNoStagingResidue(t, stagingRoot)
 			if updateErr != nil {
 				t.Fatalf("update --bump: %v\n%s", updateErr, output)
 			}

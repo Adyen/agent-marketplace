@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -287,6 +288,30 @@ func canonicalConfigPath(path string) (string, error) {
 	return filepath.Clean(canonical), nil
 }
 
+// canonicalConfigPathTolerateMissing canonicalizes path even when the file
+// does not exist yet. A layer being created has no symlink of its own, so its
+// parent directory is resolved instead: that yields the same name the loader
+// produces once the file exists, which keeps provenance and lock-path
+// comparisons stable across the creating edit.
+func canonicalConfigPathTolerateMissing(path string) (string, error) {
+	canonical, err := canonicalConfigPath(path)
+	if err == nil {
+		return canonical, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	absolute, absErr := filepath.Abs(path)
+	if absErr != nil {
+		return "", absErr
+	}
+	dir, dirErr := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if dirErr != nil {
+		return filepath.Clean(absolute), nil
+	}
+	return filepath.Join(dir, filepath.Base(absolute)), nil
+}
+
 // ConfigLockPaths identifies one config and its layer-owned lock through both
 // the requested and canonical filesystem names.
 type ConfigLockPaths struct {
@@ -510,13 +535,13 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 }
 
 // loadV4RuntimeConfig adapts a parsed v4 tree to the legacy runtime model.
-// Marketplace sources require the owning layer lock; Git/directory-only trees
-// never touch a lock. The returned ConfigRead covers the lock so callers can
-// add it to their read assertions.
+// Marketplace acquisition sources require the owning layer lock; Git/directory
+// and user exclusion-only trees never touch one. The returned ConfigRead covers
+// the lock so callers can add it to their read assertions.
 func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overlays map[string][]byte) (*Config, *ConfigRead, error) {
 	hasMarketplace := false
-	for _, src := range v4.Sources {
-		if src.Kind == V4SourceMarketplace {
+	for name := range v4.Sources {
+		if v4.AcquiresMarketplace(name) {
 			hasMarketplace = true
 			break
 		}
@@ -525,7 +550,7 @@ func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overla
 		cfg, err := v4.ToLegacyConfig(kind)
 		return cfg, nil, err
 	}
-	canonical, err := canonicalConfigPath(configPath)
+	canonical, err := canonicalConfigPathTolerateMissing(configPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -587,10 +612,19 @@ func loadConfigTree(path string, kind layerKind) (*Config, error) {
 }
 
 func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKind) (*Config, error) {
+	cfg, _, err := loadConfigTreeFromRootDataWithFiles(canonicalPath, data, kind)
+	return cfg, err
+}
+
+func loadConfigTreeFromRootDataWithFiles(canonicalPath string, data []byte, kind layerKind) (*Config, []*Config, error) {
 	loader := newConfigIncludeLoader(kind)
 	loader.rootPath = canonicalPath
 	loader.rootData = data
-	return loadCollectedConfigTree(canonicalPath, loader)
+	cfg, err := loadCollectedConfigTree(canonicalPath, loader)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cfg, append([]*Config(nil), loader.files...), nil
 }
 
 func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layerKind, overlays map[string][]byte) (*Config, []ConfigRead, error) {

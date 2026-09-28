@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
 func BenchmarkMergeInstallBindingsInMemory(b *testing.B) {
@@ -21,7 +22,7 @@ func BenchmarkMergeInstallBindingsInMemory(b *testing.B) {
 	digest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
 	for _, count := range []int{1, 16} {
 		b.Run(fmt.Sprintf("registries=%d", count), func(b *testing.B) {
-			base := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}
+			base := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo}
 			for i := range count {
 				base.Registries = append(base.Registries, lockfile.GitRegistry{
 					URL: fmt.Sprintf("https://example.invalid/registry-%d", i), Ref: "main", Commit: commit,
@@ -79,12 +80,23 @@ func BenchmarkLoadStableEffectiveIncludes(b *testing.B) {
 		}
 	}
 	opts := config.LoadEffectiveOptions{RepoRoot: root, LocalConfigDir: root, OrganizationPath: filepath.Join(root, "missing-org"), GlobalPath: filepath.Join(root, "config.yaml")}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		if _, _, err := loadStableEffective(context.Background(), opts); err != nil {
-			b.Fatal(err)
-		}
+	for _, test := range []struct {
+		name string
+		load func(context.Context, config.LoadEffectiveOptions) config.EffectiveConfig
+	}{
+		{"raw", config.LoadEffective},
+		{"online", func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+			return pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, opts, nil)
+		}},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, _, err := loadStableEffectiveWith(context.Background(), opts, test.load); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

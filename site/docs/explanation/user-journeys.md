@@ -1,6 +1,6 @@
 # User journeys
 
-This map covers using resources through the CLI, terminal UI, and hosted Marketplace browser, from finding one to updating or removing it. Publishing resources and running a Marketplace have separate guides.
+This page maps the common paths through the product for people who use resources: finding one, installing it, sharing it with a team, updating it, and removing it. Each journey gives the CLI, terminal UI (TUI), and Marketplace browser steps where they apply. Publishing resources and running a Marketplace have their own guides.
 
 ```text
 Find → Inspect → Choose scope and harnesses → Install → Use
@@ -12,15 +12,22 @@ Find → Inspect → Choose scope and harnesses → Install → Use
 
 ## Before following a journey
 
-[Install the CLI](../install.md), then choose your coding harnesses with `agent-marketplace init` or the TUI's first-run prompt. You can browse with `list` before choosing harnesses, but installation and sync need that choice.
+[Install the CLI](../install.md), then choose your coding [harnesses](../glossary.md#harness) with `agent-marketplace init` or with the prompt the TUI shows on first launch. You can browse with `list` before you choose harnesses, but installing and syncing need that choice.
 
 ::: warning Check your configuration version
-V4 is the canonical configuration schema, and `init` creates a v4 user config directly; interactive CLI startup and the TUI also offer to migrate a legacy user config (the user-personal root only). However, the commands and TUI actions that change resource selections still require v2/v3 files: the CLI's `install` and `remove` operations, endpoint registration, and TUI resource toggles fail with `v4.writer-opt-in` if they need to edit a v4 file. The TUI's harness modal (`H`) can still edit the target harness list of a v4 config.
+The current configuration format is v4 (`apiVersion: agent-marketplace/v4`). `init` and the TUI's first-run prompt create v4 files. On a v4 file, these edits work:
 
-For v2/v3, follow the command and TUI steps below. For v4 Git and directory sources, edit `sources` and `resources` directly, then run `sync`. Hosted v4 requests also need matching verified records in the layer's lockfile. Adding a source and digest by hand is not enough to install one. Read [maintaining and migrating configuration](../how-to/migrate-configuration.md) before switching to v4.
+- `install` and `remove` by name, including `--from` for a Git or directory registry that isn't configured yet;
+- `install --tag` and `install --all`;
+- registering a Marketplace and installing Marketplace resources; and
+- TUI toggles for Git and directory sources, and the TUI harness modal (`H`).
+
+v2 and v3 files still work, but they are deprecated, and every change to one prints a `config.legacy-deprecated` warning. The CLI and TUI offer to migrate your personal configuration when they start in a terminal. Repository and personal-local files change only when you run `agent-marketplace migrate`. Read [maintaining and migrating configuration](../how-to/migrate-configuration.md) before you migrate a shared repository.
+
+Some Marketplace cases are not supported: acquiring content offline when the organization lockfile is absent, rebinding hosted pins, and recording snapshots for dynamic selectors. When the CLI can't verify a pin, it refuses and changes nothing.
 :::
 
-Choose where a resource belongs before installing it:
+Choose where a resource belongs before you install it. The [scope](../glossary.md#scope) decides which configuration file records it:
 
 | Intent | CLI scope | Configuration | Output |
 |---|---|---|---|
@@ -28,97 +35,98 @@ Choose where a resource belongs before installing it:
 | Share it with this repository's team | `--scope repo` | `.agents/config.yaml` | Repository harness roots |
 | Use it only in my checkout | `--scope local` | `.agents/config.local.yaml` | Repository harness roots; private selection |
 
-Resource installation defaults to `repo`; registering a Marketplace endpoint defaults to `user`. Local scope changes which resources your checkout selects. It uses the repository's harness directories, not a separate installation directory. See [scope and precedence](./scopes-selection-and-precedence.md).
+Installing a resource defaults to `repo`. Registering a Marketplace defaults to `user`. Local scope changes which resources your checkout selects, and writes them into the repository's harness folders; there is no separate installation folder. See [scopes, selection, and precedence](./scopes-selection-and-precedence.md).
 
 ## 1. Find, inspect, and install a resource
 
-Start with a Git registry URL, a Marketplace link, or a source already in your config.
+Start from a Git registry address, a Marketplace link, or a source that is already in your configuration.
 
-1. Use `list` for Git/directory registries, `list --from <git-url>` for an unconfigured Git registry, or `search <query>` for hosted Marketplaces. You can also browse configured sources in the [TUI](../reference/tui.md) or use [search and filters in the browser](../how-to/browse-marketplace-resources.md).
-2. Open resource files with `enter` in the TUI, or read the browser's Content, Security, Revisions, and Registry tabs. Check the resource kind, prerequisites, source, and license. An automated scan cannot guarantee that a resource is safe.
-3. Choose a scope from the table above and check `status` to see which harnesses will receive the resource. Not every harness supports every resource kind; check diagnostics and the [harness reference](../reference/harnesses-and-output-paths.md).
-4. Follow the [Git tutorial](../tutorials/install-your-first-skill.md) or [Marketplace tutorial](../tutorials/install-your-first-marketplace-skill.md) to install it. The browser's copied command pins the revision you're viewing, without requiring you to register the endpoint first. If the CLI reports Marketplace warnings or active capabilities, review the verified preview before accepting. The prompt cannot approve a blocked or revoked revision.
-5. Run `status` and `sync --check`, then open or reload your coding harness in the project. Agent Marketplace installs the resource; you use it through your harness.
+1. Find the resource. Use `list` for configured Git and directory registries, `list --from <git-url>` for a Git registry you haven't configured, or `search <query>` for hosted Marketplaces. You can also browse configured sources in the [TUI](../reference/tui.md) or use [search and filters in the browser](../how-to/browse-marketplace-resources.md).
+2. Inspect it. In the TUI, press `enter` on a row to open the resource's files. In the browser, read the **Content**, **Security**, **Revisions**, and **Registry** tabs. Check the resource kind, prerequisites, source, and license. An automated scan can't prove that a resource is safe.
+3. Choose a scope from the table above, and run `status` to see which harnesses will receive the resource. Not every harness supports every resource kind; check the diagnostics and the [harness reference](../reference/harnesses-and-output-paths.md).
+4. Install it by following the [Git tutorial](../tutorials/install-your-first-skill.md) or the [Marketplace tutorial](../tutorials/install-your-first-marketplace-skill.md). The install command you copy from the browser pins the revision you are looking at, and it works without registering the Marketplace first. If the CLI or TUI reports security findings, review the preview before you accept. Capabilities alone don't need consent, and nothing can approve a blocked or revoked revision.
+5. Run `status` and `sync --check`, then open or reload your harness in the project. `agent-marketplace` installs the resource; you use it through your harness.
 
-Check the resource's scope and harness output in `status`. The drift check should exit `0`.
+`status` should list the resource with the scope and harness you chose, and `sync --check` should exit with `0`.
 
-If a name is ambiguous, add `--kind` or use a locator that includes the source. For a Marketplace local-name conflict, use `--as`. Follow the resource's instructions to set up prerequisites: Agent Marketplace reports them but does not install them. See [hosted installation troubleshooting](../how-to/install-from-a-marketplace.md#troubleshooting) for other failures.
+If a name matches more than one resource, add `--kind` or use a [locator](../glossary.md#locator) that includes the source. If a Marketplace resource's name clashes with one you already have, install it under another name with `--as`. `agent-marketplace` reports prerequisites but doesn't install them, so follow the resource's own setup instructions. For other failures, see [hosted installation troubleshooting](../how-to/install-from-a-marketplace.md#troubleshooting).
 
 ## 2. Join a repository that already has resources
 
-When a teammate has committed the repository config and its generated lock, you can reproduce that setup:
+When a teammate has committed the repository configuration and its [lockfile](../glossary.md#lockfile), you can reproduce their setup:
 
-1. Clone the repository and run commands inside it.
-2. Run `agent-marketplace sync --locked`. This fetches the exact locked Git snapshots and generates harness output without rewriting the config or locks.
-3. Run `agent-marketplace status` to see the harness targets and config layers, then `agent-marketplace sync --check` to check for drift.
-4. Open your coding harness. Use [personal repository overrides](../how-to/use-personal-repository-overrides.md) for additions or exclusions that should only affect your checkout.
+1. Clone the repository and run the commands inside it.
+2. Run `agent-marketplace sync --locked`. It downloads the exact commits recorded in the lockfile and writes the harness files, without changing the configuration or lockfiles.
+3. Run `agent-marketplace status` to see the harness targets and configuration layers, then `agent-marketplace sync --check` to check for [drift](../glossary.md#drift).
+4. Open your harness. For additions or exclusions that should affect only your checkout, use [personal repository overrides](../how-to/use-personal-repository-overrides.md).
 
-Your checkout should now have the team's resources at the locked revisions. Resources from your user and organization configs still apply, so you may also see machine-wide resources that are not in the repository config.
+Your checkout now has the team's resources at the recorded revisions. Resources from your personal and organization configurations still apply, so you may also see machine-wide resources that aren't in the repository configuration.
 
-If the committed lock is missing or stale, someone needs to update it in the repository. On a fresh CI runner, run `sync --locked` before `sync --check`; the check cannot download snapshots or create output. See [reproducibility](../how-to/keep-resources-reproducible.md) and [drift recovery](../how-to/troubleshoot-sync-drift.md).
+Everyone who reads the committed lockfile, including CI, needs `agent-marketplace` v4.0.9 or newer. If the committed lockfile is missing or out of date, someone has to update it in the repository. On a fresh CI runner, run `sync --locked` before `sync --check`, because the check doesn't download anything or write files. See [reproducibility](../how-to/keep-resources-reproducible.md) and [drift recovery](../how-to/troubleshoot-sync-drift.md).
 
 ## 3. Build a personal or shared setup
 
-Once you have a resource working, you can add more resources or harnesses and decide which parts of the setup to share.
+Once one resource works, you can add more resources or harnesses and decide which parts of the setup to share.
 
-1. Add commands, subagents, hooks, or MCP servers alongside your skills. Use [tags, collections, or registry bundles](../how-to/install-resource-bundles.md) to select a group.
-2. Choose which scope owns each selection. Commit the repository config and lock for teammates, and keep local config and its lock ignored. Generated output should not be the source of truth in Git.
-3. [Configure harnesses](../how-to/configure-multiple-harnesses.md). The repository's target list overrides the user's list, and each source can further restrict its targets. In the TUI, use `H` to choose the user or project harness list.
-4. Sync and check the result. Read shared-configuration warnings before using new hooks or MCP servers. Codex repository changes may need a separate trust review in Codex. Agent Marketplace does not grant that trust for you.
+1. Add commands, subagents, hooks, or MCP servers next to your skills. To select a group at once, use [tags, collections, or registry bundles](../how-to/install-resource-bundles.md).
+2. Decide which scope owns each selection. Commit the repository configuration and lockfile for your teammates. Keep the personal-local configuration and its lockfile out of Git. The generated harness files don't belong in Git either.
+3. [Configure harnesses](../how-to/configure-multiple-harnesses.md). The repository's harness list overrides your personal list, and each source can narrow it further. In the TUI, press `H` to edit the personal or project harness list.
+4. Sync and check the result. Read any warnings about shared configuration files before you use new hooks or MCP servers. When sync changes a repository's Codex hooks or MCP servers, it warns that the change may need a trust review in Codex. `agent-marketplace` never grants that trust for you.
 
-Check that each harness has the output it supports and that another checkout can reproduce the shared setup without your personal config.
+Check that each harness received the files it supports, and that another checkout can reproduce the shared setup without your personal configuration.
 
-For local resources, you can use [live local directories](../how-to/use-a-local-registry.md), which are not Git-locked. If symlinks don't suit your environment, choose [file materialization](../how-to/write-regular-files-instead-of-symlinks.md). To copy an existing harness layout without setting up ongoing sync, use [one-shot conversion](../how-to/convert-a-harness-layout.md).
+For resources on your own disk, you can use [live local directories](../how-to/use-a-local-registry.md), which have no lockfile. If symlinks don't work in your environment, choose [regular files instead of symlinks](../how-to/write-regular-files-instead-of-symlinks.md). To copy an existing harness layout once, without ongoing sync, use [one-shot conversion](../how-to/convert-a-harness-layout.md).
 
 ## 4. Check or update an existing setup
 
-Checking for drift and installing a new upstream revision are different operations:
+Checking for drift and installing a newer upstream revision are separate operations:
 
 | Intent | Action | What changes |
 |---|---|---|
-| See what is selected and where it came from | `status` | Leaves generated output unchanged |
-| Detect drift | `sync --check` | Read-only; does not download missing cached content |
-| Restore output using committed locks | `sync --locked` | Cache and generated output; not config or locks |
-| Apply selection changes | `sync` | Output and any writable locks that are stale or missing |
-| Advance Git revisions and install them | `update --scope repo` | Selected scope's Git locks and generated output |
-| Advance Git locks separately | `lock --upgrade --scope repo` | Locks; run `sync` afterward to apply output |
+| See what is selected and where it came from | `status` | Nothing; generated files stay as they are |
+| Detect drift | `sync --check` | Nothing; it doesn't download missing cached content |
+| Restore files from committed lockfiles | `sync --locked` | Cache and generated files; not configuration or lockfiles |
+| Apply selection changes | `sync` | Generated files, and any writable lockfiles that are out of date or missing |
+| Move to newer Git revisions and install them | `update --scope repo` | The chosen scope's Git lockfile and generated files |
+| Move Git lockfiles forward separately | `lock --upgrade --scope repo` | Lockfiles only; run `sync` afterward to update the files |
 
-An ordinary sync keeps a healthy Git lock at its recorded revision, even if the branch has moved. `update` defaults to all writable scopes, so pass a scope to limit it to the repository. The TUI's `u` action upgrades Git locks across writable scopes and syncs the output. To reload state without upgrading, use `r`.
+A plain `sync` keeps a Git lockfile at its recorded commit, even when the branch has moved on. `update` covers every writable scope by default, so pass `--scope repo` to limit it to the repository. In the TUI, `u` moves Git lockfiles forward in every writable scope and syncs the files; `r` only reloads the current state from disk.
 
-Once the revisions you wanted are installed, review the config/lock diff and run `sync --check`. When the check passes, commit shared changes together. Legacy hosted mirror pins can be updated. Updates to index-only and organization-required pins have restrictions. General hosted v4 acquisition/update and snapshots for dynamic selectors are not implemented. See [the command reference](../reference/cli.md#update).
+After the update, review the changes to the configuration and lockfile and run `sync --check`. When the check passes, commit the shared changes together.
+
+Marketplace pins have extra rules. `update` moves a hosted resource to its newest revision, but it skips a request that sets an explicit `revision:` in the configuration, index-only pins, collection pins, and pins from the organization configuration, and it prints the reason for each. Online, the CLI can record explicit Marketplace requests in writable lockfiles, and it resolves them in memory when the organization lockfile is intentionally absent. It can't do that offline. Moving a hosted request to a different Marketplace, and snapshots for dynamic selectors, aren't supported. See [the command reference](../reference/cli.md#update).
 
 ## 5. Remove something without changing everyone else's setup
 
-To remove a resource or opt out of an optional team selection:
+To remove a resource, or to opt out of an optional team selection:
 
-1. Check `status` for the source and scope that select it. The same name can exist in both machine and repository scopes.
-2. Follow [remove or override resources](../how-to/remove-or-override-resources.md), passing a scope when needed. Removal deletes a direct selection or adds an exclusion for a resource selected indirectly.
-3. If a hosted collection also selects the resource, removing its direct selection leaves the collection's selection in place. Remove the collection selector to stop selecting its members.
-4. Check `status` and `sync --check` again. Confirm that you removed the selection you meant to remove and kept the others. Another scope or selection may still keep the resource installed.
+1. Run `status` to find the source and scope that select it. The same name can exist in both the machine and repository scopes.
+2. Follow [remove or override resources](../how-to/remove-or-override-resources.md), and pass `--scope` when needed. `remove` deletes a direct selection, or adds an exclusion when the resource was selected another way, such as through a tag.
+3. If a hosted collection also selects the resource, removing the direct selection leaves the collection's selection in place. Remove the collection selector to stop selecting its members.
+4. Run `status` and `sync --check` again. Confirm that you removed the selection you meant to and kept the others. Another scope or selection may still keep the resource installed.
 
-Required resources cannot be excluded, and local overrides cannot suppress machine-wide installations. Deleting generated files by hand only removes them until the next sync. To remove the whole setup, follow the [safe removal guide](../how-to/remove-agent-marketplace-safely.md), starting with its dry run.
+Nothing can exclude a resource marked `required`, and a local override can't remove a machine-wide installation. If you delete generated files by hand, the next sync puts them back. To remove the whole setup, follow the [safe removal guide](../how-to/remove-agent-marketplace-safely.md), starting with its dry run.
 
 ## 6. Recover, work offline, or clean up
 
 | Situation | Next step | What to watch for |
 |---|---|---|
-| Missing output or a failed drift check | [Troubleshoot sync drift](../how-to/troubleshoot-sync-drift.md) | Read diagnostics before rewriting config or locks |
-| A handwritten hook/MCP entry conflicts with generated output | [Repair shared configuration](../how-to/repair-owned-shared-configuration.md) | `doctor --repair --yes` can adopt exact matches; removing or replacing entries still requires confirmation |
+| Missing output or a failed drift check | [Troubleshoot sync drift](../how-to/troubleshoot-sync-drift.md) | Read the diagnostics before you rewrite configuration or lockfiles |
+| A handwritten hook or MCP entry conflicts with generated output | [Repair shared configuration](../how-to/repair-owned-shared-configuration.md) | `doctor --repair --yes` can adopt exact matches; removing or replacing entries still asks for confirmation |
 | A machine-wide install needs recovery | [Back up and restore](../how-to/back-up-and-restore-machine-resources.md) | These backups cover machine output, not repository history |
-| No network connection | `sync --offline` in the [CLI reference](../reference/cli.md#sync) | Needs trusted cached content and cannot check for new revocations |
-| Private Git acquisition fails | [Configure private Git registries](../how-to/configure-private-git-registries.md) | Use the supported Git authentication path, not credentials in committed URLs |
-| Cache consumes too much space | [Clean the cache safely](../how-to/clean-the-cache-safely.md) | Preview with `gc --dry-run`; the shared cache may contain resources used by other repositories that this check does not cover |
-| Review or change data collection | [Configure telemetry](../how-to/configure-telemetry.md) | Organization policy may limit your choices; inspect diagnostic payloads before sharing |
-| Stop using Agent Marketplace | [Remove it safely](../how-to/remove-agent-marketplace-safely.md) | Teardown and removing the binary are separate steps |
+| No network connection | `sync --offline` in the [CLI reference](../reference/cli.md#sync) | Needs trusted cached content, and can't check for new revocations |
+| Downloading from a private Git registry fails | [Configure private Git registries](../how-to/configure-private-git-registries.md) | Use the supported Git authentication, not credentials in committed URLs |
+| The cache takes too much space | [Clean the cache safely](../how-to/clean-the-cache-safely.md) | Preview with `gc --dry-run`; the shared cache may hold resources that other repositories use, which this check doesn't cover |
+| Review or change data collection | [Configure telemetry](../how-to/configure-telemetry.md) | Organization policy may limit your choices; inspect diagnostic payloads before you share them |
+| Stop using `agent-marketplace` | [Remove it safely](../how-to/remove-agent-marketplace-safely.md) | Removing the managed files and removing the program are separate steps |
 
 ## Coverage and current limits
 
-For command flags and less common options, use the [CLI reference](../reference/cli.md) and [TUI reference](../reference/tui.md). To set up shell completion, see [completion](../reference/cli.md#completion).
+For command flags and less common options, see the [CLI reference](../reference/cli.md) and the [TUI reference](../reference/tui.md). To set up shell completion, see [completion](../reference/cli.md#completion).
 
-Harness support and these limits determine which parts of the workflows are available:
+These limits decide which parts of the journeys are available:
 
-- In the browser, you can inspect resources and copy install commands. Run those commands locally to install them in your harness.
-- TUI Marketplace discovery shows at most 50 results per endpoint/query, without pagination. Narrow the query or use CLI search for more.
-- V4 supports reading configuration and explicit migration. Resource editors and general hosted acquisition do not yet support it.
-- Agent Marketplace does not install prerequisites for you. Collections and tags group selections but do not resolve dependencies.
-- Publishing resources, running a Marketplace, and setting organization policy are outside these consumer journeys.
+- In the browser, you can inspect resources and copy install commands. Run those commands in your terminal to install the resources for your harness.
+- TUI Marketplace discovery shows at most 50 results per Marketplace and query, without pagination. Narrow the query, or use `agent-marketplace search` for more.
+- `agent-marketplace` doesn't install prerequisites. Collections and tags group selections, but they don't resolve dependencies between resources.
+- Publishing resources, running a Marketplace, and setting organization policy are outside these journeys.

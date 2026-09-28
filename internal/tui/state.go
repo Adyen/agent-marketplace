@@ -55,13 +55,14 @@ type marketplaceDiscovery struct {
 }
 
 type row struct {
-	Artifact     resolver.ResolvedArtifact
-	DetailSource *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
-	IsAvailable  bool                  // not in resolved (available but not enabled)
-	IsExcluded   bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
-	IsMalformed  bool
-	MalformedMsg string
-	DriftItem    *materialize.DriftItem // nil if in sync or available-only
+	Artifact          resolver.ResolvedArtifact
+	DetailSource      *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
+	IsAvailable       bool                  // not in resolved (available but not enabled)
+	IsExcluded        bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
+	IsMalformed       bool
+	MalformedMsg      string
+	UnavailableReason string
+	DriftItem         *materialize.DriftItem // nil if in sync or available-only
 
 	// Per-scope enablement: which config file(s) enable this skill.
 	// A skill may be enabled in multiple scopes simultaneously.
@@ -69,6 +70,7 @@ type row struct {
 	EnabledProject  bool
 	EnabledLocal    bool
 	ExcludedLocally bool
+	ExcludedByUser  bool
 
 	// Source registry of the skill. For available (non-enabled) skills, set
 	// to the first registry whose catalog contained the skill, in cfg order.
@@ -138,8 +140,15 @@ func (r *row) ensureSearchable() {
 	}
 }
 
+func (r row) canOverrideMarketplace() bool {
+	return r.Artifact.IsMarketplace && r.Artifact.Source == config.Organization && !r.Artifact.Required
+}
+
 func (r row) Glyph() string {
 	if r.IsMalformed {
+		return "[!]"
+	}
+	if r.UnavailableReason != "" {
 		return "[!]"
 	}
 	if r.IsAvailable {
@@ -165,6 +174,9 @@ func (r row) StatusText() string {
 	if r.IsMalformed {
 		return "malformed: " + r.MalformedMsg
 	}
+	if r.UnavailableReason != "" {
+		return "unavailable: " + r.UnavailableReason
+	}
 	if r.IsAvailable {
 		if r.IsExcluded {
 			return "excluded"
@@ -182,7 +194,10 @@ func (r row) StatusText() string {
 		return "available"
 	}
 	if r.Artifact.Required {
-		return "required (org)"
+		if r.Artifact.Source == config.Organization {
+			return "required (org)"
+		}
+		return "required"
 	}
 	if r.DriftItem != nil {
 		switch r.DriftItem.Reason {
@@ -226,6 +241,7 @@ type Model struct {
 	syncing             bool
 	refreshing          bool
 	requests            requestState
+	configInvalid       bool
 	rowsStale           bool
 	dependencyLifecycle DependencyLifecycle
 
@@ -271,6 +287,8 @@ type Model struct {
 	migrationPrompt             migrationPrompt
 	migrationDismissed          bool
 	operations                  operationState
+	pendingToggleOperation      operationID
+	pendingToggleReload         requestGeneration
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.

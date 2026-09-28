@@ -131,7 +131,7 @@ type Layer struct {
 // fields on LocalConfig and RegistryEntry. Adding a new kind requires:
 // 1) Adding a field to LocalConfig
 // 2) Adding a field to RegistryEntry
-// 3) Adding a case to SelectorForKind/SelectorForKindPtr (used by entryResourcesForKind)
+// 3) Adding a case to SelectorForKind/SelectorForKindPtr
 // Use this slice (AllKinds) for iteration instead of hard-coding 5-field patterns.
 var AllKinds = []ir.ResourceKind{
 	ir.KindSkill,
@@ -452,10 +452,11 @@ type Config struct {
 	// Harnesses lists the target harnesses to materialize into (e.g.
 	// "factory", "cursor", "claude"). Required at v2; the loader errors
 	// hard if absent.
-	Harnesses    []string           `yaml:"harnesses,omitempty"`
-	Registries   []RegistryEntry    `yaml:"registries,omitempty"`
-	Marketplaces []MarketplaceEntry `yaml:"marketplaces,omitempty"`
-	Collections  KindSelector       `yaml:"collections,omitempty"`
+	Harnesses             []string               `yaml:"harnesses,omitempty"`
+	Registries            []RegistryEntry        `yaml:"registries,omitempty"`
+	Marketplaces          []MarketplaceEntry     `yaml:"marketplaces,omitempty"`
+	MarketplaceExclusions []MarketplaceExclusion `yaml:"-"`
+	Collections           KindSelector           `yaml:"collections,omitempty"`
 
 	// Top-level per-kind defaults. During merge, each registry entry inherits
 	// these selectors unless it provides its own per-entry selectors.

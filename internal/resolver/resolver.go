@@ -44,16 +44,17 @@ type ResolvedArtifact struct {
 	Harnesses []hcc.Target
 
 	// Marketplace-specific fields.
-	IsMarketplace         bool
-	MarketplaceURL        string
-	MarketplaceInstanceID string
-	MarketplaceAlias      string
-	MarketplaceRegistryID string
-	InstalledName         string // overrides Name for materialization while preserving canonical digest
-	Unresolved            bool   // true when only metadata was fetched (status inspect mode)
-	Revoked               bool   // true when the resolved revision is revoked
-	UpdateAvailable       bool   // true when a newer revision exists (status/update)
-	Stale                 bool   // true when the registry refresh is stale/unavailable
+	IsMarketplace           bool
+	MarketplaceURL          string
+	MarketplaceInstanceID   string
+	MarketplaceAlias        string
+	MarketplaceRegistryID   string
+	MarketplaceResourceName string
+	InstalledName           string // overrides Name for materialization while preserving canonical digest
+	Unresolved              bool   // true when only metadata was fetched (status inspect mode)
+	Revoked                 bool   // true when the resolved revision is revoked
+	UpdateAvailable         bool   // true when a newer revision exists (status/update)
+	Stale                   bool   // true when the registry refresh is stale/unavailable
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {
@@ -107,7 +108,9 @@ type MarketplaceResolveMode int
 const (
 	// MarketplaceResolveModeRefresh fetches artifacts when they are missing from cache.
 	MarketplaceResolveModeRefresh MarketplaceResolveMode = iota
-	// MarketplaceResolveModeCached uses only cached artifacts and metadata.
+	// MarketplaceResolveModeCached uses cached artifacts and metadata, but
+	// revalidates a cached rejected revision online because cached metadata
+	// drops EffectiveAvailability.
 	MarketplaceResolveModeCached
 	// MarketplaceResolveModeInspect fetches metadata only and leaves Resource nil.
 	MarketplaceResolveModeInspect
@@ -985,8 +988,29 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	} else {
 		artifacts, errs = mpResolver.Resolve(ctx, cfg, targetSet, mode)
 	}
+	// Resolvers that cannot see exclusions (for example inspection results)
+	// still return excluded pins; drop them per owning layer so an exclusion
+	// of one layer's pin never hides another layer's pin of the same resource.
+	type ownedPin struct {
+		source     config.Source
+		catalogKey string
+	}
+	var suppressed map[ownedPin]bool
+	if len(cfg.MarketplaceExclusions) > 0 {
+		suppressed = make(map[ownedPin]bool)
+		for _, entry := range cfg.Marketplaces {
+			for _, pin := range entry.Resources {
+				if cfg.MarketplacePinExcluded(entry, pin) {
+					suppressed[ownedPin{entry.Source, config.MarketplaceCatalogKey(entry, pin)}] = true
+				}
+			}
+		}
+	}
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
 	for i, a := range artifacts {
+		if a.IsMarketplace && !a.Required && suppressed[ownedPin{a.Source, a.CatalogKey}] {
+			continue
+		}
 		sel := resourceSelection{kind: a.Kind, name: a.Name}
 		source := a.MarketplaceURL
 		if a.MarketplaceRegistryID != "" {
@@ -2645,11 +2669,17 @@ func localOwnerExcluded(candidate localOwnerCandidate, kind ir.ResourceKind, nam
 	if artifactShadowedByEntries(localCandidateArtifact(candidate), cfg.Registries) {
 		return true
 	}
-	selector := candidate.entry.SelectorForKind(kind)
-	if !candidate.entry.Required && (selector.ExcludeAll || slices.ContainsFunc(selector.Exclude, func(excluded string) bool {
-		return strings.TrimSpace(excluded) == name
-	})) {
-		return true
+	if candidate.entry.V4Decisions != nil {
+		if v4OwnerExcluded(candidate.entry, kind, name) {
+			return true
+		}
+	} else {
+		selector := candidate.entry.SelectorForKind(kind)
+		if !candidate.entry.Required && (selector.ExcludeAll || slices.ContainsFunc(selector.Exclude, func(excluded string) bool {
+			return strings.TrimSpace(excluded) == name
+		})) {
+			return true
+		}
 	}
 	return localResourceExcluded(localExcludes, localExcludeAllKinds, kind, name, candidate.entry.Required, candidate.entry.Source)
 }
@@ -3056,6 +3086,36 @@ func ResourcesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []Se
 	return resources
 }
 
+func EffectiveDirectSelectionSources(entry config.RegistryEntry, entries []config.RegistryEntry, localCfg *config.LocalConfig, kind ir.ResourceKind, name string) (entrySelected, localSelected bool) {
+	name = strings.TrimSpace(name)
+	for _, selected := range resolveSelectedResources(entry, nil) {
+		if selected.kind == kind && selected.name == name {
+			entrySelected = !artifactShadowedByEntries(unresolvedSelectionArtifact(entry, selected), entries)
+			break
+		}
+	}
+	if localCfg == nil {
+		return entrySelected, false
+	}
+	included := false
+	for _, candidate := range localCfg.SelectorForKind(kind).Include {
+		if strings.TrimSpace(candidate) == name {
+			included = true
+			break
+		}
+	}
+	if !included {
+		return entrySelected, false
+	}
+	owner := localOwnerCandidate{
+		entry:      entry,
+		catalogKey: entry.CatalogKey,
+		resource:   catalog.Entry{Kind: kind, Name: name},
+	}
+	localSelected = !localOwnerExcluded(owner, kind, name, &config.Config{Registries: entries}, localResourceExcludes(localCfg), localExcludeAllKinds(localCfg))
+	return entrySelected, localSelected
+}
+
 func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entry) resourceSelections {
 	selected := make(map[resourceSelection]struct{})
 
@@ -3210,6 +3270,24 @@ func v4DecisionKind(kind string) ir.ResourceKind {
 	default:
 		return ir.ResourceKind(-1)
 	}
+}
+
+func v4OwnerExcluded(entry config.RegistryEntry, kind ir.ResourceKind, name string) bool {
+	target := resourceSelection{kind: kind, name: name}
+	excluded := false
+	for _, decision := range entry.V4Decisions {
+		switch decision.Action {
+		case config.V4SelectionExplicit:
+			if decision.Request != nil && v4DecisionKind(decision.Request.Kind) == kind && strings.TrimSpace(decision.Request.Name) == name {
+				excluded = false
+			}
+		case config.V4SelectionExclude:
+			if !entry.Required && v4DecisionExclusionMatches(decision.Exclusion, target) {
+				excluded = true
+			}
+		}
+	}
+	return excluded
 }
 
 func v4DecisionExclusionMatches(exclusion string, selected resourceSelection) bool {

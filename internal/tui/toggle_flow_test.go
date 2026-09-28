@@ -9,8 +9,10 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 const v2Header = `apiVersion: agent-marketplace/v2
@@ -230,9 +232,7 @@ skills:
 	}
 
 	// Toggle: add "deploy" to the local config.
-	if err := config.AddSkillToLocalConfig(repoRoot, "deploy"); err != nil {
-		t.Fatalf("AddSkillToLocalConfig: %v", err)
-	}
+	mustWriteFile(t, config.LocalConfigPath(repoRoot), []byte("skills:\n  include:\n    - deploy\n"))
 
 	// Load snapshot AFTER toggle.
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
@@ -369,9 +369,7 @@ func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	}
 
 	// Toggle: add "deploy" to the project config's registry entry skills.
-	if err := config.AddSkillToRegistryInConfig(config.ProjectConfigPath(repoRoot), "./local-skills", "", "deploy"); err != nil {
-		t.Fatalf("AddSkillToRegistryInConfig: %v", err)
-	}
+	editRegistrySelection(t, config.RepoCommitted, config.ProjectConfigPath(repoRoot), config.RegistryEntry{URL: "./local-skills"}, config.SelectionInclude, "deploy")
 
 	// After toggle: deploy should be project-enabled.
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
@@ -514,9 +512,7 @@ skills:
 
 	// Toggle: add "deploy" to the per-registry skills list (not top-level).
 	registryURL := "./local-skills"
-	if err := config.AddSkillToRegistryInConfig(config.ProjectConfigPath(repoRoot), registryURL, "", "deploy"); err != nil {
-		t.Fatalf("AddSkillToRegistryInConfig: %v", err)
-	}
+	editRegistrySelection(t, config.RepoCommitted, config.ProjectConfigPath(repoRoot), config.RegistryEntry{URL: registryURL}, config.SelectionInclude, "deploy")
 
 	// After toggle: deploy should now be project-enabled because the
 	// skill was added to the specific registry entry's skills list.
@@ -670,6 +666,119 @@ func TestDisableSelectsAdjacentResourceAfterSnapshot(t *testing.T) {
 				t.Fatalf("selection after disabling %s = %#v, ok=%v; want %s", tc.disabled, selected, ok, tc.want)
 			}
 		})
+	}
+}
+
+// A disabled row moves to a different Status bucket, so the snapshot rebuild
+// must not scroll to its new position before selecting the neighbouring row.
+func TestDisableInStatusTabKeepsListScrollPosition(t *testing.T) {
+	names := make([]string, 30)
+	enabled := make([]row, len(names))
+	for i := range names {
+		names[i] = fmt.Sprintf("skill-%02d", i)
+		enabled[i] = mkRow(names[i], withProject)
+	}
+	m := NewModel("/repo", "/home")
+	m.loading = false
+	m.width, m.height = 120, 20
+	m.rows = enabled
+	m.authoritativeRows = enabled
+	m.switchTab(tabStatus)
+	if m.listVisibleHeight() >= len(m.flatItems) {
+		t.Fatalf("fixture must overflow the list: visible=%d items=%d", m.listVisibleHeight(), len(m.flatItems))
+	}
+	disabled := names[1]
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == disabled {
+			m.cursor = i
+			break
+		}
+	}
+	m.listOffset = 0
+	m.clampListOffset()
+	if m.listOffset != 0 {
+		t.Fatalf("fixture listOffset = %d, want 0", m.listOffset)
+	}
+
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("mutation operation was not accepted")
+	}
+	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: disabled, selectNext: true})
+	m = updated.(Model)
+	after := append([]row(nil), enabled...)
+	after[1] = mkRow(disabled, withAvailable)
+	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: after})
+	m = updated.(Model)
+
+	selected, ok := m.selectedRow()
+	if !ok || selected.Artifact.Name != names[2] {
+		t.Fatalf("selection after disabling %s = %q, ok=%v; want %s", disabled, selected.Artifact.Name, ok, names[2])
+	}
+	if m.listOffset != 0 {
+		t.Fatalf("listOffset after disable = %d, want 0 so the section headers stay visible", m.listOffset)
+	}
+}
+
+func TestToggleRemainsSerializedUntilAuthoritativeReload(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width, m.height = 80, 24
+	m.rows = []row{mkRow("review", withProject)}
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	first, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("initial toggle was blocked")
+	}
+	updated, cmd := m.Update(configWrittenMsg{operation: first, skillName: "review", enabled: true})
+	m = updated.(Model)
+	generation := m.requests.active(requestSnapshot)
+	if cmd == nil || generation == 0 {
+		t.Fatal("config write did not schedule an authoritative reload")
+	}
+	if _, ok := m.beginOperation(operationMutation); ok {
+		t.Fatal("second toggle started before authoritative reload")
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation - 1, rows: []row{mkRow("stale", withProject)}})
+	m = updated.(Model)
+	if _, ok := m.beginOperation(operationMutation); ok {
+		t.Fatal("stale snapshot unblocked a second toggle")
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, rows: []row{mkRow("review", withProject)}, mergedCfg: &config.Config{}, driftAssessment: driftReady})
+	m = updated.(Model)
+	if m.operations.active != nil {
+		t.Fatal("accepted reload left the toggle blocked")
+	}
+	if _, ok := m.beginOperation(operationMutation); !ok {
+		t.Fatal("toggle was not available after authoritative reload")
+	}
+}
+
+func TestToggleSupersededReloadReportsAuthoritativeFailure(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	first, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("initial toggle was blocked")
+	}
+	updated, _ := m.Update(configWrittenMsg{operation: first, skillName: "review", enabled: true})
+	m = updated.(Model)
+	original := m.requests.active(requestSnapshot)
+	superseding := m.beginRequest(requestSnapshot)
+	updated, _ = m.Update(snapshotLoadedMsg{generation: original, rows: []row{mkRow("stale", withProject)}})
+	m = updated.(Model)
+	if m.operations.active == nil || m.pendingToggleReload != original {
+		t.Fatal("stale snapshot completed a pending toggle")
+	}
+	failure := fmt.Errorf("catalog unavailable")
+	updated, _ = m.Update(snapshotLoadedMsg{generation: superseding, mergedCfg: &config.Config{}, driftAssessment: driftFailed, errs: []error{failure}})
+	m = updated.(Model)
+	if m.operations.active != nil || m.pendingToggleReload != 0 {
+		t.Fatal("accepted failed reload left the toggle operation active")
+	}
+	if !m.rowsStale || !contains(m.toast, "catalog unavailable") {
+		t.Fatalf("failed reload reported stale or misleading status: stale=%t toast=%q", m.rowsStale, m.toast)
 	}
 }
 
@@ -923,9 +1032,7 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	if err := config.EnsureRegistryWithPathsInConfig(projectPath, globalTool.RegistryURL, globalTool.RegistryRef, globalTool.RegistryPath); err != nil {
 		t.Fatalf("EnsureRegistryWithPathsInConfig: %v", err)
 	}
-	if err := config.AddSkillToRegistryInConfig(projectPath, globalTool.RegistryURL, "", "global-tool"); err != nil {
-		t.Fatalf("AddSkillToRegistryInConfig: %v", err)
-	}
+	editRegistrySelection(t, config.RepoCommitted, projectPath, config.RegistryEntry{URL: globalTool.RegistryURL, Ref: globalTool.RegistryRef, Path: globalTool.RegistryPath}, config.SelectionInclude, "global-tool")
 
 	// Reload snapshot and verify project enablement.
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadRefresh)
@@ -1024,9 +1131,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 
 	// Step 1: Disable smith at global scope — adds to exclude.
 	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	if err := config.DisableSkillInRegistryInConfig(globalPath, globalSkillsDir, "", "smith"); err != nil {
-		t.Fatalf("disable smith: %v", err)
-	}
+	editRegistrySelection(t, config.UserPersonal, globalPath, config.RegistryEntry{URL: globalSkillsDir, Path: "skills"}, config.SelectionExclude, "smith")
 
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap2.errs) > 0 {
@@ -1047,9 +1152,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	}
 
 	// Step 2: Re-enable smith at global scope — adds to include, must clean up exclude.
-	if err := config.AddSkillToRegistryInConfig(globalPath, globalSkillsDir, "", "smith"); err != nil {
-		t.Fatalf("re-enable smith: %v", err)
-	}
+	editRegistrySelection(t, config.UserPersonal, globalPath, config.RegistryEntry{URL: globalSkillsDir, Path: "skills"}, config.SelectionInclude, "smith")
 
 	snap3 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap3.errs) > 0 {
@@ -1085,42 +1188,6 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	}
 }
 
-// TestToggleFlowEnableAfterLocalExcludeCleansUp verifies that enabling
-// a skill locally after excluding it locally cleans up the exclude list.
-// This exercises the FIX-002 local-scope enable-cleans-exclude logic.
-func TestToggleFlowEnableAfterLocalExcludeCleansUp(t *testing.T) {
-	repoRoot := t.TempDir()
-
-	// Step 1: Exclude smith locally.
-	if err := config.AddToLocalExclude(repoRoot, "smith"); err != nil {
-		t.Fatalf("add local exclude: %v", err)
-	}
-
-	cfg1, err := config.LoadLocalConfigFromPath(config.LocalConfigPath(repoRoot))
-	if err != nil {
-		t.Fatalf("load local config after exclude: %v", err)
-	}
-	if !containsString(cfg1.Skills.Exclude, "smith") {
-		t.Fatalf("expected smith in Skills.Exclude, got %v", cfg1.Skills.Exclude)
-	}
-
-	// Step 2: Enable smith locally — must clean up the exclude.
-	if err := config.AddSkillToLocalConfig(repoRoot, "smith"); err != nil {
-		t.Fatalf("add local include: %v", err)
-	}
-
-	cfg2, err := config.LoadLocalConfigFromPath(config.LocalConfigPath(repoRoot))
-	if err != nil {
-		t.Fatalf("load local config after enable: %v", err)
-	}
-	if !containsString(cfg2.Skills.Include, "smith") {
-		t.Fatalf("expected smith in Skills.Include, got %v", cfg2.Skills.Include)
-	}
-	if containsString(cfg2.Skills.Exclude, "smith") {
-		t.Fatalf("expected smith NOT in Skills.Exclude after enable, got %v", cfg2.Skills.Exclude)
-	}
-}
-
 // TestToggleFlowSinglePressDisableWithDefault verifies that disabling a
 // skill in a default:true registry removes from include AND adds to exclude
 // in a single call. This exercises the FIX-003 logic.
@@ -1139,9 +1206,7 @@ registries:
         - smith
 `))
 
-	if err := config.DisableSkillInRegistryInConfig(configPath, "git@example.com:infra.git", "", "smith"); err != nil {
-		t.Fatalf("DisableSkillInRegistryInConfig: %v", err)
-	}
+	editRegistrySelection(t, config.RepoCommitted, configPath, config.RegistryEntry{URL: "git@example.com:infra.git", Ref: "main"}, config.SelectionExclude, "smith")
 
 	cfg, err := config.LoadConfigFromPath(configPath)
 	if err != nil {
@@ -1154,6 +1219,20 @@ registries:
 	}
 	if !containsString(entry.Skills.Exclude, "smith") {
 		t.Fatalf("expected smith in exclude (single-press disable with default:true), got %v", entry.Skills.Exclude)
+	}
+}
+
+func editRegistrySelection(t *testing.T, source config.Source, path string, entry config.RegistryEntry, op config.SelectionOperation, name string) {
+	t.Helper()
+	err := pipeline.EditLayerAtPath(config.LayerTarget{Source: source, StagedPath: path, DeclaringPath: path}, func(m *pipeline.LayerMutation) error {
+		binding, err := m.EnsureRegistry(entry)
+		if err != nil {
+			return err
+		}
+		return m.Apply(binding, config.SelectionChange{Operation: op, Locators: []config.ResourceLocator{{Kind: ir.KindSkill, Name: name}}})
+	})
+	if err != nil {
+		t.Fatalf("edit %q: %v", path, err)
 	}
 }
 

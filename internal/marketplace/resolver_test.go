@@ -98,6 +98,129 @@ func TestResolverRejectsCachedAssessmentBeforeArtifactRead(t *testing.T) {
 	}
 }
 
+func TestResolverCachedModeRevalidatesRejectedPinExposure(t *testing.T) {
+	ctx := context.Background()
+	cache := NewCache(t.TempDir())
+
+	skill := ir.NewSkill("explainer", "Explain code", "Explain carefully.", []string{"user"}, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(skill)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.Revision = "refs/heads/main"
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	rejected := rejectedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "explainer"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "explainer", Revision: contentDigest, Digest: contentDigest}
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}
+
+	availability := "operator-exposed"
+	served := rejected
+	var resourceRequests int
+	mux := http.NewServeMux()
+	serveWellKnown(mux, "mp")
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
+		resourceRequests++
+		_ = json.NewEncoder(w).Encode(struct {
+			store.AssessedResourceRevision
+			CurrentAvailability any `json:"current_availability"`
+		}{served, map[string]any{"availability": availability}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	entry.URL = server.URL
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
+
+	if _, err := cache.WriteResourceRevision(entry.URL, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, rejected); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Resolver{Cache: cache}
+	resolved, errs := r.Resolve(ctx, cfg, nil, resolver.MarketplaceResolveModeCached)
+	if len(errs) != 0 || len(resolved) != 1 {
+		t.Fatalf("operator-exposed cached resolve = %d artifacts, errors %v", len(resolved), errs)
+	}
+	if resourceRequests != 1 {
+		t.Fatalf("cached rejected pin made %d metadata requests, want 1 revalidation", resourceRequests)
+	}
+
+	// Offline resolution must not inherit the transient exposure grant.
+	if _, errs := r.Resolve(ctx, cfg, nil, resolver.MarketplaceResolveModeCachedNoFetch); len(errs) != 1 || !strings.Contains(errs[0].Error(), "assessment rejected") {
+		t.Fatalf("offline cached rejected resolve errors = %v", errs)
+	}
+
+	availability = "blocked"
+	resolved, errs = r.Resolve(ctx, cfg, nil, resolver.MarketplaceResolveModeCached)
+	if len(resolved) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "assessment rejected") {
+		t.Fatalf("withdrawn exposure resolve = %d artifacts, errors %v", len(resolved), errs)
+	}
+
+	// A revoked revision stays blocked even while operator-exposed.
+	served = revokedRevision(rejected.ResourceRevision, contentDigest)
+	availability = "operator-exposed"
+	resolved, errs = r.Resolve(ctx, cfg, nil, resolver.MarketplaceResolveModeCached)
+	if len(resolved) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "revoked") {
+		t.Fatalf("revoked operator-exposed resolve = %d artifacts, errors %v", len(resolved), errs)
+	}
+}
+
+func TestIndexOnlyCachedModeRevalidatesRejectedRevision(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	manifest := "sha256:" + strings.Repeat("b", 64)
+	digest := "sha256:" + strings.Repeat("c", 64)
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: manifest}
+	rejected := rejectAssessment(assessedRevisionOccurrence(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(digest),
+	}, commit, manifest))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(struct {
+			store.AssessedResourceRevision
+			CurrentAvailability any `json:"current_availability"`
+		}{rejected, map[string]any{"availability": "operator-exposed"}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}
+	identity := indexOnlyIdentity(entry, pin)
+	cache := NewCache(t.TempDir())
+	if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, rejected); err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &Resolver{Cache: cache}
+	rev, err := r.getIndexOnlyResourceRevision(context.Background(), client, cache, entry, pin, identity, resolver.MarketplaceResolveModeCached)
+	if err != nil {
+		t.Fatalf("getIndexOnlyResourceRevision: %v", err)
+	}
+	if err := enforceMarketplaceAssessment(rev); err != nil {
+		t.Fatalf("operator-exposed index-only revision rejected: %v", err)
+	}
+	offline, err := r.getIndexOnlyResourceRevision(context.Background(), nil, cache, entry, pin, identity, resolver.MarketplaceResolveModeCachedNoFetch)
+	if err != nil || enforceMarketplaceAssessment(offline) == nil {
+		t.Fatalf("offline index-only rejected revision did not fail closed: err=%v", err)
+	}
+}
+
 func TestIndexOnlyResolverRejectsAssessmentBeforeRegistryAcquisition(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	manifest := "sha256:" + strings.Repeat("b", 64)
@@ -487,7 +610,7 @@ func TestResolverInspect(t *testing.T) {
 	}
 }
 
-func TestResolverInfersRequiredFromMarketplaceOwner(t *testing.T) {
+func TestResolverDoesNotInferRequiredFromMarketplaceOwner(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	rev := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
@@ -507,13 +630,15 @@ func TestResolverInfersRequiredFromMarketplaceOwner(t *testing.T) {
 		source   config.Source
 		required bool
 	}{
-		{name: "organization", source: config.Organization, required: true},
+		{name: "organization", source: config.Organization, required: false},
+		{name: "organization explicit", source: config.Organization, required: true},
 		{name: "user", source: config.UserPersonal, required: false},
+		{name: "user explicit", source: config.UserPersonal, required: true},
 		{name: "repo", source: config.RepoCommitted, required: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
-				URL: server.URL, InstanceID: "mp", Source: tt.source,
+				URL: server.URL, InstanceID: "mp", Source: tt.source, Required: tt.required,
 				Resources: []config.MarketplaceResourcePin{{
 					RegistryID: "src", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: digest,
 				}},
@@ -535,7 +660,7 @@ func TestResolverInfersRequiredFromMarketplaceOwner(t *testing.T) {
 	}
 }
 
-func TestMergeLayersStampsOrganizationMarketplaceRequired(t *testing.T) {
+func TestMergeLayersDoesNotRequireOrganizationMarketplace(t *testing.T) {
 	const instanceID = "org-marketplace"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	revision := assessedRevision(store.ResourceRevision{
@@ -586,8 +711,8 @@ func TestMergeLayersStampsOrganizationMarketplaceRequired(t *testing.T) {
 	if len(resolved) != 1 {
 		t.Fatalf("resolved %d artifacts, want one", len(resolved))
 	}
-	if !resolved[0].Required {
-		t.Fatalf("resolved Marketplace artifact Required = false, want true")
+	if resolved[0].Required {
+		t.Fatalf("resolved Marketplace artifact Required = true without explicit policy")
 	}
 	if resolved[0].Source != config.Organization {
 		t.Fatalf("resolved Marketplace Source = %s, want Organization", resolved[0].Source)

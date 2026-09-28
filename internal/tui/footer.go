@@ -8,6 +8,9 @@ import (
 )
 
 func renderFooter(m Model) string {
+	if len(m.errs) > 0 {
+		return renderErrorFooter(m)
+	}
 	var leftParts []string
 
 	// Animated spinner + status indicator for in-flight work.
@@ -18,7 +21,7 @@ func renderFooter(m Model) string {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" syncing..."))
 	} else if m.refreshing {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterRefreshing.Render(" refreshing cache..."))
-	} else if m.driftAssessment != driftReady {
+	} else if m.driftAssessment != driftReady || m.hasUnavailableRows() {
 		leftParts = append(leftParts, styleDriftPending.Render("~ drift unavailable"))
 	} else if m.driftReport.InSync() {
 		leftParts = append(leftParts, styleDriftOK.Render("~ in sync"))
@@ -78,11 +81,53 @@ func renderFooter(m Model) string {
 	return footerWithRight(strings.Join(leftParts, "  "), right, m.width)
 }
 
+func renderErrorFooter(m Model) string {
+	actions := "e:errors · r:reload · q:quit"
+	if m.filterActive {
+		actions = "enter apply · esc cancel · q quit"
+	}
+	budget := m.width - ansi.StringWidth(actions) - 1
+	status := fmt.Sprintf("! %d errors", len(m.errs))
+	if budget > ansi.StringWidth(status)+2 {
+		latest := ""
+		if err := m.errs[len(m.errs)-1]; err != nil {
+			latest = sanitizeTerminalData(fmt.Sprint(err), terminalSingleLine)
+		}
+		if latest != "" {
+			status += ": " + latest
+		}
+	}
+	if m.width < 1 {
+		return ""
+	}
+	if budget < 0 {
+		budget = 0
+	}
+	status = ansi.Truncate(status, budget, "…")
+	if ansi.StringWidth(actions) >= m.width {
+		return ansi.Truncate(actions, m.width, "…")
+	}
+	return styleFooterError.Render(status) + " " + actions
+}
+
+func rowsHaveUnavailable(rows []row) bool {
+	for _, r := range rows {
+		if r.UnavailableReason != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) hasUnavailableRows() bool {
+	return rowsHaveUnavailable(m.rows)
+}
+
 func (m Model) failuresOrDrift() bool {
 	if len(m.errs) > 0 {
 		return true
 	}
-	return m.driftAssessment == driftFailed || (m.driftAssessment == driftReady && !m.driftReport.InSync())
+	return m.driftAssessment == driftFailed || m.hasUnavailableRows() || (m.driftAssessment == driftReady && !m.driftReport.InSync())
 }
 
 // fitFooterGroups adapts a separator-joined footer segment (actions joined

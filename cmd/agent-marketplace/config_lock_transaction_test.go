@@ -25,7 +25,7 @@ func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 	writeConfig(t, root, "include: fragment.yaml\n")
 	writeConfig(t, fragment, "harnesses: [claude]\n")
 	opts := config.LoadEffectiveOptions{RepoRoot: repo, LocalConfigDir: repo}
-	loaded, before, err := loadStableEffective(context.Background(), opts)
+	loaded, before, err := loadStableEffectiveWith(context.Background(), opts, config.LoadEffective)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 	if _, err := snapshotEffectiveConfigs(loaded, nil); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("stale parsed bytes accepted: %v", err)
 	}
-	_, after, err := loadStableEffective(context.Background(), opts)
+	_, after, err := loadStableEffectiveWith(context.Background(), opts, config.LoadEffective)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestEffectiveReadAssertionsRequireTransientOrganizationLockAbsence(t *testi
 				Overlay: true, RuntimeLock: true, AcquisitionLock: true,
 			}},
 		},
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

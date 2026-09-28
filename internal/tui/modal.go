@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ const (
 	scopeProject
 	scopeLocal
 	scopeLocalExclude
+	scopeUserExclude
 )
 
 // toggleAction describes the direction of a toggle (add vs remove) for a
@@ -37,7 +39,10 @@ type toggleAction struct {
 	registryURL             string // for project/global scopes: which registry entry to target
 	registryRef             string // ref of the source registry (for EnsureRegistryInConfig fallback)
 	registryPath            string // path subdirectory of the source registry (for EnsureRegistryWithPathsInConfig fallback)
+	registryKind            config.V4SourceKind
+	sourceHarness           string
 	isMarketplace           bool
+	allowMarketplaceExclude bool
 	marketplaceSelection    marketplaceSelection
 	hasMarketplaceSelection bool
 }
@@ -63,6 +68,10 @@ func marketplaceSourceForScope(s scope) config.Source {
 }
 
 func marketplaceSelectionForToggle(r row, s scope) (marketplaceSelection, bool) {
+	if s == scopeUserExclude {
+		selection, ok := r.MarketplaceSelections[config.Organization]
+		return selection, ok
+	}
 	if selection, ok := r.MarketplaceSelections[marketplaceSourceForScope(s)]; ok {
 		return selection, true
 	}
@@ -80,13 +89,16 @@ func marketplaceSelectionForToggle(r row, s scope) (marketplaceSelection, bool) 
 
 func scopedToggleAction(r row, s scope) toggleAction {
 	act := toggleAction{
-		skillName:     r.Artifact.Name,
-		kind:          r.Artifact.Kind,
-		scope:         s,
-		registryURL:   r.RegistryURL,
-		registryRef:   r.RegistryRef,
-		registryPath:  r.RegistryPath,
-		isMarketplace: r.Artifact.IsMarketplace,
+		skillName:               r.Artifact.Name,
+		kind:                    r.Artifact.Kind,
+		scope:                   s,
+		registryURL:             r.RegistryURL,
+		registryRef:             r.RegistryRef,
+		registryPath:            r.RegistryPath,
+		registryKind:            r.Artifact.V4Kind,
+		sourceHarness:           r.Artifact.SourceHarness,
+		isMarketplace:           r.Artifact.IsMarketplace,
+		allowMarketplaceExclude: r.canOverrideMarketplace(),
 	}
 	if act.isMarketplace {
 		act.marketplaceSelection, act.hasMarketplaceSelection = marketplaceSelectionForToggle(r, s)
@@ -100,12 +112,14 @@ func scopedToggleAction(r row, s scope) toggleAction {
 		act.enable = !r.EnabledLocal
 	case scopeLocalExclude:
 		act.enable = !r.ExcludedLocally
+	case scopeUserExclude:
+		act.enable = !r.ExcludedByUser
 	}
 	return act
 }
 
 func (a toggleAction) disablesResource() bool {
-	if a.scope == scopeLocalExclude {
+	if a.scope == scopeLocalExclude || a.scope == scopeUserExclude {
 		return a.enable
 	}
 	return !a.enable
@@ -135,7 +149,31 @@ func marketplaceToggleConfigPath(repoRoot string, s scope) (string, error) {
 	}
 }
 
-func runMarketplaceScopedToggle(repoRoot string, act toggleAction, mapper pipeline.ConfigPathMapper) error {
+func scopedToggleConfigPath(repoRoot string, s scope) (string, error) {
+	if s == scopeLocalExclude {
+		return config.LocalConfigPath(repoRoot), nil
+	}
+	return marketplaceToggleConfigPath(repoRoot, s)
+}
+
+func runMarketplaceScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mapper pipeline.ConfigPathMapper) error {
+	if act.scope == scopeUserExclude {
+		if !act.allowMarketplaceExclude || !act.hasMarketplaceSelection || act.marketplaceSelection.Pin.RegistrySlug == "" {
+			return fmt.Errorf("marketplace resource has no overridable organization pin")
+		}
+		path, err := config.GlobalConfigPath()
+		if err != nil {
+			return err
+		}
+		if mapper != nil {
+			path, err = mapper(path)
+			if err != nil {
+				return err
+			}
+		}
+		selection := act.marketplaceSelection
+		return config.SetUserMarketplaceExclusion(path, selection.Entry.URL, selection.Pin.RegistrySlug, act.kind, selection.Pin.Name, act.enable)
+	}
 	if !act.hasMarketplaceSelection {
 		return fmt.Errorf("marketplace %s %q has no direct installation pin", skill.KindLabel(act.kind), act.skillName)
 	}
@@ -143,25 +181,29 @@ func runMarketplaceScopedToggle(repoRoot string, act toggleAction, mapper pipeli
 	if err != nil {
 		return err
 	}
-	if mapper != nil {
-		configPath, err = mapper(configPath)
-		if err != nil {
-			return err
-		}
-	}
 	selection := act.marketplaceSelection
-	if act.enable {
-		pin := selection.Pin
-		pin.Direct = true
-		pin.SelectedBy = ""
-		_, _, err = config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, selection.Entry.URL, selection.Entry.InstanceID, selection.Entry.Alias, []config.MarketplaceResourcePin{pin})
-		return err
-	}
-	if !selection.Pin.Direct && len(selection.Pin.SelectedBy.List()) > 0 {
+	if !act.enable && !selection.Pin.Direct && len(selection.Pin.SelectedBy.List()) > 0 {
 		return fmt.Errorf("marketplace %s %q is selected only through a collection", skill.KindLabel(act.kind), act.skillName)
 	}
-	_, _, err = config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, selection.Entry.URL, selection.Entry.InstanceID, selection.Pin)
-	return err
+	var source config.Source
+	switch act.scope {
+	case scopeGlobal:
+		source = config.UserPersonal
+	case scopeProject:
+		source = config.RepoCommitted
+	case scopeLocal:
+		source = config.RepoPersonal
+	default:
+		return fmt.Errorf("unsupported Marketplace toggle scope")
+	}
+	localDir := config.FindLocalConfigDir()
+	if act.scope == scopeLocal {
+		rel, err := filepath.Rel(repoRoot, localDir)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			configPath = config.LocalConfigPath(localDir)
+		}
+	}
+	return pipeline.ToggleMarketplacePin(ctx, repoRoot, localDir, configPath, source, selection.Entry, selection.Pin, act.enable)
 }
 
 func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
@@ -177,7 +219,7 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 			return mapper(path)
 		}
 		if act.isMarketplace {
-			err := runMarketplaceScopedToggle(repoRoot, act, mapper)
+			err := runMarketplaceScopedToggle(context.Background(), repoRoot, act, mapper)
 			if err != nil {
 				slog.Error("TUI Marketplace toggle failed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable, "error", err)
 			} else {
@@ -185,128 +227,83 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 			}
 			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, err: err}
 		}
-		var err error
+		originalPath, pathErr := scopedToggleConfigPath(repoRoot, act.scope)
+		if pathErr != nil {
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: pathErr}
+		}
+		mappedPath, pathErr := mapPath(originalPath)
+		if pathErr != nil {
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: pathErr}
+		}
+		source := config.RepoPersonal
 		switch act.scope {
 		case scopeGlobal:
-			globalPath, pathErr := config.GlobalConfigPath()
-			if pathErr != nil {
-				err = pathErr
-				break
-			}
-			globalPath, pathErr = mapPath(globalPath)
-			if pathErr != nil {
-				err = pathErr
-				break
-			}
-			// Repo-relative local paths are valid in repo/local configs but
-			// meaningless machine-wide; refuse to write them to the user
-			// (global) config when enabling. Disabling an existing broken entry
-			// is still allowed so users can clean it up.
-			if act.enable {
-				if policyErr := config.ValidateGlobalRegistryWrite(config.RegistryEntry{URL: act.registryURL}); policyErr != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       policyErr,
-					}
-				}
-			}
-			if act.enable {
-				if err := config.EnsureRegistryWithPathsInConfig(globalPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure registry in global config: %w", err),
-					}
-				}
-				err = config.AddResourceToRegistryInConfig(globalPath, act.registryURL, act.registryPath, act.kind, act.skillName)
-			} else {
-				err = config.DisableResourceWithShadowFallback(globalPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
-			}
+			source = config.UserPersonal
 		case scopeProject:
-			projectPath, pathErr := mapPath(config.ProjectConfigPath(repoRoot))
-			if pathErr != nil {
-				err = pathErr
-				break
+			source = config.RepoCommitted
+		}
+		entry := config.RegistryEntry{URL: act.registryURL, Ref: act.registryRef, Path: act.registryPath, V4Kind: act.registryKind, SourceHarness: act.sourceHarness}
+		locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
+		// Repo-relative local paths are valid in repo/local configs but
+		// meaningless machine-wide; refuse to write them to the user (global)
+		// config when enabling. Disabling an existing broken entry is still
+		// allowed so users can clean it up.
+		if act.scope == scopeGlobal && act.enable {
+			if err := config.ValidateGlobalRegistryWrite(entry); err != nil {
+				return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
 			}
-			if act.enable {
-				if err := config.EnsureRegistryWithPathsInConfig(projectPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure registry in project config: %w", err),
-					}
-				}
-				err = config.AddResourceToRegistryInConfig(projectPath, act.registryURL, act.registryPath, act.kind, act.skillName)
-			} else {
-				err = config.DisableResourceWithShadowFallback(projectPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
-			}
-		case scopeLocal:
-			localPath, pathErr := mapPath(config.LocalConfigPath(repoRoot))
-			if pathErr != nil {
-				err = pathErr
-				break
-			}
-			if act.enable {
-				// Write the include scoped to the registry entry (creating a
-				// local shadow entry when the registry lives in a lower layer),
-				// mirroring the project/global scopes so local selections are
-				// registry-scoped too rather than a top-level skills.include.
-				if err := config.EnsureRegistryWithPathsInConfig(localPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure registry in local config: %w", err),
-					}
-				}
-				err = config.AddResourceToRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName)
-			} else {
-				err = config.DisableResourceWithShadowFallback(localPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
-			}
-		case scopeLocalExclude:
-			localPath, pathErr := mapPath(config.LocalConfigPath(repoRoot))
-			if pathErr != nil {
-				err = pathErr
-				break
-			}
-			if act.enable {
+		}
+		err := pipeline.EditLayerAtPath(config.LayerTarget{Source: source, StagedPath: mappedPath, DeclaringPath: originalPath}, func(m *pipeline.LayerMutation) error {
+			if act.scope == scopeLocalExclude {
 				if strings.TrimSpace(act.registryURL) == "" {
-					// No registry context (shouldn't normally happen): fall back
-					// to the top-level personal exclude.
-					err = config.AddKindExcludeToConfig(localPath, act.kind, act.skillName)
-					break
+					if act.enable {
+						return m.SetUnboundExclude(locator)
+					}
+					return m.ClearUnboundExclude(locator)
 				}
-				// Suppress locally, registry-scoped. The exclude is written under
-				// the providing registry entry (creating a shadow entry if
-				// needed) rather than a top-level personal exclude, and any
-				// matching local include is removed so the entry never holds a
-				// contradictory include+exclude pair. Unlike toggling the local
-				// include off ([l]), the exclude is always written so the
-				// resource is suppressed even when a lower layer's default
-				// re-selects it.
-				if e := config.EnsureRegistryWithPathsInConfig(localPath, act.registryURL, act.registryRef, act.registryPath); e != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure registry in local config: %w", e),
+				if act.enable {
+					binding, err := m.EnsureRegistry(entry)
+					if err != nil {
+						return err
+					}
+					return m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}})
+				}
+				binding, found, err := m.LookupRegistry(entry)
+				if err != nil {
+					return err
+				}
+				if found {
+					if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionClearExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+						return err
 					}
 				}
-				if e := config.RemoveResourceFromRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName); e != nil {
-					err = e
-					break
-				}
-				err = config.AddKindExcludeToRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName)
-			} else {
-				// Remove the exclude wherever it lives: the registry entry and
-				// any legacy top-level personal exclude.
-				if act.registryURL != "" {
-					if e := config.RemoveKindExcludeFromRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName); e != nil {
-						err = e
-						break
-					}
-				}
-				err = config.RemoveKindExcludeFromConfig(localPath, act.kind, act.skillName)
+				return m.ClearUnboundExclude(locator)
 			}
+			var binding config.SourceBinding
+			var found bool
+			var err error
+			if !act.enable {
+				binding, found, err = m.LookupRegistry(entry)
+				if err != nil {
+					return err
+				}
+			}
+			if !found {
+				binding, err = m.EnsureRegistry(entry)
+				if err != nil {
+					return err
+				}
+			}
+			operation := config.SelectionExclude
+			if act.enable {
+				operation = config.SelectionInclude
+			}
+			return m.Apply(binding, config.SelectionChange{Operation: operation, Locators: []config.ResourceLocator{locator}})
+		})
+		if err != nil {
+			slog.Error("TUI toggle failed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable, "error", err)
+		} else {
+			slog.Info("TUI toggle completed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable)
 		}
 		return configWrittenMsg{
 			skillName:  act.skillName,
@@ -320,6 +317,12 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 func runDependencyScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
 	if mutate == nil {
 		return runScopedToggle(repoRoot, act)
+	}
+	if act.isMarketplace && act.scope != scopeUserExclude {
+		return func() tea.Msg {
+			err := runMarketplaceScopedToggle(ctx, repoRoot, act, nil)
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
+		}
 	}
 	return func() tea.Msg {
 		err := mutate(ctx, repoRoot, func(mapper pipeline.ConfigPathMapper) error {
@@ -361,11 +364,14 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 	if len(competing) == 0 {
 		return nil
 	}
-	// Also collect per-competing-URL metadata (ref, path) so we can ensure
-	// the registry entry exists in the target config file before adding the
-	// exclude. Without this, the exclude write silently fails when the
-	// competing registry only exists in a different scope's config file.
-	competingMeta := make(map[string]struct{ ref, path string })
+	// Also collect per-competing-URL metadata (ref, path) so the competing
+	// source binding resolves to the exact entry declared in the target
+	// config file rather than a same-URL sibling.
+	type competingRegistryMeta struct {
+		ref, path, harness string
+		kind               config.V4SourceKind
+	}
+	competingMeta := make(map[string]competingRegistryMeta)
 	for _, r := range rows {
 		if r.Artifact.Kind != act.kind || r.Artifact.Name != act.skillName || r.RegistryURL == act.registryURL {
 			continue
@@ -373,7 +379,7 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 		if _, dup := competingMeta[r.RegistryURL]; dup {
 			continue
 		}
-		competingMeta[r.RegistryURL] = struct{ ref, path string }{ref: r.RegistryRef, path: r.RegistryPath}
+		competingMeta[r.RegistryURL] = competingRegistryMeta{ref: r.RegistryRef, path: r.RegistryPath, kind: r.Artifact.V4Kind, harness: r.Artifact.SourceHarness}
 	}
 
 	return func() tea.Msg {
@@ -402,30 +408,30 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 				return configWrittenMsg{skillName: act.skillName, enabled: false, err: err}
 			}
 		}
-		for _, url := range competing {
-			meta, ok := competingMeta[url]
-			if ok {
-				// Ensure the competing registry entry exists in the target
-				// config file so the exclude write finds a matching entry.
-				if err := config.EnsureRegistryWithPathsInConfig(configPath, url, meta.ref, meta.path); err != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure competing registry %q: %w", url, err),
-					}
+		source := config.UserPersonal
+		if act.scope == scopeProject {
+			source = config.RepoCommitted
+		}
+		locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
+		err := pipeline.EditLayerAtPath(config.LayerTarget{Source: source, StagedPath: configPath, DeclaringPath: configPath}, func(m *pipeline.LayerMutation) error {
+			for _, url := range competing {
+				meta := competingMeta[url]
+				entry := config.RegistryEntry{URL: url, Ref: meta.ref, Path: meta.path, V4Kind: meta.kind, SourceHarness: meta.harness}
+				binding, found, err := m.LookupRegistry(entry)
+				if err != nil {
+					return fmt.Errorf("exclude competing registry %q: %w", url, err)
+				}
+				if !found {
+					return fmt.Errorf("exclude competing registry %q: source is not declared in %s", url, configPath)
+				}
+				if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+					return fmt.Errorf("exclude %s %q in competing registry %q: %w", skill.KindLabel(act.kind), act.skillName, url, err)
 				}
 			}
-			competingPath := ""
-			if ok {
-				competingPath = meta.path
-			}
-			if err := config.AddKindExcludeToRegistryInConfig(configPath, url, competingPath, act.kind, act.skillName); err != nil {
-				return configWrittenMsg{
-					skillName: act.skillName,
-					enabled:   false,
-					err:       fmt.Errorf("exclude %s %q in competing registry %q: %w", skill.KindLabel(act.kind), act.skillName, url, err),
-				}
-			}
+			return nil
+		})
+		if err != nil {
+			return configWrittenMsg{skillName: act.skillName, enabled: false, err: err}
 		}
 		return configWrittenMsg{skillName: act.skillName, enabled: true}
 	}
@@ -475,13 +481,17 @@ func renderToggleModal(m Model) string {
 			b.WriteString("Name collision: choose one source.\n")
 		}
 		fmt.Fprintf(&b, "Global %s  Project %s\n", check(r.EnabledGlobal), check(r.EnabledProject))
-		fmt.Fprintf(&b, "Local %s  Excluded %s\n", check(r.EnabledLocal), yesno(r.ExcludedLocally))
-		b.WriteString(keyStyle.Render("[g]") + " global  " + keyStyle.Render("[p]") + " project\n")
-		b.WriteString(keyStyle.Render("[l]") + " local   ")
-		if r.Artifact.Source.IsMachineScope() {
-			b.WriteString(styleDim.Render("[e] unavailable") + "\n")
+		fmt.Fprintf(&b, "Local %s  Excluded %s\n", check(r.EnabledLocal), yesno(r.ExcludedLocally || r.ExcludedByUser))
+		if r.canOverrideMarketplace() {
+			b.WriteString(keyStyle.Render("[e]") + " user override\n")
 		} else {
-			b.WriteString(keyStyle.Render("[e]") + " exclude\n")
+			b.WriteString(keyStyle.Render("[g]") + " global  " + keyStyle.Render("[p]") + " project\n")
+			b.WriteString(keyStyle.Render("[l]") + " local   ")
+			if r.Artifact.Source.IsMachineScope() {
+				b.WriteString(styleDim.Render("[e] unavailable") + "\n")
+			} else {
+				b.WriteString(keyStyle.Render("[e]") + " exclude\n")
+			}
 		}
 		b.WriteString(keyStyle.Render("[esc]") + " cancel")
 		return compactModalStyle(styleToggleModal, m).Render(b.String())
@@ -501,7 +511,11 @@ func renderToggleModal(m Model) string {
 	fmt.Fprintf(&b, "  Global:        %s\n", check(r.EnabledGlobal))
 	fmt.Fprintf(&b, "  Project:       %s\n", check(r.EnabledProject))
 	fmt.Fprintf(&b, "  Local:         %s\n", check(r.EnabledLocal))
-	fmt.Fprintf(&b, "  Local exclude: %s  (%s)\n\n", yesno(r.ExcludedLocally), skill.KindLabel(r.Artifact.Kind))
+	if r.canOverrideMarketplace() {
+		fmt.Fprintf(&b, "  User override: %s  (%s)\n\n", yesno(r.ExcludedByUser), skill.KindLabel(r.Artifact.Kind))
+	} else {
+		fmt.Fprintf(&b, "  Local exclude: %s  (%s)\n\n", yesno(r.ExcludedLocally), skill.KindLabel(r.Artifact.Kind))
+	}
 
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
 	disabledKeyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#999999", Dark: "#777777"})
@@ -515,11 +529,15 @@ func renderToggleModal(m Model) string {
 		{"[e]", fmt.Sprintf("toggle %s exclude", kindLabel)},
 		{"[esc]", "cancel"},
 	}
+	if r.canOverrideMarketplace() {
+		actions[3].label = "toggle user override"
+		actions = actions[3:]
+	}
 	for i, a := range actions {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		if a.key == "[e]" && (r.Artifact.Source.IsMachineScope() || r.Artifact.IsMarketplace) {
+		if a.key == "[e]" && (r.Artifact.Source.IsMachineScope() || r.Artifact.IsMarketplace) && !r.canOverrideMarketplace() {
 			hint := " (use [g] to toggle at user level)"
 			if r.Artifact.IsMarketplace {
 				hint = " (use installation scopes)"
@@ -602,6 +620,11 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 
 // handleToggleModalKey routes modal key presses. Returns (newModel, cmd).
 func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modalSkill.canOverrideMarketplace() && (key.Matches(msg, m.keys.ToggleGlobal) || key.Matches(msg, m.keys.ToggleProject) || key.Matches(msg, m.keys.ToggleLocal)) {
+		return m, func() tea.Msg {
+			return toastMsg{text: "organization Marketplace items can be disabled with [e] user override", duration: 2 * time.Second}
+		}
+	}
 	switch {
 	case key.Matches(msg, m.keys.ToggleCancel):
 		m.pane = paneList
@@ -627,15 +650,18 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocal))
 	case key.Matches(msg, m.keys.ToggleExclude):
-		if m.modalSkill.Artifact.IsMarketplace {
+		if m.modalSkill.Artifact.IsMarketplace && !m.modalSkill.canOverrideMarketplace() {
 			return m, func() tea.Msg {
 				return toastMsg{text: "Marketplace items must be toggled by installation scope", duration: 2 * time.Second}
 			}
 		}
-		if m.modalSkill.Artifact.Source.IsMachineScope() {
+		if m.modalSkill.Artifact.Source.IsMachineScope() && !m.modalSkill.canOverrideMarketplace() {
 			return m, func() tea.Msg {
 				return toastMsg{text: "Cannot exclude org/user skill at local level — use [g] instead", duration: 2 * time.Second}
 			}
+		}
+		if m.modalSkill.canOverrideMarketplace() {
+			return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeUserExclude))
 		}
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocalExclude))
 	}

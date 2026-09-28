@@ -171,24 +171,80 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	m.driftAssessment = assessment
 	m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
 	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+	m.configInvalid = false
+	for _, d := range m.diagnostics.snapshot {
+		if d.severity == diagnosticError && d.category == diagnosticConfig {
+			m.configInvalid = true
+			break
+		}
+	}
+	m.dismissInvalidConfigMutationPane()
+	if m.pendingToggleReload == 0 || msg.generation < m.pendingToggleReload {
+		return
+	}
+	m.finishOperation(m.pendingToggleOperation)
+	m.pendingToggleOperation = 0
+	m.pendingToggleReload = 0
+	slog.Info("tui toggle authoritative reload completed", "generation", msg.generation, "healthy", !m.rowsStale)
+	if !m.rowsStale {
+		m.recordOperationSuccess(operationMutation)
+		return
+	}
+	msg.driftAssessment = m.driftAssessment
+	failure := snapshotAcceptanceError(msg)
+	m.recordOperationFailure(operationMutation, diagnosticMutation, failure)
+	m.toast = fmt.Sprintf("error: %v", failure)
+	m.toastExp = time.Now().Add(5 * time.Second)
 }
 
-func marketplaceInstallSnapshotError(msg snapshotLoadedMsg) error {
+func (m *Model) dismissInvalidConfigMutationPane() bool {
+	if !m.configInvalid {
+		return false
+	}
+	switch m.pane {
+	case paneToggleModal, paneHarnessModal, paneMigrationModal, paneInitModal:
+		m.pane = paneList
+		return true
+	case paneMarketplaceConsent:
+		m.pane = paneList
+		m.clearMarketplaceConsent()
+		return true
+	case paneConfirm:
+		m.pane = paneList
+		m.confirmMsg = ""
+		m.quitAfterSync = false
+		return true
+	}
+	return false
+}
+
+func snapshotAcceptanceError(msg snapshotLoadedMsg) error {
 	hardErrors := append([]error(nil), msg.errs...)
 	hardErrors = append(hardErrors, diagnosticErrors(msg.diagnostics)...)
 	if len(hardErrors) > 0 {
 		return errors.Join(hardErrors...)
 	}
 	if msg.driftAssessment != driftReady {
-		return errors.New("post-install state could not be verified")
+		return errors.New("authoritative state could not be verified")
 	}
 	return nil
 }
 
 func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	selection := m.selectionKeyForRebuild()
+	listOffset := m.listOffset
 	selectionAfterDisable := m.selectionAfterDisable
 	m.selectionAfterDisable = ""
+	var previousDetail row
+	hadPreviousDetail := false
+	if m.pane == paneDetail && m.detailKey != "" {
+		for _, r := range m.rows {
+			if rowKey(r) == m.detailKey {
+				previousDetail, hadPreviousDetail = r, true
+				break
+			}
+		}
+	}
 	m.authoritativeRows = msg.rows
 	m.rows = msg.rows
 	m.driftReport = msg.driftReport
@@ -198,10 +254,15 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	m.globalHarnesses = msg.globalHarnesses
 	m.projectHarnesses = msg.projectHarnesses
 	m.mergeDiscoveryRows()
+	// The rebuild may have scrolled to where a toggled row moved (for example
+	// a disabled row now in Available); keep the previous viewport and scroll
+	// only as far as the final selection needs.
+	m.listOffset = listOffset
 	if !m.restoreSelectionKey(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
-	m.rebuildOpenBundle()
+	m.clampListOffset()
+	m.rebuildOpenBundle(previousDetail, hadPreviousDetail)
 	if msg.inventoryResult != nil {
 		pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
 	}
@@ -276,7 +337,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pane = paneMigrationModal
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg))
+			return m, m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.refreshing = false
@@ -285,7 +346,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applySnapshotData(msg)
 		discoveryCmd := m.beginMarketplaceDiscovery(m.filter, false)
-		installCmd := m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg))
+		installCmd := m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg))
 		if msg.refreshAfterLoad {
 			m.refreshing = true
 			generation := m.beginRequest(requestSnapshot)
@@ -305,14 +366,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshotLoadedMsg))
+			return m, m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.clearMarketplaceDiscovery(true)
 			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
 		m.applySnapshotData(msg.snapshotLoadedMsg)
-		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshotLoadedMsg)))
+		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)))
 
 	case reloadMsg:
 		snapshot := snapshotLoadedMsg(msg)
@@ -333,7 +394,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.migrationPrompt = snapshot.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(snapshot.generation, marketplaceInstallSnapshotError(snapshot))
+			return m, m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		}
 		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
 			m.clearMarketplaceDiscovery(true)
@@ -342,7 +403,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySnapshotData(snapshot)
 		m.toast = "Reloaded"
 		m.toastExp = time.Now().Add(2 * time.Second)
-		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, marketplaceInstallSnapshotError(snapshot)))
+		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)))
 
 	case discoveryDebounceMsg:
 		if m.requests.active(requestDiscovery) != msg.generation {
@@ -386,6 +447,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.marketplaceInstallOptions = msg.options
 			m.marketplaceInstallOperation = msg.operation
 			m.marketplacePreparedInstall = msg.prepared
+			if !msg.prepared.RequiresRiskAcceptance() {
+				return m, commitDiscoveryInstall(ctxOrBackground(m.ctx), msg.operation, msg.options, msg.prepared)
+			}
 			m.setMarketplaceConsentPreview(msg.preview)
 			m.pane = paneMarketplaceConsent
 			return m, nil
@@ -467,10 +531,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.pendingExcludeAction = nil
-		m.finishOperation(msg.operation)
-		m.recordOperationSuccess(operationMutation)
 		// Re-load snapshot to reflect the config change.
 		generation := m.beginRequest(requestSnapshot)
+		m.pendingToggleOperation = msg.operation
+		m.pendingToggleReload = generation
 		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case harnessWrittenMsg:
@@ -552,7 +616,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Error("update failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "update", msg.err)
 			if msg.snapshot.generation != 0 {
-				installCmd = m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshot))
+				installCmd = m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshot))
 			}
 			return m, tea.Batch(toastExpiryCmd(5*time.Second), installCmd)
 		} else {
@@ -561,7 +625,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
 		if msg.snapshot.generation != 0 {
-			installCmd = m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshot))
+			installCmd = m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshot))
 		}
 		return m, tea.Batch(toastExpiryCmd(2*time.Second), installCmd)
 
@@ -721,6 +785,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, nil
+	}
+
+	if m.dismissInvalidConfigMutationPane() {
+		return m, invalidConfigToastCmd()
 	}
 
 	// Overlays take priority
@@ -893,6 +961,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Harness):
+		if m.configInvalid {
+			return m, invalidConfigToastCmd()
+		}
 		m.openHarnessModal()
 		return m, nil
 
@@ -980,38 +1051,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// Space on a skill row: open the toggle modal so the user picks
 		// which config file to write.
-		if m.rowsStale {
-			return m, func() tea.Msg {
-				return toastMsg{text: "reload before changing broken state", duration: 2 * time.Second}
-			}
-		}
 		r, ok := m.selectedRow()
 		if !ok {
 			return m, nil
 		}
-		if r.IsMalformed {
-			return m, nil
-		}
-		if discovery := r.MarketplaceDiscovery; discovery != nil && discovery.Item.Availability != "available" {
-			return m, func() tea.Msg {
-				return toastMsg{text: "this Marketplace resource is not installable", duration: 2 * time.Second}
-			}
-		}
-		if r.MarketplaceCollectionOnly {
-			return m, func() tea.Msg {
-				return toastMsg{text: "collection-selected Marketplace items must be toggled through their collection", duration: 2 * time.Second}
-			}
-		}
-		if r.Artifact.Required {
-			return m, func() tea.Msg {
-				return toastMsg{text: "required items cannot be toggled", duration: 2 * time.Second}
-			}
-		}
-		m.pane = paneToggleModal
-		m.modalSkill = r
-		return m, nil
+		return m.applyRowSpaceEligibility(r)
 
 	case key.Matches(msg, m.keys.Sync):
+		if m.configInvalid {
+			return m, invalidConfigToastCmd()
+		}
 		if m.syncing {
 			return m, nil
 		}
@@ -1029,6 +1078,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.dependencySyncCmd(), m.spinner.Tick)
 
 	case key.Matches(msg, m.keys.Update):
+		if m.configInvalid {
+			return m, invalidConfigToastCmd()
+		}
 		if m.syncing {
 			return m, nil
 		}
@@ -1087,7 +1139,7 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *Model) rebuildOpenBundle() {
+func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	if m.pane != paneDetail || m.detailKey == "" {
 		return
 	}
@@ -1099,7 +1151,36 @@ func (m *Model) rebuildOpenBundle() {
 			break
 		}
 	}
+	if !found && hadPrevious {
+		identity := registryIdentityKey(previous.RegistryURL, previous.RegistryRef, previous.RegistryPath)
+		for _, r := range m.rows {
+			if r.UnavailableReason == "" {
+				continue
+			}
+			if r.Artifact.Kind != previous.Artifact.Kind || r.Artifact.Name != previous.Artifact.Name {
+				continue
+			}
+			if registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath) != identity {
+				continue
+			}
+			current, found = r, true
+			break
+		}
+	}
 	if !found {
+		m.detailKey = ""
+		m.bundle = nil
+		m.detailSelectedPath = ""
+		m.cancelRequest(requestDetail)
+		m.detailViewport.SetContent("")
+		return
+	}
+	m.detailKey = rowKey(current)
+	if current.UnavailableReason != "" {
+		m.bundle = nil
+		m.detailSelectedPath = ""
+		m.cancelRequest(requestDetail)
+		m.detailViewport.SetContent(renderDetailFullContent(current, m.previewWidth()))
 		return
 	}
 	if isMarketplaceDetailOnly(current) {
@@ -1132,7 +1213,48 @@ func (m *Model) rebuildOpenBundle() {
 	m.ensureBundleCursorVisible()
 }
 
+func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
+	if m.syncing {
+		return m, nil
+	}
+	if m.configInvalid {
+		return m, invalidConfigToastCmd()
+	}
+	if r.IsMalformed {
+		return m, nil
+	}
+	if r.MarketplaceDiscovery != nil && !marketplaceDiscoveryInstallable(r) {
+		return m, func() tea.Msg {
+			return toastMsg{text: "this Marketplace resource is not installable", duration: 2 * time.Second}
+		}
+	}
+	if r.Artifact.Required {
+		return m, func() tea.Msg {
+			return toastMsg{text: "required items cannot be toggled", duration: 2 * time.Second}
+		}
+	}
+	if r.MarketplaceCollectionOnly && !r.canOverrideMarketplace() {
+		return m, func() tea.Msg {
+			return toastMsg{text: "collection-selected Marketplace items must be toggled through their collection", duration: 2 * time.Second}
+		}
+	}
+	m.pane = paneToggleModal
+	m.modalSkill = r
+	return m, nil
+}
+
 func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Space) {
+		for _, r := range m.rows {
+			if rowKey(r) != m.detailKey {
+				continue
+			}
+			if r.UnavailableReason != "" || marketplaceDiscoveryInstallable(r) {
+				return m.applyRowSpaceEligibility(r)
+			}
+			break
+		}
+	}
 	switch {
 	case key.Matches(msg, m.keys.DetailBack):
 		m.pane = paneList
@@ -1263,7 +1385,10 @@ func (m *Model) enterDetailPane() {
 	m.detailSelectedPath = ""
 	if r, ok := m.selectedRow(); ok {
 		m.detailKey = rowKey(r)
-		if isMarketplaceDetailOnly(r) {
+		if r.UnavailableReason != "" {
+			m.bundle = nil
+			m.detailViewport.SetContent(renderDetailFullContent(r, m.previewWidth()))
+		} else if isMarketplaceDetailOnly(r) {
 			m.bundle = nil
 			m.detailViewport.SetContent(renderMarketplaceDetailContent(r))
 		} else if bundle, err := bundleTreeForRow(r); err != nil {

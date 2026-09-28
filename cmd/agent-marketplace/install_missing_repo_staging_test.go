@@ -1,12 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 )
@@ -43,10 +45,39 @@ func TestRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
 			if file.Path != canonicalRepoConfig {
 				continue
 			}
-			if !bytes.Contains(file.Bytes, []byte("apiVersion: agent-marketplace/v2")) ||
-				!bytes.Contains(file.Bytes, []byte(origin)) ||
-				!bytes.Contains(file.Bytes, []byte("review")) {
-				t.Fatalf("staged repo config lacks skeleton, lower-layer registry, or selection:\n%s", file.Bytes)
+			var staged struct {
+				APIVersion string `yaml:"apiVersion"`
+				Sources    map[string]struct {
+					Git string `yaml:"git"`
+					Ref string `yaml:"ref"`
+				} `yaml:"sources"`
+				Resources map[string]struct {
+					Include []string `yaml:"include"`
+				} `yaml:"resources"`
+			}
+			if err := yaml.Unmarshal(file.Bytes, &staged); err != nil {
+				t.Fatalf("parse staged repo config: %v", err)
+			}
+			if staged.APIVersion != "agent-marketplace/v4" || len(staged.Sources) != 1 || len(staged.Resources) != 1 {
+				t.Fatalf("staged repo config lacks v4 schema, source, or resource:\n%s", file.Bytes)
+			}
+			for name, source := range staged.Sources {
+				gitURL, err := url.Parse(source.Git)
+				if err != nil {
+					t.Fatalf("parse staged source URL: %v", err)
+				}
+				actualOrigin, err := filepath.EvalSymlinks(gitURL.Path)
+				if err != nil {
+					t.Fatalf("resolve staged source path: %v", err)
+				}
+				expectedOrigin, err := filepath.EvalSymlinks(origin)
+				if err != nil {
+					t.Fatalf("resolve lower-layer registry path: %v", err)
+				}
+				selection, ok := staged.Resources[name]
+				if gitURL.Scheme != "file" || gitURL.Host != "" || actualOrigin != expectedOrigin || source.Ref != "main" || !ok || len(selection.Include) != 1 || selection.Include[0] != "skill/review" {
+					t.Fatalf("staged repo config lacks lower-layer source or skill selection:\n%s", file.Bytes)
+				}
 			}
 			return dependencytxn.Result{}, stop
 		}

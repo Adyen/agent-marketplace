@@ -49,6 +49,23 @@ func TestSpaceOnSkillRowOpensToggleModal(t *testing.T) {
 	}
 }
 
+func TestSpaceOnOptionalOrganizationMarketplaceCollectionLeafOpensModal(t *testing.T) {
+	r := mkRow("collection-leaf", withGlobal)
+	r.Artifact.IsMarketplace = true
+	r.Artifact.Source = config.Organization
+	r.MarketplaceCollectionOnly = true
+	r.MarketplaceSelections = map[config.Source]marketplaceSelection{config.Organization: {
+		Entry: config.MarketplaceEntry{URL: "https://market.example", Source: config.Organization},
+		Pin:   config.MarketplaceResourcePin{RegistrySlug: "tools", Kind: "skill", Name: "collection-leaf"},
+	}}
+	m := helperFlatCursorOnSkill(t, r)
+
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if mi.(Model).pane != paneToggleModal {
+		t.Fatal("optional organization collection leaf must offer a user override")
+	}
+}
+
 func TestSpaceOnMarketplaceCollectionLeafShowsToastNotModal(t *testing.T) {
 	r := mkRow("collection-leaf", withProject)
 	r.Artifact.IsMarketplace = true
@@ -71,6 +88,18 @@ func TestSpaceOnMarketplaceCollectionLeafShowsToastNotModal(t *testing.T) {
 	}
 	if toast.text != "collection-selected Marketplace items must be toggled through their collection" {
 		t.Fatalf("unexpected toast text: %q", toast.text)
+	}
+}
+
+func TestSpaceOnRequiredMarketplaceCollectionLeafShowsRequiredToast(t *testing.T) {
+	r := mkRow("collection-leaf", withRequired, withGlobal)
+	r.Artifact.IsMarketplace = true
+	r.Artifact.Source = config.Organization
+	r.MarketplaceCollectionOnly = true
+	m := helperFlatCursorOnSkill(t, r)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if cmd == nil || cmd().(toastMsg).text != "required items cannot be toggled" {
+		t.Fatal("required collection leaf must report required policy")
 	}
 }
 
@@ -275,6 +304,48 @@ func TestRenderToggleModalDisablesLocalExcludeForMachineScopeSkill(t *testing.T)
 	}
 }
 
+func TestOptionalOrganizationMarketplaceCollectionLeafDoesNotOfferDirectInstall(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.pane = paneToggleModal
+	m.modalSkill = mkRow("audit", withGlobal)
+	m.modalSkill.Artifact.IsMarketplace = true
+	m.modalSkill.Artifact.Source = config.Organization
+	m.modalSkill.MarketplaceCollectionOnly = true
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if mi.(Model).pane != paneToggleModal || cmd == nil {
+		t.Fatal("collection leaf must not offer direct installation")
+	}
+	if _, ok := cmd().(toastMsg); !ok {
+		t.Fatal("expected collection-only explanation")
+	}
+}
+
+func TestRenderOptionalOrganizationMarketplaceModalShowsOnlyOverrideAction(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.pane = paneToggleModal
+	m.modalSkill = mkRow("audit", withGlobal)
+	m.modalSkill.Artifact.IsMarketplace = true
+	m.modalSkill.Artifact.Source = config.Organization
+	out := renderToggleModal(m)
+	if !strings.Contains(out, "user override") || strings.Contains(out, "toggle global") {
+		t.Fatalf("organization Marketplace modal advertised an ineffective scope action: %s", out)
+	}
+}
+
+func TestModalEkeyExcludesOptionalOrganizationMarketplaceLeaf(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.pane = paneToggleModal
+	m.modalSkill = mkRow("audit", withGlobal)
+	m.modalSkill.Artifact.IsMarketplace = true
+	m.modalSkill.Artifact.Source = config.Organization
+	m.modalSkill.MarketplaceCollectionOnly = true
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if mi.(Model).pane != paneList || cmd == nil {
+		t.Fatal("optional organization Marketplace leaf must offer an exclude operation")
+	}
+}
+
 func TestModalEkeyShowsToastForMarketplaceItem(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneToggleModal
@@ -397,6 +468,18 @@ func TestScopedToggleActionPopulatesRegistryMetadata(t *testing.T) {
 }
 
 func TestRunScopedToggleDisablesProjectMarketplacePinWithoutRegistryMutation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	repoRoot := t.TempDir()
 	configPath := config.ProjectConfigPath(repoRoot)
 	digest := "sha256:" + strings.Repeat("a", 64)
@@ -434,8 +517,111 @@ func TestRunScopedToggleDisablesProjectMarketplacePinWithoutRegistryMutation(t *
 	}
 }
 
+func TestRunScopedToggleExcludesOptionalOrganizationMarketplaceLeaf(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Source: config.Organization}
+	pin := config.MarketplaceResourcePin{RegistryID: "source-id", RegistrySlug: "source", Kind: "skill", Name: "review"}
+	r := row{
+		Artifact:      resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}, Source: config.Organization, IsMarketplace: true},
+		EnabledGlobal: true, MarketplaceCollectionOnly: true,
+		MarketplaceSelections: map[config.Source]marketplaceSelection{config.Organization: {Entry: entry, Pin: pin}},
+	}
+	msg := runScopedToggle(t.TempDir(), scopedToggleAction(r, scopeUserExclude))()
+	if written, ok := msg.(configWrittenMsg); !ok || written.err != nil {
+		t.Fatalf("Marketplace override = %#v", msg)
+	}
+	user, err := config.LoadConfigFromPath(userPath)
+	if err != nil || user == nil || len(user.MarketplaceExclusions) != 1 || user.MarketplaceExclusions[0].Locator != "source/skill/review" {
+		t.Fatalf("user Marketplace exclusion = %#v, %v", user, err)
+	}
+	r.ExcludedByUser = true
+	msg = runScopedToggle(t.TempDir(), scopedToggleAction(r, scopeUserExclude))()
+	if written, ok := msg.(configWrittenMsg); !ok || written.err != nil {
+		t.Fatalf("Marketplace re-enable = %#v", msg)
+	}
+	user, err = config.LoadConfigFromPath(userPath)
+	if err != nil || user == nil || len(user.MarketplaceExclusions) != 0 {
+		t.Fatalf("user Marketplace exclusion after re-enable = %#v, %v", user, err)
+	}
+}
+
+func TestRunScopedToggleStagesUserMarketplaceOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	if err := os.WriteFile(userPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stageDir := t.TempDir()
+	stagePath := filepath.Join(stageDir, "config.yaml")
+	if err := os.WriteFile(filepath.Join(stageDir, config.UserConfigShadowMarker), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stagePath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry := config.MarketplaceEntry{URL: "https://market.example", Source: config.Organization}
+	pin := config.MarketplaceResourcePin{RegistrySlug: "tools", Kind: "skill", Name: "review"}
+	r := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}, Source: config.Organization, IsMarketplace: true},
+		MarketplaceSelections: map[config.Source]marketplaceSelection{config.Organization: {Entry: entry, Pin: pin}}}
+	msg := runScopedToggleAt(t.TempDir(), scopedToggleAction(r, scopeUserExclude), func(path string) (string, error) {
+		if path != userPath {
+			t.Fatalf("unexpected mapped path: %s", path)
+		}
+		return stagePath, nil
+	})()
+	if written, ok := msg.(configWrittenMsg); !ok || written.err != nil {
+		t.Fatalf("staged user override = %#v", msg)
+	}
+	data, err := os.ReadFile(userPath)
+	if err != nil || string(data) != string(original) {
+		t.Fatalf("user config changed before commit: %s, %v", data, err)
+	}
+	data, err = os.ReadFile(stagePath)
+	if err != nil || !strings.Contains(string(data), "tools/skill/review") {
+		t.Fatalf("staged config missing user override: %s, %v", data, err)
+	}
+}
+
 func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 	repoRoot := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.LocalConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	digest := "sha256:" + strings.Repeat("b", 64)
 	pin := config.MarketplaceResourcePin{
 		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v2", Digest: digest,
@@ -443,6 +629,7 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "collections", Name: "bundle", Revision: "v1"}}),
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
+	pin.Digest = warmMarketplaceSkillPin(t, entry, pin)
 	r := row{
 		Artifact:       resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "team-review"}, IsMarketplace: true, Source: config.RepoCommitted},
 		EnabledProject: true,
@@ -472,6 +659,31 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 	}
 	if len(loaded.Registries) != 0 {
 		t.Fatalf("registries mutated by Marketplace enable: %#v", loaded.Registries)
+	}
+	parentBefore, err := os.ReadFile(config.LocalConfigPath(repoRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(repoRoot, "component")
+	childPath := config.LocalConfigPath(child)
+	if err := os.MkdirAll(filepath.Dir(childPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(childPath, []byte("apiVersion: agent-marketplace/v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(child)
+	msg = runScopedToggle(repoRoot, scopedToggleAction(r, scopeLocal))()
+	if written, ok := msg.(configWrittenMsg); !ok || written.err != nil {
+		t.Fatalf("subdirectory Marketplace toggle = %#v", msg)
+	}
+	childConfig, err := config.LoadLocalConfigFromPath(childPath)
+	if err != nil || childConfig == nil || len(childConfig.Marketplaces) != 1 || len(childConfig.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("subdirectory local Marketplace pin = %#v, %v", childConfig, err)
+	}
+	parentAfter, err := os.ReadFile(config.LocalConfigPath(repoRoot))
+	if err != nil || string(parentAfter) != string(parentBefore) {
+		t.Fatalf("parent local config changed: %v", err)
 	}
 }
 
@@ -829,10 +1041,52 @@ func TestRunScopedToggleGlobalRejectsRepoRelativeRegistry(t *testing.T) {
 		t.Fatalf("expected error URL %q, got %q", act.registryURL, gre.URL)
 	}
 
-	// The global config must not have been created.
+	// The registry entry must not have been written, and no global config may
+	// have been created.
 	globalConfig := filepath.Join(homeDir, ".agents", "config.yaml")
-	if _, err := os.Stat(globalConfig); !os.IsNotExist(err) {
-		t.Fatalf("expected no global config written, got %v", err)
+	if _, err := os.Stat(globalConfig); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no global config after rejected toggle, got err=%v", err)
+	}
+}
+
+// TestRunScopedToggleGlobalDisablesRepoRelativeRegistry verifies that disabling
+// an existing repo-relative selection in the user config is allowed, so a user
+// can clean up an entry the global layer would refuse to create.
+func TestRunScopedToggleGlobalDisablesRepoRelativeRegistry(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve home: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	globalConfig := filepath.Join(homeDir, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(globalConfig), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	fixture := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n" +
+		"sources:\n  local: {directory: ./plugins/gitlab-mr}\n" +
+		"resources:\n  local: {include: [skill/audit]}\n"
+	if err := os.WriteFile(globalConfig, []byte(fixture), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	act := toggleAction{
+		skillName:   "audit",
+		kind:        ir.KindSkill,
+		scope:       scopeGlobal,
+		registryURL: "./plugins/gitlab-mr",
+	}
+
+	if err := runToggleAndErr(t, repoRoot, act); err != nil {
+		t.Fatalf("disabling an existing repo-relative global selection: %v", err)
+	}
+	cfg, loadErr := config.LoadRootConfigFromPath(globalConfig)
+	if loadErr != nil {
+		t.Fatalf("reload config: %v", loadErr)
+	}
+	if registrySelectorIncludes(cfg, ir.KindSkill, "audit") {
+		t.Fatalf("audit still selected after disable: %#v", cfg.Registries)
 	}
 }
 
