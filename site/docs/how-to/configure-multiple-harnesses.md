@@ -1,6 +1,6 @@
 # How to configure multiple harnesses
 
-Target more than one coding harness at the same time.
+Install your resources into more than one [harness](../glossary.md#harness) at the same time, for example Claude Code and Cursor.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ Launch the TUI:
 agent-marketplace
 ```
 
-Press `H` to open the harness modal. Toggle each target with `space` and press `enter`. The selection is saved to the active configuration file.
+Press `H` to open the harness modal. It opens on your personal list in `~/.agents/config.yaml`; press `p` to edit the repository list in `.agents/config.yaml` instead, or `g` to go back. Move with the arrow keys, toggle each harness with `space`, and press `enter` to save. Press `esc` to close without saving.
 
 ## 2. Or edit the configuration directly
 
@@ -29,9 +29,13 @@ harnesses:
   - devin
 ```
 
+The lists do not merge. When you sync inside a repository whose `.agents/config.yaml` sets `harnesses`, that list is used for the whole run. Otherwise sync uses your personal list, and then the organization's.
+
+Each file's resources also keep that file's own `harnesses` list as a limit. Resources from your personal configuration therefore go only to harnesses that are in both your list and the repository's list. If the two lists do not overlap, a sync inside that repository leaves out your personal resources and removes their machine-wide files until you sync somewhere else.
+
 ## 3. Narrow a registry to specific harnesses
 
-A resource group can emit only a subset of the global targets:
+A resource group can write to only some of the configured harnesses:
 
 ```yaml
 sources:
@@ -44,7 +48,7 @@ resources:
     harnesses: [claude]
 ```
 
-The group's `harnesses` list intersects with the effective list.
+Sync writes this group only to harnesses that appear in both lists. With the configuration from step 2, `code-review` goes to Claude Code and nowhere else.
 
 ## 4. Sync and verify
 
@@ -52,11 +56,11 @@ The group's `harnesses` list intersects with the effective list.
 agent-marketplace sync
 ```
 
-The summary line reports how many resources were installed; the count is the number of selected resources multiplied by the targets each applies to, so it varies with your selection.
+The summary line starts with `Installed <n>`, where `n` counts the files and entries sync wrote across all harnesses. It changes with your selection and your harnesses, so it is not a resource count.
 
-Each selected resource now appears under the directories for every applicable target harness.
+Each selected resource now appears in the folders of every harness it applies to. Run `agent-marketplace status` to check: the `HARNESS` column under `SYNCED RESOURCES` lists every harness a resource goes to, for example `claude,cursor`, and `HARNESS TARGETS` shows each harness's folders.
 
 ## Troubleshooting
 
-- **Unknown harness error**: Check the identifier against the [harnesses and output paths reference](../reference/harnesses-and-output-paths.md).
-- **A registry entry does not appear for one harness**: Verify the entry's `harnesses` list includes that target.
+- If sync reports an unknown harness, check the identifier against the [harnesses and output paths reference](../reference/harnesses-and-output-paths.md).
+- If a registry's resources do not appear for one harness, check that the resource group's `harnesses` list includes it.

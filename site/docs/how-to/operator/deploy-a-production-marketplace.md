@@ -1,22 +1,22 @@
 # How to deploy a production Marketplace
 
-Run the hosted Marketplace with separate API and worker processes, external storage, and a private operations listener. This page gives the sequence and the decisions; the two supported packagings each have their own detailed guide.
+Run the hosted Marketplace with separate API and worker processes, external storage, and a private operations listener. This page covers the order of steps and the decisions to make. Each of the two supported packagings has its own detailed guide.
 
 ## Prerequisites
 
-- PostgreSQL and an S3-compatible bucket. SQLite/filesystem storage is single-process and only suitable for one all-in-one replica.
+- PostgreSQL and an S3-compatible bucket. SQLite and filesystem storage suit only a single all-in-one replica.
 - A TLS-terminating reverse proxy or ingress that enforces authentication. The application has none.
 - A secret store for the database DSN and any registry credentials.
-- Container images for the API/worker binary (and the optional Nuxt UI and VitePress site) at an immutable tag or digest.
+- Container images at an immutable tag or digest: the API and worker images built from `Dockerfile.marketplace`, plus the optional Nuxt UI and VitePress site. Only the worker image contains Git, which acquisition needs.
 
 ## 1. Pick a packaging
 
 | Packaging | Guide | Use when |
 |---|---|---|
-| Docker Compose (PostgreSQL + S3) | [`deploy/compose/postgres-s3/README.md`](https://github.com/Adyen/agent-marketplace/blob/main/deploy/compose/postgres-s3/README.md) | One host, you manage the proxy yourself |
-| Helm chart, `mode: split` | [`deploy/helm/agent-marketplace/README.md`](https://github.com/Adyen/agent-marketplace/blob/main/deploy/helm/agent-marketplace/README.md) | Kubernetes, separate API and worker scaling |
+| Docker Compose (PostgreSQL + S3) | [`deploy/compose/postgres-s3/README.md`](https://github.com/Adyen/agent-marketplace/blob/main/deploy/compose/postgres-s3/README.md) | One host, and you manage the proxy yourself |
+| Helm chart, `mode: split` | [`deploy/helm/agent-marketplace/README.md`](https://github.com/Adyen/agent-marketplace/blob/main/deploy/helm/agent-marketplace/README.md) | Kubernetes, with separate API and worker scaling |
 
-Both packagings run `serve --role api` and `serve --role worker` as separate processes. `serve --role all` is for local development and SQLite only.
+Both packagings run `serve --role api` and `serve --role worker` as separate processes. `serve --role all` runs both in one process and is meant for local development and SQLite.
 
 ## 2. Write the operator configuration
 
@@ -53,24 +53,25 @@ registries:
         source_harness: claude
 ```
 
-- Use `dsn_file` (mounted secret) or `dsn_env`; never a literal `dsn` in a committed file.
-- Set `instance.id` once and never change it: consumers verify it on every install.
-- S3 credentials come from the AWS SDK default chain (IAM role or workload identity), not from this file.
-- The full field list is in the [operator configuration reference](../../reference/marketplace-operator-configuration.md).
+- Use `dsn_file` (a mounted secret) or `dsn_env`. Never commit a literal `dsn` to a file. Exactly one of the three must be set.
+- `operations_listen` defaults to `127.0.0.1:9090`. Bind it to a non-loopback address only on a private network, as in the example, when probes or metrics scrapers run outside the container.
+- Set `instance.id` once and never change it, because consumers verify it on every install.
+- The S3 client gets credentials from the AWS SDK default chain (for example an IAM role or workload identity), not from this file. Set `storage.blobs.endpoint` for an S3-compatible service other than AWS.
+- The [operator configuration reference](../../reference/marketplace-operator-configuration.md) lists every field.
 
 ## 3. Wire secrets and network
 
-- Mount the DSN and any registry `credentials` files read-only, owned by the container's non-root UID.
-- Restrict worker egress to the registry origins and the object store.
-- Expose only `/.well-known/agent-marketplace.json`, `/api/`, `/healthz`, and the UI path through the proxy. See [How to configure a reverse proxy](./configure-a-reverse-proxy.md).
+- Mount the DSN file and any registry credential files read-only, readable by the container's non-root user (UID 1000). If a registry sets `ca_file`, mount it in every API and worker container, because every role validates the configuration at startup.
+- Limit worker egress to the registry origins and the object store.
+- Expose only `/.well-known/agent-marketplace.json`, `/api/`, `/healthz`, and the UI paths through the proxy. See [How to configure a reverse proxy](./configure-a-reverse-proxy.md).
 
 ## 4. Roll out
 
-1. Start the API replicas. Startup runs database migrations, so start one API replica first when upgrading across versions, then scale.
-2. Start the worker. One replica is enough for most deployments; refresh jobs are leased through the metadata store, so additional worker replicas do not double-process a registry, but each extra replica needs its own egress to the registry origins.
+1. Start the API replicas. Each process applies pending database migrations when it opens the stores, so when you upgrade across versions, start one API replica first and scale up after it is ready.
+2. Start the worker. One replica is enough for most deployments. Workers lease refresh jobs through the metadata store, so extra replicas do not process the same job twice, but each one needs its own egress to the registry origins.
 3. Point the proxy at the API and UI.
 
-For upgrades, use a rolling strategy for the API and `Recreate` for the worker (the Helm chart's README shows the values).
+For upgrades, use a rolling update for the API and `Recreate` for the worker. The Helm chart README shows the values.
 
 ## 5. Verify
 
@@ -82,23 +83,25 @@ curl -fsS https://marketplace.example.com/.well-known/agent-marketplace.json
 curl -fsS http://<api-host>:9090/readyz
 ```
 
-`/healthz` proves the process is up; `/readyz` proves storage is reachable. Then trigger and observe the first ingestion:
+`/healthz` shows that the process is running. `/readyz` returns `{"status":"ready"}` only when the database's recorded configuration authority matches `management.mode`, the stored revocations match the process's configuration, the metadata store is readable, and the blob store responds. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#readyz) describes each check.
+
+The worker queues a refresh for every configured registry when it starts. To run the first ingestion yourself and watch it finish, run this from the worker image:
 
 ```bash
 agent-marketplace serve reindex --config /app/marketplace.yaml
 ```
 
-and confirm a known resource is searchable with `agent-marketplace search <name> --marketplace https://marketplace.example.com`.
+Then confirm that a known resource is searchable with `agent-marketplace search <name> --marketplace https://marketplace.example.com`.
 
 ## Rollback
 
-The database schema is migrated forward on startup and there is no automatic down-migration. Take a database backup before every upgrade (see [How to back up and restore a Marketplace](./back-up-and-restore.md)); roll back by restoring it and redeploying the previous image.
+Startup migrates the database schema forward, and there is no automatic down-migration. Take a database backup before every upgrade (see [How to back up and restore a Marketplace](./back-up-and-restore.md)). To roll back, restore that backup and redeploy the previous image.
 
 ## Boundaries
 
 - The public listener returns `404` for `/readyz` and `/metrics`.
-- No built-in authentication, authorization, or TLS; the proxy owns all three.
-- `/metrics` exposes two unlabeled series; see [health and metrics](../../reference/marketplace-health-and-metrics.md) before designing alerts.
+- The application has no built-in authentication, authorization, or TLS. The proxy provides all three.
+- `/metrics` reports HTTP request counters, a latency histogram, and in-flight requests from the API process only. The worker has no HTTP listener. Read [health and metrics](../../reference/marketplace-health-and-metrics.md) and [How to reindex and monitor a Marketplace](./reindex-and-monitor.md) before designing alerts.
 
 ## Related documentation
 

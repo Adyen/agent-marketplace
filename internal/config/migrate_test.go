@@ -652,3 +652,27 @@ registries:
 		t.Fatalf("expected repo file to remain unchanged when repo write fails")
 	}
 }
+
+func TestMigrateRefusesExplicitHarnessesThatDifferFromTheUserList(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		harnesses []string
+		wantErr   bool
+	}{
+		{"different list", []string{"cursor"}, true},
+		{"same list", []string{" factory"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			userPath := filepath.Join(t.TempDir(), "config.yaml")
+			const before = "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"
+			writeV2Config(t, userPath, before)
+			_, err := MigrateConfigFiles(MigratePaths{User: userPath}, tc.harnesses)
+			if tc.wantErr != (err != nil) || (err != nil && !strings.Contains(err.Error(), "already declares harnesses factory")) {
+				t.Fatalf("MigrateConfigFiles error = %v, want error %t", err, tc.wantErr)
+			}
+			if got := readConfigString(t, userPath); got != before {
+				t.Fatalf("user config changed to:\n%s", got)
+			}
+		})
+	}
+}

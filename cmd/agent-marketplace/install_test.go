@@ -1691,7 +1691,7 @@ registries:
 	if err == nil {
 		t.Fatal("expected install --all --registry <nonexistent> to fail")
 	}
-	if !strings.Contains(err.Error(), "not found in repo config") {
+	if !strings.Contains(err.Error(), `registry "nonexistent-registry" is not declared in any config layer`) {
 		t.Fatalf("expected registry-not-found error, got %v", err)
 	}
 }
@@ -2023,5 +2023,32 @@ registries: []
 	}
 	if data, readErr := os.ReadFile(repoConfig); readErr == nil && strings.Contains(string(data), "local-registry") {
 		t.Fatalf("local registry with missing path leaked into repo config:\n%s", string(data))
+	}
+}
+
+func TestWriteInstallResultReportsUnselectedResources(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name   string
+		result pipeline.InstallResult
+		want   string
+	}{
+		{"mixed", pipeline.InstallResult{Installed: []string{"cmd-one", "deploy"}, NotSelected: []string{"review"}},
+			"Installed cmd-one, deploy in this repo\nNot installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly\n"},
+		{"none installed", pipeline.InstallResult{NotSelected: []string{"review", "lint\x1b[31m"}},
+			"Not installed: review, lint\\x1b[31m; the effective configuration does not select them (for example, an exclusion wins). Install by name to select explicitly\n"},
+		{"all installed", pipeline.InstallResult{Installed: []string{"review"}}, "Installed review in this repo\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := writeInstallResult(&out, &tc.result, pipeline.ScopeRepo, false, false); err != nil {
+				t.Fatal(err)
+			}
+			if got := out.String(); got != tc.want {
+				t.Fatalf("output = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

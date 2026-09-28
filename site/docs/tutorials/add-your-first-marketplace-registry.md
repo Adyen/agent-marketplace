@@ -1,8 +1,8 @@
 # Add your first registry to a Marketplace
 
-In this tutorial, you'll start a local Marketplace with the admin panel turned on, add a public Git registry from your browser, and check that its skills are published in the catalog.
+In this tutorial, you start a local Marketplace with the admin panel turned on, add a public Git registry from your browser, and check that its skills are published in the catalog.
 
-You'll use a throwaway copy of the repository and a Docker volume that you remove at the end, so none of your real configuration or data is touched.
+You work in a throwaway copy of the repository with a Docker volume that you delete at the end, so your real configuration and data stay untouched.
 
 ## Before you begin
 
@@ -27,9 +27,11 @@ Docker Compose version v2.24.4
 
 The tutorial needs port `8080` and the Docker subnet `172.30.89.0/24` to be free. If you already run a local Marketplace from this repository, run `docker compose stop` in that checkout first.
 
+Run all steps in the same terminal window so the `TUTORIAL_ROOT` variable from step 1 stays set.
+
 ## 1. Make a throwaway checkout
 
-From the repository root, clone the repository into a temporary directory:
+From the repository root, clone the repository into a temporary directory and move into the clone:
 
 ```bash
 TUTORIAL_ROOT=$(mktemp -d)
@@ -37,7 +39,7 @@ git clone . "$TUTORIAL_ROOT/agent-marketplace"
 cd "$TUTORIAL_ROOT/agent-marketplace"
 ```
 
-Give this copy its own Compose project name. That way its containers and data volume stay separate from any other local Marketplace:
+Give this copy its own Compose project name, so its containers and data volume stay separate from any other local Marketplace:
 
 ```bash
 echo "COMPOSE_PROJECT_NAME=marketplace-tutorial" > .env
@@ -45,7 +47,7 @@ echo "COMPOSE_PROJECT_NAME=marketplace-tutorial" > .env
 
 ## 2. Write the operator configuration
 
-Create an operator configuration that stores registries in the database and turns on the admin panel for `http://localhost:8080`:
+Create an operator configuration that keeps registry settings in the database and turns on the admin panel for `http://localhost:8080`:
 
 ```bash
 cat > deploy/compose/sqlite-filesystem/config-mounted.local.yaml <<'EOF'
@@ -98,9 +100,9 @@ registries: []
 EOF
 ```
 
-The `registries` list is empty. You'll add the registry from the admin panel.
+The `registries` list is empty because you add the registry from the admin panel later.
 
-`allowed_origins` lets you add registries hosted on `https://github.com`. The `github` profile gives the worker a trust store for cloning from GitHub.
+`management.allowed_origins` lets administrators add registries hosted on `https://github.com`. The `github` profile points the worker at the image's CA bundle so it can clone from GitHub. `allow_insecure_localhost: true` permits the plain-HTTP `localhost` origin, which the admin panel otherwise refuses.
 
 ::: danger Local development only
 In this setup, the local proxy treats every request as coming from the administrator `local-operator`, with no sign-in. Never publish this proxy beyond `127.0.0.1` or reuse this configuration in production.
@@ -108,7 +110,7 @@ In this setup, the local proxy treats every request as coming from the administr
 
 ## 3. Point Compose at the configuration
 
-Create a Compose override. It mounts your configuration and runs the local proxy that supplies the fixed administrator identity:
+Create a Compose override. It mounts your configuration into the app and replaces the proxy configuration with `nginx-operator.local.conf`, which sends the fixed administrator identity to the API over a dedicated network:
 
 ```bash
 cat > compose.override.yaml <<'EOF'
@@ -137,7 +139,7 @@ networks:
 EOF
 ```
 
-Check the result, then build the images:
+Check the merged configuration, then build the images:
 
 ```bash
 docker compose config --quiet
@@ -156,7 +158,7 @@ The image names start with `marketplace-tutorial`, the project name from step 1.
 
 ## 4. Hand registry management to the database
 
-Adoption is a one-time step. It gives the database control of registry settings, which is what makes them editable in the admin panel. Run it once before the first start:
+Adoption is a one-time step that moves registry and policy settings from the YAML file into the database, where the admin panel can edit them. With `management.mode: database`, the Marketplace refuses to start until adoption has run. Run it once before the first start:
 
 ```bash
 docker compose run --rm --no-deps app serve adopt \
@@ -202,13 +204,13 @@ Expected output:
 
 ## 6. Open the admin panel
 
-Open `http://localhost:8080/marketplace/admin` in your browser. Type `localhost` exactly as shown. `127.0.0.1` counts as a different origin, and the admin panel will reject your changes.
+Open `http://localhost:8080/marketplace/admin` in your browser. Type `localhost` exactly as shown. The browser treats `127.0.0.1` as a different origin, and the admin API rejects changes sent from it.
 
 The **Registries** page opens and says there are no registries yet:
 
 ![The Registries admin page showing "No registries are managed yet" and an Add registry button](../images/add-registry/01-empty-registries.png)
 
-In the top right corner, you can see that you're signed in as `local-operator` and that the configuration is at **Revision 1**: the adoption from step 4.
+In the top right corner, you can see that you're signed in as `local-operator` and that the configuration is at **Revision 1**, which the adoption in step 4 created.
 
 ## 7. Describe the new registry
 
@@ -230,10 +232,11 @@ Your form now looks like this:
 
 ![The Add registry form filled in with the superpowers registry values](../images/add-registry/02-registry-form.png)
 
-Two fields are worth a closer look:
+**Acquisition** starts as **Index only** in a new form. **Mirror** makes the Marketplace keep its own copy of every published resource.
 
-- **Root 1 path** tells the Marketplace which directory to scan. In this repository, the skills live under `skills/`.
-- **Default license** applies to every resource that doesn't declare its own license. None of these skills declares one, and the Marketplace blocks resources with no license by default. Entering `MIT`, the repository's license, lets them through.
+**Root 1 path** tells the Marketplace which directory of the repository to scan. In this repository, the skills live under `skills/`.
+
+**Default license** applies to every resource that doesn't declare its own license. None of these skills declares one, and by default the Marketplace rejects resources without a license. Entering `MIT`, the repository's license, lets them through.
 
 ## 8. Preview what the Marketplace will find
 
@@ -243,9 +246,9 @@ After a few seconds, the panel lists 15 skills found under the `skills` root at 
 
 ![Discovery preview listing 15 skills under the skills root, each with its source path](../images/add-registry/03-discovery-preview.png)
 
-Each row shows the skill's name, description, and source path. Some rows have a **Warnings** badge. These are analysis findings kept for your review, and they don't stop publication. Your commit hash will differ from the one in the screenshot.
+Each row shows the skill's name, description, and source path. Some rows have a **Warnings** badge: these are analysis findings kept for your review, and they don't block publication. Your commit hash will differ from the one in the screenshot.
 
-Nothing has been published yet. The preview only reads the repository.
+The preview only reads the repository. Nothing is published yet.
 
 ## 9. Review and apply the change
 
@@ -255,17 +258,17 @@ In **Reason for change**, enter:
 Add the superpowers skill registry for the engineering teams
 ```
 
-Click **Continue to review**. The Review step shows every field you're about to set:
+Click **Continue to review**. The server validates the draft, and the Review step shows every field you're about to set:
 
 ![Review changes step: a field-by-field diff, the reason, and a note that the discovery preview found 15 resources](../images/add-registry/04-review-changes.png)
 
 The **Before you apply** box confirms that the preview found 15 resources. Select **I have reviewed the diff and understand these availability impacts and unknowns**, then click **Apply change**.
 
-The Result step confirms that the change was accepted as revision 2 and indexing was queued:
+The Result step confirms that the change was accepted as revision 2 and that indexing was queued:
 
 ![Result step: Change accepted as revision 2, with a managed-reconcile job](../images/add-registry/05-change-accepted.png)
 
-An accepted change isn't a published one yet. After a few seconds, click **Refresh job status** until the job shows **Completed**, then click **Close**.
+An accepted change is not yet published. The job status refreshes on its own for about a minute; you can also click **Refresh job status**. When the job shows **Completed**, click **Close**.
 
 ## 10. Watch the registry get indexed
 
@@ -277,7 +280,7 @@ Click **superpowers**, then open the **Indexing history** tab:
 
 ![Indexing history showing a Succeeded reconcile attempt with a Publication ID](../images/add-registry/07-indexing-history.png)
 
-Look for a **Succeeded** attempt with a **Publication** ID. That's the proof that the Marketplace cloned the repository and published its skills. If you only see **Started**, wait a few seconds and click **Refresh indexing attempts**.
+Look for a **Succeeded** attempt with a **Publication** ID. It shows that the Marketplace cloned the repository and published its skills. If you only see **Started**, wait a few seconds and click **Refresh indexing attempts**.
 
 Now click **Activity** in the top navigation:
 
@@ -314,7 +317,7 @@ All 15 skills are available for installation.
 
 ## 12. Clean up
 
-Stop the containers, delete the tutorial's data volume, and remove the throwaway directory:
+Stop the containers, delete the tutorial's data volume, return to the directory you started from, and remove the throwaway directory:
 
 ```bash
 docker compose down -v
@@ -322,7 +325,7 @@ cd -
 rm -rf "$TUTORIAL_ROOT"
 ```
 
-`down -v` deletes only the `marketplace-tutorial` volume created in this tutorial.
+`down -v` deletes only the volume of the `marketplace-tutorial` project created in this tutorial.
 
 ## What you did
 

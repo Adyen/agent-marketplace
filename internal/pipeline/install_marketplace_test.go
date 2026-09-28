@@ -483,6 +483,44 @@ func TestCommitPreparedMarketplaceInstallSucceedsForOperatorExposedRejectedResou
 	}
 }
 
+func TestCommitPreparedMarketplaceInstallRevalidatesSelectedRejectedPin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(home, "missing-org.yaml"))
+	repo := t.TempDir()
+	writeFileMode(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n", 0o600)
+
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "guarded")
+	fake.addSkill(t, registry, "clean")
+	guarded := fake.resources["source/skill/guarded"]
+	guarded.revision = testAssessedResourceRevision(t, guarded.revision.ResourceRevision, store.AssessmentDecisionReject,
+		[]store.Finding{{Code: "policy-block", Severity: "high", Policy: "reject", Message: "blocked by policy"}})
+	guarded.availability = string(mpapi.AvailabilityOperatorExposed)
+	fake.resources["source/skill/guarded"] = guarded
+
+	prepared, err := PrepareMarketplaceInstall(context.Background(), InstallOptions{Args: []string{fake.URL + "/r/source/skill/guarded"}, RepoRoot: repo, Scope: ScopeUser})
+	if err != nil {
+		t.Fatalf("PrepareMarketplaceInstall: %v", err)
+	}
+	if _, err := CommitPreparedMarketplaceInstall(context.Background(), prepared); err != nil {
+		t.Fatalf("CommitPreparedMarketplaceInstall: %v", err)
+	}
+
+	prepared, err = PrepareMarketplaceInstall(context.Background(), InstallOptions{Args: []string{fake.URL + "/r/source/skill/clean"}, RepoRoot: repo, Scope: ScopeUser})
+	if err != nil {
+		t.Fatalf("PrepareMarketplaceInstall for clean: %v", err)
+	}
+	if _, err := CommitPreparedMarketplaceInstall(context.Background(), prepared); err != nil {
+		t.Fatalf("unrelated install failed with exposed rejected pin selected: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "clean", "SKILL.md")); err != nil {
+		t.Fatalf("materialized skill missing: %v", err)
+	}
+}
+
 func TestMarketplaceInstallRequiresTargetHarnessSetBeforeMutation(t *testing.T) {
 	configPath := t.TempDir() + "/config.yaml"
 	_, err := prepareMarketplaceInstall(context.Background(), InstallOptions{Args: []string{"public:source/skill/review"}}, configPath, &config.EffectiveConfig{})

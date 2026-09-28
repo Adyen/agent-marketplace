@@ -10,8 +10,9 @@ VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo d
 ENDPOINT="${AGENT_MARKETPLACE_RELEASE_TELEMETRY_ENDPOINT:-}"
 RETENTION="${AGENT_MARKETPLACE_RELEASE_TELEMETRY_RETENTION_URL:-}"
 
-CGO_ENABLED=0 go build \
+CGO_ENABLED=0 go build -trimpath \
   -ldflags "\
+    -s -w \
     -X main.version=${VERSION} \
     -X github.com/Adyen/agent-marketplace/internal/telemetry.DefaultProjectEndpoint=${ENDPOINT} \
     -X github.com/Adyen/agent-marketplace/internal/telemetry.DefaultProjectRetentionURL=${RETENTION} \

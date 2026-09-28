@@ -1,8 +1,20 @@
 # How to reindex and monitor a Marketplace
 
-Refresh registry data and observe Marketplace health.
+Refresh registry data on demand and watch the health of a hosted Marketplace.
+
+## Before you reindex
+
+The worker refreshes every configured registry when it starts and again at each `refresh.interval` (30 minutes by default). Use `serve reindex` when you need a refresh now, for example after a configuration change.
+
+`serve reindex` opens the stores, queues one refresh job per registry, and waits for each job to finish. It processes a job in its own process unless a running worker leases it first, so it may clone the registry itself. Run it where the worker runs, with the same configuration file, credentials, network access, and Git. The API image does not contain Git. For example, in the repository's SQLite Compose setup:
+
+```bash
+docker compose exec app /app/agent-marketplace serve reindex --config /app/marketplace.yaml
+```
 
 ## Reindex one registry
+
+Pass a registry ID or slug:
 
 ```bash
 agent-marketplace serve reindex shared-agents --config /app/marketplace.yaml
@@ -14,33 +26,41 @@ agent-marketplace serve reindex shared-agents --config /app/marketplace.yaml
 agent-marketplace serve reindex --config /app/marketplace.yaml
 ```
 
-The worker applies configured revocations before acquisition and performs a readiness check after processing.
+With `management.mode: file`, this reindexes every registry in the configuration file. With `management.mode: database`, it reindexes the active admin-managed registries and ignores the `registries:` list.
 
-## Monitor with health endpoints
+Before it clones anything, `serve reindex` reconciles the stored revocations with the configuration it was given. After processing, it checks that every published artifact has a matching blob. The command exits with an error if any registry fails or the integrity check fails, and gives up after one hour.
 
-- `/healthz` on the public listener returns process liveness.
-- `/readyz` on the operations listener returns storage readiness.
+## Check health endpoints
+
+- `/healthz` on the public listener returns `{"status":"ok"}` while the process is running.
+- `/readyz` on the operations listener returns `{"status":"ready"}` only when all of these hold: the database's recorded configuration authority matches `management.mode`, the stored revocations match the process's configuration, the Marketplace record is readable from the metadata store, and the blob store responds. Otherwise it returns `503`.
 - `/metrics` on the operations listener returns Prometheus metrics.
 
-Do not expose `/readyz` or `/metrics` through the public reverse proxy.
+Only processes that run the API (`--role api` or `--role all`) serve these endpoints. A `--role worker` process has no HTTP listener. Do not expose `/readyz` or `/metrics` through the public reverse proxy.
 
-## Watch the worker log
+## Watch the logs
 
-Look for:
+Look for these values of the `code` attribute:
 
-- `marketplace.ingest.duplicate-resource`: duplicate registry-local names.
-- `marketplace.policy.license-not-allowed`: a resource was rejected by the license allowlist.
-- `marketplace.policy.license-undeclared`: a resource has no license.
-- Migration success or failure messages on startup.
+- `marketplace.ingest.duplicate-resource`: two paths in one registry publish the same kind and name. The worker keeps the first and logs both paths.
+- `marketplace.policy.license-not-allowed`: the license allowlist rejected a resource.
+- `marketplace.policy.license-undeclared`: a resource declares no license.
+- `marketplace.policy.artifact-too-large`: an artifact exceeded `artifact_bytes`.
+
+Also watch for these messages:
+
+- `serve failed` with reason `open stores`: the process could not open storage, which includes a failed database migration.
+- `process refresh job failed` and `reindex failed`: a registry refresh failed. The worker message puts the cause in the `err` attribute, and `serve reindex` puts it in `error`.
 
 ## Alert on metrics
 
-Track:
+The API exposes these application metrics, alongside the standard Go runtime and process metrics:
 
-- `agent_marketplace_requests_total`: total HTTP requests; useful for request-rate alerts.
-- `agent_marketplace_active_requests`: in-flight HTTP requests; useful for concurrency alerts.
+- `agent_marketplace_requests_total`: counter of HTTP requests, labeled by `listener`, `method`, `route`, and `code`. Use it for request rate and error rate.
+- `agent_marketplace_request_duration_seconds`: histogram of request duration, labeled by `listener`, `method`, and `route`. Use it for latency.
+- `agent_marketplace_active_requests`: gauge of in-flight requests, labeled by `listener`.
 
-Alerts for error rate, latency, queue age, storage saturation, and reindex health need signals from the reverse proxy, application logs, or the platform running the containers; these two application metrics alone do not provide them.
+The `route` label holds the registered route pattern, or `unmatched`, never the raw request path. None of these metrics cover queue age, storage saturation, or reindex health. Get those signals from application logs, the reverse proxy, or the platform that runs the containers. The Helm chart can create a `ServiceMonitor` that scrapes the API's `operations` port (`serviceMonitor.enabled`).
 
 ## Related documentation
 

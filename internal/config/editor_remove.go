@@ -41,32 +41,34 @@ func UpdateRegistryRefInConfig(configPath, url, oldRef, newRef string) (int, err
 		return 0, fmt.Errorf("update config %q: %w", configPath, err)
 	}
 
-	_, registriesNode := findTopLevelSequence(root, "registries")
-	if registriesNode == nil {
-		return 0, nil
-	}
-	if registriesNode.Kind != yaml.SequenceNode {
-		return 0, fmt.Errorf("update config %q: expected %q to be a sequence", configPath, "registries")
-	}
-
 	updated := 0
-	for _, entryNode := range registriesNode.Content {
-		if entryNode.Kind != yaml.MappingNode {
-			continue
+	bump := func(urlNode, refNode *yaml.Node) {
+		if urlNode == nil || urlNode.Kind != yaml.ScalarNode || refNode == nil || refNode.Kind != yaml.ScalarNode {
+			return
 		}
-
-		urlNode := findRegistryURLNode(entryNode)
-		refNode := findMappingValue(entryNode, "ref")
-		if urlNode == nil || refNode == nil || refNode.Kind != yaml.ScalarNode {
-			continue
-		}
-
 		if NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(url) || strings.TrimSpace(refNode.Value) != oldRef {
-			continue
+			return
 		}
-
 		refNode.Value = newRef
 		updated++
+	}
+	if _, registriesNode := findTopLevelSequence(root, "registries"); registriesNode != nil {
+		if registriesNode.Kind != yaml.SequenceNode {
+			return 0, fmt.Errorf("update config %q: expected %q to be a sequence", configPath, "registries")
+		}
+		for _, entryNode := range registriesNode.Content {
+			if entryNode.Kind == yaml.MappingNode {
+				bump(findRegistryURLNode(entryNode), findMappingValue(entryNode, "ref"))
+			}
+		}
+	}
+	// v4 roots declare Git sources by name under sources.
+	if sources := findMappingValue(root, "sources"); sources != nil && sources.Kind == yaml.MappingNode {
+		for i := 1; i < len(sources.Content); i += 2 {
+			if source := sources.Content[i]; source.Kind == yaml.MappingNode {
+				bump(findMappingValue(source, "git"), findMappingValue(source, "ref"))
+			}
+		}
 	}
 
 	if updated == 0 {
