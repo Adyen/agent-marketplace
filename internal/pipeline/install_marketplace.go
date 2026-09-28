@@ -379,7 +379,7 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	requirementWarnings, err := MutateMarketplaceLayer(ctx, prepared.options.RepoRoot, prepared.options.LocalConfigDir, prepared.configPath, installScopeSource(prepared.options.Scope), func(m *MarketplaceLayerMutation) error {
 		return m.IncludePins(commitEntry, pins)
 	}, func() ([]error, error) {
-		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan)))
+		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan, ec.Merged)))
 		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
 	})
 	if err != nil {
@@ -396,11 +396,38 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	}, nil
 }
 
-func marketplaceInstallResolveMode(plan *marketplace.PreparedInstall) resolver.MarketplaceResolveMode {
+func marketplaceInstallResolveMode(plan *marketplace.PreparedInstall, cfg *config.Config) resolver.MarketplaceResolveMode {
 	if marketplacePlanNeedsRevalidation(plan) {
 		return resolver.MarketplaceResolveModeCached
 	}
+	if cfg != nil {
+		cache := marketplace.DefaultCache()
+		for _, entry := range cfg.Marketplaces {
+			for _, pin := range entry.Resources {
+				if cfg.MarketplacePinExcluded(entry, pin) {
+					continue
+				}
+				if marketplacePinCachedRejected(cache, entry, pin) {
+					return resolver.MarketplaceResolveModeCached
+				}
+			}
+		}
+	}
 	return resolver.MarketplaceResolveModeCachedNoFetch
+}
+
+func marketplacePinCachedRejected(cache *marketplace.Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) bool {
+	entry.URL = canonicalMarketplaceURL(entry.URL)
+	var rev store.AssessedResourceRevision
+	var ok bool
+	var err error
+	if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
+		identity := marketplace.IndexOnlyIdentity{Marketplace: entry.InstanceID, RegistryID: pin.RegistryID, Commit: pin.RegistryCommit, ManifestDigest: pin.RegistryManifestDigest}
+		rev, ok, err = cache.ReadIndexOnlyResourceRevision(identity, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+	} else {
+		rev, ok, err = cache.ReadResourceRevision(entry.URL, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+	}
+	return err == nil && ok && rev.Assessment.Decision == store.AssessmentDecisionReject
 }
 
 func marketplacePlanNeedsRevalidation(plan *marketplace.PreparedInstall) bool {
@@ -709,7 +736,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 	}
 	marketplaceMode := resolver.MarketplaceResolveModeRefresh
 	if overlays != nil {
-		marketplaceMode = marketplaceInstallResolveMode(plan)
+		marketplaceMode = marketplaceInstallResolveMode(plan, ec.Merged)
 	}
 	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true, EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, FileOverlays: overlays}})
 	if len(resolved.Errors) > 0 {

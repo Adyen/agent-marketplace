@@ -1691,7 +1691,7 @@ registries:
 	if err == nil {
 		t.Fatal("expected install --all --registry <nonexistent> to fail")
 	}
-	if !strings.Contains(err.Error(), "not found in repo config") {
+	if !strings.Contains(err.Error(), `registry "nonexistent-registry" is not declared in any config layer`) {
 		t.Fatalf("expected registry-not-found error, got %v", err)
 	}
 }

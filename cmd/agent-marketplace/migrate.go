@@ -42,6 +42,9 @@ migration is declined or refused.
 The --to v4 spelling remains accepted for compatibility (v4 is the default).
 Use --to v2 only for the legacy structural-remediation flow. V4 migration
 supports --scope and --dry-run; --dry-run writes neither config nor lock.
+--to v2 rejects both, because it always remediates every layer in place.
+--harnesses sets the user config's target harnesses when the migrated user
+config has none; a different existing list is refused rather than ignored.
 Organization configuration is never edited. Git/directory-only conversion
 leaves locks unchanged; provenance-proven Marketplace conversion creates or
 upgrades the owning layer lock to agent-marketplace-lock/v2 transactionally,
@@ -49,8 +52,14 @@ published together with the migrated config in one journaled transaction.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch targetVersion {
 			case "", "v4":
-				return runMigrateV4(cmd.Context(), cmd.OutOrStdout(), config.V4MigrationScope(scope), dryRun)
+				return runMigrateV4(cmd.Context(), cmd.OutOrStdout(), config.V4MigrationScope(scope), dryRun, harnesses)
 			case "v2":
+				if dryRun {
+					return errors.New("--dry-run is not supported with --to v2: the legacy structural remediation always writes; preview a v4 migration with --dry-run instead")
+				}
+				if cmd.Flags().Changed("scope") {
+					return errors.New("--scope is not supported with --to v2: the legacy structural remediation covers the user, repository, and personal-local configs together")
+				}
 				return runMigrate(cmd.OutOrStdout(), os.Stdin, harnesses)
 			default:
 				return fmt.Errorf("unsupported migration target %q; supported targets: v2, v4", targetVersion)
@@ -59,10 +68,10 @@ published together with the migrated config in one journaled transaction.`,
 	}
 
 	cmd.Flags().StringSliceVar(&harnesses, "harnesses", nil,
-		"Target harnesses for the remediated user personal config")
+		"Target harnesses for the user personal config: written when the migrated user config has none, and must match a list it already declares")
 	cmd.Flags().StringVar(&targetVersion, "to", "", "Target configuration version (v4 by default; v2 for legacy structural remediation)")
-	cmd.Flags().StringVar(&scope, "scope", string(config.V4MigrationAll), "Writable layer to migrate (all, user, repo, local)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the v4 format migration without writing config files")
+	cmd.Flags().StringVar(&scope, "scope", string(config.V4MigrationAll), "Writable layer to migrate (all, user, repo, local); not supported with --to v2")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the v4 format migration without writing config files; not supported with --to v2")
 
 	return cmd
 }
@@ -148,12 +157,12 @@ func pendingV4MigrationPaths(paths config.MigratePaths) (config.MigratePaths, er
 	return pending, nil
 }
 
-func runMigrateV4(ctx context.Context, out io.Writer, scope config.V4MigrationScope, dryRun bool) error {
+func runMigrateV4(ctx context.Context, out io.Writer, scope config.V4MigrationScope, dryRun bool, harnesses []string) error {
 	paths, err := currentMigratePaths()
 	if err != nil {
 		return err
 	}
-	result, err := config.MigrateConfigFilesToV4WithEvidence(ctx, paths, scope, dryRun, marketplace.DefaultCache())
+	result, err := config.MigrateConfigFilesToV4WithHarnesses(ctx, paths, scope, dryRun, marketplace.DefaultCache(), harnesses)
 	if err != nil {
 		return err
 	}

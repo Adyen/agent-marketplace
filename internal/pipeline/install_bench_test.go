@@ -59,7 +59,7 @@ func BenchmarkAllDiscoveredResourceNamesSingleKind(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = allDiscoveredResourceNames(regs, catalogs, "", ir.KindSkill)
+		_, _ = allDiscoveredResourceNames(regs, catalogs, "", config.RepoCommitted, ir.KindSkill)
 	}
 }
 
@@ -73,7 +73,7 @@ func BenchmarkAllDiscoveredResourceNamesAllKinds(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, k := range config.AllKinds {
-			_, _ = allDiscoveredResourceNames(regs, catalogs, "", k)
+			_, _ = allDiscoveredResourceNames(regs, catalogs, "", config.RepoCommitted, k)
 		}
 	}
 }
@@ -87,7 +87,7 @@ func BenchmarkAllDiscoveredResourceNamesMultiRegistry(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, k := range config.AllKinds {
-			_, _ = allDiscoveredResourceNames(regs, catalogs, "", k)
+			_, _ = allDiscoveredResourceNames(regs, catalogs, "", config.RepoCommitted, k)
 		}
 	}
 }
@@ -101,7 +101,7 @@ func BenchmarkAllDiscoveredResourceNamesLarge(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, k := range config.AllKinds {
-			_, _ = allDiscoveredResourceNames(regs, catalogs, "", k)
+			_, _ = allDiscoveredResourceNames(regs, catalogs, "", config.RepoCommitted, k)
 		}
 	}
 }

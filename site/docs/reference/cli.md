@@ -147,7 +147,7 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`, and disambiguates a named registry resource. |
 | `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Works only in `repo` scope (or with no `--scope`). Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
 | `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Works only in `repo` scope (or with no `--scope`). |
-| `--registry` | string | no | all configured registries | Limits `--all` to one configured registry URL. Requires `--all`. |
+| `--registry` | string | no | all configured registries | Limits `--all` to one configured registry. Requires `--all`. Matches the URL the way `update` and `lock` do, so a `.git` suffix or a trailing slash makes no difference, and looks in every config layer. The same source declared in several layers counts as one. If the URL names entries with different refs or paths, the command refuses and lists them. |
 | `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the whole registry. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
@@ -347,9 +347,9 @@ agent-marketplace migrate [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--to` | string | no | `v4` | Target schema: `v4` or `v2`. |
-| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. |
-| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. |
-| `--harnesses` | comma-separated strings | v2 only | none | Target harnesses for legacy structural remediation. Without a terminal, `--to v2` requires it when the user config needs a harness list. |
+| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. `--to v2` rejects it, because that flow always covers every layer. |
+| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. `--to v2` rejects it, because that flow always writes. |
+| `--harnesses` | comma-separated strings | no | none | Target harnesses for the user config. Both migration paths write them only into a user config that has no list, accept a list equal to the existing one, and refuse a different one. V4 migration also refuses them when `--scope` leaves out the user config or no user config exists. Without a terminal, `--to v2` requires it when the user config needs a harness list. |
 
 `--to v4` is accepted as an explicit spelling of the default. V4 migration refuses input that would lose information, include trees, and Marketplace entries without complete verified cache evidence, and it changes no files when it refuses. Migration does not promise to keep comments or formatting. Git and directory-only conversion leaves locks unchanged. A Marketplace entry with verified evidence creates or upgrades the owning layer lock to `agent-marketplace-lock/v2`, published together with the migrated config in one transaction. Organization configuration is never edited.
 
