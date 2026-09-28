@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { INSTALL_COMMAND } from '../../../shared/site'
+import { withBase } from 'vitepress'
+import { DOCS_PATH, INSTALL_COMMAND } from '../../../shared/site'
+import ActionLink from '../components/ActionLink.vue'
 import CommandBar from '../components/CommandBar.vue'
 import SectionShell from '../components/SectionShell.vue'
+
+const quickStartPath = withBase(`${DOCS_PATH}quick-start`)
 </script>
 
 <template>
   <SectionShell
     id="install"
     class="closing"
+    density="compact"
     eyebrow="Get started"
     title="Ready to try agent-marketplace?"
     soft
@@ -20,13 +25,16 @@ import SectionShell from '../components/SectionShell.vue'
     </template>
 
     <CommandBar :command="INSTALL_COMMAND" class="bar" />
+
+    <ActionLink class="quick-start" :href="quickStartPath">
+      Quick start
+      <span aria-hidden="true">→</span>
+    </ActionLink>
   </SectionShell>
 </template>
 
 <style scoped>
 .closing {
-  --am-section-heading-gap: 24px;
-  padding-block: 72px;
   border-color: var(--am-accent-border);
 }
 
@@ -35,7 +43,7 @@ import SectionShell from '../components/SectionShell.vue'
 }
 
 .bar {
-  --am-technical-font-size: 14px;
+  --am-technical-font-size: var(--am-text-body-sm);
   --am-technical-padding: 18px;
   width: 100%;
   max-width: 960px;
@@ -43,14 +51,13 @@ import SectionShell from '../components/SectionShell.vue'
   box-shadow: 0 12px 26px -20px var(--am-code-shadow);
 }
 
-.bar :deep(.copy) {
-  padding: 8px 12px;
-  font-size: 12px;
+.quick-start {
+  margin-top: 20px;
 }
 
 @media (max-width: 680px) {
-  .closing {
-    padding-block: 64px;
+  .quick-start {
+    width: 100%;
   }
 }
 </style>

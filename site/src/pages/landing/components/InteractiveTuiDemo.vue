@@ -141,6 +141,8 @@ function selectOffset(offset: number) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  if (!hasFocus.value) return
+
   switch (event.key) {
     case 'ArrowDown':
       event.preventDefault()
@@ -200,7 +202,7 @@ onUnmounted(clearSyncTimers)
 
       <div class="panes">
         <div class="resources" aria-label="Available resources">
-          <div v-for="[registry, items] in groups" :key="registry" class="registry">
+          <div v-for="[registry, items] in groups" :key="registry">
             <div class="registry-title">▼ {{ registry }}</div>
             <div
               v-for="resource in items"
@@ -282,7 +284,7 @@ onUnmounted(clearSyncTimers)
   --tui-green: var(--am-terminal-accent);
   --tui-orange: var(--am-terminal-warning);
   --tui-selection: var(--am-terminal-selection);
-  --am-terminal-font-size: 14px;
+  --am-terminal-font-size: var(--am-text-body-sm);
   --am-terminal-line-height: 1.45;
 }
 
@@ -320,7 +322,7 @@ onUnmounted(clearSyncTimers)
 .title {
   margin-bottom: 9px;
   color: var(--tui-text);
-  font-weight: 600;
+  font-weight: var(--am-font-semibold);
 }
 
 .panes {
@@ -330,14 +332,14 @@ onUnmounted(clearSyncTimers)
   min-height: 226px;
 }
 
-.registry + .registry {
+.resources > div + div {
   margin-top: 9px;
 }
 
 .registry-title {
   margin-bottom: 2px;
   color: var(--tui-text);
-  font-weight: 600;
+  font-weight: var(--am-font-semibold);
   white-space: nowrap;
 }
 
@@ -388,7 +390,7 @@ onUnmounted(clearSyncTimers)
 
 .details dt {
   color: var(--tui-cyan);
-  font-weight: 600;
+  font-weight: var(--am-font-semibold);
 }
 
 .details dd {
@@ -429,7 +431,7 @@ onUnmounted(clearSyncTimers)
   margin-top: 12px;
   padding-top: 9px;
   border-top: 1px solid var(--tui-border);
-  font-size: 13px;
+  font-size: var(--am-text-supporting);
 }
 
 kbd {
@@ -451,7 +453,7 @@ kbd {
 
 @media (max-width: 680px) {
   .demo {
-    --am-terminal-font-size: 12.5px;
+    --am-terminal-font-size: var(--am-text-supporting);
   }
 
   .panes {

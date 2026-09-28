@@ -63,7 +63,7 @@ onUnmounted(() => clearTimeout(reset))
   border-radius: var(--am-radius-lg);
   background: var(--am-code-bg);
   box-shadow: 0 12px 30px -25px var(--am-code-shadow);
-  font-family: var(--vp-font-family-mono);
+  font-family: var(--vp-font-family-mono), monospace;
   font-size: var(--am-technical-font-size);
   line-height: var(--am-technical-line-height);
 }
@@ -90,13 +90,13 @@ code::-webkit-scrollbar-thumb {
 .highlight { color: var(--vp-c-brand-1); }
 .prompt { color: var(--vp-c-brand-1); user-select: none; }
 .copy {
-  padding: 6px 9px;
+  padding: 8px 12px;
   border: 1px solid var(--vp-c-brand-1);
   border-radius: var(--am-radius-sm);
   background: var(--vp-c-brand-1);
   color: var(--am-on-accent);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--am-text-supporting);
+  font-weight: var(--am-font-semibold);
   line-height: 1;
   cursor: pointer;
 }
