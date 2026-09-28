@@ -1009,8 +1009,8 @@ func TestRemoveAdHocRefTargetsOnlyNamedRef(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Registries) != 2 || !slices.Contains(cfg.Registries[0].Skills.Include, "shared") || slices.Contains(cfg.Registries[0].Skills.Exclude, "shared") || slices.Contains(cfg.Registries[1].Skills.Include, "shared") || !slices.Contains(cfg.Registries[1].Skills.Exclude, "shared") {
-		t.Fatalf("registries = %#v, want only release changed", cfg.Registries)
+	if len(cfg.Registries) != 2 || !slices.Contains(cfg.Registries[0].Skills.Include, "shared") || slices.Contains(cfg.Registries[0].Skills.Exclude, "shared") || slices.Contains(cfg.Registries[1].Skills.Include, "shared") || slices.Contains(cfg.Registries[1].Skills.Exclude, "shared") {
+		t.Fatalf("registries = %#v, want only the release selection dropped, without an exclusion", cfg.Registries)
 	}
 	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
 	if len(resolved.Errors) != 0 || len(resolved.Resolved) != 1 || resolved.Resolved[0].Ref != "main" {
