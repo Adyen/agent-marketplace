@@ -286,7 +286,7 @@ agent-marketplace update [resource ...] [flags]
 
 Resource names, `--ref`, `--path`, and `--kind` require `--registry`, and names require `--kind`.
 
-The output reports how many registry entries are configured, Git or local directory, which is not the number whose revision changed. With `--bump`, it also reports how many refs were rewritten and names any ref it left alone because an included config file declares it. The command checks writable Marketplace mirror pins for newer usable revisions. It does not check or rewrite organization-managed pins. The owner of the organization config updates them, and the deployed lock if there is one, and consumers then run `sync`. By default the output counts those pins on one line, and `--verbose` lists each one. Other skipped pins keep their own reason. Marketplace values are printed quoted:
+The first line counts the configured registry entries, Git or local directory, whether or not their revision changed. With `--bump`, it also reports how many refs were rewritten and names any ref it left alone because an included config file declares it. The command checks writable Marketplace mirror pins for newer usable revisions. It does not check or rewrite organization-managed pins. The owner of the organization config updates them, along with the deployed lock if there is one, and consumers then run `sync`. By default the output counts those pins on one line, and `--verbose` lists each one. Other skipped pins still show their reason. Marketplace values are printed quoted:
 
 ```text
 Configured registry entries: 2, refs bumped: 1
