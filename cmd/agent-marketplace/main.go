@@ -35,7 +35,12 @@ var rootLogState struct {
 
 func main() {
 	cmd := newRootCmd()
+	if writeE2ECommandTree(cmd) {
+		return
+	}
+	schemas := e2eConfigSchemas()
 	execCmd, execErr := cmd.ExecuteC()
+	recordE2EInvocation(cmd, execCmd, schemas, execErr)
 	finishTelemetry(execCmd, execErr)
 	if execErr != nil {
 		finishRootLogging(execErr)
