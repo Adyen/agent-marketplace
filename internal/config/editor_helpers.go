@@ -163,7 +163,11 @@ func EnsureGlobalConfig() error {
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(configPath); !errors.Is(err, os.ErrNotExist) {
+	_, err = os.Lstat(configPath)
+	switch {
+	case err == nil:
+		return nil
+	case !errors.Is(err, os.ErrNotExist):
 		return err
 	}
 	// InitializeUserPersonalAtPath creates the file exclusively, so a
