@@ -132,7 +132,7 @@ When the organization lock is intentionally absent:
 - Online `sync --check` also resolves explicit requests into verified transient evidence without publishing the organization lock.
 - Offline runs and `lock --check` still require deployed evidence and report `v4.marketplace-lock-required`.
 
-A present lock that is malformed, untrusted, or mismatched stays exact and fails closed without transient fallback (`v4.marketplace-lock-mismatch`). Dynamic selectors remain unsupported.
+A present lock that is malformed, untrusted, or mismatched stays exact and fails closed without transient fallback (`v4.marketplace-lock-mismatch`). Dynamic selectors remain unsupported. Reading configuration intent never acquires a lock, and cache garbage collection performs normal work without an organization lock.
 
 ### Editing v4 roots
 
