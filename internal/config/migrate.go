@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -277,7 +278,11 @@ func loadMigrationFile(path string, kind layerKind) (*migrationFile, error) {
 // harnesses are intentionally not promoted to user scope.
 func resolveMigrationTargetHarnesses(files map[string]*migrationFile, explicitHarnesses []string) ([]string, error) {
 	if userFile := files["user"]; userFile != nil && userFile.exists && len(userFile.harnesses) > 0 {
-		return normalizedUniqueValues(userFile.harnesses), nil
+		existing := normalizedUniqueValues(userFile.harnesses)
+		if explicit := normalizedUniqueValues(explicitHarnesses); len(explicit) > 0 && !sameHarnessSet(existing, explicit) {
+			return nil, fmt.Errorf("user config already declares harnesses %s; edit that list instead of passing different harnesses", strings.Join(existing, ", "))
+		}
+		return existing, nil
 	}
 	if len(explicitHarnesses) > 0 {
 		return normalizedUniqueValues(explicitHarnesses), nil
@@ -771,6 +776,15 @@ func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun b
 // parsed, converted, and pair-validated before anything is published;
 // unsupported constructs therefore leave all inputs intact.
 func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths, scope V4MigrationScope, dryRun bool, evidence MarketplaceMigrationEvidence) (*V4MigrationResult, error) {
+	return MigrateConfigFilesToV4WithHarnesses(ctx, paths, scope, dryRun, evidence, nil)
+}
+
+// MigrateConfigFilesToV4WithHarnesses is MigrateConfigFilesToV4WithEvidence
+// with explicit target harnesses for the user config. They are written to a
+// converted legacy user config that has none, and accepted when they equal the
+// harnesses the user config already declares; anything else fails before a
+// file is written.
+func MigrateConfigFilesToV4WithHarnesses(ctx context.Context, paths MigratePaths, scope V4MigrationScope, dryRun bool, evidence MarketplaceMigrationEvidence, harnesses []string) (*V4MigrationResult, error) {
 	if scope != V4MigrationAll && scope != V4MigrationUser && scope != V4MigrationRepo && scope != V4MigrationLocal {
 		return nil, v4err("v4.migration-scope", "scope", 0, "unsupported migration scope %q", scope)
 	}
@@ -786,6 +800,7 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 	}
 	type inputPath struct{ name, path string }
 	inputs := make([]v4MigrationInput, 0, len(selected))
+	var currentUser *V4Config
 	canonicalInputs := make(map[string]inputPath, len(selected))
 	for _, item := range selected {
 		if scope != V4MigrationAll && string(scope) != item.name {
@@ -821,6 +836,9 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 			if _, _, err := loadV4RuntimeConfig(v4, item.path, item.kind, nil); err != nil {
 				return nil, err
 			}
+			if item.kind == userLayer {
+				currentUser = v4
+			}
 			// An already-v4 file is valid input and needs no rewrite.
 			continue
 		}
@@ -839,6 +857,10 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 			return nil, v4err("v4.migration-marketplace-evidence", item.path, 0, "Marketplace entries require verified cache evidence for exact lock migration")
 		}
 		inputs = append(inputs, v4MigrationInput{name: item.name, path: item.path, logicalPath: logicalPath, kind: item.kind, mode: mode, cfg: cfg, originalData: data, canonicalPath: canonical, generation: generation, expectedMode: mode})
+	}
+
+	if err := applyV4MigrationHarnesses(inputs, currentUser, scope, paths.User, harnesses); err != nil {
+		return nil, err
 	}
 
 	result := &V4MigrationResult{Scope: scope, DryRun: dryRun, UserPath: paths.User, RepoPath: paths.Repo, LocalPath: paths.Local}
@@ -895,6 +917,53 @@ func MigrateConfigFilesToV4WithEvidence(ctx context.Context, paths MigratePaths,
 	}
 	slog.Info("v4 migration complete", "user", result.UserMigrated, "repo", result.RepoMigrated, "local", result.LocalMigrated)
 	return result, nil
+}
+
+// applyV4MigrationHarnesses writes explicit harnesses into a converted user
+// config that has none, and refuses them whenever they would otherwise be
+// ignored: the user config is out of scope or missing, or it already declares
+// a different list.
+func applyV4MigrationHarnesses(inputs []v4MigrationInput, currentUser *V4Config, scope V4MigrationScope, userPath string, harnesses []string) error {
+	harnesses = normalizedUniqueValues(harnesses)
+	if len(harnesses) == 0 {
+		return nil
+	}
+	if err := ValidateHarnessIDs(harnesses); err != nil {
+		return err
+	}
+	if scope != V4MigrationAll && scope != V4MigrationUser {
+		return v4err("v4.migration-harnesses", userPath, 0, "harnesses apply to the user config, but migration scope %q does not include the user config", scope)
+	}
+	var existing []string
+	path, found := userPath, false
+	for i := range inputs {
+		if inputs[i].kind != userLayer {
+			continue
+		}
+		existing, path, found = normalizedUniqueValues(inputs[i].cfg.Harnesses), inputs[i].path, true
+		if len(existing) == 0 {
+			inputs[i].cfg.Harnesses = harnesses
+			return nil
+		}
+		break
+	}
+	if !found && currentUser != nil {
+		existing, found = normalizedUniqueValues(currentUser.Harnesses), true
+		if len(existing) == 0 {
+			return v4err("v4.migration-harnesses", path, 0, "the user config is already v4 and declares no harnesses; add them to that file instead")
+		}
+	}
+	if !found {
+		return v4err("v4.migration-harnesses", path, 0, "harnesses apply to an existing user config, and there is none; create it with agent-marketplace init --harnesses %s", strings.Join(harnesses, ","))
+	}
+	if sameHarnessSet(existing, harnesses) {
+		return nil
+	}
+	return v4err("v4.migration-harnesses", path, 0, "user config already declares harnesses %s; edit that list instead of passing different harnesses", strings.Join(existing, ", "))
+}
+
+func sameHarnessSet(a, b []string) bool {
+	return slices.Equal(slices.Sorted(slices.Values(a)), slices.Sorted(slices.Values(b)))
 }
 
 func markV4MigrationResult(result *V4MigrationResult, name string) {

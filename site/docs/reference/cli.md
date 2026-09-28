@@ -345,9 +345,9 @@ agent-marketplace migrate [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--to` | string | no | `v4` | Target schema: `v4` or `v2`. |
-| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. |
-| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. |
-| `--harnesses` | comma-separated strings | v2 only | none | Target harnesses for legacy structural remediation. Without a terminal, `--to v2` requires it when the user config needs a harness list. |
+| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. `--to v2` rejects it, because that flow always covers every layer. |
+| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. `--to v2` rejects it, because that flow always writes. |
+| `--harnesses` | comma-separated strings | no | none | Target harnesses for the user config. Both migration paths write them only into a user config that has no list, accept a list equal to the existing one, and refuse a different one. V4 migration also refuses them when `--scope` leaves out the user config or no user config exists. Without a terminal, `--to v2` requires it when the user config needs a harness list. |
 
 `--to v4` is accepted as an explicit spelling of the default. V4 migration refuses input that would lose information, include trees, and Marketplace entries without complete verified cache evidence, and it changes no files when it refuses. Migration does not promise to keep comments or formatting. Git and directory-only conversion leaves locks unchanged. A Marketplace entry with verified evidence creates or upgrades the owning layer lock to `agent-marketplace-lock/v2`, published together with the migrated config in one transaction. Organization configuration is never edited.
 

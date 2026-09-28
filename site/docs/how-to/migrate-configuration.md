@@ -60,6 +60,7 @@ Each converted file is reported as `Migrated <layer> config: <path>`. Before it 
 Things to know about the migration:
 
 - It covers the user, repository, and repository-personal [configuration layers](../glossary.md#configuration-layer). Use `--scope user`, `--scope repo`, or `--scope local` to convert just one. The default is `--scope all`.
+- Add `--harnesses claude,factory` to give a migrated user config without a `harnesses` list its target set. The command also accepts a list equal to the one the user config already declares. If the user config declares a different list, is outside `--scope`, or does not exist, the command fails before writing anything.
 - It never edits the organization configuration.
 - It refuses, without changing any file, when a root uses `include`, when a Marketplace pin has no verified cache data, when a Marketplace resource that a collection brought in has its own local name (`installed_name`), and when some other part of the file cannot be represented in v4.
 - For Git and directory sources, it leaves lockfiles unchanged. For Marketplace pins, it creates or upgrades the lockfile for the same layer to `agent-marketplace-lock/v2` and writes it together with the config in one transaction.
@@ -85,7 +86,7 @@ A file that is already valid v2 or v3 stays byte-for-byte unchanged. The command
 agent-marketplace migrate --to v2 --harnesses claude,factory
 ```
 
-`--harnesses` is only used when the user config has no harness list. An existing list always wins. Without `--harnesses`, the command prompts on a terminal and fails in a non-interactive run instead of guessing.
+`--harnesses` is only used when the user config has no harness list. If the user config already declares a different list, the command fails; an identical list is fine. `--to v2` rejects `--dry-run` and `--scope`, because this flow always writes every layer. Without `--harnesses`, the command prompts on a terminal and fails in a non-interactive run instead of guessing.
 
 ### Convert v1 by hand
 
@@ -191,6 +192,7 @@ Included fragments may leave out `apiVersion` and inherit v4 from the root. They
 - `v4.dynamic-unbounded`: A Marketplace group uses `all` or `tags` without a `registries` list. Add one.
 - `v4.layer-field`: The file sets a field that its layer does not allow, for example `harnesses` in `.agents/config.local.yaml`, or `backup`, `logging`, or `telemetry` in a repository config. Move the field to a layer that allows it, usually the user config.
 - `v4.runtime-option`: Remove the unsupported option, such as an `as` alias that differs from the resource name on a Git or directory resource.
+- `v4.migration-harnesses`: The command could not apply `--harnesses`. Edit the user config's existing `harnesses` list directly, include the user config in `--scope`, or create a user config with `agent-marketplace init --harnesses …`.
 - `v4.migration-unsupported`: Part of the file cannot be converted, for example a root that uses `include`. The message names the part. Edit the file by hand, or keep it on v2 or v3.
 - `v4.migration-marketplace-evidence`: The verified cache data for a Marketplace pin is missing or inconsistent. Run a normal `sync` to fetch and verify the endpoint's metadata and artifacts, then run `migrate` again. Do not write lock or trust data by hand.
 - `lock.snapshot-unavailable`: Restore the exact Git snapshot, or run a command that writes the lock, then check again.
