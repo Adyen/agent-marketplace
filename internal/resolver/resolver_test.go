@@ -252,6 +252,7 @@ func TestResolveAcceptsSelectedRequirement(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/excluded-prerequisite-is-required
 func TestResolveRequiredExcludedPrerequisiteRemainsSelected(t *testing.T) {
 	cfg := &config.Config{Registries: []config.RegistryEntry{
 		{

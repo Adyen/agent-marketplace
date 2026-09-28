@@ -51,6 +51,7 @@ func TestMarketplaceExclusionMatchesExactOptionalPins(t *testing.T) {
 	}
 }
 
+// spec: marketplace-protocols/marketplace-entries-are-validated
 func TestValidateMarketplaceEntries(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -233,6 +234,7 @@ func TestValidateMarketplaceEntriesRejectsUnsafeIdentityAndEndpointFields(t *tes
 	}
 }
 
+// spec: marketplace-protocols/marketplace-url-allowlist
 func TestValidateMarketplaceURLs(t *testing.T) {
 	entries := []MarketplaceEntry{
 		{URL: "https://market.example.com/skills"},
@@ -247,8 +249,9 @@ func TestValidateMarketplaceURLs(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected blocked URL error, got nil")
 	}
-	if !strings.Contains(err.Error(), "evil.example.com") {
-		t.Fatalf("expected error to mention evil.example.com, got %v", err)
+	var blocked *MarketplaceURLBlockedError
+	if !errors.As(err, &blocked) || len(blocked.BlockedURLs) != 1 || !strings.Contains(blocked.BlockedURLs[0], "evil.example.com") {
+		t.Fatalf("error = %#v, want *MarketplaceURLBlockedError listing only evil.example.com", err)
 	}
 
 	if err := ValidateMarketplaceURLs(entries, nil); err != nil {
@@ -322,6 +325,29 @@ func TestMarketplaceMerge(t *testing.T) {
 	// Marketplaces accumulate.
 	if len(merged.Marketplaces) != 2 {
 		t.Fatalf("expected 2 merged marketplaces, got %d", len(merged.Marketplaces))
+	}
+}
+
+// spec: marketplace-protocols/layered-config-wiring
+func TestMergeLayersKeepsMarketplaceProvenanceAndFirstAllowlist(t *testing.T) {
+	orgAllow := []string{`org\.example`}
+	userAllow := []string{`.*`}
+	merged := MergeLayers([]Layer{
+		{Source: Organization, Config: &Config{AllowedMarketplaces: &orgAllow, Marketplaces: []MarketplaceEntry{{URL: "https://org.example", InstanceID: "org"}}}},
+		{Source: UserPersonal, Config: &Config{AllowedMarketplaces: &userAllow, Marketplaces: []MarketplaceEntry{{URL: "https://user.example", InstanceID: "user"}}}},
+		{Source: RepoCommitted, Config: &Config{Marketplaces: []MarketplaceEntry{{URL: "https://repo.example", InstanceID: "repo"}}}},
+	})
+
+	var got []string
+	for _, entry := range merged.Marketplaces {
+		got = append(got, entry.InstanceID+"@"+entry.Source.String())
+	}
+	want := []string{"org@" + Organization.String(), "user@" + UserPersonal.String(), "repo@" + RepoCommitted.String()}
+	if !slices.Equal(got, want) {
+		t.Fatalf("merged marketplaces = %v, want %v", got, want)
+	}
+	if merged.AllowedMarketplaces == nil || !slices.Equal(*merged.AllowedMarketplaces, orgAllow) {
+		t.Fatalf("AllowedMarketplaces = %v, want organization allowlist %v", merged.AllowedMarketplaces, orgAllow)
 	}
 }
 

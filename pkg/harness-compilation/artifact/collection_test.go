@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: marketplace-protocols/collection-manifest-round-trip
 func TestCollectionManifestRoundTrip(t *testing.T) {
 	col := ir.NewCollection("defaults", "1.0.0", "Default collection", []ir.CollectionMember{
 		{Kind: ir.KindSkill, Name: "review"},
@@ -40,6 +41,7 @@ func TestCollectionManifestRoundTrip(t *testing.T) {
 	_ = payload2
 }
 
+// spec: marketplace-protocols/deterministic-ordering
 func TestCollectionManifestDeterministic(t *testing.T) {
 	col := ir.NewCollection("defaults", "1.0.0", "Default collection", []ir.CollectionMember{
 		{Kind: ir.KindSkill, Name: "b"},
@@ -188,6 +190,7 @@ func TestVerifyCollectionManifestRejectsTrailingWhitespace(t *testing.T) {
 	}
 }
 
+// spec: marketplace-protocols/content-digest-excludes-the-digest-field
 func TestCollectionManifestContentDigestExcludesDigest(t *testing.T) {
 	col := ir.NewCollection("defaults", "1.0.0", "Default collection", []ir.CollectionMember{
 		{Kind: ir.KindSkill, Name: "review"},
@@ -394,5 +397,42 @@ func TestValidateAndExpandCollectionManifestGraphExpandsDirectLeavesWhenFlat(t *
 				t.Fatalf("ValidateFlatMirrorManifest error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// spec: marketplace-protocols/deterministic-ordering
+func TestCollectionManifestOrdersMembersAndIncludes(t *testing.T) {
+	col := ir.NewCollection("defaults", "1.0.0", "", []ir.CollectionMember{
+		{Kind: ir.KindSkill, Name: "b"},
+		{Kind: ir.KindCommand, Name: "z"},
+		{Kind: ir.KindSkill, Name: "a"},
+	}, []string{"z", "a", "m"}, nil, ir.SourceRef{})
+	m, err := CollectionFromIR(col)
+	if err != nil {
+		t.Fatalf("CollectionFromIR: %v", err)
+	}
+	payload, _, err := EncodeCollectionManifest(m)
+	if err != nil {
+		t.Fatalf("EncodeCollectionManifest: %v", err)
+	}
+	var got struct {
+		Members []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"members"`
+		Includes []string `json:"includes"`
+	}
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var members []string
+	for _, member := range got.Members {
+		members = append(members, member.Kind+":"+member.Name)
+	}
+	if want := []string{"command:z", "skill:a", "skill:b"}; strings.Join(members, ",") != strings.Join(want, ",") {
+		t.Errorf("members = %v, want %v", members, want)
+	}
+	if want := []string{"a", "m", "z"}; strings.Join(got.Includes, ",") != strings.Join(want, ",") {
+		t.Errorf("includes = %v, want %v", got.Includes, want)
 	}
 }

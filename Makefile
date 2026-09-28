@@ -10,8 +10,9 @@ TEST_FLAGS ?=
 TEST_SHORT ?= -short
 TEST_LOCAL_BASE ?= origin/main
 VALIDATE_JOBS ?= 2
+OPENSPEC_VERSION ?= 1.12.0
 
-.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e
+.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e spec-check
 
 # Public container defaults. Override these generic variables in the environment
 # when builds must use a registry mirror.
@@ -121,6 +122,13 @@ tidy:
 
 version:
 	@echo $(VERSION)
+
+# Strict OpenSpec validation with the pinned CLI, then scenario-to-test
+# traceability and the archive-before-merge rule (openspec/specs/spec-governance).
+spec-check:
+	npx --yes @fission-ai/openspec@$(OPENSPEC_VERSION) validate --all --strict --no-interactive
+	CGO_ENABLED=0 $(GO) run ./tools/specaudit trace
+	CGO_ENABLED=0 $(GO) run ./tools/specaudit archived
 
 container: container-marketplace container-web container-site
 
