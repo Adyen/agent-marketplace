@@ -39,12 +39,19 @@ type requirement struct {
 type section struct {
 	op           string
 	requirements []requirement
+	renames      []requirementRename
+}
+
+type requirementRename struct {
+	from string
+	to   string
 }
 
 var (
 	deltaHeading       = regexp.MustCompile(`^## (ADDED|MODIFIED|REMOVED|RENAMED) Requirements\s*$`)
 	requirementHeading = regexp.MustCompile(`^### Requirement:\s*(.+?)\s*$`)
 	scenarioHeading    = regexp.MustCompile(`^#### Scenario:\s*(.+?)\s*$`)
+	renameLine         = regexp.MustCompile("^\\s*-?\\s*(FROM|TO):\\s*`?###\\s*Requirement:\\s*(.+?)`?\\s*$")
 )
 
 func slugify(title string) string {
@@ -76,10 +83,11 @@ func parseSpec(root, rel, capability string) ([]section, error) {
 	defer func() { _ = f.Close() }()
 
 	var (
-		sections []section
-		cur      *section
-		fenced   bool
-		lineNo   int
+		sections   []section
+		cur        *section
+		fenced     bool
+		lineNo     int
+		renameFrom string
 	)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -95,6 +103,7 @@ func parseSpec(root, rel, capability string) ([]section, error) {
 		}
 		switch {
 		case strings.HasPrefix(line, "## "):
+			renameFrom = ""
 			cur = nil
 			if m := deltaHeading.FindStringSubmatch(line); m != nil {
 				sections = append(sections, section{op: m[1]})
@@ -105,6 +114,15 @@ func parseSpec(root, rel, capability string) ([]section, error) {
 			}
 			cur = &sections[len(sections)-1]
 		case cur == nil:
+		case cur.op == "RENAMED":
+			if m := renameLine.FindStringSubmatch(line); m != nil {
+				if m[1] == "FROM" {
+					renameFrom = normalizeName(m[2])
+				} else if renameFrom != "" {
+					cur.renames = append(cur.renames, requirementRename{from: renameFrom, to: normalizeName(m[2])})
+					renameFrom = ""
+				}
+			}
 		case requirementHeading.MatchString(line):
 			name := requirementHeading.FindStringSubmatch(line)[1]
 			cur.requirements = append(cur.requirements, requirement{name: normalizeName(name)})
@@ -210,6 +228,13 @@ func knownScenarios(root string) (map[string]scenario, []finding, error) {
 			sections, err := parseSpec(root, deltas[capability], capability)
 			if err != nil {
 				return nil, nil, err
+			}
+			for _, s := range sections {
+				for _, rename := range s.renames {
+					if i := caps[capability].index(rename.from); i >= 0 {
+						caps[capability][i].name = rename.to
+					}
+				}
 			}
 			for _, s := range sections {
 				caps[capability] = applyDelta(caps[capability], s)

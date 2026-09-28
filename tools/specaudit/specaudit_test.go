@@ -192,6 +192,30 @@ func TestTrace(t *testing.T) {
 				"x_test.go": ann("alpha/one") + ann("alpha/replacement"),
 			}),
 		},
+		// spec: spec-governance/renamed-requirement-is-modified
+		{
+			name: "renamed requirement is modified before rename section",
+			files: with(map[string]string{
+				"openspec/changes/c1/specs/alpha/spec.md": "## MODIFIED Requirements\n\n### Requirement: Renamed\n\n#### Scenario: Two\n\n## RENAMED Requirements\n- FROM: `### Requirement: Second`\n- TO: `### Requirement: Renamed`\n",
+				"x_test.go": ann("alpha/one") + ann("alpha/two"),
+			}),
+		},
+		// spec: spec-governance/renamed-requirement-is-removed
+		{
+			name: "renamed requirement can be removed by its new name",
+			files: with(map[string]string{
+				"openspec/changes/c1/specs/alpha/spec.md": "## RENAMED Requirements\n- FROM: `### Requirement: Second`\n- TO: `### Requirement: Renamed`\n\n## REMOVED Requirements\n\n### Requirement: Renamed\n",
+				"x_test.go": ann("alpha/one"),
+			}),
+		},
+		// spec: spec-governance/rename-preserves-scenario-identities
+		{
+			name: "rename alone preserves scenario annotations",
+			files: with(map[string]string{
+				"openspec/changes/c1/specs/alpha/spec.md": "## RENAMED Requirements\n- FROM: `### Requirement: Second`\n- TO: `### Requirement: Renamed`\n",
+				"x_test.go": ann("alpha/one") + ann("alpha/two"),
+			}),
+		},
 		{
 			name: "archived changes are ignored",
 			files: with(map[string]string{
