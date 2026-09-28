@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 func TestLoadEffectiveCanceledContextDoesNotBind(t *testing.T) {
@@ -100,6 +102,43 @@ resources:
 	}
 	if ll.NeedsMarketplaceLock() {
 		t.Fatal("legacy layer must not need a marketplace lock")
+	}
+}
+
+func TestLayerIntentExplicitSelections(t *testing.T) {
+	v4, err := ParseV4Config([]byte(`apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: ./regs}
+  hosted: {marketplace: https://market.example}
+resources:
+  local: {include: [skill/alpha, subagent/beta]}
+  hosted: {include: [tools/skill/review]}
+`), filepath.Join(t.TempDir(), "config.yaml"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	li := LayerIntent{Source: RepoCommitted, v4: v4}
+	want := []ExplicitSelection{
+		{Kind: ir.KindSkill, Name: "alpha"},
+		{Kind: ir.KindSubagent, Name: "beta"},
+	}
+	if got := li.ExplicitSelections(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("v4 explicit selections = %#v, want %#v", got, want)
+	}
+
+	legacy := LayerIntent{Source: RepoCommitted, legacy: &Config{Registries: []RegistryEntry{
+		{URL: "https://example.com/a.git", Skills: KindSelector{Include: []string{"one"}}, MCP: KindSelector{Include: []string{"srv"}}},
+	}}}
+	wantLegacy := []ExplicitSelection{
+		{Kind: ir.KindSkill, Name: "one"},
+		{Kind: ir.KindMcpServer, Name: "srv"},
+	}
+	if got := legacy.ExplicitSelections(); !reflect.DeepEqual(got, wantLegacy) {
+		t.Fatalf("legacy explicit selections = %#v, want %#v", got, wantLegacy)
+	}
+
+	if got := (LayerIntent{Source: RepoCommitted}).ExplicitSelections(); got != nil {
+		t.Fatalf("absent layer selections = %#v, want nil", got)
 	}
 }
 

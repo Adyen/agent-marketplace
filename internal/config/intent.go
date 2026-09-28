@@ -14,6 +14,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	telemetryconfig "github.com/Adyen/agent-marketplace/internal/telemetry/config"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 type Intent struct {
@@ -333,6 +334,43 @@ func (i Intent) AllowedRegistries() []string {
 		}
 	}
 	return nil
+}
+
+type ExplicitSelection struct {
+	Kind ir.ResourceKind
+	Name string
+}
+
+func (l LayerIntent) ExplicitSelections() []ExplicitSelection {
+	if l.legacy != nil {
+		var out []ExplicitSelection
+		for _, entry := range l.legacy.Registries {
+			for _, kind := range AllKinds {
+				for _, name := range entry.SelectorForKind(kind).Include {
+					out = append(out, ExplicitSelection{Kind: kind, Name: name})
+				}
+			}
+		}
+		return out
+	}
+	if l.v4 == nil {
+		return nil
+	}
+	names := make([]string, 0, len(l.v4.Sources))
+	for name := range l.v4.Sources {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out []ExplicitSelection
+	for _, name := range names {
+		if l.v4.Sources[name].Kind == V4SourceMarketplace {
+			continue
+		}
+		for _, request := range effectiveV4Requests(l.v4.Groups[name]) {
+			out = append(out, ExplicitSelection{Kind: v4KindToIR(request.Kind), Name: request.Name})
+		}
+	}
+	return out
 }
 
 func (i Intent) AllowedMarketplaces() []string {

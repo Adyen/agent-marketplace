@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -566,6 +567,41 @@ func runGit(t *testing.T, dir string, args ...string) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+}
+
+func TestListFromDoesNotAcquireConfiguredMarketplace(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
+	defer server.Close()
+	orgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: "+server.URL+"}\nresources:\n  hosted: {include: [tools/skill/review]}\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+
+	registry := t.TempDir()
+	writeSkill(t, registry, "local-skill", "Local skill", []string{"local"})
+
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+
+	output, err := executeCommand("list", "--from", registry)
+	if err != nil {
+		t.Fatalf("list --from failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "local-skill") {
+		t.Fatalf("expected local-skill in list output, got:\n%s", output)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("list --from made %d requests to the configured Marketplace", got)
 	}
 }
 
