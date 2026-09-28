@@ -8,7 +8,7 @@ if (!output) throw new Error("AM_TUI_RECORDING_FIXTURE is required");
 
 const lifecycle = defineFixture("recording-poc", []);
 try {
-  lifecycle.setup();
+  await lifecycle.setup();
   const fixture = lifecycle.current();
   const quote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
   const wrapper = path.join(path.dirname(output), "launch-recording-fixture");
