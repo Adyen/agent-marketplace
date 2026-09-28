@@ -335,7 +335,19 @@ func writeInstallResult(out io.Writer, result *pipeline.InstallResult, scope pip
 		_, err := fmt.Fprintf(out, "Installed collection %s %s\n", terminalSafeText(result.CollectionLabel), pipeline.InstallScopeLabel(scope))
 		return err
 	}
-	_, err := fmt.Fprintf(out, "Installed %s %s\n", terminalSafeText(strings.Join(result.Installed, ", ")), pipeline.InstallScopeLabel(scope))
+	if len(result.Installed) > 0 {
+		if _, err := fmt.Fprintf(out, "Installed %s %s\n", terminalSafeText(strings.Join(result.Installed, ", ")), pipeline.InstallScopeLabel(scope)); err != nil {
+			return err
+		}
+	}
+	if len(result.NotSelected) == 0 {
+		return nil
+	}
+	pronoun := "it"
+	if len(result.NotSelected) > 1 {
+		pronoun = "them"
+	}
+	_, err := fmt.Fprintf(out, "Not installed: %s; the effective configuration does not select %s (for example, an exclusion wins). Install by name to select explicitly\n", terminalSafeText(strings.Join(result.NotSelected, ", ")), pronoun)
 	return err
 }
 
