@@ -82,6 +82,10 @@ A program that gives your AI agent extra tools or data through the Model Context
 
 Records that `agent-marketplace` keeps about which entries it wrote into settings files it shares with you, such as Devin's `mcp_config.json` or Codex's `config.toml`. They let it update or remove only its own entries. The records live in `~/.local/state/agent-marketplace/` (or `$XDG_STATE_HOME/agent-marketplace/` when that variable is set). Do not delete them. See [Shared configuration ownership](./explanation/shared-configuration-ownership.md).
 
+## Prerequisite
+
+Another resource that a resource needs to work, declared in its front matter under `metadata.requires`. An unmet prerequisite produces an advisory warning with the install command that fixes it; it never blocks the install or changes the exit status. See [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) and the [resource prerequisites reference](./reference/resource-prerequisites.md).
+
 ## Ref
 
 The Git branch, tag, or commit that a Git [source](#source) points at, written as `ref:` in the configuration, for example `main` or `v1.2.0`. The first [sync](#sync) turns the ref into one exact [commit](#commit) and records it in the [lockfile](#lockfile).
@@ -136,7 +140,7 @@ The `agent-marketplace sync` command. It downloads what your configuration asks 
 
 ## Tag
 
-A label that a registry author puts on a resource, such as `k8s` or `security`. You can install everything with a tag at once, with `tags: [k8s]` in a [resource group](#resource-group) or with `agent-marketplace install --tag k8s`. See [Declare tags and prerequisites](./how-to/author/declare-tags-and-prerequisites.md).
+A label that a registry author puts on a resource, such as `k8s` or `security`. You can install everything with a tag at once, with `tags: [k8s]` in a [resource group](#resource-group) or with `agent-marketplace install --tag k8s`. See [Declare tags and a license](./how-to/author/declare-tags-and-licenses.md).
 
 ## Terminal
 

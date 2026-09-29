@@ -1159,8 +1159,57 @@ func TestLoadMalformedCommand(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/command-and-subagent-prerequisites
+func TestLoadCommandAndSubagentPrerequisites(t *testing.T) {
+	mapFS := fstest.MapFS{
+		"commands/deploy.md": &fstest.MapFile{
+			Data: []byte("---\nname: deploy\ndescription: Deploy command\nmetadata:\n  requires:\n    - kind: mcp\n      name: deploy-server\n      registry: git@example.com:mcp.git\n---\nRun deploy\n"),
+		},
+		"agents/reviewer.md": &fstest.MapFile{
+			Data: []byte("---\nname: reviewer\ndescription: Reviews code\nmetadata:\n  requires:\n    - helper-skill\n    - mcp:lint-server\n---\nYou are a reviewer\n"),
+		},
+	}
+
+	cat, err := LoadFS(mapFS, "claude")
+	if err != nil {
+		t.Fatalf("LoadFS = _, %v", err)
+	}
+
+	want := map[string][]Requirement{
+		"deploy": {
+			{Kind: ir.KindMcpServer, Name: "deploy-server", Registry: "git@example.com:mcp.git"},
+		},
+		"reviewer": {
+			{Kind: ir.KindSkill, Name: "helper-skill"},
+			{Kind: ir.KindMcpServer, Name: "lint-server"},
+		},
+	}
+	var found int
+	for _, e := range cat.Entries {
+		wantReqs, ok := want[e.Name]
+		if !ok {
+			continue
+		}
+		found++
+		got := RequirementsFromResource(e.Resource)
+		if !reflect.DeepEqual(got, wantReqs) {
+			t.Errorf("%s requirements = %#v, want %#v", e.Name, got, wantReqs)
+		}
+	}
+	if found != len(want) {
+		t.Fatalf("found %d entries with declared requires, want %d; entries=%#v", found, len(want), cat.Entries)
+	}
+}
+
 // spec: resource-prerequisites/structured-mcp-prerequisite
 // spec: resource-prerequisites/shorthand-prerequisite
+// spec: resource-prerequisites/structured-item-without-kind
+// spec: resource-prerequisites/kind-alias-spellings
+// spec: resource-prerequisites/kind-all-means-skill
+// spec: resource-prerequisites/shorthand-without-a-kind
+// spec: resource-prerequisites/surrounding-whitespace-is-trimmed
+// spec: resource-prerequisites/non-list-requires-value
+// spec: resource-prerequisites/invalid-item-among-valid-items
 func TestRequirementsFromExtra(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1203,11 +1252,63 @@ func TestRequirementsFromExtra(t *testing.T) {
 			},
 		},
 		{
-			name: "empty kind defaults to skill",
+			name: "missing and empty kind default to skill",
 			extra: map[string]any{"metadata": map[string]any{"requires": []any{
-				map[string]any{"kind": "", "name": "supporting-skill"},
+				map[string]any{"name": "supporting-skill"},
+				map[string]any{"kind": "", "name": "other-skill"},
+			}}},
+			want: []Requirement{
+				{Kind: ir.KindSkill, Name: "supporting-skill"},
+				{Kind: ir.KindSkill, Name: "other-skill"},
+			},
+		},
+		{
+			name: "kind alias spellings",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				map[string]any{"kind": "MCP_Servers", "name": "docs-server"},
+				map[string]any{"kind": "agents", "name": "helper-agent"},
+				map[string]any{"kind": "Commands", "name": "run-tests"},
+			}}},
+			want: []Requirement{
+				{Kind: ir.KindMcpServer, Name: "docs-server"},
+				{Kind: ir.KindSubagent, Name: "helper-agent"},
+				{Kind: ir.KindCommand, Name: "run-tests"},
+			},
+		},
+		{
+			name: "kind all resolves to skill",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				map[string]any{"kind": "all", "name": "supporting-skill"},
 			}}},
 			want: []Requirement{{Kind: ir.KindSkill, Name: "supporting-skill"}},
+		},
+		{
+			name: "bare string shorthand defaults to skill",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				"other-skill",
+			}}},
+			want: []Requirement{{Kind: ir.KindSkill, Name: "other-skill"}},
+		},
+		{
+			name: "surrounding whitespace is trimmed",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				" mcp : docs-server ",
+				map[string]any{
+					"kind":     " mcp ",
+					"name":     " genai-atlassian ",
+					"registry": " git@example.com:mcp.git ",
+					"path":     " servers ",
+				},
+			}}},
+			want: []Requirement{
+				{Kind: ir.KindMcpServer, Name: "docs-server"},
+				{
+					Kind:     ir.KindMcpServer,
+					Name:     "genai-atlassian",
+					Registry: "git@example.com:mcp.git",
+					Path:     "servers",
+				},
+			},
 		},
 		{
 			name: "collection rejected",
@@ -1227,6 +1328,21 @@ func TestRequirementsFromExtra(t *testing.T) {
 				map[string]any{"kind": "mcp", "name": " "},
 			}}},
 			want: []Requirement{},
+		},
+		{
+			name: "invalid items among valid items",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				"mcp:docs-server",
+				map[string]any{"kind": "weird", "name": "unknown-kind"},
+				"collection:team-bundle",
+				map[string]any{"kind": "skill"},
+				42,
+				map[string]any{"name": "kept-skill"},
+			}}},
+			want: []Requirement{
+				{Kind: ir.KindMcpServer, Name: "docs-server"},
+				{Kind: ir.KindSkill, Name: "kept-skill"},
+			},
 		},
 		{
 			name: "non-string map values skipped",

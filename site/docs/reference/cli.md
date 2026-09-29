@@ -319,7 +319,7 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `LOCAL REGISTRIES` | Registry entries declared in repository-personal configuration. |
 | `ORPHANED FILES` | Generated files that a sync would remove. |
 | `NAME COLLISIONS` | Registry overlap and resource-name collision diagnostics. |
-| `UNMET REQUIREMENTS` | Advisory resource prerequisites and install hints. |
+| `UNMET REQUIREMENTS` | Advisory [resource prerequisites](./resource-prerequisites.md) and install hints. |
 | `WARNINGS` | Configuration and resolution warnings, with a remediation hint where one exists. |
 | `DRIFT` | `In sync`, the number of files to write and remove, or `Unknown (exact registry view incomplete)`. |
 | `ERRORS` | Configuration, catalog, or drift-inspection failures. |
@@ -671,7 +671,7 @@ The script is written to standard output.
 
 | Status | Condition |
 |---:|---|
-| `0` | The command succeeded. Warnings, such as a missing target set for `list`, unmet advisory prerequisites, or non-blocking compatibility findings, do not change this status. |
+| `0` | The command succeeded. Warnings, such as a missing target set for `list`, unmet advisory [prerequisites](./resource-prerequisites.md), or non-blocking compatibility findings, do not change this status. |
 | `1` | Argument validation, configuration loading, registry access, resolution, conversion, materialization, repair, backup, or filesystem work returned an error. |
 | `1` | `sync --check` found drift, or `lock --check` found a lock that would change. |
 | `1` | `sync --strict` found a selected resource that was missing or malformed. |
