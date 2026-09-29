@@ -13,4 +13,4 @@
 ## 3. Delivery
 
 - [x] 3.1 Reconcile code-mode bootstrap skill claims and run focused Go tests, `make spec-check`, `make validate-full`, and strict OpenSpec validation; verify each command succeeds.
-- [ ] 3.2 Run `openspec archive code-mode-marketplace-catalog --yes` in this pull request and verify the main `code-mode-mcp` spec includes the new scenarios.
+- [x] 3.2 Run `openspec archive code-mode-marketplace-catalog --yes` in this pull request and verify the main `code-mode-mcp` spec includes the new scenarios.
