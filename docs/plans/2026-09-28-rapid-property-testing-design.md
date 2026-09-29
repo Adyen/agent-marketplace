@@ -1,7 +1,7 @@
 # Property-Based Testing with Rapid
 
 **Date:** 2026-09-28
-**Status:** Approved design; implementation not started
+**Status:** Approved design; implementation in progress
 **Worktree branch:** `hegel`
 **Design base:** `8149c845168db2ebe16b7bc87b797629a58bcec0`
 
