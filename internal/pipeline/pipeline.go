@@ -51,7 +51,7 @@ type ResolveOptions struct {
 	Gitignore        bool
 	NoBackup         bool
 	RequireTargetSet bool
-	// EffectiveOpts overrides the paths used by config.LoadEffective.
+	// EffectiveOpts overrides the paths used by LoadEffective.
 	EffectiveOpts config.LoadEffectiveOptions
 	// IgnoreBlockedRegistries treats RegistryURLBlockedError from the allowlist
 	// validation as non-fatal. Used by the remove path so a previously-allowed
@@ -444,11 +444,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 
 	var mergedCfg *config.Config
 	if ec.Merged != nil {
-		// config.LoadEffective already merged the layers and validated the
+		// LoadEffective already merged the layers and validated the
 		// registry URLs against the resolved allowlist.
 		mergedCfg = ec.Merged
 	} else {
-		// Custom loaders bypass config.LoadEffective, so we still need to
+		// Custom loaders bypass LoadEffective, so we still need to
 		// merge the layers and enforce the allowlist here.
 		layers := make([]config.Layer, 0, 4)
 		if result.OrgCfg != nil {

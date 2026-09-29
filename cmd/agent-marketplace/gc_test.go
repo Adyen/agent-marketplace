@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -460,103 +461,214 @@ func (g dialGuardTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("gc made an unexpected network request")
 }
 
-// spec: cache-garbage-collection/organization-marketplace-without-a-lock
-func TestGcCommandV4OrganizationMarketplaceWithoutLockCollects(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+type organizationMarketplaceGCFixture struct {
+	authority   string
+	lockPath    string
+	cache       *marketplace.Cache
+	dialed      *atomic.Int32
+	beforeNames []string
+	beforeMod   time.Time
+}
+
+func newOrganizationMarketplaceGCFixture(t *testing.T, orgConfig, orgLock string) *organizationMarketplaceGCFixture {
+	t.Helper()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
 
-	var dialed atomic.Int32
+	dialed := &atomic.Int32{}
 	transport := http.DefaultTransport
-	http.DefaultTransport = dialGuardTransport{dialed: &dialed}
+	http.DefaultTransport = dialGuardTransport{dialed: dialed}
 	t.Cleanup(func() { http.DefaultTransport = transport })
 
 	authority := canonicalTempDir(t)
-	orgPath := filepath.Join(authority, "config.yaml")
-	writeConfig(t, orgPath, `apiVersion: agent-marketplace/v4
-sources:
-  organization: {marketplace: https://marketplace.invalid}
-`)
-	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(authority, "config.yaml"), orgConfig)
+	fixture := &organizationMarketplaceGCFixture{
+		authority: authority,
+		lockPath:  filepath.Join(authority, "lock.yaml"),
+		cache:     marketplace.DefaultCache(),
+		dialed:    dialed,
+	}
+	if orgLock != "" {
+		writeFile(t, fixture.lockPath, orgLock)
+	}
+	config.SetTestOrganizationConfigPath(t, filepath.Join(authority, "config.yaml"))
 
-	beforeEntries, err := os.ReadDir(authority)
+	entries, err := os.ReadDir(authority)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var beforeNames []string
-	for _, entry := range beforeEntries {
-		beforeNames = append(beforeNames, entry.Name())
+	for _, entry := range entries {
+		fixture.beforeNames = append(fixture.beforeNames, entry.Name())
 	}
-	beforeInfo, err := os.Stat(authority)
+	info, err := os.Stat(authority)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	contentDigest := "sha256:" + strings.Repeat("1", 64)
-	referencedArchive := "sha256:" + strings.Repeat("2", 64)
-	orphanArchive := "sha256:" + strings.Repeat("3", 64)
-	mpCache := marketplace.DefaultCache()
-	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
-		ContentDigest: store.RevisionDigest(contentDigest),
-		ArchiveDigest: store.ArchiveDigest(referencedArchive),
-	})
-	if _, err := mpCache.WriteResourceRevision("https://marketplace.invalid", "src", "skill", "review", contentDigest, revision); err != nil {
-		t.Fatalf("WriteResourceRevision: %v", err)
-	}
-	if _, err := mpCache.WriteArtifact(referencedArchive, []byte("referenced")); err != nil {
-		t.Fatalf("WriteArtifact referenced: %v", err)
-	}
-	if _, err := mpCache.WriteArtifact(orphanArchive, []byte("orphan")); err != nil {
-		t.Fatalf("WriteArtifact orphan: %v", err)
-	}
+	fixture.beforeMod = info.ModTime()
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	withWorkingDir(t, repoRoot)
+	return fixture
+}
+
+func (f *organizationMarketplaceGCFixture) assertOrganizationFilesUnchanged(t *testing.T) {
+	t.Helper()
+	if got := f.dialed.Load(); got != 0 {
+		t.Fatalf("gc made %d network requests", got)
+	}
+	entries, err := os.ReadDir(f.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if !slices.Equal(f.beforeNames, names) {
+		t.Fatalf("organization directory listing changed: %v -> %v", f.beforeNames, names)
+	}
+	info, err := os.Stat(f.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.beforeMod.Equal(info.ModTime()) {
+		t.Fatalf("organization directory mtime changed: %v -> %v", f.beforeMod, info.ModTime())
+	}
+}
+
+// spec: cache-garbage-collection/organization-marketplace-without-a-lock
+func TestGcCommandV4OrganizationMarketplaceWithoutLockCollects(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := newOrganizationMarketplaceGCFixture(t, `apiVersion: agent-marketplace/v4
+sources:
+  organization: {marketplace: https://marketplace.invalid}
+`, "")
+
+	contentDigest := "sha256:" + strings.Repeat("1", 64)
+	referencedArchive := "sha256:" + strings.Repeat("2", 64)
+	orphanArchive := "sha256:" + strings.Repeat("3", 64)
+	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(referencedArchive),
+	})
+	if _, err := fixture.cache.WriteResourceRevision("https://marketplace.invalid", "src", "skill", "review", contentDigest, revision); err != nil {
+		t.Fatalf("WriteResourceRevision: %v", err)
+	}
+	if _, err := fixture.cache.WriteArtifact(referencedArchive, []byte("referenced")); err != nil {
+		t.Fatalf("WriteArtifact referenced: %v", err)
+	}
+	if _, err := fixture.cache.WriteArtifact(orphanArchive, []byte("orphan")); err != nil {
+		t.Fatalf("WriteArtifact orphan: %v", err)
+	}
 
 	output, err := executeCommand("gc")
 	if err != nil {
 		t.Fatalf("expected gc to collect with a lock-free organization Marketplace source: %v\n%s", err, output)
 	}
-	orphanDir := filepath.Dir(mpCache.ArtifactPath(orphanArchive))
+	orphanDir := filepath.Dir(fixture.cache.ArtifactPath(orphanArchive))
 	if !strings.Contains(output, orphanDir) || !strings.Contains(output, "Removed 1 marketplace artifact directories") {
 		t.Fatalf("expected marketplace orphan removal in output, got:\n%s", output)
 	}
-	if _, err := os.Stat(mpCache.ArtifactPath(referencedArchive)); err != nil {
+	if _, err := os.Stat(fixture.cache.ArtifactPath(referencedArchive)); err != nil {
 		t.Fatalf("active marketplace artifact was removed: %v", err)
 	}
 	if _, err := os.Stat(orphanDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected marketplace orphan to be removed, stat err=%v", err)
 	}
-	if got := dialed.Load(); got != 0 {
-		t.Fatalf("gc made %d network requests", got)
+	fixture.assertOrganizationFilesUnchanged(t)
+}
+
+// spec: cache-garbage-collection/organization-marketplace-with-empty-cache
+func TestGcCommandV4OrganizationMarketplaceEmptyCacheCollects(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := newOrganizationMarketplaceGCFixture(t, `apiVersion: agent-marketplace/v4
+sources:
+  organization: {marketplace: https://marketplace.invalid}
+`, "")
+
+	output, err := executeCommand("gc")
+	if err != nil {
+		t.Fatalf("expected gc to collect an empty organization Marketplace cache: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Removed 0 cache entries") || !strings.Contains(output, "Removed 0 marketplace artifact directories") {
+		t.Fatalf("expected zero removals in output, got:\n%s", output)
+	}
+	if _, err := os.Lstat(fixture.lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("organization acquisition lock created: %v", err)
+	}
+	fixture.assertOrganizationFilesUnchanged(t)
+}
+
+// spec: cache-garbage-collection/trusted-organization-lock-retains-exact-archive
+func TestGcCommandV4OrganizationMarketplaceTrustedLockRetainsExactArchive(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	referencedArchive := "sha256:" + strings.Repeat("2", 64)
+	orphanArchive := "sha256:" + strings.Repeat("3", 64)
+	fixture := newOrganizationMarketplaceGCFixture(t, `apiVersion: agent-marketplace/v4
+sources:
+  organization: {marketplace: https://marketplace.invalid}
+resources:
+  organization:
+    include: [src/skill/review]
+`, `apiVersion: agent-marketplace-lock/v2
+scope: organization
+marketplaces:
+  - url: https://marketplace.invalid
+    instance_id: mp
+    registry_bindings:
+      - name: src
+        registry_id: src-id
+    resources:
+      - registry_name: src
+        registry_id: src-id
+        kind: skill
+        name: review
+        revision: rev-a
+        content_digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+        archive_digest: `+referencedArchive+`
+        acquisition: mirror
+`)
+	lockBytes, err := os.ReadFile(fixture.lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.cache.WriteArtifact(referencedArchive, []byte("referenced")); err != nil {
+		t.Fatalf("WriteArtifact referenced: %v", err)
+	}
+	if _, err := fixture.cache.WriteArtifact(orphanArchive, []byte("orphan")); err != nil {
+		t.Fatalf("WriteArtifact orphan: %v", err)
 	}
 
-	afterEntries, err := os.ReadDir(authority)
+	output, err := executeCommand("gc")
+	if err != nil {
+		t.Fatalf("expected gc to collect under the trusted organization lock: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(fixture.cache.ArtifactPath(referencedArchive)); err != nil {
+		t.Fatalf("locked marketplace archive was removed: %v", err)
+	}
+	if _, err := os.Stat(fixture.cache.ArtifactPath(orphanArchive)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected unreferenced marketplace archive to be removed, stat err=%v", err)
+	}
+	got, err := os.ReadFile(fixture.lockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var afterNames []string
-	for _, entry := range afterEntries {
-		afterNames = append(afterNames, entry.Name())
+	if string(got) != string(lockBytes) || fmt.Sprintf("%x", sha256.Sum256(got)) != fmt.Sprintf("%x", sha256.Sum256(lockBytes)) {
+		t.Fatal("organization acquisition lock changed")
 	}
-	if !slices.Equal(beforeNames, afterNames) {
-		t.Fatalf("organization directory listing changed: %v -> %v", beforeNames, afterNames)
-	}
-	afterInfo, err := os.Stat(authority)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
-		t.Fatalf("organization directory mtime changed: %v -> %v", beforeInfo.ModTime(), afterInfo.ModTime())
-	}
+	fixture.assertOrganizationFilesUnchanged(t)
 }
 
 func TestGcCommandMarketplacePreflightBlocksLegacyDeletion(t *testing.T) {
@@ -601,87 +713,41 @@ func TestGcCommandV4OrganizationMarketplaceLockMismatchFailsClosed(t *testing.T)
 	if isolateCommandTest(t) {
 		return
 	}
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
-
-	var dialed atomic.Int32
-	transport := http.DefaultTransport
-	http.DefaultTransport = dialGuardTransport{dialed: &dialed}
-	t.Cleanup(func() { http.DefaultTransport = transport })
-
-	authority := canonicalTempDir(t)
-	orgPath := filepath.Join(authority, "config.yaml")
-	writeConfig(t, orgPath, `apiVersion: agent-marketplace/v4
+	fixture := newOrganizationMarketplaceGCFixture(t, `apiVersion: agent-marketplace/v4
 sources:
   organization: {marketplace: https://marketplace.invalid}
-`)
-	writeFile(t, filepath.Join(authority, "lock.yaml"), `apiVersion: agent-marketplace-lock/v2
+`, `apiVersion: agent-marketplace-lock/v2
 scope: organization
 marketplaces:
   - url: https://other-marketplace.invalid
     instance_id: other
 `)
-	config.SetTestOrganizationConfigPath(t, orgPath)
-
-	beforeEntries, err := os.ReadDir(authority)
-	if err != nil {
-		t.Fatal(err)
-	}
-	beforeInfo, err := os.Stat(authority)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	contentDigest := "sha256:" + strings.Repeat("1", 64)
 	referencedArchive := "sha256:" + strings.Repeat("2", 64)
 	orphanArchive := "sha256:" + strings.Repeat("3", 64)
-	mpCache := marketplace.DefaultCache()
 	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(referencedArchive),
 	})
-	if _, err := mpCache.WriteResourceRevision("https://marketplace.invalid", "src", "skill", "review", contentDigest, revision); err != nil {
+	if _, err := fixture.cache.WriteResourceRevision("https://marketplace.invalid", "src", "skill", "review", contentDigest, revision); err != nil {
 		t.Fatalf("WriteResourceRevision: %v", err)
 	}
 	for _, artifact := range []string{referencedArchive, orphanArchive} {
-		if _, err := mpCache.WriteArtifact(artifact, []byte("cache")); err != nil {
+		if _, err := fixture.cache.WriteArtifact(artifact, []byte("cache")); err != nil {
 			t.Fatalf("WriteArtifact: %v", err)
 		}
 	}
-
-	repoRoot := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	withWorkingDir(t, repoRoot)
 
 	output, err := executeCommand("gc")
 	if err == nil || !strings.Contains(err.Error(), "v4.marketplace-lock-mismatch") {
 		t.Fatalf("gc error = %v\n%s; want mismatched organization Marketplace lock rejection", err, output)
 	}
 	for _, artifact := range []string{referencedArchive, orphanArchive} {
-		if _, statErr := os.Stat(mpCache.ArtifactPath(artifact)); statErr != nil {
+		if _, statErr := os.Stat(fixture.cache.ArtifactPath(artifact)); statErr != nil {
 			t.Fatalf("mismatched lock mutated marketplace cache %q: %v", artifact, statErr)
 		}
 	}
-	if got := dialed.Load(); got != 0 {
-		t.Fatalf("gc made %d network requests", got)
-	}
-	afterEntries, err := os.ReadDir(authority)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(beforeEntries) != len(afterEntries) {
-		t.Fatalf("organization directory entries changed: %d -> %d", len(beforeEntries), len(afterEntries))
-	}
-	afterInfo, err := os.Stat(authority)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
-		t.Fatalf("organization directory mtime changed: %v -> %v", beforeInfo.ModTime(), afterInfo.ModTime())
-	}
+	fixture.assertOrganizationFilesUnchanged(t)
 }

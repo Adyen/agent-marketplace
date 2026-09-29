@@ -83,7 +83,7 @@ func TestOrganizationConfigLockTrustUnit(t *testing.T) {
 			if test.set != nil {
 				test.set(t, configPath, lockPath)
 			}
-			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+			ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 			assertOrganizationTrustFailure(t, ec, test.code)
 		})
 	}
@@ -108,7 +108,7 @@ func TestOrganizationV4MarketplaceLockTrustUnit(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+			ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 			if test.code != "" {
 				assertOrganizationTrustFailure(t, ec, test.code)
 				return
@@ -124,7 +124,7 @@ func TestOrganizationRemoteRequirementsLoadWithoutLock(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
 	writeFile(t, configPath, remoteOrganizationFixture)
-	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+	ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 	if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
 		t.Fatalf("organization config without lock was blocked: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
 	}
@@ -139,7 +139,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 		if err := os.Symlink(target, configPath); err != nil {
 			t.Fatal(err)
 		}
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.config.symlink")
 	})
 
@@ -154,7 +154,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 		if err := os.Symlink(realDir, linkDir); err != nil {
 			t.Fatal(err)
 		}
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(filepath.Join(linkDir, "config.yaml")))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(filepath.Join(linkDir, "config.yaml")))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.symlink")
 	})
 
@@ -166,7 +166,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.writable")
 	})
 
@@ -183,7 +183,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 		configPath := filepath.Join(link, "authority", "config.yaml")
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.symlink")
 	})
 
@@ -199,7 +199,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(filepath.Join(authority, "config.yaml")))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(filepath.Join(authority, "config.yaml")))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.writable")
 	})
 }
@@ -215,7 +215,7 @@ func TestOrganizationTrustRejectsWrongOwnerWhenFeasible(t *testing.T) {
 	if err := os.Chown(filepath.Join(dir, "lock.yaml"), 65534, -1); err != nil {
 		t.Skipf("cannot create wrong-owner fixture: %v", err)
 	}
-	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+	ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 	assertOrganizationTrustFailure(t, ec, "organization.trust.lock.owner")
 }
 
@@ -225,7 +225,7 @@ func TestOrganizationTrustedFixtureLoadsAsManaged(t *testing.T) {
 	writeFile(t, configPath, remoteOrganizationFixture)
 	writeTrustedOrganizationLock(t, configPath)
 
-	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+	ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 	if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
 		t.Fatalf("trusted organization fixture was blocked: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
 	}
@@ -339,7 +339,7 @@ func TestOrganizationIncludesRequireTrustedLexicalPaths(t *testing.T) {
 						}
 					})
 				}
-				ec := LoadEffective(context.Background(), isolatedEffectiveOptions(root))
+				ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(root))
 				if test.code != "" {
 					assertOrganizationTrustFailure(t, ec, test.code)
 					var trustErr *OrganizationTrustError
@@ -387,7 +387,7 @@ func TestV4OrganizationIncludesRequireTrustedAuthority(t *testing.T) {
 			}
 			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: fragment.yaml\n")
 
-			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(root))
+			ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(root))
 			if test.code != "" {
 				assertOrganizationTrustFailure(t, ec, test.code)
 				return
@@ -415,7 +415,7 @@ func TestOrganizationIncludeRetainsRootLexicalPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	requested := dir + "/alias/../authority/config.yaml"
-	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(requested))
+	ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(requested))
 	assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.symlink")
 }
 
@@ -484,7 +484,7 @@ func TestLoadEffectivePreservesOrganizationLockErrorPrecedence(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+			ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 			if len(ec.Errors) == 0 {
 				t.Fatal("expected a lock error, got none")
 			}
@@ -523,7 +523,7 @@ func TestLoadEffectivePreservesOrganizationLockErrorPrecedence(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 		var trustErr *OrganizationTrustError
 		if !errors.As(errors.Join(ec.Errors...), &trustErr) {
 			t.Fatalf("errors = %v, want OrganizationTrustError", ec.Errors)

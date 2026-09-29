@@ -20,7 +20,7 @@ func TestEffectiveConfigLayerResultsExposeExplicitPathsInPrecedenceOrder(t *test
 	writeFile(t, paths[2], "apiVersion: agent-marketplace/v2\n")
 	writeFile(t, paths[3], "skills: [local-skill]\n")
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		RepoRoot:         dir,
 		LocalConfigDir:   dir,
 		OrganizationPath: paths[0],
@@ -58,7 +58,7 @@ func TestEffectiveConfigLayerResultsExposeDefaultPaths(t *testing.T) {
 	t.Setenv("HOME", home)
 	SetTestOrganizationConfigPath(t, orgPath)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		RepoRoot:       repo,
 		LocalConfigDir: repo,
 	})
@@ -94,7 +94,7 @@ func TestEffectiveConfigUsesNearestMonorepoLocalLayerPath(t *testing.T) {
 	ResetRepoRootCache()
 	t.Cleanup(ResetRepoRootCache)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{})
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{})
 	if len(ec.Errors) != 0 {
 		t.Fatalf("LoadEffective errors: %v", ec.Errors)
 	}
@@ -119,7 +119,7 @@ func TestEffectiveConfigAbsentLayersRetainResolvedPaths(t *testing.T) {
 		filepath.Join(dir, "missing-repo.yaml"),
 		filepath.Join(dir, "missing-local.yaml"),
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		RepoRoot:         dir,
 		LocalConfigDir:   dir,
 		OrganizationPath: paths[0],

@@ -555,7 +555,7 @@ func TestLoadV4MarketplaceLockOverlayRead(t *testing.T) {
 		LocalPath:        filepath.Join(dir, "local-config.yaml"),
 		FileOverlays:     map[string][]byte{lockPath: lockData},
 	}
-	ec := LoadEffective(context.Background(), opts)
+	ec := loadEffectiveForTest(context.Background(), opts)
 	if err := errors.Join(ec.Errors...); err != nil {
 		t.Fatal(err)
 	}

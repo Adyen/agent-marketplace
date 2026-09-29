@@ -727,7 +727,7 @@ func loadInstallDiscoveryConfig(ctx context.Context, opts InstallOptions, ec *co
 		return nil, errors.Join(ec.Errors...)
 	}
 
-	// config.LoadEffective already merged the layers, stamped registry
+	// LoadEffective already merged the layers, stamped registry
 	// sources, and enforced the resolved allowlist.
 	return ec.Merged, nil
 }

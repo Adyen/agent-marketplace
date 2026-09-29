@@ -1,7 +1,6 @@
 package config
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -143,18 +142,6 @@ func (ec EffectiveConfig) PresentLayers() []LayerResult {
 		}
 	}
 	return present
-}
-
-// LoadEffective loads every applicable Configuration Layer, validates each
-// according to its authority and schema version, merges the layers, and
-// validates the resulting registry URLs against the resolved allowlist.
-//
-// The returned EffectiveConfig always contains every layer that could be
-// loaded; callers must check Errors before proceeding to registry/network
-// operations.
-func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConfig {
-	intent := ReadIntent(ctx, opts)
-	return bindDeployed(intent, deployedLocks(intent, opts))
 }
 
 func globalConfigPath() (string, error) {

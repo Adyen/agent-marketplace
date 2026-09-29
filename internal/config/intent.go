@@ -586,18 +586,6 @@ func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOpti
 	return doc, reads, nil
 }
 
-func deployedLocks(intent Intent, opts LoadEffectiveOptions) Evidence {
-	ev := Evidence{}
-	for _, source := range intentLayerOrder {
-		doc, reads, errs := deployedLayerEvidence(intent.Layers[source], source, opts)
-		ev.Locks[source] = doc
-		ev.errors[source] = errs
-		ev.reads[source] = reads
-		ev.Reads = append(ev.Reads, reads...)
-	}
-	return ev
-}
-
 func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 	if err := ctx.Err(); err != nil {
 		return Intent{Errors: []error{err}, aborted: true}
@@ -802,16 +790,4 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 
 func Bind(intent Intent, ev Evidence) EffectiveConfig {
 	return finishBind(intent, ev, bindLayers(intent, ev))
-}
-
-func bindDeployed(intent Intent, ev Evidence) EffectiveConfig {
-	ec := bindLayers(intent, ev)
-	if ec.Organization.Config != nil && len(ec.Organization.Errors) == 0 && organizationHasRemoteRequirements(ec.Organization.Config) {
-		if trustErr := ValidateOrganizationTrustUnit(ec.Organization.Path, true, true); trustErr != nil {
-			ev.errors[Organization] = append(ev.errors[Organization], trustErr)
-			ec.Organization.Config = nil
-			ec.Organization.Errors = append(ec.Organization.Errors, trustErr)
-		}
-	}
-	return finishBind(intent, ev, ec)
 }
