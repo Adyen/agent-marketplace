@@ -74,12 +74,23 @@ func propDrawModel(t *rapid.T) map[string]propEntry {
 	return model
 }
 
+func propModelKeys(model map[string]propEntry) []string {
+	keys := make([]string, 0, len(model))
+	for k := range model {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func propBuild(model map[string]propEntry, zeroProof bool) propScenario {
 	s := propScenario{model: model}
+	keys := propModelKeys(model)
 	if !zeroProof {
 		s.proof.file = "mcp_config.json"
 		s.proof.entries = make(map[string]Entry)
-		for k, e := range model {
+		for _, k := range keys {
+			e := model[k]
 			if e.owned {
 				s.proof.entries[k] = Entry{
 					Kind: e.id.Kind, Container: e.id.Container, Key: e.id.Key,
@@ -89,7 +100,8 @@ func propBuild(model map[string]propEntry, zeroProof bool) propScenario {
 			}
 		}
 	}
-	for _, e := range model {
+	for _, k := range keys {
+		e := model[k]
 		if e.existing {
 			s.existing = append(s.existing, EntryValue{ID: e.id, ValueDigest: e.existingDigest})
 		}
@@ -267,11 +279,10 @@ func propCheck(t *rapid.T, s propScenario, zeroProof bool) {
 }
 
 func propConstrain(model map[string]propEntry, f func(*propEntry)) {
-	for k, e := range model {
-		f(&e)
-		model[k] = e
-		return
-	}
+	k := propModelKeys(model)[0]
+	e := model[k]
+	f(&e)
+	model[k] = e
 }
 
 func TestClassifyProperties(t *testing.T) {
