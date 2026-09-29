@@ -1,7 +1,7 @@
 # marketplace-api Specification
 
 ## Purpose
-Defines the public Marketplace protocol surface shared by the server, CLI, and generated clients: the OpenAPI contract, the capabilities and well-known discovery documents, the wire vocabulary of selectable resource kinds, the analyzer finding-code catalog, consumer Marketplace configuration, and the artifact and collection-manifest wire formats.
+Defines the public Marketplace protocol surface shared by the server, CLI, and generated clients: the OpenAPI contract, the capabilities and well-known discovery documents, the wire vocabulary of selectable resource kinds, the analyzer finding-code catalog, and the artifact and collection-manifest wire formats.
 
 ## Requirements
 

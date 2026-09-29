@@ -276,8 +276,7 @@ In practice:
   gitignored. Files that coordinate in-progress transactions live under the XDG
   state directory (`$XDG_STATE_HOME`, default `~/.local/state`), outside
   repositories.
-- Any layer can pull in other local files with `include`. See the
-  [precedence reference](./docs/PRECEDENCE.md) for include syntax.
+- Any layer can pull in other local files with `include`.
 
 A minimal committed repository configuration looks like this. Each `sources:`
 entry names a Git, directory, or Marketplace origin, and the `resources:` group
@@ -317,9 +316,6 @@ registries:
     skills:
       include: [vm-lifecycle, k8s-basics]
 ```
-
-The full precedence and selection rules, including edge cases and error
-handling, are in [`docs/PRECEDENCE.md`](./docs/PRECEDENCE.md).
 
 ### Monorepos and nested configs
 
@@ -377,8 +373,7 @@ resources:
 ```
 
 An exclusion removes a matching selection, and an include in a more specific
-layer can select the same resource again. See
-[`docs/PRECEDENCE.md`](./docs/PRECEDENCE.md) for the full decision order.
+layer can select the same resource again.
 
 ### Machine-wide opt-in with `required` and `all`
 
@@ -752,9 +747,9 @@ for each target harness.
 | Collection | Supported (a named bundle of the kinds above, not a resource of its own) |
 
 Hooks with the same name from independent registries are all installed. For
-every other kind, one registry wins a name collision (see
-[`docs/PRECEDENCE.md`](./docs/PRECEDENCE.md)). A hook event that the target harness
-cannot represent is skipped with a diagnostic such as `hook.event-unmappable`.
+every other kind, one registry wins a name collision. A hook event that the
+target harness cannot represent is skipped with a diagnostic such as
+`hook.event-unmappable`.
 
 When a target harness cannot represent a resource, the compiler reports a
 structured diagnostic (visible in `status`) and skips that file instead of

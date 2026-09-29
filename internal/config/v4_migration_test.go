@@ -31,6 +31,7 @@ resources: {shared: [skill/review]}
 	}
 }
 
+// spec: config-layering/v4-root-rejects-legacy-installation-keys
 func TestV4RootRejectsLegacyInstallationKeys(t *testing.T) {
 	_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nskills: {include: [review]}\n"))
 	if err == nil || !strings.Contains(err.Error(), "legacy installation key") {

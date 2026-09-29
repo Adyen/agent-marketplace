@@ -1,6 +1,6 @@
 ## 1. Legacy documents under docs/
 
-- [ ] 1.1 Harvest and delete `docs/PRECEDENCE.md` → config-layering, config-migration, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 1.1 Harvest and delete `docs/PRECEDENCE.md` → config-layering, config-migration, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.2 Harvest and delete `docs/adoption-guide.md` → config-layering, materialization; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.3 Harvest and delete `docs/devin-cli-harness-spec-3000.3.md` → harness-devin; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.4 Harvest and delete `docs/devin-verification-2026-08-04.md` → none (dated verification log; delete without harvest); verify the file is gone and every carried claim has a `// spec:` test
@@ -53,7 +53,7 @@
 - [ ] 4.11 Harvest and delete `docs/plans/2026-09-02-tui-marketplace-discovery-spec.md` → tui-*; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.12 Harvest and delete `docs/plans/2026-09-04-bundle-browser-design.md` → tui-*; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.13 Harvest and delete `docs/plans/2026-09-04-deterministic-tui-qa-journeys.md` → tui-*; verify the file is gone and every carried claim has a `// spec:` test
-- [ ] 4.14 Harvest and delete `docs/plans/2026-09-07-unified-resource-config-design.md` → config-layering, config-migration, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 4.14 Harvest and delete `docs/plans/2026-09-07-unified-resource-config-design.md` → config-layering, config-migration, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.15 Harvest and delete `docs/plans/2026-09-08-process-isolated-command-tests.md` → none expected (test infrastructure); verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.16 Harvest and delete `docs/plans/2026-09-15-marketplace-api-prometheus-metrics-design.md` → marketplace-operations; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.17 Harvest and delete `docs/plans/2026-09-16-additive-hooks.md` → resource-selection, harness-windsurf; verify the file is gone and every carried claim has a `// spec:` test

@@ -1,6 +1,6 @@
 # Adopting agent-marketplace
 
-This guide covers setting up `agent-marketplace` in a repository and on a workstation, and the day-to-day configuration tasks that follow. For the detailed precedence rules (layer order, excludes, collection behavior, collisions, and error cases), see [`docs/PRECEDENCE.md`](./PRECEDENCE.md).
+This guide covers setting up `agent-marketplace` in a repository and on a workstation, and the day-to-day configuration tasks that follow.
 
 V4 (`apiVersion: agent-marketplace/v4`) is the canonical writable schema, built on `sources` and `resources`. Every new config root is v4. The v2 schema (`apiVersion: agent-marketplace/v2`) and its v3 compatibility alias are deprecated but stay fully readable and writable. Every mutation of a v2/v3 layer emits a `config.legacy-deprecated` warning naming the `agent-marketplace migrate` command for that scope.
 
