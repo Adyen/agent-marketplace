@@ -88,6 +88,7 @@ func TestNewWorkspaceRejectsLocalConfigDirOutsideRepository(t *testing.T) {
 	}
 }
 
+// spec: workspace-resolution/escaping-personal-local-root
 func TestNewWorkspaceRejectsMissingLeafBeneathEscapingSymlink(t *testing.T) {
 	// Canonical roots keep the unresolved lexical candidate beneath the
 	// repository root so only physical containment can reject it.
@@ -319,6 +320,7 @@ registries: []
 	}
 }
 
+// spec: workspace-resolution/nested-personal-local-synchronization
 func TestSyncNestedLocalLoadsRepoConfigAndMaterializesBelowIt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repoRoot := t.TempDir()
