@@ -69,10 +69,12 @@ run does not exercise the real-terminal journeys.
 Without `TEST_PACKAGES`, `make test` runs `-short` tests for the root-module
 packages `tools/test-local` selects as changed since the merge base with
 `origin/main` (committed, staged, unstaged, untracked). Root Markdown and
-`docs/**/*.md` outside Go packages select no Go tests; other unmappable paths
-fall back to `./...`. E2E changes are never selected, and reverse dependencies
-are left to `make test-full` and CI's witnessed run; set `TEST_PACKAGES` (or
-`TEST_LOCAL_BASE`) to override.
+`docs/**/*.md`, recognized OpenSpec/CI/deployment metadata, and exact root
+metadata such as `.gitignore` select no Go tests outside Go packages; other
+unmappable paths fall back to `./...`. Run relevant spec, E2E, container,
+Helm, or CI checks for those files. E2E changes are never selected, and reverse
+dependencies are left to `make test-full` and CI's witnessed run; set
+`TEST_PACKAGES` (or `TEST_LOCAL_BASE`) to override.
 
 Pre-commit runs `make test`, `make lint`, `make build`. If `go fmt`
 modifies files during lint, re-stage and commit again.

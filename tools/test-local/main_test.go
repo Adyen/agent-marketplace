@@ -89,8 +89,45 @@ func TestSelectPackages(t *testing.T) {
 		{"unknown non-Markdown docs path falls back", func(t *testing.T, root string) {
 			writeFile(t, root, "docs/data.json", "{}\n")
 		}, "./..."},
-		{"OpenSpec Markdown remains shared", func(t *testing.T, root string) {
+		{"OpenSpec prose and configuration select nothing", func(t *testing.T, root string) {
 			writeFile(t, root, "openspec/specs/feature/spec.md", "changed\n")
+			writeFile(t, root, "openspec/config.yaml", "schema: x\n")
+			writeFile(t, root, "openspec/changes/new/.openspec.yaml", "schema: x\n")
+		}, ""},
+		{"repository metadata selects nothing", func(t *testing.T, root string) {
+			for _, file := range []string{".gitignore", ".gitlab-ci.yml", "LICENSE", ".coderabbit.yaml", ".dockerignore"} {
+				writeFile(t, root, file, "changed\n")
+			}
+		}, ""},
+		{"CI metadata selects nothing", func(t *testing.T, root string) {
+			writeFile(t, root, ".github/workflows/ci.yml", "jobs: {}\n")
+			writeFile(t, root, ".github/workflows/harness-compatibility.yml", "jobs: {}\n")
+			writeFile(t, root, ".gitlab/jobs/build.yml", "build: {}\n")
+		}, ""},
+		{"deployment metadata selects nothing", func(t *testing.T, root string) {
+			for _, file := range []string{"deploy/helm/chart/Chart.yaml", "deploy/helm/chart/templates/deployment.tpl", "deploy/compose/local/nginx.conf", "deploy/compose/local/.env.example", "deploy/compose/local/secrets/.gitignore"} {
+				writeFile(t, root, file, "changed\n")
+			}
+		}, ""},
+		{"metadata with Go change selects package", func(t *testing.T, root string) {
+			writeFile(t, root, "openspec/config.yaml", "schema: x\n")
+			writeFile(t, root, "deploy/helm/chart/values.yaml", "changed\n")
+			writeFile(t, root, "internal/a/a.go", "package a\n// changed\n")
+		}, "./internal/a"},
+		{"unknown files under metadata paths fall back", func(t *testing.T, root string) {
+			writeFile(t, root, ".github/scripts/check.sh", "exit 0\n")
+		}, "./..."},
+		{"GitHub agent Markdown is not CI metadata", func(t *testing.T, root string) {
+			writeFile(t, root, ".github/agents/review.md", "agent\n")
+		}, "./..."},
+		{"Go files under metadata paths fall back when deleted", func(t *testing.T, root string) {
+			writeFile(t, root, "openspec/changes/helper.go", "package changes\n")
+			testGit(t, root, "add", "openspec/changes/helper.go")
+			testGit(t, root, "commit", "-m", "add helper")
+			testGit(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+			if err := os.Remove(filepath.Join(root, "openspec", "changes", "helper.go")); err != nil {
+				t.Fatal(err)
+			}
 		}, "./..."},
 		{"fixture maps to owning package", func(t *testing.T, root string) {
 			writeFile(t, root, "internal/a/testdata/golden.txt", "x\n")
