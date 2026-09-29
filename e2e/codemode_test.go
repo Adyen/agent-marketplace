@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 func TestCodeModeJourney(t *testing.T) {
@@ -157,6 +159,68 @@ func TestCodeModeLegacyInvocationCoverage(t *testing.T) {
 		"local:registry/skill/greeter", "", "", registryDir)
 	promoteEnv.MustRunAM("promote", "local:registry/skill/greeter", "--scope", "repo")
 	promoteEnv.AssertFileContains("/workspace/.agents/config.yaml", "greeter")
+}
+
+// spec: code-mode-mcp/marketplace-skill-and-declared-server-execute-through-the-gate
+func TestCodeModeMarketplaceCatalogJourney(t *testing.T) {
+	fakeScript := `while IFS= read -r line; do
+  tmp=${line#*\"id\":}
+  id=${tmp%%[!0-9]*}
+  [ -z "$id" ] && continue
+  case "$line" in
+    *tools/list*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"ping","description":"pong","inputSchema":{"type":"object","properties":{}}}]}}\n' "$id" ;;
+    *tools/call*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"pong"}]}}\n' "$id" ;;
+    *) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fake","version":"0"}}}\n' "$id" ;;
+  esac
+done`
+	files := marketplaceBehaviorFiles("Marketplace journey skill", false)
+	files[".mcp.json"] = MergeMCPFile([]MCPServer{{Name: "fake", Command: "sh", Args: []string{"-c", fakeScript}}})
+	fixture := newMarketplaceBehaviorFixture(t, files)
+	catalogCfg := fixture.cfg
+	catalogCfg.CatalogProjection.Enabled = true
+	fixture.setHandler(mpapi.NewServer(catalogCfg, fixture.meta, fixture.blobs).PublicHandler())
+
+	consumer := fixture.newConsumer(t, fixture.server.URL)
+
+	session := consumer.Run(fmt.Sprintf(
+		`{ printf '%%s\n' '%s' '%s'; sleep 5; printf '%%s\n' '%s' '%s'; } | %q mcp`,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"code":"async () => catalog.map(r => r.ref)"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"code":"async () => catalog.map(r => r.ref)"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute","arguments":{"servers":["behavior:behavior-source/mcp/fake"],"code":"async () => [(await skills.load(\"behavior:behavior-source/skill/skill-one\")).content.includes(\"Marketplace journey skill\"), (await mcp.fake.listTools())[0].inputSchema.type, (await mcp.fake.ping()).text]"}}}`,
+		consumer.binary))
+	if session.ExitCode != 0 {
+		t.Fatalf("mcp session failed (exit %d):\n%s", session.ExitCode, session.Combined)
+	}
+	for _, want := range []string{
+		`catalog.stale`,
+		`behavior:behavior-source/skill/skill-one`,
+		`behavior:behavior-source/mcp/fake`,
+		`[true,\"object\",\"pong\"]`,
+	} {
+		if !strings.Contains(session.Stdout, want) {
+			t.Fatalf("mcp session output missing %q:\n%s", want, session.Stdout)
+		}
+	}
+
+	log := consumer.MustRun(`cat "$XDG_STATE_HOME/agent-marketplace/mcp-sessions/"*.jsonl`)
+	for _, want := range []string{"skill.load", "server.start", "marketplace:" + fixture.server.URL} {
+		if !strings.Contains(log.Stdout, want) {
+			t.Fatalf("session log missing %q:\n%s", want, log.Stdout)
+		}
+	}
+
+	// A second session reuses the persisted complete catalog before refresh.
+	second := consumer.Run(fmt.Sprintf(
+		`printf '%%s\n' '%s' | %q mcp`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"code":"async () => catalog.map(r => r.ref)"}}}`,
+		consumer.binary))
+	if second.ExitCode != 0 {
+		t.Fatalf("second mcp session failed (exit %d):\n%s", second.ExitCode, second.Combined)
+	}
+	if !strings.Contains(second.Stdout, `behavior:behavior-source/skill/skill-one`) {
+		t.Fatalf("cached catalog not reused at startup:\n%s", second.Stdout)
+	}
 }
 
 // spec: code-mode-mcp/marketplace-findings-gate-on-consent
