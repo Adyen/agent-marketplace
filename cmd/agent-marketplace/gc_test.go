@@ -460,6 +460,7 @@ func (g dialGuardTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("gc made an unexpected network request")
 }
 
+// spec: cache-garbage-collection/organization-marketplace-without-a-lock
 func TestGcCommandV4OrganizationMarketplaceWithoutLockCollects(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -595,6 +596,7 @@ registries:
 	}
 }
 
+// spec: cache-garbage-collection/mismatched-organization-lock
 func TestGcCommandV4OrganizationMarketplaceLockMismatchFailsClosed(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
