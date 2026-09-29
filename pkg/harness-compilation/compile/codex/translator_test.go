@@ -351,6 +351,7 @@ func TestUnsupportedRuleAndHookProduceStableDiagnostics(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/factory-devin-and-codex-suppress-unmappable-events-with-an-error
 func TestHookEventsMatchCodexDocumentation(t *testing.T) {
 	supported := []string{
 		"PreToolUse",
@@ -424,6 +425,7 @@ func TestHookSuppressesInvalidNativeAdditionalContextLimit(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/negative-timeouts-are-refused-for-devin-and-codex
 func TestHookSuppressesNegativeTimeout(t *testing.T) {
 	hook := ir.NewHookWithMatcherOptions("check", "PreToolUse", "", "./check", "command", nil, ir.SourceRef{}, ir.WithHookTimeout(-1))
 	result, err := compile.Compile(hook, compile.TargetCodex)
@@ -448,6 +450,7 @@ func TestNativeSessionEndDoesNotEmitAsyncTrue(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/codex-caps-sessionend-timeouts
 func TestNativeSessionEndCapsTimeout(t *testing.T) {
 	hook := ir.NewHookWithMatcherOptions("cleanup", "SessionEnd", "", "./cleanup", "command", nil, ir.SourceRef{}, ir.WithHookTimeout(30))
 	hook.Ext.Codex = &ext.Codex{NativeHook: true}
@@ -474,6 +477,8 @@ func TestSubagentOmitsKnownUnmappableModel(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/codex-devin-and-windsurf-receive-the-source-bundle-root
+// spec: hook-resources/missing-plugin-root-leaves-the-token-with-a-warning
 func TestHookPluginRootResolution(t *testing.T) {
 	hook := ir.NewHook("check", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{})
 	resolved, err := compile.Compile(hook, compile.TargetCodex, compile.WithPluginRoot("/plugins/demo"))

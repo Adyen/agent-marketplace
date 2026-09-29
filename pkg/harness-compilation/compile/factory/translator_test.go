@@ -292,6 +292,7 @@ func TestFactoryHook_CommandType(t *testing.T) {
 }
 
 // --- Factory Hook: non-command type dropped ---
+// spec: hook-resources/factory-drops-other-non-command-types-with-a-warning
 func TestFactoryHook_NonCommandTypeDropped(t *testing.T) {
 	c := &factoryCompiler{}
 	hook := ir.NewHook("post-commit-http", "post-commit", "http://example.com", "http", map[string]any{}, ir.SourceRef{File: "hooks/hooks.json", Line: 0})

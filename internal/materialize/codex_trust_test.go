@@ -15,6 +15,7 @@ import (
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
+// spec: hook-resources/codex-repository-hook-change-reports-trust-review
 func TestCodexTrustReviewDiagnosticsFollowRepositoryMutation(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -272,6 +272,7 @@ func TestTranslate_Subagent_UnknownTool(t *testing.T) {
 
 // --- Hook matrix cell ---
 
+// spec: hook-resources/cursor-and-gemini-receive-harness-variables
 func TestTranslate_Hook(t *testing.T) {
 	c := newCursorCompiler()
 	hook := ir.NewHook(

@@ -73,6 +73,7 @@ func TestD2RemoteMCPDoesNotFabricateStdio(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/prompt-hooks-compile-where-supported
 func TestD2PromptHookSupportAndSuppression(t *testing.T) {
 	hook := ir.NewHookWithOptions("prompt", "UserPromptSubmit", "", "prompt", nil, ir.SourceRef{}, ir.WithHookPrompt("Review this"))
 	for _, target := range []compile.Target{compile.TargetClaude, compile.TargetGemini} {
@@ -249,6 +250,7 @@ func TestD2GeminiSubagentEffortIsOmittedWithWarning(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/prompt-hooks-are-suppressed-where-unsupported
 func TestD2UnsupportedTargetsSuppressCommandAndPromptHooks(t *testing.T) {
 	hook := ir.NewHookWithOptions("mixed", "UserPromptSubmit", "echo command", "command", nil, ir.SourceRef{}, ir.WithHookPrompt("also prompt"))
 	for _, target := range []Target{TargetFactory, TargetCursor, TargetWindsurf} {

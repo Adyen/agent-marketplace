@@ -248,6 +248,7 @@ func TestTranslateHook_AbsentSidecarWorkdirRemainsBlocked(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/codex-devin-and-windsurf-receive-the-source-bundle-root
 func TestTranslateHook_WithPluginRoot(t *testing.T) {
 	hook := ir.NewHookWithMatcher(
 		"PreToolUse-Read-command",
@@ -274,6 +275,7 @@ func TestTranslateHook_WithPluginRoot(t *testing.T) {
 	assertGoldenFile(t, "testdata/hook_with_plugin_root.golden", artifact.Bytes)
 }
 
+// spec: hook-resources/missing-plugin-root-leaves-the-token-with-a-warning
 func TestTranslateHook_WithoutPluginRoot(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHookWithMatcher(
@@ -331,6 +333,7 @@ func TestTranslateHook_PreToolUse_Write(t *testing.T) {
 	assertGoldenFile(t, "testdata/hook_pre_write_code.golden", artifact.Bytes)
 }
 
+// spec: hook-resources/windsurf-splits-pretooluse-by-tool-matcher
 func TestTranslateHook_PreToolUse_Bash(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHookWithMatcher(
@@ -457,6 +460,7 @@ func TestTranslateHook_SubagentStop(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/gemini-and-windsurf-suppress-unmappable-events-with-a-warning
 func TestTranslateHook_UnmappableEvent(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHook(
@@ -486,6 +490,7 @@ func TestTranslateHook_UnmappableEvent(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/windsurf-splits-pretooluse-by-tool-matcher
 func TestTranslateHook_PreToolUse_EmptyMatcher(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHook(

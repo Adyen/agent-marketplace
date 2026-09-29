@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: hook-resources/gemini-receives-the-matcher-and-timeout-verbatim
 func TestNativeHookDefinitionsUseMatcherGroups(t *testing.T) {
 	hook := ir.NewHookWithMatcherOptions("audit", "PreToolUse", "Read|Edit", "echo audit", "command", map[string]any{"description": "audit commands", "env": map[string]any{"AUDIT_MODE": "local"}}, ir.SourceRef{}, ir.WithHookTimeout(2500))
 	artifacts, diagnostics, err := translateHook(hook, compile.Options{})

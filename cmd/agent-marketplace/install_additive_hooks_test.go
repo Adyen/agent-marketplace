@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
+// spec: hook-resources/install-all-includes-every-hook-provider
 func TestInstallCommandAllIncludesCrossRegistryHooks(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

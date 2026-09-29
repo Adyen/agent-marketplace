@@ -415,6 +415,7 @@ func TestDevinDriftedOwnedEntryIsReplaced(t *testing.T) {
 // plan rules at once: "Handwritten hooks keep their relative order and execute
 // before generated hooks" and "One semantically identical unmanaged hook may
 // satisfy any number of selected marketplace resources without duplication".
+// spec: hook-resources/handwritten-devin-hooks-keep-order-and-satisfy-identical-entries
 func TestDevinHandwrittenHooksKeepOrderAndSatisfyIdenticalDesiredEntries(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)

@@ -2508,6 +2508,7 @@ func TestRunWindsurfRepoScopeSkillSyncIsIdempotent(t *testing.T) {
 // every sync. The hooks directory contains only merge (fragment) artifacts;
 // the previous behaviour called syncArtifactLinks(hooks_dir, [], prune=true)
 // which deleted all files before materializeMergeArtifacts re-wrote them.
+// spec: hook-resources/repeat-sync-is-byte-identical
 func TestRunHookArtifactsAreNotPrunedOnSecondSync(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -2758,6 +2759,7 @@ func TestRunMultipleHooksSameEventSameMatcherBothSurvive(t *testing.T) {
 // TestRunExcludedHookEntryRemovedFromMergedFile verifies that when a hook is
 // excluded (no longer in the resolved list), its managed entry is removed
 // from the merged hooks.json — not just the support file symlink.
+// spec: hook-resources/deselected-hook-is-removed-from-the-merged-file
 func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -2838,6 +2840,7 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 // TestRunHookSupportFilesAreSymlinked verifies that support files (scripts)
 // alongside hooks.json in the source directory are materialized as symlinks
 // in the hooks output directory, and are pruned when the hook is removed.
+// spec: hook-resources/support-scripts-are-installed-beside-the-hook-file
 func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -2900,6 +2903,47 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 
 	if _, err := os.Lstat(scriptLink); !os.IsNotExist(err) {
 		t.Errorf("remind.sh symlink should have been pruned, got err: %v", err)
+	}
+}
+
+// spec: hook-resources/factory-commands-point-into-the-install-root
+func TestRunFactoryHookCommandPointsIntoInstallRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	sourceDir := t.TempDir()
+	hook := ir.NewHook("pre-tool-use-check", "PreToolUse",
+		"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh", "command", nil, ir.SourceRef{File: filepath.Join(sourceDir, "hooks.json")})
+	resolved := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Name: "pre-tool-use-check", Resource: hook, Path: filepath.Join(sourceDir, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+	}
+
+	report, err := Run(context.Background(), repoRoot, resolved)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("unexpected error diagnostics: %v", report.Diags)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(repoRoot, ".factory", "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatalf("read materialized hooks.json: %v", err)
+	}
+	var document map[string][]struct {
+		Hooks []struct {
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatalf("materialized hooks.json is not valid JSON: %v\n%s", err, raw)
+	}
+	groups := document["PreToolUse"]
+	if len(groups) != 1 || len(groups[0].Hooks) != 1 {
+		t.Fatalf("materialized hooks.json does not contain exactly one PreToolUse handler: %s", raw)
+	}
+	if got := groups[0].Hooks[0].Command; got != ".factory/hooks/check.sh" {
+		t.Fatalf("materialized command = %q, want the repository-relative install-root path %q", got, ".factory/hooks/check.sh")
 	}
 }
 

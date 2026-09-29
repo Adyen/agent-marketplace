@@ -961,6 +961,7 @@ func TestDevinBundleDuplicateCollapseIsOrderIndependent(t *testing.T) {
 // per-resource error contract: each bad hook is reported as an error and named
 // in Result.Skipped, the aggregate omits exactly those entries, and the skill,
 // the subagent, and the one good hook are published untouched.
+// spec: hook-resources/a-bad-devin-hook-does-not-suppress-good-ones
 func TestDevinBundleBadHookDoesNotSuppressGoodOnes(t *testing.T) {
 	result, err := compileBundleFromIR(&ingest.Bundle{
 		Resources: []ir.Resource{

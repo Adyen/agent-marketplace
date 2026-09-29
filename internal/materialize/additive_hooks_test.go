@@ -24,6 +24,7 @@ type additiveFactoryGroup struct {
 	Hooks   []additiveFactoryHook `json:"hooks"`
 }
 
+// spec: hook-resources/same-named-hooks-from-two-registries-both-install
 func TestAdditiveHooksIngestResolveMaterialize(t *testing.T) {
 	tests := []struct {
 		name          string

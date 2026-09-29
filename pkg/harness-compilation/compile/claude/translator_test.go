@@ -207,6 +207,8 @@ func TestClaudeSubagent_FrontmatterExtraFieldsAreDeterministic(t *testing.T) {
 }
 
 // --- Claude Hook test (✓ passthrough) ---
+// spec: hook-resources/claude-code-hooks-use-the-plugin-hook-file
+// spec: hook-resources/claude-code-emits-unknown-events-unchanged
 func TestClaudeHook_Passthrough(t *testing.T) {
 	c := &claudeCompiler{}
 	hook := ir.NewHook("pre-commit-command", "pre-commit", "echo test", "command", map[string]any{}, ir.SourceRef{File: "hooks/hooks.json", Line: 0})

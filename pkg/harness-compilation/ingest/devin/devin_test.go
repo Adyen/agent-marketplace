@@ -474,6 +474,7 @@ func TestSubagentDirectoryFormIsReportedNotIngested(t *testing.T) {
 
 // --- hooks ---
 
+// spec: hook-resources/undocumented-devin-event-keeps-its-name-with-a-diagnostic
 func TestHookIngest(t *testing.T) {
 	thirty := 30
 	tests := []struct {

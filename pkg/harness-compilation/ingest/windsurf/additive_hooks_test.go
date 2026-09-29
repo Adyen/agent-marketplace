@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: hook-resources/windsurf-native-file-keeps-every-handler
 func TestLoadHooksAliasDistinctNames(t *testing.T) {
 	src := fstest.MapFS{"hooks.json": {Data: []byte(`{"hooks":{"pre_run_command":[{"command":"echo first"},{"command":"echo second"}]}}`)}}
 	hooks, _, err := LoadHooks(src, "hooks.json")

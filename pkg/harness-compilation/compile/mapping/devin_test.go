@@ -205,6 +205,7 @@ func TestDevinReverseHookEvent(t *testing.T) {
 // a non-empty Devin cell must reverse back to itself, and every Devin event the
 // reverse table lists must be produced by the forward table. Neither table is
 // derived from the other, so this is a real cross-check rather than a tautology.
+// spec: hook-resources/undocumented-devin-event-keeps-its-name-with-a-diagnostic
 func TestDevinReverseHookEventAgreesWithForwardTable(t *testing.T) {
 	forward := map[string]string{} // devin event -> canonical event
 	var unmappable []string        // canonical events with no Devin cell

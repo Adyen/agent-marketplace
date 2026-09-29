@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
+// spec: hook-resources/legacy-windsurf-hook-lock-is-retained-until-upgrade
 func TestWindsurfLegacyHookLockRetainedUntilUpgrade(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

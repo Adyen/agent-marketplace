@@ -108,6 +108,7 @@ func additiveSafetyCommands(t *testing.T, file, container, event string) []strin
 	return commands
 }
 
+// spec: hook-resources/every-harness-target-receives-hooks-in-both-scopes-and-modes
 func TestAdditiveHooksAllTargetsScopesAndModes(t *testing.T) {
 	targets := []struct {
 		target                               hcc.Target
@@ -175,6 +176,7 @@ func TestAdditiveHooksAllTargetsScopesAndModes(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/conflicting-support-files-refuse-the-affected-hooks
 func TestAdditiveHookSupportConflictPreservesInstalledBytes(t *testing.T) {
 	for _, target := range []hcc.Target{hcc.TargetFactory, hcc.TargetWindsurf} {
 		for _, machine := range []bool{false, true} {
@@ -284,6 +286,7 @@ func TestWindsurfMalformedHooksPreserveBytes(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/blocked-windsurf-hooks-keep-their-installed-entries
 func TestWindsurfIncompleteHooksRetainManagedSiblings(t *testing.T) {
 	repo, _ := additiveSafetyEnv(t)
 	file := filepath.Join(repo, ".windsurf", "hooks.json")

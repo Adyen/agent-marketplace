@@ -207,6 +207,7 @@ func TestLoadHooks_HookExtraFields(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/non-command-handler-type-loads-with-a-warning
 func TestLoadHooks_HookTypeField(t *testing.T) {
 	src := fstest.MapFS{
 		"hooks/hooks.json": {
@@ -228,6 +229,9 @@ func TestLoadHooks_HookTypeField(t *testing.T) {
 	}
 	if len(diags) != 1 {
 		t.Fatalf("expected 1 diagnostic, got %d", len(diags))
+	}
+	if diags[0].Code != diag.CodeHookClaudeUnsupportedType {
+		t.Errorf("diag code: got %q, want %q", diags[0].Code, diag.CodeHookClaudeUnsupportedType)
 	}
 }
 
@@ -419,6 +423,7 @@ func TestLoadHooks_ClaudeWorkspaceFormat(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/repeated-event-and-type-receive-distinct-names
 func TestLoadHooks_AssignsDistinctNamesToRepeatedEventTypes(t *testing.T) {
 	src := fstest.MapFS{
 		"hooks/hooks.json": {
@@ -446,6 +451,7 @@ func TestLoadHooks_AssignsDistinctNamesToRepeatedEventTypes(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/repeated-event-and-type-receive-distinct-names
 func TestLoadHooks_SuffixedNameDoesNotCollideWithTypedBaseName(t *testing.T) {
 	src := fstest.MapFS{
 		"hooks/hooks.json": {

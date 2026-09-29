@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: hook-resources/conflicting-support-files-refuse-the-affected-hooks
 func TestPrepareHookSupportDetectsSameOutputConflicts(t *testing.T) {
 	first := makeHookSupportSource(t, "echo first", 0o644)
 	second := makeHookSupportSource(t, "echo second", 0o644)

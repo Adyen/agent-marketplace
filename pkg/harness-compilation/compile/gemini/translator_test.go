@@ -327,6 +327,7 @@ func TestCompileSubagentWithNoModel(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/cursor-and-gemini-receive-harness-variables
 func TestCompileHookToSettingsJSON(t *testing.T) {
 	hook := ir.NewHook(
 		"pre-commit",
@@ -398,6 +399,7 @@ func TestCompileHookToSettingsJSON(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/gemini-and-windsurf-suppress-unmappable-events-with-a-warning
 func TestCompileHookEventMapping(t *testing.T) {
 	tests := []struct {
 		claudeEvent string

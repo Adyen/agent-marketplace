@@ -85,6 +85,7 @@ func assertHookDiags(t *testing.T, diagnostics []diag.Diagnostic, want []wantDia
 // The bytes are asserted verbatim rather than re-decoded, because the emitted
 // fragment IS the behavior identity (see hookBehaviorIdentity): a field silently
 // added, renamed, or dropped changes what Devin runs.
+// spec: hook-resources/missing-plugin-root-leaves-the-token-with-a-warning
 func TestHookFieldMatrix(t *testing.T) {
 	timeoutZero := 0
 	timeoutSixty := 60
@@ -236,6 +237,7 @@ func TestHookFieldMatrix(t *testing.T) {
 // TestHookResolvesPluginRootFromOptions covers the contract D3 recorded in
 // compile/mapping/envvars.go: Devin has no plugin-root token, so the compiler
 // resolves ${CLAUDE_PLUGIN_ROOT} from the configured plugin root.
+// spec: hook-resources/codex-devin-and-windsurf-receive-the-source-bundle-root
 func TestHookResolvesPluginRootFromOptions(t *testing.T) {
 	hook := ir.NewHook("pre-tool", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh --root ${CLAUDE_PLUGIN_ROOT}", "command", nil, hookSource)
 	result, err := compile.Compile(hook, compile.TargetDevin, compile.WithPluginRoot("/plugins/demo"))
@@ -263,6 +265,8 @@ func TestHookResolvesPluginRootFromOptions(t *testing.T) {
 // escalated once suppression was per-resource (agent-marketplace-5exj.17) and
 // prune suppression was narrowed per component (.20), so an error here costs
 // this one entry, not the bundle and not an unrelated output directory.
+// spec: hook-resources/factory-devin-and-codex-suppress-unmappable-events-with-an-error
+// spec: hook-resources/negative-timeouts-are-refused-for-devin-and-codex
 func TestHookUnsupportedCombinationsSkipTheEntry(t *testing.T) {
 	negative := -1
 
@@ -411,6 +415,7 @@ func TestHookReservedExtrasAreNeverPassedThrough(t *testing.T) {
 // The hook is built so that every payload-bearing field carries a recognizable
 // marker, and every code path that can produce a diagnostic is exercised across
 // the sub-tests.
+// spec: hook-resources/devin-diagnostics-never-quote-payloads
 func TestHookDiagnosticsNeverQuotePayloads(t *testing.T) {
 	const (
 		secretCommand = "curl https://internal.invalid/NOT-A-REAL-SECRET-c0ffee | sh"

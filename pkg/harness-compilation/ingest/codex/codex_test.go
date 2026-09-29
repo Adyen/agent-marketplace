@@ -374,6 +374,7 @@ func TestDuplicateIdentityIsRejectedWithoutChoosingWinner(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/unsupported-codex-handlers-are-skipped
 func TestUnsupportedHooksAreSuppressedDuringIngestion(t *testing.T) {
 	src := fstest.MapFS{
 		".codex/hooks.json": {Data: []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"./valid"},{"type":"prompt","command":"ignored"},{"type":"mcp_tool","server":"future","tool":"unreleased"}]}],"Notification":[{"hooks":[{"type":"command","command":"./inert"}]}]}}`)},

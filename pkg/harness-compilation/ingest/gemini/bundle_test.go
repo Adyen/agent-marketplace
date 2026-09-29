@@ -185,6 +185,7 @@ func TestLoadHooks(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/gemini-beforeagent-maps-to-userpromptsubmit
 func TestLoadHooksMapsBeforeAgentToUserPromptSubmit(t *testing.T) {
 	src := fstest.MapFS{
 		".gemini/settings.json": &fstest.MapFile{
