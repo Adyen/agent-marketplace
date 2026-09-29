@@ -2,9 +2,9 @@
 
 Date: 2026-09-23
 
-Status: **Implementation in progress.** WP0 is complete at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`; WP1 is implemented by `agent-marketplace-cgxc.8.2`; WP2 is implemented by `agent-marketplace-cgxc.8.3`; WP3 is implemented by `agent-marketplace-cgxc.8.4`. WP4 is implemented by `agent-marketplace-cgxc.8.5`; WP5 is implemented by `agent-marketplace-cgxc.8.6` at `57087a51d4f565fcd64e4c7e57dda8b52e0a580b`.
+Status: **Implemented across the stack.** WP0 is PR #317 (`cgxc.8.1`); WP1 is PR #318 (`cgxc.8.2`); WP2 is PR #321 (`cgxc.8.3`); WP3 is PR #334 (`cgxc.8.4`); WP4 is PR #346 (`cgxc.8.5`); PR #390 (`cgxc.7` shared inspection) sits in the stack between WP4 and WP5; WP5 is PR #397 (`cgxc.8.6` rebased). The `agent-marketplace-cgxc.8.7` layer closes the remaining acceptance gaps. Individual PR merge status is tracked by the reviews, not asserted here.
 
-Baseline: WP1 is based on `agent-marketplace-cgxc.8.1` at `c778890506c84f9f3e6ab228546bf7e20e8f7c3a`, which is based on main `1d092d7d13a8a2340973f3e13d5980a137b7b4ee`. PR291 was closed unmerged and contributes nothing.
+Baseline: the stack was rebased onto PR275 / `cgxc.5` (validated Workspace), which sits on current main. PR291 was closed unmerged and contributes nothing.
 
 Governing rule for every work package: **the diff removes more decision points than it adds.** A package that lands a new seam and leaves the old path alive "for compatibility" is not done. Each package lists the code it must delete; reviewers check the deletions before the additions.
 
@@ -27,16 +27,15 @@ One function fuses the two responsibilities the design separates:
 After this slice:
 
 ```text
-config.ReadIntent(ctx, opts)            -> Intent          parse, validate, includes, authority, read set. No lock I/O.
-pipeline.ReadDeployedLocks(intent)      -> Evidence        read + validate applicable locks. No network.
-pipeline.AcquireOrganization(ctx, ...)  -> Evidence        online only; fills the absent organization lock in memory.
-config.Bind(intent, evidence)           -> EffectiveConfig existing toLegacyConfig + MergeLayers. Pure.
-config.LoadEffective(ctx, opts)         = Bind(ReadIntent, ReadDeployedLocks)          transitional facade
-pipeline.LoadEffectiveOnline(ctx, ...)  = Bind(ReadIntent, AcquireOrganization(...))   no retry, no provisional lock
-pipeline.GarbageCollect(ctx, dryRun)    reachability from Intent + Evidence + local metadata, under lease
+config.ReadIntent(ctx, opts)                       -> Intent          parse, validate, includes, authority, read set. No lock I/O.
+pipeline.ReadDeployedLocks(ctx, intent)            -> Evidence        ReadLayerLock/decodeLayerLock per layer. No network.
+config.Bind(intent, evidence)                      -> EffectiveConfig existing toLegacyConfig + MergeLayers. Pure.
+pipeline.LoadEffective(ctx, mode, opts, policy)    = Bind(ReadIntent, ReadDeployedLocks, inline organization acquisition)
+                                                     ConfigLoadOnline | ConfigLoadStrict | ConfigLoadCached; no retry, no provisional lock
+pipeline.GarbageCollect(ctx, dryRun)               reachability from Intent + Evidence + local metadata, under lease
 ```
 
-Five named functions. No strategy interface, no options struct with booleans, no session object.
+Five named functions. No strategy interface, no options struct with booleans, no session object. Transient organization acquisition is inlined inside `loadEffective` (one resolve, read-assertion revalidation, bind) rather than a separate per-call `AcquireOrganization`; the `config.LoadEffective` facade was deleted once its callers migrated.
 
 ## 1. Types
 
@@ -171,11 +170,13 @@ WP0 fixtures 3 and 4 are enabled and green here: `TestLoadUserLoggingConfigIgnor
 
 ### WP3. Acquisition without provisional locks
 
-Move `readDeployedLock` from `config` to `internal/pipeline/acquisition.go` and generalize it to the layer loop currently in `cmd/agent-marketplace/gc.go:132-179`:
+As implemented, `internal/pipeline/acquisition.go` owns the layered lock readers — `ReadLayerLock`, `decodeLayerLock`, and `readLayerLockWithOverlays` — generalized over the layer loop that lived in `cmd/agent-marketplace/gc.go:132-179`, and exposes:
 
 ```go
 func ReadDeployedLocks(ctx context.Context, intent config.Intent) (config.Evidence, error)
 ```
+
+`config.readDeployedLock` was not moved: it still serves the config package's single-layer readers (`intent.go:433`). Decision (a): keep the split between the single-file config decoder and the layered pipeline readers, and track unification as a follow-up decoder task rather than unifying in this slice.
 
 Rules, all already present in `gc.go` and `lock.go`, now in one place:
 - organization: `ValidateOrganizationTrustUnit(path, true, true)` before reading; absent is `nil` with no error; present must decode, scope-validate, and pass `unselectedLayerIsFresh`;
@@ -183,23 +184,20 @@ Rules, all already present in `gc.go` and `lock.go`, now in one place:
 - present locks always decode and scope-validate;
 - the `lockLifecycleError` type and its `lock.invalid`/`lock.stale` codes move to pipeline unchanged so CLI output is identical.
 
-Online path becomes:
+As implemented, the runtime load is one entry point with an explicit mode (`internal/pipeline/marketplace_runtime_lock.go`):
 
 ```go
-func LoadEffectiveOnline(ctx, opts, policy) config.EffectiveConfig {
-    intent := config.ReadIntent(ctx, opts)
-    if len(intent.Errors) > 0 { return config.Bind(intent, config.Evidence{}) }
-    ev, err := ReadDeployedLocks(ctx, intent)
-    if err != nil { return errorEC(err) }
-    org := intent.Layers[config.Organization]
-    if org.NeedsMarketplaceLock() && ev.Locks[config.Organization] == nil {
-        doc, reads, err := acquireOrganization(ctx, intent, org, policy)   // cache lookup, Resolve, read assertions — once
-        if err != nil { return errorEC(err) }
-        ev.Locks[config.Organization], ev.Reads = &doc, append(ev.Reads, reads...)
-    }
-    return config.Bind(intent, ev)
-}
+type ConfigLoadMode uint8
+const (
+    ConfigLoadOnline ConfigLoadMode = iota  // may acquire the absent organization lock transiently
+    ConfigLoadStrict                         // on-disk evidence only; missing required lock is an error
+    ConfigLoadCached                         // reuse verified transient cache; never contacts the Marketplace
+)
+
+func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig
 ```
+
+`loadEffective` composes `readIntent` + `readDeployedLocks`, then — only when the mode is online, the organization layer `NeedsMarketplaceLock()`, and its lock is absent — performs transient acquisition inline (cache lookup, `marketplacelock.Resolve`, read-assertion revalidation — once) before `config.Bind`. There is no separate per-call `AcquireOrganization`.
 
 `marketplacelock.Resolve` needs allowlist and target harnesses; both come from `intent` (`Settings().AllowedRegistries` merged with existing precedence, `intent.TargetHarnesses()`), so the provisional load that existed to obtain them is unnecessary. The transient cache keeps its read-assertion revalidation, keyed on the intent read set plus the lock-absence generation exactly as `transientMarketplaceReadAssertions` does now.
 
@@ -286,8 +284,8 @@ The slice is complete when all of the following hold on the integration branch:
 
 One integration owner for WP1-WP4; they are serial because each edits the seam the next consumes. WP0 can be written by anyone now. WP5 can be split by file once WP4 lands.
 
-Beads: parent `agent-marketplace-cgxc.8` (under the `cgxc` architecture-audit epic) with children `cgxc.8.1` (WP0) through `cgxc.8.6` (WP5), each blocked by its predecessor.
+Beads: parent `agent-marketplace-cgxc.8` (under the `cgxc` architecture-audit epic) with children `cgxc.8.1` (WP0) through `cgxc.8.6` (WP5), plus `cgxc.8.7` for the final acceptance evidence, each blocked by its predecessor.
 
-PR275 / `cgxc.5` (validated Workspace) is **not** the base of this stack. It touches 59 files across `pipeline`, `cmd`, and `tui` and is currently conflicting with `main`; making it the base would rebase every seam PR whenever it moves. Its file set is almost disjoint from this slice (`pipeline/install.go` and `pipeline/update.go` are the only shared files, and only at `LoadEffectiveOnline` call sites). Land it on `main` independently after its own rebase. `ReadIntent` keeps `FindRepoRoot`/`FindLocalConfigDir`; once both have merged, a small follow-up passes `Workspace` roots into `ReadIntent` and deletes the two finders from it.
+PR275 / `cgxc.5` (validated Workspace) **is** the base of this stack: the seam PRs were rebased onto it, so Workspace-aware callers flow through the shared pipeline load. `ReadIntent` keeps `FindRepoRoot`/`FindLocalConfigDir`; a follow-up passes `Workspace` roots into `ReadIntent` and deletes the two finders from it.
 
-`cgxc.7` (shared inspection) and `cgxc.4` (serialized mutations) are slice 2 and 3 consumers of `Intent`/`Bind` and are not touched here.
+`cgxc.7` (shared inspection, PR390) landed in this stack between WP4 and WP5. `cgxc.4` (serialized mutations) remains a slice-3 consumer of `Intent`/`Bind` and is not touched here. The TUI custom-`Loaders` reload at `internal/pipeline/pipeline.go:402` and the `config.readDeployedLock` versus `pipeline.ReadLayerLock`/`decodeLayerLock` decoder split are deferred follow-ups, per design section 6.

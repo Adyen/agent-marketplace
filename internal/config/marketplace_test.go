@@ -186,7 +186,7 @@ func TestValidateMarketplaceEntriesAllowsLayeredAliasForSameIdentity(t *testing.
 	}
 }
 
-// spec: marketplace-protocols/same-endpoint-alias-with-different-instance-ids
+// spec: configuration-intent/same-endpoint-alias-with-different-instance-ids
 func TestValidateMarketplaceEntriesRejectsAliasWithDifferentInstanceIDs(t *testing.T) {
 	organization := MarketplaceEntry{URL: "https://market.example", InstanceID: "bootstrap", Alias: "org", Source: Organization}
 	for _, tc := range []struct {
