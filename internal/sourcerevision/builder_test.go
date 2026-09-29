@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -158,6 +159,7 @@ func TestBuildRejectsTraversalAndSymlinkEscape(t *testing.T) {
 		}
 	})
 
+	// spec: registry-symlink-containment/narrowed-source-root-excludes-unsafe-symlink
 	t.Run("unsafe symlink outside configured root is ignored", func(t *testing.T) {
 		root := filepath.Join(snapshot, "scoped")
 		writeFixture(t, filepath.Join(root, ".factory", "skills", "ok", "SKILL.md"), "---\nname: ok\n---\nbody\n")
@@ -178,6 +180,36 @@ func TestBuildRejectsTraversalAndSymlinkEscape(t *testing.T) {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("Build error %q does not mention %s", err, want)
 			}
+		}
+	})
+
+	// spec: registry-symlink-containment/selected-unsafe-symlink-identifies-remediation
+	t.Run("in-root unsafe symlink error identifies remediation", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			link   string
+			target string
+		}{
+			{name: "dangling", link: "dangling-link", target: "/nonexistent/.factory/settings.json"},
+			{name: "escaping", link: "escape-link", target: outside},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				fresh := t.TempDir()
+				root := filepath.Join(fresh, "diag")
+				writeFixture(t, filepath.Join(root, ".factory", "skills", "ok", "SKILL.md"), "---\nname: ok\n---\nbody\n")
+				if err := os.Symlink(tc.target, filepath.Join(root, tc.link)); err != nil {
+					t.Fatal(err)
+				}
+				_, err := Build(Input{SnapshotRoot: fresh, RootPath: "diag", SourceHarness: "factory"})
+				if !errors.Is(err, ErrPathEscape) {
+					t.Fatalf("Build error = %v, want ErrPathEscape", err)
+				}
+				for _, want := range []string{`"diag/` + tc.link + `"`, strconv.Quote(tc.target), `"diag"`, "narrow the registry entry's path"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("Build error %q does not mention %s", err, want)
+					}
+				}
+			})
 		}
 	})
 

@@ -337,6 +337,7 @@ func TestExactGitCancelledReadOnlyDoesNotCreateLockFile(t *testing.T) {
 	}
 }
 
+// spec: registry-symlink-containment/snapshot-tracked-tree-is-altered
 func TestExactGitRejectsMismatchAndTampering(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := newExactGitRepository(t, "sha1")
@@ -452,6 +453,7 @@ func TestExactGitRejectsObjectFormatMismatch(t *testing.T) {
 
 // Symlink safety is enforced per configured root by sourcerevision; an unsafe
 // link elsewhere in the repository must not make the whole snapshot unusable.
+// spec: registry-symlink-containment/snapshot-contains-unselected-unsafe-symlinks
 func TestExactGitAcquiresSnapshotWithEscapingOrDanglingSymlink(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := newExactGitRepository(t, "sha1")
