@@ -136,6 +136,8 @@ func newRootCmd() *cobra.Command {
 		newDeinitCmd(),
 		newServeCmd(),
 		newTelemetryCmd(),
+		newMcpCmd(),
+		newPromoteCmd(),
 	)
 
 	return rootCmd

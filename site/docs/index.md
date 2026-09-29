@@ -24,6 +24,7 @@ The [user-journey map](./explanation/user-journeys.md) follows a resource from f
 |---|---|
 | Install one skill from Git, end to end, on Claude Code | [Tutorial: install your first skill](./tutorials/install-your-first-skill.md) |
 | Find and install your first skill from an online Marketplace | [Tutorial: install your first Marketplace skill](./tutorials/install-your-first-marketplace-skill.md) |
+| Discover and load a skill on demand in Devin | [Tutorial: use code mode with Devin](./tutorials/use-code-mode-with-devin.md) |
 | Read a resource's content and security findings, or inspect an older revision | [Browse and inspect Marketplace resources](./how-to/browse-marketplace-resources.md) |
 | Add agent-marketplace to a repository the team shares | [Adopt in a repository](./how-to/adopt-agent-marketplace-in-a-repository.md) |
 | Make CI prove every clone gets the same files | [Keep resources reproducible](./how-to/keep-resources-reproducible.md) |
