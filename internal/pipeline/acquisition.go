@@ -207,12 +207,6 @@ func IntentReadAssertions(intent config.Intent) ([]dependencytxn.ReadAssertion, 
 	return sortedReadAssertions(byRequested), nil
 }
 
-func transientOrganizationMarketplaceInputs(intent config.Intent) string {
-	targets, _ := intent.TargetHarnesses()
-	allowed, marketplaces := intent.AllowedRegistries(), intent.AllowedMarketplaces()
-	return fmt.Sprintf("harnesses=%q allowed-nil=%t allowed=%q allowed-marketplaces-nil=%t allowed-marketplaces=%q", targets, allowed == nil, allowed, marketplaces == nil, marketplaces)
-}
-
 func transientMarketplaceReadAssertions(intent config.Intent, lockPath string) ([]dependencytxn.ReadAssertion, error) {
 	organization := intent.Layers[config.Organization]
 	return transientReadAssertions([]config.LayerResult{{Source: config.Organization, Path: organization.Path, Reads: organization.Reads}}, lockPath)
