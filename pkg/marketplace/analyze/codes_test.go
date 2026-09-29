@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: marketplace-protocols/code-catalog-parity
+// spec: marketplace-api/code-catalog-parity
 func TestFindingCodes_Documented(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "pkg", "marketplace", "analyze", "codes.md")
 	data, err := os.ReadFile(path)
@@ -54,7 +54,7 @@ func TestPolicyCodesAreStable(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/code-catalog-parity
+// spec: marketplace-api/code-catalog-parity
 func TestFindingCodesAreStable(t *testing.T) {
 	codes := FindingCodes()
 	seen := make(map[string]bool)

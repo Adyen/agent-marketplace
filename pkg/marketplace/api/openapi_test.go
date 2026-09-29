@@ -35,7 +35,7 @@ func readOpenAPIDocument(t *testing.T) map[string]any {
 	return doc
 }
 
-// spec: marketplace-protocols/required-paths-and-schemas-are-present
+// spec: marketplace-api/openapi-document-declares-the-marketplace-paths-and-schemas
 func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths, ok := doc["paths"].(map[string]any)
@@ -89,7 +89,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/go-constants-match-the-openapi-enum
+// spec: marketplace-api/capabilities-document-matches-the-openapi-contract
 func TestDefaultCapabilitiesMatchOpenAPIEnums(t *testing.T) {
 	caps := DefaultCapabilities()
 	if !slices.Equal(caps.APIVersions, []string{"v1"}) {
@@ -234,6 +234,7 @@ func sameAnyStrings(raw []any, want []string) bool {
 	return true
 }
 
+// spec: marketplace-api/inspection-content-routes-serve-the-public-media-types
 func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths := doc["paths"].(map[string]any)
@@ -264,6 +265,7 @@ func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/well-known-document-exposes-browser-templates-only-when-configured
 func TestOpenAPIBrowserRoutesAreNuxtHTMLAndWellKnownTemplatesOptional(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths := doc["paths"].(map[string]any)

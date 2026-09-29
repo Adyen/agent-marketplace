@@ -51,7 +51,7 @@ func TestMarketplaceExclusionMatchesExactOptionalPins(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/marketplace-entries-are-validated
+// spec: marketplace-api/marketplace-entries-are-validated
 func TestValidateMarketplaceEntries(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -234,7 +234,7 @@ func TestValidateMarketplaceEntriesRejectsUnsafeIdentityAndEndpointFields(t *tes
 	}
 }
 
-// spec: marketplace-protocols/marketplace-url-allowlist
+// spec: marketplace-api/marketplace-url-allowlist
 func TestValidateMarketplaceURLs(t *testing.T) {
 	entries := []MarketplaceEntry{
 		{URL: "https://market.example.com/skills"},
@@ -328,7 +328,7 @@ func TestMarketplaceMerge(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/layered-config-wiring
+// spec: marketplace-api/layered-config-wiring
 func TestMergeLayersKeepsMarketplaceProvenanceAndFirstAllowlist(t *testing.T) {
 	orgAllow := []string{`org\.example`}
 	userAllow := []string{`.*`}

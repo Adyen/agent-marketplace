@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-// spec: marketplace-protocols/collection-manifest-round-trip
+// spec: marketplace-api/collection-manifest-round-trip
 func TestCollectionManifestRoundTrip(t *testing.T) {
 	col := ir.NewCollection("defaults", "1.0.0", "Default collection", []ir.CollectionMember{
 		{Kind: ir.KindSkill, Name: "review"},
@@ -41,7 +41,7 @@ func TestCollectionManifestRoundTrip(t *testing.T) {
 	_ = payload2
 }
 
-// spec: marketplace-protocols/deterministic-ordering
+// spec: marketplace-api/deterministic-ordering
 func TestCollectionManifestDeterministic(t *testing.T) {
 	col := ir.NewCollection("defaults", "1.0.0", "Default collection", []ir.CollectionMember{
 		{Kind: ir.KindSkill, Name: "b"},
@@ -190,7 +190,7 @@ func TestVerifyCollectionManifestRejectsTrailingWhitespace(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/content-digest-excludes-the-digest-field
+// spec: marketplace-api/content-digest-excludes-the-digest-field
 func TestCollectionManifestContentDigestExcludesDigest(t *testing.T) {
 	col := ir.NewCollection("defaults", "1.0.0", "Default collection", []ir.CollectionMember{
 		{Kind: ir.KindSkill, Name: "review"},
@@ -400,7 +400,7 @@ func TestValidateAndExpandCollectionManifestGraphExpandsDirectLeavesWhenFlat(t *
 	}
 }
 
-// spec: marketplace-protocols/deterministic-ordering
+// spec: marketplace-api/deterministic-ordering
 func TestCollectionManifestOrdersMembersAndIncludes(t *testing.T) {
 	col := ir.NewCollection("defaults", "1.0.0", "", []ir.CollectionMember{
 		{Kind: ir.KindSkill, Name: "b"},
