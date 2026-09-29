@@ -89,6 +89,7 @@ func TestInspectionIssuesClassifyEverySource(t *testing.T) {
 	}
 }
 
+// spec: inspection-outcomes/warning-only-inspection
 func TestInspectionWarningOnlyRemainsSuccessful(t *testing.T) {
 	resolved := ResolveResult{
 		Warnings: []error{errors.New("config warning")},
