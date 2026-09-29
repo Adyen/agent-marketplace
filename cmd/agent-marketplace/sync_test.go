@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
+// spec: authored-configuration-reads/selection-labels-with-missing-acquisition-evidence
 func TestConfiguredSelectionLabelsReadsIntentWithoutLocks(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

@@ -607,6 +607,7 @@ func TestListFromDoesNotAcquireConfiguredMarketplace(t *testing.T) {
 	}
 }
 
+// spec: authored-configuration-reads/allowlist-from-unbindable-layer
 func TestListFromHonorsAllowlistFromUnbindableV4Layer(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
