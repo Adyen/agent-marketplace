@@ -128,18 +128,13 @@ func propDrawMarketplace(t *rapid.T) MarketplaceLock {
 	pairs := append([][2]string(nil), propBindings...)
 	propShuffle(t, "binding-order", pairs)
 	nBindings := rapid.IntRange(2, len(pairs)).Draw(t, "bindings")
-	bound := make(map[string][2]string, nBindings)
-	for _, pair := range pairs[:nBindings] {
+	names := pairs[:nBindings]
+	for _, pair := range names {
 		mp.RegistryBindings = append(mp.RegistryBindings, MarketplaceRegistryBinding{Name: pair[0], RegistryID: pair[1]})
-		bound[pair[0]] = pair
 	}
 
 	nRes := rapid.IntRange(1, 4).Draw(t, "mp-resources")
 	seen := make(map[string]bool, nRes)
-	names := make([][2]string, 0, len(bound))
-	for _, pair := range bound {
-		names = append(names, pair)
-	}
 	var collections []MarketplaceResourceLock
 	for len(mp.Resources) < nRes {
 		binding := names[rapid.IntRange(0, len(names)-1).Draw(t, "binding")]
@@ -285,6 +280,7 @@ func propPermute(t *rapid.T, d Document) Document {
 				for name := range files {
 					keys = append(keys, name)
 				}
+				slices.Sort(keys)
 				propShuffle(t, "perm-support", keys)
 				rebuilt := make(map[string]Digest, len(files))
 				for _, name := range keys {
