@@ -27,4 +27,4 @@
 
 - [x] 5.1 Run `make spec-check` and verify that strict validation and `specaudit trace` pass with every new scenario bound.
 - [x] 5.2 Run `make validate` and verify that it passes.
-- [ ] 5.3 Run `openspec archive specify-resource-prerequisites --yes` and verify that `openspec/specs/resource-prerequisites/spec.md` contains the added requirements and that `make spec-check` still passes.
+- [x] 5.3 Run `openspec archive specify-resource-prerequisites --yes` and verify that `openspec/specs/resource-prerequisites/spec.md` contains the added requirements and that `make spec-check` still passes.
