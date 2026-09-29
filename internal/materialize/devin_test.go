@@ -249,6 +249,8 @@ func TestDevinUserHooksPatchConfigWithoutTouchingUnrelatedSettings(t *testing.T)
 // TestDevinUnmanagedMcpCollisionIsPreserved pins "unmanaged collisions are
 // preserved": the existing entry is neither overwritten nor deleted, and only
 // the generated entry fails.
+// spec: owned-entry-reconciliation/handwritten-entries-remain-unmanaged
+// spec: owned-entry-reconciliation/unmanaged-collision-fails-only-the-generated-entry
 func TestDevinUnmanagedMcpCollisionIsPreserved(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)
@@ -302,6 +304,7 @@ func TestDevinUnmanagedMcpCollisionIsPreserved(t *testing.T) {
 
 // TestDevinStaleProvenEntryPrunesAndUnmanagedNeverDoes pins "Only stale PROVEN
 // entries prune" from both directions.
+// spec: owned-entry-reconciliation/stale-owned-entries-are-pruned
 func TestDevinStaleProvenEntryPrunesAndUnmanagedNeverDoes(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)
@@ -344,6 +347,7 @@ func TestDevinStaleProvenEntryPrunesAndUnmanagedNeverDoes(t *testing.T) {
 // TestDevinMissingOwnershipStateNeverPrunes pins the fail-closed direction:
 // "Missing or corrupt ownership state makes all existing aggregate entries
 // unmanaged", so nothing is pruned even for an entry we really did write.
+// spec: owned-entry-reconciliation/missing-ownership-state-preserves-everything
 func TestDevinMissingOwnershipStateNeverPrunes(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)
@@ -372,6 +376,7 @@ func TestDevinMissingOwnershipStateNeverPrunes(t *testing.T) {
 
 // TestDevinDriftedOwnedEntryIsReplaced pins "Manual edits to a proven owned
 // entry are reported as drift and replaced from marketplace configuration".
+// spec: owned-entry-reconciliation/drifted-owned-entry-is-restored
 func TestDevinDriftedOwnedEntryIsReplaced(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)
