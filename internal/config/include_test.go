@@ -242,7 +242,7 @@ func TestConfigIncludesAcrossAllLayers(t *testing.T) {
 	writeIncludeConfig(t, user, "apiVersion: agent-marketplace/v2\ninclude: user-fragment.yaml\n")
 	writeIncludeConfig(t, repo, "apiVersion: agent-marketplace/v2\ninclude: repo-fragment.yaml\n")
 	writeIncludeConfig(t, local, "include: local-fragment.yaml\n")
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{OrganizationPath: org, GlobalPath: user, RepoPath: repo, LocalPath: local, RepoRoot: dir, LocalConfigDir: dir})
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{OrganizationPath: org, GlobalPath: user, RepoPath: repo, LocalPath: local, RepoRoot: dir, LocalConfigDir: dir})
 	if len(ec.Errors) != 0 {
 		t.Fatalf("errors = %v", ec.Errors)
 	}

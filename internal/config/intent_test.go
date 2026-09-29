@@ -16,7 +16,7 @@ import (
 func TestLoadEffectiveCanceledContextDoesNotBind(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	ec := LoadEffective(ctx, LoadEffectiveOptions{})
+	ec := loadEffectiveForTest(ctx, LoadEffectiveOptions{})
 	if len(ec.Errors) != 1 || !errors.Is(ec.Errors[0], context.Canceled) {
 		t.Fatalf("errors = %v, want one context.Canceled", ec.Errors)
 	}

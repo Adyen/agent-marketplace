@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -185,24 +184,26 @@ func TestValidateMarketplaceEntriesAllowsLayeredAliasForSameIdentity(t *testing.
 	}
 }
 
-func TestValidateMarketplaceEntriesTreatsAProvisionalInstanceAsUnknown(t *testing.T) {
-	organization := MarketplaceEntry{URL: "https://market.example", InstanceID: lockfile.ProvisionalMarketplaceInstanceID, Alias: "org", Source: Organization}
+// spec: marketplace-protocols/same-endpoint-alias-with-different-instance-ids
+func TestValidateMarketplaceEntriesRejectsAliasWithDifferentInstanceIDs(t *testing.T) {
+	organization := MarketplaceEntry{URL: "https://market.example", InstanceID: "bootstrap", Alias: "org", Source: Organization}
 	for _, tc := range []struct {
-		name   string
-		layer  MarketplaceEntry
-		wantOK bool
+		name  string
+		layer MarketplaceEntry
+		unset bool
 	}{
-		{"same URL with a verified instance", MarketplaceEntry{URL: "https://market.example/", InstanceID: "behavior-marketplace", Alias: "org", Source: UserPersonal}, true},
+		{"same URL with a verified instance", MarketplaceEntry{URL: "https://market.example/", InstanceID: "behavior-marketplace", Alias: "org", Source: UserPersonal}, false},
 		{"another URL", MarketplaceEntry{URL: "https://other.example", InstanceID: "behavior-marketplace", Alias: "org", Source: UserPersonal}, false},
-		{"same file", MarketplaceEntry{URL: "https://market.example", InstanceID: "behavior-marketplace", Alias: "org"}, false},
+		{"same file", MarketplaceEntry{URL: "https://market.example", InstanceID: "behavior-marketplace", Alias: "org"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entries := []MarketplaceEntry{organization, tc.layer}
-			if tc.name == "same file" {
+			if tc.unset {
 				entries[0].Source = SourceUnset
 			}
-			if errs := ValidateMarketplaceEntries(entries); (len(errs) == 0) != tc.wantOK {
-				t.Fatalf("ValidateMarketplaceEntries = %v, want accepted %t", errs, tc.wantOK)
+			errs := ValidateMarketplaceEntries(entries)
+			if len(errs) == 0 || !strings.Contains(errors.Join(errs...).Error(), "duplicates") {
+				t.Fatalf("ValidateMarketplaceEntries(%q) = %v, want duplicate alias", tc.name, errs)
 			}
 		})
 	}

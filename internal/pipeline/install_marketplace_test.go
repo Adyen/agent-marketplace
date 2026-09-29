@@ -689,7 +689,7 @@ func TestMarketplaceCollisionUsesExactLockView(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(warm, ".factory", "skills", "cache-only", "SKILL.md"), []byte("---\nname: cache-only\ndescription: cache\n---\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			loaded := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot})
+			loaded := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 			if len(loaded.Errors) > 0 {
 				t.Fatal(errors.Join(loaded.Errors...))
 			}
@@ -753,10 +753,7 @@ func TestMarketplaceCollisionRejectsInvalidOrUnavailableExactLock(t *testing.T) 
 			ec, snapshot := exactLockViewGCFixture(t)
 			repoRoot := filepath.Dir(filepath.Dir(ec.Repo.Path))
 			tc.breakFixture(t, repoRoot, snapshot)
-			loaded := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot})
-			if len(loaded.Errors) > 0 {
-				t.Fatal(errors.Join(loaded.Errors...))
-			}
+			loaded := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 			var clones atomic.Int32
 			opts := InstallOptions{RepoRoot: repoRoot, CatalogOption: []catalog.LoadOption{catalog.WithCloneOrPull(func(string, string) (string, error) {
 				clones.Add(1)

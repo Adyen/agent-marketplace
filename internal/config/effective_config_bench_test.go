@@ -19,7 +19,7 @@ func BenchmarkLoadEffectiveSmall(b *testing.B) {
 	}
 
 	for b.Loop() {
-		_ = LoadEffective(context.Background(), opts)
+		_ = loadEffectiveForTest(context.Background(), opts)
 	}
 }
 
@@ -34,7 +34,7 @@ func BenchmarkLoadEffectiveLargeConfig(b *testing.B) {
 	}
 
 	for b.Loop() {
-		_ = LoadEffective(context.Background(), opts)
+		_ = loadEffectiveForTest(context.Background(), opts)
 	}
 }
 

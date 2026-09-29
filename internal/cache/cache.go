@@ -134,9 +134,6 @@ func WithCacheMutationLockWithContext[T any](ctx context.Context, fn func() (T, 
 }
 
 func withContextCacheMutationLock[T any](ctx context.Context, fn func() (T, error)) (T, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	select {
 	case cacheMutationMu <- struct{}{}:
 		defer func() { <-cacheMutationMu }()

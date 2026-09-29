@@ -694,7 +694,7 @@ func TestRemoveCollectionDuplicateInRootAndIncludeRetainsExclusion(t *testing.T)
 	if !strings.Contains(string(rootData), "include: collections.yaml") {
 		t.Fatalf("root include directive lost:\n%s", rootData)
 	}
-	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: repoRoot})
+	ec := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: repoRoot}, nil)
 	if len(ec.Errors) != 0 {
 		t.Fatalf("effective config errors = %v", ec.Errors)
 	}

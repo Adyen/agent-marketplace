@@ -1,13 +1,13 @@
 ## 1. Configuration and cache cleanup
 
-- [ ] 1.1 Write and run the duplicate-alias test with the `marketplace-protocols/same-endpoint-alias-with-different-instance-ids` witness; verify it fails on the base and passes after removing the provisional-instance exception.
-- [ ] 1.2 Centralize missing Marketplace evidence detection and remove the unused configuration loader facade; verify focused config, pipeline, and command bootstrap tests pass and production caller search has no facade.
-- [ ] 1.3 Remove nil-context fallbacks in cache operations and repair actual nil callers; verify focused cache tests, cancellation checks, and `make ci-lint` pass.
+- [x] 1.1 Write and run the duplicate-alias test with the `marketplace-protocols/same-endpoint-alias-with-different-instance-ids` witness; verify it fails on the base and passes after removing the provisional-instance exception.
+- [x] 1.2 Centralize missing Marketplace evidence detection and remove the unused configuration loader facade; verify focused config, pipeline, and command bootstrap tests pass and production caller search has no facade.
+- [x] 1.3 Remove nil-context fallbacks in cache operations and repair actual nil callers; verify focused cache tests, cancellation checks, and `make ci-lint` pass.
 
 ## 2. Cache collection evidence
 
-- [ ] 2.1 Factor the organization Marketplace GC command fixture and add the empty-cache case tagged `cache-garbage-collection/organization-marketplace-with-empty-cache`; verify zero removals, requests, and organization writes.
-- [ ] 2.2 Add the trusted organization acquisition lock case tagged `cache-garbage-collection/trusted-organization-lock-retains-exact-archive`; verify retention, real orphan deletion, unchanged lock bytes, and zero network requests.
+- [x] 2.1 Factor the organization Marketplace GC command fixture and add the empty-cache case tagged `cache-garbage-collection/organization-marketplace-with-empty-cache`; verify zero removals, requests, and organization writes.
+- [x] 2.2 Add the trusted organization acquisition lock case tagged `cache-garbage-collection/trusted-organization-lock-retains-exact-archive`; verify retention, real orphan deletion, unchanged lock bytes, and zero network requests.
 
 ## 3. As-built evidence
 

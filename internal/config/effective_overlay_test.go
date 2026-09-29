@@ -15,7 +15,7 @@ func TestLoadEffectiveFileOverlaysRetainRealPaths(t *testing.T) {
 	if err := os.WriteFile(user, []byte("apiVersion: agent-marketplace/v2\nskills: [old]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       user, RepoPath: repo, LocalPath: local,
 		FileOverlays: map[string][]byte{
@@ -61,7 +61,7 @@ func TestLoadEffectiveV4MissingLocalOverlayThroughAlias(t *testing.T) {
 	if _, err := os.Stat(local); !os.IsNotExist(err) {
 		t.Fatalf("local config already exists: %v", err)
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		RepoRoot: alias, LocalConfigDir: alias,
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       filepath.Join(dir, "missing-user.yaml"),
@@ -91,7 +91,7 @@ resources: {new: [skill/new]}
 	if err := os.WriteFile(user, onDisk, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       user,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -112,7 +112,7 @@ resources: {new: [skill/new]}
 func TestLoadEffectiveNeverOverlaysOrganization(t *testing.T) {
 	dir := t.TempDir()
 	org := filepath.Join(dir, "org.yaml")
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: org,
 		GlobalPath:       filepath.Join(dir, "missing-user.yaml"),
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),

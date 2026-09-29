@@ -21,8 +21,7 @@ var readIntent = config.ReadIntent
 
 func NeedsLockBootstrap(errs []error) bool {
 	for _, err := range errs {
-		var validation *config.V4ValidationError
-		if errors.As(err, &validation) && (validation.Code == "v4.marketplace-lock-required" || validation.Code == "v4.marketplace-lock-mismatch") {
+		if config.MissingMarketplaceEvidence(err) {
 			return true
 		}
 		var lifecycle *LockViewError
