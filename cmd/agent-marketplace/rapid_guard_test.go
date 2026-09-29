@@ -20,11 +20,13 @@ func TestRapidProductionDependencyGuard(t *testing.T) {
 	if modcache != "" {
 		cmd.Env = append(os.Environ(), "GOMODCACHE="+modcache)
 	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go list -deps: %v\n%s", err, out)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go list -deps: %v\nstderr:\n%s\nstdout:\n%s", err, stderr.String(), stdout.String())
 	}
-	deps := string(out)
+	deps := stdout.String()
 	if !strings.Contains(deps, "github.com/spf13/cobra") {
 		t.Fatalf("non-vacuity control failed: github.com/spf13/cobra missing from production dependency graph:\n%s", deps)
 	}
