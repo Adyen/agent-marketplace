@@ -336,6 +336,49 @@ func TestCodeModeGateScopesToSelectedRegistry(t *testing.T) {
 }
 
 // spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
+func TestInstallAllRegistrySkipsCodeModeGateOnUnselectedSource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	stubAgentMarketplaceOnPATH(t)
+
+	brokenOrigin, brokenWorking := createBareRepoWithWorkingClone(t, "broken-codemode-registry.git")
+	writeFile(t, filepath.Join(brokenWorking, ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"/nonexistent/bin/agent-marketplace","args":["mcp"]}}}`)
+	commitAndPushAll(t, brokenWorking, "Add broken code-mode MCP")
+
+	selectedOrigin, selectedWorking := createBareRepoWithWorkingClone(t, "selected-codemode-registry.git")
+	writeFile(t, filepath.Join(selectedWorking, ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"agent-marketplace","args":["mcp"]}}}`)
+	writeFile(t, filepath.Join(selectedWorking, "skills", "helper", "SKILL.md"),
+		"---\nname: helper\ndescription: Helper skill\n---\n\n# helper\n")
+	commitAndPushAll(t, selectedWorking, "Add healthy code-mode MCP")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  a-broken:\n    git: file://"+
+			brokenOrigin+"\n    ref: main\n  z-selected:\n    git: file://"+selectedOrigin+"\n    ref: main\n")
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("install", "--all", "--registry", "file://"+selectedOrigin)
+	if err != nil {
+		t.Fatalf("install --all --registry gated by an unselected source: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".mcp.json"))
+	if err != nil || !strings.Contains(string(data), `"agent-marketplace"`) {
+		t.Fatalf("selected agent-marketplace MCP entry missing:\n%s", data)
+	}
+	if strings.Contains(string(data), "/nonexistent/bin/agent-marketplace") {
+		t.Fatalf("unselected source's broken MCP entry materialized:\n%s", data)
+	}
+	if _, serr := os.Stat(filepath.Join(repoRoot, ".claude", "skills", "helper")); serr != nil {
+		t.Fatalf("selected source's skill not materialized: %v", serr)
+	}
+}
+
+// spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
 func TestCodeModeGateFailsSelectedSourceBeforeCommit(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

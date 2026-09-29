@@ -12,6 +12,6 @@
 
 ## 3. Documentation and verification
 
-- [ ] 3.1 Update code-mode tutorial, CLI and configuration reference for collection installation and migration; verify site build and focused link/CLI checks.
-- [ ] 3.2 Run make spec-check and make validate-full on the candidate; verify all affected requirements have annotated passing test witnesses.
-- [ ] 3.3 Run `openspec archive code-mode-native-installation --yes` as the final change step in the same pull request and verify make spec-check passes on the archived candidate.
+- [x] 3.1 Update code-mode tutorial, CLI and configuration reference for collection installation and migration; verify site build and focused link/CLI checks.
+- [x] 3.2 Run make spec-check and make validate-full on the candidate; verify all affected requirements have annotated passing test witnesses.
+- [x] 3.3 Run `openspec archive code-mode-native-installation --yes` as the final change step in the same pull request and verify make spec-check passes on the archived candidate.

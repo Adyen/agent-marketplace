@@ -382,6 +382,10 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		if err != nil {
 			return nil, err
 		}
+		gateCatalogKeys = make(map[string]bool, len(selectedEntries))
+		for _, entry := range selectedEntries {
+			gateCatalogKeys[entry.CatalogKey] = true
+		}
 		if hasKind {
 			// Filter to the specified kind only.
 			installed, err = allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, config.RepoCommitted, kind)
