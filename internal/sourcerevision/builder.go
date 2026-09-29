@@ -436,7 +436,7 @@ func secureRoot(input Input) (string, error) {
 	if _, err := lexicallyContained(snapshotReal, rootReal); err != nil {
 		return "", err
 	}
-	if err := validateTreeSymlinks(rootReal); err != nil {
+	if err := validateTreeSymlinks(snapshotReal, rootReal, rootPath); err != nil {
 		return "", err
 	}
 	return rootReal, nil
@@ -461,7 +461,7 @@ func lexicallyContained(root, target string) (string, error) {
 	return rel, nil
 }
 
-func validateTreeSymlinks(rootReal string) error {
+func validateTreeSymlinks(snapshotReal, rootReal, rootPath string) error {
 	return filepath.WalkDir(rootReal, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -470,13 +470,19 @@ func validateTreeSymlinks(rootReal string) error {
 			return nil
 		}
 		resolved, err := filepath.EvalSymlinks(name)
-		if err != nil {
-			return fmt.Errorf("%w: resolve symlink %q: %v", ErrPathEscape, name, err)
+		if err == nil {
+			_, err = lexicallyContained(rootReal, resolved)
 		}
-		if _, err := lexicallyContained(rootReal, resolved); err != nil {
-			return fmt.Errorf("%w: symlink %q", err, name)
+		if err == nil {
+			return nil
 		}
-		return nil
+		target, _ := os.Readlink(name)
+		rel, relErr := filepath.Rel(snapshotReal, name)
+		if relErr != nil {
+			rel = name
+		}
+		return fmt.Errorf("%w: registry symlink %q -> %q does not resolve inside configured root %q; remove it from the registry or narrow the registry entry's path: %w",
+			ErrPathEscape, filepath.ToSlash(rel), target, rootPath, err)
 	})
 }
 
