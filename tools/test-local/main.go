@@ -77,6 +77,31 @@ func packageFor(root, rel string) (pkg string, e2e bool) {
 	return "", false
 }
 
+func isNonGoMetadata(rel string) bool {
+	switch rel {
+	case ".gitignore", ".gitlab-ci.yml", "LICENSE", ".coderabbit.yaml", ".dockerignore":
+		return true
+	}
+	if path.Ext(rel) == ".md" && path.Dir(rel) == "." {
+		return true
+	}
+	if strings.HasPrefix(rel, "docs/") {
+		return path.Ext(rel) == ".md"
+	}
+	if strings.HasPrefix(rel, "deploy/") && path.Base(rel) == ".gitignore" {
+		return true
+	}
+	switch path.Ext(rel) {
+	case ".md", ".yaml", ".yml":
+		return strings.HasPrefix(rel, "openspec/") || strings.HasPrefix(rel, ".github/workflows/") ||
+			rel == ".github/dependabot.yml" || strings.HasPrefix(rel, ".gitlab/") ||
+			strings.HasPrefix(rel, "deploy/")
+	case ".tpl", ".conf", ".example":
+		return strings.HasPrefix(rel, "deploy/")
+	}
+	return false
+}
+
 func selectPackages(root, ref string) (pkgs []string, notes []string) {
 	fallback := func(note string) ([]string, []string) {
 		return []string{"./..."}, append(notes, note+"; falling back to ./...")
@@ -100,6 +125,9 @@ func selectPackages(root, ref string) (pkgs []string, notes []string) {
 			notes = append(notes, "test-local: "+f+" is in the e2e module; not selectable from the root module")
 			continue
 		}
+		if pkg == "" && isNonGoMetadata(f) {
+			continue
+		}
 		if pkg == "" || strings.ContainsAny(pkg, " \t\n") {
 			return fallback("test-local: " + f + " does not map to a root-module Go package")
 		}
@@ -109,6 +137,9 @@ func selectPackages(root, ref string) (pkgs []string, notes []string) {
 		pkgs = append(pkgs, p)
 	}
 	sort.Strings(pkgs)
+	if len(pkgs) == 0 && len(notes) == 0 {
+		notes = append(notes, "test-local: only documentation or repository metadata changed; nothing to run")
+	}
 	return pkgs, notes
 }
 
