@@ -68,9 +68,10 @@ run does not exercise the real-terminal journeys.
 
 Without `TEST_PACKAGES`, `make test` runs `-short` tests for the root-module
 packages `tools/test-local` selects as changed since the merge base with
-`origin/main` (committed, staged, unstaged, untracked). Unmappable paths fall
-back to `./...`, e2e changes are never selected, and reverse dependencies are
-left to `make test-full` and CI's witnessed run; set `TEST_PACKAGES` (or
+`origin/main` (committed, staged, unstaged, untracked). Root Markdown and
+`docs/**/*.md` outside Go packages select no Go tests; other unmappable paths
+fall back to `./...`. E2E changes are never selected, and reverse dependencies
+are left to `make test-full` and CI's witnessed run; set `TEST_PACKAGES` (or
 `TEST_LOCAL_BASE`) to override.
 
 Pre-commit runs `make test`, `make lint`, `make build`. If `go fmt`

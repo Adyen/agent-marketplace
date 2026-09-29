@@ -100,6 +100,9 @@ func selectPackages(root, ref string) (pkgs []string, notes []string) {
 			notes = append(notes, "test-local: "+f+" is in the e2e module; not selectable from the root module")
 			continue
 		}
+		if pkg == "" && path.Ext(f) == ".md" && (path.Dir(f) == "." || strings.HasPrefix(f, "docs/")) {
+			continue
+		}
 		if pkg == "" || strings.ContainsAny(pkg, " \t\n") {
 			return fallback("test-local: " + f + " does not map to a root-module Go package")
 		}
@@ -109,6 +112,9 @@ func selectPackages(root, ref string) (pkgs []string, notes []string) {
 		pkgs = append(pkgs, p)
 	}
 	sort.Strings(pkgs)
+	if len(pkgs) == 0 && len(notes) == 0 {
+		notes = append(notes, "test-local: only documentation changed; nothing to run")
+	}
 	return pkgs, notes
 }
 

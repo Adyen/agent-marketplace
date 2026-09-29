@@ -74,6 +74,24 @@ func TestSelectPackages(t *testing.T) {
 			writeFile(t, root, "go.mod", "module example.com/t\n\n")
 			writeFile(t, root, "docs/guide.md", "changed\n")
 		}, "./..."},
+		{"root and nested documentation select nothing", func(t *testing.T, root string) {
+			writeFile(t, root, "AGENTS.md", "instructions\n")
+			writeFile(t, root, "README.md", "read me\n")
+			writeFile(t, root, "docs/plans/guide.md", "guide\n")
+		}, ""},
+		{"documentation with Go change selects package", func(t *testing.T, root string) {
+			writeFile(t, root, "docs/guide.md", "guide\n")
+			writeFile(t, root, "internal/a/a.go", "package a\n// changed\n")
+		}, "./internal/a"},
+		{"package Markdown still selects package", func(t *testing.T, root string) {
+			writeFile(t, root, "internal/a/README.md", "read me\n")
+		}, "./internal/a"},
+		{"unknown non-Markdown docs path falls back", func(t *testing.T, root string) {
+			writeFile(t, root, "docs/data.json", "{}\n")
+		}, "./..."},
+		{"OpenSpec Markdown remains shared", func(t *testing.T, root string) {
+			writeFile(t, root, "openspec/specs/feature/spec.md", "changed\n")
+		}, "./..."},
 		{"fixture maps to owning package", func(t *testing.T, root string) {
 			writeFile(t, root, "internal/a/testdata/golden.txt", "x\n")
 			writeFile(t, root, "internal/a/testdata/fixture/example.go", "package fixture\n")

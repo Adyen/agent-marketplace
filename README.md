@@ -1024,8 +1024,9 @@ then run `make validate` and any E2E, TUI QA, or spec gate your change touches
 before you hand off; CI runs the full root suite. Without `TEST_PACKAGES`,
 `make test` asks `tools/test-local` for the packages changed since the merge
 base with `origin/main` (staged, unstaged, untracked, and committed work);
-paths it cannot map to a root-module package fall back to `./...`, e2e-module
-changes are never selected, and reverse dependencies are left to `make
+root Markdown and `docs/**/*.md` outside Go packages select no Go tests,
+other paths it cannot map to a root-module package fall back to `./...`,
+e2e-module changes are never selected, and reverse dependencies are left to `make
 test-full` and CI's witnessed run. `make lint` rewrites files, so
 do not run it at the same time as other checks.
 
