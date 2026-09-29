@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,7 @@ type SnapshotBuilder struct {
 	CatalogMode catalog.LoadMode
 	RepoRoot    string
 
-	Discovery func(ec config.EffectiveConfig) ([]marketplace.DiscoveryOutcome, error)
+	Catalog func(ctx context.Context, ec config.EffectiveConfig, mode catalog.LoadMode) ([]marketplace.CatalogOutcome, error)
 
 	Cache *marketplace.Cache
 }
@@ -179,34 +180,33 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 		if mc == nil {
 			mc = marketplace.DefaultCache()
 		}
-		discover := b.Discovery
-		if discover == nil {
-			discover = func(ec config.EffectiveConfig) ([]marketplace.DiscoveryOutcome, error) {
-				outcomes, _, err := marketplace.CachedDiscovery(ec, "", marketplace.DiscoveryOptions{
-					Limit: marketplace.DiscoveryPageLimit * 20,
-					Cache: marketplace.DefaultDiscoveryCache(),
-				})
-				return outcomes, err
+		scan := b.Catalog
+		if scan == nil {
+			scan = func(ctx context.Context, ec config.EffectiveConfig, mode catalog.LoadMode) ([]marketplace.CatalogOutcome, error) {
+				if mode == catalog.LoadModeRefresh {
+					return marketplace.RefreshCatalog(ctx, ec, marketplace.CatalogScanOptions{})
+				}
+				return marketplace.CachedCatalog(ec, nil)
 			}
 		}
-		outcomes, derr := discover(ec)
+		outcomes, derr := scan(ctx, ec, mode)
 		if derr != nil {
 			snap.Stale = true
 			errs = append(errs, derr)
 		}
 		for _, oc := range outcomes {
-			if oc.Err != nil || oc.CacheState == marketplace.DiscoveryCacheMiss {
+			if oc.Err != nil || !oc.Complete {
 				snap.Stale = true
+				if oc.Err != nil && !errors.Is(oc.Err, marketplace.ErrCatalogNotCached) {
+					errs = append(errs, fmt.Errorf("marketplace %s catalog: %w", oc.Endpoint.URL, oc.Err))
+				}
 				continue
-			}
-			if oc.CacheState == marketplace.DiscoveryCacheStale {
-				snap.Stale = true
 			}
 			alias := oc.Endpoint.Alias
 			if alias == "" {
 				alias = oc.Endpoint.InstanceID
 			}
-			for _, item := range oc.Items {
+			for _, item := range oc.Resources {
 				if excludedAvailability(item.Availability) {
 					continue
 				}
@@ -235,7 +235,7 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 				if !b.applyCachedGate(mc, oc.Endpoint.URL, item, &res) {
 					continue
 				}
-				if item.Kind == "mcp" {
+				if res.Kind == "mcp" {
 					res.Tools = "unknown"
 				}
 				if seenRefs[res.Ref] {
@@ -254,7 +254,7 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 	return snap, errs
 }
 
-func (b *SnapshotBuilder) applyCachedGate(mc *marketplace.Cache, endpointURL string, item mpapi.ResourceListItem, res *Resource) bool {
+func (b *SnapshotBuilder) applyCachedGate(mc *marketplace.Cache, endpointURL string, item mpapi.CatalogResource, res *Resource) bool {
 	if mc == nil {
 		return true
 	}

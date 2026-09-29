@@ -174,7 +174,7 @@ func (e *Engine) aliasObject(ctx context.Context, vm *goja.Runtime, alias string
 						throwCoded(vm, coded(err, ErrCodeToolError, "list tools on %s", alias))
 						return nil
 					}
-					return vm.ToValue(tools)
+					return vm.ToValue(plainJSON(tools))
 				}, true
 			}
 			return func(call goja.FunctionCall) goja.Value {
@@ -191,7 +191,7 @@ func (e *Engine) aliasObject(ctx context.Context, vm *goja.Runtime, alias string
 					throwCoded(vm, coded(err, ErrCodeToolError, "tool %s on %s", tool, alias))
 					return nil
 				}
-				return vm.ToValue(out)
+				return vm.ToValue(plainJSON(out))
 			}, true
 		},
 	})
@@ -315,6 +315,21 @@ func (e *Engine) logEvent(event string, res *Resource, digest string) {
 	if err := e.Log.Append(entry); err != nil {
 		slog.Warn("code-mode session log append failed", "event", event, "ref", res.Ref, "error", err)
 	}
+}
+
+// plainJSON converts a Go value to plain JSON-shaped data (maps, slices,
+// scalars) via its JSON encoding so scripts see documented wire field names
+// rather than Go struct fields or encoded byte arrays.
+func plainJSON(v any) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var plain any
+	if err := json.Unmarshal(raw, &plain); err != nil {
+		return v
+	}
+	return plain
 }
 
 func coded(err error, code, format string, args ...any) *Error {

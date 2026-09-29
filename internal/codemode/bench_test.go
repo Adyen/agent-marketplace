@@ -48,6 +48,25 @@ func BenchmarkSearchCatalog(b *testing.B) {
 	}
 }
 
+func BenchmarkExecuteListTools(b *testing.B) {
+	store := &SnapshotStore{}
+	store.Store(&Snapshot{Resources: []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Revision: "v1", Assessment: "allow"},
+	}})
+	e := &Engine{Snapshots: store, Skills: fakeSkills{}, Pool: newFakePool(), Limits: Limits{}}
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv"},
+		"code":    `async () => { const t = await mcp.srv.listTools(); return (await mcp.srv.ping({x: 1})).alias }`,
+	})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := e.Execute(context.Background(), args); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkExecuteVMStartup(b *testing.B) {
 	e := benchEngine(1)
 	args, _ := json.Marshal(map[string]any{

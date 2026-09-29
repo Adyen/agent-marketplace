@@ -26,13 +26,13 @@ func TestBuildSnapshotCrossOriginRefCollision(t *testing.T) {
 
 	builder := &SnapshotBuilder{
 		CatalogMode: catalog.LoadModeCached,
-		Discovery: func(config.EffectiveConfig) ([]marketplace.DiscoveryOutcome, error) {
-			return []marketplace.DiscoveryOutcome{{
-				Endpoint:   config.MarketplaceEntry{Alias: "local", URL: "https://mp.example"},
-				CacheState: marketplace.DiscoveryCacheFresh,
-				Items: []mpapi.ResourceListItem{
+		Catalog: func(context.Context, config.EffectiveConfig, catalog.LoadMode) ([]marketplace.CatalogOutcome, error) {
+			return []marketplace.CatalogOutcome{{
+				Endpoint: config.MarketplaceEntry{Alias: "local", URL: "https://mp.example"},
+				Complete: true,
+				Resources: []mpapi.CatalogResource{
 					{RegistryID: "tools-id", RegistrySlug: "tools", Kind: "skill", Name: "x", Revision: "r1"},
-					{RegistryID: "tools-id", RegistrySlug: "tools", Kind: "mcp", Name: "srv", Revision: "r1"},
+					{RegistryID: "tools-id", RegistrySlug: "tools", Kind: "mcpserver", Name: "srv", Revision: "r1"},
 					{RegistryID: "tools-id", RegistrySlug: "tools", Kind: "skill", Name: "mp-only", Revision: "r1"},
 				},
 			}}, nil
