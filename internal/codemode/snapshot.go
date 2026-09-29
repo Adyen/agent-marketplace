@@ -127,7 +127,7 @@ func resourceJS(r *Resource) map[string]any {
 		m["tags"] = r.Tags
 	}
 	if len(r.Findings) > 0 {
-		m["findings"] = r.Findings
+		m["findings"] = plainJSON(r.Findings)
 	}
 	if r.Tools != nil {
 		m["tools"] = r.Tools

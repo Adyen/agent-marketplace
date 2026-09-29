@@ -176,7 +176,7 @@ func ToolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        "search",
-			"description": "Run an async JavaScript arrow function against the read-only code-mode catalog. " + dtsCatalog + " Never starts servers and never writes. Returns {value, truncated, warnings}.",
+			"description": "Run an async JavaScript arrow function against the read-only code-mode catalog. " + dtsCatalog + dtsErrors + " Never starts servers and never writes. Returns {value, truncated, warnings}; when the serialized value exceeds the output cap, value is {truncated:true, bytes:number, prefix:string} holding the serialized byte size and a leading excerpt.",
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"properties": map[string]any{"code": map[string]any{"type": "string", "description": "async arrow function source, e.g. async () => catalog.filter(r => r.kind === 'skill')"}},
@@ -185,7 +185,7 @@ func ToolDefinitions() []map[string]any {
 		},
 		{
 			"name":        "execute",
-			"description": "Run an async JavaScript arrow function with catalog, skills, and the declared MCP servers bound under mcp. " + dtsCatalog + dtsSkills + dtsMCP + " Every ref in servers must be an MCP server from the catalog; only those servers may start. Returns {value, truncated, warnings}.",
+			"description": "Run an async JavaScript arrow function with catalog, skills, and the declared MCP servers bound under mcp. " + dtsCatalog + dtsSkills + dtsMCP + dtsErrors + " Every ref in servers must be an MCP server from the catalog; only those servers may start. Returns {value, truncated, warnings}; when the serialized value exceeds the output cap, value is {truncated:true, bytes:number, prefix:string} holding the serialized byte size and a leading excerpt.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -219,3 +219,7 @@ declare const mcp: Record<string, {
   listTools(): Promise<Array<{name:string,description?:string,inputSchema?:object}>>;
   [tool: string]: (args?: object) => Promise<any>;
 }>;`
+
+const dtsErrors = `
+// Host failures reject with CodeModeError (an Error carrying {name:"CodeModeError", code:string, message:string}).
+declare class CodeModeError extends Error { code: string; }`

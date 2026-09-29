@@ -232,3 +232,138 @@ func TestExecuteTypescriptStripped(t *testing.T) {
 		t.Fatalf("value = %s", res.Value)
 	}
 }
+
+// spec: code-mode-mcp/repeated-declared-ref-binds-once
+func TestExecuteRepeatedDeclaredRefBindsOnce(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+	})
+	pool := newFakePool()
+	e.Pool = pool
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv", "reg/mcp/srv"},
+		"code":    `async () => { const keys = Object.keys(mcp); await mcp.srv.listTools(); return keys }`,
+	})
+	res, _, err := e.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if string(res.Value) != `["srv"]` {
+		t.Fatalf("aliases = %s, want the resource name bound once", res.Value)
+	}
+	if len(pool.started) != 1 {
+		t.Fatalf("server started %d times for one ref", len(pool.started))
+	}
+}
+
+// spec: code-mode-mcp/failures-carry-stable-codes
+func TestThrownErrorIsCodeModeError(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+	})
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv"},
+		"code": `async () => {
+			try { await mcp.srv.fail() } catch (e) {
+				return [e instanceof Error, e.name, e.code, e.message, e.Code === undefined, e.Message === undefined]
+			}
+			return "missed"
+		}`,
+	})
+	res, _, err := e.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	got := string(res.Value)
+	var decoded []any
+	if err := json.Unmarshal(res.Value, &decoded); err != nil || len(decoded) != 6 {
+		t.Fatalf("caught shape = %s", got)
+	}
+	if decoded[0] != true || decoded[1] != "CodeModeError" || decoded[4] != true || decoded[5] != true {
+		t.Fatalf("caught shape = %s, want Error named CodeModeError without Go-cased fields", got)
+	}
+	if decoded[2] != ErrCodeToolError || decoded[3] != "boom" {
+		t.Fatalf("coded fields = %s, want code %q and message %q", got, ErrCodeToolError, "boom")
+	}
+}
+
+type findingsSkills struct {
+	fakeSkills
+	findings []Finding
+}
+
+func (f findingsSkills) Load(ctx context.Context, res *Resource) (SkillContent, error) {
+	c, err := f.fakeSkills.Load(ctx, res)
+	c.Findings = f.findings
+	return c, err
+}
+
+// spec: code-mode-mcp/catalog-and-skill-findings-use-documented-fields
+func TestCatalogAndSkillFindingsUseDocumentedFields(t *testing.T) {
+	findings := []Finding{{Rule: "sec.high", Severity: "high", Message: "issue one"}}
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/skill/s", Kind: "skill", Name: "s", Registry: "reg", Assessment: "warn", Findings: findings},
+	})
+	e.Skills = findingsSkills{findings: findings}
+	args, _ := json.Marshal(map[string]any{
+		"code": `async () => {
+			const c = catalog[0].findings[0];
+			const l = (await skills.load("reg/skill/s")).findings[0];
+			return [
+				[c.message, c.severity, c.rule, c.Message === undefined, c.Rule === undefined],
+				[l.message, l.severity, l.rule, l.Message === undefined, l.Rule === undefined],
+			]
+		}`,
+	})
+	res, _, err := e.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := `[["issue one","high","sec.high",true,true],["issue one","high","sec.high",true,true]]`
+	if string(res.Value) != want {
+		t.Fatalf("findings = %s, want %s", res.Value, want)
+	}
+}
+
+// spec: code-mode-mcp/ref-prefix-matches-registry-field
+func TestCatalogRefPrefixMatchesRegistry(t *testing.T) {
+	mp := &Resource{Ref: "marketplace:tools/skill/x", Kind: "skill", Name: "x", Registry: "marketplace:tools", Assessment: "allow"}
+	mp.SetOrigin(&Origin{Marketplace: &MarketplaceOrigin{Kind: "skill", Name: "x"}})
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+		{Ref: "local:src/skill/y", Kind: "skill", Name: "y", Registry: "local:src", Assessment: "allow"},
+		*mp,
+	})
+	args, _ := json.Marshal(map[string]any{
+		"code": `async () => catalog.every(r => r.ref.startsWith(r.registry + "/"))`,
+	})
+	res, _, err := e.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if string(res.Value) != `true` {
+		t.Fatalf("ref prefix diverges from registry: %s", res.Value)
+	}
+}
+
+// spec: code-mode-mcp/tool-descriptions-declare-script-visible-shapes
+func TestToolDescriptionsDeclareScriptVisibleShapes(t *testing.T) {
+	tools := ToolDefinitions()
+	seen := map[string]string{}
+	for _, td := range tools {
+		name, _ := td["name"].(string)
+		desc, _ := td["description"].(string)
+		seen[name] = desc
+	}
+	for _, name := range []string{"search", "execute"} {
+		desc := seen[name]
+		if desc == "" {
+			t.Fatalf("tool %q missing", name)
+		}
+		for _, want := range []string{"findings", "message", "severity", "rule", "truncated", "bytes", "prefix", "CodeModeError", "code"} {
+			if !strings.Contains(desc, want) {
+				t.Fatalf("%s description missing %q:\n%s", name, want, desc)
+			}
+		}
+	}
+}

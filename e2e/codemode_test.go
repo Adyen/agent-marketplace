@@ -1,7 +1,10 @@
 package e2e_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -80,24 +83,29 @@ resources:
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"code":"async () => catalog.map(r => r.ref)"}}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute","arguments":{"servers":["local:registry/mcp/fake"],"code":"async () => [(await skills.load(\"local:registry/skill/greeter\")).digest.slice(0,7), (await mcp.fake.ping()).text]"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute","arguments":{"servers":["local:reg/mcp/fake"],"code":"async () => [(await skills.load(\"local:reg/skill/greeter\")).digest.slice(0,7), (await mcp.fake.ping()).text]"}}}`,
 		env.binary))
 	if session.ExitCode != 0 {
 		t.Fatalf("mcp session failed (exit %d):\n%s", session.ExitCode, session.Combined)
 	}
-	for _, want := range []string{`"search"`, `"execute"`, "local:registry/skill/greeter", "pong"} {
+	for _, want := range []string{`"search"`, `"execute"`, "local:reg/skill/greeter", "pong"} {
 		if !strings.Contains(session.Stdout, want) {
 			t.Fatalf("mcp session output missing %q:\n%s", want, session.Stdout)
 		}
 	}
 
 	log := env.MustRun(`cat "$XDG_STATE_HOME/agent-marketplace/mcp-sessions/"*.jsonl`)
-	for _, want := range []string{"skill.load", "server.start", "local:registry/skill/greeter", "local:registry/mcp/fake"} {
+	for _, want := range []string{"skill.load", "server.start", "local:reg/skill/greeter", "local:reg/mcp/fake"} {
 		if !strings.Contains(log.Stdout, want) {
 			t.Fatalf("session log missing %q:\n%s", want, log.Stdout)
 		}
 	}
 
+	// spec: code-mode-mcp/recorded-refs-remain-promotable
+	registryDir := env.mustResolvePath("/workspace/registry")
+	writeCodeModeSessionEntry(env, "sess-old-label", "skill.load",
+		"local:registry/skill/greeter", "", "", registryDir)
+	env.MustRunAM("promote", "local:reg/skill/greeter", "--scope", "repo")
 	env.MustRunAM("promote", "local:registry/skill/greeter", "--scope", "repo")
 	env.AssertFileContains("/workspace/.agents/config.yaml", "greeter")
 
@@ -164,8 +172,7 @@ func TestCodeModeLegacyInvocationCoverage(t *testing.T) {
 // spec: code-mode-mcp/marketplace-skill-and-declared-server-execute-through-the-gate
 func TestCodeModeMarketplaceCatalogJourney(t *testing.T) {
 	fakeScript := `while IFS= read -r line; do
-  tmp=${line#*\"id\":}
-  id=${tmp%%[!0-9]*}
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\s*\([0-9][0-9]*\).*/\1/p')
   [ -z "$id" ] && continue
   case "$line" in
     *tools/list*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"ping","description":"pong","inputSchema":{"type":"object","properties":{}}}]}}\n' "$id" ;;
@@ -187,15 +194,15 @@ done`
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"code":"async () => catalog.map(r => r.ref)"}}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"code":"async () => catalog.map(r => r.ref)"}}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute","arguments":{"servers":["behavior:behavior-source/mcp/fake"],"code":"async () => [(await skills.load(\"behavior:behavior-source/skill/skill-one\")).content.includes(\"Marketplace journey skill\"), (await mcp.fake.listTools())[0].inputSchema.type, (await mcp.fake.ping()).text]"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute","arguments":{"servers":["marketplace:behavior-source/mcp/fake"],"code":"async () => [(await skills.load(\"marketplace:behavior-source/skill/skill-one\")).content.includes(\"Marketplace journey skill\"), (await mcp.fake.listTools())[0].inputSchema.type, (await mcp.fake.ping()).text]"}}}`,
 		consumer.binary))
 	if session.ExitCode != 0 {
 		t.Fatalf("mcp session failed (exit %d):\n%s", session.ExitCode, session.Combined)
 	}
 	for _, want := range []string{
 		`catalog.stale`,
-		`behavior:behavior-source/skill/skill-one`,
-		`behavior:behavior-source/mcp/fake`,
+		`marketplace:behavior-source/skill/skill-one`,
+		`marketplace:behavior-source/mcp/fake`,
 		`[true,\"object\",\"pong\"]`,
 	} {
 		if !strings.Contains(session.Stdout, want) {
@@ -218,7 +225,7 @@ done`
 	if second.ExitCode != 0 {
 		t.Fatalf("second mcp session failed (exit %d):\n%s", second.ExitCode, second.Combined)
 	}
-	if !strings.Contains(second.Stdout, `behavior:behavior-source/skill/skill-one`) {
+	if !strings.Contains(second.Stdout, `marketplace:behavior-source/skill/skill-one`) {
 		t.Fatalf("cached catalog not reused at startup:\n%s", second.Stdout)
 	}
 }
@@ -250,4 +257,66 @@ func TestCodeModePromoteMarketplaceRiskFlags(t *testing.T) {
 	writeCodeModeSessionEntry(v4c, "sess-mp-v4-cmd", "skill.load",
 		"org:behavior-source/command/command-one", commandDigest, commandDigest, "marketplace:"+fixture.server.URL)
 	v4c.MustRunAM("promote", "org:behavior-source/command/command-one", "--yes")
+}
+
+// spec: code-mode-mcp/environment-references-expanded-before-start
+func TestCodeModeRemoteHeaderInterpolationAndTruncation(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "initialize":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"remote"}}}`, req.ID)
+		case "tools/list":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"auth"},{"name":"boom"}]}}`, req.ID)
+		case "tools/call":
+			if req.Params.Name == "boom" {
+				fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"remote refused"}}`, req.ID)
+				return
+			}
+			auth, _ := json.Marshal(r.Header.Get("Authorization"))
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":%s}]}}`, req.ID, auth)
+		default:
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unknown"}}`, req.ID)
+		}
+	}))
+	defer remote.Close()
+
+	env := newEnv(t)
+	env.WriteFile("/workspace/registry/.mcp.json",
+		fmt.Sprintf(`{"mcpServers":{"remote":{"url":%q,"headers":{"Authorization":"Bearer ${AM_E2E_TOKEN}"}}}}`, remote.URL))
+	env.WriteRepoConfig(`apiVersion: agent-marketplace/v4
+harnesses: [claude]
+sources:
+  reg:
+    directory: ./registry
+`)
+
+	session := env.Run(fmt.Sprintf(`printf '%%s\n' '%s' '%s' '%s' | AM_E2E_TOKEN=e2e-secret %q mcp`,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute","arguments":{"servers":["local:reg/mcp/remote"],"code":"async () => { const auth = (await mcp.remote.auth()).text; let caught = \"missed\"; try { await mcp.remote.boom() } catch (e) { caught = [e instanceof Error, e.name, e.code, e.Code === undefined].join(\"|\") } return [auth, caught] }"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"execute","arguments":{"servers":["local:reg/mcp/remote"],"code":"async () => \"x\".repeat(2 * 1024 * 1024)"}}}`,
+		env.binary))
+	if session.ExitCode != 0 {
+		t.Fatalf("mcp session failed (exit %d):\n%s", session.ExitCode, session.Combined)
+	}
+	for _, want := range []string{
+		`Bearer e2e-secret`,
+		`true|CodeModeError|mcp.tool-error|true`,
+		`\"truncated\":true`,
+		`\"bytes\":`,
+	} {
+		if !strings.Contains(session.Stdout, want) {
+			t.Fatalf("mcp session output missing %q:\n%s", want, session.Stdout)
+		}
+	}
 }

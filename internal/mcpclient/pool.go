@@ -200,10 +200,14 @@ func (p *Pool) startOne(ctx context.Context, def *codemode.ServerDef, ref string
 	if def == nil {
 		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "ref %q has no server definition", ref)
 	}
-	if def.URL != "" {
-		return NewHTTP(def)
+	expanded, secrets, err := expandServerDef(def)
+	if err != nil {
+		return nil, err
 	}
-	return Spawn(ctx, def)
+	if expanded.URL != "" {
+		return NewHTTP(expanded, secrets...)
+	}
+	return Spawn(ctx, expanded, secrets...)
 }
 
 func (p *Pool) markDead(key string, err error) {

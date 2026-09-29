@@ -99,8 +99,10 @@ func (e *Engine) Execute(ctx context.Context, argsJSON json.RawMessage) (Result,
 		if res.Kind != "mcp" {
 			return Result{}, nil, CodeError(ErrCodeUnsupportedKind, "ref %q is kind %s, not an MCP server", ref, res.Kind)
 		}
+		if _, dup := declared[ref]; !dup {
+			names[res.Name]++
+		}
 		declared[ref] = res
-		names[res.Name]++
 	}
 
 	for _, ref := range args.Servers {
@@ -208,7 +210,7 @@ func (d *mcpDynamic) Get(key string) goja.Value {
 	if obj, ok := d.aliases[key]; ok {
 		return obj
 	}
-	panic(d.vm.ToValue(CodeError(ErrCodeNotDeclared, "server %q was not listed in the servers argument", key)))
+	panic(codeModeErrorValue(d.vm, CodeError(ErrCodeNotDeclared, "server %q was not listed in the servers argument", key)))
 }
 
 func (d *mcpDynamic) Set(key string, val goja.Value) bool { return false }
@@ -259,7 +261,7 @@ func (e *Engine) skillsBinding(ctx context.Context, snap *Snapshot) map[string]a
 			return map[string]any{
 				"ref": content.Ref, "revision": content.Revision,
 				"digest": content.Digest, "content": content.Content,
-				"files": content.Files, "findings": content.Findings,
+				"files": content.Files, "findings": plainJSON(content.Findings),
 			}, nil
 		},
 		"read": func(ref, path string) (string, error) {
