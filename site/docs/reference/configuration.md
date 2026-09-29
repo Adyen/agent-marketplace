@@ -132,18 +132,8 @@ Unknown top-level fields are rejected.
 | `logging` | mapping | no | Log file settings: `enabled`, `level`, `file`, `max_size_mb`, `max_backups`, `max_age_days`, `compress`. See the [logging reference](logging.md). |
 | `telemetry` | mapping | no | Machine telemetry policy: `level`, `endpoint`, `community_reporting`, `retention_policy`, `ca_file`, `allow_insecure`, `headers`. See the [telemetry reference](telemetry.md). Organization and user files only. |
 | `materialization` | mapping | no | Whether generated resources are symlinks or regular files: `mode` and `targets`. See [Materialization](#materialization). |
-| `codeMode` | mapping | no | Opt-in code-mode MCP registration; only `enabled` is supported. |
 
 `harnesses`, `allowed_registries`, and `allowed_marketplaces` must be lists of strings. Allowlist entries must compile as regular expressions.
-
-## `codeMode`
-
-`codeMode.enabled: true` opts the layer into the code-mode MCP server. While any layer's effective value is true, `sync` registers an owned `agent-marketplace` MCP entry (running `agent-marketplace mcp`) in every target harness; when disabled or absent, `sync` removes that entry and leaves handwritten entries untouched. Layers follow ordinary precedence: a higher-precedence `enabled: false` overrides a lower `true`, and an organization `false` never force-disables lower layers. Manage it with `agent-marketplace mcp enable --scope <user|repo|local>`, `mcp disable`, or `agent-marketplace init --code-mode`.
-
-```yaml
-codeMode:
-  enabled: true
-```
 
 ## `harnesses`
 

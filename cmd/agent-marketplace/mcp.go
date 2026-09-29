@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -22,68 +21,16 @@ import (
 func newMcpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mcp",
-		Short: "Run the opt-in code-mode MCP server over stdio",
+		Short: "Run the code-mode MCP server over stdio",
 		Long: "agent-marketplace mcp serves the code-mode MCP surface (search and execute) " +
 			"over stdio. It is started and stopped by the harness that registered it. " +
-			"Enable registration with 'agent-marketplace mcp enable' or 'agent-marketplace init --code-mode'.",
+			"Register it by installing the code-mode collection from the agent-marketplace registry.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMCPServer(cmd.Context(), os.Stdin, cmd.OutOrStdout())
 		},
 	}
-
-	var scopeStr string
-	enable := &cobra.Command{
-		Use:   "enable",
-		Short: "Enable code-mode MCP registration in one config layer",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := codeModeScopePath(scopeStr)
-			if err != nil {
-				return err
-			}
-			if err := config.SetCodeModeEnabled(path, true); err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "codeMode enabled in %s; run 'agent-marketplace sync' to register the server.\n", path)
-			return err
-		},
-	}
-	enable.Flags().StringVar(&scopeStr, "scope", "user", "Config layer: user, repo, or local")
-
-	disable := &cobra.Command{
-		Use:   "disable",
-		Short: "Disable code-mode MCP registration in one config layer",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := codeModeScopePath(scopeStr)
-			if err != nil {
-				return err
-			}
-			if err := config.RemoveCodeMode(path); err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "codeMode disabled in %s; run 'agent-marketplace sync' to unregister the server.\n", path)
-			return err
-		},
-	}
-	disable.Flags().StringVar(&scopeStr, "scope", "user", "Config layer: user, repo, or local")
-
-	cmd.AddCommand(enable, disable)
 	return cmd
-}
-
-func codeModeScopePath(scope string) (string, error) {
-	switch scope {
-	case "user":
-		return config.GlobalConfigPath()
-	case "repo":
-		return config.ProjectConfigPath(config.FindRepoRoot()), nil
-	case "local":
-		return config.LocalConfigPath(config.FindLocalConfigDir()), nil
-	default:
-		return "", fmt.Errorf("unknown scope %q; expected user, repo, or local", scope)
-	}
 }
 
 func runMCPServer(ctx context.Context, in io.Reader, out io.Writer) error {

@@ -515,12 +515,13 @@ log under `$XDG_STATE_HOME/agent-marketplace/mcp-sessions/`; `agent-marketplace
 promote <ref>` turns a logged resource into a normal installed, locked
 selection.
 
-Enable it explicitly — it is never registered by default:
+Enable it explicitly by installing the first-party `code-mode` collection —
+it is never registered by default:
 
 ```bash
-agent-marketplace mcp enable --scope user   # or init --code-mode
+agent-marketplace install code-mode --from https://github.com/Adyen/agent-marketplace --path skills
 agent-marketplace sync                    # registers the server per harness
-agent-marketplace mcp disable && agent-marketplace sync   # unregisters it
+agent-marketplace remove code-mode && agent-marketplace sync   # unregisters it
 ```
 
 > **Security note:** `execute` starts catalog MCP servers, which runs registry

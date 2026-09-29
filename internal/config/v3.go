@@ -268,6 +268,10 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 		}
 
 		key := keyNode.Value
+		if key == "codeMode" {
+			errs = append(errs, fmt.Errorf("line %d: %s", keyNode.Line, codeModeMigrationGuidance))
+			continue
+		}
 		if !allowed[key] {
 			if key == "sources" || key == "resources" {
 				errs = append(errs, fmt.Errorf("line %d: v4 installation field %q is not valid in %s configuration; add apiVersion: agent-marketplace/v4 and load it with the v4 reader", keyNode.Line, key, kind.name()))

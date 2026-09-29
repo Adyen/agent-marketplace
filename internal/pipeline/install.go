@@ -332,6 +332,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	var mutateInstall func(*LayerMutation) error
 	var excludeCleanup *resourceIdentity
 	var excludeCleanupEntry *config.RegistryEntry
+	var gateCatalogKeys map[string]bool
 	if trimmedTag := strings.TrimSpace(opts.Tag); trimmedTag != "" {
 		if opts.Scope != ScopeRepo {
 			return nil, fmt.Errorf("--tag is only supported with --scope repo (or no --scope)")
@@ -432,7 +433,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		arg := strings.TrimSpace(opts.Args[0])
 		// Detect collection install.
 		if col := collection.Find(discoveredCollections, arg); col != nil {
-			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries, opts.Scope)
+			collectionResources, syntheticEntries, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries, opts.Scope)
 			if err != nil {
 				return nil, err
 			}
@@ -445,6 +446,9 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			}
 			if provider == nil {
 				return nil, fmt.Errorf("collection %q was found but no providing registry entry could be identified", col.Name)
+			}
+			if err := codeModeInstallGate(catalogs, collectionResources, codeModeGateCatalogKeys(syntheticEntries)); err != nil {
+				return nil, err
 			}
 			if opts.bindRegistry != nil {
 				if err := opts.bindRegistry(*provider); err != nil {
@@ -491,6 +495,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			return nil, fmt.Errorf("%s %q was found but no providing registry entry could be identified", skill.KindLabel(match.kind), resourceName)
 		}
 		excludeCleanupEntry = entry
+		gateCatalogKeys = map[string]bool{entry.CatalogKey: true}
 		// Repo-relative local registries are project-local and cannot be
 		// shadowed into the user-personal (global) config.
 		if err := validateRegistryWriteScope(opts.Scope, *entry); err != nil {
@@ -516,6 +521,9 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 	}
 
+	if err := codeModeInstallGate(catalogs, installedResources, gateCatalogKeys); err != nil {
+		return nil, err
+	}
 	if err := editInstallLayer(mutateInstall); err != nil {
 		return nil, err
 	}
@@ -532,6 +540,52 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	return syncInstalledResources(ctx, repoRoot, installed, installedResources, silentSyncOptsForInstall(opts)...)
 }
 
+func codeModeInstallGate(catalogs map[string]catalog.LoadedCatalog, resources []resourceIdentity, catalogKeys map[string]bool) error {
+	selected := false
+	for _, r := range resources {
+		if r.kind == ir.KindMcpServer && strings.TrimSpace(r.name) == "agent-marketplace" {
+			selected = true
+			break
+		}
+	}
+	if !selected {
+		return nil
+	}
+	for key, catalogForEntry := range catalogs {
+		if catalogKeys != nil && !catalogKeys[key] {
+			continue
+		}
+		for _, entry := range catalogForEntry.Entries {
+			if entry.Kind != ir.KindMcpServer || strings.TrimSpace(entry.Name) != "agent-marketplace" {
+				continue
+			}
+			server, ok := entry.Resource.(*ir.McpServer)
+			if !ok || server.Disabled {
+				continue
+			}
+			if err := codeModeRuntimeErr(entry.Name, server); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// codeModeGateCatalogKeys returns the catalog keys whose entries the
+// code-mode gate may inspect: the member registries whose collection
+// contribution selects the agent-marketplace MCP server.
+func codeModeGateCatalogKeys(syntheticEntries []config.RegistryEntry) map[string]bool {
+	keys := make(map[string]bool, len(syntheticEntries))
+	for i := range syntheticEntries {
+		for _, name := range syntheticEntries[i].SelectorForKind(ir.KindMcpServer).Include {
+			if strings.TrimSpace(name) == "agent-marketplace" {
+				keys[syntheticEntries[i].CatalogKey] = true
+			}
+		}
+	}
+	return keys
+}
+
 func resourceIdentities(kind ir.ResourceKind, names []string) []resourceIdentity {
 	resources := make([]resourceIdentity, 0, len(names))
 	for _, name := range names {
@@ -540,10 +594,10 @@ func resourceIdentities(kind ir.ResourceKind, names []string) []resourceIdentity
 	return resources
 }
 
-func collectionInstallResources(name string, available []collection.Collection, registries []config.RegistryEntry, scope Scope) ([]resourceIdentity, error) {
+func collectionInstallResources(name string, available []collection.Collection, registries []config.RegistryEntry, scope Scope) ([]resourceIdentity, []config.RegistryEntry, error) {
 	expanded, expandErrs := collection.Expand([]string{name}, available, registries)
 	if err := errors.Join(expandErrs...); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	providerEntries := make([]config.RegistryEntry, 0, len(expanded.SyntheticEntries)+1)
 	if col := collection.Find(available, name); col != nil {
@@ -551,7 +605,7 @@ func collectionInstallResources(name string, available []collection.Collection, 
 	}
 	providerEntries = append(providerEntries, expanded.SyntheticEntries...)
 	if err := validateRegistryWriteScope(scope, providerEntries...); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var resources []resourceIdentity
 	for _, entry := range expanded.SyntheticEntries {
@@ -559,7 +613,7 @@ func collectionInstallResources(name string, available []collection.Collection, 
 			resources = append(resources, resourceIdentities(kind, entry.SelectorForKind(kind).Include)...)
 		}
 	}
-	return resources, nil
+	return resources, expanded.SyntheticEntries, nil
 }
 
 func expandInstalledCollectionResources(installed []resourceIdentity, available []collection.Collection, registries []config.RegistryEntry, scope Scope) ([]resourceIdentity, error) {
@@ -568,7 +622,7 @@ func expandInstalledCollectionResources(installed []resourceIdentity, available 
 		if resource.kind != ir.KindCollection {
 			continue
 		}
-		members, err := collectionInstallResources(resource.name, available, registries, scope)
+		members, _, err := collectionInstallResources(resource.name, available, registries, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -1284,8 +1338,11 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			}
 		}
 		if col := collection.Find(selectedCollections, resourceName); col != nil {
-			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries, opts.Scope)
+			collectionResources, syntheticEntries, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries, opts.Scope)
 			if err != nil {
+				return nil, err
+			}
+			if err := codeModeInstallGate(catalogs, collectionResources, codeModeGateCatalogKeys(syntheticEntries)); err != nil {
 				return nil, err
 			}
 			if err := addSelectedResource(ir.KindCollection, col.Name); err != nil {
@@ -1313,6 +1370,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			return nil, fmt.Errorf("resource or collection %q not found in registry %s", resourceName, fromURL)
 		}
 
+		if err := codeModeInstallGate(selectedCatalogs, []resourceIdentity{{kind: match.kind, name: resourceName}}, nil); err != nil {
+			return nil, err
+		}
 		if err := addSelectedResource(match.kind, resourceName); err != nil {
 			return nil, err
 		}
@@ -1343,6 +1403,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 				return nil, err
 			}
 			if match != nil {
+				if err := codeModeInstallGate(selectedCatalogs, []resourceIdentity{{kind: match.kind, name: inferredName}}, nil); err != nil {
+					return nil, err
+				}
 				if err := addSelectedResource(match.kind, inferredName); err != nil {
 					return nil, err
 				}
@@ -1384,6 +1447,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	slices.Sort(allInstalled)
 
+	if err := codeModeInstallGate(selectedCatalogs, installedResources, nil); err != nil {
+		return nil, err
+	}
 	if err := EditLayerAtPath(layer, func(m *LayerMutation) error {
 		bound, err := m.EnsureRegistry(syntheticEntry)
 		if err != nil {

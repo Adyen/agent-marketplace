@@ -11,6 +11,8 @@ func TestCodeModeJourney(t *testing.T) {
 
 	env.WriteFile("/workspace/registry/skills/greeter/SKILL.md",
 		"---\nname: greeter\ndescription: Greeting skill\n---\n\n# greeter\nSay hello.\n")
+	env.WriteFile("/workspace/registry/skills/code-mode/SKILL.md",
+		"---\nname: code-mode\ndescription: Code-mode bootstrap skill\n---\n\n# code-mode\n")
 
 	env.WriteFile("/workspace/registry/fake-mcp.sh", `#!/bin/sh
 while IFS= read -r line; do
@@ -25,7 +27,10 @@ while IFS= read -r line; do
 done
 `)
 	env.WriteFile("/workspace/registry/.mcp.json",
-		`{"mcpServers":{"fake":{"command":"sh","args":["registry/fake-mcp.sh"]}}}`)
+		fmt.Sprintf(`{"mcpServers":{"fake":{"command":"sh","args":["registry/fake-mcp.sh"]},"agent-marketplace":{"command":%q,"args":["mcp"]}}}`, env.binary))
+
+	env.WriteFile("/workspace/registry/collections/code-mode/COLLECTION.yaml",
+		"name: code-mode\nresources:\n  - name: code-mode\n    kind: skill\n  - name: agent-marketplace\n    kind: mcp\n")
 
 	env.WriteRepoConfig(`apiVersion: agent-marketplace/v4
 harnesses: [claude, codex, devin]
@@ -34,7 +39,7 @@ sources:
     directory: ./registry
 resources:
   reg:
-    all: true
+    include: [skill/greeter]
 `)
 
 	env.WriteFile("/workspace/.mcp.json",
@@ -57,13 +62,15 @@ resources:
 	}
 	env.AssertFileContains("/workspace/.mcp.json", "handwritten")
 
-	env.MustRunAM("mcp", "enable", "--scope", "repo")
-	env.AssertFileContains("/workspace/.agents/config.yaml", "codeMode")
+	env.MustRunAM("install", "code-mode")
 	env.MustRunAM("sync")
 	for f := range owned {
 		if !containsOwned(f) {
 			t.Fatalf("owned code-mode entry missing from %s", f)
 		}
+	}
+	if !env.CheckFileExists("/workspace/.claude/skills/code-mode/SKILL.md") {
+		t.Fatal("collection skill member not materialized")
 	}
 	env.AssertFileContains("/workspace/.mcp.json", "handwritten")
 
@@ -92,13 +99,19 @@ resources:
 	env.MustRunAM("promote", "local:registry/skill/greeter", "--scope", "repo")
 	env.AssertFileContains("/workspace/.agents/config.yaml", "greeter")
 
-	env.MustRunAM("mcp", "disable", "--scope", "repo")
+	env.MustRunAM("remove", "code-mode")
 	env.MustRunAM("sync")
 	env.AssertFileContains("/workspace/.mcp.json", "handwritten")
 	for f := range owned {
 		if containsOwned(f) {
 			t.Fatalf("owned code-mode entry not pruned: %s", f)
 		}
+	}
+	if env.CheckFileExists("/workspace/.claude/skills/code-mode/SKILL.md") {
+		t.Fatal("collection skill member not pruned")
+	}
+	if !env.CheckFileExists("/workspace/.claude/skills/greeter/SKILL.md") {
+		t.Fatal("independently selected greeter skill was removed")
 	}
 }
 
@@ -110,8 +123,7 @@ func writeCodeModeSessionEntry(env *Env, session, event, ref, revision, digest, 
 	env.WriteFile("/root/.local/state/agent-marketplace/mcp-sessions/"+session+".jsonl", entry)
 }
 
-// spec: code-mode-mcp/enable-and-disable-write-one-config-layer
-// spec: code-mode-mcp/init-flag-opts-in
+// spec: code-mode-mcp/retired-enablement-fails-with-migration-guidance
 func TestCodeModeLegacyInvocationCoverage(t *testing.T) {
 	legacy := newEnv(t)
 	legacy.InitGitRepo()
@@ -119,21 +131,20 @@ func TestCodeModeLegacyInvocationCoverage(t *testing.T) {
 	if r := legacy.RunAM("mcp"); r.ExitCode != 0 {
 		t.Fatalf("mcp over stdio with EOF failed (exit %d):\n%s", r.ExitCode, r.Combined)
 	}
-	legacy.MustRunAM("mcp", "disable", "--scope", "user")
-	legacy.MustRunAM("mcp", "enable", "--scope", "user")
-	legacy.AssertFileContains("/root/.agents/config.yaml", "codeMode")
+	for _, args := range [][]string{
+		{"mcp", "disable", "--scope", "user"},
+		{"mcp", "enable", "--scope", "user"},
+		{"init", "--harnesses", "factory", "--code-mode"},
+	} {
+		if r := legacy.RunAM(args...); r.ExitCode == 0 {
+			t.Fatalf("%v unexpectedly succeeded:\n%s", args, r.Combined)
+		}
+	}
 
-	initLegacy := newEnv(t)
-	initLegacy.InitGitRepo()
-	initLegacy.WriteRepoConfig("apiVersion: agent-marketplace/v2\nregistries: []\n")
-	initLegacy.MustRunAM("init", "--harnesses", "factory", "--code-mode")
-	initLegacy.AssertFileContains("/root/.agents/config.yaml", "codeMode")
-
-	initV4 := newEnv(t)
-	initV4.InitGitRepo()
-	initV4.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
-	initV4.MustRunAM("init", "--harnesses", "factory", "--code-mode")
-	initV4.AssertFileContains("/root/.agents/config.yaml", "codeMode")
+	legacy.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\ncodeMode:\n  enabled: true\n")
+	if r := legacy.RunAM("sync"); r.ExitCode == 0 || !strings.Contains(r.Combined, "codeMode") {
+		t.Fatalf("expected codeMode migration diagnostic:\n%s", r.Combined)
+	}
 
 	promoteEnv := newEnv(t)
 	promoteEnv.InitGitRepo()

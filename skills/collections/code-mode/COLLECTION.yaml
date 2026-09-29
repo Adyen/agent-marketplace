@@ -1,0 +1,9 @@
+name: code-mode
+description: >
+  Code mode: a bootstrap skill plus the agent-marketplace MCP server that
+  serves search and execute over stdio.
+resources:
+  - name: code-mode
+    kind: skill
+  - name: agent-marketplace
+    kind: mcp
