@@ -6,6 +6,7 @@ import (
 	"testing"
 )
 
+// spec: acquisition-lock-codec/minimal-v1-lock-emits-stable-compatibility-bytes
 func TestMinimalDocumentsGolden(t *testing.T) {
 	for _, scope := range []Scope{ScopeOrganization, ScopeUser, ScopeRepo, ScopeLocal} {
 		t.Run(string(scope), func(t *testing.T) {
@@ -21,6 +22,7 @@ func TestMinimalDocumentsGolden(t *testing.T) {
 	}
 }
 
+// spec: acquisition-lock-codec/v1-git-lock-emits-stable-compatibility-bytes-for-every-scope
 func TestCompleteGitDocumentGoldensCoverEveryScope(t *testing.T) {
 	headers := map[Scope]string{
 		ScopeOrganization: "apiVersion: agent-marketplace-lock/v1\nscope: organization",
