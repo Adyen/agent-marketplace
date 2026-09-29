@@ -14,4 +14,4 @@
 
 ## 4. Archive
 
-- [ ] 4.1 Run `openspec archive baseline-marketplace-api --yes`, delete any empty `openspec/specs/marketplace-protocols/` directory it leaves, and verify `make spec-check` passes with no `marketplace-protocols` scenario or annotation left outside `openspec/changes/archive`
+- [x] 4.1 Run `openspec archive baseline-marketplace-api --yes`, delete any empty `openspec/specs/marketplace-protocols/` directory it leaves, and verify `make spec-check` passes with no `marketplace-protocols` scenario or annotation left outside `openspec/changes/archive`

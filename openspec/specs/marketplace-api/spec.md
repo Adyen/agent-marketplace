@@ -1,8 +1,9 @@
-## Purpose
+# marketplace-api Specification
 
+## Purpose
 Defines the public Marketplace protocol surface shared by the server, CLI, and generated clients: the OpenAPI contract, the capabilities and well-known discovery documents, the wire vocabulary of selectable resource kinds, the analyzer finding-code catalog, consumer Marketplace configuration, and the artifact and collection-manifest wire formats.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: OpenAPI contract
 
@@ -80,7 +81,8 @@ SHALL share one wire vocabulary of selectable resource kinds.
   harness-neutral resource representation
 - **THEN** the `skill`, `command`, `subagent`, `hook`, and `mcpserver` kinds
   MUST map in both directions
-- **AND** the virtual `collection` kind and unknown values MUST be rejected
+- **AND** conversion into the harness-neutral representation MUST reject
+  the virtual `collection` kind and unknown values
 
 ### Requirement: Well-known discovery document
 
