@@ -16,7 +16,7 @@ import (
 const migrationTable = "marketplace_metadata_v2_migrations"
 const legacyMigrationTable = "marketplace_schema_migrations"
 
-var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(false), store.ManagedRuntimeSchema, store.ManagedPreviewSchema}
+var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(false), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migrationDigestIndexes}
 
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
@@ -277,4 +277,8 @@ INSERT INTO catalog_versions (singleton, version) VALUES (1, 0);
 // from direct resource members.
 const migration2 = `
 ALTER TABLE collection_revisions ADD COLUMN includes TEXT NOT NULL DEFAULT '[]';
+`
+
+const migrationDigestIndexes = `
+CREATE INDEX idx_current_assessments_content ON current_resource_assessments(marketplace_id, content_digest);
 `
