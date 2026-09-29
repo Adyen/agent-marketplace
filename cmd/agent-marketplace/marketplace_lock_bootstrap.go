@@ -52,7 +52,7 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		if err != nil {
 			return 0, err
 		}
-		if exists && current.APIVersion != lockfile.APIVersionV1 {
+		if exists && current.APIVersion != lockfile.APIVersionV1 && len(current.Marketplaces) > 0 {
 			continue
 		}
 		var registries []lockfile.GitRegistry

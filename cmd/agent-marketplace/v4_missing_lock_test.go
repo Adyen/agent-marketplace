@@ -448,6 +448,7 @@ resources:
 	}
 }
 
+// spec: deployed-acquisition-locks/selection-edit-reuses-organization-evidence
 func TestTransientOrganizationMarketplaceLockSurvivesSelectionConfigEdits(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -472,6 +473,7 @@ func TestTransientOrganizationMarketplaceLockSurvivesSelectionConfigEdits(t *tes
 	}
 }
 
+// spec: deployed-acquisition-locks/harness-change-reacquires-organization-evidence
 func TestTransientOrganizationMarketplaceLockReacquiresWhenTargetHarnessesChange(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

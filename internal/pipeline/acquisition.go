@@ -22,7 +22,7 @@ var readIntent = config.ReadIntent
 func NeedsLockBootstrap(errs []error) bool {
 	for _, err := range errs {
 		var validation *config.V4ValidationError
-		if errors.As(err, &validation) && validation.Code == "v4.marketplace-lock-required" {
+		if errors.As(err, &validation) && (validation.Code == "v4.marketplace-lock-required" || validation.Code == "v4.marketplace-lock-mismatch") {
 			return true
 		}
 		var lifecycle *LockViewError
@@ -207,8 +207,15 @@ func IntentReadAssertions(intent config.Intent) ([]dependencytxn.ReadAssertion, 
 	return sortedReadAssertions(byRequested), nil
 }
 
+func transientOrganizationMarketplaceInputs(intent config.Intent) string {
+	targets, _ := intent.TargetHarnesses()
+	allowed, marketplaces := intent.AllowedRegistries(), intent.AllowedMarketplaces()
+	return fmt.Sprintf("harnesses=%q allowed-nil=%t allowed=%q allowed-marketplaces-nil=%t allowed-marketplaces=%q", targets, allowed == nil, allowed, marketplaces == nil, marketplaces)
+}
+
 func transientMarketplaceReadAssertions(intent config.Intent, lockPath string) ([]dependencytxn.ReadAssertion, error) {
-	byRequested, err := configReadAssertions(intentLayerResults(intent), false)
+	organization := intent.Layers[config.Organization]
+	byRequested, err := configReadAssertions([]config.LayerResult{{Source: config.Organization, Path: organization.Path, Reads: organization.Reads}}, false)
 	if err != nil {
 		return nil, err
 	}
@@ -236,8 +243,9 @@ type transientOrganizationMarketplaceLockCache struct {
 }
 
 type cachedTransientOrganizationMarketplaceLock struct {
-	doc   lockfile.Document
-	reads []dependencytxn.ReadAssertion
+	doc    lockfile.Document
+	reads  []dependencytxn.ReadAssertion
+	inputs string
 }
 
 type transientOrganizationMarketplaceLockUse uint8
@@ -272,20 +280,20 @@ func cloneLockDocument(doc lockfile.Document) (lockfile.Document, error) {
 	return lockfile.Decode(data)
 }
 
-func (c *transientOrganizationMarketplaceLockCache) load(path string) (lockfile.Document, []dependencytxn.ReadAssertion, bool) {
+func (c *transientOrganizationMarketplaceLockCache) load(path string) (lockfile.Document, []dependencytxn.ReadAssertion, string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.path != path {
-		return lockfile.Document{}, nil, false
+		return lockfile.Document{}, nil, "", false
 	}
 	doc, err := cloneLockDocument(c.entry.doc)
 	if err != nil {
-		return lockfile.Document{}, nil, false
+		return lockfile.Document{}, nil, "", false
 	}
-	return doc, append([]dependencytxn.ReadAssertion(nil), c.entry.reads...), true
+	return doc, append([]dependencytxn.ReadAssertion(nil), c.entry.reads...), c.entry.inputs, true
 }
 
-func (c *transientOrganizationMarketplaceLockCache) store(path string, doc lockfile.Document, reads []dependencytxn.ReadAssertion) {
+func (c *transientOrganizationMarketplaceLockCache) store(path string, doc lockfile.Document, reads []dependencytxn.ReadAssertion, inputs string) {
 	cloned, err := cloneLockDocument(doc)
 	if err != nil {
 		return
@@ -294,8 +302,9 @@ func (c *transientOrganizationMarketplaceLockCache) store(path string, doc lockf
 	defer c.mu.Unlock()
 	c.path = path
 	c.entry = cachedTransientOrganizationMarketplaceLock{
-		doc:   cloned,
-		reads: append([]dependencytxn.ReadAssertion(nil), reads...),
+		doc:    cloned,
+		reads:  append([]dependencytxn.ReadAssertion(nil), reads...),
+		inputs: inputs,
 	}
 }
 
