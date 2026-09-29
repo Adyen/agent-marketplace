@@ -96,6 +96,10 @@ rewritten to a different semantic.
 Ingestion SHALL retain native model strings verbatim and record the source
 layout's harness as model-source provenance; compilation SHALL use provenance
 to preserve same-harness selections without requiring a canonical alias.
+An absent or JSON `null` `ModelSource` SHALL mean no model-source provenance
+is defined and SHALL use legacy canonical resolution, including legacy sidecar
+precedence. It SHALL NOT clear an explicit model selection; only an omitted
+model selection follows the destination surface's inheritance/default semantics.
 
 #### Scenario: Same-harness native model strings round-trip unchanged
 
@@ -124,8 +128,11 @@ to preserve same-harness selections without requiring a canonical alias.
 
 #### Scenario: Ambiguous or malformed provenance is rejected
 
-- **WHEN** an archive payload carries duplicate or non-string provenance
+- **WHEN** an archive payload carries duplicate provenance or a non-string,
+  non-null provenance value
 - **THEN** decoding MUST fail rather than guess a source
+- **AND** a single JSON `null` provenance value MUST instead be accepted and
+  behave identically to absent provenance, preserving any explicit model selection
 
 #### Scenario: Legacy archives remain byte-stable and resolvable
 

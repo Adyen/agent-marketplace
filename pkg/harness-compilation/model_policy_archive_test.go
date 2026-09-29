@@ -110,6 +110,44 @@ func TestModelPolicyArchiveExtrasCannotForgeProvenance(t *testing.T) {
 
 // spec: harness-model-catalogs/ambiguous-or-malformed-provenance-is-rejected
 func TestModelPolicyArchiveRejectsAmbiguousProvenance(t *testing.T) {
+	for _, kind := range []string{"skill", "subagent"} {
+		for _, model := range []string{"", "sonnet"} {
+			t.Run(kind+"/null/"+model, func(t *testing.T) {
+				var payloads [][]byte
+				for _, provenance := range []string{"", `,"ModelSource":null`} {
+					resource, err := artifact.DecodeResource(kind, []byte(`{"name":"review","Model":"`+model+`"`+provenance+`}`))
+					if err != nil {
+						t.Fatal(err)
+					}
+					encoded, err := artifact.FromIR(resource)
+					if err != nil {
+						t.Fatal(err)
+					}
+					payloads = append(payloads, encoded.Payload)
+					result, err := Compile(resource, TargetDevin)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(result.Artifacts) == 0 {
+						t.Fatal("resource was suppressed")
+					}
+					foundModel := false
+					for _, a := range result.Artifacts {
+						foundModel = foundModel || bytes.Contains(a.Bytes, []byte("model: sonnet\n"))
+						if model == "" && bytes.Contains(a.Bytes, []byte("model:")) {
+							t.Fatalf("omitted model gained a selection: %s", a.Bytes)
+						}
+					}
+					if model != "" && !foundModel {
+						t.Fatal("explicit model selection was lost")
+					}
+				}
+				if !bytes.Equal(payloads[0], payloads[1]) {
+					t.Fatal("null provenance differs from absent provenance")
+				}
+			})
+		}
+	}
 	for _, payload := range []string{
 		`{"name":"review","ModelSource":"codex","modelsource":"devin"}`,
 		`{"name":"review","ModelSource":true}`,
