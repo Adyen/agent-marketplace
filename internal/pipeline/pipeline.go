@@ -1113,14 +1113,8 @@ func codeModeRuntimeErr(name string, server *ir.McpServer) error {
 	if !isCodeModeRuntime(command, server.Args) {
 		return nil
 	}
-	if strings.ContainsRune(command, '/') {
-		if _, err := exec.LookPath(command); err != nil {
-			return fmt.Errorf("code-mode MCP server %q cannot start: executable %q is not available; install agent-marketplace, then run 'agent-marketplace sync' again", name, command)
-		}
-		return nil
-	}
 	if _, err := exec.LookPath(command); err != nil {
-		return fmt.Errorf("code-mode MCP server %q cannot start: executable %q was not found on PATH; install agent-marketplace so it is on PATH, then run 'agent-marketplace sync' again", name, command)
+		return fmt.Errorf("code-mode MCP server %q cannot start: executable %q is not available or not executable; ensure the CLI is on PATH or correct its explicit path, then run 'agent-marketplace sync' again", name, command)
 	}
 	return nil
 }

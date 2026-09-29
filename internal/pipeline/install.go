@@ -571,9 +571,6 @@ func codeModeInstallGate(catalogs map[string]catalog.LoadedCatalog, resources []
 	return nil
 }
 
-// codeModeGateCatalogKeys returns the catalog keys whose entries the
-// code-mode gate may inspect: the member registries whose collection
-// contribution selects the agent-marketplace MCP server.
 func codeModeGateCatalogKeys(syntheticEntries []config.RegistryEntry) map[string]bool {
 	keys := make(map[string]bool, len(syntheticEntries))
 	for i := range syntheticEntries {
