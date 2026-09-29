@@ -11,7 +11,7 @@
 
 ## 3. As-built evidence
 
-- [ ] 3.1 Correct the design, plan, and development guidance to describe the stack and the deferred decoder/TUI seams; verify each claim against source and branch history.
+- [x] 3.1 Correct the design, plan, and development guidance to describe the stack and the deferred decoder/TUI seams; verify each claim against source and branch history.
 - [ ] 3.2 Capture ten benchmark samples at the specified stack baseline and the layer head, run benchstat for the named matched cases, and report the unpaired Marketplace GC case and endpoint-walk I/O in the PR body.
 - [ ] 3.3 Run focused and native build, test, lint, and strict OpenSpec/specaudit checks and record the section-4/section-7 evidence on the parent task.
-- [ ] 3.4 Run `openspec archive close-slice-one-acceptance-gaps --yes` in this pull request and verify the two capabilities are synced into the main specs.
+- [x] 3.4 Run `openspec archive close-slice-one-acceptance-gaps --yes` in this pull request and verify the two capabilities are synced into the main specs.

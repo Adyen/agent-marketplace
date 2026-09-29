@@ -608,9 +608,10 @@ To exercise an organization config, name one explicitly:
 
 ```go
 config.SetTestOrganizationConfigPath(t, orgPath)       // package-level, restored on cleanup
-config.LoadEffective(ctx, config.LoadEffectiveOptions{ // or per call
-    OrganizationPath: orgPath,
-})
+pipeline.LoadEffective(ctx, pipeline.ConfigLoadStrict, // or per call; ConfigLoadOnline only when the
+    config.LoadEffectiveOptions{                       // test permits transient acquisition
+        OrganizationPath: orgPath,
+    }, nil)
 ```
 
 E2E is separate: it drives the built binary rather than a test binary,

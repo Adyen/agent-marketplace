@@ -2,7 +2,7 @@
 
 Date: 2026-09-23
 
-Status: **Implemented at `57087a51d4f565fcd64e4c7e57dda8b52e0a580b`.** The operator agreed the separation and the requirement that GC work normally without an organization lock. This document specifies the first implementation slice; it does not authorize dispatch or approve merging other PRs.
+Status: **Implemented across the stacked PRs #317–#397 on the PR275 (`cgxc.5`) base, including PR390 (`cgxc.7` shared inspection), plus the final `agent-marketplace-cgxc.8.7` acceptance layer.** The operator agreed the separation and the requirement that GC work normally without an organization lock. This document specifies the first implementation slice; it does not authorize dispatch or approve merging other PRs.
 
 Baseline: `27675b3bc71ed336020ed7069125af93e055583c` on `rework-architecture`, matching remote `main` at investigation time. PR291 also has active work beyond its published head; its final revision remains an integration input.
 
@@ -99,7 +99,7 @@ Acquisition consumes validated intent and effective policy. It reads applicable 
 
 These are separate stages, not a `skipValidation` or `ignoreLocks` flag. Configuration-only consumers have no reason to call runtime binding. Binding cannot fabricate pins, turn an invalid deployed lock into an unlocked source, or interpret unavailable acquisition as an empty selection.
 
-Existing `LoadEffective` and `LoadEffectiveOnline` entry points may remain transitional facades, but must compose the same intent reader and binding implementation. They must not retain another parser, include walk, or policy merger. The online path decides whether transient organization acquisition is needed from intent and lock state, not by catching `v4.marketplace-lock-required` and retrying a different loader.
+Loading entry points must compose the same intent reader and binding implementation; none may retain another parser, include walk, or policy merger. The transitional `config.LoadEffective` facade was deleted once its callers migrated: `pipeline.LoadEffective(ctx, mode, opts, policy)` now selects `ConfigLoadOnline`, `ConfigLoadStrict`, or `ConfigLoadCached` and decides whether transient organization acquisition is needed from intent and lock state, not by catching `v4.marketplace-lock-required` and retrying a different loader.
 
 Invocation-local reuse of verified transient acquisition remains valid. Its lifetime, policy read assertions, and organization-lock absence assertion still apply. Revalidation compares current input generations; it does not require repeated semantic parsing when those generations are unchanged.
 
@@ -171,6 +171,11 @@ The extraction must remove, in the migrated paths:
 - duplicated policy computation introduced by transitional facades.
 
 Strict runtime compatibility entry points may survive. Production custom loaders, TUI mutation fallbacks, and the rest of command-owned lock orchestration are follow-up deletion obligations, not claimed completed here. Every migrated facade must delegate to the one implementation rather than preserve an independent path indefinitely.
+
+Concretely deferred to follow-up work, not claimed by this slice:
+
+- The error-triggered reload for custom `Loaders` at `internal/pipeline/pipeline.go:402`. When a TUI-supplied loader set surfaces a lock-bootstrap error and the mode is not `ConfigLoadStrict`, the operation reloads through `loadEffective`; that fallback stays until TUI mutation consolidation removes it.
+- The lock-decoder split between single-file `config.readDeployedLock` (used by the config package's single-layer readers) and the layered `pipeline.ReadLayerLock`/`decodeLayerLock`/`readDeployedLocks`. Decision (a): keep both decoders now and track unification as a follow-up decoder task; this slice does not unify them.
 
 ## 7. Acceptance evidence
 
