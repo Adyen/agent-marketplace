@@ -6,7 +6,7 @@ This page lists the files and folders `agent-marketplace` reads in a registry, a
 
 | Kind | Directory | Expected files |
 |---|---|---|
-| skill | `skills/<name>/` in most layouts; see the table below | `SKILL.md` with top-level `name`, `description`, and optional `license`; `metadata` holds `tags` and `requires`. Other files in the folder ship with the skill. |
+| skill | `skills/<name>/` in most layouts; see the table below | `SKILL.md` with top-level `name`, `description`, and optional `license`; `metadata` holds `tags` and [`requires`](./resource-prerequisites.md). Other files in the folder ship with the skill. |
 | command | source-harness-specific, for example `commands/<name>.md` for Claude or `skills/<name>/` with `x-agent-marketplace-kind: command` for Devin and Codex | Native command file, or a skill-shaped command for the source harness. |
 | subagent | source-harness-specific; see the table below | Native subagent file for the source harness. |
 | hook | source-harness-specific; see the table below | Native hook file or shared settings file for the source harness. |

@@ -313,6 +313,7 @@ func writeDoctorRequirementWarnings(out io.Writer, ctx context.Context, repoRoot
 		}
 		requirementDiagnostics = append(requirementDiagnostics, warning)
 	}
+	requirementDiagnostics = append(requirementDiagnostics, requiresInvalidWarnings(resolved.CatalogLoad.Catalogs)...)
 	slices.SortFunc(requirementDiagnostics, func(a, b error) int {
 		return strings.Compare(a.Error(), b.Error())
 	})

@@ -1159,8 +1159,55 @@ func TestLoadMalformedCommand(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/command-and-subagent-prerequisites
+func TestLoadCommandAndSubagentPrerequisites(t *testing.T) {
+	mapFS := fstest.MapFS{
+		"commands/deploy.md": &fstest.MapFile{
+			Data: []byte("---\nname: deploy\ndescription: Deploy command\nmetadata:\n  requires:\n    - kind: mcp\n      name: deploy-server\n      registry: git@example.com:mcp.git\n---\nRun deploy\n"),
+		},
+		"agents/reviewer.md": &fstest.MapFile{
+			Data: []byte("---\nname: reviewer\ndescription: Reviews code\nmetadata:\n  requires:\n    - helper-skill\n    - mcp:lint-server\n---\nYou are a reviewer\n"),
+		},
+	}
+
+	cat, err := LoadFS(mapFS, "claude")
+	if err != nil {
+		t.Fatalf("LoadFS = _, %v", err)
+	}
+
+	want := map[string][]Requirement{
+		"deploy": {
+			{Kind: ir.KindMcpServer, Name: "deploy-server", Registry: "git@example.com:mcp.git"},
+		},
+		"reviewer": {
+			{Kind: ir.KindSkill, Name: "helper-skill"},
+			{Kind: ir.KindMcpServer, Name: "lint-server"},
+		},
+	}
+	var found int
+	for _, e := range cat.Entries {
+		wantReqs, ok := want[e.Name]
+		if !ok {
+			continue
+		}
+		found++
+		got := RequirementsFromResource(e.Resource)
+		if !reflect.DeepEqual(got, wantReqs) {
+			t.Errorf("%s requirements = %#v, want %#v", e.Name, got, wantReqs)
+		}
+	}
+	if found != len(want) {
+		t.Fatalf("found %d entries with declared requires, want %d; entries=%#v", found, len(want), cat.Entries)
+	}
+}
+
 // spec: resource-prerequisites/structured-mcp-prerequisite
 // spec: resource-prerequisites/shorthand-prerequisite
+// spec: resource-prerequisites/structured-item-without-kind
+// spec: resource-prerequisites/kind-alias-spellings
+// spec: resource-prerequisites/kind-all-is-rejected
+// spec: resource-prerequisites/shorthand-without-a-kind
+// spec: resource-prerequisites/surrounding-whitespace-is-trimmed
 func TestRequirementsFromExtra(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1203,11 +1250,66 @@ func TestRequirementsFromExtra(t *testing.T) {
 			},
 		},
 		{
-			name: "empty kind defaults to skill",
+			name: "missing and empty kind default to skill",
 			extra: map[string]any{"metadata": map[string]any{"requires": []any{
-				map[string]any{"kind": "", "name": "supporting-skill"},
+				map[string]any{"name": "supporting-skill"},
+				map[string]any{"kind": "", "name": "other-skill"},
 			}}},
-			want: []Requirement{{Kind: ir.KindSkill, Name: "supporting-skill"}},
+			want: []Requirement{
+				{Kind: ir.KindSkill, Name: "supporting-skill"},
+				{Kind: ir.KindSkill, Name: "other-skill"},
+			},
+		},
+		{
+			name: "kind alias spellings",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				map[string]any{"kind": "MCP_Servers", "name": "docs-server"},
+				map[string]any{"kind": "agents", "name": "helper-agent"},
+				map[string]any{"kind": "Commands", "name": "run-tests"},
+			}}},
+			want: []Requirement{
+				{Kind: ir.KindMcpServer, Name: "docs-server"},
+				{Kind: ir.KindSubagent, Name: "helper-agent"},
+				{Kind: ir.KindCommand, Name: "run-tests"},
+			},
+		},
+		{
+			name: "kind all rejected while sibling retained",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				map[string]any{"kind": "all", "name": "supporting-skill"},
+				" ALL :everything",
+				"all : spaced",
+				map[string]any{"kind": "skill", "name": "kept-skill"},
+			}}},
+			want: []Requirement{{Kind: ir.KindSkill, Name: "kept-skill"}},
+		},
+		{
+			name: "bare string shorthand defaults to skill",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				"other-skill",
+			}}},
+			want: []Requirement{{Kind: ir.KindSkill, Name: "other-skill"}},
+		},
+		{
+			name: "surrounding whitespace is trimmed",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				" mcp : docs-server ",
+				map[string]any{
+					"kind":     " mcp ",
+					"name":     " genai-atlassian ",
+					"registry": " git@example.com:mcp.git ",
+					"path":     " servers ",
+				},
+			}}},
+			want: []Requirement{
+				{Kind: ir.KindMcpServer, Name: "docs-server"},
+				{
+					Kind:     ir.KindMcpServer,
+					Name:     "genai-atlassian",
+					Registry: "git@example.com:mcp.git",
+					Path:     "servers",
+				},
+			},
 		},
 		{
 			name: "collection rejected",
@@ -1229,6 +1331,21 @@ func TestRequirementsFromExtra(t *testing.T) {
 			want: []Requirement{},
 		},
 		{
+			name: "invalid items among valid items",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				"mcp:docs-server",
+				map[string]any{"kind": "weird", "name": "unknown-kind"},
+				"collection:team-bundle",
+				map[string]any{"kind": "skill"},
+				42,
+				map[string]any{"name": "kept-skill"},
+			}}},
+			want: []Requirement{
+				{Kind: ir.KindMcpServer, Name: "docs-server"},
+				{Kind: ir.KindSkill, Name: "kept-skill"},
+			},
+		},
+		{
 			name: "non-string map values skipped",
 			extra: map[string]any{"metadata": map[string]any{"requires": []any{
 				map[string]any{"kind": 42, "name": "wrong-kind"},
@@ -1247,6 +1364,149 @@ func TestRequirementsFromExtra(t *testing.T) {
 			}
 		})
 	}
+}
+
+// spec: resource-prerequisites/kind-all-is-rejected
+// spec: resource-prerequisites/non-list-requires-value
+// spec: resource-prerequisites/invalid-item-among-valid-items
+func TestLoadRequiresInvalidDiagnostics(t *testing.T) {
+	mapFS := fstest.MapFS{
+		"skills/mixed/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: mixed\ndescription: Mixed requires\nmetadata:\n  requires:\n    - mcp:docs-server\n    - kind: all\n      name: everything\n    - kind: weird\n      name: secret-user:secret-token@example.com\n---\nbody\n"),
+		},
+		"skills/shapeless/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: shapeless\ndescription: Non-list requires\nmetadata:\n  requires: mcp:docs-server\n---\nbody\n"),
+		},
+	}
+
+	cat, err := LoadFS(mapFS, "claude")
+	if err != nil {
+		t.Fatalf("LoadFS = _, %v", err)
+	}
+
+	var mixedDiags, shapelessDiags []diag.Diagnostic
+	for _, d := range cat.Diagnostics {
+		if d.Code != CodeRequiresInvalid {
+			continue
+		}
+		switch d.Resource {
+		case "mixed":
+			mixedDiags = append(mixedDiags, d)
+		case "shapeless":
+			shapelessDiags = append(shapelessDiags, d)
+		}
+	}
+
+	if len(mixedDiags) != 2 {
+		t.Fatalf("mixed requires diagnostics = %#v, want 2 catalog.requires.invalid warnings", mixedDiags)
+	}
+	for _, d := range mixedDiags {
+		if d.Severity != diag.SeverityWarning {
+			t.Errorf("diagnostic severity = %v, want warning: %#v", d.Severity, d)
+		}
+		if d.Source.File != "skills/mixed/SKILL.md" {
+			t.Errorf("diagnostic source = %q, want skills/mixed/SKILL.md", d.Source.File)
+		}
+		if strings.Contains(d.Message, "secret-token") || strings.Contains(d.Message, "example.com") {
+			t.Errorf("diagnostic message leaked the malformed value: %q", d.Message)
+		}
+		if !strings.Contains(d.Message, "item 1") && !strings.Contains(d.Message, "item 2") {
+			t.Errorf("diagnostic message missing item index: %q", d.Message)
+		}
+	}
+
+	if len(shapelessDiags) != 1 {
+		t.Fatalf("shapeless requires diagnostics = %#v, want 1 catalog.requires.invalid warning", shapelessDiags)
+	}
+	if shapelessDiags[0].Source.File != "skills/shapeless/SKILL.md" {
+		t.Errorf("shapeless diagnostic source = %q, want skills/shapeless/SKILL.md", shapelessDiags[0].Source.File)
+	}
+
+	var mixedFound, shapelessFound bool
+	for _, e := range cat.Entries {
+		switch e.Name {
+		case "mixed":
+			mixedFound = true
+			requirements := RequirementsFromResource(e.Resource)
+			want := []Requirement{{Kind: ir.KindMcpServer, Name: "docs-server"}}
+			if !reflect.DeepEqual(requirements, want) {
+				t.Errorf("mixed requirements = %#v, want %#v", requirements, want)
+			}
+		case "shapeless":
+			shapelessFound = true
+			if requirements := RequirementsFromResource(e.Resource); len(requirements) != 0 {
+				t.Errorf("shapeless requirements = %#v, want none", requirements)
+			}
+		}
+	}
+	if !mixedFound || !shapelessFound {
+		t.Fatalf("expected both resources in catalog entries; entries=%#v", cat.Entries)
+	}
+
+	for _, m := range malformedFromDiagnostics(cat.Diagnostics) {
+		if m.DirName == "mixed" || m.DirName == "shapeless" {
+			t.Fatalf("requires diagnostic produced malformed entry: %#v", m)
+		}
+	}
+}
+
+// spec: resource-prerequisites/invalid-item-among-valid-items
+func TestLoadRequiresInvalidDiagnosticShapes(t *testing.T) {
+	cat, err := LoadFS(fstest.MapFS{
+		"skills/shapes/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: shapes\ndescription: Malformed shapes\nmetadata:\n  requires:\n    - mcp:docs-server\n    - kind: mcp\n    - name: ' '\n      kind: mcp\n    - name: 7\n    - name: x\n      kind: 7\n    - name: x\n      kind: collection\n    - name: x\n      registry: secret-token\n      path: 7\n    - 42\n---\nbody\n"),
+		},
+	}, "claude")
+	if err != nil {
+		t.Fatalf("LoadFS = _, %v", err)
+	}
+
+	want := []struct {
+		index  int
+		reason string
+	}{
+		{1, "name must be a non-empty string"},
+		{2, "name must be a non-empty string"},
+		{3, "name must be a non-empty string"},
+		{4, "kind must be a string"},
+		{5, "unknown or unsupported kind"},
+		{6, "registry and path must be strings"},
+		{7, "requirement must be a string or map"},
+	}
+
+	var got []diag.Diagnostic
+	for _, d := range cat.Diagnostics {
+		if d.Code == CodeRequiresInvalid {
+			got = append(got, d)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("requires diagnostics = %#v, want %d warnings", got, len(want))
+	}
+	for i, w := range want {
+		wantMessage := fmt.Sprintf("requires item %d: %s", w.index, w.reason)
+		if got[i].Message != wantMessage {
+			t.Errorf("diagnostic %d message = %q, want %q", i, got[i].Message, wantMessage)
+		}
+		if got[i].Severity != diag.SeverityWarning || got[i].Resource != "shapes" || got[i].Source.File != "skills/shapes/SKILL.md" {
+			t.Errorf("diagnostic %d = %#v, want warning on shapes in skills/shapes/SKILL.md", i, got[i])
+		}
+		if strings.Contains(got[i].Message, "secret-token") {
+			t.Errorf("diagnostic %d leaked the malformed value: %q", i, got[i].Message)
+		}
+	}
+
+	for _, e := range cat.Entries {
+		if e.Name != "shapes" {
+			continue
+		}
+		wantRequirements := []Requirement{{Kind: ir.KindMcpServer, Name: "docs-server"}}
+		if requirements := RequirementsFromResource(e.Resource); !reflect.DeepEqual(requirements, wantRequirements) {
+			t.Errorf("shapes requirements = %#v, want %#v", requirements, wantRequirements)
+		}
+		return
+	}
+	t.Fatal("shapes entry missing from catalog")
 }
 
 func TestOverlappingEntryWarningRedactsURLCredentials(t *testing.T) {

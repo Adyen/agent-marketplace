@@ -111,7 +111,8 @@ export default defineConfig({
               items: [
                 { text: 'Add a resource to a registry', link: `${DOCS_PATH}how-to/author/add-a-resource-to-a-registry` },
                 { text: 'Publish resource collections', link: `${DOCS_PATH}how-to/author/publish-resource-collections` },
-                { text: 'Declare tags and prerequisites', link: `${DOCS_PATH}how-to/author/declare-tags-and-prerequisites` },
+                { text: 'Declare tags and a license', link: `${DOCS_PATH}how-to/author/declare-tags-and-licenses` },
+                { text: 'Declare resource prerequisites', link: `${DOCS_PATH}how-to/author/declare-resource-prerequisites` },
                 { text: 'Validate a registry in CI', link: `${DOCS_PATH}how-to/author/validate-a-registry-in-ci` },
                 { text: 'Version and release a registry', link: `${DOCS_PATH}how-to/author/version-and-release-a-registry` }
               ]
@@ -152,6 +153,7 @@ export default defineConfig({
             { text: 'Marketplace resource locators', link: `${DOCS_PATH}reference/marketplace-resource-locators` },
             { text: 'Registry layout', link: `${DOCS_PATH}reference/registry-layout` },
             { text: 'Resource metadata', link: `${DOCS_PATH}reference/resource-metadata` },
+            { text: 'Resource prerequisites', link: `${DOCS_PATH}reference/resource-prerequisites` },
             { text: 'Collections', link: `${DOCS_PATH}reference/collections` }
           ]
         },

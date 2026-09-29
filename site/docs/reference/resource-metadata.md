@@ -50,16 +50,7 @@ Commands and subagents written as Markdown with front matter read `metadata.tags
 
 ## `requires` item
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `kind` | string | `skill` | Resource kind: `skill`, `command`, `subagent`, `hook`, or `mcp`. `collection` is not accepted. |
-| `name` | string | required | Required resource name. |
-| `registry` | string | none | Registry hint, used as `--from` in the suggested install command. |
-| `path` | string | none | Path hint, used as `--path` in the suggested install command. |
-
-A string item is shorthand: `mcp:docs-server` means kind `mcp` and name `docs-server`, and a string without a colon names a skill.
-
-A prerequisite is met when a resource with the same kind and name is selected in the same run, from any source or configuration layer. `registry` and `path` are remediation hints and do not restrict where the resource comes from. An unmet prerequisite produces a warning, never an error. Items with an unknown kind or without a `name` are skipped, and the CLI writes a warning to its log file.
+Each `metadata.requires` item is a map with `name` and optional `kind`, `registry`, and `path`, or a string shorthand (`mcp:docs-server`, or a bare name for a skill). An unmet prerequisite produces an advisory warning, never an error. The full declaration grammar, satisfaction rule, warning format, and exit status live in the [resource prerequisites reference](./resource-prerequisites.md).
 
 ## Command marker
 
@@ -86,5 +77,7 @@ Subagent, hook, and MCP files use source-harness-specific native formats. The [r
 ## Related documentation
 
 - [Registry layout reference](./registry-layout.md)
-- [How to declare tags and prerequisites](../how-to/author/declare-tags-and-prerequisites.md)
+- [Resource prerequisites reference](./resource-prerequisites.md)
+- [How to declare resource prerequisites](../how-to/author/declare-resource-prerequisites.md)
+- [How to declare tags and a license](../how-to/author/declare-tags-and-licenses.md)
 - [How to add a resource to a registry](../how-to/author/add-a-resource-to-a-registry.md)

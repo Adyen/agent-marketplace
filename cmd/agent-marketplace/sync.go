@@ -60,7 +60,7 @@ func newSyncCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			locked = locked || checkOnly || offline
 			if checkOnly {
-				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), offline, locked)
+				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), strict, offline, locked)
 			}
 			return runSyncWithLocks(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, lockRunOptions{locked: locked, marketplacePolicy: policy})
 		},
@@ -68,7 +68,7 @@ func newSyncCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "Check drift without reconciling; exits 1 if out of sync")
 	cmd.Flags().BoolVar(&noBackup, "no-backup", false, "Skip pre-sync backup of machine-scope harness directories")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Treat all unresolved-selection warnings — 'selected but not found' and 'found but failed to load' — as hard errors (exit 1)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on unresolved selections ('selected but not found', 'found but failed to load') and on unmet prerequisites (exit 1)")
 	cmd.Flags().BoolVar(&pruneStale, "prune-stale", false, "Auto-remove stale skill selections from config after successful sync")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print per-file detail for each target and list malformed resources")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use only trusted local registry and Marketplace caches; never fetch or contact remote endpoints")
@@ -82,6 +82,8 @@ type lockRunOptions struct {
 	locked            bool
 	marketplacePolicy resolver.MarketplaceRevocationPolicy
 }
+
+var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as warnings; select the prerequisite resources or run without --strict")
 
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
@@ -153,10 +155,14 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	// In strict mode, re-elevate soft SelectedNotFound warnings to hard errors.
 	// Present-but-malformed selections elevate too: they are equally unresolved,
 	// and a strict caller (CI) wants the run to fail either way.
+	unmetRequirements := false
 	if strict {
 		strictErrors := make([]error, 0, len(syncResult.Warnings))
 		strictWarnings := make([]error, 0, len(syncResult.Warnings))
 		for _, w := range syncResult.Warnings {
+			if resolver.IsUnmetRequirement(w) {
+				unmetRequirements = true
+			}
 			if resolver.IsSoftSelectedNotFound(w) || resolver.IsSoftSelectedMalformed(w) {
 				strictErrors = append(strictErrors, w)
 			} else {
@@ -175,6 +181,9 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	// the same message from different resources remains a distinct counted issue.
 	// Presentation grouping happens later and never changes this count.
 	errs = dedupIssues(errs)
+	if unmetRequirements {
+		errs = append(errs, errStrictUnmetPrerequisites)
+	}
 
 	totalWritten := 0
 	totalRemoved := 0
@@ -405,7 +414,7 @@ func printRemediations(out io.Writer, issues []error) error {
 	return nil
 }
 
-func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
+func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bool) error {
 	repoRoot := config.FindRepoRoot()
 	isOffline := len(offline) > 0 && offline[0]
 	localDir := config.FindLocalConfigDir()
@@ -487,7 +496,11 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	}
 	errorRows := buildErrorRows(resolvedResult.Errors)
 
-	return writeSyncCheckSummary(out, report, errorRows, resolvedResult.Errors)
+	summaryErr := writeSyncCheckSummary(out, report, errorRows, resolvedResult.Errors)
+	if strict && len(requirementWarnings) > 0 {
+		return errors.Join(summaryErr, errStrictUnmetPrerequisites)
+	}
+	return summaryErr
 }
 
 // writeSyncCheckSummary renders the `sync --check` verdict and returns the

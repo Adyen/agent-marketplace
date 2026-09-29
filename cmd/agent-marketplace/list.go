@@ -215,6 +215,10 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 		return errors.Join(hardCatalogErrs...)
 	}
 
+	for _, warning := range requiresInvalidWarnings(result.Catalogs) {
+		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(warning.Error())) //nolint:errcheck
+	}
+
 	displayName := registryDisplayName(fromURL)
 
 	rows := make([]listRow, 0)
@@ -255,6 +259,20 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	}
 
 	return writeListTable(out, rows)
+}
+
+func requiresInvalidWarnings(catalogs map[string]loadedCatalog) []error {
+	var warnings []error
+	for _, loaded := range catalogs {
+		for _, d := range loaded.Diagnostics {
+			if d.Code == catalog.CodeRequiresInvalid {
+				warnings = append(warnings, pipeline.PromoteDiagnostic(d))
+			}
+		}
+	}
+	warnings = pipeline.DedupIssues(warnings)
+	slices.SortFunc(warnings, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
+	return warnings
 }
 
 func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolved []resolver.ResolvedArtifact) []listRow {
