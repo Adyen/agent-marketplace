@@ -41,7 +41,16 @@ func modelPolicyFields(t *testing.T, artifacts []artifact.Artifact) map[string]a
 	return nil
 }
 
+// spec: harness-model-catalogs/unresolved-model-warns-and-keeps-the-resource
 func TestModelPolicyUnknownModelStillEmits(t *testing.T) {
+	wantCode := map[Target]string{
+		TargetClaude:  diag.CodeModelUnresolved,
+		TargetFactory: diag.CodeModelUnresolved,
+		TargetCursor:  diag.CodeModelUnresolved,
+		TargetGemini:  diag.CodeModelUnresolved,
+		TargetDevin:   diag.CodeSubagentDevinModelUnmappable,
+		TargetCodex:   diag.CodeModelUnresolved,
+	}
 	for _, target := range []Target{TargetClaude, TargetFactory, TargetCursor, TargetGemini, TargetDevin, TargetCodex} {
 		t.Run(string(target), func(t *testing.T) {
 			r := ir.NewSubagent("review", "Review", "Keep this body.\n", "unrecognized-provider-model", nil, "", nil, "", nil, ir.SourceRef{})
@@ -52,13 +61,63 @@ func TestModelPolicyUnknownModelStillEmits(t *testing.T) {
 			if fields := modelPolicyFields(t, result.Artifacts); fields["model"] != nil {
 				t.Fatalf("unknown model emitted: %v", fields)
 			}
-			if len(result.Diagnostics) == 0 {
-				t.Fatal("model omission was not diagnosed")
+			if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != wantCode[target] || result.Diagnostics[0].Severity != diag.SeverityWarning {
+				t.Fatalf("model omission diagnostics = %+v, want one %s warning", result.Diagnostics, wantCode[target])
 			}
 		})
 	}
 }
 
+// spec: harness-model-catalogs/no-cross-provider-approximation
+// spec: harness-model-catalogs/floating-family-selector-pinned-with-notice
+// spec: harness-model-catalogs/unsupported-reasoning-warns-without-suppressing
+// spec: harness-model-catalogs/conflicting-reasoning-preference-warns-and-resolves-once
+// spec: harness-model-catalogs/crossing-inheritance-and-default-boundaries-warns
+// spec: harness-model-catalogs/reasoning-on-inherited-selection-is-omitted-when-unrepresentable
+func TestModelPolicyDiagnosticScenarios(t *testing.T) {
+	for _, tc := range []struct {
+		name                                            string
+		source                                          Target
+		target                                          Target
+		model, effort, wantModel, effortKey, wantEffort string
+		wantCode                                        string
+		wantSeverity                                    diag.Severity
+	}{
+		{"no cross-provider approximation", "", TargetGemini, "sonnet", "", "", "effort", "", diag.CodeModelUnresolved, diag.SeverityWarning},
+		{"unsupported reasoning", "", TargetGemini, "gemini-3-preview", "high", "gemini-3-preview", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"conflicting reasoning", TargetCursor, TargetClaude, "claude-opus-5[effort=high]", "low", "claude-opus-5", "effort", "low", diag.CodeModelReasoningConflict, diag.SeverityWarning},
+		{"floating family pin", "", TargetFactory, "sonnet", "", "claude-sonnet-5", "reasoningEffort", "", diag.CodeModelSelectorPinned, diag.SeverityInfo},
+		{"inheritance/default mismatch", TargetDevin, TargetClaude, "", "", "", "effort", "", diag.CodeModelInheritanceMismatch, diag.SeverityWarning},
+		{"reasoning on inherited selection", "", TargetFactory, "inherit", "high", "inherit", "reasoningEffort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"positive control", TargetClaude, TargetCodex, "gpt-5.6-luna", "medium", "gpt-5.6-luna", "model_reasoning_effort", "medium", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := ir.NewSubagent("review", "Review", "Keep this body.\n", tc.model, nil, tc.effort, nil, "", nil, ir.SourceRef{})
+			r.ModelSource = string(tc.source)
+			result, err := Compile(r, tc.target)
+			if err != nil || diag.HasErrors(result.Diagnostics) {
+				t.Fatalf("compile: %v %+v", err, result)
+			}
+			fields := modelPolicyFields(t, result.Artifacts)
+			model, _ := fields["model"].(string)
+			effort, _ := fields[tc.effortKey].(string)
+			if model != tc.wantModel || effort != tc.wantEffort {
+				t.Fatalf("fields = %v, want model=%q %s=%q", fields, tc.wantModel, tc.effortKey, tc.wantEffort)
+			}
+			if tc.wantCode == "" {
+				if len(result.Diagnostics) != 0 {
+					t.Fatalf("positive control emitted diagnostics: %+v", result.Diagnostics)
+				}
+				return
+			}
+			if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != tc.wantCode || result.Diagnostics[0].Severity != tc.wantSeverity {
+				t.Fatalf("diagnostics = %+v, want one %s %s", result.Diagnostics, tc.wantSeverity, tc.wantCode)
+			}
+		})
+	}
+}
+
+// spec: harness-model-catalogs/supported-reasoning-emits-native-encoding
 func TestModelPolicyNativeReasoningEncoding(t *testing.T) {
 	for _, tc := range []struct {
 		name                                            string
@@ -87,6 +146,7 @@ func TestModelPolicyNativeReasoningEncoding(t *testing.T) {
 	}
 }
 
+// spec: harness-model-catalogs/same-harness-native-model-strings-round-trip-unchanged
 func TestModelPolicyDevinNativeRoundTrip(t *testing.T) {
 	for _, model := range []string{"swe", "gpt", "gpt-5-6-luna-medium", ""} {
 		t.Run(model, func(t *testing.T) {

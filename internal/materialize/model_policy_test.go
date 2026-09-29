@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: harness-model-catalogs/model-warnings-keep-materialized-resources-converged
 func TestModelPolicyMaterializationKeepsResourcesAndConverges(t *testing.T) {
 	for _, tc := range []struct {
 		target                                hcc.Target

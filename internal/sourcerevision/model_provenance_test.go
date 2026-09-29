@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
+// spec: harness-model-catalogs/legacy-source-revisions-ignore-provenance
 func TestModelProvenanceLegacyFallbackDigests(t *testing.T) {
 	for _, schema := range []string{"v1", "v2", "v3"} {
 		for _, source := range []string{"claude", "factory", "cursor", "devin", "codex"} {
@@ -56,6 +57,7 @@ func TestModelProvenanceLegacyFallbackDigests(t *testing.T) {
 	}
 }
 
+// spec: harness-model-catalogs/current-source-revision-retains-provenance
 func TestModelProvenanceCurrentFallbackDigest(t *testing.T) {
 	r := ir.NewSubagent("review", "Review", "Body", "gpt-5.6-luna", nil, "medium", nil, "", nil, ir.SourceRef{})
 	r.ModelSource = "codex"

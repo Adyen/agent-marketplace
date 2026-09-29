@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// spec: harness-model-catalogs/conversion-fixtures-prove-catalog-mappings
 func TestCatalogConversions(t *testing.T) {
 	raw, err := os.ReadFile("testdata/conversions.yaml")
 	if err != nil {

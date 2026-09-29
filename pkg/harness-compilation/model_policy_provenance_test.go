@@ -7,6 +7,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: harness-model-catalogs/ingestion-records-model-source-provenance
 func TestModelPolicySkillSourceProvenance(t *testing.T) {
 	for _, tc := range []struct {
 		source Harness

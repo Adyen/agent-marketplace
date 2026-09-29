@@ -9,6 +9,8 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
+// spec: harness-model-catalogs/resolved-model-emits-the-native-spelling
+// spec: harness-model-catalogs/omitted-model-uses-the-surface-s-native-semantics
 func TestResolve(t *testing.T) {
 	for _, tc := range []struct {
 		name                                 string
@@ -126,6 +128,7 @@ func TestFactoryReasoningSubset(t *testing.T) {
 	}
 }
 
+// spec: harness-model-catalogs/every-registered-harness-target-ships-a-catalog
 func TestShippedCatalogs(t *testing.T) {
 	r, err := shipped()
 	if err != nil {
@@ -138,6 +141,7 @@ func TestShippedCatalogs(t *testing.T) {
 	}
 }
 
+// spec: harness-model-catalogs/malformed-catalogs-are-rejected
 func TestRejectInvalidCatalog(t *testing.T) {
 	const valid = "schema: 1\nharness: claude\nevidence:\n  checked: '2026-09-21'\n  refs: [test]\nsurfaces:\n  subagent:\n    model_field: model\n    effort_field: effort\n    omitted_model: inherit\n    inherit_model: inherit\nmodels:\n  example/model:\n    model: native-model\n    reasoning:\n      high: {effort: high}\n"
 	load := func(data string) error {

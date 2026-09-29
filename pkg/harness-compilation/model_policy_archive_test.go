@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
+// spec: harness-model-catalogs/authoritative-fields-override-stale-legacy-sidecars
 func TestModelPolicyArchivePreservesAuthoritativeNativeSelection(t *testing.T) {
 	r := ir.NewSubagent("review", "Review", "Keep this body.\n", "gpt-5.6-luna", nil, "medium", nil, "", nil, ir.SourceRef{})
 	r.ModelSource = "codex"
@@ -36,6 +37,7 @@ func TestModelPolicyArchivePreservesAuthoritativeNativeSelection(t *testing.T) {
 	}
 }
 
+// spec: harness-model-catalogs/legacy-archives-remain-byte-stable-and-resolvable
 func TestModelPolicyLegacyArchiveRemainsUnchanged(t *testing.T) {
 	r := ir.NewSubagent("review", "Review", "Keep this body.\n", "sonnet", nil, "", nil, "", nil, ir.SourceRef{})
 	before, err := artifact.FromIR(r)
@@ -65,6 +67,7 @@ func TestModelPolicyLegacyArchiveRemainsUnchanged(t *testing.T) {
 	}
 }
 
+// spec: harness-model-catalogs/extras-cannot-forge-provenance-or-resurrect-dropped-fields
 func TestModelPolicyArchiveExtrasCannotForgeProvenance(t *testing.T) {
 	for _, source := range []string{"", "factory"} {
 		for _, key := range []string{"ModelSource", "modelsource", "MODELSOURCE"} {
@@ -105,6 +108,7 @@ func TestModelPolicyArchiveExtrasCannotForgeProvenance(t *testing.T) {
 	}
 }
 
+// spec: harness-model-catalogs/ambiguous-or-malformed-provenance-is-rejected
 func TestModelPolicyArchiveRejectsAmbiguousProvenance(t *testing.T) {
 	for _, payload := range []string{
 		`{"name":"review","ModelSource":"codex","modelsource":"devin"}`,
