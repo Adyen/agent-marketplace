@@ -87,6 +87,7 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// spec: digest-owner-lookup/postgresql-store-keeps-digest-owner-indexes
 		for name, table := range map[string]string{
 			"idx_resource_revisions_content":  "resource_revisions",
 			"idx_current_assessments_content": "current_resource_assessments",
