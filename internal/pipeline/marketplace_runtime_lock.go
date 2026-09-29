@@ -40,7 +40,7 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	}
 	evidence, err := readDeployedLocks(ctx, intent, opts.FileOverlays)
 	if err != nil && (mode != ConfigLoadOnline || !isMissingLockError(err)) {
-		return effectiveConfigError(config.Bind(intent, config.Evidence{}), err), transientOrganizationMarketplaceLockUnused
+		return effectiveConfigError(config.Bind(intent, evidence), err), transientOrganizationMarketplaceLockUnused
 	}
 	organization := intent.Layers[config.Organization]
 	if mode == ConfigLoadStrict || !organization.Present() || !organization.NeedsMarketplaceLock() || evidence.Locks[config.Organization] != nil {
@@ -54,9 +54,10 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 		return effectiveConfigError(config.Bind(intent, evidence), err), transientOrganizationMarketplaceLockUnused
 	}
 	lockPath := paths.CanonicalLock
+	inputs := transientOrganizationMarketplaceInputs(intent)
 	if cache := transientOrganizationMarketplaceLockCacheFrom(ctx); cache != nil {
-		if doc, reads, ok := cache.load(lockPath); ok {
-			if err := dependencytxn.ValidateReadAssertions(reads); err == nil {
+		if doc, reads, cachedInputs, ok := cache.load(lockPath); ok {
+			if err := dependencytxn.ValidateReadAssertions(reads); err == nil && cachedInputs == inputs {
 				evidence.Locks[config.Organization] = &doc
 				cachedEC := config.Bind(intent, evidence)
 				if len(cachedEC.Errors) > 0 {
@@ -80,6 +81,10 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	if err != nil {
 		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
 	}
+	acquisitionReads, err := IntentReadAssertions(intent)
+	if err != nil {
+		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
+	}
 	slog.Info("transient organization Marketplace lock acquisition started", "config", organization.Path)
 	mpResolver := marketplace.NewResolver()
 	mpResolver.AllowedRegistries = intent.AllowedRegistries()
@@ -100,8 +105,11 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
 		return effectiveConfigError(finalEC, fmt.Errorf("%w: organization Marketplace inputs changed while validating transient acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
 	}
+	if err := dependencytxn.ValidateReadAssertions(acquisitionReads); err != nil {
+		return effectiveConfigError(finalEC, fmt.Errorf("%w: target harnesses or allowlists changed during transient organization Marketplace acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
+	}
 	if cache := transientOrganizationMarketplaceLockCacheFrom(ctx); cache != nil {
-		cache.store(lockPath, exact, reads)
+		cache.store(lockPath, exact, reads, inputs)
 	}
 	slog.Info("transient organization Marketplace lock acquisition completed", "config", organization.Path, "resources", marketplaceLockResourceCount(exact))
 	return finalEC, transientOrganizationMarketplaceLockAcquired
