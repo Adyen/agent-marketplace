@@ -1,8 +1,11 @@
 name: agent-marketplace-tools
 description: >
-  Skills for working with and developing the agent-marketplace CLI,
-  including Go efficiency and coding patterns needed for contributions.
-skills:
-  - name: agent-marketplace
-  - name: agent-marketplace-development
-  - name: registry-authoring
+  Skills for using the agent-marketplace CLI, authoring registries for it,
+  and developing the agent-marketplace codebase.
+resources:
+  - kind: skill
+    name: agent-marketplace
+  - kind: skill
+    name: agent-marketplace-development
+  - kind: skill
+    name: registry-authoring

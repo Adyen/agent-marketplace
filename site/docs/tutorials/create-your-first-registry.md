@@ -124,7 +124,7 @@ Installed 2  Removed 0  Malformed 0  Errors 0
 
 `Installed` counts files written: the skill, and a Claude Code manifest that lists installed skills. If your organization's configuration also installs resources on this computer, the numbers are higher and more folders appear.
 
-If you had no user configuration yet, this first sync also creates `~/.agents/config.yaml` in the older v2 format. The next command may then ask `Migrate these configuration files to v4 now? [Y/n]:`. Press Enter to accept. Only `~/.agents/config.yaml` changes.
+If you had no user configuration yet, this first sync also creates `~/.agents/config.yaml` with `harnesses: [factory, windsurf]`. The test project's own `harnesses:` list takes precedence, so this sync still writes only for Claude Code.
 
 If `Malformed` is `1`, the skill's front matter has a problem. Run `agent-marketplace sync --verbose` to see the reason, fix `SKILL.md` in the `agent-skills` folder, and run `agent-marketplace sync` again.
 
