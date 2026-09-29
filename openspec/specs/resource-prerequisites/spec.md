@@ -170,10 +170,12 @@ be trimmed from every value.
 
 The marketplace SHALL skip malformed prerequisite declarations without failing
 to load the declaring resource. A malformed item SHALL NOT prevent remaining
-valid items from being read. `list --from` and `doctor` SHALL print a warning
-with the stable code `catalog.requires.invalid`, the declaring resource and its
-source file, and the item index when the malformed value is a list item. The
-warning MUST NOT include the malformed value or credentials from it.
+valid items from being read or cause unrelated resources in a covered
+sub-bundle to be reported as undiscovered. `list --from` and `doctor` SHALL
+print a warning with the stable code `catalog.requires.invalid`, the declaring
+resource and its source file, and the item index when the malformed value is a
+list item. The warning MUST NOT include the malformed value or credentials from
+it.
 
 #### Scenario: Non-list requires value
 
@@ -191,6 +193,12 @@ warning MUST NOT include the malformed value or credentials from it.
 
 - **WHEN** a selected resource declares only malformed prerequisite items and ordinary sync runs
 - **THEN** sync MUST materialize the resource and MUST NOT print an unmet-prerequisite warning
+
+#### Scenario: Covered sub-bundle with malformed prerequisite
+
+- **WHEN** a discovered resource in a covered organizational sub-bundle declares a malformed prerequisite
+- **THEN** the marketplace MUST retain the resource and report `catalog.requires.invalid`
+- **AND** it MUST NOT report that covered sub-bundle as ignored
 
 ### Requirement: Prerequisite exit status
 

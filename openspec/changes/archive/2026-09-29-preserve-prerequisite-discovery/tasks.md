@@ -6,4 +6,4 @@
 ## 2. Verify and archive
 
 - [x] 2.1 Run `make spec-check` and `make validate` and verify the new scenario binding and affected Go tests pass; the parent will run the full E2E and native gates on the final clean commit.
-- [ ] 2.2 Run `openspec archive preserve-prerequisite-discovery --yes` as the final commit, then verify the synced main spec and `make spec-check` pass.
+- [x] 2.2 Run `openspec archive preserve-prerequisite-discovery --yes` as the final commit, then verify the synced main spec and `make spec-check` pass.
