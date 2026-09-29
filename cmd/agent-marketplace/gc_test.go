@@ -516,7 +516,7 @@ func newOrganizationMarketplaceGCFixture(t *testing.T, orgConfig, orgLock string
 	return fixture
 }
 
-func (f *organizationMarketplaceGCFixture) assertOrganizationFilesUnchanged(t *testing.T) {
+func (f *organizationMarketplaceGCFixture) assertOrganizationDirUnchanged(t *testing.T) {
 	t.Helper()
 	if got := f.dialed.Load(); got != 0 {
 		t.Fatalf("gc made %d network requests", got)
@@ -583,11 +583,11 @@ sources:
 	if _, err := os.Stat(orphanDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected marketplace orphan to be removed, stat err=%v", err)
 	}
-	fixture.assertOrganizationFilesUnchanged(t)
+	fixture.assertOrganizationDirUnchanged(t)
 }
 
 // spec: cache-garbage-collection/organization-marketplace-with-empty-cache
-func TestGcCommandV4OrganizationMarketplaceEmptyCacheCollects(t *testing.T) {
+func TestGcCommandV4OrganizationMarketplaceEmptyCacheIsNoop(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -606,11 +606,11 @@ sources:
 	if _, err := os.Lstat(fixture.lockPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("organization acquisition lock created: %v", err)
 	}
-	fixture.assertOrganizationFilesUnchanged(t)
+	fixture.assertOrganizationDirUnchanged(t)
 }
 
 // spec: cache-garbage-collection/trusted-organization-lock-retains-exact-archive
-func TestGcCommandV4OrganizationMarketplaceTrustedLockRetainsExactArchive(t *testing.T) {
+func TestGcCommandV4OrganizationMarketplaceTrustedLockRetainsExactReferences(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -668,7 +668,7 @@ marketplaces:
 	if string(got) != string(lockBytes) || fmt.Sprintf("%x", sha256.Sum256(got)) != fmt.Sprintf("%x", sha256.Sum256(lockBytes)) {
 		t.Fatal("organization acquisition lock changed")
 	}
-	fixture.assertOrganizationFilesUnchanged(t)
+	fixture.assertOrganizationDirUnchanged(t)
 }
 
 func TestGcCommandMarketplacePreflightBlocksLegacyDeletion(t *testing.T) {
@@ -749,5 +749,5 @@ marketplaces:
 			t.Fatalf("mismatched lock mutated marketplace cache %q: %v", artifact, statErr)
 		}
 	}
-	fixture.assertOrganizationFilesUnchanged(t)
+	fixture.assertOrganizationDirUnchanged(t)
 }
