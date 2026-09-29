@@ -23,6 +23,7 @@ var isTerminal = term.IsTerminal
 
 func newInitCmd() *cobra.Command {
 	var harnesses []string
+	var codeMode bool
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -31,21 +32,34 @@ func newInitCmd() *cobra.Command {
 			"harnesses list. It does not install resources, add registries, or configure a marketplace.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(cmd.OutOrStdout(), os.Stdin, harnesses)
+			return runInit(cmd.OutOrStdout(), os.Stdin, harnesses, codeMode)
 		},
 	}
 
 	cmd.Flags().StringSliceVar(&harnesses, "harnesses", nil,
 		"Comma-separated target harnesses (non-interactive); required when stdin is not a terminal")
+	cmd.Flags().BoolVar(&codeMode, "code-mode", false,
+		"Enable the code-mode MCP server registration in the initialized config")
 
 	return cmd
 }
 
-func runInit(out io.Writer, in *os.File, harnesses []string) error {
+func enableCodeMode(out io.Writer, path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := config.SetCodeModeEnabled(path, true); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(out, "Code-mode MCP server enabled; run 'agent-marketplace sync' to register it.")
+	return err
+}
+
+func runInit(out io.Writer, in *os.File, harnesses []string, codeMode bool) error {
 	slog.Info("init start")
 
 	if len(harnesses) > 0 {
-		return initWithHarnesses(out, harnesses)
+		return initWithHarnesses(out, harnesses, codeMode)
 	}
 
 	if !isTerminal(in.Fd()) {
@@ -78,6 +92,11 @@ func runInit(out io.Writer, in *os.File, harnesses []string) error {
 	if err != nil {
 		return err
 	}
+	if codeMode {
+		if err := enableCodeMode(out, path); err != nil {
+			return err
+		}
+	}
 	if created {
 		if err := promptTelemetryConsent(out, reader, path); err != nil {
 			slog.Error("init failed to record telemetry consent", "err", err)
@@ -87,13 +106,19 @@ func runInit(out io.Writer, in *os.File, harnesses []string) error {
 	return nil
 }
 
-func initWithHarnesses(out io.Writer, harnesses []string) error {
+func initWithHarnesses(out io.Writer, harnesses []string, codeMode bool) error {
 	if err := config.ValidateHarnessIDs(harnesses); err != nil {
 		slog.Error("init failed to validate harnesses", "err", err)
 		return err
 	}
-	_, _, err := initializeAndReport(out, harnesses)
-	return err
+	path, _, err := initializeAndReport(out, harnesses)
+	if err != nil {
+		return err
+	}
+	if codeMode {
+		return enableCodeMode(out, path)
+	}
+	return nil
 }
 
 func initializeAndReport(out io.Writer, harnesses []string) (string, bool, error) {

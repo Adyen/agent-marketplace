@@ -67,6 +67,7 @@ agent-marketplace init [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--harnesses` | comma-separated strings | without a terminal | none | Target harnesses. Accepted values: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, and `windsurf`. |
+| `--code-mode` | boolean | no | `false` | Also enables `codeMode.enabled` in the initialized config so subsequent `sync` runs register the `agent-marketplace mcp` code-mode MCP server in the target harnesses. |
 
 Without `--harnesses`, `init` detects installed harnesses, prints `Detected harnesses: ...`, and asks `Use these? [Y/n/e to edit]:`. Without a terminal, `--harnesses` is required. When `init` creates the file interactively, it also asks `Enable basic telemetry? [Y/n]:`, unless organization policy already sets the telemetry level.
 
@@ -325,6 +326,58 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `ERRORS` | Configuration, catalog, or drift-inspection failures. |
 
 Fatal resolution errors return exit status 1 after the report is printed.
+
+## `mcp`
+
+Runs the opt-in code-mode MCP server over stdio. The harness that registered it starts and stops the process; it exposes exactly two tools, `search` and `execute`, and never exits because of a tool call.
+
+```text
+agent-marketplace mcp
+```
+
+`search({code})` runs an async JavaScript arrow function against a read-only catalog snapshot merged from every configured Marketplace endpoint and Git/directory registry. It never starts a process and never writes resources. `execute({servers, code})` adds `skills.load`/`skills.read` plus `mcp.<alias>` bindings for exactly the MCP server refs declared in `servers`, starting them lazily with only definition-declared environment variables. Each call runs in a fresh VM with a 30 s deadline, a 1 MiB output cap, and a 100 host-call cap; failures carry stable coded errors. Skill loads and server starts are recorded in a session log under `$XDG_STATE_HOME/agent-marketplace/mcp-sessions/` with exact ref, revision, and digest for audit and `promote`.
+
+The server is registered only when a config layer enables `codeMode.enabled` (see `mcp enable` or `init --code-mode`); while enabled, `sync` adds an owned `agent-marketplace` MCP entry to every target harness and removes it when disabled.
+
+### `mcp enable`
+
+Sets `codeMode.enabled: true` in one writable config layer. Run `agent-marketplace sync` afterwards to register the server.
+
+```text
+agent-marketplace mcp enable --scope user
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--scope` | string | no | `user` | Config layer: `user`, `repo`, or `local`. |
+
+### `mcp disable`
+
+Removes `codeMode.enabled` from one writable config layer. The next `sync` unregisters the owned MCP entry while preserving handwritten entries.
+
+```text
+agent-marketplace mcp disable --scope user
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--scope` | string | no | `user` | Config layer: `user`, `repo`, or `local`. |
+
+## `promote`
+
+Converts a code-mode session-log entry for a catalog ref into a normal installed, locked selection through the existing install transaction.
+
+```text
+agent-marketplace promote <ref> [--scope <scope>] [--accept-risk | --yes]
+```
+
+When the recorded entry resolves to a Marketplace resource with security findings or active capabilities, `promote` applies the same consent gate as `install`: interactive terminals get the risk summary prompt, non-interactive runs refuse until `--accept-risk` or `--yes` is passed. Those flags are rejected for Git and directory sources.
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--scope` | string | no | resolved by install | Config layer to write to: `repo`, `user`, or `local`. |
+| `--accept-risk` | bool | no | `false` | Accept Marketplace findings and active capabilities for the promoted resource. |
+| `--yes` | bool | no | `false` | Accept Marketplace findings and active capabilities (automation). |
 
 ## Configuration authoring
 

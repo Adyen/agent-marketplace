@@ -486,6 +486,16 @@ type Config struct {
 	// Telemetry is the machine-scope telemetry policy. It is only allowed in
 	// the organization and user-personal configuration layers.
 	Telemetry *telemetryconfig.TelemetryConfig `yaml:"telemetry,omitempty"`
+
+	CodeMode *CodeModeConfig `yaml:"codeMode,omitempty"`
+}
+
+type CodeModeConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+func (c *CodeModeConfig) EnabledValue() bool {
+	return c != nil && c.Enabled != nil && *c.Enabled
 }
 
 // SelectorForKind returns the top-level KindSelector for the given resource

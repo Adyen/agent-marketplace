@@ -154,6 +154,7 @@ type V4Config struct {
 	Logging             *LoggingConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
+	CodeMode            *CodeModeConfig
 
 	telemetryFields v4TelemetryFields
 }
@@ -209,7 +210,7 @@ var v4LegacyKeys = map[string]struct{}{
 var v4RootKeys = map[string]struct{}{
 	"apiVersion": {}, "include": {}, "sources": {}, "resources": {},
 	"harnesses": {}, "allowed_registries": {}, "allowed_marketplaces": {},
-	"backup": {}, "logging": {}, "telemetry": {}, "materialization": {},
+	"backup": {}, "logging": {}, "telemetry": {}, "materialization": {}, "codeMode": {},
 }
 
 var v4SourceKeys = map[string]struct{}{
@@ -227,7 +228,7 @@ func ParseV4Config(data []byte, declaringPath string, root bool) (*V4Config, err
 	if err != nil {
 		return nil, err
 	}
-	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
+	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization, CodeMode: doc.codeMode, telemetryFields: doc.telemetryFields}
 	if err := normalizeV4Tree(out); err != nil {
 		return nil, err
 	}
@@ -307,6 +308,7 @@ type v4Document struct {
 	logging             *LoggingConfig
 	telemetry           *telemetryconfig.TelemetryConfig
 	materialization     *MaterializationConfig
+	codeMode            *CodeModeConfig
 	telemetryFields     v4TelemetryFields
 }
 
@@ -445,7 +447,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 			}
 		}
 	}
-	for _, key := range []string{"backup", "logging", "telemetry", "materialization"} {
+	for _, key := range []string{"backup", "logging", "telemetry", "materialization", "codeMode"} {
 		n := mappingValue(root, key)
 		if n == nil || (n.Kind == yaml.ScalarNode && n.Tag == "!!null") {
 			continue
@@ -459,6 +461,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 		"logging":         {"enabled": true, "level": true, "file": true, "max_size_mb": true, "max_backups": true, "max_age_days": true, "compress": true},
 		"telemetry":       {"level": true, "endpoint": true, "community_reporting": true, "retention_policy": true, "ca_file": true, "allow_insecure": true, "headers": true},
 		"materialization": {"mode": true, "targets": true},
+		"codeMode":        {"enabled": true},
 	}
 	for key, allowed := range auxiliaryKeys {
 		n := mappingValue(root, key)
@@ -563,6 +566,9 @@ func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
 		}
 	}
 	if err := decode("materialization", &doc.materialization); err != nil {
+		return err
+	}
+	if err := decode("codeMode", &doc.codeMode); err != nil {
 		return err
 	}
 	for _, err := range validateBackup(doc.backup) {
@@ -1343,6 +1349,7 @@ func mergeV4Config(dst, src *V4Config) error {
 	dst.Telemetry = mergeV4Telemetry(dst.Telemetry, src.Telemetry, src.telemetryFields)
 	dst.telemetryFields = mergeV4TelemetryFields(dst.telemetryFields, src.telemetryFields)
 	dst.Materialization = mergeV4Materialization(dst.Materialization, src.Materialization)
+	dst.CodeMode = mergeV4CodeMode(dst.CodeMode, src.CodeMode)
 	for name, s := range src.Sources {
 		if old, ok := dst.Sources[name]; ok && (old.Kind != s.Kind || old.CanonicalURL != s.CanonicalURL || old.Ref != s.Ref || old.Path != s.Path || old.SourceHarness != s.SourceHarness) {
 			return v4err("v4.source-conflict", "sources."+name, s.Line, "source name is declared with conflicting values in %q and %q", old.File, s.File)
@@ -1447,6 +1454,10 @@ func mergeV4Materialization(dst, src *MaterializationConfig) *MaterializationCon
 	return mergeMaterializationConfig(dst, src)
 }
 
+func mergeV4CodeMode(dst, src *CodeModeConfig) *CodeModeConfig {
+	return mergeCodeModeConfig(dst, src)
+}
+
 func mergeV4TelemetryFields(dst, src v4TelemetryFields) v4TelemetryFields {
 	return v4TelemetryFields{
 		level: dst.level || src.level, endpoint: dst.endpoint || src.endpoint,
@@ -1519,7 +1530,7 @@ func cloneV4TelemetryHeaders(headers map[string]telemetryconfig.HeaderSource) ma
 }
 
 func mergeV4Document(dst *V4Config, doc *v4Document) error {
-	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
+	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization, CodeMode: doc.codeMode, telemetryFields: doc.telemetryFields}
 	return mergeV4Config(dst, src)
 }
 func mergeV4Group(dst *V4Config, name string, src V4ResourceGroup) {
@@ -1759,7 +1770,7 @@ func (c *V4Config) policyConfig(kind layerKind) (*Config, error) {
 	if err := c.validateLayerFields(kind); err != nil {
 		return nil, err
 	}
-	out := &Config{APIVersion: APIVersionV4, Harnesses: cloneV4StringList(c.Harnesses), Backup: c.Backup, Logging: c.Logging, Telemetry: c.Telemetry, Materialization: c.Materialization}
+	out := &Config{APIVersion: APIVersionV4, Harnesses: cloneV4StringList(c.Harnesses), Backup: c.Backup, Logging: c.Logging, Telemetry: c.Telemetry, Materialization: c.Materialization, CodeMode: c.CodeMode}
 	if c.AllowedRegistries != nil {
 		values := cloneV4StringList(*c.AllowedRegistries)
 		out.AllowedRegistries = &values

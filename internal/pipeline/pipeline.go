@@ -26,6 +26,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -706,6 +707,9 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	// acquire a second file description when delegating to resolution.
 	resolveOpts.ExactLockLease = nil
 	resolved := Resolve(ctx, resolveOpts)
+	if resolved.MergedCfg != nil && resolved.MergedCfg.CodeMode.EnabledValue() {
+		resolved.Resolved = append(resolved.Resolved, codeModeMCPServer(resolved.TargetHarnesses))
+	}
 	result.ResolveResult = resolved
 	for _, warning := range SoftWarnings(resolved) {
 		if opts.Offline && (resolver.IsSoftSelectedNotFound(warning) || resolver.IsSoftSelectedMalformed(warning)) {
@@ -1088,4 +1092,17 @@ func appendLocalConfigIgnoreEntries(f *os.File) error {
 		return fmt.Errorf("append gitignore: %w", err)
 	}
 	return nil
+}
+
+func codeModeMCPServer(targets []hcc.Target) resolver.ResolvedArtifact {
+	command, err := os.Executable()
+	if err != nil || command == "" {
+		command = "agent-marketplace"
+	}
+	server := ir.NewMcpServer("agent-marketplace", command, []string{"mcp"}, nil, nil, ir.SourceRef{})
+	return resolver.ResolvedArtifact{
+		Entry:     catalog.Entry{Kind: ir.KindMcpServer, Name: "agent-marketplace", Resource: server},
+		Harnesses: targets,
+		Required:  true,
+	}
 }
