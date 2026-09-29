@@ -39,6 +39,8 @@
 
 # E2E report artifact
 e2e/e2e-report.json
+
+testdata/rapid/
 .envrc.local
 
 # IDEA

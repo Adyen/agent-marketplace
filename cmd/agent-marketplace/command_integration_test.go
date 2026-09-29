@@ -28,6 +28,7 @@ var inProcessTests = map[string]bool{
 	"TestMainIsolatesHome":                                true,
 	"TestStartupTargetRegistrationsAreValid":              true,
 	"TestRepositoryIgnoresDependencyTransactionLockFiles": true,
+	"TestRapidProductionDependencyGuard":                  true,
 }
 
 func commandScenarioPattern(selector, filter string) (string, error) {
