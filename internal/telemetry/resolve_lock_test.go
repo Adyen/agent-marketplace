@@ -10,6 +10,7 @@ import (
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
 
+// spec: configuration-settings/settings-with-an-unreadable-acquisition-lock
 func TestLoadAndResolveSettingsIgnoresUnreadableLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

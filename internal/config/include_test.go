@@ -315,6 +315,7 @@ func TestUserLoggingLoaderResolvesIncludes(t *testing.T) {
 	}
 }
 
+// spec: configuration-settings/settings-with-an-unreadable-acquisition-lock
 func TestLoadUserLoggingConfigIgnoresUnreadableLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
