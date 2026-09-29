@@ -39,6 +39,7 @@ func TestHardSnapshotFailureNeverRendersInSync(t *testing.T) {
 	}
 }
 
+// spec: inspection-outcomes/materialization-dry-run-failure
 func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	induced := errors.New("induced dry-run failure")
 	previousMaterialize := runMaterialize

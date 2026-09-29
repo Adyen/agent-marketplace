@@ -33,6 +33,7 @@ registries:
 	return repoRoot
 }
 
+// spec: inspection-outcomes/warning-only-inspection
 func TestStatusReportsMaterializationWarningsInWarningsSection(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -146,6 +147,7 @@ func TestSyncCheckReportsMaterializationWarningDiagnostics(t *testing.T) {
 	}
 }
 
+// spec: inspection-outcomes/materialization-dry-run-failure
 func TestSyncCheckSurfacesDryRunFailureAsInspectionError(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
