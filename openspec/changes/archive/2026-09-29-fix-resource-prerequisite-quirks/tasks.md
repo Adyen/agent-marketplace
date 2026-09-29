@@ -18,4 +18,4 @@
 ## 4. Delivery
 
 - [x] 4.1 Run `make validate`, `make validate-e2e`, and a site build with no failures; the parent runs the final clean-commit gates and independent reviews.
-- [ ] 4.2 Archive the child change with `openspec archive fix-resource-prerequisite-quirks --yes`, then verify the main spec and `make spec-check` before review and stacked publication.
+- [x] 4.2 Archive the child change with `openspec archive fix-resource-prerequisite-quirks --yes`, then verify the main spec and `make spec-check` before review and stacked publication.
