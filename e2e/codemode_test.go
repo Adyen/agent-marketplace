@@ -101,3 +101,78 @@ resources:
 		}
 	}
 }
+
+func writeCodeModeSessionEntry(env *Env, session, event, ref, revision, digest, source string) {
+	env.t.Helper()
+	entry := fmt.Sprintf(
+		`{"ts":"2026-09-29T00:00:00Z","session":%q,"event":%q,"ref":%q,"revision":%q,"digest":%q,"source":%q}`+"\n",
+		session, event, ref, revision, digest, source)
+	env.WriteFile("/root/.local/state/agent-marketplace/mcp-sessions/"+session+".jsonl", entry)
+}
+
+// spec: code-mode-mcp/enable-and-disable-write-one-config-layer
+// spec: code-mode-mcp/init-flag-opts-in
+func TestCodeModeLegacyInvocationCoverage(t *testing.T) {
+	legacy := newEnv(t)
+	legacy.InitGitRepo()
+	legacy.WriteRepoConfig("apiVersion: agent-marketplace/v2\nregistries: []\n")
+	if r := legacy.RunAM("mcp"); r.ExitCode != 0 {
+		t.Fatalf("mcp over stdio with EOF failed (exit %d):\n%s", r.ExitCode, r.Combined)
+	}
+	legacy.MustRunAM("mcp", "disable", "--scope", "user")
+	legacy.MustRunAM("mcp", "enable", "--scope", "user")
+	legacy.AssertFileContains("/root/.agents/config.yaml", "codeMode")
+
+	initLegacy := newEnv(t)
+	initLegacy.InitGitRepo()
+	initLegacy.WriteRepoConfig("apiVersion: agent-marketplace/v2\nregistries: []\n")
+	initLegacy.MustRunAM("init", "--harnesses", "factory", "--code-mode")
+	initLegacy.AssertFileContains("/root/.agents/config.yaml", "codeMode")
+
+	initV4 := newEnv(t)
+	initV4.InitGitRepo()
+	initV4.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	initV4.MustRunAM("init", "--harnesses", "factory", "--code-mode")
+	initV4.AssertFileContains("/root/.agents/config.yaml", "codeMode")
+
+	promoteEnv := newEnv(t)
+	promoteEnv.InitGitRepo()
+	promoteEnv.WriteFile("/workspace/registry/skills/greeter/SKILL.md",
+		"---\nname: greeter\ndescription: Greeting skill\n---\n\n# greeter\nSay hello.\n")
+	registryDir := promoteEnv.mustResolvePath("/workspace/registry")
+	promoteEnv.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n")
+	promoteEnv.WriteRepoConfig("apiVersion: agent-marketplace/v2\nregistries:\n  - url: " + registryDir + "\n")
+	writeCodeModeSessionEntry(promoteEnv, "sess-legacy", "skill.load",
+		"local:registry/skill/greeter", "", "", registryDir)
+	promoteEnv.MustRunAM("promote", "local:registry/skill/greeter", "--scope", "repo")
+	promoteEnv.AssertFileContains("/workspace/.agents/config.yaml", "greeter")
+}
+
+// spec: code-mode-mcp/marketplace-findings-gate-on-consent
+func TestCodeModePromoteMarketplaceRiskFlags(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Promote risk flags", false))
+	skillDigest := fixture.resourceDigest(t, "skill", "skill-one")
+	commandDigest := fixture.resourceDigest(t, "command", "command-one")
+
+	legacy := fixture.newConsumer(t, fixture.server.URL)
+	writeCodeModeSessionEntry(legacy, "sess-mp", "skill.load",
+		"behavior:behavior-source/skill/skill-one", skillDigest, skillDigest, "marketplace:"+fixture.server.URL)
+	legacy.MustRunAM("promote", "behavior:behavior-source/skill/skill-one", "--accept-risk")
+	if !legacy.CheckFileExists("/workspace/.factory/skills/skill-one/SKILL.md") && !legacy.CheckFileExists("/root/.factory/skills/skill-one/SKILL.md") {
+		t.Fatal("promoted skill was not materialized for the legacy consumer")
+	}
+	writeCodeModeSessionEntry(legacy, "sess-mp-cmd", "skill.load",
+		"behavior:behavior-source/command/command-one", commandDigest, commandDigest, "marketplace:"+fixture.server.URL)
+	legacy.MustRunAM("promote", "behavior:behavior-source/command/command-one", "--yes")
+
+	v4c := newV4MarketplaceConsumer(t, fixture)
+	writeCodeModeSessionEntry(v4c, "sess-mp-v4", "skill.load",
+		"org:behavior-source/skill/skill-one", skillDigest, skillDigest, "marketplace:"+fixture.server.URL)
+	v4c.MustRunAM("promote", "org:behavior-source/skill/skill-one", "--accept-risk")
+	if !v4c.CheckFileExists("/workspace/.factory/skills/skill-one/SKILL.md") && !v4c.CheckFileExists("/root/.factory/skills/skill-one/SKILL.md") {
+		t.Fatal("promoted skill was not materialized for the v4 consumer")
+	}
+	writeCodeModeSessionEntry(v4c, "sess-mp-v4-cmd", "skill.load",
+		"org:behavior-source/command/command-one", commandDigest, commandDigest, "marketplace:"+fixture.server.URL)
+	v4c.MustRunAM("promote", "org:behavior-source/command/command-one", "--yes")
+}
