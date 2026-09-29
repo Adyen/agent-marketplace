@@ -59,6 +59,7 @@ func readDeployedLocksIntent(t *testing.T, opts config.LoadEffectiveOptions) con
 	return intent
 }
 
+// spec: deployed-acquisition-locks/absent-organization-lock
 func TestReadDeployedLocksAbsentOrganizationIsNil(t *testing.T) {
 	orgPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v4\nsources: {m: {marketplace: https://market.example}}\nresources: {m: [src/skill/review]}\n", "")
 	intent := readDeployedLocksIntent(t, config.LoadEffectiveOptions{OrganizationPath: orgPath})
@@ -181,6 +182,7 @@ func TestLoadEffectiveSkipsLockPathForLayerWithoutRemoteSources(t *testing.T) {
 	}
 }
 
+// spec: deployed-acquisition-locks/missing-writable-acquisition-lock
 func TestReadDeployedLocksMissingWritableGitLockFails(t *testing.T) {
 	repoPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.test/a.git\n    ref: main\n", "")
 	intent := readDeployedLocksIntent(t, config.LoadEffectiveOptions{RepoPath: repoPath})
@@ -195,6 +197,7 @@ func TestReadDeployedLocksMissingWritableGitLockFails(t *testing.T) {
 	}
 }
 
+// spec: deployed-acquisition-locks/stale-organization-lock
 func TestReadDeployedLocksStaleOrganizationGitLockFails(t *testing.T) {
 	orgPath, _ := deployedLockFixture(t,
 		"apiVersion: agent-marketplace/v4\nsources: {s: {git: https://example.test/a.git, ref: main}}\n",
@@ -229,6 +232,7 @@ func TestReadDeployedLocksStaleOrganizationGitLockFails(t *testing.T) {
 	}
 }
 
+// spec: deployed-acquisition-locks/malformed-organization-lock
 func TestReadDeployedLocksMalformedOrganizationFails(t *testing.T) {
 	orgPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v2\nregistries: []\n", "not: [valid\n")
 	intent := readDeployedLocksIntent(t, config.LoadEffectiveOptions{OrganizationPath: orgPath})
@@ -240,6 +244,7 @@ func TestReadDeployedLocksMalformedOrganizationFails(t *testing.T) {
 	}
 }
 
+// spec: deployed-acquisition-locks/missing-lock-preserves-independent-evidence
 func TestLoadEffectiveUsesStagedMarketplaceLockOverlay(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -286,10 +291,27 @@ func TestLoadEffectiveUsesStagedMarketplaceLockOverlay(t *testing.T) {
 	if loaded.User.Config == nil || len(loaded.User.Config.Marketplaces) != 1 {
 		t.Fatalf("loaded user Marketplace config = %#v", loaded.User.Config)
 	}
+	found := false
 	for _, read := range loaded.User.Reads {
 		if read.RequestedPath == lockPath && read.Overlay && read.AcquisitionLock {
-			return
+			found = true
 		}
 	}
-	t.Fatalf("user layer reads do not include staged acquisition lock %q: %#v", lockPath, loaded.User.Reads)
+	if !found {
+		t.Fatalf("user layer reads do not include staged acquisition lock %q: %#v", lockPath, loaded.User.Reads)
+	}
+	if err := os.MkdirAll(filepath.Dir(opts.RepoPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(opts.RepoPath, []byte("apiVersion: agent-marketplace/v4\nsources: {git: {git: https://example.test/git, ref: main}}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded = LoadEffective(context.Background(), ConfigLoadStrict, opts, nil)
+	var missingLock *LockViewError
+	if !errors.As(errors.Join(loaded.Errors...), &missingLock) || missingLock.Code != "lock.missing" {
+		t.Fatalf("missing repository lock errors = %v, want lock.missing", loaded.Errors)
+	}
+	if loaded.User.Config == nil || len(loaded.User.Config.Marketplaces) != 1 {
+		t.Fatalf("missing repository lock discarded verified user Marketplace evidence: %#v", loaded.User.Config)
+	}
 }

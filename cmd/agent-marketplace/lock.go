@@ -766,15 +766,24 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, 0, nil, fmt.Errorf("%w: staged config %s matched %d effective writable layers", dependencytxn.ErrGenerationConflict, path, consumed[path])
 		}
 	}
-	if mode.reuseInstall != nil {
+	if mode.reuseInstall != nil || mode.check && !mode.locked {
 		ec.Errors = slices.DeleteFunc(ec.Errors, func(err error) bool {
 			var lockErr *pipeline.LockViewError
 			if !errors.As(err, &lockErr) || lockErr.Code != "lock.missing" {
 				return false
 			}
-			for _, path := range mode.reuseInstall.lockPaths {
-				if lockErr.Path == path {
-					return true
+			if mode.reuseInstall != nil {
+				for _, path := range mode.reuseInstall.lockPaths {
+					if lockErr.Path == path {
+						return true
+					}
+				}
+			}
+			if mode.check && !mode.locked {
+				for _, layer := range ec.PresentLayers() {
+					if lockScopeForSource(layer.Source) == lockErr.Scope {
+						return true
+					}
 				}
 			}
 			return false
