@@ -204,6 +204,9 @@ func TestBuildRejectsTraversalAndSymlinkEscape(t *testing.T) {
 				if !errors.Is(err, ErrPathEscape) {
 					t.Fatalf("Build error = %v, want ErrPathEscape", err)
 				}
+				if tc.name == "dangling" && !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("Build error = %v, want os.ErrNotExist cause", err)
+				}
 				for _, want := range []string{`"diag/` + tc.link + `"`, strconv.Quote(tc.target), `"diag"`, "narrow the registry entry's path"} {
 					if !strings.Contains(err.Error(), want) {
 						t.Fatalf("Build error %q does not mention %s", err, want)

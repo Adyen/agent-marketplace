@@ -481,7 +481,7 @@ func validateTreeSymlinks(snapshotReal, rootReal, rootPath string) error {
 		if relErr != nil {
 			rel = name
 		}
-		return fmt.Errorf("%w: registry symlink %q -> %q does not resolve inside configured root %q; remove it from the registry or narrow the registry entry's path: %v",
+		return fmt.Errorf("%w: registry symlink %q -> %q does not resolve inside configured root %q; remove it from the registry or narrow the registry entry's path: %w",
 			ErrPathEscape, filepath.ToSlash(rel), target, rootPath, err)
 	})
 }
