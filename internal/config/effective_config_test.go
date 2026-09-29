@@ -692,6 +692,7 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// spec: configuration-intent/reading-authored-selections-without-acquisition
 func TestReadIntentPerformsNoLockIO(t *testing.T) {
 	dir := t.TempDir()
 	userDir := filepath.Join(dir, "user")

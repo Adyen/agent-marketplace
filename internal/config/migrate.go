@@ -841,7 +841,7 @@ func MigrateConfigFilesToV4WithHarnesses(ctx context.Context, paths MigratePaths
 				return nil, err
 			}
 			if item.kind == userLayer {
-				currentUser = v4
+				currentUser = li.v4
 			}
 			// An already-v4 file is valid input and needs no rewrite.
 			continue

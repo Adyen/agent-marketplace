@@ -266,7 +266,7 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 }
 
 func readDeployedLock(path string, overlays map[string][]byte) (*lockfile.Document, *ConfigRead, error) {
-	canonical, err := canonicalConfigPath(path)
+	canonical, err := canonicalEffectiveLayerPath(path)
 	if err != nil {
 		return nil, nil, err
 	}
