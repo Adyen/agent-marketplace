@@ -13,8 +13,8 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-// spec: marketplace-protocols/canonical-artifact-round-trip
-// spec: marketplace-protocols/payload-contains-resource-name
+// spec: marketplace-api/canonical-artifact-round-trip
+// spec: marketplace-api/payload-contains-resource-name
 func TestCanonicalArtifactRoundTripForKinds(t *testing.T) {
 	cases := []struct {
 		name string
@@ -160,7 +160,7 @@ func TestCanonicalArtifactEncodeRejectsBadPaths(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/security-rejection-during-decode
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsLinks(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -179,7 +179,7 @@ func TestCanonicalArtifactDecodeRejectsLinks(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/security-rejection-during-decode
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsHardLinks(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -198,7 +198,7 @@ func TestCanonicalArtifactDecodeRejectsHardLinks(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/security-rejection-during-decode
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsAbsolutePaths(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -217,7 +217,7 @@ func TestCanonicalArtifactDecodeRejectsAbsolutePaths(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/security-rejection-during-decode
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsPathTraversal(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -236,7 +236,7 @@ func TestCanonicalArtifactDecodeRejectsPathTraversal(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/security-rejection-during-decode
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsDeviceFiles(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -266,7 +266,7 @@ func TestCanonicalArtifactVerifyRejectsBadContentDigest(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/archive-digest-resolves-the-self-reference-problem
+// spec: marketplace-api/archive-digest-verification-catches-archive-tampering
 func TestCanonicalArtifactVerifyRejectsBadArchiveDigest(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -291,7 +291,7 @@ func TestCanonicalArtifactVerifyRejectsBadArchiveDigest(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/oversized-resource-rejection
+// spec: marketplace-api/oversized-resource-rejection
 func TestCanonicalArtifactValidateRejectsOversizedPayload(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -308,7 +308,7 @@ func TestCanonicalArtifactValidateRejectsOversizedPayload(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/oversized-resource-rejection
+// spec: marketplace-api/oversized-resource-rejection
 func TestCanonicalArtifactValidateRejectsOversizedAsset(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -376,7 +376,7 @@ func writeTarGz(t *testing.T, prepare func(tw *tar.Writer)) []byte {
 	return buf.Bytes()
 }
 
-// spec: marketplace-protocols/payload-contains-resource-name
+// spec: marketplace-api/payload-contains-resource-name
 func TestFromIRPreservesExtraAndNameWins(t *testing.T) {
 	extra := map[string]any{
 		"x-agent-marketplace-foo": "bar",
@@ -517,7 +517,7 @@ func TestCanonicalManifestValidateFindings(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/canonical-artifact-round-trip
+// spec: marketplace-api/canonical-artifact-round-trip
 func TestCanonicalArtifactRoundTripCarriesAssetsLicensesAndSupport(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {

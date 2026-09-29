@@ -531,7 +531,5 @@ The current glossary and ADRs describe pins stored in consumer config. Those des
 - [PR #123](https://github.com/Adyen/agent-marketplace/pull/123), especially its [layer-owned lock design at the inspected revision](https://github.com/Adyen/agent-marketplace/blob/24123dbf5a8d55a1569094f6dcfc8dbc13685fab/docs/plans/2026-08-31-layer-owned-lockfiles-design.md).
 - [Existing config model](../../internal/config/config.go), [Marketplace pins](../../internal/config/marketplace.go), [merge semantics](../../internal/config/merge.go), and [selection implementation](../../internal/resolver/resolver.go).
 - [Selection and precedence reference](../PRECEDENCE.md), with implementation and tests authoritative where existing descriptions disagree.
-- [Marketplace identity ADR](../adr/0002-separate-marketplace-identity-from-installed-names.md).
 - [Registry occurrence ADR](../adr/0004-separate-registry-occurrences-from-resource-revisions.md).
-- [Collection membership ADR](../adr/0005-use-content-addressed-collection-manifests-and-selection-edges.md).
 - [Current domain glossary](../../openspec/config.yaml) and [coding standards](../../CODING_STANDARDS.md).

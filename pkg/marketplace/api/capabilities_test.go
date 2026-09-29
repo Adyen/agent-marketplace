@@ -25,6 +25,7 @@ func TestDefaultCapabilitiesAdvertisesV1(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/capabilities-document-declares-acquisition-modes-and-server-features
 func TestDefaultCapabilitiesListsAcquisitionModes(t *testing.T) {
 	caps := DefaultCapabilities()
 	for _, want := range []string{AcquisitionIndexOnly, AcquisitionMirror} {
@@ -34,6 +35,7 @@ func TestDefaultCapabilitiesListsAcquisitionModes(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/capabilities-document-declares-acquisition-modes-and-server-features
 func TestDefaultCapabilitiesAdvertisesCatalogProjectionV1Alpha1(t *testing.T) {
 	caps := DefaultCapabilities()
 	if !slices.Contains(caps.Features, "catalog-projection-v1alpha1") {
@@ -41,6 +43,7 @@ func TestDefaultCapabilitiesAdvertisesCatalogProjectionV1Alpha1(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/well-known-document-exposes-browser-templates-only-when-configured
 func TestDefaultWellKnownAdvertisesBrowserTemplatesOnlyWhenConfigured(t *testing.T) {
 	withoutBrowser := DefaultWellKnown("mp", "https://api.example")
 	if withoutBrowser.BrowserBase != "" || withoutBrowser.BrowserLatestRoute != "" || withoutBrowser.BrowserExactRoute != "" {
@@ -84,7 +87,7 @@ func TestIsCanonicalGitCommit(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/selectable-resource-kinds
+// spec: marketplace-api/selectable-resource-kinds
 func TestIsMarketplaceKind(t *testing.T) {
 	if want := []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"}; !slices.Equal(SupportedResourceKinds, want) {
 		t.Fatalf("SupportedResourceKinds = %v, want %v", SupportedResourceKinds, want)
@@ -101,7 +104,7 @@ func TestIsMarketplaceKind(t *testing.T) {
 	}
 }
 
-// spec: marketplace-protocols/bidirectional-kind-conversion
+// spec: marketplace-api/bidirectional-kind-conversion
 func TestKindIRConversion(t *testing.T) {
 	pairs := []struct {
 		kind string

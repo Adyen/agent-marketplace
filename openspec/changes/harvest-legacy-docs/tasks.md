@@ -18,13 +18,13 @@
 
 - [ ] 2.1 Harvest and delete `docs/adr/0001-marketplace-indexes-git-and-mirrors-canonical-artifacts.md` → marketplace-store; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 2.2 Harvest and delete `docs/adr/0001-telemetry-authority-and-routing.md` → telemetry; verify the file is gone and every carried claim has a `// spec:` test
-- [ ] 2.3 Harvest and delete `docs/adr/0002-separate-marketplace-identity-from-installed-names.md` → marketplace-api, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 2.3 Harvest and delete `docs/adr/0002-separate-marketplace-identity-from-installed-names.md` → marketplace-api, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 2.4 Harvest and delete `docs/adr/0003-codex-native-harness-and-owned-config.md` → harness-codex, owned-entry-reconciliation; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 2.5 Harvest and delete `docs/adr/0003-separate-nuxt-marketplace-frontend.md` → marketplace-web; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 2.6 Harvest and delete `docs/adr/0004-separate-registry-occurrences-from-resource-revisions.md` → marketplace-store; verify the file is gone and every carried claim has a `// spec:` test
-- [ ] 2.7 Harvest and delete `docs/adr/0005-use-content-addressed-collection-manifests-and-selection-edges.md` → marketplace-api, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 2.7 Harvest and delete `docs/adr/0005-use-content-addressed-collection-manifests-and-selection-edges.md` → marketplace-api, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 2.8 Harvest and delete `docs/adr/0006-compute-effective-revocation-from-live-desired-state.md` → marketplace-store; verify the file is gone and every carried claim has a `// spec:` test
-- [ ] 2.9 Harvest and delete `docs/adr/0007-require-immutable-inspection-projections.md` → marketplace-api; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 2.9 Harvest and delete `docs/adr/0007-require-immutable-inspection-projections.md` → marketplace-api; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 2.10 Harvest and delete `docs/adr/0008-use-layer-owned-acquisition-lockfiles.md` → acquisition-lock; verify the file is gone and every carried claim has a `// spec:` test
 
 ## 3. Harness validation notes
@@ -46,7 +46,7 @@
 - [ ] 4.4 Harvest and delete `docs/plans/2026-08-04-marker-to-ownership-migration.md` → owned-entry-reconciliation, harness-devin; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.5 Harvest and delete `docs/plans/2026-08-06-ownership-locking-design.md` → owned-entry-reconciliation; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.6 Harvest and delete `docs/plans/2026-08-14-transparent-telemetry.md` → telemetry; verify the file is gone and every carried claim has a `// spec:` test
-- [ ] 4.7 Harvest and delete `docs/plans/2026-08-18-marketplace-serve-design.md` → marketplace-api, marketplace-store; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 4.7 Harvest and delete `docs/plans/2026-08-18-marketplace-serve-design.md` → marketplace-api, marketplace-store; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.8 Harvest and delete `docs/plans/2026-08-31-layer-owned-lockfiles-design.md` → acquisition-lock; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.9 Harvest and delete `docs/plans/2026-08-31-lockfile-package-manager-research.md` → acquisition-lock; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.10 Harvest and delete `docs/plans/2026-09-01-inventory-metrics-design.md` → telemetry; verify the file is gone and every carried claim has a `// spec:` test
