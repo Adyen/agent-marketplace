@@ -9,7 +9,7 @@
 
 - [ ] 2.1 Check off rows 1.1 and 4.14 in `openspec/changes/harvest-legacy-docs/tasks.md`
 - [ ] 2.2 Delete `docs/PRECEDENCE.md` and `docs/plans/2026-09-07-unified-resource-config-design.md`
-- [ ] 2.3 Remove or repoint every remaining reference to the deleted documents in `README.md`, `AGENTS.md`, `docs/adoption-guide.md`, `docs/tui-product-contract.md`, and `docs/plans/2026-09-24-pre-v4-regression-gates.md`; verify a repo-wide search for both paths returns hits only under `openspec/changes/archive`
+- [ ] 2.3 Remove or repoint every remaining reference to the deleted documents in `README.md`, `AGENTS.md`, `docs/adoption-guide.md`, `docs/tui-product-contract.md`, and `docs/plans/2026-09-24-pre-v4-regression-gates.md`; verify no surviving file outside `openspec/changes/` links to either deleted document (the harvest ledger's checked rows and this change's own artifacts name the paths as backticked mentions, not links)
 - [ ] 2.4 Verify every claim under the design's Discarded claims is genuinely not carried into the spec and every carried claim has an annotated test, by re-reading both deleted documents against the change
 
 ## 3. Verify and archive

@@ -16,7 +16,7 @@ Consumer configuration SHALL express a Marketplace endpoint registration as a na
 #### Scenario: v4 root rejects legacy installation keys
 
 - **WHEN** a v4 root declares a legacy top-level installation key
-- **THEN** the root MUST be rejected with a diagnostic naming the key
+- **THEN** the root MUST be rejected with a legacy-installation-key diagnostic
 
 #### Scenario: v2 and v3 roots declare Marketplace entries
 
@@ -53,6 +53,12 @@ Consumer configuration SHALL validate every Marketplace endpoint registration an
 - **THEN** validation MUST accept both entries
 - **AND** two entries in one file MUST be rejected
 
+#### Scenario: Provisional instance entry defers to a verified layered instance
+
+- **WHEN** an organization entry declares a provisional instance ID and another layer declares the same alias at the same canonical endpoint URL with a verified instance ID
+- **THEN** validation MUST accept both entries
+- **AND** the same alias at a different endpoint URL, both entries in one file, or two verified instances at one endpoint MUST be rejected
+
 #### Scenario: Unsafe identity and endpoint fields are rejected
 
 - **WHEN** an entry declares a URL carrying credentials, a query, or an encoded unsafe path, an instance ID containing whitespace or a slash, an alias containing a control character, or a pin with an invalid registry slug
@@ -62,7 +68,7 @@ Consumer configuration SHALL validate every Marketplace endpoint registration an
 #### Scenario: Personal-local duplicate aliases are rejected at load
 
 - **WHEN** a personal-local root declares two Marketplace entries with the same alias
-- **THEN** loading the root MUST fail with a diagnostic naming the duplicate
+- **THEN** loading the root MUST fail with a duplicate-alias diagnostic
 
 ### Requirement: Consumer Marketplace configuration merge
 

@@ -14,7 +14,7 @@ Consumer Marketplace configuration — Marketplace endpoint registrations, Marke
 
 **Non-Goals:**
 - Baselining any config-layering content beyond consumer Marketplace configuration. Include syntax, include-tree validation and trust, layer files and locations, `allowed_registries` first authority, target-harness precedence, and migration consent stay for later baseline changes and are recorded under **Discarded claims**.
-- Carrying acquisition-lock or migration claims: the exact-pin lock wire shape, provisional instance identity, and consent-based migration are owned by the acquisition-lock-codec and config-migration baselines.
+- Carrying acquisition-lock or migration claims: the exact-pin lock wire shape and consent-based migration are owned by the acquisition-lock-codec and config-migration baselines. The provisional-instance validation rule is consumer-configuration validation and is carried here; only the lock record shape that carries a provisional instance stays with acquisition-lock-codec.
 - Touching any other `marketplace-api` requirement.
 
 ## Decisions
@@ -27,13 +27,13 @@ OpenSpec cannot move a requirement between capabilities, so the delta REMOVES th
 
 The three proven scenario behaviors carry across with the same annotated tests; test files change in comment lines only. The two validation scenarios keep their titles and WHEN/THEN verbatim. *Layered config wiring* is retitled to **Layered merge retains per-layer provenance and first-set allowlist**: the scenario states merge outcomes, not wiring.
 
-Eight scenarios are added for observable consumer-configuration behaviors already proven by existing passing tests that were never bound to a consumer-configuration scenario (the prior baseline recorded them as claims that "enter a spec when their owning consumer-configuration scenarios are baselined"). Each is proven by adding one `// spec:` annotation line; no new test logic.
+Nine scenarios are added for observable consumer-configuration behaviors already proven by existing passing tests that were never bound to a consumer-configuration scenario (the prior baseline recorded them as claims that "enter a spec when their owning consumer-configuration scenarios are baselined"). Each is proven by adding one `// spec:` annotation line; no new test logic.
 
-Schema coexistence wording: the expression scenarios state the v4 and v2/v3 spellings as current behavior of roots that declare those `apiVersion` values. They carry no deprecation narrative or migration direction, which the spec rules forbid; both spellings load today through their own readers.
+Schema coexistence wording: the expression scenarios state the v4 and v2/v3 spellings as current behavior of roots that declare those `apiVersion` values. They carry no deprecation narrative or migration direction, which the spec rules forbid; both spellings load today through their own readers. The prior rebaseline removed version wording from a requirement that claimed a canonical schema had been superseded; this change names the declared `apiVersion` of the root as the observable input that selects the spelling.
 
 ### D3. Purpose edit
 
-A delta cannot modify an existing capability's Purpose, so `openspec/specs/marketplace-api/spec.md` is edited directly to drop the "consumer Marketplace configuration" phrase from its Purpose list. The pinned CLI documents this as the sanctioned way to change an existing capability's Purpose; `openspec validate --all --strict` and `make spec-check` verify the result. The edit lands with the annotation moves in the same commit.
+A delta cannot modify an existing capability's Purpose; the pinned CLI's artifact instructions state that changing an existing capability's Purpose means editing the live spec file (`openspec/specs/marketplace-api/spec.md`) directly. That direct edit drops the "consumer Marketplace configuration" phrase from the Purpose list, lands with the annotation moves, and is verified by `openspec validate --all --strict` and `make spec-check`.
 
 ### D4. Annotation slug map
 
@@ -54,15 +54,16 @@ New annotations go on existing passing tests:
 | `v2-and-v3-roots-declare-marketplace-entries` | `TestMarketplaceConfigRoundTrip`, `TestV3MarketplaceRejectsDevelopmentAliasesEvenWithOtherConfigErrors` |
 | `duplicate-and-reserved-marketplace-aliases-are-rejected` | `TestValidateMarketplaceEntriesRejectsDuplicateAndReservedAliases` |
 | `layered-alias-accepted-for-one-endpoint-identity` | `TestValidateMarketplaceEntriesAllowsLayeredAliasForSameIdentity` |
+| `provisional-instance-entry-defers-to-a-verified-layered-instance` | `TestValidateMarketplaceEntriesTreatsAProvisionalInstanceAsUnknown` |
 | `unsafe-identity-and-endpoint-fields-are-rejected` | `TestValidateMarketplaceEntriesRejectsUnsafeIdentityAndEndpointFields` |
 | `personal-local-duplicate-aliases-are-rejected-at-load` | `TestLocalMarketplaceValidationCoversAllEntries` |
 | `allowed-marketplace-patterns-follow-include-authority-in-a-v4-root` | `TestV4IncludeMergesAuxiliaryPolicyByField` |
 
-Binding notes: the legacy-installation-key scenario names the key family, and both bound tests exercise the same `legacy installation key` rejection rule for family members (`skills`, `registries`); no test exercises the `marketplaces` spelling specifically, which the Discarded claims record. The v2/v3 expression scenario binds the v2 round-trip test for retention and the v2/v3-reader test for pin rejection; both readers accept both declared versions.
+Binding notes: the legacy-installation-key scenario names the key family, and both bound tests exercise the same `legacy installation key` rejection rule for family members (`skills`, `registries`); no test exercises the `marketplaces` spelling specifically, which the Discarded claims record. The v2/v3 expression scenario binds the v2 round-trip test for retention and the v2/v3-reader test for pin rejection; no test declares `agent-marketplace/v3` together with `marketplaces` entries, so the v3 spelling is proven through the single shared v2/v3 reader that accepts both `apiVersion` sentinels identically — a v3-declared load test could strengthen the binding later without any behavior change.
 
 ### D5. Harvest absorption and link repointing
 
-Rows 1.1 and 4.14 are checked off in `openspec/changes/harvest-legacy-docs/tasks.md`, and both documents are deleted. A repo-wide search for references to either path must return hits only under `openspec/changes/archive`. The live references are:
+Rows 1.1 and 4.14 are checked off in `openspec/changes/harvest-legacy-docs/tasks.md`, and both documents are deleted. No surviving file outside `openspec/changes/` may link to either deleted document; the harvest ledger's checked rows and this change's own artifacts name the paths as backticked mentions, not links, and stay. The live references are:
 
 - `README.md` (four links) — drop the link sentences or reword so they no longer point at the deleted reference.
 - `AGENTS.md` — the Core Concept sentence "See [the precedence reference](./docs/PRECEDENCE.md) for include syntax, validation, migration consent, and merge order." and the File Layout row for `PRECEDENCE.md` are removed.
@@ -106,7 +107,7 @@ Every claim from the two absorbed documents that is not carried into `config-lay
 - **Marketplace exclusions** (an exclusion-only group acquires nothing and needs no lock; exclusions take precedence over includes; required groups immune): owned by `resource-selection` and `acquisition-lock-codec`.
 - **V4 selection decision order** (include-tree order, dynamic `all`/tag candidates, exclusion suppression, re-enablement by later includes, `required`-only groups selecting zero, empty `tags` and `harnesses` semantics): owned by `resource-selection`.
 - **Layer order** (the four layers, their file locations, and higher-layers-override): carried only as the merge scenario's observable outcome; the layer file locations and their management notes are owned by a later `config-layering` baseline addition.
-- **Layer locks** (per-layer lock files, lock composition not changing selection precedence, lock v2 as the only write format, v1 upgrade behavior, `lock.version-deprecated`, exact Marketplace records in the lock): owned by `acquisition-lock-codec`.
+- **Layer locks** (per-layer lock files, lock composition not changing selection precedence, lock v2 as the only write format, v1 upgrade behavior, `lock.version-deprecated`, exact Marketplace records in the lock, including the provisional-instance lock record): owned by `acquisition-lock-codec`.
 - **Target harnesses** (project-first precedence `RepoCommitted` → `UserPersonal` → `Organization`, absent-or-empty lists not setting the target set, per-entry narrowing): owned by a later `config-layering` baseline addition.
 - **Registry allowlist** (`allowed_registries` first-authority within and across layers, `host/path` matching form without scheme, `git@` prefix, trailing slash, or `.git` suffix, empty-versus-omitted semantics, `config.local.yaml` cannot declare it): owned by `resource-selection`; the analogous `allowed_marketplaces` first-set rule is carried here. No test proves the `config.local.yaml` restriction for `allowed_marketplaces` itself, so that specific restriction is not carried.
 - **Registry-level selection rules**, **ExcludeAll**, **Exclude precedence**, **Removal scope** (scope selection, authority boundaries, `--from` semantics, collection removal), **Collection precedence** (expansion, pinned paths and refs, binding eligibility, nested definitions), **Resource prerequisites**, **Name collisions and ambiguity** (winner ordering, hook additivity, overlapping paths, remediation), and **Practical examples**: owned by `resource-selection` (and `config-mutation` for removal edits).
