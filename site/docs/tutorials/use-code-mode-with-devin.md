@@ -10,11 +10,7 @@ You need Git, Devin CLI, and an `agent-marketplace` binary that supports code mo
 agent-marketplace mcp --help
 ```
 
-Expect help for `mcp`, including `enable` and `disable`:
-
-![Terminal help listing the mcp enable and disable commands](../images/code-mode/mcp-help.png)
-
-If the CLI reports `unknown command "mcp"`, use a build containing code mode before continuing. Keep the binary at the same path while you use this setup: `sync` registers its executable path with Devin.
+Expect help for `mcp`, the stdio code-mode server. Keep the binary on `PATH` while you use this setup: the installed MCP entry launches `agent-marketplace mcp` by name.
 
 ## 1. Create a practice registry
 
@@ -48,15 +44,15 @@ Expect the v4 configuration shown above. It points to the local registry and sel
 
 ## 2. Register the code-mode server with Devin
 
-Opt in at repository scope, then synchronize the Devin MCP configuration:
+Install the first-party `code-mode` collection from the Agent Marketplace Git registry, then synchronize the Devin MCP configuration:
 
 ```bash
-agent-marketplace mcp enable --scope repo
+agent-marketplace install code-mode --from https://github.com/Adyen/agent-marketplace --path skills
 agent-marketplace sync
 cat .devin/mcp_config.json
 ```
 
-The enable command reports `codeMode enabled in <practice-repo>/.agents/config.yaml`; `sync` should finish without errors. In the JSON file, find an `agent-marketplace` MCP server whose command is the absolute path of your CLI binary and whose arguments include `mcp`. Notice that only the server was registered; no `hello-code-mode` skill file was installed into `.devin/skills/`.
+The collection selects the `agent-marketplace` MCP server and a bootstrap skill; `sync` should finish without errors. In the JSON file, find an `agent-marketplace` MCP server whose command launches `agent-marketplace mcp`. Notice that the practice `hello-code-mode` skill was not installed into `.devin/skills/`; only the code-mode collection was selected.
 
 ## 3. Find the skill from Devin
 
@@ -102,13 +98,13 @@ Expect at least one session-log file. The `skills.load` event records the skill 
 
 ## 6. Unregister the practice server
 
-Leave the Devin session, then remove the practice repo's opt-in setting and synchronize again:
+Leave the Devin session, then remove the `code-mode` collection and synchronize again:
 
 ```bash
-agent-marketplace mcp disable --scope repo
+agent-marketplace remove code-mode
 agent-marketplace sync
 ```
 
-Expect `codeMode disabled in <practice-repo>/.agents/config.yaml` and a sync without errors. The managed `agent-marketplace` entry is removed from this repo's `.devin/mcp_config.json`; your machine-local session log remains available for audit.
+Expect a sync without errors. The managed `agent-marketplace` entry is removed from this repo's `.devin/mcp_config.json`; your machine-local session log remains available for audit.
 
 You have now discovered and loaded a skill dynamically without installing it. For the exact `search`, `execute`, and `promote` interfaces, see the [CLI reference](../reference/cli.md#mcp).

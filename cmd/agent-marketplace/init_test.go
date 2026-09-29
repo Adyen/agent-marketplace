@@ -177,7 +177,7 @@ func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil, false); err != nil {
+	if err := runInit(&out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 
@@ -252,7 +252,7 @@ func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil, false); err != nil {
+	if err := runInit(&out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 
@@ -349,7 +349,7 @@ func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil, false); err != nil {
+	if err := runInit(&out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 

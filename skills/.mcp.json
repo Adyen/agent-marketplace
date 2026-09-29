@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agent-marketplace": {
+      "command": "agent-marketplace",
+      "args": ["mcp"]
+    }
+  }
+}

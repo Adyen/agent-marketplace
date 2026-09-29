@@ -1,147 +1,62 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestV4ParsesCodeMode(t *testing.T) {
-	cfg, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\ncodeMode:\n  enabled: true\n"), "config.yaml", true)
-	if err != nil {
-		t.Fatalf("ParseV4Config: %v", err)
+// spec: code-mode-mcp/retired-enablement-fails-with-migration-guidance
+func TestCodeModeRootsFailWithMigrationGuidance(t *testing.T) {
+	assertGuidance := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("expected codeMode migration error")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "codeMode") || !strings.Contains(msg, "install") || !strings.Contains(msg, "code-mode") {
+			t.Fatalf("error is not actionable code-mode guidance: %v", err)
+		}
 	}
-	if cfg.CodeMode == nil || !cfg.CodeMode.EnabledValue() {
-		t.Fatalf("CodeMode = %+v", cfg.CodeMode)
-	}
-}
 
-func TestV4RejectsUnknownCodeModeField(t *testing.T) {
-	_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\ncodeMode:\n  enabled: true\n  extra: 1\n"), "config.yaml", true)
-	if err == nil {
-		t.Fatal("expected unknown-field error")
-	}
-}
+	t.Run("v4 root", func(t *testing.T) {
+		_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\ncodeMode:\n  enabled: true\n"), "config.yaml", true)
+		assertGuidance(t, err)
+		var v4err *V4ValidationError
+		if !errors.As(err, &v4err) || v4err.Code != "v4.code-mode-removed" {
+			t.Fatalf("expected coded v4.code-mode-removed error, got %v", err)
+		}
+	})
 
-// spec: code-mode-mcp/layer-precedence-resolves-effective-enable
-func TestCodeModeMergePrecedence(t *testing.T) {
-	tru := true
-	fal := false
-	org := Layer{Source: Organization, Config: &Config{CodeMode: &CodeModeConfig{Enabled: &fal}}}
-	user := Layer{Source: UserPersonal, Config: &Config{CodeMode: &CodeModeConfig{Enabled: &tru}}}
-	merged := MergeLayers([]Layer{org, user})
-	if !merged.CodeMode.EnabledValue() {
-		t.Fatal("organization false force-disabled a declaring lower layer")
-	}
-	merged = MergeLayers([]Layer{org})
-	if merged.CodeMode.EnabledValue() {
-		t.Fatal("organization false did not apply when nothing else declared")
-	}
-	if MergeLayers(nil).CodeMode.EnabledValue() {
-		t.Fatal("code mode enabled with no declarations")
-	}
-}
+	t.Run("v4 included fragment", func(t *testing.T) {
+		dir := t.TempDir()
+		writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "codeMode:\n  enabled: true\n")
+		root := filepath.Join(dir, "config.yaml")
+		writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\n")
+		_, err := LoadV4ConfigFromPath(root)
+		assertGuidance(t, err)
+	})
 
-func TestSetAndRemoveCodeMode(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("apiVersion: agent-marketplace/v4\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := SetCodeModeEnabled(path, true); err != nil {
-		t.Fatalf("SetCodeModeEnabled: %v", err)
-	}
-	cfg, err := LoadV4ConfigFromPath(path)
-	if err != nil {
-		t.Fatalf("LoadV4ConfigFromPath: %v", err)
-	}
-	if !cfg.CodeMode.EnabledValue() {
-		t.Fatal("enabled not persisted")
-	}
-	if err := RemoveCodeMode(path); err != nil {
-		t.Fatalf("RemoveCodeMode: %v", err)
-	}
-	cfg, err = LoadV4ConfigFromPath(path)
-	if err != nil {
-		t.Fatalf("LoadV4ConfigFromPath: %v", err)
-	}
-	if cfg.CodeMode != nil {
-		t.Fatalf("codeMode block not removed: %+v", cfg.CodeMode)
-	}
-}
+	t.Run("v2 root", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		body := "apiVersion: agent-marketplace/v2\nharnesses: [claude]\ncodeMode:\n  enabled: true\n"
+		writeIncludeConfig(t, path, body)
+		_, err := LoadConfigFromPath(path)
+		assertGuidance(t, err)
+		after, rerr := os.ReadFile(path)
+		if rerr != nil || string(after) != body {
+			t.Fatalf("rejected root was modified:\n%s", after)
+		}
+	})
 
-func TestSetCodeModeEnabledCreatesV4Roots(t *testing.T) {
-	for _, name := range []string{"config.yaml", "config.local.yaml"} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), name)
-			if err := SetCodeModeEnabled(path, true); err != nil {
-				t.Fatalf("SetCodeModeEnabled: %v", err)
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if PeekAPIVersion(data) != APIVersionV4 {
-				t.Fatalf("fresh root is not v4:\n%s", data)
-			}
-			cfg, err := LoadV4ConfigFromPath(path)
-			if err != nil {
-				t.Fatalf("LoadV4ConfigFromPath: %v", err)
-			}
-			if !cfg.CodeMode.EnabledValue() {
-				t.Fatal("codeMode.enabled not persisted")
-			}
-		})
-	}
-}
-
-func TestSetCodeModeEnabledRefusesLegacyRoots(t *testing.T) {
-	bodies := map[string]string{
-		"v2.yaml":           "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
-		"v3.yaml":           "apiVersion: agent-marketplace/v3\nharnesses: [factory]\n",
-		"noversion.yaml":    "harnesses: [factory]\n",
-		"config.local.yaml": "registries: []\n",
-	}
-	for name, body := range bodies {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), name)
-			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			err := SetCodeModeEnabled(path, true)
-			if err == nil || !strings.Contains(err.Error(), "migrate --scope") {
-				t.Fatalf("expected migrate guidance, got %v", err)
-			}
-			after, err := os.ReadFile(path)
-			if err != nil || string(after) != body {
-				t.Fatalf("legacy root modified:\n%s", after)
-			}
-		})
-	}
-}
-
-func TestRemoveCodeModeAbsentRootIsNoop(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := RemoveCodeMode(path); err != nil {
-		t.Fatalf("RemoveCodeMode: %v", err)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("disable created a config root")
-	}
-}
-
-func TestRemoveCodeModeLeavesLegacyRootUntouched(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	body := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := RemoveCodeMode(path); err != nil {
-		t.Fatalf("RemoveCodeMode: %v", err)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil || string(after) != body {
-		t.Fatalf("legacy root modified:\n%s", after)
-	}
+	t.Run("v3 root", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		writeIncludeConfig(t, path, "apiVersion: agent-marketplace/v3\nharnesses: [claude]\ncodeMode:\n  enabled: true\n")
+		_, err := LoadConfigFromPath(path)
+		assertGuidance(t, err)
+	})
 }

@@ -9,55 +9,6 @@ turns session evidence into a durable installed selection.
 
 ## Requirements
 
-### Requirement: Opt-in registration
-
-Code mode SHALL be off by default. A config layer opts in by declaring
-`codeMode.enabled: true`; only v4 configuration roots accept the `codeMode`
-block, and only `enabled` is a supported field. While the merged effective
-value is true, `sync` SHALL add a required owned `agent-marketplace` MCP
-entry running `agent-marketplace mcp` to every target harness; when the
-effective value is false or absent, `sync` SHALL NOT register it and SHALL
-remove any previously owned entry while preserving handwritten entries.
-Layer merge follows ordinary precedence. `agent-marketplace mcp enable`
-writes `enabled: true` and `mcp disable` removes the block in one selected
-layer (`--scope user|repo|local`); `init --code-mode` enables it in the
-initialized config.
-
-#### Scenario: Sync registers owned server entry while enabled
-
-- **WHEN** `codeMode.enabled` is effectively true and sync runs
-- **THEN** every target harness gains an owned `agent-marketplace` MCP entry
-  launching `agent-marketplace mcp`, and disabling plus re-syncing removes
-  only the owned entry
-
-#### Scenario: Disabled or absent codeMode registers nothing
-
-- **WHEN** no layer enables `codeMode.enabled`
-- **THEN** sync registers no code-mode MCP entry
-
-#### Scenario: Layer precedence resolves effective enable
-
-- **WHEN** layers disagree on `codeMode.enabled`
-- **THEN** the higher-precedence layer's value wins, and no layer present
-  means disabled
-
-#### Scenario: Enable and disable write one config layer
-
-- **WHEN** `mcp enable --scope <s>` or `mcp disable --scope <s>` runs
-- **THEN** only that layer's `codeMode.enabled` is set or removed, and the
-  output directs the user to run `sync`
-
-#### Scenario: Writes refuse legacy configuration roots
-
-- **WHEN** `mcp enable` targets a non-v4 root
-- **THEN** it refuses with a `v4.writer-opt-in` error naming the migrate
-  command and leaves the file unchanged
-
-#### Scenario: Init flag opts in
-
-- **WHEN** `agent-marketplace init --code-mode` runs
-- **THEN** the written config contains `codeMode.enabled: true`
-
 ### Requirement: Two-tool MCP surface over stdio
 
 `agent-marketplace mcp` SHALL serve JSON-RPC 2.0 over stdio at protocol
@@ -331,3 +282,27 @@ recorded provenance cannot route safely, promote SHALL fail closed.
 
 - **WHEN** an entry records a colon-bearing ref with no usable provenance
 - **THEN** promote refuses and directs the user to reload through code mode
+
+### Requirement: Collection-based registration
+
+Code mode SHALL be off by default. The first-party Git registry SHALL publish a `code-mode` collection containing one bootstrap skill and one `agent-marketplace` MCP server resource launching the installed `agent-marketplace mcp` executable. Ordinary resource installation SHALL select both resources, and sync SHALL materialize them only for supported selected harness targets. An unavailable executable or unrepresentable resource SHALL produce a visible actionable failure rather than reporting usable code mode. Ordinary collection removal SHALL remove only owned entries no longer selected elsewhere, preserve handwritten MCP entries and unrelated settings, and refuse unowned collisions. Repeated install, sync, and remove SHALL be idempotent. The former `codeMode` configuration field and the `mcp enable`, `mcp disable`, and `init --code-mode` CLI options SHALL NOT be accepted. Loading a root or fragment with `codeMode` SHALL fail without rewriting that file, with a diagnostic directing the user to remove the field and install the collection. The `agent-marketplace mcp` stdio runtime SHALL remain available with the same `search` and `execute` tool contract.
+
+#### Scenario: Installing collection selects skill and MCP
+
+- **WHEN** a user installs the first-party `code-mode` collection from its Git registry and syncs a supported target
+- **THEN** its bootstrap skill and owned `agent-marketplace mcp` server materialize; a missing executable or unsupported target reports an actionable failure, and an unselected fresh config installs neither
+
+#### Scenario: Removing collection preserves other owners
+
+- **WHEN** a user removes the `code-mode` collection and syncs, including a case where one member is still independently selected or the MCP aggregate contains handwritten entries
+- **THEN** only unselected owned entries are removed, handwritten entries survive, unowned collisions are refused, and repeating the operations does not change the resulting state
+
+#### Scenario: Retired enablement fails with migration guidance
+
+- **WHEN** a root or included config contains `codeMode`, or a user invokes `mcp enable`, `mcp disable`, or `init --code-mode`
+- **THEN** the config load refuses without rewriting it and directs the user to remove the field and install the collection, and the retired CLI options are not available
+
+#### Scenario: Installed server retains two tools
+
+- **WHEN** a harness starts the MCP server installed from the first-party collection
+- **THEN** it serves the existing stdio protocol with `search` and `execute` and no extra tools

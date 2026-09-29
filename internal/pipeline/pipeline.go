@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -707,8 +708,8 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	// acquire a second file description when delegating to resolution.
 	resolveOpts.ExactLockLease = nil
 	resolved := Resolve(ctx, resolveOpts)
-	if resolved.MergedCfg != nil && resolved.MergedCfg.CodeMode.EnabledValue() {
-		resolved.Resolved = append(resolved.Resolved, codeModeMCPServer(resolved.TargetHarnesses))
+	if err := requireCodeModeExecutable(resolved.Resolved); err != nil {
+		resolved.Errors = append(resolved.Errors, err)
 	}
 	result.ResolveResult = resolved
 	for _, warning := range SoftWarnings(resolved) {
@@ -1094,15 +1095,37 @@ func appendLocalConfigIgnoreEntries(f *os.File) error {
 	return nil
 }
 
-func codeModeMCPServer(targets []hcc.Target) resolver.ResolvedArtifact {
-	command, err := os.Executable()
-	if err != nil || command == "" {
-		command = "agent-marketplace"
+func requireCodeModeExecutable(resolved []resolver.ResolvedArtifact) error {
+	for _, artifact := range resolved {
+		server, ok := artifact.Resource.(*ir.McpServer)
+		if !ok || artifact.Name != "agent-marketplace" || server.Disabled {
+			continue
+		}
+		if err := codeModeRuntimeErr(artifact.Name, server); err != nil {
+			return err
+		}
 	}
-	server := ir.NewMcpServer("agent-marketplace", command, []string{"mcp"}, nil, nil, ir.SourceRef{})
-	return resolver.ResolvedArtifact{
-		Entry:     catalog.Entry{Kind: ir.KindMcpServer, Name: "agent-marketplace", Resource: server},
-		Harnesses: targets,
-		Required:  true,
+	return nil
+}
+
+func codeModeRuntimeErr(name string, server *ir.McpServer) error {
+	command := server.Command
+	if !isCodeModeRuntime(command, server.Args) {
+		return nil
 	}
+	if _, err := exec.LookPath(command); err != nil {
+		return fmt.Errorf("code-mode MCP server %q cannot start: executable %q is not available or not executable; ensure the CLI is on PATH or correct its explicit path, then run 'agent-marketplace sync' again", name, command)
+	}
+	return nil
+}
+
+func isCodeModeRuntime(command string, args []string) bool {
+	if len(args) == 0 || args[0] != "mcp" {
+		return false
+	}
+	base := command
+	if i := strings.LastIndexByte(command, '/'); i >= 0 {
+		base = command[i+1:]
+	}
+	return base == "agent-marketplace"
 }

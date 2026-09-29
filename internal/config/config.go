@@ -486,17 +486,9 @@ type Config struct {
 	// Telemetry is the machine-scope telemetry policy. It is only allowed in
 	// the organization and user-personal configuration layers.
 	Telemetry *telemetryconfig.TelemetryConfig `yaml:"telemetry,omitempty"`
-
-	CodeMode *CodeModeConfig `yaml:"codeMode,omitempty"`
 }
 
-type CodeModeConfig struct {
-	Enabled *bool `yaml:"enabled,omitempty"`
-}
-
-func (c *CodeModeConfig) EnabledValue() bool {
-	return c != nil && c.Enabled != nil && *c.Enabled
-}
+const codeModeMigrationGuidance = "the codeMode field was removed; delete it from this file and install the code-mode collection from the agent-marketplace registry (for example 'agent-marketplace install code-mode --from https://github.com/Adyen/agent-marketplace --path skills'), then run 'agent-marketplace sync'"
 
 // SelectorForKind returns the top-level KindSelector for the given resource
 // kind. Returns the zero-value KindSelector for unknown kinds.

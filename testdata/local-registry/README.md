@@ -6,8 +6,8 @@ A local (non-git) registry for manually testing collections without needing a re
 
 ```
 testdata/local-registry/
-├── agent-marketplace            -> symlink to skills/agent-marketplace
-├── agent-marketplace-development -> symlink to skills/agent-marketplace-development
+├── agent-marketplace            -> symlink to skills/skills/agent-marketplace
+├── agent-marketplace-development -> symlink to skills/skills/agent-marketplace-development
 └── collections/
     └── agent-marketplace-tools/
         └── COLLECTION.yaml      ← the collection definition

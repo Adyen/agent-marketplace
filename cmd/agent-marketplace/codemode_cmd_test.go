@@ -6,182 +6,478 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/codemode"
-	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-// spec: code-mode-mcp/enable-and-disable-write-one-config-layer
-func TestMcpEnableThenDisableUserScope(t *testing.T) {
+func writeCodeModeRegistry(t *testing.T, working string) {
+	t.Helper()
+	writeFile(t, filepath.Join(working, "skills", "skills", "code-mode", "SKILL.md"),
+		"---\nname: code-mode\ndescription: Code-mode bootstrap skill\n---\n\n# code-mode\n")
+	writeFile(t, filepath.Join(working, "skills", ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"agent-marketplace","args":["mcp"]}}}`)
+	writeFile(t, filepath.Join(working, "skills", "collections", "code-mode", "COLLECTION.yaml"), `
+name: code-mode
+description: Code mode bootstrap skill plus the agent-marketplace MCP server.
+resources:
+  - name: code-mode
+    kind: skill
+  - name: agent-marketplace
+    kind: mcp
+`)
+}
+
+func stubAgentMarketplaceOnPATH(t *testing.T) {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(bin, "agent-marketplace"), "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(bin, "agent-marketplace"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
+func TestCodeModeCollectionInstallAndSync(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	stubAgentMarketplaceOnPATH(t)
 
-	out, err := executeCommand("mcp", "enable", "--scope", "user")
+	origin, working := createBareRepoWithWorkingClone(t, "agent-marketplace-registry.git")
+	writeCodeModeRegistry(t, working)
+	commitAndPushAll(t, working, "Add code-mode collection")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("sync")
 	if err != nil {
-		t.Fatalf("mcp enable: %v\n%s", err, out)
+		t.Fatalf("sync: %v\n%s", err, out)
 	}
-	cfgPath, err := config.UserPersonalConfigPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("config not written: %v", err)
-	}
-	if !strings.Contains(string(data), "codeMode") || !strings.Contains(string(data), "enabled: true") {
-		t.Fatalf("codeMode.enabled missing:\n%s", data)
+	if data, err := os.ReadFile(filepath.Join(repoRoot, ".mcp.json")); err == nil &&
+		strings.Contains(string(data), "agent-marketplace") {
+		t.Fatalf("code-mode registered without selection:\n%s", data)
 	}
 
-	out, err = executeCommand("mcp", "disable", "--scope", "user")
+	out, err = executeCommand("install", "code-mode", "--from", origin, "--path", "skills")
 	if err != nil {
-		t.Fatalf("mcp disable: %v\n%s", err, out)
+		t.Fatalf("install code-mode collection: %v\n%s", err, out)
 	}
-	data, err = os.ReadFile(cfgPath)
+	out, err = executeCommand("sync")
 	if err != nil {
-		t.Fatalf("config read: %v", err)
+		t.Fatalf("sync after install: %v\n%s", err, out)
 	}
-	if strings.Contains(string(data), "codeMode") {
-		t.Fatalf("codeMode block not removed:\n%s", data)
+
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".mcp.json"))
+	if err != nil {
+		t.Fatalf(".mcp.json missing: %v", err)
+	}
+	if !strings.Contains(string(data), `"agent-marketplace"`) {
+		t.Fatalf("owned agent-marketplace MCP entry missing:\n%s", data)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".claude", "skills", "code-mode")); err != nil {
+		t.Fatalf("bootstrap skill not materialized: %v", err)
 	}
 }
 
-func TestMcpEnableCreatesV4RootsInEachScope(t *testing.T) {
+// spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
+func TestCodeModeCollectionMissingExecutableFails(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	repo := t.TempDir()
-	withWorkingDir(t, repo)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
 
-	for _, scope := range []string{"user", "repo", "local"} {
-		out, err := executeCommand("mcp", "enable", "--scope", scope)
-		if err != nil {
-			t.Fatalf("mcp enable --scope %s: %v\n%s", scope, err, out)
-		}
+	origin, working := createBareRepoWithWorkingClone(t, "agent-marketplace-registry.git")
+	writeCodeModeRegistry(t, working)
+	commitAndPushAll(t, working, "Add code-mode collection")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	cfgPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	cfgBody := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n"
+	writeConfig(t, cfgPath, cfgBody)
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("install", "code-mode", "--from", origin, "--path", "skills")
+	if err == nil || !strings.Contains(err.Error()+out, "executable") {
+		t.Fatalf("expected missing-executable failure, got err=%v out=%s", err, out)
+	}
+	if after, rerr := os.ReadFile(cfgPath); rerr != nil || string(after) != cfgBody {
+		t.Fatalf("failed install changed the config:\n%s", after)
+	}
+	if _, serr := os.Stat(filepath.Join(repoRoot, ".mcp.json")); !os.IsNotExist(serr) {
+		t.Fatal("failed install claimed an MCP entry")
+	}
+}
+
+// spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
+func TestCodeModeCollectionUnrepresentableMemberFails(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	registry := t.TempDir()
+	writeCodeModeRegistry(t, registry)
+	writeFile(t, filepath.Join(registry, "skills", ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"${file:/x}","args":["mcp"]}}}`)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	cfgPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	cfgBody := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  reg:\n    directory: " +
+		filepath.ToSlash(filepath.Join(registry, "skills")) +
+		"\nresources:\n  reg:\n    include: [collection/code-mode]\n"
+	writeConfig(t, cfgPath, cfgBody)
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("sync")
+	if err == nil || !strings.Contains(err.Error()+out, "agent-marketplace") {
+		t.Fatalf("expected unrepresentable-member failure, got err=%v out=%s", err, out)
+	}
+	if data, rerr := os.ReadFile(filepath.Join(repoRoot, ".devin", "mcp_config.json")); rerr == nil &&
+		strings.Contains(string(data), "agent-marketplace") {
+		t.Fatalf("unrepresentable member claimed a usable entry:\n%s", data)
+	}
+	if after, rerr := os.ReadFile(cfgPath); rerr != nil || string(after) != cfgBody {
+		t.Fatalf("failed sync changed the config:\n%s", after)
+	}
+}
+
+// spec: code-mode-mcp/removing-collection-preserves-other-owners
+func TestCodeModeCollectionRemovePreservesOthers(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	stubAgentMarketplaceOnPATH(t)
+
+	origin, working := createBareRepoWithWorkingClone(t, "agent-marketplace-registry.git")
+	writeCodeModeRegistry(t, working)
+	commitAndPushAll(t, working, "Add code-mode collection")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	writeFile(t, filepath.Join(repoRoot, ".mcp.json"),
+		`{"mcpServers":{"handwritten":{"command":"echo","args":["hi"]}}}`)
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("install", "code-mode", "--from", origin, "--path", "skills")
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	if out, err = executeCommand("sync"); err != nil {
+		t.Fatalf("sync: %v\n%s", err, out)
 	}
 
-	userPath, err := config.UserPersonalConfigPath()
+	mcpPath := filepath.Join(repoRoot, ".mcp.json")
+	installed, err := os.ReadFile(mcpPath)
+	if err != nil || !strings.Contains(string(installed), `"agent-marketplace"`) {
+		t.Fatalf("owned agent-marketplace MCP entry missing:\n%s", installed)
+	}
+
+	out, err = executeCommand("install", "agent-marketplace", "--kind", "mcp", "--from", origin, "--path", "skills")
+	if err != nil {
+		t.Fatalf("independent member install: %v\n%s", err, out)
+	}
+	if out, err = executeCommand("sync"); err != nil {
+		t.Fatalf("sync after independent install: %v\n%s", err, out)
+	}
+
+	out, err = executeCommand("remove", "code-mode")
+	if err != nil {
+		t.Fatalf("remove code-mode collection: %v\n%s", err, out)
+	}
+	if out, err = executeCommand("sync"); err != nil {
+		t.Fatalf("sync after remove: %v\n%s", err, out)
+	}
+
+	data, err := os.ReadFile(mcpPath)
+	if err != nil || !strings.Contains(string(data), `"agent-marketplace"`) {
+		t.Fatalf("independently selected MCP entry removed with the collection:\n%s", data)
+	}
+	if !strings.Contains(string(data), "handwritten") {
+		t.Fatalf("handwritten MCP entry pruned:\n%s", data)
+	}
+	if _, serr := os.Stat(filepath.Join(repoRoot, ".claude", "skills", "code-mode")); !os.IsNotExist(serr) {
+		t.Fatal("collection-owned skill not removed")
+	}
+
+	out, err = executeCommand("remove", "agent-marketplace", "--kind", "mcp")
+	if err != nil {
+		t.Fatalf("remove independent member: %v\n%s", err, out)
+	}
+	if out, err = executeCommand("sync"); err != nil {
+		t.Fatalf("sync after member remove: %v\n%s", err, out)
+	}
+	data, err = os.ReadFile(mcpPath)
+	if err == nil && strings.Contains(string(data), `"agent-marketplace"`) {
+		t.Fatalf("owned MCP entry not removed:\n%s", data)
+	}
+	if err == nil && !strings.Contains(string(data), "handwritten") {
+		t.Fatalf("handwritten MCP entry pruned:\n%s", data)
+	}
+
+	if out, err = executeCommand("sync"); err != nil {
+		t.Fatalf("repeat sync: %v\n%s", err, out)
+	}
+	again, rerr := os.ReadFile(mcpPath)
+	if rerr == nil && string(again) != string(data) {
+		t.Fatalf("repeat sync not byte-idempotent:\n--- before ---\n%s\n--- after ---\n%s", data, again)
+	}
+}
+
+// spec: code-mode-mcp/removing-collection-preserves-other-owners
+func TestCodeModeCollectionUnownedCollisionDiagnosed(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	stubAgentMarketplaceOnPATH(t)
+
+	registry := t.TempDir()
+	writeCodeModeRegistry(t, registry)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  reg:\n    directory: "+
+			filepath.ToSlash(filepath.Join(registry, "skills"))+
+			"\nresources:\n  reg:\n    include: [collection/code-mode]\n")
+	mcpPath := filepath.Join(repoRoot, ".mcp.json")
+	handwritten := `{"mcpServers":{"agent-marketplace":{"command":"echo","args":["hi"]}}}`
+	writeFile(t, mcpPath, handwritten)
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("sync")
+	if err == nil || !strings.Contains(err.Error()+out, "agent-marketplace") {
+		t.Fatalf("expected diagnosed unmanaged collision, got err=%v out=%s", err, out)
+	}
+	if data, rerr := os.ReadFile(mcpPath); rerr != nil || string(data) != handwritten {
+		t.Fatalf("unowned colliding entry overwritten:\n%s", data)
+	}
+}
+
+// spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
+func TestSameNameMcpWithOtherRuntimeNotGated(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "agent-marketplace-registry.git")
+	writeCodeModeRegistry(t, working)
+	writeFile(t, filepath.Join(working, "skills", ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"definitely-missing-other-binary","args":["serve"]}}}`)
+	commitAndPushAll(t, working, "Add code-mode collection")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("install", "code-mode", "--from", origin, "--path", "skills")
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	if out, err = executeCommand("sync"); err != nil {
+		t.Fatalf("sync gated an unrelated same-name MCP: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".mcp.json"))
+	if err != nil || !strings.Contains(string(data), "definitely-missing-other-binary") {
+		t.Fatalf("same-name MCP entry not materialized:\n%s", data)
+	}
+}
+
+// spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
+func TestCodeModeGateScopesToSelectedRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	other := t.TempDir()
+	writeFile(t, filepath.Join(other, ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"definitely-missing-other-binary","args":["serve"]}}}`)
+	codemode := t.TempDir()
+	writeFile(t, filepath.Join(codemode, ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"agent-marketplace","args":["mcp"]}}}`)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  a-other:\n    directory: "+
+			filepath.ToSlash(other)+"\n  z-codemode:\n    directory: "+filepath.ToSlash(codemode)+"\n")
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("install", "agent-marketplace", "--kind", "mcp")
+	if err != nil {
+		t.Fatalf("install of non-code-mode agent-marketplace MCP gated by another source: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".mcp.json"))
+	if err != nil || !strings.Contains(string(data), "definitely-missing-other-binary") {
+		t.Fatalf("selected same-name MCP entry not materialized:\n%s", data)
+	}
+}
+
+// spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
+func TestInstallAllRegistrySkipsCodeModeGateOnUnselectedSource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	stubAgentMarketplaceOnPATH(t)
+
+	brokenOrigin, brokenWorking := createBareRepoWithWorkingClone(t, "broken-codemode-registry.git")
+	writeFile(t, filepath.Join(brokenWorking, ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"/nonexistent/bin/agent-marketplace","args":["mcp"]}}}`)
+	commitAndPushAll(t, brokenWorking, "Add broken code-mode MCP")
+
+	selectedOrigin, selectedWorking := createBareRepoWithWorkingClone(t, "selected-codemode-registry.git")
+	writeFile(t, filepath.Join(selectedWorking, ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"agent-marketplace","args":["mcp"]}}}`)
+	writeFile(t, filepath.Join(selectedWorking, "skills", "helper", "SKILL.md"),
+		"---\nname: helper\ndescription: Helper skill\n---\n\n# helper\n")
+	commitAndPushAll(t, selectedWorking, "Add healthy code-mode MCP")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  a-broken:\n    git: file://"+
+			brokenOrigin+"\n    ref: main\n  z-selected:\n    git: file://"+selectedOrigin+"\n    ref: main\n")
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("install", "--all", "--registry", "file://"+selectedOrigin)
+	if err != nil {
+		t.Fatalf("install --all --registry gated by an unselected source: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".mcp.json"))
+	if err != nil || !strings.Contains(string(data), `"agent-marketplace"`) {
+		t.Fatalf("selected agent-marketplace MCP entry missing:\n%s", data)
+	}
+	if strings.Contains(string(data), "/nonexistent/bin/agent-marketplace") {
+		t.Fatalf("unselected source's broken MCP entry materialized:\n%s", data)
+	}
+	if _, serr := os.Stat(filepath.Join(repoRoot, ".claude", "skills", "helper")); serr != nil {
+		t.Fatalf("selected source's skill not materialized: %v", serr)
+	}
+}
+
+// spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
+func TestCodeModeGateFailsSelectedSourceBeforeCommit(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	codemode := t.TempDir()
+	writeFile(t, filepath.Join(codemode, ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"agent-marketplace","args":["mcp"]}}}`)
+	other := t.TempDir()
+	writeFile(t, filepath.Join(other, ".mcp.json"),
+		`{"mcpServers":{"agent-marketplace":{"command":"definitely-missing-other-binary","args":["serve"]}}}`)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	cfgPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	cfgBody := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  a-codemode:\n    directory: " +
+		filepath.ToSlash(codemode) + "\n  z-other:\n    directory: " + filepath.ToSlash(other) + "\n"
+	writeConfig(t, cfgPath, cfgBody)
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("install", "agent-marketplace", "--kind", "mcp")
+	if err == nil || !strings.Contains(err.Error()+out, "executable") {
+		t.Fatalf("expected missing-executable failure, got err=%v out=%s", err, out)
+	}
+	if after, rerr := os.ReadFile(cfgPath); rerr != nil || string(after) != cfgBody {
+		t.Fatalf("failed install changed the config:\n%s", after)
+	}
+	if _, serr := os.Stat(filepath.Join(repoRoot, ".mcp.json")); !os.IsNotExist(serr) {
+		t.Fatal("failed install claimed an MCP entry")
+	}
+}
+
+// spec: code-mode-mcp/installing-collection-selects-skill-and-mcp
+func TestFirstPartyRegistryResolvesPreexistingSkillNames(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	_, thisFile, _, _ := runtime.Caller(0)
+	skillsDir, err := filepath.Abs(filepath.Join(filepath.Dir(thisFile), "..", "..", "skills"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for scope, path := range map[string]string{
-		"user":  userPath,
-		"repo":  config.ProjectConfigPath(repo),
-		"local": config.LocalConfigPath(repo),
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  fp:\n    directory: "+filepath.ToSlash(skillsDir)+"\nresources:\n  fp:\n    include: [skill/agent-marketplace, skill/agent-marketplace-development, skill/registry-authoring]\n")
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("sync against first-party registry: %v\n%s", err, out)
+	}
+	for _, name := range []string{"agent-marketplace", "agent-marketplace-development", "registry-authoring"} {
+		if _, serr := os.Stat(filepath.Join(repoRoot, ".claude", "skills", name)); serr != nil {
+			t.Fatalf("preexisting skill %q not materialized: %v", name, serr)
+		}
+	}
+}
+
+// spec: code-mode-mcp/retired-enablement-fails-with-migration-guidance
+func TestRetiredCodeModeEnablementFails(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	for _, args := range [][]string{
+		{"mcp", "enable"}, {"mcp", "disable"}, {"init", "--code-mode", "--harnesses", "claude"},
 	} {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("%s root missing: %v", scope, err)
-		}
-		if config.PeekAPIVersion(data) != config.APIVersionV4 {
-			t.Fatalf("%s root is not v4:\n%s", scope, data)
-		}
-		cfg, err := config.LoadV4ConfigFromPath(path)
-		if err != nil {
-			t.Fatalf("%s root failed v4 load: %v", scope, err)
-		}
-		if !cfg.CodeMode.EnabledValue() {
-			t.Fatalf("%s root lost codeMode.enabled", scope)
+		if out, err := executeCommand(args...); err == nil {
+			t.Fatalf("%v unexpectedly succeeded: %s", args, out)
 		}
 	}
 
-	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{
-		RepoRoot:         repo,
-		LocalConfigDir:   repo,
-		GlobalPath:       userPath,
-		OrganizationPath: filepath.Join(repo, "absent-org.yaml"),
-	})
-	if len(ec.Errors) > 0 {
-		t.Fatalf("effective load errors: %v", ec.Errors)
+	cfgPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	body := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\ncodeMode:\n  enabled: true\n"
+	writeConfig(t, cfgPath, body)
+	out, err := executeCommand("sync")
+	if err == nil || !strings.Contains(err.Error()+out, "codeMode") || !strings.Contains(err.Error()+out, "install") {
+		t.Fatalf("expected code-mode migration diagnostic, got err=%v out=%s", err, out)
 	}
-	if !ec.Merged.CodeMode.EnabledValue() {
-		t.Fatalf("effective config lost codeMode.enabled: %+v", ec.Merged.CodeMode)
-	}
-	for _, warning := range ec.Warnings {
-		if strings.Contains(warning.Error(), "deprecated") {
-			t.Fatalf("fresh v4 roots produced a legacy warning: %v", warning)
-		}
-	}
-}
-
-// spec: code-mode-mcp/writes-refuse-legacy-configuration-roots
-func TestMcpEnableRefusesLegacyRootsWithoutRewriting(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	repo := t.TempDir()
-	withWorkingDir(t, repo)
-
-	userPath, err := config.UserPersonalConfigPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	localPath := config.LocalConfigPath(repo)
-	roots := map[string]string{
-		userPath:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
-		localPath: "registries: []\n",
-	}
-	for path, body := range roots {
-		writeConfig(t, path, body)
-	}
-
-	out, err := executeCommand("mcp", "enable", "--scope", "user")
-	if err == nil || !strings.Contains(err.Error(), "migrate --scope user") {
-		t.Fatalf("expected user migrate guidance, got %v\n%s", err, out)
-	}
-	out, err = executeCommand("mcp", "enable", "--scope", "local")
-	if err == nil || !strings.Contains(err.Error(), "migrate --scope local") {
-		t.Fatalf("expected local migrate guidance, got %v\n%s", err, out)
-	}
-
-	for path, body := range roots {
-		after, err := os.ReadFile(path)
-		if err != nil || string(after) != body {
-			t.Fatalf("legacy root %s modified:\n%s", path, after)
-		}
-	}
-}
-
-func TestMcpDisableAbsentRootIsNoop(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	out, err := executeCommand("mcp", "disable", "--scope", "user")
-	if err != nil {
-		t.Fatalf("mcp disable on absent root: %v\n%s", err, out)
-	}
-	userPath, err := config.UserPersonalConfigPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, statErr := os.Stat(userPath); !os.IsNotExist(statErr) {
-		t.Fatal("disable created a config root")
-	}
-}
-
-func TestMcpEnableRejectsUnknownScope(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if _, err := executeCommand("mcp", "enable", "--scope", "bogus"); err == nil {
-		t.Fatal("expected unknown scope to fail")
+	after, rerr := os.ReadFile(cfgPath)
+	if rerr != nil || string(after) != body {
+		t.Fatalf("rejected config was modified:\n%s", after)
 	}
 }
 
 // spec: code-mode-mcp/tools-list-exposes-exactly-search-and-execute
+// spec: code-mode-mcp/installed-server-retains-two-tools
 func TestMcpServerListsExactlySearchAndExecute(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -275,30 +571,6 @@ func TestMcpServerExitsOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("server did not exit on context cancel while stdin stayed open")
-	}
-}
-
-// spec: code-mode-mcp/init-flag-opts-in
-func TestInitCodeModeFlagEnablesCodeMode(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	out, err := executeCommand("init", "--harnesses", "claude", "--code-mode")
-	if err != nil {
-		t.Fatalf("init --code-mode: %v\n%s", err, out)
-	}
-	cfgPath, err := config.UserPersonalConfigPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "codeMode") || !strings.Contains(string(data), "enabled: true") {
-		t.Fatalf("codeMode.enabled missing after init --code-mode:\n%s", data)
 	}
 }
 

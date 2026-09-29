@@ -59,7 +59,6 @@ func MergeLayers(layers []Layer) *Config {
 		if layer.Config.Materialization != nil && (layer.Source == UserPersonal || layer.Source == RepoCommitted || layer.Source == RepoPersonal) {
 			merged.Materialization = mergeMaterializationConfig(merged.Materialization, layer.Config.Materialization)
 		}
-		merged.CodeMode = mergeCodeModeConfig(merged.CodeMode, layer.Config.CodeMode)
 		// AllowedRegistries and AllowedMarketplaces use first-non-nil-wins
 		// semantics so that Organization policy cannot be relaxed by
 		// higher-precedence layers.
@@ -190,20 +189,6 @@ func mergeMaterializationConfig(base, override *MaterializationConfig) *Material
 				out.Targets[target] = mode
 			}
 		}
-	}
-	return out
-}
-
-func mergeCodeModeConfig(base, override *CodeModeConfig) *CodeModeConfig {
-	if base == nil && override == nil {
-		return nil
-	}
-	out := &CodeModeConfig{}
-	if base != nil {
-		out.Enabled = base.Enabled
-	}
-	if override != nil && override.Enabled != nil {
-		out.Enabled = override.Enabled
 	}
 	return out
 }
