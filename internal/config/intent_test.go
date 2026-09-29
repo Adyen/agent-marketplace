@@ -338,6 +338,7 @@ func TestReadLayerIntentV4KeepsCapturedCanonicalAfterRemove(t *testing.T) {
 	}
 }
 
+// spec: configuration-intent/captured-configuration-provenance
 func TestReadLayerIntentV4SymlinkRetargetKeepsCapturedProvenance(t *testing.T) {
 	dir := t.TempDir()
 	targetA := filepath.Join(dir, "a")
