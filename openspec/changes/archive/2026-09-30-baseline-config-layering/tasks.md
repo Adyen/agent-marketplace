@@ -15,4 +15,4 @@
 ## 3. Verify and archive
 
 - [x] 3.1 Run `npx --yes @fission-ai/openspec@1.12.0 validate baseline-config-layering --strict --no-interactive` and `make spec-check`; both must pass
-- [ ] 3.2 Run `openspec archive baseline-config-layering --yes` as the final commit of the pull request, then re-run `make spec-check` and `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict --no-interactive`; if archive reports unaccounted wrapped lines in the removed requirement, follow design D6 and rerun
+- [x] 3.2 Run `openspec archive baseline-config-layering --yes` as the final commit of the pull request, then re-run `make spec-check` and `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict --no-interactive`; if archive reports unaccounted wrapped lines in the removed requirement, follow design D6 and rerun

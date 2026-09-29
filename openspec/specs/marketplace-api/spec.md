@@ -114,39 +114,6 @@ document each code.
 - **AND** every code MUST use the `marketplace.find.` prefix
 - **AND** the code set MUST contain no duplicates
 
-### Requirement: Consumer Marketplace configuration
-
-Consumer configuration SHALL support Marketplace endpoint registration
-records and Marketplace installation pins under `marketplaces`, and an
-`allowed_marketplaces` allowlist, validated per entry and merged across
-configuration layers.
-
-#### Scenario: Marketplace entries are validated
-
-- **WHEN** `marketplaces` entries are validated
-- **THEN** entries missing `url` or `instance_id` MUST be rejected
-- **AND** `resources` pins with invalid `digest`, `kind`, or `acquisition`
-  values MUST be rejected
-- **AND** URLs containing `..` MUST be rejected as path traversal
-
-#### Scenario: Marketplace URL allowlist
-
-- **WHEN** Marketplace endpoint URLs are validated against a configured
-  `allowed_marketplaces` allowlist
-- **THEN** URLs matching at least one regex pattern MUST be allowed
-- **AND** URLs matching none MUST be reported as blocked, listing the blocked
-  URLs
-- **AND** an unset allowlist MUST permit all URLs while an empty allowlist
-  MUST deny all non-empty URLs
-
-#### Scenario: Layered config wiring
-
-- **WHEN** configuration layers are merged in precedence order
-- **THEN** Marketplace entries from every layer MUST be retained in layer
-  order, each recording the layer it came from
-- **AND** the first layer that sets `allowed_marketplaces` MUST determine the
-  effective allowlist, so a higher-precedence layer cannot relax it
-
 ### Requirement: Canonical artifact format
 
 A resource artifact SHALL be a deterministic `tar.gz` archive under artifact
