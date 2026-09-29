@@ -1159,6 +1159,8 @@ func TestLoadMalformedCommand(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/structured-mcp-prerequisite
+// spec: resource-prerequisites/shorthand-prerequisite
 func TestRequirementsFromExtra(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1167,6 +1169,13 @@ func TestRequirementsFromExtra(t *testing.T) {
 	}{
 		{
 			name: "nil metadata",
+		},
+		{
+			name: "structured MCP with provider hints",
+			extra: map[string]any{"metadata": map[string]any{"requires": []any{
+				map[string]any{"kind": "mcp", "name": "genai-atlassian", "registry": "git@example.com:mcp.git", "path": "servers"},
+			}}},
+			want: []Requirement{{Kind: ir.KindMcpServer, Name: "genai-atlassian", Registry: "git@example.com:mcp.git", Path: "servers"}},
 		},
 		{
 			name: "MCP and skill requirements",

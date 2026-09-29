@@ -27,7 +27,6 @@
 /dist/
 /.tmp/
 /.local/
-/openspec/changes/
 /.windsurf/
 /.devin/skills/
 /.devin/hooks.v1.json

@@ -2440,6 +2440,7 @@ registries:
 				FilesAbsent: []string{"/root/.factory/skills/not-this-skill"}},
 		},
 	},
+	// spec: resource-prerequisites/install-finds-an-unmet-prerequisite
 	{
 		Name: "mcp/install_skill_prerequisite",
 		Desc: "Given a skill that requires an unselected MCP server, When the skill is installed, Then installation warns without selecting or materializing the MCP prerequisite",
@@ -2481,6 +2482,7 @@ registries:
 			},
 		},
 	},
+	// spec: resource-prerequisites/prerequisite-is-explicitly-excluded
 	{
 		Name: "mcp/install_skill_preserves_excluded_prerequisite",
 		Desc: "Given an explicitly excluded MCP prerequisite, When the requiring skill is installed, Then installation warns and preserves the explicit exclusion",
@@ -2521,6 +2523,8 @@ registries:
 			},
 		},
 	},
+	// spec: resource-prerequisites/sync-reports-without-mutation
+	// spec: resource-prerequisites/status-and-doctor-diagnostics
 	{
 		Name: "mcp/sync_reports_unmet_prerequisite",
 		Desc: "Given a selected skill with an unselected MCP prerequisite, When sync runs, Then the skill is materialized and a remediable warning is emitted",

@@ -1,9 +1,11 @@
-# Marketplace protocols and contracts
+# marketplace-protocols Specification
 
-This specification freezes the public protocol surface introduced by bead
-`agent-marketplace-pf99.1`. See `openspec/changes/agent-marketplace-pf99.1/design.md`
-and `openspec/changes/agent-marketplace-pf99.1/proposal.md` for motivation, scope,
-and design decisions.
+## Purpose
+
+Define the public Marketplace protocol surface shared by the server, CLI, and
+generated clients: the OpenAPI contract, selectable resource kinds, analyzer
+finding codes, consumer Marketplace configuration, and the canonical artifact
+and collection manifest formats.
 
 ## Requirements
 
@@ -15,15 +17,27 @@ public Marketplace API.
 #### Scenario: Required paths and schemas are present
 
 - **WHEN** `api/openapi.yaml` is parsed as YAML
-- **THEN** it MUST contain the paths:
+- **THEN** it MUST contain at least the discovery, catalog, search, registry,
+  resource, revision, manifest, assessment, inspection, content, artifact,
+  browser, and health paths:
   - `/.well-known/agent-marketplace.json`
-  - `/api/v1/capabilities`
-  - `/api/v1/resources`
-  - `/api/v1/artifacts/{kind}/{name}`
-- **AND** it MUST contain the schemas:
-  - `Capabilities`
-  - `WellKnown`
-  - `ResourceListItem`
+  - `/api/v1/capabilities`, `/api/v1/catalog`, `/api/v1/instance`, `/api/v1/search`
+  - `/api/v1/registries`, `/api/v1/registries/{registry}`,
+    `/api/v1/registries/{registry}/history`,
+    `/api/v1/registries/{registry}/occurrences/{commit}`
+  - `/api/v1/resources/{registry}/{kind}/{name}`, its `/revisions` and
+    `/revisions/{revision}` children, and the revision's `/inspection`,
+    `/inspection/content`, and `/inspection/content/{digest}` children
+  - `/api/v1/manifests/{registry-revision}`
+  - `/api/v1/assessments/sha256/{digest}`, `/api/v1/inspection/sha256/{digest}`,
+    `/api/v1/content/sha256/{digest}`, `/api/v1/artifacts/sha256/{digest}`
+  - `/r/{registry}/{kind}/{name}` and `/r/{registry}/{kind}/{name}/revisions/{revision}`
+  - `/healthz`
+- **AND** it MUST contain the schemas `Capabilities`, `WellKnown`, `Marketplace`,
+  `Registry`, `RegistryOccurrence`, `ExactRegistryOccurrence`, `SearchResult`,
+  `ResourceListItem`, `ResourceRevision`, `ResourceAssessment`,
+  `AssessmentFinding`, `ResourceOccurrence`, `Revocation`, `ResourceCoordinate`,
+  `InspectionManifest`, `InspectionFile`, and the `Catalog*` projection schemas
 
 #### Scenario: Go constants match the OpenAPI enum
 
@@ -67,10 +81,9 @@ ship a Markdown catalog that documents each code.
 
 ### Requirement: Consumer config fields
 
-The v2 canonical config schema SHALL support `marketplaces` and
-`allowed_marketplaces` fields. These fields are additive; the canonical `apiVersion`
-remains `agent-marketplace/v2` and `agent-marketplace/v3` is kept as a compatibility
-alias.
+Consumer configuration SHALL support Marketplace endpoint entries
+(`marketplaces` in the legacy v2/v3 schema) and an `allowed_marketplaces`
+allowlist, validated per entry and merged across configuration layers.
 
 #### Scenario: Marketplace entries are validated
 
@@ -91,13 +104,11 @@ alias.
 
 #### Scenario: Layered config wiring
 
-- **WHEN** `Config`, `LocalConfig`, the v3 loader, the merge step, and the
-  effective config resolver are inspected
-- **THEN** `marketplaces` and `allowed_marketplaces` MUST be present in the
-  per-layer allowlists and merged effective config
-- **AND** `marketplaces` entries MUST accumulate across layers and be stamped with
-  their `Source`
-- **AND** `allowed_marketplaces` MUST use first-non-nil-wins precedence
+- **WHEN** configuration layers are merged in precedence order
+- **THEN** Marketplace entries from every layer MUST be retained in layer order,
+  each recording the layer it came from
+- **AND** the first layer that sets `allowed_marketplaces` MUST determine the
+  effective allowlist, so a higher-precedence layer cannot relax it
 
 ### Requirement: Canonical artifact format
 
@@ -151,12 +162,12 @@ revision or an index-only source supplies the bytes.
 
 #### Scenario: Archive digest resolves the self-reference problem
 
-- **WHEN** an artifact is encoded
-- **THEN** the manifest's `archive_digest` MUST be computed over a canonical form
-  of the archive in which `archive_digest` is replaced by a fixed-length placeholder
-- **AND** `VerifyArchiveDigest` MUST recompute the digest using the same placeholder
-  form and, when raw bytes are supplied, MUST also confirm the raw bytes match the
-  canonical final archive
+- **WHEN** `VerifyArchiveDigest` is called on an artifact whose manifest
+  `archive_digest` does not match its canonical archive
+- **THEN** it MUST fail with an archive digest mismatch
+- **AND** when raw archive bytes are supplied that differ from the canonical
+  archive, it MUST fail even if the manifest digest is correct
+- **AND** an untampered encoded artifact MUST verify
 
 ### Requirement: Collection manifest format
 
@@ -184,23 +195,3 @@ manifest for virtual collections. Collection manifests are not tar archives.
 - **THEN** `VerifyCollectionManifest` MUST recompute the digest with
   `content_digest` cleared
 - **AND** a tampered `content_digest` value MUST fail verification
-
-### Requirement: Test and benchmark coverage
-
-All protocol code SHALL have unit tests and hot-path benchmarks.
-
-#### Scenario: Artifact coverage
-
-- **WHEN** `pkg/harness-compilation/artifact` is tested
-- **THEN** there MUST be tests for round-trips of all selectable kinds,
-  determinism, `FromIR` payload content, and rejection of unsafe paths, bad
-  digests, and oversized resources
-- **AND** there MUST be benchmarks for `Encode`, `Decode`, `FromIR`, and
-  `VerifyArchiveDigest`
-
-#### Scenario: Collection coverage
-
-- **WHEN** `pkg/harness-compilation/artifact` is tested
-- **THEN** there MUST be tests for `CollectionFromIR` across all kinds,
-  deterministic encoding, validation of invalid schemas/kinds, and
-  `content_digest` verification

@@ -534,4 +534,4 @@ The current glossary and ADRs describe pins stored in consumer config. Those des
 - [Marketplace identity ADR](../adr/0002-separate-marketplace-identity-from-installed-names.md).
 - [Registry occurrence ADR](../adr/0004-separate-registry-occurrences-from-resource-revisions.md).
 - [Collection membership ADR](../adr/0005-use-content-addressed-collection-manifests-and-selection-edges.md).
-- [Current domain glossary](../../CONTEXT.md) and [coding standards](../../CODING_STANDARDS.md).
+- [Current domain glossary](../../openspec/config.yaml) and [coding standards](../../CODING_STANDARDS.md).
