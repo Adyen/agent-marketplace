@@ -41,6 +41,7 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer func() { _ = db.Close() }()
 		var tbl, def string
 		// spec: digest-owner-lookup/sqlite-store-keeps-digest-owner-index
 		err = db.QueryRow("SELECT tbl_name, sql FROM sqlite_master WHERE type='index' AND name='idx_current_assessments_content'").Scan(&tbl, &def)
@@ -53,7 +54,6 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 		if err != nil || n != 1 {
 			t.Fatalf("resource_revisions content_digest indexes = %d err %v, want 1 (existing preserved)", n, err)
 		}
-		_ = db.Close()
 	}
 }
 

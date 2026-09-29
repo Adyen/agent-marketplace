@@ -87,6 +87,7 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer func() { _ = db.Close() }()
 		// spec: digest-owner-lookup/postgresql-store-keeps-digest-owner-indexes
 		for name, table := range map[string]string{
 			"idx_resource_revisions_content":  "resource_revisions",
@@ -98,7 +99,6 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 				t.Fatalf("index %s on %s: def=%q err=%v, want non-unique (marketplace_id, content_digest)", name, table, def, err)
 			}
 		}
-		_ = db.Close()
 	}
 	dropSchema(t, dsn, schema)
 }
