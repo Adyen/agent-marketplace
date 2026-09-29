@@ -1,0 +1,57 @@
+# Draft seed for pkg/harness-compilation/hookpolicy/testdata/conversions.yaml.
+#
+# Independently authored expected outputs. Expectations are written by hand,
+# never computed from the catalog under test, so a wrong catalog edit fails
+# here. `want_error` is the diagnostic code of a refused hook.
+matchers:
+  - {name: Bash to Factory, source: claude, target: factory, event: PreToolUse, matcher: Bash, want_event: PreToolUse, want_matcher: Execute}
+  - {name: Bash to Cursor, source: claude, target: cursor, event: PreToolUse, matcher: Bash, want_event: preToolUse, want_matcher: "^Shell$"}
+  - {name: Bash to Gemini, source: claude, target: gemini, event: PreToolUse, matcher: Bash, want_event: BeforeTool, want_matcher: "^run_shell_command$"}
+  - {name: Bash to Devin is anchored, source: claude, target: devin, event: PreToolUse, matcher: Bash, want_event: PreToolUse, want_matcher: "^exec$"}
+  - {name: Bash to Codex, source: claude, target: codex, event: PreToolUse, matcher: Bash, want_event: PreToolUse, want_matcher: "^Bash$"}
+  - {name: Bash to Windsurf splits the event, source: claude, target: windsurf, event: PreToolUse, matcher: Bash, want_event: pre_run_command, want_matcher: ""}
+  - {name: Write and Edit to Factory, source: claude, target: factory, event: PostToolUse, matcher: "Write|Edit", want_event: PostToolUse, want_matcher: "^(Create|Edit|ApplyPatch)$"}
+  - {name: Write and Edit to Cursor, source: claude, target: cursor, event: PostToolUse, matcher: "Write|Edit", want_event: postToolUse, want_matcher: "^Write$"}
+  - {name: Write and Edit to Codex, source: claude, target: codex, event: PostToolUse, matcher: "Write|Edit", want_event: PostToolUse, want_matcher: "^apply_patch$"}
+  - {name: Write and Edit to Windsurf, source: claude, target: windsurf, event: PostToolUse, matcher: "Write|Edit", want_event: post_write_code, want_matcher: ""}
+  - {name: Write and Edit to Gemini, source: claude, target: gemini, event: PostToolUse, matcher: "Write|Edit", want_event: AfterTool, want_matcher: "^(write_file|replace)$"}
+  - {name: Edit alone to Cursor would widen, source: claude, target: cursor, event: PreToolUse, matcher: Edit, want_error: hook.matcher-untranslatable}
+  - {name: Edit alone to Factory would miss ApplyPatch, source: claude, target: factory, event: PreToolUse, matcher: Edit, want_error: hook.matcher-untranslatable}
+  - {name: Glob has no Cursor tool, source: claude, target: cursor, event: PreToolUse, matcher: Glob, want_error: hook.matcher-untranslatable}
+  - {name: Regex matcher is refused cross-harness, source: claude, target: factory, event: PreToolUse, matcher: "Bash.*", want_error: hook.matcher-untranslatable}
+  - {name: Legacy Task alias resolves, source: "", target: factory, event: PreToolUse, matcher: Task, want_event: PreToolUse, want_matcher: Task}
+  - {name: Cursor Write becomes Write and Edit, source: cursor, target: claude, event: postToolUse, matcher: Write, want_event: PostToolUse, want_matcher: "Write|Edit"}
+  - {name: Server-scoped MCP to Cursor is refused, source: claude, target: cursor, event: PreToolUse, matcher: "mcp__github__.*", want_error: hook.matcher-untranslatable}
+  - {name: All MCP to Gemini, source: claude, target: gemini, event: PreToolUse, matcher: "mcp__.*", want_event: BeforeTool, want_matcher: "^mcp_.*"}
+  - {name: Server MCP to Gemini, source: claude, target: gemini, event: PreToolUse, matcher: "mcp__github__create_issue", want_event: BeforeTool, want_matcher: "^mcp_github_create_issue$"}
+  - {name: Factory native matcher kept, source: factory, target: factory, event: PreToolUse, matcher: "Execute", want_event: PreToolUse, want_matcher: Execute}
+
+events:
+  - {name: Stop to Gemini, source: claude, target: gemini, event: Stop, want_event: AfterAgent}
+  - {name: Devin PostCompaction to Claude, source: devin, target: claude, event: PostCompaction, want_event: PostCompact}
+  - {name: Devin PostCompaction to Factory, source: devin, target: factory, event: PostCompaction, want_error: hook.event-unmappable}
+  - {name: Codex Interrupt is native only, source: codex, target: claude, event: Interrupt, want_error: hook.event-unmappable}
+  - {name: Claude-only event to Cursor, source: claude, target: cursor, event: PostToolBatch, want_error: hook.event-unmappable}
+
+env:
+  - {name: Project dir to Factory, source: claude, target: factory, command: '"$CLAUDE_PROJECT_DIR"/bin/x', want_command: '"$FACTORY_PROJECT_DIR"/bin/x'}
+  - {name: Cursor accepts the Claude alias, source: claude, target: cursor, command: '"$CLAUDE_PROJECT_DIR"/bin/x', want_command: '"$CLAUDE_PROJECT_DIR"/bin/x'}
+  - {name: Project dir to Codex uses git root, source: claude, target: codex, command: '"$CLAUDE_PROJECT_DIR"/bin/x', want_command: '"$(git rev-parse --show-toplevel)"/bin/x'}
+  - {name: Project dir to Windsurf is relative, source: claude, target: windsurf, command: '"$CLAUDE_PROJECT_DIR"/bin/x', want_command: 'bin/x'}
+  - {name: Env file has no Factory equivalent, source: claude, target: factory, event: SessionStart, command: 'echo x >> "$CLAUDE_ENV_FILE"', want_error: hook.env-unrepresentable}
+  - {name: Unknown variables are untouched, source: claude, target: devin, command: '"$HOME"/bin/x', want_command: '"$HOME"/bin/x'}
+
+timeouts:
+  - {name: Seconds to Gemini, source: claude, target: gemini, event: PreToolUse, timeout: 30, want_timeout: 30000}
+  - {name: Gemini ms rounds up, source: gemini, target: claude, event: BeforeTool, timeout: 2500, want_timeout: 3, want_warning: hook.timeout-rounded}
+  - {name: Gemini ms kept same-harness, source: gemini, target: gemini, event: BeforeTool, timeout: 2500, want_timeout: 2500}
+  - {name: Codex SessionEnd cap, source: codex, target: codex, event: SessionEnd, timeout: 30, want_timeout: 3, want_warning: compile.codex.field-dropped}
+
+allow_lists:
+  - {name: Bash and Read to Factory droid, source: claude, target: factory, surface: subagent_tools, tools: [Read, Bash], want_tools: [Read, Execute]}
+  - {name: Write to Factory droid, source: claude, target: factory, surface: subagent_tools, tools: [Write], want_tools: [Create]}
+  - {name: Edit to Factory droid excludes ApplyPatch, source: claude, target: factory, surface: subagent_tools, tools: [Edit], want_tools: [Edit]}
+  - {name: Write and Edit to Factory droid, source: claude, target: factory, surface: subagent_tools, tools: [Write, Edit], want_tools: [Create, Edit, ApplyPatch]}
+  - {name: Read to Gemini agent, source: claude, target: gemini, surface: subagent_tools, tools: [Read, Grep], want_tools: [read_file, read_many_files, grep_search]}
+  - {name: Write to Devin agent keeps the existing warning, source: claude, target: devin, surface: subagent_tools, tools: [Write], want_tools: null, want_warning: subagent.devin.tool-unknown}
+  - {name: Cursor has no subagent tool list, source: claude, target: cursor, surface: subagent_tools, tools: [Read], want_error: subagent.cursor.tool-unknown}

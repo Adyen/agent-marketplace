@@ -1,0 +1,39 @@
+# Draft seed for pkg/harness-compilation/hookpolicy/catalogs/gemini.yaml.
+schema: 1
+harness: gemini
+evidence:
+  checked: "2026-09-29"
+  refs:
+    - https://geminicli.com/docs/hooks/
+    - https://geminicli.com/docs/hooks/reference/
+  notes: >-
+    Hooks run with a sanitized environment. Timeouts are milliseconds (default
+    60000). Tool-event matchers are regexes; lifecycle matchers are exact
+    strings. AfterAgent ("when the agent loop ends", can force a retry) is
+    linked to Stop. ${extensionPath} is set only for extension hooks.
+
+env:
+  project_dir: [GEMINI_PROJECT_DIR, CLAUDE_PROJECT_DIR]
+  plans_dir: [GEMINI_PLANS_DIR]
+  session_id: [GEMINI_SESSION_ID]
+  cwd: [GEMINI_CWD]
+plugin_env:
+  plugin_root: [extensionPath]
+
+repository_base: {env: project_dir}
+timeout: {unit: milliseconds}
+matcher: {syntax: regex}
+loads_hooks_of: []
+
+events:
+  BeforeTool: {canonical: PreToolUse, matcher: tool, types: [command]}
+  AfterTool: {canonical: PostToolUse, matcher: tool, types: [command]}
+  BeforeAgent: {canonical: UserPromptSubmit, matcher: none, types: [command]}
+  AfterAgent: {canonical: Stop, matcher: none, types: [command]}
+  SessionStart: {canonical: SessionStart, matcher: lifecycle, types: [command]}
+  SessionEnd: {canonical: SessionEnd, matcher: lifecycle, types: [command]}
+  PreCompress: {canonical: PreCompact, matcher: lifecycle, types: [command]}
+  Notification: {canonical: Notification, matcher: lifecycle, types: [command]}
+  BeforeModel: {matcher: none, types: [command]}
+  AfterModel: {matcher: none, types: [command]}
+  BeforeToolSelection: {matcher: none, types: [command]}
