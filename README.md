@@ -1020,7 +1020,8 @@ make release        # cross-compile darwin-arm64/amd64 and linux-amd64/arm64 int
 
 While you iterate, run the affected package first, for example
 `make test TEST_PACKAGES=./internal/resolver TEST_FLAGS="-run TestResolve -count=1"`,
-and run the full gates once before you hand off. Without `TEST_PACKAGES`,
+then run `make validate` and any E2E, TUI QA, or spec gate your change touches
+before you hand off; CI runs the full root suite. Without `TEST_PACKAGES`,
 `make test` asks `tools/test-local` for the packages changed since the merge
 base with `origin/main` (staged, unstaged, untracked, and committed work);
 paths it cannot map to a root-module package fall back to `./...`, e2e-module
