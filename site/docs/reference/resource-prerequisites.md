@@ -2,8 +2,9 @@
 
 A resource can declare `metadata.requires` in its front matter to name other
 resources it needs. Prerequisites are advisory: an unmet prerequisite produces
-a warning with a suggested install command and never changes the exit status
-of any command.
+a warning with a suggested install command. Only `sync --strict` (including
+`sync --strict --check`) fails on an unmet prerequisite; every other command
+keeps it advisory.
 
 Skills, commands, and subagents written as Markdown with front matter read
 `metadata.requires` from the `metadata` map. Hooks and MCP servers have no
@@ -34,10 +35,9 @@ flag:
 | hook | `hook`, `hooks` |
 | mcp | `mcp`, `mcpserver`, `mcpservers`, `mcp_server`, `mcp_servers` |
 
-`collection` is not a supported prerequisite kind, and an empty or missing
-`kind` means `skill`. `kind: all` also resolves to a skill prerequisite
-today; do not rely on that spelling, it is not a supported way to require
-every kind.
+`collection` and `all` are not supported prerequisite kinds, and an empty or
+missing `kind` means `skill`. `all` is a `--kind` filter, not a resource kind,
+so it is rejected in prerequisite declarations rather than read as a skill.
 
 ### Shorthand
 
@@ -53,16 +53,17 @@ metadata:
 
 ## Malformed items
 
-An item that cannot be read is skipped: the resource still loads, the
-remaining items still apply, and nothing is printed in command output. The
-CLI records the skip only in its log file (visible with `--debug`). An item
-is skipped when:
+An item that cannot be read is skipped: the resource still loads and the
+remaining items still apply. `list --from` and `doctor` print a warning with
+the stable code `catalog.requires.invalid`, the declaring resource, its
+source file, and the item index when the malformed value is a list entry;
+the warning never quotes the malformed value. An item is skipped when:
 
 - `metadata.requires` itself is not a list;
 - the item is neither a string nor a map;
 - `name` is missing, blank, or not a string;
 - `kind`, `registry`, or `path` is present but not a string;
-- `kind` names an unknown kind or `collection`.
+- `kind` names an unknown kind, `all`, or `collection`.
 
 ## Satisfaction
 
@@ -96,10 +97,11 @@ item declares those hints. Kinds print as `skill`, `command`, `subagent`,
 
 ## Exit status
 
-Unmet prerequisites are warnings only. `install`, `sync`, `sync --check`,
-`status`, and `doctor` exit with status 0 when unmet prerequisites are the
-only findings, and `sync --strict` does not promote them to errors either —
-`--strict` applies only to unresolved-selection warnings.
+`install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0
+when unmet prerequisites are the only findings. `sync --strict` — including
+`sync --strict --check` — still prints the advisory warning and remediation,
+but exits nonzero so CI can enforce declared prerequisites. Strict mode never
+selects the prerequisite for you.
 
 ## Related documentation
 

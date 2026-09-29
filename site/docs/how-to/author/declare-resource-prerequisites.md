@@ -61,7 +61,7 @@ warning: skill "review-code" requires mcp "docs-server", but it is not selected
 Installed review-code in this repo
 ```
 
-The warning is advisory: `install`, `sync`, `sync --check`, `doctor`, and even `sync --strict` all exit with status 0 when it is the only finding.
+The warning is advisory: `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0 when it is the only finding. `sync --strict` (including `sync --strict --check`) is the exception — it prints the same warning but exits nonzero, so CI can enforce declared prerequisites.
 
 ## 5. Verify with `status`
 
@@ -81,7 +81,7 @@ skill:review-code  mcp:docs-server  agent-marketplace install "docs-server" --ki
 
 ## Troubleshooting
 
-- **No warning appears.** The CLI skips items without a `name`, with an unknown `kind` or `collection`, with non-string fields, or items that are neither a string nor a map. It skips the whole value when `metadata.requires` is not a list. Skips are silent in command output; run with `--debug` and check the log for `ignoring malformed resource requirement` or `ignoring malformed metadata.requires`. `kind: all` currently means skill rather than every kind; use a supported kind instead.
+- **A prerequisite was skipped.** The CLI skips items without a `name`, with an unknown `kind`, `collection`, or `all`, with non-string fields, or items that are neither a string nor a map. It skips the whole value when `metadata.requires` is not a list. Skipped items are reported by `agent-marketplace list --from <registry>` and `agent-marketplace doctor` as a `catalog.requires.invalid` warning naming the resource, its source file, and the item index; the warning never quotes the rejected value. Fix the indicated item and use a supported kind instead of `all`.
 - **The warning does not go away.** Install the prerequisite in any configuration layer that applies to the project, for example with the exact command the warning suggests.
 
 ## Related documentation

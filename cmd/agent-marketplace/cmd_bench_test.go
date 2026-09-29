@@ -189,7 +189,7 @@ func BenchmarkRunSyncCheckLocalRegistry(b *testing.B) {
 			})
 
 			var buf bytes.Buffer
-			err = runSyncCheck(context.Background(), &buf)
+			err = runSyncCheck(context.Background(), &buf, false)
 			if err == nil || !strings.Contains(err.Error(), "out of sync") {
 				b.Fatalf("runSyncCheck error = %v, want out of sync", err)
 			}
@@ -198,7 +198,7 @@ func BenchmarkRunSyncCheckLocalRegistry(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				buf.Reset()
-				if err := runSyncCheck(context.Background(), &buf); err == nil {
+				if err := runSyncCheck(context.Background(), &buf, false); err == nil {
 					b.Fatal("runSyncCheck error = nil, want out of sync")
 				}
 			}

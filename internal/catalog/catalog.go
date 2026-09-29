@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -354,6 +353,7 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 	}
 
 	entries := make([]Entry, 0, len(bundle.Resources))
+	var requiresDiags []diag.Diagnostic
 	for _, r := range bundle.Resources {
 		entry := Entry{
 			Kind:          r.Kind(),
@@ -366,15 +366,18 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 		entry.Tags = tagsFromResource(r)
 
 		// Path from SourceRef
-		if src, ok := sourceRefFromResource(r); ok {
+		src, _ := sourceRefFromResource(r)
+		if src != "" {
 			entry.Path = src
 		}
+		requiresDiags = append(requiresDiags, requiresDiagnosticsFromExtra(extraFromResource(r), r.Name(), src)...)
 
 		entries = append(entries, entry)
 	}
 
-	allDiags := make([]diag.Diagnostic, 0, len(bundle.Diagnostics)+1)
+	allDiags := make([]diag.Diagnostic, 0, len(bundle.Diagnostics)+len(requiresDiags)+1)
 	allDiags = append(allDiags, bundle.Diagnostics...)
+	allDiags = append(allDiags, requiresDiags...)
 	if autodetectDiag.Code != "" {
 		allDiags = append(allDiags, autodetectDiag)
 	}
@@ -416,25 +419,62 @@ func tagsFromExtra(extra map[string]any) []string {
 	}
 }
 
+const CodeRequiresInvalid = "catalog.requires.invalid"
+
+type requirementIssue struct {
+	Index  int
+	Reason string
+}
+
 func requirementsFromExtra(extra map[string]any) []Requirement {
-	if extra == nil {
+	requirements, _ := parseRequirementsExtra(extra)
+	return requirements
+}
+
+func requiresDiagnosticsFromExtra(extra map[string]any, resourceName, sourceFile string) []diag.Diagnostic {
+	_, issues := parseRequirementsExtra(extra)
+	if len(issues) == 0 {
 		return nil
+	}
+	diagnostics := make([]diag.Diagnostic, 0, len(issues))
+	for _, issue := range issues {
+		message := "requires: " + issue.Reason
+		if issue.Index >= 0 {
+			message = fmt.Sprintf("requires item %d: %s", issue.Index, issue.Reason)
+		}
+		diagnostics = append(diagnostics, diag.Diagnostic{
+			Code:     CodeRequiresInvalid,
+			Severity: diag.SeverityWarning,
+			Resource: resourceName,
+			Message:  message,
+			Source:   diag.SourceRef{File: sourceFile},
+		})
+	}
+	return diagnostics
+}
+
+func parseRequirementsExtra(extra map[string]any) ([]Requirement, []requirementIssue) {
+	if extra == nil {
+		return nil, nil
 	}
 	meta, ok := extra["metadata"].(map[string]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	raw, ok := meta["requires"]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	items, ok := raw.([]any)
 	if !ok {
-		slog.Warn("ignoring malformed metadata.requires", "reason", "requires must be a list")
-		return nil
+		return nil, []requirementIssue{{Index: -1, Reason: "requires must be a list"}}
 	}
 	requirements := make([]Requirement, 0, len(items))
+	var issues []requirementIssue
+	skip := func(index int, reason string) {
+		issues = append(issues, requirementIssue{Index: index, Reason: reason})
+	}
 	for i, item := range items {
 		switch value := item.(type) {
 		case string:
@@ -442,29 +482,29 @@ func requirementsFromExtra(extra map[string]any) []Requirement {
 			if ok {
 				requirements = append(requirements, Requirement{Kind: kind, Name: name})
 			} else {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "invalid shorthand")
+				skip(i, "invalid shorthand")
 			}
 		case map[string]any:
 			name, valid := requirementMapString(value, "name", true)
 			name = strings.TrimSpace(name)
 			if !valid || name == "" {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "name must be a non-empty string")
+				skip(i, "name must be a non-empty string")
 				continue
 			}
 			kindText, valid := requirementMapString(value, "kind", false)
 			if !valid {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "kind must be a string")
+				skip(i, "kind must be a string")
 				continue
 			}
 			kind, ok := parseRequirementKind(kindText)
 			if !ok {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "unknown or unsupported kind")
+				skip(i, "unknown or unsupported kind")
 				continue
 			}
 			registry, registryValid := requirementMapString(value, "registry", false)
 			path, pathValid := requirementMapString(value, "path", false)
 			if !registryValid || !pathValid {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "registry and path must be strings")
+				skip(i, "registry and path must be strings")
 				continue
 			}
 			requirements = append(requirements, Requirement{
@@ -474,10 +514,10 @@ func requirementsFromExtra(extra map[string]any) []Requirement {
 				Path:     strings.TrimSpace(path),
 			})
 		default:
-			slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "requirement must be a string or map")
+			skip(i, "requirement must be a string or map")
 		}
 	}
-	return requirements
+	return requirements, issues
 }
 
 func parseRequirementShorthand(value string) (ir.ResourceKind, string, bool) {
@@ -492,8 +532,12 @@ func parseRequirementShorthand(value string) (ir.ResourceKind, string, bool) {
 }
 
 func parseRequirementKind(value string) (ir.ResourceKind, bool) {
-	if strings.TrimSpace(value) == "" {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
 		return ir.KindSkill, true
+	}
+	if strings.EqualFold(trimmed, "all") {
+		return ir.KindSkill, false
 	}
 	kind, ok := skill.ParseKind(value)
 	if !ok || kind == ir.KindCollection {
