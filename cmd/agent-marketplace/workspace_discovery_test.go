@@ -79,7 +79,7 @@ registries:
 	if ensureCalls != 0 {
 		t.Fatalf("global config initialization ran before workspace validation: %d calls", ensureCalls)
 	}
-	if err := runSyncCheck(context.Background(), io.Discard); !errors.Is(err, sentinel) {
+	if err := runSyncCheck(context.Background(), io.Discard, false); !errors.Is(err, sentinel) {
 		t.Fatalf("runSyncCheck error = %v; want discovery sentinel", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(repoRoot, ".agents", "lock.yaml")); !os.IsNotExist(statErr) {
@@ -131,7 +131,7 @@ registries:
 
 	// sync --check must resolve and dry-run materialize against the same
 	// discovered workspace: a fully materialized repository reports in sync.
-	if err := runSyncCheck(context.Background(), io.Discard); err != nil {
+	if err := runSyncCheck(context.Background(), io.Discard, false); err != nil {
 		t.Fatalf("runSyncCheck against the discovered workspace error = %v; want in sync", err)
 	}
 }
