@@ -36,6 +36,7 @@ func canonicalTestPath(t *testing.T, path string) string {
 // ordering invariant: sync and sync-check must construct the validated
 // Workspace before any lock preparation runs. A discovery failure must
 // surface without a lockfile being written.
+// spec: workspace-resolution/escaping-personal-local-root
 func TestSyncFailsBeforeLockPreparationWhenWorkspaceDiscoveryFails(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
