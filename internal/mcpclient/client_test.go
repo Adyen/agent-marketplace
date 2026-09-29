@@ -153,6 +153,7 @@ func TestEnvironmentFiltering(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/crashed-server-is-not-restarted
 func TestCrashNotRestarted(t *testing.T) {
 	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
 	res := fakeResource(fakeDef(fakeEnv()))
@@ -170,6 +171,7 @@ func TestCrashNotRestarted(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/hung-server-killed-at-deadline
 func TestHangKilledAtDeadline(t *testing.T) {
 	pool := NewPool(NewSchemaCache(t.TempDir()), 150*time.Millisecond)
 	res := fakeResource(fakeDef(fakeEnv()))
@@ -213,6 +215,7 @@ func TestSchemaCacheRoundTrip(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/session-close-stops-child-servers
 func TestPoolCloseStopsChildren(t *testing.T) {
 	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
 	res := fakeResource(fakeDef(fakeEnv()))
@@ -231,6 +234,7 @@ func TestPoolCloseStopsChildren(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/remote-endpoints-require-https-or-loopback
 func TestHTTPRejectedInsecure(t *testing.T) {
 	_, err := NewHTTP(&codemode.ServerDef{URL: "http://example.com/mcp"})
 	if err == nil {

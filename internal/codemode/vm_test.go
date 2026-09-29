@@ -93,6 +93,7 @@ func TestRunUndefinedSerializesToValidJSON(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/host-call-cap-enforced
 func TestRunHostCallLimit(t *testing.T) {
 	calls := 0
 	bind := Bindings{
@@ -110,6 +111,7 @@ func TestRunHostCallLimit(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/no-ambient-host-globals
 func TestRunNoDangerousGlobals(t *testing.T) {
 	res, err := Run(context.Background(), `async () => [
 		typeof process, typeof require, typeof fetch, typeof os, typeof globalThis.process
@@ -122,6 +124,7 @@ func TestRunNoDangerousGlobals(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/failures-carry-stable-codes
 func TestRunScriptErrorCode(t *testing.T) {
 	_, err := Run(context.Background(), `async () => { throw new Error("boom") }`, nil, Limits{})
 	var ce *Error

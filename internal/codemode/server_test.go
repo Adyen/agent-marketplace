@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// spec: code-mode-mcp/requests-answered-over-stdio
 func TestServerE2E(t *testing.T) {
 	store := &SnapshotStore{}
 	store.Store(&Snapshot{Resources: []Resource{{
@@ -101,6 +102,7 @@ func serveTestEngine() *Engine {
 	return &Engine{Snapshots: store, Skills: fakeSkills{}, Pool: newFakePool()}
 }
 
+// spec: code-mode-mcp/server-exits-on-shutdown
 func TestServeReturnsOnContextCancel(t *testing.T) {
 	pr, pw := io.Pipe()
 	defer func() { _ = pw.Close() }()

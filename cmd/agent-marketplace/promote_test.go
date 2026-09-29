@@ -243,6 +243,7 @@ func TestPromoteSelectsRecordedLocalSource(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/recorded-git-source-installed-at-recorded-commit
 func TestPromoteLocksRecordedGitCommit(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -299,6 +300,7 @@ func TestPromoteLocksRecordedGitCommit(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/unprovenanced-ref-fails-closed
 func TestPromoteLegacyAmbiguousColonRefFailsClosed(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -315,6 +317,7 @@ func TestPromoteLegacyAmbiguousColonRefFailsClosed(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/marketplace-promotion-pins-exact-digest
 func TestPromoteMarketplacePinsExactContentDigest(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -416,6 +419,7 @@ func lockHasResourcePin(t *testing.T, lockPath, name string) bool {
 	return false
 }
 
+// spec: code-mode-mcp/marketplace-findings-gate-on-consent
 func TestPromoteMarketplaceWarnRefusesWithoutConsent(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -512,6 +516,7 @@ func TestPromoteMarketplaceWarnInteractiveConsent(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/risk-flags-rejected-for-non-marketplace-sources
 func TestPromoteRejectsRiskFlagsForNonMarketplaceSource(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

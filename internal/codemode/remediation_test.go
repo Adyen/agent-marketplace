@@ -79,6 +79,7 @@ func (p *blockingPool) Call(ctx context.Context, alias string, res *Resource, to
 	}
 }
 
+// spec: code-mode-mcp/deadline-bounds-execution
 func TestExecuteDeadlineBoundsBlockedHostCall(t *testing.T) {
 	e, _ := testEngine(t, []Resource{
 		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
@@ -119,6 +120,7 @@ func (p *deadlinePool) Call(ctx context.Context, alias string, res *Resource, to
 	return nil, ctx.Err()
 }
 
+// spec: code-mode-mcp/declared-servers-gated-before-code-runs
 func TestExecuteGatesDeclaredServersBeforeCode(t *testing.T) {
 	res := []Resource{
 		{Ref: "reg/mcp/revoked", Kind: "mcp", Name: "revoked", Registry: "reg", Assessment: "allow"},
@@ -172,6 +174,7 @@ func TestExecuteFailsClosedWithoutGateEvidence(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/traversal-and-symlink-escape-rejected
 func TestSkillReadRejectsTraversalAndSymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.txt")
@@ -263,6 +266,7 @@ func TestMarketplaceReadRejectsTraversal(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/output-cap-truncates-to-valid-json
 func TestOutputTruncatedProducesValidJSON(t *testing.T) {
 	res, err := Run(context.Background(), `async () => "x".repeat(2 * 1024 * 1024)`, nil, Limits{OutputCap: 1 << 20})
 	if err != nil {
@@ -281,6 +285,7 @@ func TestOutputTruncatedProducesValidJSON(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/loads-and-starts-recorded-with-identity
 func TestServerStartLogged(t *testing.T) {
 	dir := t.TempDir()
 	e, _ := testEngine(t, []Resource{
@@ -342,6 +347,7 @@ func (p *observePool) fire(res *Resource) {
 	}
 }
 
+// spec: code-mode-mcp/revoked-or-rejected-resources-refuse
 func TestSkillLoadErrorsPreserveCodedErrors(t *testing.T) {
 	e, _ := testEngine(t, []Resource{
 		{Ref: "reg/skill/ok", Kind: "skill", Name: "ok", Revision: "v1", Assessment: "allow"},
@@ -394,6 +400,7 @@ func TestSkillLoadErrorsPreserveCodedErrors(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/source-provenance-recorded
 func TestSessionLogRecordsSourceProvenance(t *testing.T) {
 	dir := t.TempDir()
 	gitRes := &Resource{Ref: "github.com:org-repo/skill/x", Kind: "skill", Name: "x", Revision: "main", Assessment: "allow"}
@@ -457,6 +464,7 @@ func TestServerStartLogsContentDigest(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/marketplace-artifacts-verified-by-digest
 func TestResolveServerDefSeparatesArchiveAndContentDigests(t *testing.T) {
 	loader := &FileSkillLoader{Cache: marketplace.NewCache(t.TempDir()), Online: false}
 	srv := ir.NewMcpServer("remote", "echo", []string{"hi"}, nil, nil, ir.SourceRef{})
@@ -830,6 +838,7 @@ func TestSnapshotLabelsSurviveAdversarialSuffixAndIdenticalSources(t *testing.T)
 	}
 }
 
+// spec: code-mode-mcp/ambiguous-alias-fails-closed
 func TestExecuteFailsClosedOnAmbiguousAlias(t *testing.T) {
 	e, _ := testEngine(t, []Resource{
 		{Ref: "reg/mcp/one", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},

@@ -24,6 +24,7 @@ func TestV4RejectsUnknownCodeModeField(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/layer-precedence-resolves-effective-enable
 func TestCodeModeMergePrecedence(t *testing.T) {
 	tru := true
 	fal := false

@@ -57,6 +57,7 @@ func (p *fakePool) Call(ctx context.Context, alias string, res *Resource, tool s
 
 func (p *fakePool) Close() error { return nil }
 
+// spec: code-mode-mcp/search-binds-only-the-catalog
 func TestSearchCatalogBinding(t *testing.T) {
 	e, _ := testEngine(t, []Resource{
 		{Ref: "reg/skill/pdf", Kind: "skill", Name: "pdf", Registry: "reg", Revision: "main", Assessment: "allow"},
@@ -71,6 +72,7 @@ func TestSearchCatalogBinding(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/search-never-starts-servers
 func TestSearchNeverStartsServers(t *testing.T) {
 	e, _ := testEngine(t, []Resource{
 		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Revision: "main", Assessment: "allow"},
@@ -85,6 +87,7 @@ func TestSearchNeverStartsServers(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/unknown-or-malformed-refs-rejected
 func TestExecuteGatesUnknownRef(t *testing.T) {
 	e, _ := testEngine(t, nil)
 	args, _ := json.Marshal(map[string]any{
@@ -98,6 +101,7 @@ func TestExecuteGatesUnknownRef(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/declared-refs-must-be-catalog-mcp-servers
 func TestExecuteGatesNonMCPKind(t *testing.T) {
 	e, _ := testEngine(t, []Resource{
 		{Ref: "reg/skill/pdf", Kind: "skill", Name: "pdf", Registry: "reg", Assessment: "allow"},
@@ -113,6 +117,7 @@ func TestExecuteGatesNonMCPKind(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/undeclared-alias-rejected
 func TestExecuteUndeclaredAlias(t *testing.T) {
 	e, _ := testEngine(t, []Resource{
 		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
@@ -145,6 +150,7 @@ func TestExecuteToolCallCatchable(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/skills-load-and-read-on-demand
 func TestExecuteSkillLoadAndLog(t *testing.T) {
 	dir := t.TempDir()
 	e, _ := testEngine(t, []Resource{
@@ -180,6 +186,7 @@ func TestExecuteSkillLoadAndLog(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/stale-snapshot-warns
 func TestSearchStaleWarning(t *testing.T) {
 	e, _ := testEngine(t, nil)
 	e.Snapshots.Store(&Snapshot{Stale: true})
@@ -193,6 +200,7 @@ func TestSearchStaleWarning(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/colliding-aliases-disambiguated-by-registry
 func TestExecuteAliasDisambiguation(t *testing.T) {
 	e, _ := testEngine(t, []Resource{
 		{Ref: "a/mcp/srv", Kind: "mcp", Name: "srv", Registry: "a", Assessment: "allow"},

@@ -24,6 +24,7 @@ func codeModeLoaders(cm *config.CodeModeConfig) Loaders {
 	}
 }
 
+// spec: code-mode-mcp/sync-registers-owned-server-entry-while-enabled
 func TestCodeModeSyncRegistersAndUnregistersOwnedMCPEntries(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -88,6 +89,7 @@ func TestCodeModeSyncRegistersAndUnregistersOwnedMCPEntries(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/disabled-or-absent-codemode-registers-nothing
 func TestCodeModeAbsentRegistersNothing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

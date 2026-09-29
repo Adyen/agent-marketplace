@@ -105,6 +105,7 @@ func TestPoolBindsServerByExactRefNotAlias(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/only-declared-environment-forwarded
 func TestDeclaredEnvForwardsOnlyDeclared(t *testing.T) {
 	t.Setenv("HOME", "/home/tester")
 	t.Setenv("PATH", "/usr/bin:/bin")

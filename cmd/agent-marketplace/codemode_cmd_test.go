@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
+// spec: code-mode-mcp/enable-and-disable-write-one-config-layer
 func TestMcpEnableThenDisableUserScope(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -110,6 +111,7 @@ func TestMcpEnableCreatesV4RootsInEachScope(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/writes-refuse-legacy-configuration-roots
 func TestMcpEnableRefusesLegacyRootsWithoutRewriting(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -179,6 +181,7 @@ func TestMcpEnableRejectsUnknownScope(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/tools-list-exposes-exactly-search-and-execute
 func TestMcpServerListsExactlySearchAndExecute(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -275,6 +278,7 @@ func TestMcpServerExitsOnContextCancel(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/init-flag-opts-in
 func TestInitCodeModeFlagEnablesCodeMode(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -298,6 +302,7 @@ func TestInitCodeModeFlagEnablesCodeMode(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/missing-evidence-fails
 func TestPromoteFailsWithoutSessionEvidence(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -311,6 +316,7 @@ func TestPromoteFailsWithoutSessionEvidence(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/latest-matching-entry-wins
 func TestPromoteFindsLatestSessionEntry(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
