@@ -12,4 +12,4 @@
 ## 3. Verify and publish specifications
 
 - [x] 3.1 Run make test, make ci-lint, make build, make spec-check, and relevant E2E tests; verify successful exits and all added spec scenarios have test witnesses.
-- [ ] 3.2 Run `openspec archive pass-read-intent-workspace-roots --yes` in the same pull request; verify the main workspace-resolution spec contains both added scenarios.
+- [x] 3.2 Run `openspec archive pass-read-intent-workspace-roots --yes` in the same pull request; verify the main workspace-resolution spec contains both added scenarios.
