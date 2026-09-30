@@ -894,7 +894,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if resourceKind == ir.KindHook && !harness.IsInstallationAdapterTarget(w.target) {
 			ins := nativeHookInspectionFor(nativeInspections, key, repoRoot)
 			if ins.err != nil {
-				blocked.blockResource(key, w)
+				blockResource(key, w)
 				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 				allDiags = append(allDiags, ownedAggregateCodedDiag(key, ins.root, "", ins.err, diag.CodeHookNativeToleranceRefused))
 				continue
@@ -909,7 +909,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					// The legacy file could not be surveyed safely for a
 					// surviving managed twin: fail this target closed so the
 					// merge can neither rewrite nor delete those bytes.
-					blocked.blockResource(key, w)
+					blockResource(key, w)
 					markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 					allDiags = append(allDiags, ownedAggregateCodedDiag(key, legacyRoot, "", suppressErr, diag.CodeHookNativeToleranceRefused))
 					continue

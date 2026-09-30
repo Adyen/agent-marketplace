@@ -756,6 +756,9 @@ func TestMalformedNativeHookFileDoesNotBlockOtherTargets(t *testing.T) {
 	if !diag.HasCode(report.Diags, diag.CodeHookNativeToleranceRefused) {
 		t.Fatalf("missing %s diagnostic: %#v", diag.CodeHookNativeToleranceRefused, report.Diags)
 	}
+	if len(report.BlockedResources) != 1 || report.BlockedResources[0].Name != "deploy" || report.BlockedResources[0].Target != hcc.TargetFactory {
+		t.Fatalf("blocked resources = %#v, want only the factory hook", report.BlockedResources)
+	}
 	// Cursor has no native file: its legacy output proceeds unaffected.
 	data, err := os.ReadFile(filepath.Join(repoRoot, ".cursor", "hooks", "hooks.json"))
 	if err != nil || !strings.Contains(string(data), "run.sh") {
