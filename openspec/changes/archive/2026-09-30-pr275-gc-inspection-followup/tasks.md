@@ -11,4 +11,4 @@
 
 - [x] 3.1 Run focused tests and `make validate`, `make spec-check`, `make validate-e2e`, and `make tui-qa`; record pass or exact blockers.
 - [ ] 3.2 Reconcile PR #275 benchmark and verification claims against measured evidence and verify the PR body.
-- [ ] 3.3 Run `openspec archive pr275-gc-inspection-followup --yes` in the same pull request and verify `make spec-check`.
+- [x] 3.3 Run `openspec archive pr275-gc-inspection-followup --yes` in the same pull request and verify `make spec-check`.
