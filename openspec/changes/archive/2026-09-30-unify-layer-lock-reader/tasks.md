@@ -11,4 +11,4 @@
 ## 3. Verify and publish
 
 - [x] 3.1 Run make test, make ci-lint, make build, make spec-check and the affected E2E gate; verify spec witnesses and clean output.
-- [ ] 3.2 Run openspec archive unify-layer-lock-reader --yes in the same pull request, then verify strict OpenSpec validation.
+- [x] 3.2 Run openspec archive unify-layer-lock-reader --yes in the same pull request, then verify strict OpenSpec validation.
