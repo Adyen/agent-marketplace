@@ -124,9 +124,13 @@ func TestConfirmedFilterStaysVisibleUntilEscInList(t *testing.T) {
 		t.Fatalf("confirmed filter and match count must stay visible:\n%s", view)
 	}
 
+	m.listOffset = m.cursor // the filtered selection scrolled to the top line
 	m = asModel(t, mustUpdate(m.Update(escKey())))
 	if m.filter != "" {
 		t.Fatalf("Esc in the list must clear the applied filter, got %q", m.filter)
+	}
+	if m.listOffset != 0 {
+		t.Fatalf("rows that reappear above the selection must scroll into view, offset %d", m.listOffset)
 	}
 	if got := artifactNames(m.flatItems); !namesEqual(got, []string{"audit", "deploy"}) {
 		t.Fatalf("clearing must restore the unfiltered list, got %v", got)

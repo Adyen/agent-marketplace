@@ -1414,6 +1414,10 @@ func (m Model) clearSearch() (tea.Model, tea.Cmd) {
 	m.searchInput.SetValue("")
 	m.searchInput.Blur()
 	m.restoreBrowseDiscovery()
+	// Rows hidden by the filter reappear above the selection; scroll as
+	// little as possible so they are visible instead of kept off-screen.
+	m.listOffset = 0
+	m.clampListOffset()
 	recordActionSpan(m.ctx, "filter", map[string]string{"result_count": strconv.Itoa(len(m.filteredRows))})
 	return m, m.beginMarketplaceDiscovery("", false)
 }
@@ -1955,6 +1959,9 @@ func renderSearchRow(m Model) string {
 		input := m.searchInput
 		if m.discoveryLoading {
 			input.Prompt = m.spinner.View() + " "
+		}
+		if m.filter == "" {
+			return ansi.Truncate(input.View(), m.width, "…")
 		}
 		return ansi.Truncate(input.View()+"  "+styleDim.Render(matches), m.width, "…")
 	}

@@ -27,6 +27,7 @@ Each interaction contract has its own file. The `*.spec.ts` files are PTY journe
 13. `tests/accept-user-migration.spec.ts` accepts the startup migration prompt. It verifies that only the legacy user root converts (with a byte-exact backup) and that the committed legacy repository root is untouched. It then selects a repository-declared Git resource globally into the migrated user root, syncs, and passes a drift check.
 14. `tests/v4-directory-global-toggle.spec.ts` starts on a v4 user config with a local directory source, enables a skill globally, syncs it into the Factory, Gemini, and Devin user roots, disables it, syncs again, and passes `sync --check` without creating any lockfile.
 15. `tests/v4-directory-error-visibility.spec.ts` starts on the same v4 directory setup, makes the user config invalid while the toggle modal is open, and verifies that the failed toggle keeps its error visible, the footer keeps its recovery actions at 50x12, and the full diagnostic opens without the config being rewritten.
+16. `tests/layout-quality.spec.ts` checks that the footer keeps the command palette, help and quit hints, that the toggle and edit-config modals render as one complete frame that keeps file names visible, and that the footer and palette still fit at 50x12.
 
 `tests/target-pid.test.ts` is a helper test. It checks that the PID lookup used by the SIGTERM journey waits for the launcher to publish the PID.
 

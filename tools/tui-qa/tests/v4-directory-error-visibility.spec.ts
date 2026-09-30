@@ -37,13 +37,13 @@ test("keeps the v4 mutation error visible at narrow widths", async ({ terminal }
   });
   await step("failed global toggle retains diagnostic", () => terminal.write("g"), async () => {
     await expect(terminal.getByText(/! 1 errors/g)).toBeVisible();
-    await expect(terminal.getByText("e:errors", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("e errors", { strict: false })).toBeVisible();
   });
   await step("narrow error footer keeps recovery actions", () => terminal.resize(50, 12), async () => {
     await expect(terminal.getByText(/! 1 errors/g)).toBeVisible();
-    await expect(terminal.getByText("e:errors", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("r:reload", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("q:quit", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("e errors", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("r reload", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("q quit", { strict: false })).toBeVisible();
   });
   await step("open complete error diagnostic", () => terminal.write("e"), async () => {
     await expect(terminal.getByText("unknown top-level field", { strict: false })).toBeVisible();

@@ -25,7 +25,7 @@ The TUI saves a selection change to config as soon as you accept it. The change 
 
 ## Hosted Marketplace discovery
 
-Configured resources appear first. Results from each Marketplace then arrive in the **Available** group, labeled with their Marketplace and registry. As you type a search, the TUI filters the rows it already has. About 250 milliseconds after you stop typing, it also searches the remote endpoints. Clearing the search brings back the default results.
+Configured resources appear first. Results from each Marketplace then arrive in the **Available** group, labeled with their Marketplace and registry. As you type a search, the TUI filters the rows it already has: resource names match fuzzily, and other details such as tags, registry, and description match when each query word starts one of their words. Name matches sort first within each group and the best match is selected. After `enter`, the query and its match count stay above the list; `esc` clears it, and `/` resumes editing it. About 250 milliseconds after you stop typing, it also searches the remote endpoints. Clearing the search brings back the default results.
 
 The TUI shows at most 50 results per endpoint and query, with no pagination. Narrow the query, or use [`agent-marketplace search`](./cli.md#search) for more results. Cached results stay fresh for five minutes. If discovery fails, the TUI can keep showing stale results for up to 24 hours. Discovery errors and sync state are separate: an endpoint error alone does not mean your local files are out of sync.
 
@@ -39,7 +39,7 @@ If a config layer has no lock, the TUI can browse its source's current content a
 
 A configuration load error blocks selection changes until you fix the file with `E`. Catalog, resolution, and materialization failures keep the loaded rows visible. Rows that can normally be toggled still open the scope dialog, including selections shown as unavailable, and drift stays marked as failed.
 
-The status bar reports sync drift, Marketplace endpoint health, the active operation, and error or warning counts when space permits. It shows `running` until an operation reports a phase it has entered. Progress alone never reports success; the operation and its on-disk reload must finish. Up to three short result notices appear as toasts and expire after a few seconds. At narrow widths, the footer keeps the quit and recovery keys visible.
+The status bar reports sync drift, Marketplace endpoint health, the active operation, and error or warning counts when space permits. It shows `running` until an operation reports a phase it has entered. Progress alone never reports success; the operation and its on-disk reload must finish. Up to three short result notices appear as toasts and expire after a few seconds. The footer always shows the command palette (`:`), help (`?`), and quit (`q`) keys; other key hints drop one at a time as the terminal narrows. While errors are present, the error, reload, and quit keys come first.
 
 ## Keys
 
@@ -52,7 +52,7 @@ The status bar reports sync drift, Marketplace endpoint health, the active opera
 | Switch tab: Scope, Registry, Status | `1` / `2` / `3` |
 | Next / previous tab | `tab` / `shift+tab` |
 | Fuzzy search | `/` |
-| Confirm / clear search | `enter` / `esc` |
+| Apply / clear search | `enter` / `esc` |
 | Open the scope dialog, or fold a section header | `space` |
 | View resource details or cached files | `enter` |
 | Collapse / expand a section | `h` / `l` or left / right |
@@ -69,13 +69,13 @@ The status bar reports sync drift, Marketplace endpoint health, the active opera
 
 In the file browser that `enter` opens, `j` / `k` and the arrow keys move through entries, `h` / left folds a directory, `l` / right expands it, and `enter` toggles a directory. `esc` or `q` returns to the resource list.
 
-The command palette (`ctrl+k` or `:`) lists the resource-list actions — search, details, toggle, reload, sync, update, harnesses, config editor, help, diagnostics, tab switches, fold commands, and quit — as a fuzzy-filtered overlay. It opens only over the resource list at a supported size: not while a search, dialog, or overlay is active, not while a `z` fold prefix is pending, and not below the minimum terminal size. Type to filter the action labels (`q` and other letters are filter text, not list keys), move with `up` / `down`, run the highlighted action with `enter`, and close the palette with `esc`; `ctrl+c` still exits immediately. Actions that are not currently allowed are hidden, eligibility is checked again when you confirm, and the same guards and confirmations apply as for the key itself.
+The command palette (`ctrl+k` or `:`) lists the resource-list actions — search, clear search (while a filter is applied), details, toggle, reload, sync, update, harnesses, config editor, help, diagnostics, tab switches, fold commands, and quit — as a fuzzy-filtered overlay, with each action's key shown beside it. It opens only over the resource list at a supported size: not while a search, dialog, or overlay is active, not while a `z` fold prefix is pending, and not below the minimum terminal size. Type to filter the action labels (`q` and other letters are filter text, not list keys), move with `up` / `down`, run the highlighted action with `enter`, and close the palette with `esc`; `ctrl+c` still exits immediately. Actions that are not currently allowed are hidden, eligibility is checked again when you confirm, and the same guards and confirmations apply as for the key itself.
 
 ## Dialogs
 
 - `space` opens the resource's scope dialog. Press `g` for user (global) selection, `p` for project, `l` for local, or `e` for a local exclusion. Press `esc` to cancel. A local exclusion cannot hide a machine-wide or required resource. For an optional organization Marketplace resource, `e` instead edits an exact exclusion in your v4 user config; required resources stay protected.
 - `H` opens harness selection. Choose user (global) with `g` or project with `p`, toggle harnesses with `space`, then save with `enter` or cancel with `esc`. The project list overrides the user list. Local scope has no harness list.
-- `E` opens the config picker: `g` for user (global), `p` for project, or `l` for local; `esc` cancels. The TUI opens the file in the editor named by `$EDITOR`, or `vi` if it is not set, and reloads when the editor exits.
+- `E` opens the config picker: `g` for user (global), `p` for project, or `l` for local; `esc` cancels. The TUI opens the file in the editor named by `$EDITOR`, or `vi` if it is not set, and reloads when the editor exits. While the editor runs, the terminal shows which file is open instead of the shell.
 
 Inside a dialog, these letters have dialog meanings. In the resource list, `g` jumps to the top and `e` opens diagnostics.
 
