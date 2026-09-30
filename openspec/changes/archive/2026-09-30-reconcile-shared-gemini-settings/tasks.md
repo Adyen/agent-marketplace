@@ -8,4 +8,4 @@
 
 - [x] Run package, consumer, race, benchmark and applicable E2E checks.
 - [x] Complete adversarial delegated review of every changed file.
-- [ ] Archive with `openspec archive reconcile-shared-gemini-settings --yes` as the final commit.
+- [x] Archive with `openspec archive reconcile-shared-gemini-settings --yes` as the final commit.
