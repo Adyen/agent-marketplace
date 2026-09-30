@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
@@ -68,7 +69,7 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 		dependencyWarnings = view.Warnings
 		o.DependencyCommitted = true
 	}
-	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall}
+	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall, marketplaceInstallSource: o.marketplaceInstallSource}
 	if o.MaterializeRoot != "" && o.MaterializeRoot != repoRoot {
 		resolveOpts.MaterializeRoot = o.MaterializeRoot
 	}
@@ -88,19 +89,20 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 }
 
 type silentSyncOptions struct {
-	MaterializeRoot         string
-	LocalConfigDir          string
-	IgnoreBlockedRegistries bool
-	CatalogMode             catalog.LoadMode
-	CatalogOption           []catalog.LoadOption
-	ExactLockLease          func(context.Context) (func(), error)
-	DependencyReconciler    DependencyReconciler
-	StagedConfigEdits       []StagedConfigEdit
-	ConfigStaging           *configStagingManager
-	DependencyCommitted     bool
-	MarketplaceMode         *resolver.MarketplaceResolveMode
-	marketplaceInstall      *marketplace.PreparedInstall
-	resolved                *[]resolver.ResolvedArtifact
+	MaterializeRoot          string
+	LocalConfigDir           string
+	IgnoreBlockedRegistries  bool
+	CatalogMode              catalog.LoadMode
+	CatalogOption            []catalog.LoadOption
+	ExactLockLease           func(context.Context) (func(), error)
+	DependencyReconciler     DependencyReconciler
+	StagedConfigEdits        []StagedConfigEdit
+	ConfigStaging            *configStagingManager
+	DependencyCommitted      bool
+	MarketplaceMode          *resolver.MarketplaceResolveMode
+	marketplaceInstall       *marketplace.PreparedInstall
+	marketplaceInstallSource config.Source
+	resolved                 *[]resolver.ResolvedArtifact
 }
 
 type silentSyncOpt func(*silentSyncOptions)
@@ -110,8 +112,11 @@ func withResolvedCapture(dst *[]resolver.ResolvedArtifact) silentSyncOpt {
 	return func(o *silentSyncOptions) { o.resolved = dst }
 }
 
-func withMarketplaceInstall(plan *marketplace.PreparedInstall) silentSyncOpt {
-	return func(o *silentSyncOptions) { o.marketplaceInstall = plan }
+func withMarketplaceInstall(plan *marketplace.PreparedInstall, source config.Source) silentSyncOpt {
+	return func(o *silentSyncOptions) {
+		o.marketplaceInstall = plan
+		o.marketplaceInstallSource = source
+	}
 }
 
 // withMaterializeRoot sets a different root for materialization (where

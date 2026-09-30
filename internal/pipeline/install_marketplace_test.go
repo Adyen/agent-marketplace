@@ -329,7 +329,7 @@ func TestMarketplaceCollisionsCannotBeBypassedWithInstalledName(t *testing.T) {
 			} else {
 				existing.RegistryURL = "file:///local"
 			}
-			if err := checkResolvedMarketplaceInstallCollision([]resolver.ResolvedArtifact{existing}, plan); err == nil {
+			if err := checkResolvedMarketplaceInstallCollision([]resolver.ResolvedArtifact{existing}, plan, config.RepoCommitted); err == nil {
 				t.Fatal("resource collision was bypassed with installed_name")
 			}
 		})

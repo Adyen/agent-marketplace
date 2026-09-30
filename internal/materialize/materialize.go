@@ -831,22 +831,20 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			result.Artifacts = rest
 		}
 
-		// For hooks, expand ${DROID_PLUGIN_ROOT} to a relative path.
+		// For hooks, expand ${DROID_PLUGIN_ROOT} to an installed root.
 		// Factory Droid only sets DROID_PLUGIN_ROOT for plugin-scoped hooks,
-		// not workspace-level hooks (.factory/hooks/). By expanding to a
-		// relative path at materialization time, the hook command works
-		// without the env var. Factory Droid runs hooks from the repo root,
-		// so ".factory/hooks/script.sh" resolves correctly.
+		// not workspace-level hooks (.factory/hooks/). Repository hooks run
+		// from the repo root, so their paths can be relative. Machine hooks
+		// run from any repo and must always use the absolute machine root.
 		if resourceKind == ir.KindHook && !harness.IsInstallationAdapterTarget(w.target) {
 			if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
 				pluginRoot := roots.For(w.machineScope, repoRoot)
 				if pluginRoot != "" {
-					// Use a relative path when the plugin root is inside the
-					// repo (repo-scope). For machine-scope (outside the repo),
-					// fall back to the absolute path.
-					relPath, err := filepath.Rel(repoRoot, pluginRoot)
-					if err == nil && !strings.HasPrefix(relPath, "..") {
-						pluginRoot = relPath
+					if !w.machineScope {
+						relPath, err := filepath.Rel(repoRoot, pluginRoot)
+						if err == nil && !strings.HasPrefix(relPath, "..") {
+							pluginRoot = relPath
+						}
 					}
 					for i := range result.Artifacts {
 						result.Artifacts[i].Bytes = bytes.ReplaceAll(

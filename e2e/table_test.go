@@ -629,6 +629,41 @@ registries:
 	},
 
 	// ===== collision =====
+	// spec: resource-selection/repository-winner-does-not-displace-a-user-scope-selection
+	{
+		Name:       "collision/cross_scope_sync_keeps_both_skills",
+		Desc:       "Given user and repository sources selecting different skills with the same installed name, When syncing in the repository, Then both scopes retain their own skill and sync --check succeeds",
+		Registries: []RegistryDef{{Name: "user-skill", Skills: []Skill{{Name: "shared", Description: "User selection"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:user-skill}}', ref: main}}\nresources: {user: {include: [skill/shared]}}\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				Symlinks: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{
+					"/root/.factory/skills/shared/SKILL.md":      "User selection",
+					"/workspace/.factory/skills/shared/SKILL.md": "Repository selection",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: resource-selection/required-user-scope-selection-suppresses-a-repository-selection
+	{
+		Name:       "collision/required_machine_prevents_repo_shadow",
+		Desc:       "Given a required user skill and another repository skill with the same installed name, When syncing in the repository, Then the required machine skill remains and the repository cannot shadow it",
+		Registries: []RegistryDef{{Name: "required-user", Skills: []Skill{{Name: "shared", Description: "Mandatory user selection"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:required-user}}\n    ref: main\n    required: true\n    skills: [shared]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Unreviewed repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"multiple registries"},
+				Symlinks: []string{"/root/.factory/skills/shared"},
+				FilesAbsent: []string{"/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Mandatory user selection"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}, FilesAbsent: []string{"/workspace/.factory/skills/shared"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}},
+		},
+	},
 	{
 		Name: "install/collision_warning_scoped",
 		Desc: "Given two selected registries with skill and command collisions, When installing one skill, Then its collision is reported without unrelated warnings and the existing winner is installed",
