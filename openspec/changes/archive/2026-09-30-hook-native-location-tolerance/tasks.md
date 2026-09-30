@@ -13,4 +13,4 @@
 
 - [x] 3.1 Add an isolated mixed-version fixture of the future native file plus ownership proof; run the candidate as legacy-writing client after a simulated native migration, including `sync --locked` and `sync --check`, and require every scenario to execute.
 - [ ] 3.2 Annotate every new OpenSpec scenario with `// spec:` test witnesses. Run focused tests, `make validate`, applicable `make validate-e2e`, `make spec-check`, and `openspec validate --all --strict`; fix failures without weakening a gate.
-- [ ] 3.3 Run `openspec archive hook-native-location-tolerance --yes` in the same PR; verify strict OpenSpec validation and `make spec-check` after archive.
+- [x] 3.3 Run `openspec archive hook-native-location-tolerance --yes` in the same PR; verify strict OpenSpec validation and `make spec-check` after archive.
