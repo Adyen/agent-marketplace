@@ -17,7 +17,11 @@ import (
 )
 
 func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) (int, error) {
-	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir})
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return 0, err
+	}
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()})
 	if err := pipeline.MarketplaceAllowlistError(intent); err != nil {
 		return 0, err
 	}

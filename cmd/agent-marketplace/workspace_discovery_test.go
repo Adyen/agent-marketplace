@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -282,6 +283,116 @@ func TestStatusFromNestedLocalDryRunsTheWorkspaceMaterializeRoot(t *testing.T) {
 	}
 	if got, want := canonicalTestPath(t, gotRoot), canonicalTestPath(t, nested); got != want {
 		t.Fatalf("status dry-run root = %q; want workspace materialization root %q (repository root %q)", got, want, repoRoot)
+	}
+}
+
+// spec: workspace-resolution/nested-personal-local-browsing-and-inspection
+func TestBrowsingCommandsReadCommittedAndNestedLocalLayers(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("HOME", t.TempDir())
+
+	repoRoot, nested := writeNestedLocalFixture(t)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+marketplaces:
+  - url: http://127.0.0.1:1/committed-mp
+    instance_id: committed
+`)
+	writeFile(t, filepath.Join(nested, ".agents", "config.local.yaml"), `
+registries: []
+marketplaces:
+  - url: http://127.0.0.1:1/nested-mp
+    instance_id: nested
+`)
+	withWorkingDir(t, nested)
+
+	err := runSearchContext(context.Background(), io.Discard, io.Discard, []string{"skill"}, "", "", "table", 0, 0)
+	if err == nil {
+		t.Fatal("search against unreachable Marketplace endpoints must fail")
+	}
+	for _, marker := range []string{"committed-mp", "nested-mp"} {
+		if !strings.Contains(err.Error(), marker) {
+			t.Fatalf("search error %v does not contain the %s endpoint; a configuration layer root was dropped", err, marker)
+		}
+	}
+
+	committedPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	localPath := filepath.Join(nested, ".agents", "config.local.yaml")
+	writeConfig(t, committedPath, "registries: [")
+	writeFile(t, localPath, "registries: [")
+
+	var doctorOut strings.Builder
+	if err := runDoctor(doctorOptions{ctx: context.Background(), out: &doctorOut}); err != nil {
+		t.Fatalf("doctor with malformed layers: %v", err)
+	}
+	for _, path := range []string{committedPath, localPath} {
+		if !strings.Contains(doctorOut.String(), path) {
+			t.Fatalf("doctor output does not report layer error at %s:\n%s", path, doctorOut.String())
+		}
+	}
+
+	listErr := runListFrom(context.Background(), io.Discard, io.Discard, filepath.Join(t.TempDir(), "registry"), "", "", "")
+	if listErr == nil {
+		t.Fatal("list --from must surface configuration layer errors instead of ignoring them")
+	}
+	for _, path := range []string{committedPath, localPath} {
+		if !strings.Contains(listErr.Error(), path) {
+			t.Fatalf("list --from error %v does not report layer error at %s", listErr, path)
+		}
+	}
+
+	gcErr := runGC(context.Background(), io.Discard, true)
+	if gcErr == nil {
+		t.Fatal("gc must surface configuration layer errors instead of ignoring them")
+	}
+	for _, path := range []string{committedPath, localPath} {
+		if !strings.Contains(gcErr.Error(), path) {
+			t.Fatalf("gc error %v does not report layer error at %s", gcErr, path)
+		}
+	}
+}
+
+// spec: workspace-resolution/escaping-personal-local-root-during-browsing-and-collection
+func TestBrowsingCommandsRejectEscapingLocalRoot(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("HOME", t.TempDir())
+
+	repoRoot := canonicalTestPath(t, t.TempDir())
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+	outside := canonicalTestPath(t, t.TempDir())
+	writeFile(t, filepath.Join(outside, ".agents", "config.local.yaml"), `
+registries: []
+`)
+	link := filepath.Join(repoRoot, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink escaping local root: %v", err)
+	}
+	withWorkingDir(t, link)
+	t.Setenv("PWD", link)
+
+	assertInvalidWorkspace := func(name string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatalf("%s must reject a personal-local root outside the repository", name)
+		}
+		if !errors.Is(err, pipeline.ErrInvalidWorkspace) {
+			t.Fatalf("%s error = %v; want an invalid-workspace failure", name, err)
+		}
+	}
+
+	assertInvalidWorkspace("list --from", runListFrom(context.Background(), io.Discard, io.Discard, "https://example.com/registry.git", "", "", ""))
+	assertInvalidWorkspace("search", runSearchContext(context.Background(), io.Discard, io.Discard, []string{"skill"}, "", "", "table", 0, 0))
+	assertInvalidWorkspace("doctor", runDoctor(doctorOptions{ctx: context.Background(), out: io.Discard}))
+	assertInvalidWorkspace("gc", runGC(context.Background(), io.Discard, true))
+
+	if _, err := os.Stat(filepath.Join(repoRoot, ".agents", "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("command mutated repository state before workspace validation; stat err = %v", err)
 	}
 }
 

@@ -638,6 +638,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		slog.Info("lock lifecycle completed", attrs...)
 	}()
 
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return nil, 0, nil, err
+	}
 	stateDir, err := dependencyStateDir()
 	if err != nil {
 		return nil, 0, nil, err
@@ -679,7 +683,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		overlays[destination] = edit.Bytes
 	}
 	loadOptions := config.LoadEffectiveOptions{
-		RepoRoot: repoRoot, LocalConfigDir: localDir,
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
 		FileOverlays: overlays,
 	}
 	loadMode := pipeline.ConfigLoadStrict
@@ -699,7 +703,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && len(mode.stagedLockEdits) == 0 && mode.commitScope == nil
 	if canBootstrapMarketplace && pipeline.NeedsLockBootstrap(ec.Errors) {
-		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects, mode.marketplacePolicy)
+		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode.selects, mode.marketplacePolicy)
 		if err != nil {
 			return nil, 0, nil, err
 		}

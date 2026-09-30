@@ -595,11 +595,11 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 
 	repoRoot := opts.RepoRoot
 	if repoRoot == "" {
-		repoRoot = FindRepoRoot()
+		return Intent{Errors: []error{errors.New("repository root is required: pass a validated workspace repository root")}, aborted: true}
 	}
 	localDir := opts.LocalConfigDir
 	if localDir == "" {
-		localDir = FindLocalConfigDir()
+		localDir = repoRoot
 	}
 
 	intent := Intent{}

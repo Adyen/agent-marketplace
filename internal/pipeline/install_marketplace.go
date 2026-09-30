@@ -250,7 +250,11 @@ func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*Prepa
 			}
 		}
 	}
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
+	ws, err := workspaceForRoots(opts.RepoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}
@@ -348,7 +352,11 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	if err != nil {
 		return nil, err
 	}
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: prepared.options.RepoRoot, LocalConfigDir: prepared.options.LocalConfigDir, FileOverlays: lockOverlay}, nil)
+	ws, err := workspaceForRoots(prepared.options.RepoRoot, prepared.options.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: lockOverlay}, nil)
 	var allowedMarketplaces, allowedRegistries *[]string
 	if ec.Merged != nil {
 		allowedMarketplaces = ec.Merged.AllowedMarketplaces
