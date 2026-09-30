@@ -731,6 +731,46 @@ func TestMalformedNativeHookFilePreservesBothLocations(t *testing.T) {
 	}
 }
 
+// A malformed native file that refuses tolerance must also surface on the
+// blocked-resources report, under the Marketplace installed name when the
+// hook was installed under one, so status identifies the kept hook.
+// spec: hook-native-location-tolerance/malformed-native-file-leaves-both-locations-unchanged
+func TestMalformedNativeHookFileReportsBlockedResource(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	repoRoot := t.TempDir()
+	resolved, _ := toleranceHookFixture(t, config.RepoCommitted, hcc.TargetFactory)
+	resolved.Kind = ir.KindHook
+	resolved.IsMarketplace = true
+	resolved.InstalledName = "deploy-copy"
+
+	nativeRoot := filepath.Join(repoRoot, ".factory")
+	if err := os.MkdirAll(nativeRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nativeRoot, "hooks.json"), []byte(`{"PreToolUse":"not-an-array"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if !diag.HasCode(report.Diags, diag.CodeHookNativeToleranceRefused) {
+		t.Fatalf("missing %s diagnostic: %#v", diag.CodeHookNativeToleranceRefused, report.Diags)
+	}
+	want := BlockedResource{Kind: ir.KindHook, Name: "deploy-copy", Target: hcc.TargetFactory}
+	found := false
+	for _, got := range report.BlockedResources {
+		if got == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("blocked resources = %+v, want entry %+v", report.BlockedResources, want)
+	}
+}
+
 // A malformed native file blocks only its own (target, scope): another
 // selected target still reconciles normally.
 // spec: hook-native-location-tolerance/malformed-native-file-leaves-both-locations-unchanged
