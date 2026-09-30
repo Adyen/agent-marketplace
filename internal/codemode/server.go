@@ -222,4 +222,4 @@ declare const mcp: Record<string, {
 
 const dtsErrors = `
 // Host failures reject with CodeModeError (an Error carrying {name:"CodeModeError", code:string, message:string}).
-declare class CodeModeError extends Error { code: string; }`
+interface CodeModeError extends Error { code: string; }`

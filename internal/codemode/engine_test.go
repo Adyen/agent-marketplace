@@ -454,5 +454,11 @@ func TestToolDescriptionsDeclareScriptVisibleShapes(t *testing.T) {
 				t.Fatalf("%s description missing %q:\n%s", name, want, desc)
 			}
 		}
+		if !strings.Contains(desc, "interface CodeModeError extends Error") {
+			t.Fatalf("%s description must declare CodeModeError as a type-only interface:\n%s", name, desc)
+		}
+		if strings.Contains(desc, "declare class CodeModeError") {
+			t.Fatalf("%s description must not declare an ambient CodeModeError class:\n%s", name, desc)
+		}
 	}
 }
