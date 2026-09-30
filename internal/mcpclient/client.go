@@ -107,9 +107,6 @@ func expandEnvString(field, value string, secrets *[]string) (string, error) {
 // expandServerDef returns a copy of def with environment references expanded
 // and the expanded host values for redaction.
 func expandServerDef(def *codemode.ServerDef) (*codemode.ServerDef, []string, error) {
-	if def == nil {
-		return nil, nil, nil
-	}
 	out := *def
 	var secrets []string
 	var err error
@@ -375,12 +372,18 @@ func (c *stdioClient) Call(ctx context.Context, name string, args json.RawMessag
 	if err != nil {
 		return nil, err
 	}
+	return parseToolResult(res, name, c.redact)
+}
+
+// parseToolResult decodes a tools/call result into {content, text}; tool
+// errors become a coded error whose text is redacted by the caller's secret set.
+func parseToolResult(res json.RawMessage, name string, redact func(string) string) (any, error) {
 	var out struct {
+		IsError bool `json:"isError"`
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
-		IsError bool `json:"isError"`
 	}
 	if err := json.Unmarshal(res, &out); err != nil {
 		return nil, codemode.CodeError(codemode.ErrCodeToolError, "malformed tools/call result: %v", err)
@@ -390,7 +393,7 @@ func (c *stdioClient) Call(ctx context.Context, name string, args json.RawMessag
 		for _, ct := range out.Content {
 			parts = append(parts, ct.Text)
 		}
-		return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s: %s", name, strings.Join(parts, " "))
+		return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s: %s", name, redact(strings.Join(parts, " ")))
 	}
 	var texts []string
 	for _, ct := range out.Content {
@@ -592,30 +595,7 @@ func (c *httpClient) Call(ctx context.Context, name string, args json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	var out struct {
-		IsError bool `json:"isError"`
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(res, &out); err != nil {
-		return nil, codemode.CodeError(codemode.ErrCodeToolError, "malformed tools/call result: %v", err)
-	}
-	if out.IsError {
-		var parts []string
-		for _, ct := range out.Content {
-			parts = append(parts, ct.Text)
-		}
-		return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s: %s", name, c.redact(strings.Join(parts, " ")))
-	}
-	var texts []string
-	for _, ct := range out.Content {
-		if ct.Type == "text" {
-			texts = append(texts, ct.Text)
-		}
-	}
-	return map[string]any{"content": out.Content, "text": strings.Join(texts, "\n")}, nil
+	return parseToolResult(res, name, c.redact)
 }
 
 func (c *httpClient) Close() error { return nil }

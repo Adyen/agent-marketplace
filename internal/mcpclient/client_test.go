@@ -77,7 +77,7 @@ func fakeServer() {
 				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "error": map[string]any{"code": -32000, "message": "denied " + os.Getenv("SECRET_TOKEN")}})
 				continue
 			case "toolerror":
-				result = map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "tool failed hard"}}}
+				result = map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "tool failed hard " + os.Getenv("SECRET_TOKEN")}}}
 			case "hang":
 				time.Sleep(10 * time.Second)
 			case "crash":
@@ -569,6 +569,14 @@ func TestStdioToolCallErrorRedactsDeclaredEnv(t *testing.T) {
 	}
 	if strings.Contains(ce.Message, secret) {
 		t.Fatalf("declared env value leaked in tool error: %q", ce.Message)
+	}
+
+	_, err = c.Call(context.Background(), "toolerror", json.RawMessage(`{}`))
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeToolError {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeToolError, err)
+	}
+	if strings.Contains(ce.Message, secret) {
+		t.Fatalf("declared env value leaked in tool-error content: %q", ce.Message)
 	}
 }
 
