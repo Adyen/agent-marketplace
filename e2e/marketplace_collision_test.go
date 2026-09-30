@@ -37,7 +37,7 @@ resources:
 	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "collection member")
 	locator := fixture.server.URL + "/r/other-source/skill/skill-one"
 	before := consumer.ReadFile("/workspace/.agents/config.yaml")
-	result := consumer.RunAM("install", locator, "--yes", "--scope", "repo")
+	result := consumer.RunAM("install", locator, "--yes", "--scope", "user")
 	if result.ExitCode == 0 || !strings.Contains(result.Combined, "marketplace.install-collision") {
 		t.Fatalf("active member collision not refused (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -55,13 +55,13 @@ resources:
   company:
     exclude: [behavior-source/skill/skill-one]
 `, fixture.server.URL))
-	consumer.MustRunAM("install", locator, "--yes", "--scope", "repo")
 	consumer.MustRunAM("sync")
 	consumer.AssertFileAbsent("/root/.factory/skills/skill-one")
 	consumer.AssertFileContains("/root/.factory/commands/command-one.md", "echo behavior")
-	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "replacement body")
-	if cfg := consumer.ReadFile("/workspace/.agents/config.yaml"); !strings.Contains(cfg, "other-source-id") {
-		t.Fatalf("replacement source not persisted:\n%s", cfg)
+	consumer.MustRunAM("install", locator, "--yes", "--scope", "user")
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "replacement body")
+	if cfg := consumer.ReadFile("/root/.agents/config.yaml"); !strings.Contains(cfg, "other-source/skill/skill-one") {
+		t.Fatalf("replacement source not persisted in user configuration:\n%s", cfg)
 	}
 }
 
@@ -159,8 +159,8 @@ func TestMarketplaceInstallChecksReconciledCollision(t *testing.T) {
 				if result.ExitCode != 0 {
 					t.Fatalf("locked noncollision refused: %s", result.Combined)
 				}
-				if tc.safeUser && !strings.Contains(result.Combined, `skill "skill-one" is provided by multiple registries`) {
-					t.Fatalf("successful Marketplace install hid its collision warning: %s", result.Combined)
+				if tc.safeUser && strings.Contains(result.Combined, `skill "skill-one" is provided by multiple registries`) {
+					t.Fatalf("complementary user and repository selections reported a collision: %s", result.Combined)
 				}
 				consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "APPROVED MARKETPLACE BODY")
 				if tc.retainLock {
@@ -168,7 +168,7 @@ func TestMarketplaceInstallChecksReconciledCollision(t *testing.T) {
 						t.Fatalf("retained lock changed: %v", err)
 					}
 				} else {
-					consumer.AssertFileAbsent("/root/.factory/skills/skill-one")
+					consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "UNREVIEWED GIT BODY")
 					consumer.MustRunAM("lock", "--check")
 				}
 				return

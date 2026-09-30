@@ -616,6 +616,134 @@ func TestResolveDetectsNameCollisionAcrossDifferentRegistries(t *testing.T) {
 	}
 }
 
+// spec: resource-selection/repository-winner-does-not-displace-a-user-scope-selection
+// spec: resource-selection/same-scope-collision-keeps-one-winner
+func TestResolveDifferentRegistriesCollideOnlyWithinInstallScope(t *testing.T) {
+	tests := []struct {
+		name    string
+		sources []config.RegistryEntry
+		want    []string
+		warning bool
+	}{
+		{
+			name: "different scopes are complementary",
+			sources: []config.RegistryEntry{
+				{URL: "git@example.com:user.git", Ref: "main", Source: config.UserPersonal, Skills: ks("shared")},
+				{URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared")},
+			},
+			want: []string{"git@example.com:user.git", "git@example.com:repo.git"},
+		},
+		{
+			name: "machine collision does not include repository",
+			sources: []config.RegistryEntry{
+				{URL: "git@example.com:user.git", Ref: "main", Source: config.UserPersonal, Skills: ks("shared")},
+				{URL: "git@example.com:required.git", Ref: "main", Source: config.Organization, Skills: ks("shared")},
+				{URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared")},
+			},
+			want:    []string{"git@example.com:user.git", "git@example.com:repo.git"},
+			warning: true,
+		},
+		{
+			name: "same scope still collides",
+			sources: []config.RegistryEntry{
+				{URL: "git@example.com:user.git", Ref: "main", Source: config.UserPersonal, Skills: ks("shared")},
+				{URL: "git@example.com:required.git", Ref: "main", Source: config.Organization, Required: true, Skills: ks("shared")},
+			},
+			want:    []string{"git@example.com:required.git"},
+			warning: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Registries: tt.sources}
+			setCatalogKeys(cfg)
+			catalogs := make(map[string][]catalog.Entry)
+			for _, source := range cfg.Registries {
+				catalogs[source.CatalogKey] = []catalog.Entry{{Kind: ir.KindSkill, Name: "shared", Path: "/cache/" + source.URL}}
+			}
+			got, errs := Resolve(cfg, catalogs, nil)
+			if len(got) != len(tt.want) {
+				t.Fatalf("resolved %d artifacts, want %d: %#v", len(got), len(tt.want), got)
+			}
+			for i, want := range tt.want {
+				if got[i].RegistryURL != want {
+					t.Errorf("artifact %d registry = %q, want %q", i, got[i].RegistryURL, want)
+				}
+			}
+			if !tt.warning {
+				if len(errs) != 0 {
+					t.Fatalf("cross-scope pair must not warn: %v", errs)
+				}
+				return
+			}
+			if len(errs) != 1 {
+				t.Fatalf("expected one within-scope collision warning, got %v", errs)
+			}
+			var warning *NameCollisionWarning
+			if !errors.As(errs[0], &warning) {
+				t.Fatalf("expected name collision warning, got %T", errs[0])
+			}
+			wantWinner := "git@example.com:required.git"
+			if tt.name == "machine collision does not include repository" {
+				wantWinner = "git@example.com:user.git"
+			}
+			if warning.WinnerURL != wantWinner || len(warning.RunnersUp) != 1 || strings.Contains(errs[0].Error(), "repo.git") {
+				t.Fatalf("warning must describe only machine participants: %+v", warning)
+			}
+		})
+	}
+}
+
+func TestResolveCrossScopeRegistryCollisionRetainsSameRegistryPaths(t *testing.T) {
+	const machineURL = "git@example.com:machine.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: machineURL, Ref: "main", Path: "teams/alpha", Source: config.Organization, Default: true},
+		{URL: machineURL, Ref: "main", Path: "teams/beta", Source: config.UserPersonal, Default: true},
+		{URL: "git@example.com:repository.git", Ref: "main", Source: config.RepoCommitted, Default: true},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := make(map[string][]catalog.Entry)
+	for _, source := range cfg.Registries {
+		catalogs[source.CatalogKey] = []catalog.Entry{{Kind: ir.KindSkill, Name: "shared", Path: "/cache/shared"}}
+	}
+	got, errs := Resolve(cfg, catalogs, nil)
+	if len(got) != 3 || got[0].RegistryPath != "teams/alpha" || got[1].RegistryPath != "teams/beta" || got[2].Source != config.RepoCommitted {
+		t.Fatalf("both machine paths and repository occurrence must survive: %#v", got)
+	}
+	if len(errs) != 1 || !IsNameCollision(errs[0]) || strings.Contains(errs[0].Error(), "repository.git") {
+		t.Fatalf("only the machine path collision should be reported: %v", errs)
+	}
+}
+
+// spec: resource-selection/required-user-scope-selection-suppresses-a-repository-selection
+func TestResolveRequiredMachineSelectionSuppressesDifferentRepository(t *testing.T) {
+	for _, machineSource := range []config.Source{config.UserPersonal, config.Organization} {
+		t.Run(machineSource.String(), func(t *testing.T) {
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: "git@example.com:mandatory.git", Ref: "main", Source: machineSource, Required: true, Skills: ks("shared")},
+				{URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared")},
+			}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "shared", Path: "/cache/mandatory/shared"}},
+				cfg.Registries[1].CatalogKey: {{Kind: ir.KindSkill, Name: "shared", Path: "/cache/repo/shared"}},
+			}
+			got, warnings := Resolve(cfg, catalogs, nil)
+			if len(got) != 1 || got[0].RegistryURL != cfg.Registries[0].URL || !got[0].Source.IsMachineScope() {
+				t.Fatalf("required machine resource must be the only selection: %#v", got)
+			}
+			if len(warnings) != 1 {
+				t.Fatalf("expected one cross-scope warning, got %v", warnings)
+			}
+			var warning *NameCollisionWarning
+			if !errors.As(warnings[0], &warning) || warning.WinnerURL != cfg.Registries[0].URL ||
+				len(warning.RunnersUp) != 1 || !strings.Contains(warning.RunnersUp[0], "repo") {
+				t.Fatalf("required source must win with repository as runner-up: %v", warnings)
+			}
+		})
+	}
+}
+
 func TestResolveSameURLDifferentRefsIsCollision(t *testing.T) {
 	// Same URL but different refs are different catalog sources.
 	// If both select the same skill name, it's a collision — but the resolver

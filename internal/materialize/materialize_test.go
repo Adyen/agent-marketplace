@@ -2558,6 +2558,52 @@ func TestRunHookArtifactsAreNotPrunedOnSecondSync(t *testing.T) {
 	}
 }
 
+// spec: materialization/machine-scope-hook-command-uses-the-absolute-machine-root
+// spec: materialization/repository-scope-hook-command-stays-repository-relative
+func TestFactoryHookCommandRootIsStableAcrossWorkingDirectories(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	machineHook := ir.NewHook("user-check", "PreToolUse", "${DROID_PLUGIN_ROOT}/hooks/check.sh", "command", nil, ir.SourceRef{})
+	user := []resolver.ResolvedArtifact{{
+		Entry: catalog.Entry{Name: "user-check", Resource: machineHook}, Source: config.UserPersonal,
+		Harnesses: []hcc.Target{hcc.TargetFactory},
+	}}
+	machineFile := filepath.Join(home, ".factory", "hooks", "hooks.json")
+	var first []byte
+	for _, root := range []string{home, repo} {
+		if _, err := Run(context.Background(), root, user); err != nil {
+			t.Fatalf("materialize machine hook from %s: %v", root, err)
+		}
+		content, err := os.ReadFile(machineFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), filepath.Join(home, ".factory", "hooks", "check.sh")) {
+			t.Fatalf("machine hook must use absolute root, got %s", content)
+		}
+		if first != nil && !bytes.Equal(first, content) {
+			t.Fatalf("machine hook bytes changed across roots:\n%s\n%s", first, content)
+		}
+		first = content
+	}
+
+	repoHook := ir.NewHook("repo-check", "PreToolUse", "${DROID_PLUGIN_ROOT}/hooks/repo-check.sh", "command", nil, ir.SourceRef{})
+	if _, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{{
+		Entry: catalog.Entry{Name: "repo-check", Resource: repoHook}, Source: config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetFactory},
+	}}); err != nil {
+		t.Fatalf("materialize repository hook: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, ".factory", "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), ".factory/hooks/repo-check.sh") || strings.Contains(string(content), repo+"/.factory") {
+		t.Fatalf("repository hook must use relative root, got %s", content)
+	}
+}
+
 // TestRunMultipleHooksSameEventBothSurvive verifies that two hooks for the
 // same event (e.g. PostToolUse) are both present in the materialized
 // hooks.json and survive idempotent re-syncs without duplication.

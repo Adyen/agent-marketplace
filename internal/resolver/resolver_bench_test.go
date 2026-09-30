@@ -2,6 +2,8 @@ package resolver
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
@@ -67,6 +69,33 @@ func BenchmarkResolve(b *testing.B) {
 				_, _ = Resolve(cfg, catalogs, localCfg)
 			}
 		})
+	}
+}
+
+func BenchmarkResolveCrossScopeCollisions(b *testing.B) {
+	const skills = 50
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "git@example.com:user.git", Ref: "main", Source: config.UserPersonal, Default: true},
+		{URL: "git@example.com:organization.git", Ref: "main", Source: config.Organization, Default: true, Required: true},
+		{URL: "git@example.com:repository.git", Ref: "main", Source: config.RepoCommitted, Default: true},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := make(map[string][]catalog.Entry, len(cfg.Registries))
+	for _, source := range cfg.Registries {
+		entries := make([]catalog.Entry, skills)
+		for i := range entries {
+			entries[i] = catalog.Entry{Kind: ir.KindSkill, Name: fmt.Sprintf("skill-%02d", i)}
+		}
+		catalogs[source.CatalogKey] = entries
+	}
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer slog.SetDefault(previousLogger)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Resolve(cfg, catalogs, nil)
 	}
 }
 

@@ -379,7 +379,7 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	requirementWarnings, err := MutateMarketplaceLayer(ctx, prepared.options.RepoRoot, prepared.options.LocalConfigDir, prepared.configPath, installScopeSource(prepared.options.Scope), func(m *MarketplaceLayerMutation) error {
 		return m.IncludePins(commitEntry, pins)
 	}, func() ([]error, error) {
-		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan, ec.Merged)))
+		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan, installScopeSource(prepared.options.Scope)), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan, ec.Merged)))
 		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
 	})
 	if err != nil {
@@ -715,6 +715,7 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 		return nil
 	}
 	installed := marketplaceInstalledName(plan.Pin)
+	installSource := installScopeSource(opts.Scope)
 	if ec.Merged != nil {
 		for _, entry := range ec.Merged.Marketplaces {
 			for _, pin := range entry.Resources {
@@ -722,6 +723,9 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 					continue
 				}
 				if sameMarketplacePinIdentity(entry.URL, entry.InstanceID, pin, plan) {
+					continue
+				}
+				if !marketplaceInstallScopesCollide(entry.Source, entry.Required, installSource) {
 					continue
 				}
 				return marketplaceInstallCollisionError("marketplace "+pin.Kind, pin.Name, installed)
@@ -742,13 +746,20 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 	if len(resolved.Errors) > 0 {
 		return errors.Join(resolved.Errors...)
 	}
-	return checkResolvedMarketplaceInstallCollision(resolved.Resolved, plan)
+	return checkResolvedMarketplaceInstallCollision(resolved.Resolved, plan, installSource)
 }
 
-func checkResolvedMarketplaceInstallCollision(resolved []resolver.ResolvedArtifact, plan *marketplace.PreparedInstall) error {
+// A required machine selection also controls the repository harness: a
+// non-required repository installation cannot shadow it.
+func marketplaceInstallScopesCollide(existing config.Source, required bool, installing config.Source) bool {
+	return existing.IsMachineScope() == installing.IsMachineScope() ||
+		(existing.IsMachineScope() && required && !installing.IsMachineScope())
+}
+
+func checkResolvedMarketplaceInstallCollision(resolved []resolver.ResolvedArtifact, plan *marketplace.PreparedInstall, installSource config.Source) error {
 	if len(plan.CollectionMembers) > 0 {
 		for _, member := range plan.CollectionMembers {
-			if err := checkResolvedMarketplaceInstallCollision(resolved, member); err != nil {
+			if err := checkResolvedMarketplaceInstallCollision(resolved, member, installSource); err != nil {
 				return err
 			}
 		}
@@ -760,6 +771,9 @@ func checkResolvedMarketplaceInstallCollision(resolved []resolver.ResolvedArtifa
 			continue
 		}
 		if sameResolvedMarketplaceIdentity(existing, plan) {
+			continue
+		}
+		if !marketplaceInstallScopesCollide(existing.Source, existing.Required, installSource) {
 			continue
 		}
 		return marketplaceInstallCollisionError(existing.Kind.String(), existing.Name, installed)

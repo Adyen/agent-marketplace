@@ -69,8 +69,9 @@ type ResolveOptions struct {
 	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
 	// MarketplaceMode overrides the mode derived from CatalogMode when set,
 	// except that Offline always forces CachedNoFetch.
-	MarketplaceMode    *resolver.MarketplaceResolveMode
-	marketplaceInstall *marketplace.PreparedInstall
+	MarketplaceMode          *resolver.MarketplaceResolveMode
+	marketplaceInstall       *marketplace.PreparedInstall
+	marketplaceInstallSource config.Source
 	// ConfigLoadMode selects organization-lock loading semantics; the default
 	// is online. Offline and cached-only catalog operations always force strict
 	// loading, preserving their existing requirement for on-disk evidence.
@@ -759,7 +760,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		return result
 	}
 	if opts.marketplaceInstall != nil {
-		if err := checkResolvedMarketplaceInstallCollision(resolved.Resolved, opts.marketplaceInstall); err != nil {
+		if err := checkResolvedMarketplaceInstallCollision(resolved.Resolved, opts.marketplaceInstall, opts.marketplaceInstallSource); err != nil {
 			slog.Warn("Marketplace install refused after dependency resolution", "error", err)
 			result.addMaterializeError(err)
 			return result
