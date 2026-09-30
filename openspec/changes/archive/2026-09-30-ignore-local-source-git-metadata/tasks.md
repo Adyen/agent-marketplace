@@ -6,4 +6,4 @@
 ## 2. Verify and publish
 
 - [x] 2.1 Run focused tests, `make validate`, and `make spec-check`; verify no false Git metadata errors or unexpected changes to materialized resources.
-- [ ] 2.2 Run `openspec archive ignore-local-source-git-metadata --yes` as the final implementation commit in the same pull request and verify the main spec contains the scenario.
+- [x] 2.2 Run `openspec archive ignore-local-source-git-metadata --yes` as the final implementation commit in the same pull request and verify the main spec contains the scenario.
