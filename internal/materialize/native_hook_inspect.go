@@ -220,8 +220,6 @@ func nativeHookEntries(outDir string, layout nativeHookLayout, container *jsonc.
 					ID:          ownership.EntryID{Kind: ownership.KindHook, Container: event, IdentityDigest: ownership.HookIdentityDigest(event, valueDigest)},
 					ValueDigest: valueDigest,
 				},
-				container: event,
-				raw:       element.Raw(),
 			})
 		}
 	}

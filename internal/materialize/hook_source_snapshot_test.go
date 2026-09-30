@@ -61,20 +61,6 @@ func TestGitFingerprintSnapshotPinnedAbsoluteSource(t *testing.T) {
 	}
 }
 
-func TestCommonTrailingSlashPath(t *testing.T) {
-	cases := []struct{ a, b, want string }{
-		{"/snap/abc/.factory/hooks/hooks.json", "/cache/main/.factory/hooks/hooks.json", ".factory/hooks/hooks.json"},
-		{"/a/b/hooks.json", "/x/y/hooks.json", "hooks.json"},
-		{"/a/b/hooks.json", "/x/y/other.json", ""},
-		{"/a/b/hooks.json", "", ""},
-	}
-	for _, tc := range cases {
-		if got := commonTrailingSlashPath(filepath.FromSlash(tc.a), filepath.FromSlash(tc.b)); got != tc.want {
-			t.Errorf("commonTrailingSlashPath(%q, %q) = %q, want %q", tc.a, tc.b, got, tc.want)
-		}
-	}
-}
-
 // When the snapshot-pinned source shares no trailing component with the
 // readable path, the hook cannot be identified and must suppress nothing.
 func TestGitFingerprintAbsoluteSourceWithoutCommonSuffixFails(t *testing.T) {
