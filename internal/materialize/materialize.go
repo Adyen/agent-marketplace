@@ -904,7 +904,17 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
 					legacyRoot = roots.For(w.machineScope, repoRoot)
 				}
-				result.Artifacts = suppressNativeSatisfiedHookRules(w.skill, key, legacyRoot, ins, result.Artifacts)
+				suppressed, suppressErr := suppressNativeSatisfiedHookRules(w.skill, key, legacyRoot, ins, result.Artifacts)
+				if suppressErr != nil {
+					// The legacy file could not be surveyed safely for a
+					// surviving managed twin: fail this target closed so the
+					// merge can neither rewrite nor delete those bytes.
+					blocked.blockResource(key, w)
+					markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+					allDiags = append(allDiags, ownedAggregateCodedDiag(key, legacyRoot, "", suppressErr, diag.CodeHookNativeToleranceRefused))
+					continue
+				}
+				result.Artifacts = suppressed
 			}
 		}
 

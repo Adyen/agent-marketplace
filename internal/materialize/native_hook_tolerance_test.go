@@ -1,17 +1,22 @@
 package materialize
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -889,6 +894,242 @@ func TestNativeOwnedHookDoesNotDeleteSurvivingLegacyEntry(t *testing.T) {
 	data, err := os.ReadFile(legacyPath)
 	if err != nil || string(data) != string(legacyBefore) {
 		t.Fatalf("surviving managed legacy entry changed or was deleted: %v %q", err, data)
+	}
+}
+
+// When a valid native proof exists, the surviving-managed-twin check reads
+// the legacy file through the same descriptor-anchored boundary as every
+// other aggregate read: a symlinked legacy file, a symlinked parent
+// directory, a FIFO, or a malformed legacy document can never be followed,
+// block, or be mistaken for "no managed twin". Each unsafe shape fails the
+// affected (target, scope) closed with the stable coded diagnostic, leaves
+// the legacy path and everything it pointed at byte-identical, and does not
+// block an independent target.
+//
+// This test deliberately carries no spec annotation: the malformed-file
+// scenario's WHEN names a malformed/unsafe NATIVE file, already witnessed by
+// TestMalformedNativeHookFilePreservesBothLocations and
+// TestMalformedNativeHookFileDoesNotBlockOtherTargets. The unsafe LEGACY read
+// boundary exercised here is implementation hardening inside the same
+// fail-closed seam, not that scenario's trigger.
+func TestNativeProofWithUnsafeLegacyFileFailsClosed(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	managedTwin := []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./run.sh"}],"_managed_by":"agent-marketplace"}]}` + "\n")
+
+	// setup seeds valid ownership-proven native output for the factory hook
+	// and returns the legacy hooks directory that the twin check must read.
+	setup := func(t *testing.T) (resolver.ResolvedArtifact, string, string) {
+		repoRoot := t.TempDir()
+		resolved, src := toleranceHookFixture(t, config.RepoCommitted, hcc.TargetFactory)
+		resolved.Harnesses = []hcc.Target{hcc.TargetFactory, hcc.TargetCursor}
+		nativeRoot := filepath.Join(repoRoot, ".factory")
+		layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
+		seedNativeOwnedHook(t, nativeRoot, layout, nativeSeedFor(t, hcc.TargetFactory, false),
+			toleranceFingerprint(t, src, "factory", HookScopeRepository))
+		legacyDir := filepath.Join(nativeRoot, "hooks")
+		if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return resolved, repoRoot, legacyDir
+	}
+	assertRefused := func(t *testing.T, repoRoot string, resolved resolver.ResolvedArtifact) {
+		report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+		if err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+		if !diag.HasCode(report.Diags, diag.CodeHookNativeToleranceRefused) {
+			t.Fatalf("unsafe legacy file must fail closed with %s: %#v",
+				diag.CodeHookNativeToleranceRefused, report.Diags)
+		}
+		// The independent cursor target reconciles normally.
+		data, err := os.ReadFile(filepath.Join(repoRoot, ".cursor", "hooks", "hooks.json"))
+		if err != nil || !strings.Contains(string(data), "run.sh") {
+			t.Fatalf("independent target did not reconcile: %v %q", err, data)
+		}
+	}
+
+	// A symlinked legacy file must never be followed: the managed twin it
+	// points at is not evidence, and no write may travel through the link.
+	t.Run("symlinked_legacy_file", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink fixture requires unix")
+		}
+		resolved, repoRoot, legacyDir := setup(t)
+		outside := filepath.Join(t.TempDir(), "outside.json")
+		if err := os.WriteFile(outside, managedTwin, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(legacyDir, "hooks.json")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Fatal(err)
+		}
+		assertRefused(t, repoRoot, resolved)
+		if target, err := os.Readlink(link); err != nil || target != outside {
+			t.Fatalf("legacy symlink replaced: %v %q", err, target)
+		}
+		if data, err := os.ReadFile(outside); err != nil || string(data) != string(managedTwin) {
+			t.Fatalf("external file behind legacy symlink changed: %v %q", err, data)
+		}
+	})
+
+	// A symlinked parent directory escapes the legacy root just as surely:
+	// the descriptor walk must refuse it before the file is ever reached.
+	t.Run("symlinked_legacy_parent", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink fixture requires unix")
+		}
+		resolved, repoRoot, legacyDir := setup(t)
+		outsideDir := t.TempDir()
+		outside := filepath.Join(outsideDir, "hooks.json")
+		if err := os.WriteFile(outside, managedTwin, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(legacyDir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outsideDir, legacyDir); err != nil {
+			t.Fatal(err)
+		}
+		assertRefused(t, repoRoot, resolved)
+		if data, err := os.ReadFile(outside); err != nil || string(data) != string(managedTwin) {
+			t.Fatalf("external file behind symlinked parent changed: %v %q", err, data)
+		}
+	})
+
+	// A FIFO at the legacy path would hang a plain os.ReadFile forever. The
+	// bounded descriptor read must refuse it immediately; the test itself is
+	// deadline-bound so a regression cannot wedge the suite.
+	t.Run("fifo_legacy_file", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("fifo fixture requires unix")
+		}
+		resolved, repoRoot, legacyDir := setup(t)
+		fifo := filepath.Join(legacyDir, "hooks.json")
+		if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		type result struct {
+			report *Report
+			err    error
+		}
+		done := make(chan result, 1)
+		go func() {
+			report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+			done <- result{report, err}
+		}()
+		var res result
+		select {
+		case res = <-done:
+		case <-time.After(30 * time.Second):
+			t.Fatal("sync hung on FIFO legacy file")
+		}
+		if res.err != nil {
+			t.Fatalf("sync: %v", res.err)
+		}
+		if !diag.HasCode(res.report.Diags, diag.CodeHookNativeToleranceRefused) {
+			t.Fatalf("FIFO legacy file must fail closed with %s: %#v",
+				diag.CodeHookNativeToleranceRefused, res.report.Diags)
+		}
+		if info, err := os.Lstat(fifo); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+			t.Fatalf("FIFO legacy path replaced: %v", err)
+		}
+	})
+
+	// A legacy file that exists but cannot be decoded cannot be surveyed for
+	// a surviving managed twin: treating it as absent could drop user bytes.
+	t.Run("malformed_legacy_file", func(t *testing.T) {
+		resolved, repoRoot, legacyDir := setup(t)
+		malformed := []byte("this is not json\n")
+		legacyPath := filepath.Join(legacyDir, "hooks.json")
+		if err := os.WriteFile(legacyPath, malformed, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		assertRefused(t, repoRoot, resolved)
+		if data, err := os.ReadFile(legacyPath); err != nil || string(data) != string(malformed) {
+			t.Fatalf("malformed legacy file changed: %v %q", err, data)
+		}
+	})
+
+	// Positive control: an ordinary legacy file holding a marked managed
+	// twin still keeps its exact bytes with no refusal.
+	t.Run("ordinary_managed_twin", func(t *testing.T) {
+		resolved, repoRoot, legacyDir := setup(t)
+		legacyPath := filepath.Join(legacyDir, "hooks.json")
+		if err := os.WriteFile(legacyPath, managedTwin, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+		if err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+		if diag.HasCode(report.Diags, diag.CodeHookNativeToleranceRefused) {
+			t.Fatalf("ordinary managed twin refused: %#v", report.Diags)
+		}
+		if data, err := os.ReadFile(legacyPath); err != nil || string(data) != string(managedTwin) {
+			t.Fatalf("ordinary managed twin changed or deleted: %v %q", err, data)
+		}
+	})
+}
+
+// A mid-loop survey failure must leave the caller's artifact slice
+// untouched: the suppressed-output accumulator must not reuse the input
+// backing array, or a fail-closed error return would still carry the
+// already-rewritten fragment bytes. No spec annotation: the malformed-file
+// scenario's WHEN names a malformed NATIVE file, witnessed by
+// TestMalformedNativeHookFilePreservesBothLocations; this guards the
+// error-return contract of the same seam only.
+func TestSuppressNativeSatisfiedHookRulesErrorLeavesInputUnchanged(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	repoRoot := t.TempDir()
+	resolved, src := toleranceHookFixture(t, config.RepoCommitted, hcc.TargetFactory)
+	nativeRoot := filepath.Join(repoRoot, ".factory")
+	layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
+	seedNativeOwnedHook(t, nativeRoot, layout, nativeSeedFor(t, hcc.TargetFactory, false),
+		toleranceFingerprint(t, src, "factory", HookScopeRepository))
+	ins := nativeHookInspectionFor(map[outputKey]*nativeHookInspection{},
+		outputKey{target: hcc.TargetFactory}, repoRoot)
+	if ins.err != nil {
+		t.Fatalf("inspection: %v", ins.err)
+	}
+	legacyRoot := nativeRoot
+
+	// The first fragment's managed legacy twin survives, so it is kept and
+	// re-marshaled; the second fragment's legacy file is malformed, which
+	// must abort with an error AND leave both input artifacts' bytes intact.
+	rule := `{"hooks":[{"command":"./run.sh","type":"command"}],"matcher":"Bash"}`
+	twin := `{"PreToolUse":[{"hooks":[{"command":"./run.sh","type":"command"}],"matcher":"Bash","_managed_by":"agent-marketplace"}]}` + "\n"
+	firstPath := "hooks/hooks.json"
+	firstAbs := filepath.Join(legacyRoot, filepath.FromSlash(firstPath))
+	if err := os.MkdirAll(filepath.Dir(firstAbs), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(firstAbs, []byte(twin), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secondPath := "hooks/other.json"
+	secondAbs := filepath.Join(legacyRoot, filepath.FromSlash(secondPath))
+	if err := os.WriteFile(secondAbs, []byte("this is not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	firstBytes := []byte(`{"PreToolUse": [` + rule + `]}`)
+	secondBytes := []byte(`{"PreToolUse":[` + rule + `]}`)
+	artifacts := []artifact.Artifact{
+		{Path: firstPath, Bytes: firstBytes, Fragment: true},
+		{Path: secondPath, Bytes: secondBytes, Fragment: true},
+	}
+
+	if _, err := suppressNativeSatisfiedHookRules(resolved, outputKey{target: hcc.TargetFactory},
+		legacyRoot, ins, artifacts); err == nil {
+		t.Fatal("suppression must fail on the malformed second legacy file")
+	}
+	if !bytes.Equal(artifacts[0].Bytes, firstBytes) {
+		t.Fatalf("error return rewrote input artifact bytes: %s", artifacts[0].Bytes)
+	}
+	if !bytes.Equal(artifacts[1].Bytes, secondBytes) {
+		t.Fatalf("error return rewrote input artifact bytes: %s", artifacts[1].Bytes)
 	}
 }
 

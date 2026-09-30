@@ -326,18 +326,29 @@ func marshalHookFragment(events map[string][]json.RawMessage, nested bool) ([]by
 // forbidden to do. An equal UNMARKED element — the proven native entry itself
 // in the Windsurf shared file — does not keep the rule desired: suppressing
 // it leaves exactly that element in place, marked-duplicate free.
-func legacyManagedRulePresent(legacyFile string, nested bool, event string, rule json.RawMessage) bool {
-	raw, err := os.ReadFile(legacyFile)
+//
+// The file is read through the same descriptor-anchored boundary as every
+// other aggregate: a symlink in any component, a non-regular file (a FIFO
+// would hang a plain path read forever), or an oversized file is refused
+// rather than followed. Any failure to survey the file — unsafe shape, read
+// error, or an undecodable/mismatched document — returns an error so the
+// caller fails the affected target closed instead of guessing "no managed
+// twin" and letting the merge delete user bytes.
+func legacyManagedRulePresent(legacyRoot, rel string, nested bool, event string, rule json.RawMessage) (bool, error) {
+	raw, err := ownership.ReadAggregateFileAt(legacyRoot, rel)
 	if err != nil {
-		return false
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
 	events, fileNested, ok := hookFragmentEventMap(raw)
 	if !ok || fileNested != nested {
-		return false
+		return false, fmt.Errorf("legacy hook file %q is not a decodable hook document", filepath.Join(legacyRoot, filepath.FromSlash(rel)))
 	}
 	want, err := canonicalOwnedJSON(rule)
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, existing := range events[event] {
 		unmarked, marked := stripManagedByMarker(existing)
@@ -349,10 +360,10 @@ func legacyManagedRulePresent(legacyFile string, nested bool, event string, rule
 			continue
 		}
 		if bytes.Equal(canonical, want) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // stripManagedByMarker removes the _managed_by member from one JSON object,
@@ -389,20 +400,26 @@ func stripManagedByMarker(raw json.RawMessage) (json.RawMessage, bool) {
 // preserves those bytes instead of deleting them.
 //
 // A hook whose source fingerprint cannot be computed at all suppresses
-// nothing — an identity guess could suppress the wrong entry.
-func suppressNativeSatisfiedHookRules(res resolver.ResolvedArtifact, key outputKey, legacyRoot string, ins *nativeHookInspection, artifacts []artifact.Artifact) []artifact.Artifact {
+// nothing — an identity guess could suppress the wrong entry. And a legacy
+// file that cannot be surveyed safely for a surviving managed twin returns
+// an error: the caller must fail this target closed rather than risk the
+// merge deleting bytes it could not inspect.
+func suppressNativeSatisfiedHookRules(res resolver.ResolvedArtifact, key outputKey, legacyRoot string, ins *nativeHookInspection, artifacts []artifact.Artifact) ([]artifact.Artifact, error) {
 	fingerprint, err := nativeHookFingerprint(res, key.target, key.machineScope)
 	if err != nil {
-		return artifacts
+		return artifacts, nil
 	}
 	name := res.Name
 	if res.InstalledName != "" {
 		name = res.InstalledName
 	}
 	if !ins.hookSatisfied(fingerprint, name) {
-		return artifacts
+		return artifacts, nil
 	}
-	out := artifacts[:0]
+	// A fresh backing array is required: an error return hands the caller's
+	// original slice back, and reusing its storage would leak the
+	// already-rewritten fragment bytes into that "unchanged" input.
+	out := make([]artifact.Artifact, 0, len(artifacts))
 	for _, a := range artifacts {
 		if !a.Fragment {
 			out = append(out, a)
@@ -413,18 +430,22 @@ func suppressNativeSatisfiedHookRules(res resolver.ResolvedArtifact, key outputK
 			out = append(out, a)
 			continue
 		}
-		legacyFile := filepath.Join(legacyRoot, filepath.FromSlash(a.Path))
+		legacyRel := a.Path
 		if key.target == hcc.TargetWindsurf && key.machineScope {
 			// The machine-scope install root already IS ~/.codeium/windsurf:
 			// the compiled ".windsurf/" prefix is a project-scope prefix that
 			// machine-scope plans strip before writing.
-			legacyFile = filepath.Join(legacyRoot, filepath.FromSlash(strings.TrimPrefix(a.Path, windsurfDir+"/")))
+			legacyRel = strings.TrimPrefix(a.Path, windsurfDir+"/")
 		}
 		filtered := make(map[string][]json.RawMessage, len(events))
 		for _, event := range sortedKeys(events) {
 			var kept []json.RawMessage
 			for _, rule := range events[event] {
-				if legacyManagedRulePresent(legacyFile, nested, event, rule) {
+				present, presentErr := legacyManagedRulePresent(legacyRoot, legacyRel, nested, event, rule)
+				if presentErr != nil {
+					return artifacts, presentErr
+				}
+				if present {
 					kept = append(kept, rule)
 				}
 			}
@@ -445,5 +466,5 @@ func suppressNativeSatisfiedHookRules(res resolver.ResolvedArtifact, key outputK
 		a.Bytes = body
 		out = append(out, a)
 	}
-	return out
+	return out, nil
 }
