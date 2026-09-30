@@ -371,10 +371,10 @@ func walkFingerprintDir(defDirFD int, fn func(relPath string) error) error {
 				entries = append(entries, batch...)
 			}
 			if err != nil {
-				_ = dir.Close()
 				if errors.Is(err, io.EOF) {
 					break
 				}
+				_ = dir.Close()
 				return fmt.Errorf("hook source fingerprint: read directory %s: %w", prefix, err)
 			}
 		}
