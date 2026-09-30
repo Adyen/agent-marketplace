@@ -960,6 +960,46 @@ func TestGCEndpointRootIgnoresInterruptedMetadataWrite(t *testing.T) {
 	}
 }
 
+func TestGCEndpointRootRejectsTempSymlink(t *testing.T) {
+	c := NewCache(t.TempDir())
+	endpoint := "https://marketplace.invalid"
+	contentDigest := "sha256:" + strings.Repeat("1", 64)
+	liveArchive := "sha256:" + strings.Repeat("2", 64)
+	if _, err := c.WriteResourceRevision(endpoint, "src", "skill", "review", contentDigest, assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(liveArchive),
+	})); err != nil {
+		t.Fatalf("WriteResourceRevision: %v", err)
+	}
+	if _, err := c.WriteArtifact(liveArchive, []byte("live")); err != nil {
+		t.Fatalf("WriteArtifact live: %v", err)
+	}
+	orphanArchive := writeOrphanArtifact(t, c)
+
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte("external-bytes"), 0o644); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
+	metadataPath := c.MetadataPath(endpoint, "src", "skill", "review", contentDigest)
+	tmpLink := filepath.Join(filepath.Dir(metadataPath), ".tmp-injected")
+	if err := os.Symlink(outside, tmpLink); err != nil {
+		t.Fatalf("symlink external target: %v", err)
+	}
+
+	result, err := c.GarbageCollect(false, GCRoots{UnlockedEndpoints: []string{endpoint}})
+	if err == nil || len(result.Removed) != 0 {
+		t.Fatalf("GarbageCollect = %v, %v; want fail-closed rejection of .tmp- symlink with no removals", result.Removed, err)
+	}
+	if _, statErr := os.Stat(c.ArtifactPath(orphanArchive)); statErr != nil {
+		t.Fatalf("temp symlink GC mutated artifact cache: %v", statErr)
+	}
+	raw, readErr := os.ReadFile(outside)
+	if readErr != nil || string(raw) != "external-bytes" {
+		t.Fatalf("external file mutated: raw=%q err=%v", raw, readErr)
+	}
+}
+
 // spec: cache-garbage-collection/oversized-revision-metadata
 func TestGCEndpointRootRejectsOversizedMetadata(t *testing.T) {
 	c := NewCache(t.TempDir())

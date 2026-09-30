@@ -264,7 +264,7 @@ func (c *Cache) endpointArchiveDigests(endpoint string) (map[string]struct{}, er
 			}
 			for _, entry := range entries {
 				p := filepath.Join(dir, entry.Name())
-				if !entry.IsDir() && strings.HasPrefix(entry.Name(), ".tmp-") {
+				if entry.Type().IsRegular() && strings.HasPrefix(entry.Name(), ".tmp-") {
 					continue
 				}
 				if depth < 3 {
