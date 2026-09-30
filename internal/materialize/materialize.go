@@ -749,7 +749,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			name = w.skill.InstalledName
 		}
 		blockedResources = append(blockedResources, BlockedResource{
-			Kind: w.skill.Resource.Kind(), Name: name, Target: key.target, MachineScope: key.machineScope,
+			Kind: w.skill.Kind, Name: name, Target: key.target, MachineScope: key.machineScope,
 		})
 	}
 
