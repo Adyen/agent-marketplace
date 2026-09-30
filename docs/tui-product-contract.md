@@ -36,7 +36,7 @@ The startup snapshot is delivered progressively under one request generation. On
 
 Marketplace discovery is replaceable and non-authoritative.
 
-- The TUI renders progressively loaded local inventory and cached Marketplace rows before final assessment. Each configured Marketplace may add a first page of at most 50 results to the existing Available group.
+- The TUI renders pending local selections first and replaces them with verified inventory as resolution completes. Each configured Marketplace may add a first page of at most 50 results to the existing Available group.
 - Search filters loaded rows immediately and starts a remote search after approximately 250 milliseconds without input. A new request cancels and supersedes the prior generation.
 - Clearing search restores the empty-query browse results.
 - Discovery has no pagination and does not change the command-line `search` interface.
@@ -72,7 +72,7 @@ A successful resource-toggle write stays active until an authoritative post-writ
 
 Snapshot diagnostics and operation diagnostics have separate lifecycles. An accepted snapshot atomically replaces earlier snapshot diagnostics without erasing an operation failure. An operation failure stays visible until a successful operation of the same kind supersedes it. Stable diagnostic identity deduplicates repeated values within one outcome.
 
-Hard snapshot errors make drift unavailable or failed, never `in sync`. Before the assessed stage lands, drift is explicitly pending and shown as unavailable rather than `in sync` or assessed. A configuration parse or load failure may produce no structured rows at all; in that case the E editor remains the recovery path because row intent cannot be inferred safely.
+Hard snapshot errors make drift unavailable or failed, never `in sync`. Before the assessed stage lands, drift is explicitly pending and shown as unavailable rather than `in sync` or assessed. A configuration parse or load failure may produce no structured rows at all. In that case the E editor remains the recovery path, because row intent cannot be inferred safely.
 
 Hard catalog, resolution, dry-run, or materialization errors keep their diagnostics and failed drift but retain the partial inventory:
 
@@ -126,4 +126,4 @@ The full resource view is a split bundle browser. The left pane is an expandable
 
 ## Performance evidence
 
-Changed user-visible render and state paths retain benchmarks. Progressive startup reports milestones separately, with allocation data on identical fixtures: config validation as a prerequisite (`config_ready_prerequisite`), the real startup path from staged config read through the config stage and the cached-first discovery it launches until the first cached Marketplace row is rendered (`first_visible`), first toggle-ready verified inventory (`toggle_ready`), and the fully assessed snapshot (`fully_assessed`). Base and head comparisons use identical selections where a base equivalent exists; genuinely new paths record a repeated HEAD baseline with allocation data.
+Changed user-visible render and state paths keep their benchmarks. Progressive startup reports milestones separately, with allocation data on identical fixtures: config validation as a prerequisite (`config_ready_prerequisite`), the real startup path from staged config read through the config stage and the cached-first discovery it launches until the first cached Marketplace row is rendered (`first_visible`), first toggle-ready verified inventory (`toggle_ready`), and the fully assessed snapshot (`fully_assessed`). Base and head comparisons use identical selections where a base equivalent exists; genuinely new paths record a repeated HEAD baseline with allocation data.
