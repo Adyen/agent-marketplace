@@ -685,6 +685,32 @@ func TestHTTPInitializeRejectionRedactsLongestSecret(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestHTTPRejectionRedactsSecretStraddlingSnippetBoundary(t *testing.T) {
+	secret := "boundary-secret-12345"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(strings.Repeat("x", 507) + secret + " trailing text"))
+	}))
+	defer server.Close()
+
+	c, err := NewHTTP(&codemode.ServerDef{URL: server.URL}, secret)
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	err = c.Initialize(context.Background())
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, secret[:5]) {
+		t.Fatalf("secret fragment straddling the snippet boundary leaked: %q", ce.Message)
+	}
+	if len(ce.Message) > 600 {
+		t.Fatalf("rejection snippet not bounded: %d bytes", len(ce.Message))
+	}
+}
+
 func assertRichResult(t *testing.T, out any) {
 	t.Helper()
 	m, ok := out.(map[string]any)

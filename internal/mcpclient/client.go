@@ -521,9 +521,9 @@ func (c *httpClient) post(ctx context.Context, payload any, out any) error {
 		return c.errf("read response: %v", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		snippet := truncate(string(body), 512)
+		snippet := truncate(c.redact(string(body)), 512)
 		if !c.inited.Load() {
-			return codemode.CodeError(codemode.ErrCodeStartFailed, "server rejected handshake: http %d: %s", resp.StatusCode, c.redact(snippet))
+			return codemode.CodeError(codemode.ErrCodeStartFailed, "server rejected handshake: http %d: %s", resp.StatusCode, snippet)
 		}
 		return c.errf("http %d: %s", resp.StatusCode, snippet)
 	}
