@@ -22,7 +22,6 @@ func TestNewThemeBackgroundAdaptiveRoles(t *testing.T) {
 			"text":    th.text,
 			"surface": th.surface,
 			"onSurf":  th.onSurf,
-			"card":    th.card,
 		}
 		for name, c := range roles {
 			if c == nil {

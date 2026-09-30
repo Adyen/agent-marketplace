@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"github.com/charmbracelet/x/ansi"
 	"os"
 	"path/filepath"
 	"slices"
@@ -75,8 +76,8 @@ func TestRenderEditConfigModalContainsAllScopes(t *testing.T) {
 	m := NewModel(repoDir, homeDir)
 	m.pane = paneEditConfigModal
 
-	out := renderEditConfigModal(m)
-	for _, want := range []string{"Edit Config", "[g]", "[p]", "[l]", "[esc]"} {
+	out := ansi.Strip(renderEditConfigModal(m))
+	for _, want := range []string{"Edit Config", "[g]", "[p]", "[l]", "esc cancel"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("renderEditConfigModal missing %q", want)
 		}

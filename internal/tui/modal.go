@@ -11,7 +11,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -468,58 +467,45 @@ func renderToggleModal(m Model) string {
 		return "no"
 	}
 
+	t := m.currentTheme()
+	collision := hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name)
 	if compactTerminalLayout(m) {
-		keyStyle := markKeyStyle(m.currentTheme())
-		var b strings.Builder
-		b.WriteString(title + "\n")
-		if hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name) {
-			b.WriteString("Name collision: choose one source.\n")
+		keyStyle := markKeyStyle(t)
+		var body []string
+		if collision {
+			body = append(body, warnBoldStyle(t).Render("Name collision: choose one source."))
 		}
-		fmt.Fprintf(&b, "Global %s  Project %s\n", check(r.EnabledGlobal), check(r.EnabledProject))
-		fmt.Fprintf(&b, "Local %s  Excluded %s\n", check(r.EnabledLocal), yesno(r.ExcludedLocally || r.ExcludedByUser))
-		if r.canOverrideMarketplace() {
-			b.WriteString(keyStyle.Render("[e]") + " user override\n")
-		} else {
-			b.WriteString(keyStyle.Render("[g]") + " global  " + keyStyle.Render("[p]") + " project\n")
-			b.WriteString(keyStyle.Render("[l]") + " local   ")
-			if r.Artifact.Source.IsMachineScope() {
-				b.WriteString(styleDim.Render("[e] unavailable") + "\n")
-			} else {
-				b.WriteString(keyStyle.Render("[e]") + " exclude\n")
-			}
+		body = append(body,
+			fmt.Sprintf("Global %s  Project %s  Local %s", check(r.EnabledGlobal), check(r.EnabledProject), check(r.EnabledLocal)),
+			fmt.Sprintf("Excluded %s", yesno(r.ExcludedLocally || r.ExcludedByUser)))
+		switch {
+		case r.canOverrideMarketplace():
+			body = append(body, keyStyle.Render("[e]")+" user override")
+		case r.Artifact.Source.IsMachineScope():
+			body = append(body, keyStyle.Render("[g]")+" global  "+keyStyle.Render("[p]")+" project  "+keyStyle.Render("[l]")+" local",
+				styleDim.Render("[e] unavailable"))
+		default:
+			body = append(body, keyStyle.Render("[g]")+" global  "+keyStyle.Render("[p]")+" project  "+keyStyle.Render("[l]")+" local",
+				keyStyle.Render("[e]")+" exclude")
 		}
-		b.WriteString(keyStyle.Render("[esc]") + " cancel")
-		return compactModalStyle(modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent), m).Render(b.String())
+		return modalFrame(m, t.accent, title, body, []footerHint{{"esc", "cancel"}})
 	}
 
-	var b strings.Builder
-	b.WriteString(title + "\n\n")
-
-	// Check for name collision errors affecting this resource.
-	if hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name) {
-		warnStyle := warnBoldStyle(m.currentTheme())
-		b.WriteString("  " + warnStyle.Render("⚠ Name collision — toggle may not take effect until you exclude the other source") + "\n\n")
+	var body []string
+	if collision {
+		body = append(body, warnBoldStyle(t).Render("⚠ Name collision — toggle may not take effect until you exclude the other source"), "")
 	}
-
-	fmt.Fprintf(&b, "  Global:        %s\n", check(r.EnabledGlobal))
-	fmt.Fprintf(&b, "  Project:       %s\n", check(r.EnabledProject))
-	fmt.Fprintf(&b, "  Local:         %s\n", check(r.EnabledLocal))
+	body = append(body, fmt.Sprintf("Global %s   Project %s   Local %s", check(r.EnabledGlobal), check(r.EnabledProject), check(r.EnabledLocal)))
 	if r.canOverrideMarketplace() {
-		fmt.Fprintf(&b, "  User override: %s  (%s)\n\n", yesno(r.ExcludedByUser), skill.KindLabel(r.Artifact.Kind))
+		body = append(body, fmt.Sprintf("User override: %s  (%s)", yesno(r.ExcludedByUser), skill.KindLabel(r.Artifact.Kind)))
 	} else {
-		fmt.Fprintf(&b, "  Local exclude: %s  (%s)\n\n", yesno(r.ExcludedLocally), skill.KindLabel(r.Artifact.Kind))
+		body = append(body, fmt.Sprintf("Local exclude: %s  (%s)", yesno(r.ExcludedLocally), skill.KindLabel(r.Artifact.Kind)))
 	}
-
-	keyStyle := markKeyStyle(m.currentTheme())
-
 	m.ensureToggleForm()
 	if m.toggleForm != nil {
-		b.WriteString(m.toggleForm.View())
-		b.WriteString("\n")
+		body = append(body, "", m.toggleForm.View())
 	}
-	b.WriteString("  " + keyStyle.Render("[esc]") + "  cancel")
-
-	return modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent).Render(b.String())
+	return modalFrame(m, t.accent, title, body, []footerHint{{"↑↓", "move"}, {"enter", "apply"}, {"esc", "cancel"}})
 }
 
 // hasCollisionError returns true if any error in errs is a name collision

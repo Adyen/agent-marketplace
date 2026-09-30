@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,7 +134,7 @@ func TestRenderToggleModalShowsPerScopeState(t *testing.T) {
 	m.pane = paneToggleModal
 	m.modalSkill = r
 
-	out := renderToggleModal(m)
+	out := ansi.Strip(renderToggleModal(m))
 	for _, want := range []string{
 		"audit",
 		"Global",
@@ -144,7 +145,7 @@ func TestRenderToggleModalShowsPerScopeState(t *testing.T) {
 		"[p]",
 		"[l]",
 		"[e]",
-		"[esc]",
+		"esc cancel",
 	} {
 		if !contains(out, want) {
 			t.Fatalf("modal missing %q in output:\n%s", want, out)

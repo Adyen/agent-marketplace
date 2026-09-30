@@ -24,7 +24,7 @@ var (
 
 // theme owns every TUI color as semantic roles mapped onto the terminal's
 // ANSI-16 palette, so the interface inherits the user's terminal colors.
-// Only roles that depend on the background (mark, text, card) carry a
+// Only roles that depend on the background (mark, text) carry a
 // light/dark pair; the rest are fixed ANSI-16 indexes.
 type theme struct {
 	dark    bool
@@ -37,7 +37,6 @@ type theme struct {
 	text    color.Color // readable body text on the surface
 	surface color.Color // raised chrome background (header, selection, overlays)
 	onSurf  color.Color // readable text on the surface
-	card    color.Color // floating modal background
 }
 
 // newTheme builds the semantic ANSI-16 theme for one terminal background.
@@ -57,7 +56,6 @@ func newTheme(isDark bool) theme {
 		text:    ld(lipgloss.ANSIColor(0), lipgloss.ANSIColor(15)),
 		surface: paletteSurface,
 		onSurf:  paletteOnSurface,
-		card:    ld(lipgloss.ANSIColor(15), lipgloss.ANSIColor(0)),
 	}
 }
 
@@ -69,18 +67,6 @@ func (m Model) currentTheme() theme {
 		return newTheme(m.isDark || compat.HasDarkBackground)
 	}
 	return m.theme
-}
-
-// modalBoxStyle builds the bordered floating-box style for modal panes. The
-// card and text roles follow the model's reported background so the box
-// reads clearly on top of the main two-pane layout.
-func modalBoxStyle(t theme, border lipgloss.Border, borderColor color.Color) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Border(border).
-		BorderForeground(borderColor).
-		Background(t.card).
-		Foreground(t.text).
-		Padding(1, 2)
 }
 
 // Style factories for the background-dependent roles. Every color decision
@@ -111,7 +97,9 @@ func huhTheme(t theme) *huh.Styles {
 	s := huh.ThemeBase(t.dark)
 	button := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
 
-	s.Focused.Base = s.Focused.Base.BorderForeground(t.accent)
+	// The modal frame owns the border; a second focus bar inside it would
+	// duplicate the option cursor.
+	s.Focused.Base = lipgloss.NewStyle()
 	s.Focused.Card = s.Focused.Base
 	s.Focused.Title = s.Focused.Title.Foreground(t.accent).Bold(true)
 	s.Focused.NoteTitle = s.Focused.NoteTitle.Foreground(t.accent).Bold(true)
@@ -136,7 +124,6 @@ func huhTheme(t theme) *huh.Styles {
 	s.Focused.TextInput.Text = s.Focused.TextInput.Text.Foreground(t.text)
 
 	s.Blurred = s.Focused
-	s.Blurred.Base = s.Blurred.Base.BorderStyle(lipgloss.HiddenBorder())
 	s.Blurred.Card = s.Blurred.Base
 	s.Blurred.MultiSelectSelector = lipgloss.NewStyle().SetString("  ")
 	s.Blurred.NextIndicator = lipgloss.NewStyle()

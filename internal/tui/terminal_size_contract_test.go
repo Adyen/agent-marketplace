@@ -136,14 +136,14 @@ func TestCoreViewsFitSupportedMinimumWithRecoveryActions(t *testing.T) {
 		{name: "errors", prepare: func(m Model) Model { m.pane = paneErrors; return m }, required: []string{"esc/e close", "Ctrl+C quit"}},
 		{name: "confirm", prepare: func(m Model) Model { m.pane = paneConfirm; m.confirmMsg = "Sync before quitting?"; return m }, required: []string{"y sync+quit", "n quit", "esc cancel"}},
 		{name: "detail", prepare: func(m Model) Model { m.pane = paneDetail; return m }, required: []string{"esc/q back", "Ctrl+C quit"}},
-		{name: "toggle", prepare: func(m Model) Model { m.pane = paneToggleModal; m.modalSkill = mkRow("resource", withProject); return m }, required: []string{"[g]", "[p]", "[l]", "[e]", "[esc]"}},
-		{name: "harness", prepare: func(m Model) Model { m.pane = paneHarnessModal; m.openHarnessModal(); return m }, required: []string{"[space]", "[enter]", "[esc]"}},
+		{name: "toggle", prepare: func(m Model) Model { m.pane = paneToggleModal; m.modalSkill = mkRow("resource", withProject); return m }, required: []string{"[g]", "[p]", "[l]", "[e]", "esc cancel"}},
+		{name: "harness", prepare: func(m Model) Model { m.pane = paneHarnessModal; m.openHarnessModal(); return m }, required: []string{"space toggle", "enter save", "esc cancel"}},
 		{name: "first run", prepare: func(m Model) Model {
 			m.pane = paneInitModal
 			m.initModal = initModalState{selected: map[string]bool{"factory": true}}
 			return m
-		}, required: []string{"[space]", "[enter]", "[esc]"}},
-		{name: "edit config", prepare: func(m Model) Model { m.pane = paneEditConfigModal; return m }, required: []string{"[g]", "[p]", "[l]", "[esc]"}},
+		}, required: []string{"space toggle", "enter save", "esc cancel"}},
+		{name: "edit config", prepare: func(m Model) Model { m.pane = paneEditConfigModal; return m }, required: []string{"[g]", "[p]", "[l]", "esc cancel"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			output := ansi.Strip(test.prepare(base).View().Content)

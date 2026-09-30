@@ -10,7 +10,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -128,53 +127,36 @@ func renderHarnessModal(m Model) string {
 		modal.selected = harnessSelection(m.globalHarnesses)
 	}
 
-	title := titleStyle(m.currentTheme()).Render("Target harnesses")
-	keyStyle := markKeyStyle(m.currentTheme())
-	activeStyle := okBoldStyle(m.currentTheme())
+	t := m.currentTheme()
+	title := titleStyle(t).Render("Target harnesses")
+	activeStyle := okBoldStyle(t)
+	hints := []footerHint{{"space", "toggle"}, {"enter", "save"}, {"esc", "cancel"}, {"g", "global"}, {"p", "project"}}
 
-	compact := compactTerminalLayout(m)
-	modalStyle := compactModalStyle(modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent), m)
-	var b strings.Builder
-	if compact {
-		contentRows := max(1, m.height-modalStyle.GetVerticalFrameSize())
-		visibleOptions := max(1, contentRows-4)
+	var body []string
+	if compactTerminalLayout(m) {
 		if modal.multi != nil {
-			modal.multi.Height(visibleOptions)
+			modal.multi.Height(max(1, m.height-modalFrameRows-2))
 		}
-		b.WriteString(title + "\n")
-		fmt.Fprintf(&b, "%s · %s\n", activeStyle.Render(modal.scope.label()), harnessListLabel(effectiveHarnesses(m), ", "))
-	} else {
-		b.WriteString(title + "\n\n")
-		fmt.Fprintf(&b, "  Editing:   %s\n", activeStyle.Render(modal.scope.label()))
-		fmt.Fprintf(&b, "  Effective: %s\n", harnessListLabel(effectiveHarnesses(m), ", "))
-		fmt.Fprintf(&b, "  Global:    %s\n", harnessListLabel(m.globalHarnesses, ", "))
-		fmt.Fprintf(&b, "  Project:   %s\n\n", harnessListLabel(m.projectHarnesses, ", "))
+		body = append(body, fmt.Sprintf("%s · %s", activeStyle.Render(modal.scope.label()), harnessListLabel(effectiveHarnesses(m), ", ")))
+		if modal.form != nil {
+			body = append(body, modal.form.View())
+		}
+		return modalFrame(m, t.accent, title, body, hints)
 	}
 
+	body = append(body,
+		"Editing:   "+activeStyle.Render(modal.scope.label()),
+		"Effective: "+harnessListLabel(effectiveHarnesses(m), ", "),
+		"Global:    "+harnessListLabel(m.globalHarnesses, ", "),
+		"Project:   "+harnessListLabel(m.projectHarnesses, ", "),
+		"")
 	if modal.form != nil {
-		b.WriteString(modal.form.View())
-		b.WriteString("\n")
+		body = append(body, modal.form.View())
 	}
-
-	unknown := unknownSelectedHarnesses(modal.selected)
-	if len(unknown) > 0 && !compact {
-		b.WriteString("\n")
-		fmt.Fprintf(&b, "  Other selected: %s\n", sanitizeTerminalData(strings.Join(unknown, ", "), terminalSingleLine))
+	if unknown := unknownSelectedHarnesses(modal.selected); len(unknown) > 0 {
+		body = append(body, "", "Other selected: "+sanitizeTerminalData(strings.Join(unknown, ", "), terminalSingleLine))
 	}
-
-	if !compact {
-		b.WriteString("\n  ")
-	}
-	b.WriteString(keyStyle.Render("[g]") + " global  ")
-	b.WriteString(keyStyle.Render("[p]") + " project\n")
-	if !compact {
-		b.WriteString("  ")
-	}
-	b.WriteString(keyStyle.Render("[space]") + " toggle  ")
-	b.WriteString(keyStyle.Render("[enter]") + " save  ")
-	b.WriteString(keyStyle.Render("[esc]") + " cancel")
-
-	return modalStyle.Render(b.String())
+	return modalFrame(m, t.accent, title, body, hints)
 }
 
 func unknownSelectedHarnesses(selected map[string]bool) []string {

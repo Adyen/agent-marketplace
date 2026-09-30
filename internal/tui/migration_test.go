@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"github.com/charmbracelet/x/ansi"
 	"os"
 	"path/filepath"
 	"testing"
@@ -270,16 +271,15 @@ func TestRenderMigrationModalIncludesActions(t *testing.T) {
 	m.pane = paneMigrationModal
 	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}}
 
-	out := renderMigrationModal(m)
+	out := ansi.Strip(renderMigrationModal(m))
 	for _, want := range []string{
 		"Configuration migration required",
 		"Project",
 		"agent-marketplace migrate --scope user",
 		"apiVersion: agent-marketplace/v4",
 		"preserves source selections and layer policies",
-		"[m]",
-		"[l]",
-		"leave config unchanged",
+		"enter/m migrate",
+		"l/esc leave unchanged",
 	} {
 		if !contains(out, want) {
 			t.Fatalf("migration modal missing %q in output:\n%s", want, out)

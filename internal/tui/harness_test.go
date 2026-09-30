@@ -41,8 +41,8 @@ func TestRenderHarnessModalShowsProvenanceAndActions(t *testing.T) {
 	m.globalHarnesses = []string{"cursor"}
 	m.openHarnessModal()
 
-	out := renderHarnessModal(m)
-	for _, want := range []string{"Target harnesses", "Effective:", "Project:", "Global:", "Factory Droid", "Cursor", "[p]", "[g]", "[space]", "[enter]"} {
+	out := ansi.Strip(renderHarnessModal(m))
+	for _, want := range []string{"Target harnesses", "Effective:", "Project:", "Global:", "Factory Droid", "Cursor", "p project", "g global", "space toggle", "enter save"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("modal missing %q in output:\n%s", want, out)
 		}

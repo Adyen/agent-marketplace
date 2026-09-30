@@ -13,7 +13,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -26,45 +25,29 @@ type editConfigPathMsg struct {
 }
 
 func renderEditConfigModal(m Model) string {
-	title := titleStyle(m.currentTheme()).Render("Edit Config")
-
-	globalPath, err := config.GlobalConfigPath()
-	if err != nil {
-		globalPath = fmt.Sprintf("<global config path unavailable: %s>", err.Error())
-	}
-	projectPath := config.ProjectConfigPath(m.repoRoot)
-	localPath := config.LocalConfigPath(m.workspace.LocalConfigDir())
-
-	dimStyle := dimTextStyle(m.currentTheme())
-
-	keyStyle := markKeyStyle(m.currentTheme())
-
-	if compactTerminalLayout(m) {
-		var b strings.Builder
-		b.WriteString(title + "\n")
-		m.ensureEditConfigForm()
-		if m.editConfigForm != nil {
-			b.WriteString(m.editConfigForm.View())
-			b.WriteString("\n")
-		}
-		b.WriteString(keyStyle.Render("[esc]") + " cancel")
-		return compactModalStyle(modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent), m).Render(b.String())
-	}
-
-	var b strings.Builder
-	b.WriteString(title + "\n\n")
-	fmt.Fprintf(&b, "  Global:    %s\n", dimStyle.Render(sanitizeTerminalData(globalPath, terminalSingleLine)))
-	fmt.Fprintf(&b, "  Project:   %s\n", dimStyle.Render(sanitizeTerminalData(projectPath, terminalSingleLine)))
-	fmt.Fprintf(&b, "  Local:     %s\n\n", dimStyle.Render(sanitizeTerminalData(localPath, terminalSingleLine)))
-
+	t := m.currentTheme()
+	title := titleStyle(t).Render("Edit Config")
+	hints := []footerHint{{"↑↓", "move"}, {"enter", "open"}, {"esc", "cancel"}}
 	m.ensureEditConfigForm()
-	if m.editConfigForm != nil {
-		b.WriteString(m.editConfigForm.View())
-		b.WriteString("\n")
-	}
-	b.WriteString("  " + keyStyle.Render("[esc]") + "  cancel")
 
-	return modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent).Render(b.String())
+	var body []string
+	if !compactTerminalLayout(m) {
+		globalPath, err := config.GlobalConfigPath()
+		if err != nil {
+			globalPath = fmt.Sprintf("<global config path unavailable: %s>", err.Error())
+		}
+		width := modalInnerWidth(m) - len("Project  ")
+		dim := dimTextStyle(t)
+		body = append(body,
+			"Global   "+dim.Render(shortenPath(globalPath, m.homeDir, width)),
+			"Project  "+dim.Render(shortenPath(config.ProjectConfigPath(m.repoRoot), m.homeDir, width)),
+			"Local    "+dim.Render(shortenPath(config.LocalConfigPath(m.workspace.LocalConfigDir()), m.homeDir, width)),
+			"")
+	}
+	if m.editConfigForm != nil {
+		body = append(body, m.editConfigForm.View())
+	}
+	return modalFrame(m, t.accent, title, body, hints)
 }
 
 func (m Model) handleEditConfigModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

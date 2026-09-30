@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 )
@@ -21,13 +20,6 @@ func (m Model) belowMinimumTerminal() bool {
 
 func compactTerminalLayout(m Model) bool {
 	return m.width < 60 || m.height < 20
-}
-
-func compactModalStyle(style lipgloss.Style, m Model) lipgloss.Style {
-	if compactTerminalLayout(m) {
-		return style.Padding(0, 1)
-	}
-	return style
 }
 
 func fitTerminalRows(content string, width, height int) string {

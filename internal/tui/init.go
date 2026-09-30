@@ -2,14 +2,12 @@ package tui
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -41,54 +39,39 @@ func newInitModalState(homeDir string) (initModalState, error) {
 func renderInitModal(m Model) string {
 	m.ensureInitForm()
 	modal := m.initModal
+	t := m.currentTheme()
+	title := titleStyle(t).Render("Initialize target harnesses")
+	hints := []footerHint{{"space", "toggle"}, {"enter", "save"}, {"esc", "cancel"}}
 
-	titleStyle := titleStyle(m.currentTheme())
-	keyStyle := markKeyStyle(m.currentTheme())
-
-	compact := compactTerminalLayout(m)
-	modalStyle := compactModalStyle(modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent), m)
-	var b strings.Builder
-	if compact {
-		contentRows := max(1, m.height-modalStyle.GetVerticalFrameSize())
-		visibleOptions := max(1, contentRows-3)
+	var body []string
+	if compactTerminalLayout(m) {
 		if modal.multi != nil {
-			modal.multi.Height(visibleOptions)
+			modal.multi.Height(max(1, m.height-modalFrameRows-2))
 		}
-		b.WriteString(titleStyle.Render("Initialize target harnesses") + "\n")
 		if modal.detected {
-			b.WriteString("Detected targets are pre-selected.\n")
+			body = append(body, "Detected targets are pre-selected.")
 		} else {
-			b.WriteString("No installed targets detected.\n")
+			body = append(body, "No installed targets detected.")
 		}
+		if modal.form != nil {
+			body = append(body, modal.form.View())
+		}
+		return modalFrame(m, t.accent, title, body, hints)
+	}
+
+	body = append(body, "Select the harnesses agent-marketplace should materialize into.")
+	if modal.detected {
+		body = append(body, "Detected installation roots are pre-selected.", "")
 	} else {
-		b.WriteString(titleStyle.Render("Initialize target harnesses") + "\n\n")
-		b.WriteString("Select the harnesses agent-marketplace should materialize into.\n")
-		if modal.detected {
-			b.WriteString("Detected installation roots are pre-selected.\n\n")
-		} else {
-			b.WriteString("No harness installation roots were detected.\n\n")
-		}
+		body = append(body, "No harness installation roots were detected.", "")
 	}
-
 	if modal.form != nil {
-		b.WriteString(modal.form.View())
-		b.WriteString("\n")
+		body = append(body, modal.form.View())
 	}
-
-	unknown := unknownSelectedHarnesses(modal.selected)
-	if len(unknown) > 0 && !compact {
-		b.WriteString("\n")
-		fmt.Fprintf(&b, "  Other selected: %s\n", sanitizeTerminalData(strings.Join(unknown, ", "), terminalSingleLine))
+	if unknown := unknownSelectedHarnesses(modal.selected); len(unknown) > 0 {
+		body = append(body, "", "Other selected: "+sanitizeTerminalData(strings.Join(unknown, ", "), terminalSingleLine))
 	}
-
-	if !compact {
-		b.WriteString("\n  ")
-	}
-	b.WriteString(keyStyle.Render("[space]") + " toggle  ")
-	b.WriteString(keyStyle.Render("[enter]") + " save  ")
-	b.WriteString(keyStyle.Render("[esc]") + " cancel")
-
-	return modalStyle.Render(b.String())
+	return modalFrame(m, t.accent, title, body, hints)
 }
 
 func (m Model) handleInitModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -104,7 +87,7 @@ func (m Model) handleInitModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		harnesses := selectedHarnessIDs(m.initModal.selected)
 		if len(harnesses) == 0 {
-			m.initModal.form, m.initModal.multi, m.initModal.multiValue = newHarnessSelectForm(m.initModal.selected, m.currentTheme())
+			m.initModal.form, m.initModal.multi, m.initModal.multiValue = newHarnessSelectForm(m.initModal.selected, m.currentTheme(), modalInnerWidth(m))
 			return m, func() tea.Msg {
 				return toastMsg{text: "select at least one harness", duration: 2 * time.Second}
 			}

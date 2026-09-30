@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -99,37 +97,26 @@ func migrationPathsForPrompt(prompt migrationPrompt) config.MigratePaths {
 	return paths
 }
 
+// renderMigrationModal leads with what was found and the decision, so the
+// explanatory detail is what drops first on short terminals.
 func renderMigrationModal(m Model) string {
-	title := warnTitleStyle(m.currentTheme()).Render("Configuration migration required")
-
-	keyStyle := markKeyStyle(m.currentTheme())
-
-	dim := dimTextStyle(m.currentTheme())
-
-	var b strings.Builder
-	b.WriteString(title + "\n\n")
-	b.WriteString("This configuration can be migrated to agent-marketplace/v4.\n")
-	b.WriteString("Existing v2 and v3 configurations remain readable if you decline.\n")
-	b.WriteString("The migrated root declares:\n```yaml\napiVersion: agent-marketplace/v4\n```\n\n")
-	b.WriteString("Runs the in-process equivalent of:\n")
-	b.WriteString("```sh\nagent-marketplace migrate --scope user\n```\n\n")
-	b.WriteString("The migration preserves source selections and layer policies, but regenerates canonical YAML.\n\n")
-	b.WriteString("Detected legacy configuration in:\n")
+	t := m.currentTheme()
+	title := warnTitleStyle(t).Render("Configuration migration required")
+	body := []string{"Legacy configuration found:"}
 	for _, cfg := range m.migrationPrompt.configs {
-		fmt.Fprintf(&b, "  • %s: %s\n", cfg.label, cfg.path)
+		body = append(body, fmt.Sprintf("  • %s: %s", cfg.label, shortenPath(cfg.path, m.homeDir, modalInnerWidth(m)-6-len(cfg.label))))
 	}
-	b.WriteString("\n")
-	b.WriteString(dim.Render("Migration is transactional; unsupported or lossy inputs are left unchanged."))
-	b.WriteString("\n\n")
+	body = append(body, "", "Migrate it to agent-marketplace/v4? Existing v2 and v3 configurations remain readable if you leave them unchanged.")
 	m.ensureMigrationForm()
 	if m.migrationForm != nil {
-		b.WriteString(m.migrationForm.View())
-		b.WriteString("\n\n")
+		body = append(body, "", m.migrationForm.View())
 	}
-	b.WriteString("  " + keyStyle.Render("[enter]") + " or " + keyStyle.Render("[m]") + "  migrate to v4\n")
-	b.WriteString("  " + keyStyle.Render("[l]") + " or " + keyStyle.Render("[esc]") + "  leave config unchanged")
-
-	return modalBoxStyle(m.currentTheme(), lipgloss.DoubleBorder(), m.currentTheme().warn).Render(b.String())
+	dim := dimTextStyle(t)
+	body = append(body, "",
+		dim.Render("Equivalent command:  agent-marketplace migrate --scope user"),
+		dim.Render("Migrated root:       apiVersion: agent-marketplace/v4"),
+		dim.Render("The migration preserves source selections and layer policies, but regenerates canonical YAML. It is transactional; unsupported or lossy inputs are left unchanged."))
+	return modalFrame(m, t.warn, title, body, []footerHint{{"enter/m", "migrate"}, {"l/esc", "leave unchanged"}})
 }
 
 func (m Model) handleMigrationModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
