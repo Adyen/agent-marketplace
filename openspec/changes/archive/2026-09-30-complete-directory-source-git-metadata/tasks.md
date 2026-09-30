@@ -7,5 +7,5 @@
 ## 2. Fix and verify
 
 - [x] 2.1 Exclude only `.git` before Factory, Cursor, Gemini, Windsurf, and Codex skill-directory enumeration; verify focused tests pass and genuine malformed authored skills still retain their existing handling.
-- [ ] 2.2 Run affected-package tests, the v4 CLI/TUI consumer tests, `make validate`, and `make spec-check`; verify explicit source roots and safety checks remain unchanged. Run applicable E2E and TUI QA gates if touched.
-- [ ] 2.3 Run `openspec archive complete-directory-source-git-metadata --yes` as the final implementation commit in this pull request and verify the main spec retains every scenario.
+- [x] 2.2 Run affected-package tests, the v4 CLI/TUI consumer tests, `make validate`, and `make spec-check`; verify explicit source roots and safety checks remain unchanged. Run applicable E2E and TUI QA gates if touched.
+- [x] 2.3 Run `openspec archive complete-directory-source-git-metadata --yes` as the final implementation commit in this pull request and verify the main spec retains every scenario.
