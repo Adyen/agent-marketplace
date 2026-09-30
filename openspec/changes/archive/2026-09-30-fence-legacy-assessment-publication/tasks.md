@@ -9,4 +9,4 @@
 - [x] Run affected store/consumer tests, race checks and before/after benchmarks.
 - [x] Execute PostgreSQL checks or record the environment blocker explicitly.
 - [x] Complete adversarial delegated review of the entire layer.
-- [ ] Archive with `openspec archive fence-legacy-assessment-publication --yes` as the final commit.
+- [x] Archive with `openspec archive fence-legacy-assessment-publication --yes` as the final commit.
