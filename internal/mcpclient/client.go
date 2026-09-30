@@ -150,6 +150,7 @@ func Spawn(ctx context.Context, def *codemode.ServerDef, extraSecrets ...string)
 	if def == nil || def.Command == "" {
 		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "server definition has no command")
 	}
+	secrets := append(envSecrets(def.Env), extraSecrets...)
 	cmd := exec.Command(def.Command, def.Args...)
 	cmd.Env = declaredEnv(def.Env)
 	stderr := newStderrCapture()
@@ -163,13 +164,14 @@ func Spawn(ctx context.Context, def *codemode.ServerDef, extraSecrets ...string)
 		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "stdin pipe: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "start %q: %v", def.Command, scrubErr(err))
+		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "start %q: %s",
+			redactSecrets(def.Command, secrets), redactSecrets(scrubErr(err), secrets))
 	}
 	c := &stdioClient{
 		cmd:     cmd,
 		stdin:   stdin,
 		stderr:  stderr,
-		secrets: append(envSecrets(def.Env), extraSecrets...),
+		secrets: secrets,
 		scanner: bufio.NewScanner(stdout),
 		sem:     make(chan struct{}, 1),
 	}
@@ -233,11 +235,17 @@ func (s *stderrCapture) String() string {
 	return s.buf.String()
 }
 
-func (c *stdioClient) redact(s string) string {
-	for _, secret := range c.secrets {
-		s = strings.ReplaceAll(s, secret, "<redacted>")
+func redactSecrets(s string, secrets []string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			s = strings.ReplaceAll(s, secret, "<redacted>")
+		}
 	}
 	return s
+}
+
+func (c *stdioClient) redact(s string) string {
+	return redactSecrets(s, c.secrets)
 }
 
 func (c *stdioClient) redactedStderr() string {
@@ -276,7 +284,7 @@ func (c *stdioClient) request(ctx context.Context, method string, params any) (j
 	case err := <-writeCh:
 		if err != nil {
 			c.kill()
-			return nil, codemode.CodeError(codemode.ErrCodeToolError, "write to server: %v", scrubErr(err))
+			return nil, codemode.CodeError(codemode.ErrCodeToolError, "write to server: %s", c.redact(scrubErr(err)))
 		}
 	case <-ctx.Done():
 		c.kill()

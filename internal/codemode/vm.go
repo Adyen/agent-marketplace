@@ -175,10 +175,7 @@ func truncatedMarker(raw string, cap int) (json.RawMessage, error) {
 // named "CodeModeError" carrying a lower-cased code field) for a coded host
 // error, without installing any host global.
 func codeModeErrorValue(vm *goja.Runtime, e *Error) goja.Value {
-	obj, err := vm.New(vm.Get("Error").ToObject(vm), vm.ToValue(e.Message))
-	if err != nil {
-		return vm.ToValue(e.Message)
-	}
+	obj := vm.NewTypeError(e.Message)
 	_ = obj.Set("name", "CodeModeError")
 	_ = obj.Set("code", e.Code)
 	return obj

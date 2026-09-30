@@ -326,6 +326,56 @@ func TestRethrownCodeModeErrorKeepsCode(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/failures-carry-stable-codes
+func TestCodeModeErrorSurvivesErrorGlobalOverwrite(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+	})
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv"},
+		"code": `async () => {
+			const OriginalError = Error
+			Error = function () { return {} }
+			try { await skills.load("reg/skill/missing") } catch (e) {
+				return [e instanceof OriginalError, e.name, e.code]
+			}
+			return "missed"
+		}`,
+	})
+	res, _, err := e.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	got := string(res.Value)
+	var decoded []any
+	if err := json.Unmarshal(res.Value, &decoded); err != nil || len(decoded) != 3 {
+		t.Fatalf("caught shape = %s", got)
+	}
+	if decoded[0] != true || decoded[1] != "CodeModeError" || decoded[2] != ErrCodeNotFound {
+		t.Fatalf("caught shape = %s, want Error named CodeModeError with code %q", got, ErrCodeNotFound)
+	}
+}
+
+// spec: code-mode-mcp/host-call-cap-enforced
+func TestHostCallCapAfterErrorGlobalOverwrite(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+	})
+	e.Limits = Limits{HostCallLimit: 3}
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv"},
+		"code": `async () => {
+			Error = function () { return {} }
+			for (let i = 0; i < 10; i++) { await mcp.srv.ping() }
+		}`,
+	})
+	_, _, err := e.Execute(context.Background(), args)
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Code != ErrCodeHostCallLimit {
+		t.Fatalf("expected %s, got %v", ErrCodeHostCallLimit, err)
+	}
+}
+
 type findingsSkills struct {
 	fakeSkills
 	findings []Finding

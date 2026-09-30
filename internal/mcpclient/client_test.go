@@ -329,6 +329,25 @@ func TestBlockedStdinWriteCancelledAtDeadline(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/environment-references-expanded-before-start
+func TestStartFailureRedactsExpandedCommand(t *testing.T) {
+	secret := "private-executable-xyz"
+	t.Setenv("AM_TEST_SECRET", secret)
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := fakeResource(&codemode.ServerDef{Command: "${AM_TEST_SECRET}/missing"})
+	_, err := pool.Tools(context.Background(), "fake", res)
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, secret) {
+		t.Fatalf("expanded command value leaked in start failure: %q", ce.Message)
+	}
+	if !strings.Contains(ce.Message, "<redacted>") || !strings.Contains(ce.Message, "missing") {
+		t.Fatalf("start failure lost its diagnostic: %q", ce.Message)
+	}
+}
+
 func TestStartFailedCoded(t *testing.T) {
 	_, err := Spawn(context.Background(), &codemode.ServerDef{Command: "/nonexistent/binary/xyz"})
 	var ce *codemode.Error
