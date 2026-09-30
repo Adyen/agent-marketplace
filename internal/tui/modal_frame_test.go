@@ -99,3 +99,10 @@ func TestShortenPathKeepsFileName(t *testing.T) {
 		t.Fatalf("a path that fits must stay unchanged, got %q", got)
 	}
 }
+
+func TestDetailLabelsNeverTouchTheirValues(t *testing.T) {
+	out := ansi.Strip(keyValueTable(newTheme(true), [][2]string{{"Kind:", "skill"}, {"Registry:", "https://example.test"}}))
+	if !strings.Contains(out, "Registry: https://example.test") || strings.Contains(out, "Registry:https") {
+		t.Fatalf("the longest label must be separated from its value:\n%s", out)
+	}
+}

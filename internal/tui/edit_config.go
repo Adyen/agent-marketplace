@@ -122,7 +122,7 @@ func openEditorCmd(path string) tea.Cmd {
 			return editConfigPathMsg{path: path, err: fmt.Errorf("create config directory for %q: %w", path, err)}
 		}
 		c := exec.Command(parts[0], append(parts[1:], path)...)
-		return tea.Exec(newEditorProcess(c), func(err error) tea.Msg {
+		return tea.Exec(newEditorProcess(c).withWaitingScreen(path, parts[0]), func(err error) tea.Msg {
 			slog.Debug("config editor process exited", "editor", editor, "path", path, "err", err)
 			return editConfigPathMsg{path: path, err: err}
 		})()

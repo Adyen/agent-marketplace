@@ -157,7 +157,8 @@ func keyValueTable(t theme, pairs [][2]string) string {
 		Wrap(false).
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if col == 0 {
-				return styleDetailLabel
+				// The gap keeps the longest label from touching its value.
+				return styleDetailLabel.PaddingRight(1)
 			}
 			return valueStyle
 		}).
