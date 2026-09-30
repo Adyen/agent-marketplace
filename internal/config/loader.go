@@ -293,6 +293,8 @@ func canonicalConfigPath(path string) (string, error) {
 // existing ancestor and appends the missing components, which yields the same
 // name canonicalConfigPath produces once the file exists. That keeps staged
 // edits, provenance, and lock-path comparisons stable across the creating edit.
+// A dangling symlink on the path has no such stable name, so it is refused
+// with an error that still reports the file as not existing.
 func canonicalConfigPathTolerateMissing(path string) (string, error) {
 	current, err := filepath.Abs(path)
 	if err != nil {
@@ -310,6 +312,9 @@ func canonicalConfigPathTolerateMissing(path string) (string, error) {
 		parent := filepath.Dir(current)
 		if !errors.Is(err, fs.ErrNotExist) || parent == current {
 			return "", fmt.Errorf("resolve config path %q: %w", path, err)
+		}
+		if _, lstatErr := os.Lstat(current); lstatErr == nil {
+			return "", fmt.Errorf("resolve config path %q: %s is a symlink to a missing target: %w", path, current, err)
 		}
 		missing = append(missing, filepath.Base(current))
 		current = parent

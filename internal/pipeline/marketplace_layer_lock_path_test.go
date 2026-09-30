@@ -43,4 +43,12 @@ func TestMarketplaceLayerLockPathForAConfigWhoseDirectoryIsMissing(t *testing.T)
 	if got, err := marketplaceLayerLockPath(dangling); err == nil {
 		t.Fatalf("marketplaceLayerLockPath accepted a dangling config symlink: %q", got)
 	}
+
+	danglingDir := filepath.Join(home, "dangling-dir")
+	if err := os.Symlink(filepath.Join(root, "absent"), danglingDir); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := marketplaceLayerLockPath(filepath.Join(danglingDir, "config.yaml")); err == nil {
+		t.Fatalf("marketplaceLayerLockPath accepted a config below a dangling directory symlink: %q", got)
+	}
 }

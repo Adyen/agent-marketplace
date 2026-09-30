@@ -1,6 +1,8 @@
 package e2e_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -81,4 +83,53 @@ func TestInstallUserScopeMarketplaceCreatesAMissingUserConfig(t *testing.T) {
 	env.AssertFileContains("/root/.agents/lock.yaml", "skill-one")
 	env.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "User scope body")
 	env.AssertExitCode(env.RunAM("sync", "--check"), 0)
+}
+
+// A dangling symlink at ~/.agents or ~/.agents/config.yaml, such as a dotfiles
+// link whose target is not checked out, is never written through. User-scope
+// installs are refused, and read-only commands and sync keep treating the user
+// config as absent.
+func TestUserScopeRefusesToWriteThroughADanglingSymlink(t *testing.T) {
+	for _, link := range []string{".agents", filepath.Join(".agents", "config.yaml")} {
+		t.Run(link, func(t *testing.T) {
+			fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Dangling body", false))
+			env := newEnv(t)
+			env.InitGitRepo()
+			env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+			registry := env.CreateBareRepo("dangling-user-root", RegistryFiles([]Skill{{Name: "review", Description: "Review"}}, nil, nil))
+			target := filepath.Join(filepath.Dir(env.home), "dotfiles", "missing")
+			linkPath := filepath.Join(env.home, link)
+			if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, linkPath); err != nil {
+				t.Fatal(err)
+			}
+			assertLinkUntouched := func(step string) {
+				t.Helper()
+				if got, err := os.Readlink(linkPath); err != nil || got != target {
+					t.Fatalf("%s changed the %s symlink: %q, %v", step, link, got, err)
+				}
+				if _, err := os.Lstat(target); !os.IsNotExist(err) {
+					t.Fatalf("%s wrote through the dangling %s symlink (target lstat: %v)", step, link, err)
+				}
+			}
+
+			for _, args := range [][]string{
+				{"install", "review", "--from", registry, "--ref", "main", "--scope", "user"},
+				{"install", fixture.server.URL + "/r/behavior-source/skill/skill-one", "--scope", "user", "--yes"},
+			} {
+				result := env.RunAM(args...)
+				if result.ExitCode == 0 || !strings.Contains(result.Combined, "symlink") {
+					t.Fatalf("%v through a dangling %s symlink was not refused (exit %d):\n%s", args, link, result.ExitCode, result.Combined)
+				}
+				assertLinkUntouched(strings.Join(args[:2], " "))
+			}
+			env.AssertFileAbsent("/root/.factory/skills/review")
+			for _, args := range [][]string{{"status"}, {"sync"}} {
+				env.AssertExitCode(env.RunAM(args...), 0)
+				assertLinkUntouched(args[0])
+			}
+		})
+	}
 }

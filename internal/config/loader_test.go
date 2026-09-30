@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -901,6 +903,37 @@ func TestCanonicalConfigPathTolerateMissingResolvesTheDeepestExistingAncestor(t 
 		existing, err := canonicalConfigPath(tc.path)
 		if err != nil || existing != got {
 			t.Fatalf("name after creating %q = %q, %v; want the pre-creation name %q", tc.path, existing, err, got)
+		}
+	}
+}
+
+// A dangling symlink on the path, as the file or as one of its directories,
+// has no name that stays the same once its target exists. It is refused, and
+// the error still reports a missing file so readers treat the layer as absent.
+func TestCanonicalConfigPathTolerateMissingRefusesADanglingSymlink(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "dotfiles", "agents"), filepath.Join(home, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	leafDir := filepath.Join(root, "leaf")
+	if err := os.MkdirAll(leafDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "dotfiles", "config.yaml"), filepath.Join(leafDir, "config.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".agents", "config.yaml"),
+		filepath.Join(home, ".agents", "nested", "config.yaml"),
+		filepath.Join(leafDir, "config.yaml"),
+	} {
+		got, err := canonicalConfigPathTolerateMissing(path)
+		if err == nil || !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "symlink to a missing target") {
+			t.Fatalf("canonicalConfigPathTolerateMissing(%q) = %q, %v; want a dangling-symlink error that wraps fs.ErrNotExist", path, got, err)
 		}
 	}
 }
