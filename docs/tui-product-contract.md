@@ -1,6 +1,6 @@
 # TUI Product Contract
 
-This document defines the `agent-marketplace tui` behavior covered by GitHub issue #41. It does not redefine configuration schema, migration, target precedence, or materialization policy; `AGENTS.md`, `docs/PRECEDENCE.md`, and their owning packages govern those. The TUI consumes those contracts and must report their outcomes truthfully.
+This document defines the `agent-marketplace tui` behavior covered by GitHub issue #41. It does not redefine configuration schema, migration, target precedence, or materialization policy; `AGENTS.md` and their owning packages govern those. The TUI consumes those contracts and must report their outcomes truthfully.
 
 ## Authority and enforcement
 
