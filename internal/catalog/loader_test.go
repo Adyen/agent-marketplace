@@ -1278,6 +1278,45 @@ metadata:
 	}
 }
 
+// spec: directory-source-discovery/git-metadata-beside-valid-and-malformed-skills
+func TestDiscover_SkillsGitMetadataIgnored(t *testing.T) {
+	dir := t.TempDir()
+	for rel, content := range map[string]string{
+		"skills/.git/HEAD":             "ref: refs/heads/main\n",
+		"skills/.git/hooks/pre-commit": "#!/bin/sh\n",
+		"skills/good-skill/SKILL.md":   "---\nname: good-skill\n---\nGood\n",
+		"skills/bad-skill/SKILL.md":    "---\nname: Bad_Skill\n---\nBad\n",
+	} {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, path, content)
+	}
+
+	result, err := Discover(dir, "claude")
+	if err != nil {
+		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
+	}
+
+	if len(result.Entries) != 1 || result.Entries[0].Name != "good-skill" {
+		t.Fatalf("expected exactly the good-skill entry, got %#v", result.Entries)
+	}
+
+	badSkillMalformed := false
+	for _, m := range result.Malformed {
+		if strings.Contains(m.DirName, ".git") || strings.Contains(m.Path, ".git") || m.DirName == "catalog.discover.sub-bundles-ignored" {
+			t.Errorf("unexpected malformed entry: %#v", m)
+		}
+		if strings.Contains(m.DirName, "bad-skill") || strings.Contains(m.Path, "bad-skill") {
+			badSkillMalformed = true
+		}
+	}
+	if !badSkillMalformed {
+		t.Errorf("expected malformed authored skill bad-skill to be reported, got %#v", result.Malformed)
+	}
+}
+
 // TestDiscover_SubBundlesPopulated verifies that Discover populates the
 // SubBundles field when recursive discovery is triggered.
 func TestDiscover_SubBundlesPopulated(t *testing.T) {
