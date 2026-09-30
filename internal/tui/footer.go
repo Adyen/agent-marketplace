@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -45,12 +46,24 @@ const (
 	rankAction = rankStatus + 20
 )
 
+// renderedHints memoizes styled hint text: the hint styles are fixed, and
+// the footer re-renders the same hints on every frame.
+var renderedHints sync.Map
+
 func hintItem(key, desc string, rank int, floor bool) footerItem {
-	keyStyle := shortcutKeyStyle
+	cacheKey := key + "\x00" + desc
 	if floor {
-		keyStyle = styleSearchPrompt
+		cacheKey += "\x00floor"
 	}
-	return footerItem{text: keyStyle.Render(key) + " " + shortcutDescStyle.Render(desc), rank: rank, hint: true}
+	text, ok := renderedHints.Load(cacheKey)
+	if !ok {
+		keyStyle := shortcutKeyStyle
+		if floor {
+			keyStyle = styleSearchPrompt
+		}
+		text, _ = renderedHints.LoadOrStore(cacheKey, keyStyle.Render(key)+" "+shortcutDescStyle.Render(desc))
+	}
+	return footerItem{text: text.(string), rank: rank, hint: true}
 }
 
 // footerFloor is the always-reachable entry points: the command palette,
@@ -222,28 +235,55 @@ func layoutFooter(width int, items []footerItem) string {
 	}
 	sort.SliceStable(order, func(a, b int) bool { return items[order[a]].rank < items[order[b]].rank })
 	chosen := make([]string, len(items))
+	widths := make([]int, len(items)) // width of chosen[i]; 0 when not admitted
 	for _, i := range order {
 		for _, text := range []string{items[i].text, items[i].short} {
 			if text == "" {
 				continue
 			}
-			chosen[i] = text
-			if ansi.StringWidth(joinFooter(items, chosen)) <= width {
+			widths[i] = ansi.StringWidth(text)
+			if footerWidth(items, widths) <= width {
+				chosen[i] = text
 				break
 			}
-			chosen[i] = ""
+			widths[i] = 0
 		}
 		if chosen[i] != "" || !items[i].clip {
 			continue
 		}
-		chosen[i] = " "
-		if room := width - ansi.StringWidth(joinFooter(items, chosen)) + 1; room > 1 {
+		widths[i] = 1
+		if room := width - footerWidth(items, widths) + 1; room > 1 {
 			chosen[i] = ansi.Truncate(items[i].text, room, "…")
+			widths[i] = ansi.StringWidth(chosen[i])
 		} else {
-			chosen[i] = ""
+			widths[i] = 0
 		}
 	}
 	return joinFooter(items, chosen)
+}
+
+// footerWidth is the display width joinFooter would produce for the items
+// with non-zero widths, computed without building the string.
+func footerWidth(items []footerItem, widths []int) int {
+	total, prev := 0, -1
+	for i, w := range widths {
+		if w == 0 {
+			continue
+		}
+		if prev >= 0 {
+			total += ansi.StringWidth(footerSeparator(items[prev], items[i]))
+		}
+		total += w
+		prev = i
+	}
+	return total
+}
+
+func footerSeparator(prev, next footerItem) string {
+	if prev.hint && next.hint {
+		return " · "
+	}
+	return "  "
 }
 
 // joinFooter joins the chosen item texts in display order: consecutive
@@ -256,11 +296,7 @@ func joinFooter(items []footerItem, chosen []string) string {
 			continue
 		}
 		if prev >= 0 {
-			if items[prev].hint && items[i].hint {
-				b.WriteString(" · ")
-			} else {
-				b.WriteString("  ")
-			}
+			b.WriteString(footerSeparator(items[prev], items[i]))
 		}
 		b.WriteString(text)
 		prev = i
