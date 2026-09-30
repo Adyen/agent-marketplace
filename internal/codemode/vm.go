@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dop251/goja"
 )
@@ -98,7 +99,7 @@ func RunWithBinder(ctx context.Context, code string, binder func(context.Context
 
 	v, err := vm.RunString("(" + code + ")")
 	if err != nil {
-		return Result{}, mapRunError(err, sentinel)
+		return Result{}, mapRunError(vm, err, sentinel)
 	}
 	fn, ok := goja.AssertFunction(v)
 	if !ok {
@@ -106,12 +107,12 @@ func RunWithBinder(ctx context.Context, code string, binder func(context.Context
 	}
 	v, err = fn(goja.Undefined())
 	if err != nil {
-		return Result{}, mapRunError(err, sentinel)
+		return Result{}, mapRunError(vm, err, sentinel)
 	}
 
 	if p, isPromise := v.Export().(*goja.Promise); isPromise {
 		if p.State() == goja.PromiseStateRejected {
-			return Result{}, mapRunError(thrownValue{v: p.Result()}, sentinel)
+			return Result{}, mapRunError(vm, thrownValue{v: p.Result()}, sentinel)
 		}
 		v = p.Result()
 	}
@@ -122,7 +123,7 @@ func RunWithBinder(ctx context.Context, code string, binder func(context.Context
 	}
 	out, err := stringify(goja.Undefined(), v)
 	if err != nil {
-		return Result{}, mapRunError(err, sentinel)
+		return Result{}, mapRunError(vm, err, sentinel)
 	}
 	if goja.IsUndefined(out) {
 		return Result{Value: json.RawMessage("null")}, nil
@@ -138,10 +139,20 @@ func RunWithBinder(ctx context.Context, code string, binder func(context.Context
 	return Result{Value: json.RawMessage(raw)}, nil
 }
 
+const truncationPrefixCap = 4 << 10
+
 func truncatedMarker(raw string, cap int) (json.RawMessage, error) {
-	for n := len(raw); ; {
+	n := len(raw)
+	if n > truncationPrefixCap {
+		n = truncationPrefixCap
+	}
+	for {
+		for n > 0 && !utf8.ValidString(raw[:n]) {
+			n--
+		}
 		marker, err := json.Marshal(map[string]any{
 			"truncated": true,
+			"bytes":     len(raw),
 			"prefix":    raw[:n],
 		})
 		if err != nil {
@@ -160,20 +171,54 @@ func truncatedMarker(raw string, cap int) (json.RawMessage, error) {
 	}
 }
 
-func mapRunError(err error, sentinel *interruptSentinel) error {
+// codeModeErrorValue builds a script-visible CodeModeError (a builtin Error
+// named "CodeModeError" carrying a lower-cased code field) for a coded host
+// error, without installing any host global.
+func codeModeErrorValue(vm *goja.Runtime, e *Error) goja.Value {
+	obj := vm.NewTypeError(e.Message)
+	_ = obj.Set("name", "CodeModeError")
+	_ = obj.Set("code", e.Code)
+	return obj
+}
+
+// errorFromValue recovers a coded host error from a thrown script value.
+func errorFromValue(vm *goja.Runtime, v goja.Value) *Error {
+	if v == nil {
+		return nil
+	}
+	if e, ok := v.Export().(*Error); ok {
+		return e
+	}
+	if obj := v.ToObject(vm); obj != nil {
+		if n := obj.Get("name"); n == nil || n.String() != "CodeModeError" {
+			return nil
+		}
+		code := obj.Get("code")
+		if code != nil && !goja.IsUndefined(code) && !goja.IsNull(code) {
+			msg := ""
+			if m := obj.Get("message"); m != nil && !goja.IsUndefined(m) {
+				msg = m.String()
+			}
+			return &Error{Code: code.String(), Message: msg}
+		}
+	}
+	return nil
+}
+
+func mapRunError(vm *goja.Runtime, err error, sentinel *interruptSentinel) error {
 	var ce *Error
 	if errors.As(err, &ce) {
 		return ce
 	}
 	var tv thrownValue
 	if errors.As(err, &tv) {
-		if thrown, ok := tv.v.Export().(*Error); ok {
+		if thrown := errorFromValue(vm, tv.v); thrown != nil {
 			return thrown
 		}
 	}
 	var exc *goja.Exception
 	if errors.As(err, &exc) {
-		if thrown, ok := exc.Value().Export().(*Error); ok {
+		if thrown := errorFromValue(vm, exc.Value()); thrown != nil {
 			return thrown
 		}
 	}
@@ -201,7 +246,7 @@ func sanitizeHostPaths(s string) string {
 }
 
 func throwCoded(vm *goja.Runtime, err *Error) {
-	panic(vm.ToValue(err))
+	panic(codeModeErrorValue(vm, err))
 }
 
 func wrapHostCalls(vm *goja.Runtime, value any, counter *int64, limit int) any {
@@ -229,7 +274,7 @@ func wrapHostCalls(vm *goja.Runtime, value any, counter *int64, limit int) any {
 
 func countHostCall(vm *goja.Runtime, counter *int64, limit int) {
 	if atomic.AddInt64(counter, 1) > int64(limit) {
-		panic(vm.ToValue(CodeError(ErrCodeHostCallLimit, "host-call cap of %d reached", limit)))
+		panic(codeModeErrorValue(vm, CodeError(ErrCodeHostCallLimit, "host-call cap of %d reached", limit)))
 	}
 }
 
@@ -259,7 +304,7 @@ func countedNativeFunc(vm *goja.Runtime, fn reflect.Value, counter *int64, limit
 			if e, ok := outs[1].Interface().(error); ok && e != nil {
 				var ce *Error
 				if errors.As(e, &ce) {
-					panic(vm.ToValue(ce))
+					panic(codeModeErrorValue(vm, ce))
 				}
 				panic(vm.ToValue(e.Error()))
 			}

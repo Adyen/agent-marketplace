@@ -243,6 +243,45 @@ func TestPromoteSelectsRecordedLocalSource(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/recorded-refs-remain-promotable
+func TestPromoteAcceptsRefRecordedUnderEarlierLabel(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("TMPDIR", t.TempDir())
+
+	dir := filepath.Join(t.TempDir(), "reg-b")
+	writeSkill(t, dir, "shared", "recorded body", nil)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	// The source name now labels refs `local:b-src/...`; the session entry
+	// still carries the earlier derived label `local:reg-b/...`.
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  b-src: {directory: "+dir+"}\n")
+	withWorkingDir(t, repoRoot)
+
+	ref := "local:" + filepath.Base(dir) + "/skill/shared"
+	writeSessionEntry(t, home+"/state", "sess-relabel", codemode.SessionEntry{
+		Event: "skill.load", Ref: ref, Source: dir,
+	})
+
+	output, err := executeCommand("promote", ref, "--scope", "repo")
+	if err != nil {
+		t.Fatalf("promote: %v\n%s", err, output)
+	}
+	materialized, err := os.ReadFile(filepath.Join(repoRoot, ".factory", "skills", "shared", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("materialized skill: %v", err)
+	}
+	if !strings.Contains(string(materialized), "recorded body") {
+		t.Fatalf("promote did not route through recorded provenance:\n%s", materialized)
+	}
+}
+
 // spec: code-mode-mcp/recorded-git-source-installed-at-recorded-commit
 func TestPromoteLocksRecordedGitCommit(t *testing.T) {
 	if isolateCommandTest(t) {

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -283,6 +284,17 @@ func TestOutputTruncatedProducesValidJSON(t *testing.T) {
 	if !ok || m["truncated"] != true {
 		t.Fatalf("truncated marker missing: %.200s", res.Value)
 	}
+	serialized := 2*1024*1024 + 2
+	if m["bytes"] != float64(serialized) {
+		t.Fatalf("marker bytes = %v, want serialized size %d", m["bytes"], serialized)
+	}
+	prefix, ok := m["prefix"].(string)
+	if !ok || len(prefix) > 4<<10 || !utf8.ValidString(prefix) {
+		t.Fatalf("prefix = %d bytes valid=%v, want at most 4 KiB of valid UTF-8", len(prefix), ok)
+	}
+	if !strings.HasPrefix(prefix, `"xx`) {
+		t.Fatalf("prefix does not lead the serialized value: %q", prefix[:min(len(prefix), 16)])
+	}
 }
 
 // spec: code-mode-mcp/loads-and-starts-recorded-with-identity
@@ -364,7 +376,7 @@ func TestSkillLoadErrorsPreserveCodedErrors(t *testing.T) {
 
 	caught, _ := json.Marshal(map[string]any{
 		"code": `async () => {
-			try { await skills.load("reg/skill/missing") } catch (err) { return err.Code }
+			try { await skills.load("reg/skill/missing") } catch (err) { return err.code }
 			return "missed"
 		}`,
 	})
@@ -373,7 +385,7 @@ func TestSkillLoadErrorsPreserveCodedErrors(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	if string(res.Value) != `"`+ErrCodeNotFound+`"` {
-		t.Fatalf("caught value = %s, want coded object with Code %q", res.Value, ErrCodeNotFound)
+		t.Fatalf("caught value = %s, want coded object with code %q", res.Value, ErrCodeNotFound)
 	}
 
 	e.Gate = func(ctx context.Context, r *Resource) error {

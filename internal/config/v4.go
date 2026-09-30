@@ -1856,7 +1856,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document) (*
 			out.Marketplaces = append(out.Marketplaces, *entry)
 			continue
 		}
-		entry := RegistryEntry{SourceHarness: src.SourceHarness, Ref: src.Ref, Path: src.Path, URL: src.URL, V4Kind: src.Kind}
+		entry := RegistryEntry{SourceHarness: src.SourceHarness, Ref: src.Ref, Path: src.Path, URL: src.URL, V4Kind: src.Kind, SourceName: name}
 		if src.Kind == V4SourceDirectory {
 			entry.Ref = ""
 			entry.Path = ""

@@ -202,10 +202,6 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 				}
 				continue
 			}
-			alias := oc.Endpoint.Alias
-			if alias == "" {
-				alias = oc.Endpoint.InstanceID
-			}
 			for _, item := range oc.Resources {
 				if excludedAvailability(item.Availability) {
 					continue
@@ -216,11 +212,11 @@ func (b *SnapshotBuilder) BuildSnapshot(ctx context.Context, ec config.Effective
 				}
 				kind := normalizeKind(item.Kind)
 				res := Resource{
-					Ref:         alias + ":" + slug + "/" + kind + "/" + item.Name,
+					Ref:         "marketplace:" + slug + "/" + kind + "/" + item.Name,
 					Kind:        kind,
 					Name:        item.Name,
 					Description: item.Description,
-					Registry:    slug,
+					Registry:    "marketplace:" + slug,
 					Revision:    item.Revision,
 					Assessment:  "allow",
 				}
@@ -416,6 +412,12 @@ func excludedAvailability(a mpapi.Availability) bool {
 }
 
 func registryLabel(entry config.RegistryEntry) string {
+	if entry.SourceName != "" {
+		if entry.V4Kind == config.V4SourceDirectory {
+			return "local:" + entry.SourceName
+		}
+		return entry.SourceName
+	}
 	label := entry.URL
 	if entry.IsLocal() {
 		label = "local:" + filepath.Base(strings.TrimRight(entry.URL, "/"))

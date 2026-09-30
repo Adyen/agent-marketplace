@@ -48,6 +48,10 @@ func fakeServer() {
 			continue
 		}
 		var result any
+		if method == "initialize" && os.Getenv("GO_MCP_FAKE_INITERR") == "1" {
+			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "error": map[string]any{"code": -32000, "message": "initialize refused " + os.Getenv("SECRET_TOKEN")}})
+			continue
+		}
 		switch method {
 		case "initialize":
 			result = map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "serverInfo": map[string]any{"name": "fake"}}
@@ -69,8 +73,20 @@ func fakeServer() {
 				result = map[string]any{"content": []map[string]any{{"type": "text", "text": string(out)}}}
 			case "env":
 				result = map[string]any{"content": []map[string]any{{"type": "text", "text": os.Getenv("SECRET_TOKEN")}}}
+			case "rich":
+				result = map[string]any{
+					"content": []map[string]any{
+						{"type": "text", "text": "hello"},
+						{"type": "image", "data": "aGk=", "mimeType": "image/png"},
+					},
+					"structuredContent": map[string]any{"rows": []any{1, 2}, "label": "rich"},
+					"_meta":             map[string]any{"cursor": "next"},
+				}
+			case "rpcerror":
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "error": map[string]any{"code": -32000, "message": "denied " + os.Getenv("SECRET_TOKEN")}})
+				continue
 			case "toolerror":
-				result = map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "tool failed hard"}}}
+				result = map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "tool failed hard " + os.Getenv("SECRET_TOKEN")}}}
 			case "hang":
 				time.Sleep(10 * time.Second)
 			case "crash":
@@ -313,6 +329,25 @@ func TestBlockedStdinWriteCancelledAtDeadline(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/environment-references-expanded-before-start
+func TestStartFailureRedactsExpandedCommand(t *testing.T) {
+	secret := "private-executable-xyz"
+	t.Setenv("AM_TEST_SECRET", secret)
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := fakeResource(&codemode.ServerDef{Command: "${AM_TEST_SECRET}/missing"})
+	_, err := pool.Tools(context.Background(), "fake", res)
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, secret) {
+		t.Fatalf("expanded command value leaked in start failure: %q", ce.Message)
+	}
+	if !strings.Contains(ce.Message, "<redacted>") || !strings.Contains(ce.Message, "missing") {
+		t.Fatalf("start failure lost its diagnostic: %q", ce.Message)
+	}
+}
+
 func TestStartFailedCoded(t *testing.T) {
 	_, err := Spawn(context.Background(), &codemode.ServerDef{Command: "/nonexistent/binary/xyz"})
 	var ce *codemode.Error
@@ -386,5 +421,481 @@ func TestHTTPDirectRequestSendsDeclaredHeaders(t *testing.T) {
 	}
 	if gotAuth != "Bearer test-secret-xyz" {
 		t.Fatalf("declared header not sent to the configured endpoint: %q", gotAuth)
+	}
+}
+
+// spec: code-mode-mcp/environment-references-expanded-before-start
+func TestEnvironmentReferencesExpandedBeforeStart(t *testing.T) {
+	t.Setenv("AM_EXPAND_TOKEN", "expanded-secret")
+	t.Setenv("AM_EXPAND_BIN", os.Args[0])
+	t.Setenv("AM_HOST_ONLY", "must-not-forward")
+
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := fakeResource(&codemode.ServerDef{
+		Command: "${AM_EXPAND_BIN}",
+		Args:    []string{"-test.run", "TestMain"},
+		Env: map[string]string{
+			"GO_MCP_FAKE":  "1",
+			"SECRET_TOKEN": "${env:AM_EXPAND_TOKEN}",
+		},
+	})
+	out, err := pool.Call(context.Background(), "fake", res, "env", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if out.(map[string]any)["text"] != "expanded-secret" {
+		t.Fatalf("env value not expanded: %v", out)
+	}
+	for _, kv := range declaredEnv(res.ServerDef().Env) {
+		if strings.HasPrefix(kv, "AM_HOST_ONLY=") {
+			t.Fatalf("host-only variable forwarded: %v", kv)
+		}
+	}
+}
+
+// spec: code-mode-mcp/environment-references-expanded-before-start
+func TestHeaderAndURLReferencesExpandedBeforeStart(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		var req rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		result := json.RawMessage(`{"protocolVersion":"` + protocolVersion + `","capabilities":{}}`)
+		if req.Method == "tools/list" {
+			result = json.RawMessage(`{"tools":[{"name":"ping"}]}`)
+		}
+		if req.Method == "notifications/initialized" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(rpcReply{JSONRPC: "2.0", ID: req.ID, Result: result})
+	}))
+	defer server.Close()
+
+	t.Setenv("AM_HDR_TOKEN", "expanded-header-secret")
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	def := &codemode.ServerDef{
+		URL:     server.URL + "/${AM_URL_SUFFIX}",
+		Headers: map[string]string{"Authorization": "Bearer ${AM_HDR_TOKEN}"},
+	}
+	t.Setenv("AM_URL_SUFFIX", "mcp")
+	res := &codemode.Resource{Ref: "reg/mcp/remote", Kind: "mcp", Name: "remote", Registry: "reg", Assessment: "allow"}
+	res.SetOrigin(&codemode.Origin{Server: def})
+	tools, err := pool.Tools(context.Background(), "remote", res)
+	if err != nil {
+		t.Fatalf("Tools: %v", err)
+	}
+	if len(tools) != 1 || gotAuth != "Bearer expanded-header-secret" {
+		t.Fatalf("expanded values not applied: tools=%v auth=%q", tools, gotAuth)
+	}
+}
+
+// spec: code-mode-mcp/unresolvable-reference-fails-before-start
+func TestUnresolvableReferenceFailsBeforeStart(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		def     *codemode.ServerDef
+		field   string
+		varName string
+	}{
+		{"unset env value", fakeDef(map[string]string{"GO_MCP_FAKE": "1", "SECRET_TOKEN": "${AM_UNSET_TOKEN}"}), "env.SECRET_TOKEN", "AM_UNSET_TOKEN"},
+		{"unset arg", &codemode.ServerDef{Command: "sh", Args: []string{"-c", "${AM_UNSET_ARG}"}, Env: fakeEnv()}, "args", "AM_UNSET_ARG"},
+		{"file reference", &codemode.ServerDef{Command: "sh", Args: []string{"${file:/etc/passwd}"}, Env: fakeEnv()}, "args", "file:/etc/passwd"},
+		{"unset header", &codemode.ServerDef{URL: "https://mcp.example.com/mcp", Headers: map[string]string{"X-Auth": "${AM_UNSET_HDR}"}}, "headers.X-Auth", "AM_UNSET_HDR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+			res := fakeResource(tc.def)
+			_, err := pool.Tools(context.Background(), "fake", res)
+			var ce *codemode.Error
+			if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+				t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+			}
+			if !strings.Contains(ce.Message, tc.field) || !strings.Contains(ce.Message, tc.varName) {
+				t.Fatalf("error must name field %q and variable %q: %q", tc.field, tc.varName, ce.Message)
+			}
+			if len(pool.servers) != 0 {
+				t.Fatal("a process started despite the unresolvable reference")
+			}
+		})
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestRemoteInitializationRejectionReportsStartFailure(t *testing.T) {
+	secret := "expanded-header-secret-789"
+	t.Setenv("AM_REJECT_TOKEN", secret)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("denied credential " + r.Header.Get("Authorization") + " rejected"))
+	}))
+	defer server.Close()
+
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := &codemode.Resource{Ref: "reg/mcp/remote", Kind: "mcp", Name: "remote", Registry: "reg", Assessment: "allow"}
+	res.SetOrigin(&codemode.Origin{Server: &codemode.ServerDef{
+		URL:     server.URL,
+		Headers: map[string]string{"Authorization": "Bearer ${AM_REJECT_TOKEN}"},
+	}})
+	_, err := pool.Tools(context.Background(), "remote", res)
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if !strings.Contains(ce.Message, "401") {
+		t.Fatalf("start failure must report the rejection: %q", ce.Message)
+	}
+	if strings.Contains(ce.Message, secret) {
+		t.Fatalf("expanded header value leaked in error: %q", ce.Message)
+	}
+	if len(ce.Message) > 2200 {
+		t.Fatalf("rejection body not bounded: %d bytes", len(ce.Message))
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestStdioInitializeRejectionReportsStartFailure(t *testing.T) {
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := fakeResource(fakeDef(map[string]string{"GO_MCP_FAKE": "1", "GO_MCP_FAKE_INITERR": "1"}))
+	_, err := pool.Tools(context.Background(), "fake", res)
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestStdioInitializeRejectionRedactsDeclaredEnv(t *testing.T) {
+	secret := "s3cr3t-init-98765"
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := fakeResource(fakeDef(map[string]string{"GO_MCP_FAKE": "1", "GO_MCP_FAKE_INITERR": "1", "SECRET_TOKEN": secret}))
+	_, err := pool.Tools(context.Background(), "fake", res)
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, secret) {
+		t.Fatalf("declared env value leaked in start failure: %q", ce.Message)
+	}
+}
+
+// spec: code-mode-mcp/failures-carry-stable-codes
+func TestStdioToolCallErrorRedactsDeclaredEnv(t *testing.T) {
+	secret := "s3cr3t-rpc-98765"
+	c, err := Spawn(context.Background(), fakeDef(map[string]string{"GO_MCP_FAKE": "1", "SECRET_TOKEN": secret}))
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+	_, err = c.Call(context.Background(), "rpcerror", json.RawMessage(`{}`))
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeToolError {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeToolError, err)
+	}
+	if strings.Contains(ce.Message, secret) {
+		t.Fatalf("declared env value leaked in tool error: %q", ce.Message)
+	}
+
+	_, err = c.Call(context.Background(), "toolerror", json.RawMessage(`{}`))
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeToolError {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeToolError, err)
+	}
+	if strings.Contains(ce.Message, secret) {
+		t.Fatalf("declared env value leaked in tool-error content: %q", ce.Message)
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestHTTPInitializeRPCErrorFailsStart(t *testing.T) {
+	var initializedSeen int32
+	secret := "Bearer rpc-secret-456"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if req.Method == "notifications/initialized" {
+			atomic.StoreInt32(&initializedSeen, 1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": req.ID,
+			"error": map[string]any{"code": -32000, "message": "denied " + r.Header.Get("Authorization")},
+		})
+	}))
+	defer server.Close()
+
+	c, err := NewHTTP(&codemode.ServerDef{URL: server.URL, Headers: map[string]string{"Authorization": secret}})
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	err = c.Initialize(context.Background())
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, secret) {
+		t.Fatalf("declared header leaked in start failure: %q", ce.Message)
+	}
+	if atomic.LoadInt32(&initializedSeen) != 0 {
+		t.Fatal("initialized notification sent after a rejected handshake")
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestRedactSecretsLongestFirst(t *testing.T) {
+	got := redactSecrets("x prefixLONG y", []string{"prefix", "prefixLONG"})
+	if got != "x <redacted> y" {
+		t.Fatalf("overlapping secrets left a tail: %q", got)
+	}
+	if strings.Contains(got, "prefix") || strings.Contains(got, "LONG") {
+		t.Fatalf("secret material survived redaction: %q", got)
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestRedactSecretsOverlappingNonContaining(t *testing.T) {
+	got := redactSecrets("denied ghp_abc123 rejected", []string{"ghp_abc", "abc123"})
+	if got != "denied <redacted> rejected" {
+		t.Fatalf("overlapping secrets left a tail: %q", got)
+	}
+	if strings.Contains(got, "ghp_") || strings.Contains(got, "abc") || strings.Contains(got, "123") {
+		t.Fatalf("secret material survived redaction: %q", got)
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestHTTPInitializeRejectionRedactsOverlappingSecrets(t *testing.T) {
+	t.Setenv("AM_OVERLAP_TOKEN", "abc123")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("denied ghp_abc123 rejected"))
+	}))
+	defer server.Close()
+
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := &codemode.Resource{Ref: "reg/mcp/remote", Kind: "mcp", Name: "remote", Registry: "reg", Assessment: "allow"}
+	res.SetOrigin(&codemode.Origin{Server: &codemode.ServerDef{
+		URL: server.URL,
+		Headers: map[string]string{
+			"Authorization": "ghp_abc",
+			"X-Token":       "${AM_OVERLAP_TOKEN}",
+		},
+	}})
+	_, err := pool.Tools(context.Background(), "remote", res)
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, "ghp_") || strings.Contains(ce.Message, "abc123") || strings.Contains(ce.Message, "123") {
+		t.Fatalf("overlapping secret tail leaked in start failure: %q", ce.Message)
+	}
+	if !strings.Contains(ce.Message, "denied <redacted> rejected") {
+		t.Fatalf("rejection lost its diagnostic: %q", ce.Message)
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestHTTPInitializeRejectionRedactsLongestSecret(t *testing.T) {
+	short := "prefix"
+	long := "prefixLONG"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("denied credential " + long + " rejected"))
+	}))
+	defer server.Close()
+
+	c, err := NewHTTP(&codemode.ServerDef{
+		URL:     server.URL,
+		Headers: map[string]string{"Authorization": short},
+	}, long)
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	err = c.Initialize(context.Background())
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, long) || strings.Contains(ce.Message, "LONG") {
+		t.Fatalf("longer secret tail leaked in start failure: %q", ce.Message)
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestHTTPRejectionRedactsSecretStraddlingSnippetBoundary(t *testing.T) {
+	secret := "boundary-secret-12345"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(strings.Repeat("x", 507) + secret + " trailing text"))
+	}))
+	defer server.Close()
+
+	c, err := NewHTTP(&codemode.ServerDef{URL: server.URL}, secret)
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	err = c.Initialize(context.Background())
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, secret[:5]) {
+		t.Fatalf("secret fragment straddling the snippet boundary leaked: %q", ce.Message)
+	}
+	if len(ce.Message) > 600 {
+		t.Fatalf("rejection snippet not bounded: %d bytes", len(ce.Message))
+	}
+}
+
+func assertRichResult(t *testing.T, out any) {
+	t.Helper()
+	m, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v, want a JSON object", out)
+	}
+	if m["text"] != "hello" {
+		t.Fatalf("text = %v", m["text"])
+	}
+	sc, ok := m["structuredContent"].(map[string]any)
+	if !ok || sc["label"] != "rich" {
+		t.Fatalf("structuredContent = %v", m["structuredContent"])
+	}
+	meta, ok := m["_meta"].(map[string]any)
+	if !ok || meta["cursor"] != "next" {
+		t.Fatalf("_meta = %v", m["_meta"])
+	}
+	content, ok := m["content"].([]any)
+	if !ok || len(content) != 2 {
+		t.Fatalf("content = %v", m["content"])
+	}
+	img, ok := content[1].(map[string]any)
+	if !ok || img["type"] != "image" || img["data"] != "aGk=" || img["mimeType"] != "image/png" {
+		t.Fatalf("image content item = %v", content[1])
+	}
+}
+
+// spec: code-mode-mcp/tool-calls-preserve-json-field-names
+func TestStdioToolCallPreservesStructuredFields(t *testing.T) {
+	c, err := Spawn(context.Background(), fakeDef(fakeEnv()))
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+	out, err := c.Call(context.Background(), "rich", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	assertRichResult(t, out)
+}
+
+// spec: code-mode-mcp/tool-calls-preserve-json-field-names
+func TestHTTPToolCallPreservesStructuredFields(t *testing.T) {
+	rich := json.RawMessage(`{
+		"content": [{"type":"text","text":"hello"},{"type":"image","data":"aGk=","mimeType":"image/png"}],
+		"structuredContent": {"rows":[1,2],"label":"rich"},
+		"_meta": {"cursor":"next"}
+	}`)
+	c, err := NewHTTP(&codemode.ServerDef{URL: httpToolResultServer(t, rich).URL})
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	out, err := c.Call(context.Background(), "rich", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	assertRichResult(t, out)
+}
+
+// spec: code-mode-mcp/unresolvable-reference-fails-before-start
+func TestNestedReferenceFailsBeforeStart(t *testing.T) {
+	t.Setenv("AM_NESTED_REF", "inner")
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := fakeResource(&codemode.ServerDef{
+		Command: os.Args[0],
+		Args:    []string{"-test.run", "TestMain", "${${AM_NESTED_REF}}"},
+		Env:     fakeEnv(),
+	})
+	_, err := pool.Tools(context.Background(), "fake", res)
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if !strings.Contains(ce.Message, "args") {
+		t.Fatalf("error must name the field: %q", ce.Message)
+	}
+	if strings.Contains(ce.Message, "inner") {
+		t.Fatalf("expanded value leaked in error: %q", ce.Message)
+	}
+	if len(pool.servers) != 0 {
+		t.Fatal("a process started despite the residual reference")
+	}
+}
+
+func httpToolResultServer(t *testing.T, result json.RawMessage) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		res := json.RawMessage(`{"protocolVersion":"` + protocolVersion + `","capabilities":{}}`)
+		switch req.Method {
+		case "tools/call":
+			res = result
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(rpcReply{JSONRPC: "2.0", ID: req.ID, Result: res})
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// spec: code-mode-mcp/failures-carry-stable-codes
+func TestHTTPToolCallNullResultCodedError(t *testing.T) {
+	c, err := NewHTTP(&codemode.ServerDef{URL: httpToolResultServer(t, json.RawMessage(`null`)).URL})
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	_, err = c.Call(context.Background(), "null", json.RawMessage(`{}`))
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeToolError {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeToolError, err)
+	}
+}
+
+// spec: code-mode-mcp/tool-calls-preserve-json-field-names
+func TestHTTPToolCallPreservesExistingTextField(t *testing.T) {
+	result := json.RawMessage(`{
+		"text": "server-text",
+		"content": [{"type":"text","text":"hello"}],
+		"structuredContent": {"label":"rich"}
+	}`)
+	c, err := NewHTTP(&codemode.ServerDef{URL: httpToolResultServer(t, result).URL})
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	out, err := c.Call(context.Background(), "rich", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	m, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v, want a JSON object", out)
+	}
+	if m["text"] != "server-text" {
+		t.Fatalf("pre-existing text overwritten: %v", m["text"])
+	}
+	sc, ok := m["structuredContent"].(map[string]any)
+	if !ok || sc["label"] != "rich" {
+		t.Fatalf("structuredContent = %v", m["structuredContent"])
 	}
 }

@@ -640,6 +640,9 @@ type RegistryEntry struct {
 	// legacy adapter. It is never serialized and prevents a directory named
 	// ".git" from being reclassified as a Git source at runtime.
 	V4Kind V4SourceKind `yaml:"-"`
+	// SourceName carries the declaring v4 source name for label derivation.
+	// It is never serialized; legacy v2/v3 entries leave it empty.
+	SourceName string `yaml:"-"`
 	// V4All preserves v4 all:true as an additive selection policy for the
 	// runtime resolver; Default alone cannot distinguish it from legacy policy.
 	V4All       bool                  `yaml:"-"`

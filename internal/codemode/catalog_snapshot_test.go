@@ -61,7 +61,7 @@ func TestSnapshotCompleteCatalogBeyondFirstPage(t *testing.T) {
 			t.Fatalf("resource %q missing from snapshot %+v", name, snap.Resources)
 		}
 	}
-	res := snap.Find("pub:tools/mcp/late-server")
+	res := snap.Find("marketplace:tools/mcp/late-server")
 	if res == nil {
 		t.Fatalf("Marketplace MCP ref missing: %+v", snap.Resources)
 	}
@@ -141,7 +141,7 @@ func TestSnapshotIncompleteCatalogStaysStale(t *testing.T) {
 	if !snap.Stale {
 		t.Fatal("incomplete catalog published as complete")
 	}
-	if snap.Find("pub:tools/skill/partial") != nil {
+	if snap.Find("marketplace:tools/skill/partial") != nil {
 		t.Fatal("partial scan resource was published")
 	}
 }
@@ -168,10 +168,10 @@ func TestSnapshotCatalogFiltersUnavailable(t *testing.T) {
 	if len(errs) > 0 {
 		t.Fatalf("BuildSnapshot errors: %v", errs)
 	}
-	if snap.Find("pub:tools/skill/good") == nil {
+	if snap.Find("marketplace:tools/skill/good") == nil {
 		t.Fatalf("available resource missing: %+v", snap.Resources)
 	}
-	for _, ref := range []string{"pub:tools/skill/revoked", "pub:tools/skill/blocked", "pub:tools/skill/no-artifact"} {
+	for _, ref := range []string{"marketplace:tools/skill/revoked", "marketplace:tools/skill/blocked", "marketplace:tools/skill/no-artifact"} {
 		if snap.Find(ref) != nil {
 			t.Fatalf("unavailable ref %q was offered", ref)
 		}

@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -62,10 +64,93 @@ type stdioClient struct {
 	inited  atomic.Bool
 }
 
-func Spawn(ctx context.Context, def *codemode.ServerDef) (*stdioClient, error) {
+var (
+	envRefToken = regexp.MustCompile(`\$\{([^{}]*)\}`)
+	envVarName  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
+
+// expandEnvString expands complete ${VAR} and ${env:VAR} references from the
+// host environment. Any other well-formed ${...} reference (including
+// ${file:...}) or a reference to an unset variable fails; expanded host values
+// are recorded in secrets for error redaction.
+func expandEnvString(field, value string, secrets *[]string) (string, error) {
+	var refErr error
+	out := envRefToken.ReplaceAllStringFunc(value, func(token string) string {
+		if refErr != nil {
+			return token
+		}
+		inner := token[2 : len(token)-1]
+		name := inner
+		if strings.HasPrefix(inner, "env:") {
+			name = inner[len("env:"):]
+		}
+		if !envVarName.MatchString(name) {
+			refErr = codemode.CodeError(codemode.ErrCodeStartFailed, "unsupported reference ${%s} in %s", inner, field)
+			return token
+		}
+		v, ok := os.LookupEnv(name)
+		if !ok {
+			refErr = codemode.CodeError(codemode.ErrCodeStartFailed, "variable %s in %s is not set", name, field)
+			return token
+		}
+		if v != "" {
+			*secrets = append(*secrets, v)
+		}
+		return v
+	})
+	if refErr != nil {
+		return "", refErr
+	}
+	if envRefToken.MatchString(out) {
+		return "", codemode.CodeError(codemode.ErrCodeStartFailed, "unexpanded reference remains in %s", field)
+	}
+	return out, nil
+}
+
+// expandServerDef returns a copy of def with environment references expanded
+// and the expanded host values for redaction.
+func expandServerDef(def *codemode.ServerDef) (*codemode.ServerDef, []string, error) {
+	out := *def
+	var secrets []string
+	var err error
+	if out.Command, err = expandEnvString("command", def.Command, &secrets); err != nil {
+		return nil, nil, err
+	}
+	if len(def.Args) > 0 {
+		out.Args = make([]string, len(def.Args))
+		for i, a := range def.Args {
+			if out.Args[i], err = expandEnvString("args", a, &secrets); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	if len(def.Env) > 0 {
+		out.Env = make(map[string]string, len(def.Env))
+		for k, v := range def.Env {
+			if out.Env[k], err = expandEnvString("env."+k, v, &secrets); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	if out.URL, err = expandEnvString("url", def.URL, &secrets); err != nil {
+		return nil, nil, err
+	}
+	if len(def.Headers) > 0 {
+		out.Headers = make(map[string]string, len(def.Headers))
+		for k, v := range def.Headers {
+			if out.Headers[k], err = expandEnvString("headers."+k, v, &secrets); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return &out, secrets, nil
+}
+
+func Spawn(ctx context.Context, def *codemode.ServerDef, extraSecrets ...string) (*stdioClient, error) {
 	if def == nil || def.Command == "" {
 		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "server definition has no command")
 	}
+	secrets := append(envSecrets(def.Env), extraSecrets...)
 	cmd := exec.Command(def.Command, def.Args...)
 	cmd.Env = declaredEnv(def.Env)
 	stderr := newStderrCapture()
@@ -79,13 +164,14 @@ func Spawn(ctx context.Context, def *codemode.ServerDef) (*stdioClient, error) {
 		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "stdin pipe: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "start %q: %v", def.Command, scrubErr(err))
+		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "start %q: %s",
+			redactSecrets(def.Command, secrets), redactSecrets(scrubErr(err), secrets))
 	}
 	c := &stdioClient{
 		cmd:     cmd,
 		stdin:   stdin,
 		stderr:  stderr,
-		secrets: envSecrets(def.Env),
+		secrets: secrets,
 		scanner: bufio.NewScanner(stdout),
 		sem:     make(chan struct{}, 1),
 	}
@@ -149,12 +235,56 @@ func (s *stderrCapture) String() string {
 	return s.buf.String()
 }
 
-func (c *stdioClient) redactedStderr() string {
-	s := c.stderr.String()
-	for _, secret := range c.secrets {
-		s = strings.ReplaceAll(s, secret, "<redacted>")
+func redactSecrets(s string, secrets []string) string {
+	type span struct{ start, end int }
+	var spans []span
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		for off := 0; off <= len(s); {
+			i := strings.Index(s[off:], secret)
+			if i < 0 {
+				break
+			}
+			spans = append(spans, span{off + i, off + i + len(secret)})
+			off += i + 1
+		}
 	}
-	return s
+	if len(spans) == 0 {
+		return s
+	}
+	slices.SortFunc(spans, func(a, b span) int { return a.start - b.start })
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+	emit := func(sp span) {
+		b.WriteString(s[last:sp.start])
+		b.WriteString("<redacted>")
+		last = sp.end
+	}
+	cur := spans[0]
+	for _, sp := range spans[1:] {
+		if sp.start <= cur.end {
+			if sp.end > cur.end {
+				cur.end = sp.end
+			}
+			continue
+		}
+		emit(cur)
+		cur = sp
+	}
+	emit(cur)
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+func (c *stdioClient) redact(s string) string {
+	return redactSecrets(s, c.secrets)
+}
+
+func (c *stdioClient) redactedStderr() string {
+	return c.redact(c.stderr.String())
 }
 
 func (c *stdioClient) kill() {
@@ -189,7 +319,7 @@ func (c *stdioClient) request(ctx context.Context, method string, params any) (j
 	case err := <-writeCh:
 		if err != nil {
 			c.kill()
-			return nil, codemode.CodeError(codemode.ErrCodeToolError, "write to server: %v", scrubErr(err))
+			return nil, codemode.CodeError(codemode.ErrCodeToolError, "write to server: %s", c.redact(scrubErr(err)))
 		}
 	case <-ctx.Done():
 		c.kill()
@@ -225,7 +355,10 @@ func (c *stdioClient) request(ctx context.Context, method string, params any) (j
 			return nil, codemode.CodeError(codemode.ErrCodeToolError, "server closed during %s", method)
 		}
 		if r.msg.Error != nil {
-			return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s failed: %s", method, r.msg.Error.Message)
+			if !c.inited.Load() {
+				return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "server rejected %s: %s", method, c.redact(r.msg.Error.Message))
+			}
+			return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s failed: %s", method, c.redact(r.msg.Error.Message))
 		}
 		return r.msg.Result, nil
 	case <-ctx.Done():
@@ -285,30 +418,42 @@ func (c *stdioClient) Call(ctx context.Context, name string, args json.RawMessag
 	if err != nil {
 		return nil, err
 	}
-	var out struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-		IsError bool `json:"isError"`
-	}
+	return parseToolResult(res, name, c.redact)
+}
+
+// parseToolResult decodes a tools/call result preserving every result and
+// content field, and adds a "text" convenience joining text content items.
+// Tool errors become a coded error whose text is redacted by the caller's
+// secret set.
+func parseToolResult(res json.RawMessage, name string, redact func(string) string) (any, error) {
+	var out map[string]any
 	if err := json.Unmarshal(res, &out); err != nil {
 		return nil, codemode.CodeError(codemode.ErrCodeToolError, "malformed tools/call result: %v", err)
 	}
-	if out.IsError {
-		var parts []string
-		for _, ct := range out.Content {
-			parts = append(parts, ct.Text)
-		}
-		return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s: %s", name, strings.Join(parts, " "))
+	if out == nil {
+		return nil, codemode.CodeError(codemode.ErrCodeToolError, "malformed tools/call result: %s", res)
 	}
 	var texts []string
-	for _, ct := range out.Content {
-		if ct.Type == "text" {
-			texts = append(texts, ct.Text)
+	isErr, _ := out["isError"].(bool)
+	if content, ok := out["content"].([]any); ok {
+		for _, item := range content {
+			ct, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if isErr || ct["type"] == "text" {
+				text, _ := ct["text"].(string)
+				texts = append(texts, text)
+			}
 		}
 	}
-	return map[string]any{"content": out.Content, "text": strings.Join(texts, "\n")}, nil
+	if isErr {
+		return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s: %s", name, redact(strings.Join(texts, " ")))
+	}
+	if _, ok := out["text"]; !ok {
+		out["text"] = strings.Join(texts, "\n")
+	}
+	return out, nil
 }
 
 func (c *stdioClient) Close() error {
@@ -323,12 +468,13 @@ func (c *stdioClient) Close() error {
 type httpClient struct {
 	url       string
 	headers   map[string]string
+	secrets   []string
 	hc        *http.Client
 	sessionID string
 	inited    atomic.Bool
 }
 
-func NewHTTP(def *codemode.ServerDef) (*httpClient, error) {
+func NewHTTP(def *codemode.ServerDef, extraSecrets ...string) (*httpClient, error) {
 	if def == nil || def.URL == "" {
 		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "server definition has no url")
 	}
@@ -342,11 +488,24 @@ func NewHTTP(def *codemode.ServerDef) (*httpClient, error) {
 	default:
 		return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "remote MCP endpoint must be https or loopback")
 	}
-	return &httpClient{url: def.URL, headers: def.Headers, hc: &http.Client{
+	return &httpClient{url: def.URL, headers: def.Headers, secrets: extraSecrets, hc: &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return errors.New("redirects are not followed")
 		},
 	}}, nil
+}
+
+func (c *httpClient) redact(s string) string {
+	secrets := make([]string, 0, len(c.headers)+len(c.secrets))
+	for _, v := range c.headers {
+		secrets = append(secrets, v)
+	}
+	secrets = append(secrets, c.secrets...)
+	return redactSecrets(s, secrets)
+}
+
+func (c *httpClient) errf(format string, args ...any) error {
+	return codemode.CodeError(codemode.ErrCodeToolError, "%s", c.redact(fmt.Sprintf(format, args...)))
 }
 
 func isLoopbackHost(host string) bool {
@@ -373,7 +532,10 @@ func (c *httpClient) post(ctx context.Context, payload any, out any) error {
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return codemode.CodeError(codemode.ErrCodeToolError, "request: %v", err)
+		if !c.inited.Load() {
+			return codemode.CodeError(codemode.ErrCodeStartFailed, "server unreachable: %s", c.redact(err.Error()))
+		}
+		return c.errf("request: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if sid := resp.Header.Get("mcp-session-id"); sid != "" {
@@ -384,10 +546,14 @@ func (c *httpClient) post(ctx context.Context, payload any, out any) error {
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return codemode.CodeError(codemode.ErrCodeToolError, "read response: %v", err)
+		return c.errf("read response: %v", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return codemode.CodeError(codemode.ErrCodeToolError, "http %d: %s", resp.StatusCode, truncate(string(body), 512))
+		snippet := truncate(c.redact(string(body)), 512)
+		if !c.inited.Load() {
+			return codemode.CodeError(codemode.ErrCodeStartFailed, "server rejected handshake: http %d: %s", resp.StatusCode, snippet)
+		}
+		return c.errf("http %d: %s", resp.StatusCode, snippet)
 	}
 
 	data := extractSSE(string(body))
@@ -423,6 +589,9 @@ func (c *httpClient) Initialize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if reply.Error != nil {
+		return codemode.CodeError(codemode.ErrCodeStartFailed, "server rejected initialize: %s", c.redact(reply.Error.Message))
+	}
 	_ = c.post(ctx, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, nil)
 	c.inited.Store(true)
 	return nil
@@ -435,7 +604,10 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 		return nil, err
 	}
 	if reply.Error != nil {
-		return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s failed: %s", method, reply.Error.Message)
+		if !c.inited.Load() {
+			return nil, codemode.CodeError(codemode.ErrCodeStartFailed, "server rejected %s: %s", method, c.redact(reply.Error.Message))
+		}
+		return nil, c.errf("%s failed: %s", method, reply.Error.Message)
 	}
 	return reply.Result, nil
 }
@@ -472,19 +644,7 @@ func (c *httpClient) Call(ctx context.Context, name string, args json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	var out struct {
-		IsError bool            `json:"isError"`
-		Content json.RawMessage `json:"content"`
-	}
-	if err := json.Unmarshal(res, &out); err != nil {
-		return nil, codemode.CodeError(codemode.ErrCodeToolError, "malformed tools/call result: %v", err)
-	}
-	if out.IsError {
-		return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s returned an error", name)
-	}
-	var generic any
-	_ = json.Unmarshal(res, &generic)
-	return generic, nil
+	return parseToolResult(res, name, c.redact)
 }
 
 func (c *httpClient) Close() error { return nil }

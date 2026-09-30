@@ -114,12 +114,12 @@ func TestRunHostCallLimit(t *testing.T) {
 // spec: code-mode-mcp/no-ambient-host-globals
 func TestRunNoDangerousGlobals(t *testing.T) {
 	res, err := Run(context.Background(), `async () => [
-		typeof process, typeof require, typeof fetch, typeof os, typeof globalThis.process
+		typeof process, typeof require, typeof fetch, typeof os, typeof globalThis.process, typeof CodeModeError
 	]`, nil, Limits{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if string(res.Value) != `["undefined","undefined","undefined","undefined","undefined"]` {
+	if string(res.Value) != `["undefined","undefined","undefined","undefined","undefined","undefined"]` {
 		t.Fatalf("globals exposed: %s", res.Value)
 	}
 }
