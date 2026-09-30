@@ -1940,31 +1940,45 @@ func filepathBase(path string) string {
 }
 
 func (m *Model) applyFilter() []row {
+	for i := range m.rows {
+		m.rows[i].ensureLabelMemo()
+		if m.filter != "" {
+			m.rows[i].ensureSearchable()
+		}
+	}
 	if m.filter == "" {
 		return m.rows
 	}
 
+	matches := fuzzy.FindFromNoSort(m.filter, searchableSource(m.rows))
+
 	filtered := m.filterScratch[:0]
-	if cap(filtered) < len(m.rows) {
-		filtered = make([]row, 0, len(m.rows))
+	if cap(filtered) < len(matches) {
+		filtered = make([]row, 0, len(matches))
 	}
-	for i := range m.rows {
-		m.rows[i].ensureSearchable()
-		match, ok := fuzzyMatch(m.filter, m.rows[i].searchableLower)
-		if !ok {
-			continue
-		}
-		r := m.rows[i]
+	for _, match := range matches {
+		r := m.rows[match.Index]
 		r.searchRanked = true
 		r.searchScore = match.Score
-		if nameMatch, nameOK := fuzzyMatch(m.filter, r.searchName); nameOK {
-			r.searchMatchRunes = runeIndexes(r.searchName, nameMatch.MatchedIndexes)
-		}
 		filtered = append(filtered, r)
+	}
+	for _, nameMatch := range fuzzy.FindFromNoSort(m.filter, searchNameSource(filtered)) {
+		r := &filtered[nameMatch.Index]
+		r.searchMatchRunes = runeIndexes(r.searchName, nameMatch.MatchedIndexes)
 	}
 	m.filterScratch = filtered[:0]
 	return filtered
 }
+
+type searchableSource []row
+
+func (s searchableSource) String(i int) string { return s[i].searchableLower }
+func (s searchableSource) Len() int            { return len(s) }
+
+type searchNameSource []row
+
+func (s searchNameSource) String(i int) string { return s[i].searchName }
+func (s searchNameSource) Len() int            { return len(s) }
 
 func fuzzyMatch(pattern, text string) (fuzzy.Match, bool) {
 	for _, match := range fuzzy.FindFromIterNoSort(pattern, func(yield func(string) bool) {

@@ -65,7 +65,29 @@ func renderList(m Model, visibleHeight int) string {
 }
 
 func flatItemHeight(item flatItem, width int, compact bool) int {
+	if item.Kind == flatSection {
+		if width < 1 {
+			return 0
+		}
+		return 1
+	}
+	memo := item.Row.labelMemo
+	color := colorCapable()
+	if memo != nil && memo.valid && memo.depth == item.Depth &&
+		memo.width == width && memo.compact == compact && memo.color == color {
+		return memo.height
+	}
 	_, height := fitFlatItem(item, formatFlatItem(item, width, compact), width)
+	if memo != nil {
+		*memo = rowLabelMemo{
+			depth:   item.Depth,
+			width:   width,
+			compact: compact,
+			color:   color,
+			height:  height,
+			valid:   true,
+		}
+	}
 	return height
 }
 

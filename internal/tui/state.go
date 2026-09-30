@@ -100,6 +100,23 @@ type row struct {
 	// searchMatchRunes holds rune indexes into the sanitized name that the
 	// query genuinely matched; it is empty for metadata-only matches.
 	searchMatchRunes []int
+
+	labelMemo *rowLabelMemo
+}
+
+type rowLabelMemo struct {
+	depth   int
+	width   int
+	compact bool
+	color   bool
+	height  int
+	valid   bool
+}
+
+func (r *row) ensureLabelMemo() {
+	if r.labelMemo == nil {
+		r.labelMemo = &rowLabelMemo{}
+	}
 }
 
 // ensureSearchable populates searchableLower on first use and short-circuits

@@ -79,6 +79,32 @@ func BenchmarkApplyFilter(b *testing.B) {
 	}
 }
 
+func BenchmarkFuzzyRankedView(b *testing.B) {
+	rows := buildBenchRows(500)
+
+	cases := []struct {
+		name   string
+		filter string
+	}{
+		{"broad_match", "skill"},
+		{"narrow_match", "helm"},
+	}
+
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
+			m := NewModel("/repo", "/home")
+			m.rows = append([]row(nil), rows...)
+			m.filter = c.filter
+			m.recomputeView()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				m.recomputeView()
+			}
+		})
+	}
+}
+
 // BenchmarkApplyFilterColdAndWarm covers cold and warm searchable cache,
 // no-match, tag-match, registry-match, and broad-match cases.
 func BenchmarkApplyFilterColdAndWarm(b *testing.B) {
