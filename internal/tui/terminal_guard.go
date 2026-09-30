@@ -21,9 +21,9 @@ import (
 //     program starts and restores it — together with the alternate screen,
 //     cursor visibility, mouse modes, and bracketed paste — on every exit:
 //     clean quit, renderer/cancel-reader initialization failure, returned
-//     error, or a handled SIGINT/SIGTERM. Bubble Tea restores the terminal
-//     on its own handled exits; the guard is the last-resort layer for the
-//     startup paths where Bubble Tea returns before its shutdown runs.
+//     error, or a handled SIGINT/SIGTERM. Bubble Tea restores the terminal on
+//     its own handled exits; the guard is the last-resort layer for startup
+//     paths where Bubble Tea returns before its shutdown runs.
 
 // trustedTerminalRestoreSequence resets every terminal mode the TUI enables,
 // in an order that keeps all resets inside the alternate buffer until the

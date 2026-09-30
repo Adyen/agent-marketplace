@@ -20,6 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // BenchmarkBuildRows measures the hot-path cost of buildRows under two
@@ -337,6 +338,22 @@ func BenchmarkMoveCursorByPage(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		m.cursor = i % len(m.flatItems)
 		m.moveCursorByPage(1)
+	}
+}
+
+func BenchmarkMouseWheelListUpdate(b *testing.B) {
+	m := benchmarkClampModel()
+	m.loading = false
+	msg := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown}
+	listWidth, _ := paneWidths(m.width)
+	m.listHeightOffsets(listWidth)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.cursor = 0
+		m.listOffset = 0
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
 	}
 }
 
