@@ -12,6 +12,6 @@
 
 ## 3. Validation and delivery
 
-- [ ] 3.1 Run focused tests, benchmarks, `make validate`, `make spec-check`, `make validate-e2e`, and `make tui-qa`.
-- [ ] 3.2 Run an adversarial review of the diff and commit the implementation.
-- [ ] 3.3 `openspec archive fix-cross-scope-collection-members --yes`
+- [x] 3.1 Run focused tests, benchmarks, `make validate`, `make spec-check`, `make validate-e2e`, and `make tui-qa`.
+- [x] 3.2 Run an adversarial review of the diff and commit the implementation.
+- [x] 3.3 `openspec archive fix-cross-scope-collection-members --yes`
