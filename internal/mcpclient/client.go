@@ -101,6 +101,9 @@ func expandEnvString(field, value string, secrets *[]string) (string, error) {
 	if refErr != nil {
 		return "", refErr
 	}
+	if envRefToken.MatchString(out) {
+		return "", codemode.CodeError(codemode.ErrCodeStartFailed, "unexpanded reference remains in %s", field)
+	}
 	return out, nil
 }
 
@@ -375,33 +378,39 @@ func (c *stdioClient) Call(ctx context.Context, name string, args json.RawMessag
 	return parseToolResult(res, name, c.redact)
 }
 
-// parseToolResult decodes a tools/call result into {content, text}; tool
-// errors become a coded error whose text is redacted by the caller's secret set.
+// parseToolResult decodes a tools/call result preserving every result and
+// content field, and adds a "text" convenience joining text content items.
+// Tool errors become a coded error whose text is redacted by the caller's
+// secret set.
 func parseToolResult(res json.RawMessage, name string, redact func(string) string) (any, error) {
-	var out struct {
-		IsError bool `json:"isError"`
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
+	var out map[string]any
 	if err := json.Unmarshal(res, &out); err != nil {
 		return nil, codemode.CodeError(codemode.ErrCodeToolError, "malformed tools/call result: %v", err)
 	}
-	if out.IsError {
-		var parts []string
-		for _, ct := range out.Content {
-			parts = append(parts, ct.Text)
-		}
-		return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s: %s", name, redact(strings.Join(parts, " ")))
+	if out == nil {
+		return nil, codemode.CodeError(codemode.ErrCodeToolError, "malformed tools/call result: %s", res)
 	}
 	var texts []string
-	for _, ct := range out.Content {
-		if ct.Type == "text" {
-			texts = append(texts, ct.Text)
+	isErr, _ := out["isError"].(bool)
+	if content, ok := out["content"].([]any); ok {
+		for _, item := range content {
+			ct, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if isErr || ct["type"] == "text" {
+				text, _ := ct["text"].(string)
+				texts = append(texts, text)
+			}
 		}
 	}
-	return map[string]any{"content": out.Content, "text": strings.Join(texts, "\n")}, nil
+	if isErr {
+		return nil, codemode.CodeError(codemode.ErrCodeToolError, "%s: %s", name, redact(strings.Join(texts, " ")))
+	}
+	if _, ok := out["text"]; !ok {
+		out["text"] = strings.Join(texts, "\n")
+	}
+	return out, nil
 }
 
 func (c *stdioClient) Close() error {

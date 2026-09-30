@@ -73,6 +73,15 @@ func fakeServer() {
 				result = map[string]any{"content": []map[string]any{{"type": "text", "text": string(out)}}}
 			case "env":
 				result = map[string]any{"content": []map[string]any{{"type": "text", "text": os.Getenv("SECRET_TOKEN")}}}
+			case "rich":
+				result = map[string]any{
+					"content": []map[string]any{
+						{"type": "text", "text": "hello"},
+						{"type": "image", "data": "aGk=", "mimeType": "image/png"},
+					},
+					"structuredContent": map[string]any{"rows": []any{1, 2}, "label": "rich"},
+					"_meta":             map[string]any{"cursor": "next"},
+				}
 			case "rpcerror":
 				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "error": map[string]any{"code": -32000, "message": "denied " + os.Getenv("SECRET_TOKEN")}})
 				continue
@@ -616,5 +625,152 @@ func TestHTTPInitializeRPCErrorFailsStart(t *testing.T) {
 	}
 	if atomic.LoadInt32(&initializedSeen) != 0 {
 		t.Fatal("initialized notification sent after a rejected handshake")
+	}
+}
+
+func assertRichResult(t *testing.T, out any) {
+	t.Helper()
+	m, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v, want a JSON object", out)
+	}
+	if m["text"] != "hello" {
+		t.Fatalf("text = %v", m["text"])
+	}
+	sc, ok := m["structuredContent"].(map[string]any)
+	if !ok || sc["label"] != "rich" {
+		t.Fatalf("structuredContent = %v", m["structuredContent"])
+	}
+	meta, ok := m["_meta"].(map[string]any)
+	if !ok || meta["cursor"] != "next" {
+		t.Fatalf("_meta = %v", m["_meta"])
+	}
+	content, ok := m["content"].([]any)
+	if !ok || len(content) != 2 {
+		t.Fatalf("content = %v", m["content"])
+	}
+	img, ok := content[1].(map[string]any)
+	if !ok || img["type"] != "image" || img["data"] != "aGk=" || img["mimeType"] != "image/png" {
+		t.Fatalf("image content item = %v", content[1])
+	}
+}
+
+// spec: code-mode-mcp/tool-calls-preserve-json-field-names
+func TestStdioToolCallPreservesStructuredFields(t *testing.T) {
+	c, err := Spawn(context.Background(), fakeDef(fakeEnv()))
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+	out, err := c.Call(context.Background(), "rich", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	assertRichResult(t, out)
+}
+
+// spec: code-mode-mcp/tool-calls-preserve-json-field-names
+func TestHTTPToolCallPreservesStructuredFields(t *testing.T) {
+	rich := json.RawMessage(`{
+		"content": [{"type":"text","text":"hello"},{"type":"image","data":"aGk=","mimeType":"image/png"}],
+		"structuredContent": {"rows":[1,2],"label":"rich"},
+		"_meta": {"cursor":"next"}
+	}`)
+	c, err := NewHTTP(&codemode.ServerDef{URL: httpToolResultServer(t, rich).URL})
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	out, err := c.Call(context.Background(), "rich", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	assertRichResult(t, out)
+}
+
+// spec: code-mode-mcp/unresolvable-reference-fails-before-start
+func TestNestedReferenceFailsBeforeStart(t *testing.T) {
+	t.Setenv("AM_NESTED_REF", "inner")
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := fakeResource(&codemode.ServerDef{
+		Command: os.Args[0],
+		Args:    []string{"-test.run", "TestMain", "${${AM_NESTED_REF}}"},
+		Env:     fakeEnv(),
+	})
+	_, err := pool.Tools(context.Background(), "fake", res)
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if !strings.Contains(ce.Message, "args") {
+		t.Fatalf("error must name the field: %q", ce.Message)
+	}
+	if strings.Contains(ce.Message, "inner") {
+		t.Fatalf("expanded value leaked in error: %q", ce.Message)
+	}
+	if len(pool.servers) != 0 {
+		t.Fatal("a process started despite the residual reference")
+	}
+}
+
+func httpToolResultServer(t *testing.T, result json.RawMessage) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		res := json.RawMessage(`{"protocolVersion":"` + protocolVersion + `","capabilities":{}}`)
+		switch req.Method {
+		case "tools/call":
+			res = result
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(rpcReply{JSONRPC: "2.0", ID: req.ID, Result: res})
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// spec: code-mode-mcp/failures-carry-stable-codes
+func TestHTTPToolCallNullResultCodedError(t *testing.T) {
+	c, err := NewHTTP(&codemode.ServerDef{URL: httpToolResultServer(t, json.RawMessage(`null`)).URL})
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	_, err = c.Call(context.Background(), "null", json.RawMessage(`{}`))
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeToolError {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeToolError, err)
+	}
+}
+
+// spec: code-mode-mcp/tool-calls-preserve-json-field-names
+func TestHTTPToolCallPreservesExistingTextField(t *testing.T) {
+	result := json.RawMessage(`{
+		"text": "server-text",
+		"content": [{"type":"text","text":"hello"}],
+		"structuredContent": {"label":"rich"}
+	}`)
+	c, err := NewHTTP(&codemode.ServerDef{URL: httpToolResultServer(t, result).URL})
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	out, err := c.Call(context.Background(), "rich", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	m, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v, want a JSON object", out)
+	}
+	if m["text"] != "server-text" {
+		t.Fatalf("pre-existing text overwritten: %v", m["text"])
+	}
+	sc, ok := m["structuredContent"].(map[string]any)
+	if !ok || sc["label"] != "rich" {
+		t.Fatalf("structuredContent = %v", m["structuredContent"])
 	}
 }

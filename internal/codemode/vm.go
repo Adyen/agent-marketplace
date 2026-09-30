@@ -193,6 +193,9 @@ func errorFromValue(vm *goja.Runtime, v goja.Value) *Error {
 		return e
 	}
 	if obj := v.ToObject(vm); obj != nil {
+		if n := obj.Get("name"); n == nil || n.String() != "CodeModeError" {
+			return nil
+		}
 		code := obj.Get("code")
 		if code != nil && !goja.IsUndefined(code) && !goja.IsNull(code) {
 			msg := ""

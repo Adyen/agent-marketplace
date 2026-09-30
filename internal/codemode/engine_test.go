@@ -287,6 +287,45 @@ func TestThrownErrorIsCodeModeError(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/failures-carry-stable-codes
+func TestPlainCodedObjectThrowsScriptError(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+	})
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv"},
+		"code":    `async () => { throw {code: "resource.revoked", message: "looks coded"} }`,
+	})
+	_, _, err := e.Execute(context.Background(), args)
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Code != ErrCodeScriptError {
+		t.Fatalf("expected %s for a plain thrown object, got %v", ErrCodeScriptError, err)
+	}
+	for _, marker := range []string{"/internal/", "/pkg/mod/", "codemode/", "mcpclient/"} {
+		if strings.Contains(ce.Message, marker) {
+			t.Fatalf("host path leaked in script error: %q", ce.Message)
+		}
+	}
+}
+
+// spec: code-mode-mcp/failures-carry-stable-codes
+func TestRethrownCodeModeErrorKeepsCode(t *testing.T) {
+	e, _ := testEngine(t, []Resource{
+		{Ref: "reg/mcp/srv", Kind: "mcp", Name: "srv", Registry: "reg", Assessment: "allow"},
+	})
+	args, _ := json.Marshal(map[string]any{
+		"servers": []string{"reg/mcp/srv"},
+		"code": `async () => {
+			try { await mcp.srv.fail() } catch (e) { throw e }
+		}`,
+	})
+	_, _, err := e.Execute(context.Background(), args)
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Code != ErrCodeToolError {
+		t.Fatalf("expected rethrown %s, got %v", ErrCodeToolError, err)
+	}
+}
+
 type findingsSkills struct {
 	fakeSkills
 	findings []Finding
