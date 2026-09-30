@@ -47,6 +47,7 @@ func missingEffectiveOpts(dir, orgPath string) config.LoadEffectiveOptions {
 	}
 }
 
+// spec: tui-startup/browse-safe-config-publishes-the-verified-endpoint-before-acquisition
 func TestBrowsingConfigReadyPublishesVerifiedEndpointBeforeAcquisition(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := t.TempDir()
@@ -126,6 +127,7 @@ func TestBrowsingConfigReadyPublishesVerifiedEndpointBeforeAcquisition(t *testin
 	}
 }
 
+// spec: tui-startup/provisional-config-publishes-configured-pins-before-acquisition
 func TestProvisionalConfigReadyPublishesPinsBeforeAcquisition(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := t.TempDir()
@@ -194,6 +196,7 @@ func TestProvisionalConfigReadyPublishesPinsBeforeAcquisition(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/browse-safe-config-is-never-published-for-unsafe-configurations
 func TestBrowsingConfigReadyNeverPublishesUnsafeConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

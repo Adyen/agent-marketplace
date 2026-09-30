@@ -20,6 +20,7 @@ import (
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
+// spec: tui-startup/cached-marketplace-rows-render-while-acquisition-is-blocked
 func TestBrowsingConfigStageRendersCachedRowsBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 

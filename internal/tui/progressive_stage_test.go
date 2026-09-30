@@ -84,6 +84,7 @@ func collectSnapshotStages(stages <-chan snapshotLoadedMsg) []snapshotLoadedMsg 
 	return msgs
 }
 
+// spec: tui-startup/startup-snapshot-delivers-config-inventory-then-assessed-stages
 func TestReadSnapshotStagesDeliversConfigInventoryThenAssessed(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 
@@ -131,6 +132,7 @@ func TestReadSnapshotStagesDeliversConfigInventoryThenAssessed(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/invalid-configuration-delivers-one-fail-closed-final-stage
 func TestReadSnapshotStagesInvalidConfigStaysFailClosed(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	if err := os.WriteFile(filepath.Join(homeDir, ".agents", "config.yaml"), []byte("not: [valid\n"), 0o644); err != nil {
@@ -191,6 +193,7 @@ func TestReadSnapshotStagesUsesNestedLocalWorkspace(t *testing.T) {
 
 // Once the validated-config stage lands, Marketplace discovery runs while the
 // local catalog, detail capture, and dry run are still in flight.
+// spec: tui-startup/config-stage-starts-cached-first-marketplace-discovery-before-local-verification-finishes
 func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -231,6 +234,7 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/verified-rows-inserted-above-a-selection-keep-it-on-the-same-screen-line
 func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.T) {
 	m := newProvisionalStageModel()
 	generation := m.requests.active(requestSnapshot)
@@ -263,6 +267,7 @@ func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.
 	}
 }
 
+// spec: tui-startup/an-untouched-cursor-stays-on-top-when-installed-rows-arrive
 func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -303,6 +308,7 @@ func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/verified-inventory-is-navigable-and-toggle-ready-while-drift-is-pending
 func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -342,6 +348,7 @@ func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/drift-applies-only-to-rows-of-its-own-catalog-selection
 func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	key := skill.ResourceKey(ir.KindSkill, "shared")
 	selected := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared", Path: "skills/shared"}, CatalogKey: "selected-cat"}}
@@ -364,6 +371,7 @@ func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/final-stage-replaces-pending-inventory-with-the-assessment
 func TestFinalStageReplacesPendingInventoryWithAssessment(t *testing.T) {
 	m := newTestModel()
 	m.loading = true
@@ -383,6 +391,7 @@ func TestFinalStageReplacesPendingInventoryWithAssessment(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/superseded-stage-delivery-cannot-overwrite-newer-state
 func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 	m := newTestModel()
 	stale := m.requests.active(requestSnapshot)
@@ -412,6 +421,7 @@ func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/an-intermediate-stage-cannot-complete-a-pending-mutation-reload
 func TestInventoryStageDoesNotCompletePendingToggleReload(t *testing.T) {
 	m := newTestModel()
 	operation, ok := m.beginOperation(operationMutation)
@@ -437,6 +447,7 @@ func TestInventoryStageDoesNotCompletePendingToggleReload(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/provisional-config-stage-publishes-verification-pending-rows
 func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -497,6 +508,7 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/excluded-configured-selections-render-unchecked-in-their-verified-position
 func TestProvisionalStageDoesNotCheckExcludedMarketplacePin(t *testing.T) {
 	m := newProvisionalStageModel()
 	cfg := &config.Config{
@@ -536,6 +548,7 @@ func scopeLayout(rows []row) []string {
 	return layout
 }
 
+// spec: tui-startup/provisional-layout-matches-verified-inventory
 func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 	audit := config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "audit", Direct: true}
 	review := config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "review", Direct: true}
@@ -562,6 +575,7 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/organization-marketplace-collection-expands-from-the-verified-cached-manifest
 func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testing.T) {
 	cache := marketplace.NewCache(t.TempDir())
 	const url = "https://market.example"
@@ -626,6 +640,7 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 	}
 }
 
+// spec: tui-startup/optional-collection-member-yields-to-a-configured-selection-of-the-same-resource
 func TestProvisionalCollectionMemberYieldsToConfiguredSelectionOfSameName(t *testing.T) {
 	member := config.MarketplaceResourcePin{
 		RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "audit", Revision: "sha256:" + strings.Repeat("a", 64),
@@ -641,6 +656,7 @@ func TestProvisionalCollectionMemberYieldsToConfiguredSelectionOfSameName(t *tes
 	}
 }
 
+// spec: tui-startup/registry-selections-carry-the-harness-override-badge
 func TestProvisionalRowsCarryRegistryOverrideHarnessBadge(t *testing.T) {
 	cfg := &config.Config{Registries: []config.RegistryEntry{{
 		URL: "https://git.example/skills.git", Source: config.RepoCommitted, CatalogKey: "skills", Harnesses: []string{"codex"},
@@ -652,6 +668,7 @@ func TestProvisionalRowsCarryRegistryOverrideHarnessBadge(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/a-stale-provisional-stage-cannot-publish-rows
 func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 	m := newTestModel()
 	stale := m.requests.active(requestSnapshot)
@@ -670,6 +687,7 @@ func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/provisional-rows-render-while-transient-acquisition-is-blocked
 func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	unblock := blockedOrganizationMarketplace(t)
@@ -873,6 +891,7 @@ func pendingRowNames(rows []row) map[string]ir.ResourceKind {
 	return got
 }
 
+// spec: tui-startup/provisional-rows-render-while-transient-acquisition-is-blocked
 func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir, _, _ := provisionalLocalAllTrueFixture(t)
 	unblock := blockedOrganizationMarketplace(t)
@@ -933,6 +952,7 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 	}
 }
 
+// spec: tui-startup/local-all-true-selections-expand-into-pending-rows-on-the-normal-config-path
 func TestProvisionalLocalAllTrueRowsRenderOnNormalConfigPath(t *testing.T) {
 	repoRoot, homeDir, _, _ := provisionalLocalAllTrueFixture(t)
 	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil }))
@@ -997,6 +1017,7 @@ func TestProvisionalLocalAllTrueRowsRenderOnNormalConfigPath(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/excluded-only-configuration-publishes-no-provisional-rows
 func TestExcludedOnlyProvisionalStagePublishesNoRows(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -1044,6 +1065,7 @@ func TestExcludedOnlyProvisionalStagePublishesNoRows(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/registry-scoped-local-excludes-apply-to-provisional-rows
 func TestProvisionalRegistryScopedLocalExcludesApply(t *testing.T) {
 	repoRoot, homeDir, regA, regB := provisionalLocalAllTrueFixture(t)
 	regC := t.TempDir()
@@ -1107,6 +1129,7 @@ func TestProvisionalRegistryScopedLocalExcludesApply(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/authoritative-failure-clears-provisional-rows
 func TestAuthoritativeFailureClearsProvisionalRows(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -1142,6 +1165,7 @@ func TestAuthoritativeFailureClearsProvisionalRows(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/an-open-detail-follows-its-verified-row
 func TestPendingDetailFollowsVerifiedRow(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -1185,6 +1209,7 @@ func TestPendingDetailFollowsVerifiedRow(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/final-stage-merges-discovery-published-during-the-config-stage
 func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -1218,6 +1243,7 @@ func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/mutations-stay-gated-until-verified-inventory
 func TestSyncKeyBlockedBeforeVerifiedInventory(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -1251,6 +1277,7 @@ func TestSyncKeyBlockedBeforeVerifiedInventory(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/mutations-stay-gated-until-verified-inventory
 func TestDiscoveryRowCannotInstallBeforeVerifiedInventory(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
