@@ -1,7 +1,7 @@
 ## 1. Regression and behavior
 
-- [ ] 1.1 Add command tests with spec annotations for reconciled nested output, drifted nested output, and root/exact-lock preservation; verify the nested regression fails on the base commit for false drift.
-- [ ] 1.2 Make status preview the effective nested output root without changing synchronization; verify focused command tests pass and status leaves output and lock bytes unchanged.
+- [x] 1.1 Add command tests with spec annotations for reconciled nested output, drifted nested output, and root/exact-lock preservation; record the red run of the nested regression on the original base fe4c9a7a (false drift at the repository root).
+- [x] 1.2 Confirm upstream `pipeline.NewWorkspace`/`pipeline.Inspect` workspace inspection makes status preview the effective nested output root so the rebased branch carries no production change; verify focused command tests pass and status leaves output and lock bytes unchanged.
 - [ ] 1.3 Run `make validate`, `make spec-check`, `make validate-e2e`, and `openspec validate --all --strict`; verify all checks pass.
 
 ## 2. Publication

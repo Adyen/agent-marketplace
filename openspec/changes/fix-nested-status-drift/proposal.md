@@ -1,12 +1,12 @@
 ## Why
 
-When a personal-local configuration is in a nested directory, `status` resolves its resources but previews their output at the repository root. This can report writes and parent-root removals even after `sync` has reconciled the nested output.
+`status` previously reported drift for a nested personal-local configuration even after `sync` reconciled its output, listing false writes and unrelated parent-root removals. The upstream fix is merged; this change pins the parity contract in the status-reporting spec and adds the regression coverage that was missing.
 
 ## What Changes
 
-- Make `status` inspect the same materialization root as `sync --check` for nested personal-local configurations.
-- Specify and test in-sync and drifted nested output, including unrelated parent-owned artifacts.
-- Preserve root-level inspection, read-only behavior, and exact-lock error reporting.
+- Specify truthful drift and orphan reporting when a nested personal-local configuration determines the output root (behavior already implemented by workspace inspection).
+- Add command-level regression tests for in-sync and drifted nested output, including unrelated parent-owned artifacts.
+- Change no production behavior; preserve root-level inspection, read-only status, and exact-lock error reporting.
 
 ## Capabilities
 
@@ -20,4 +20,4 @@ None.
 
 ## Impact
 
-The `status` command, its command tests, and the status-reporting specification change. Synchronization and ownership policies do not change.
+The `status` command tests and the status-reporting specification change. Production code, synchronization, and ownership policies do not change.

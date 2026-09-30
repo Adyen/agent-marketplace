@@ -1,16 +1,16 @@
 ## Context
 
-`sync --check` resolves and previews at the nested local configuration directory when it differs from the repository root. `status` resolves the nearest local configuration but previews at the repository root.
+`sync --check` and `status` both inspect through `pipeline.Inspect` on a `pipeline.Workspace` whose materialization root is the nested local configuration directory when present, so previewing matches reconciliation. That nested parity contract is still unspecified and untested.
 
 ## Goals / Non-Goals
 
-**Goal:** Keep `status` drift and orphan reporting rooted at the output location chosen by synchronization.
+**Goal:** Specify and regression-test `status` drift and orphan reporting rooted at the output location chosen by synchronization.
 
-**Non-goal:** Change synchronization, ownership, pruning, or resource selection.
+**Non-goal:** Change synchronization, ownership, pruning, resource selection, or any production code; the upstream workspace inspection already implements the behavior.
 
 ## Decisions
 
-Select the materialization root in `status` using the same local-directory rule as `sync --check`, while retaining the repository root for configuration resolution and unrelated status sections. Reusing the synchronization rule is smaller than changing the pipeline or materializer and avoids moving other status output without evidence.
+Cover the existing `pipeline.Inspect`/`Workspace.MaterializeRoot()` path with a spec delta and command tests rather than new production code. Reusing the shared workspace inspection keeps `status` aligned with `sync --check` by construction, so this pull request is regression-and-specification-only.
 
 ## Risks / Trade-offs
 
