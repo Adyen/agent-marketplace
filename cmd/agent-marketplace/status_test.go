@@ -285,7 +285,8 @@ skills:
 	}
 }
 
-func TestStatusCommandShowsMalformedSkillsInErrors(t *testing.T) {
+// spec: inspection-outcomes/malformed-resource-warning
+func TestStatusCommandShowsMalformedSkillsAsWarnings(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -320,11 +321,11 @@ registries:
 
 	output, err := executeCommand("status")
 	if err != nil {
-		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
+		t.Fatalf("expected status command to succeed on a warning-only malformed resource: %v\n%s", err, output)
 	}
 
 	for _, needle := range []string{
-		"ERRORS",
+		"WARNINGS",
 		"broken-skill",
 		filepath.Join("skills", "broken-skill", "SKILL.md"),
 		"did not find expected ',' or ']'",
@@ -332,6 +333,9 @@ registries:
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected status output to contain %q, got:\n%s", needle, output)
 		}
+	}
+	if strings.Contains(output, filepath.Join("skills", "broken-skill", "SKILL.md", "SKILL.md")) {
+		t.Fatalf("status appended a second SKILL.md to a file path:\n%s", output)
 	}
 }
 

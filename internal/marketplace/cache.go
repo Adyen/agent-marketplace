@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/url"
@@ -261,11 +262,11 @@ func (c *Cache) endpointArchiveDigests(endpoint string) (map[string]struct{}, er
 			if err != nil {
 				return nil, err
 			}
-			if len(entries) == 0 && depth > 0 {
-				return nil, fmt.Errorf("endpoint metadata directory %q is empty", dir)
-			}
 			for _, entry := range entries {
 				p := filepath.Join(dir, entry.Name())
+				if !entry.IsDir() && strings.HasPrefix(entry.Name(), ".tmp-") {
+					continue
+				}
 				if depth < 3 {
 					if !entry.IsDir() {
 						return nil, fmt.Errorf("unexpected file %q in endpoint metadata tree", p)
@@ -284,7 +285,7 @@ func (c *Cache) endpointArchiveDigests(endpoint string) (map[string]struct{}, er
 				} else if !exists {
 					return nil, fmt.Errorf("endpoint metadata file %q is not a regular file", p)
 				}
-				raw, err := os.ReadFile(p)
+				raw, err := readBoundedEndpointMetadata(p)
 				if err != nil {
 					return nil, err
 				}
@@ -306,6 +307,26 @@ func (c *Cache) endpointArchiveDigests(endpoint string) (map[string]struct{}, er
 		}
 		dirs = next
 	}
+}
+
+const maxEndpointMetadataSize = maxDiscoveryCacheSize
+
+func readBoundedEndpointMetadata(path string) ([]byte, error) {
+	// #nosec G304 -- path was already validated as a regular file inside the
+	// cache root by validateCacheRegularFile.
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(f, maxEndpointMetadataSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxEndpointMetadataSize {
+		return nil, fmt.Errorf("endpoint metadata %q exceeds size limit", path)
+	}
+	return raw, nil
 }
 
 func validArchiveDigestKey(name string) bool {

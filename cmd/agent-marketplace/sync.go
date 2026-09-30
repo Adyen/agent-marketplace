@@ -476,13 +476,15 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	// one diagnostic affecting several harness targets prints once.
 	//
 	// Warnings do not affect drift detection or the --check exit code.
-	// Concat, not append: appending to resolvedResult.Warnings could write into
-	// its spare capacity and mutate the caller's slice.
-	var materializeWarnings []error
-	for _, issue := range inspection.IssuesOf(pipeline.IssueWarning, pipeline.IssueMaterialization) {
-		materializeWarnings = append(materializeWarnings, issue.Err)
+	// Concat keeps the separately collected lock and inspection warnings
+	// independent before deduplication.
+	var inspectionWarnings []error
+	for _, issue := range inspection.Issues {
+		if issue.Severity == pipeline.IssueWarning {
+			inspectionWarnings = append(inspectionWarnings, issue.Err)
+		}
 	}
-	allWarnings := slices.Concat(lockWarnings, resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult), materializeWarnings)
+	allWarnings := slices.Concat(lockWarnings, inspectionWarnings)
 	for _, warning := range dedupIssues(allWarnings) {
 		if _, err := fmt.Fprintf(out, "warning: %v\n", warning); err != nil {
 			return err

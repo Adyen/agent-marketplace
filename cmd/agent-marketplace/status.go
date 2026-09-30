@@ -243,7 +243,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		}
 		inspectionErrors = append(inspectionErrors, issue.Err)
 	}
-	errorRows := buildErrorRows(inspectionErrors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
+	errorRows := buildErrorRows(inspectionErrors, secondResolveRealErrs)
 
 	targetHarnesses := make([]string, len(result.TargetHarnesses))
 	for i, t := range result.TargetHarnesses {
@@ -255,9 +255,11 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		return fmt.Errorf("resolve harness target roots: %w", err)
 	}
 
-	statusWarnings := slices.Clone(result.Warnings)
-	for _, issue := range inspection.IssuesOf(pipeline.IssueWarning, pipeline.IssueMaterialization) {
-		statusWarnings = append(statusWarnings, issue.Err)
+	var statusWarnings []error
+	for _, issue := range inspection.Issues {
+		if issue.Severity == pipeline.IssueWarning {
+			statusWarnings = append(statusWarnings, issue.Err)
+		}
 	}
 
 	if err := writeStatusSections(out, statusView{
@@ -332,14 +334,6 @@ func describeCacheFreshness(catalogKey string, now time.Time) string {
 }
 
 const staleCacheThreshold = 24 * time.Hour
-
-func malformedSkillErrors(skills []skill.MalformedSkill) []error {
-	errs := make([]error, 0, len(skills))
-	for _, malformed := range skills {
-		errs = append(errs, fmt.Errorf("malformed skill %q (%s/SKILL.md): %w", malformed.DirName, malformed.Path, malformed.Error))
-	}
-	return errs
-}
 
 func applyExactLockFreshness(rows []statusRow, metadata []pipeline.LockMetadata) {
 	for i := range rows {

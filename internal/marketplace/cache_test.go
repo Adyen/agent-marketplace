@@ -696,6 +696,7 @@ func TestCacheGarbageCollectMalformedMetadataFailsClosed(t *testing.T) {
 	}
 }
 
+// spec: cache-garbage-collection/dry-run-then-collect
 func TestCacheGarbageCollectDryRunDoesNotMutate(t *testing.T) {
 	c := NewCache(t.TempDir())
 	archiveDigest := "sha256:" + strings.Repeat("c", 64)
@@ -917,6 +918,78 @@ func TestGCEndpointRootIgnoresVirtualCollectionArchive(t *testing.T) {
 	}
 }
 
+// spec: cache-garbage-collection/interrupted-metadata-write
+func TestGCEndpointRootIgnoresInterruptedMetadataWrite(t *testing.T) {
+	c := NewCache(t.TempDir())
+	endpoint := "https://marketplace.invalid"
+	contentDigest := "sha256:" + strings.Repeat("1", 64)
+	liveArchive := "sha256:" + strings.Repeat("2", 64)
+	if _, err := c.WriteResourceRevision(endpoint, "src", "skill", "review", contentDigest, assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(liveArchive),
+	})); err != nil {
+		t.Fatalf("WriteResourceRevision: %v", err)
+	}
+	if _, err := c.WriteArtifact(liveArchive, []byte("live")); err != nil {
+		t.Fatalf("WriteArtifact live: %v", err)
+	}
+	orphanArchive := writeOrphanArtifact(t, c)
+
+	metadataPath := c.MetadataPath(endpoint, "src", "skill", "review", contentDigest)
+	tmpFile := filepath.Join(filepath.Dir(metadataPath), ".tmp-interrupted")
+	if err := os.WriteFile(tmpFile, []byte("{"), 0o644); err != nil {
+		t.Fatalf("write interrupted temp file: %v", err)
+	}
+	emptyDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(metadataPath))), "interrupted")
+	if err := os.MkdirAll(emptyDir, 0o755); err != nil {
+		t.Fatalf("mkdir empty intermediate tree: %v", err)
+	}
+
+	result, err := c.GarbageCollect(false, GCRoots{UnlockedEndpoints: []string{endpoint}})
+	if err != nil || len(result.Removed) != 1 || result.Removed[0] != filepath.Dir(c.ArtifactPath(orphanArchive)) {
+		t.Fatalf("GarbageCollect = %v, %v; want interrupted write ignored and only the orphan removed", result.Removed, err)
+	}
+	if _, err := os.Stat(c.ArtifactPath(liveArchive)); err != nil {
+		t.Fatalf("live archive removed: %v", err)
+	}
+	for _, residue := range []string{tmpFile, emptyDir} {
+		if _, err := os.Stat(residue); err != nil {
+			t.Fatalf("interrupted-write residue %q was collected: %v", residue, err)
+		}
+	}
+}
+
+// spec: cache-garbage-collection/oversized-revision-metadata
+func TestGCEndpointRootRejectsOversizedMetadata(t *testing.T) {
+	c := NewCache(t.TempDir())
+	metadataPath := c.MetadataPath("https://marketplace.invalid", "src", "skill", "review", "sha256:"+strings.Repeat("1", 64))
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
+		t.Fatalf("mkdir metadata: %v", err)
+	}
+	file, err := os.Create(metadataPath)
+	if err != nil {
+		t.Fatalf("create oversized metadata: %v", err)
+	}
+	if err := file.Truncate(maxDiscoveryCacheSize + 1); err != nil {
+		_ = file.Close()
+		t.Fatalf("grow oversized metadata: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close oversized metadata: %v", err)
+	}
+	orphanArchive := writeOrphanArtifact(t, c)
+
+	result, err := c.GarbageCollect(false, GCRoots{UnlockedEndpoints: []string{"https://marketplace.invalid"}})
+	if err == nil || !strings.Contains(err.Error(), "size limit") || len(result.Removed) != 0 {
+		t.Fatalf("GarbageCollect = %v, %v; want bounded oversized metadata failure with no removals", result.Removed, err)
+	}
+	if _, statErr := os.Stat(c.ArtifactPath(orphanArchive)); statErr != nil {
+		t.Fatalf("oversized metadata GC mutated artifact cache: %v", statErr)
+	}
+}
+
+// spec: cache-garbage-collection/malformed-completed-revision
 func TestGCEndpointRootRejectsMalformedMetadata(t *testing.T) {
 	c := NewCache(t.TempDir())
 	metadataPath := c.MetadataPath("https://marketplace.invalid", "src", "skill", "review", "sha256:"+strings.Repeat("1", 64))

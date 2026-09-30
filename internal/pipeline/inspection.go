@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -164,11 +163,7 @@ func buildInspection(resolved ResolveResult, report *materialize.Report, matErr 
 }
 
 func malformedResourceError(m skill.MalformedSkill) error {
-	path := m.Path
-	if path != "" && !strings.HasSuffix(path, ".md") {
-		path += "/SKILL.md"
-	}
-	return fmt.Errorf("malformed skill %q (%s): %w", m.DirName, path, m.Error)
+	return fmt.Errorf("malformed skill %q (%s): %w", m.DirName, skill.MalformedSourceFile(m), m.Error)
 }
 
 func IssueDedupKey(err error) string {

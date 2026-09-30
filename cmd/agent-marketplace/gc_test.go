@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -449,6 +450,119 @@ marketplaces:
 	}
 	if _, err := os.Stat(mpCache.ArtifactPath(orphanArchive)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected marketplace orphan to be removed, stat err=%v", err)
+	}
+}
+
+// spec: cache-garbage-collection/configuration-or-lock-changes-while-waiting-for-lease
+func TestGcCommandReadsConfigChangedWhileWaitingForLease(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	userConfig := filepath.Join(homeDir, ".agents", "config.yaml")
+	writeConfig(t, userConfig, `registries:
+  - url: ssh://git@example.com/kept.git
+    ref: main
+`)
+	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
+
+	kept := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/kept.git"), "main", ".gitkeep")
+	added := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/added-while-waiting.git"), "main", ".gitkeep")
+	orphan := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
+	for _, path := range []string{kept, added, orphan} {
+		writeFile(t, path, "cache\n")
+	}
+
+	withWorkingDir(t, repoRoot)
+
+	release, err := cache.AcquireExactGitNamespaceLeaseWithContext(context.Background())
+	if err != nil {
+		t.Fatalf("acquire shared exact lease: %v", err)
+	}
+	gcDone := make(chan struct{})
+	var output string
+	var gcErr error
+	go func() {
+		defer close(gcDone)
+		output, gcErr = executeCommand("gc")
+	}()
+	time.Sleep(200 * time.Millisecond)
+	writeConfig(t, userConfig, `registries:
+  - url: ssh://git@example.com/kept.git
+    ref: main
+  - url: ssh://git@example.com/added-while-waiting.git
+    ref: main
+`)
+	release()
+	<-gcDone
+
+	if gcErr != nil {
+		t.Fatalf("gc failed: %v\n%s", gcErr, output)
+	}
+	if _, err := os.Stat(added); err != nil {
+		t.Fatalf("cache made reachable while GC waited for its lease was removed: %v", err)
+	}
+	if _, err := os.Stat(orphan); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unreferenced cache was not collected: %v", err)
+	}
+}
+
+// spec: cache-garbage-collection/configuration-or-lock-changes-while-waiting-for-lease
+func TestGcCommandReadsDeployedLockChangedWhileWaitingForLease(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `registries:
+  - url: ssh://git@example.com/kept.git
+    ref: main
+`)
+	lockPath := filepath.Join(homeDir, ".agents", "lock.yaml")
+	writeFile(t, lockPath, "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
+
+	kept := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/kept.git"), "main", ".gitkeep")
+	orphan := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
+	for _, path := range []string{kept, orphan} {
+		writeFile(t, path, "cache\n")
+	}
+
+	withWorkingDir(t, repoRoot)
+
+	release, err := cache.AcquireExactGitNamespaceLeaseWithContext(context.Background())
+	if err != nil {
+		t.Fatalf("acquire shared exact lease: %v", err)
+	}
+	gcDone := make(chan struct{})
+	var output string
+	var gcErr error
+	go func() {
+		defer close(gcDone)
+		output, gcErr = executeCommand("gc")
+	}()
+	time.Sleep(200 * time.Millisecond)
+	writeFile(t, lockPath, "apiVersion: agent-marketplace-lock/v1\nscope: user\nregistries: [\n")
+	release()
+	<-gcDone
+
+	if gcErr == nil {
+		t.Fatalf("gc succeeded after deployed lock turned malformed while waiting for its lease:\n%s", output)
+	}
+	for _, path := range []string{kept, orphan} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("fail-closed gc deleted %q: %v", path, err)
+		}
 	}
 }
 

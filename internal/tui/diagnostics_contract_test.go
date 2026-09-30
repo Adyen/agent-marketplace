@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -65,6 +66,64 @@ func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	}
 	if errs := diagnosticErrors(snapshot.diagnostics); len(errs) != 1 || !errors.Is(errs[0], induced) {
 		t.Fatalf("dry-run failure not propagated: %v", errs)
+	}
+}
+
+// spec: inspection-outcomes/malformed-resource-warning
+func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	registryRoot := t.TempDir()
+	globalCfg := &config.Config{
+		APIVersion: config.APIVersionV2,
+		Harnesses:  []string{"factory"},
+		Registries: []config.RegistryEntry{
+			{URL: registryRoot, Skills: config.KindSelector{Include: []string{"healthy"}}},
+		},
+	}
+	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
+	t.Cleanup(restoreOrg)
+	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) { return globalCfg, nil })
+	t.Cleanup(restoreGlobal)
+	restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) { return nil, nil })
+	t.Cleanup(restoreRepo)
+	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
+	t.Cleanup(restoreLocal)
+	previousDiscover := discoverCatalog
+	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+		if dir != registryRoot {
+			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
+		}
+		return catalogInfo{
+			Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}},
+			Malformed: []skill.MalformedSkill{{
+				DirName: "broken-skill",
+				Path:    filepath.Join("skills", "broken-skill", "SKILL.md"),
+				Kind:    ir.KindSkill.String(),
+				Error:   errors.New("yaml: parse failure"),
+			}},
+		}, nil
+	}
+	t.Cleanup(func() { discoverCatalog = previousDiscover })
+
+	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
+	if errs := diagnosticErrors(snapshot.diagnostics); len(errs) != 0 {
+		t.Fatalf("malformed unselected resource produced error diagnostics: %v", errs)
+	}
+	var malformedWarning error
+	for _, d := range snapshot.diagnostics {
+		if d.severity == diagnosticWarning && strings.Contains(d.err.Error(), "broken-skill") {
+			malformedWarning = d.err
+		}
+	}
+	if malformedWarning == nil {
+		t.Fatalf("malformed resource missing from warning diagnostics: %+v", snapshot.diagnostics)
+	}
+	if strings.Contains(malformedWarning.Error(), filepath.Join("SKILL.md", "SKILL.md")) {
+		t.Fatalf("warning appended a second SKILL.md to a file path: %v", malformedWarning)
+	}
+	if snapshot.driftAssessment != driftReady {
+		t.Fatalf("warning-only malformed resource marked drift failed: %v", snapshot.driftAssessment)
 	}
 }
 
