@@ -664,6 +664,43 @@ registries:
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}},
 		},
 	},
+	// spec: resource-selection/collection-member-is-not-displaced-by-a-selection-in-the-other-scope
+	{
+		Name: "collision/cross_scope_collection_member_keeps_both_skills",
+		Desc: "Given a user collection member and a repository skill with the same installed name, When syncing in the repository, Then both scopes retain their own skill without a collision warning and sync --check succeeds",
+		Registries: []RegistryDef{{Name: "user-bundle", Skills: []Skill{{Name: "shared", Description: "User collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nversion: \"1.0\"\nresources:\n  - name: shared\n"}}},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:user-bundle}}', ref: main}}\nresources: {user: {include: [collection/bundle]}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				Symlinks: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{
+					"/root/.factory/skills/shared/SKILL.md":      "User collection member",
+					"/workspace/.factory/skills/shared/SKILL.md": "Repository selection",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true, OutNotContains: []string{"multiple registries"}, PathsUnchanged: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"}},
+		},
+	},
+	// spec: resource-selection/required-selection-through-a-collection-suppresses-a-repository-selection
+	{
+		Name: "collision/required_collection_member_prevents_repo_shadow",
+		Desc: "Given a required organization collection member and a repository skill with the same installed name, When syncing in the repository, Then the required member remains in the machine harness, the repository skill is not installed, and the collision is reported",
+		Registries: []RegistryDef{{Name: "org-bundle", Skills: []Skill{{Name: "shared", Description: "Mandatory collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nversion: \"1.0\"\nresources:\n  - name: shared\n"}}},
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nsources: {org: {git: '{{REG:org-bundle}}', ref: main}}\nresources: {org: {include: [collection/bundle], required: true}}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Unreviewed repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"multiple registries"},
+				Symlinks:     []string{"/root/.factory/skills/shared"},
+				FilesAbsent:  []string{"/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Mandatory collection member"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}, FilesAbsent: []string{"/workspace/.factory/skills/shared"}},
+		},
+	},
 	{
 		Name: "install/collision_warning_scoped",
 		Desc: "Given two selected registries with skill and command collisions, When installing one skill, Then its collision is reported without unrelated warnings and the existing winner is installed",
