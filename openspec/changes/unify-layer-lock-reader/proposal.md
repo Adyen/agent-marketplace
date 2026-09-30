@@ -20,4 +20,4 @@ None.
 
 ## Impact
 
-`internal/lockfile`, `internal/config`, and `internal/pipeline` share one acquisition-lock decoder. Existing command callers keep their error codes and lock formats.
+`internal/dependencytxn`, `internal/config`, and `internal/pipeline` share one acquisition-lock reader. Existing command callers keep their error codes and lock formats.

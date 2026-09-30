@@ -1,6 +1,6 @@
 ## Context
 
-`internal/config/intent.go` reads adjacent locks for single-file loaders, while `internal/pipeline/acquisition.go` independently reads, decodes, and scope-validates deployed locks. Pipeline callers depend on `LockViewError` codes and unsafe-path mapping; config callers record canonical and requested paths with a digest. Both choose canonical overlay data before requested overlay data.
+Single-file config loading and `internal/pipeline/acquisition.go` read deployed locks through separate paths. Pipeline callers depend on `LockViewError` codes and unsafe-path mapping; config callers record canonical and requested paths with a digest. Both choose canonical overlay data before requested overlay data.
 
 ## Goals / Non-Goals
 
@@ -10,9 +10,9 @@
 
 ## Decisions
 
-- A shared `internal/lockfile` reader accepts canonical and requested lock paths, scope, and overlays, returning the document, digest, existence, overlay flag, and a typed validation cause. This removes the two decoders without introducing another acquisition policy loop. An alternative shared pipeline helper would make config depend on pipeline and invert the existing dependency direction.
-- Pipeline translates typed validation failure to `LockViewError{Code: "lock.invalid"}` and maps unsafe files to `dependencytxn.ErrUnsafePath`; config retains its loader-specific read/decode errors and `ConfigRead` metadata. An alternative shared outward error type would change existing callers' error identity.
-- The caller resolves and validates configuration paths before passing lock paths to the reader. Keep trust and missing-lock policy outside it because they differ by layer and mode.
+- `dependencytxn.ReadLayerLock` accepts canonical and requested lock paths, scope, and overlays, returning `LayerLockEvidence` with the document, digest, and overlay flag plus a typed validation cause. It uses descriptor-bound reads for managed paths and strict reads for legacy paths, without adding an acquisition policy loop or making config depend on pipeline.
+- Pipeline translates typed validation failure to `LockViewError{Code: "lock.invalid"}` and preserves unsafe-path mapping; config retains its loader-specific read/decode errors and `ConfigRead` metadata. An alternative shared outward error type would change existing callers' error identity.
+- Config resolves paths through `ResolveConfigLockPathsTolerateMissing` before passing lock paths to the reader, preserving the logical layer lock location when config uses an approved link. Keep trust and missing-lock policy outside it because they differ by layer and mode.
 
 ## Risks / Trade-offs
 
