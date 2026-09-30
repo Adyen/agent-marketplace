@@ -412,7 +412,7 @@ test.describe('Marketplace browser discovery', () => {
       await expect(markdown.locator('pre')).toHaveCSS('border-color', theme.marketplace.border)
 
       const command = page.getByTestId('command-text')
-      await expect(command.locator('../..')).toHaveCSS('background-color', theme.marketplace.code)
+      await expect(page.getByTestId('command-container')).toHaveCSS('background-color', theme.marketplace.code)
       await expect(command).toHaveCSS('color', theme.marketplace.primaryText)
       await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toHaveCSS('background-color', theme.marketplace.action)
 

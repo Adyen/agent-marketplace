@@ -72,7 +72,7 @@ onBeforeUnmount(() => {
   <div>
     <!-- Filled, unbordered, prompt-prefixed: a command is output to be taken,
          not a field to be typed in, so it must not borrow input chrome. -->
-    <div class="grid h-12 grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded border border-[var(--am-color-code-border)] bg-[var(--am-color-code-bg)]">
+    <div data-testid="command-container" class="grid h-12 grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded border border-[var(--am-color-code-border)] bg-[var(--am-color-code-bg)]">
       <div class="relative h-full min-w-0 overflow-hidden">
         <pre ref="scrollViewport" data-testid="command-scroll" class="command-scroll m-0 flex h-full min-w-0 items-center gap-3 overflow-x-auto px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--am-color-action-focus-ring)]" tabindex="0" aria-label="Install command" @scroll.passive="handleScroll"><span class="select-none font-mono text-sm leading-6 text-dimmed" aria-hidden="true">$</span><code
             v-if="available"
