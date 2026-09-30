@@ -6,11 +6,88 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 )
 
 var ErrPublicationFence = errors.New("marketplace/store: publication fence rejected")
+
+func FenceRegistryPublication(ctx context.Context, q ManagedSQLQueries, meta MetadataStore, req RegistryRevisionPublication) (bool, error) {
+	err := assertRegistryHead(ctx, q, req.Occurrence.RegistryID, req.ExpectedHeadCommit)
+	if err == nil || !errors.Is(err, ErrConflict) {
+		return false, err
+	}
+	current, readErr := legacyPublicationAlreadyCurrent(ctx, q, meta, req)
+	if readErr != nil && !errors.Is(readErr, ErrNotFound) && !errors.Is(readErr, sql.ErrNoRows) {
+		return false, readErr
+	}
+	if current {
+		return true, nil
+	}
+	return false, err
+}
+
+func legacyPublicationAlreadyCurrent(ctx context.Context, q ManagedSQLQueries, meta MetadataStore, req RegistryRevisionPublication) (bool, error) {
+	head, err := meta.LatestRegistryOccurrence(ctx, req.Occurrence.RegistryID)
+	if err != nil || !head.Equal(NormalizeRegistryOccurrence(req.Occurrence)) {
+		return false, err
+	}
+	for _, expected := range req.Resources {
+		var matches bool
+		err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM resource_revisions WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5 AND COALESCE(archive_digest,'')=$6 AND COALESCE(license,'')=$7 AND COALESCE(description,'')=$8)`, expected.Coordinate.Marketplace, expected.Coordinate.Registry, expected.Coordinate.Kind, expected.Coordinate.Name, expected.ContentDigest, expected.ArchiveDigest, expected.License, BoundDescription(expected.Description)).Scan(&matches)
+		if err != nil || !matches {
+			return false, err
+		}
+	}
+	for _, expected := range req.ResourceOccurrences {
+		expected, err := NormalizeResourceOccurrence(expected)
+		if err != nil {
+			return false, err
+		}
+		var matches bool
+		err = q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM all_resource_occurrences WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5 AND revision_commit=$6 AND manifest_digest=$7 AND COALESCE(source_path,'')=$8)`, expected.Coordinate.Marketplace, expected.Coordinate.Registry, expected.Coordinate.Kind, expected.Coordinate.Name, expected.ContentDigest, expected.Commit, expected.ManifestDigest, expected.SourcePath).Scan(&matches)
+		if err != nil || !matches {
+			return false, err
+		}
+	}
+	for _, expected := range req.Assessments {
+		var matches bool
+		err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM current_resource_assessments WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5 AND assessment_digest=$6)`, expected.Coordinate.Marketplace, expected.Coordinate.Registry, expected.Coordinate.Kind, expected.Coordinate.Name, expected.ContentDigest, expected.AssessmentDigest).Scan(&matches)
+		if err != nil || !matches {
+			return false, err
+		}
+	}
+	collections := slices.Clone(req.Collections)
+	if req.Collection != nil {
+		collections = append(collections, *req.Collection)
+	}
+	for _, expected := range collections {
+		current, err := meta.GetCollectionRevision(ctx, expected.ID)
+		if err != nil || !current.Equal(expected) {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func assertRegistryHead(ctx context.Context, q ManagedSQLQueries, registry RegistryID, expectedCommit string) error {
+	if _, err := q.ExecContext(ctx, `UPDATE registries SET id=id WHERE id=$1`, registry); err != nil {
+		return fmt.Errorf("lock publication registry: %w", err)
+	}
+	var current string
+	err := q.QueryRowContext(ctx, `SELECT revision_commit FROM effective_registry_heads WHERE registry_id=$1`, registry).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) && expectedCommit == "" {
+		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read publication head: %w", err)
+	}
+	if errors.Is(err, sql.ErrNoRows) || current != expectedCommit {
+		return fmt.Errorf("%w: registry head expectation changed", ErrConflict)
+	}
+	return nil
+}
 
 func ReadRegistryPublication(ctx context.Context, q ManagedSQLQueries, registry RegistryID, id PublicationID) (RegistryPublication, error) {
 	var record string
