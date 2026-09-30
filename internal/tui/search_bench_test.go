@@ -142,7 +142,7 @@ func BenchmarkApplyFilterColdAndWarm(b *testing.B) {
 				if !c.preWarm {
 					b.StopTimer()
 					for j := range m.rows {
-						m.rows[j].searchableLower = ""
+						m.rows[j].searchReady = false
 					}
 					b.StartTimer()
 				}

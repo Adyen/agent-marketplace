@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/spinner"
@@ -89,13 +91,15 @@ type row struct {
 
 	PendingVerification bool
 
-	// searchableLower is a cached lowercased concatenation of the fields
-	// applyFilter scans (name + tags + registry URL). Populated lazily by
-	// ensureSearchable so applyFilter does not re-allocate this string on
-	// every keystroke while the user is typing in the search input.
-	searchableLower string
+	// searchWords is the cached, sorted and deduplicated set of lowercased
+	// words from the name and metadata that query terms prefix-match.
+	// Populated lazily by ensureSearchable so applyFilter does not rebuild
+	// it on every keystroke while the user is typing in the search input.
+	searchWords     []string
+	searchReady     bool
 	searchName      string
 	searchRanked    bool
+	searchNameMatch bool
 	searchScore     int
 	// searchMatchRunes holds rune indexes into the sanitized name that the
 	// query genuinely matched; it is empty for metadata-only matches.
@@ -119,12 +123,12 @@ func (r *row) ensureLabelMemo() {
 	}
 }
 
-// ensureSearchable populates searchableLower on first use and short-circuits
-// on subsequent calls. Safe to call from any code path that is about to
-// filter the row; buildRows and test helpers can skip the call because the
-// first applyFilter invocation will fill it in.
+// ensureSearchable populates the search index on first use and
+// short-circuits on subsequent calls. Safe to call from any code path that
+// is about to filter the row; buildRows and test helpers can skip the call
+// because the first applyFilter invocation will fill it in.
 func (r *row) ensureSearchable() {
-	if r.searchableLower != "" {
+	if r.searchReady {
 		return
 	}
 	size := len(r.Artifact.Name) + len(r.Artifact.RegistryURL) + 2
@@ -165,12 +169,26 @@ func (r *row) ensureSearchable() {
 		}
 	}
 	r.searchName = strings.ToLower(sanitizeTerminalData(r.Artifact.Name, terminalSingleLine))
-	r.searchableLower = strings.ToLower(b.String())
-	if r.searchableLower == "" {
-		// Guarantee a non-empty sentinel so the cached-check above keeps
-		// short-circuiting even for fully-empty rows.
-		r.searchableLower = " "
-	}
+	words := searchTerms(b.String())
+	slices.Sort(words)
+	r.searchWords = slices.Compact(words)
+	r.searchReady = true
+}
+
+// searchTerms splits text into lowercased words at every character that is
+// neither a letter nor a digit. Queries and searchable metadata share it so
+// "platform.git" matches the words of a registry URL.
+func searchTerms(text string) []string {
+	return strings.FieldsFunc(strings.ToLower(text), func(c rune) bool {
+		return !unicode.IsLetter(c) && !unicode.IsDigit(c)
+	})
+}
+
+// hasWordWithPrefix reports whether any of the row's search words begins
+// with term.
+func (r *row) hasWordWithPrefix(term string) bool {
+	i, _ := slices.BinarySearch(r.searchWords, term)
+	return i < len(r.searchWords) && strings.HasPrefix(r.searchWords[i], term)
 }
 
 func (r row) canOverrideMarketplace() bool {

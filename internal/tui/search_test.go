@@ -205,7 +205,7 @@ func TestSearchInputShowsSpinnerWhileMarketplaceResultsLoad(t *testing.T) {
 	}
 }
 
-func TestSearchReopenRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T) {
+func TestSearchClearFromListRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	m := searchModel()
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
@@ -221,10 +221,19 @@ func TestSearchReopenRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T) {
 	m.searchInput.SetValue("remote")
 	m.mergeDiscoveryRows()
 
-	updated, cmd := m.Update(keyPress('/'))
+	m = asModel(t, mustUpdate(m.Update(keyPress('/'))))
+	if !m.filterActive || m.filter != "remote" || m.searchInput.Value() != "remote" {
+		t.Fatalf("reopened search must resume the query: active=%t filter=%q input=%q", m.filterActive, m.filter, m.searchInput.Value())
+	}
+	if got := rowNames(m.discoveryRows); !slices.Equal(got, []string{"remote-result"}) {
+		t.Fatalf("resuming search must keep the query's discovery rows, got %v", got)
+	}
+	m = asModel(t, mustUpdate(m.Update(v2Enter())))
+
+	updated, cmd := m.Update(escKey())
 	m = updated.(Model)
-	if !m.filterActive || m.filter != "" || m.searchInput.Value() != "" {
-		t.Fatalf("reopened search state: active=%t filter=%q input=%q", m.filterActive, m.filter, m.searchInput.Value())
+	if m.filterActive || m.filter != "" || m.searchInput.Value() != "" {
+		t.Fatalf("cleared search state: active=%t filter=%q input=%q", m.filterActive, m.filter, m.searchInput.Value())
 	}
 	if got := rowNames(m.discoveryRows); !slices.Equal(got, []string{"browse-result"}) {
 		t.Fatalf("visible discovery rows = %v, want browse results", got)

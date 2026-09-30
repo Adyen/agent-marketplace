@@ -71,15 +71,16 @@ func TestFuzzySearchMetadataUsesSortedKeyOrder(t *testing.T) {
 			},
 		}
 		r.ensureSearchable()
-		return r.searchableLower
+		return strings.Join(r.searchWords, " ")
 	}
 	first, second := build(), build()
 	if first != second {
-		t.Fatalf("searchable text must be deterministic across builds:\n%q\n%q", first, second)
+		t.Fatalf("searchable words must be deterministic across builds:\n%q\n%q", first, second)
 	}
-	ia, im, iz := strings.Index(first, "aa-first"), strings.Index(first, "mm-mid"), strings.Index(first, "zz-last")
-	if ia < 0 || im < 0 || iz < 0 || ia >= im || im >= iz {
-		t.Fatalf("metadata keys must appear in sorted order in searchable text: %q", first)
+	for _, word := range []string{"aa", "first", "mm", "mid", "zz", "last", "v1", "v2", "v3"} {
+		if !strings.Contains(" "+first+" ", " "+word+" ") {
+			t.Fatalf("metadata word %q missing from searchable words: %q", word, first)
+		}
 	}
 }
 

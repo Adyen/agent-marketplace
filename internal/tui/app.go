@@ -25,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -407,7 +408,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorsViewport.SetHeight(max(1, msg.Height-1))
 		m.resizeMarketplaceConsentViewport(false)
 		m.clampListOffset()
-		layout := screenLayoutFor(m.height, m.filterActive)
+		layout := screenLayoutFor(m.height, m.searchRowVisible())
 		listWidth, detailWidth := paneWidths(m.width)
 		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
 		if !m.belowMinimumTerminal() && m.pane == paneDetail && previewWidthFor(msg.Width) != m.detailRenderWidth {
@@ -1129,6 +1130,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Search):
 		return m.dispatchAction(actionSearch)
 
+	case key.Matches(msg, m.keys.Clear) && m.filter != "":
+		return m.dispatchAction(actionClearSearch)
+
 	case key.Matches(msg, m.keys.Palette):
 		return m, m.openPalette()
 
@@ -1217,16 +1221,14 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case actionSearch:
-		resetRemoteSearch := m.filter != ""
+		// Resume editing an applied filter instead of discarding it.
 		m.filterActive = true
-		m.searchInput.SetValue("")
-		cmd := m.searchInput.Focus()
-		m.filter = ""
-		if resetRemoteSearch {
-			m.restoreBrowseDiscovery()
-			return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false))
-		}
-		return m, cmd
+		m.searchInput.SetValue(m.filter)
+		m.searchInput.CursorEnd()
+		return m, m.searchInput.Focus()
+
+	case actionClearSearch:
+		return m.clearSearch()
 
 	case actionHelp:
 		m.pane = paneHelp
@@ -1389,13 +1391,7 @@ func (m Model) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Clear):
-		m.filterActive = false
-		m.filter = ""
-		m.searchInput.SetValue("")
-		m.searchInput.Blur()
-		m.restoreBrowseDiscovery()
-		recordActionSpan(m.ctx, "filter", map[string]string{"result_count": strconv.Itoa(len(m.filteredRows))})
-		return m, m.beginMarketplaceDiscovery("", false)
+		return m.clearSearch()
 
 	case key.Matches(msg, m.keys.SearchConfirm):
 		m.filterActive = false
@@ -1408,6 +1404,18 @@ func (m Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// and character input.
 		return m.applySearchInput(msg)
 	}
+}
+
+// clearSearch drops the query, whether it is being typed or already
+// applied, and restores unfiltered browsing and discovery.
+func (m Model) clearSearch() (tea.Model, tea.Cmd) {
+	m.filterActive = false
+	m.filter = ""
+	m.searchInput.SetValue("")
+	m.searchInput.Blur()
+	m.restoreBrowseDiscovery()
+	recordActionSpan(m.ctx, "filter", map[string]string{"result_count": strconv.Itoa(len(m.filteredRows))})
+	return m, m.beginMarketplaceDiscovery("", false)
 }
 
 func (m Model) applySearchInput(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1866,7 +1874,7 @@ func (m Model) viewContent() string {
 	// without hiding the underlying controls.
 	if m.palette.open && m.pane == paneList {
 		if layer := renderPalette(m); layer != "" {
-			base = compositePalette(base, layer, m.width, m.height)
+			base = compositePalette(base, layer, m.width, m.height, m.paletteTop())
 		}
 	}
 
@@ -1894,7 +1902,7 @@ func (m Model) viewContent() string {
 // renderBaseScreen renders the standard header + tabs + two-pane layout +
 // footer without any overlay. Extracted so overlays can composite on top.
 func (m Model) renderBaseScreen() string {
-	layout := screenLayoutFor(m.height, m.filterActive)
+	layout := screenLayoutFor(m.height, m.searchRowVisible())
 	if !layout.header {
 		return ""
 	}
@@ -1904,11 +1912,7 @@ func (m Model) renderBaseScreen() string {
 		parts = append(parts, renderTabBar(m.activeTab))
 	}
 	if layout.search {
-		searchInput := m.searchInput
-		if m.discoveryLoading {
-			searchInput.Prompt = m.spinner.View() + " "
-		}
-		parts = append(parts, searchInput.View())
+		parts = append(parts, renderSearchRow(m))
 	}
 	if layout.mainHeight > 0 {
 		listWidth, detailWidth := paneWidths(m.width)
@@ -1933,6 +1937,31 @@ func (m Model) renderBaseScreen() string {
 	return fitTerminal(strings.Join(parts, "\n"), m.width, m.height)
 }
 
+// searchRowVisible reports whether the search row occupies a line: while
+// the query is being typed and while a confirmed filter is applied.
+func (m Model) searchRowVisible() bool {
+	return m.filterActive || m.filter != ""
+}
+
+// renderSearchRow shows the focused search input, or the applied filter as
+// a chip, followed by the local match count and how to change it.
+func renderSearchRow(m Model) string {
+	count := len(m.filteredRows)
+	matches := fmt.Sprintf("%d matches", count)
+	if count == 1 {
+		matches = "1 match"
+	}
+	if m.filterActive {
+		input := m.searchInput
+		if m.discoveryLoading {
+			input.Prompt = m.spinner.View() + " "
+		}
+		return ansi.Truncate(input.View()+"  "+styleDim.Render(matches), m.width, "…")
+	}
+	chip := styleSearchPrompt.Render("/ ") + sanitizeTerminalData(m.filter, terminalSingleLine)
+	return ansi.Truncate(chip+"  "+styleDim.Render(matches+" · esc clear · / edit"), m.width, "…")
+}
+
 type screenLayout struct {
 	header     bool
 	tabs       bool
@@ -1941,7 +1970,7 @@ type screenLayout struct {
 	mainHeight int
 }
 
-func screenLayoutFor(height int, filterActive bool) screenLayout {
+func screenLayoutFor(height int, searchRow bool) screenLayout {
 	if height < 1 {
 		return screenLayout{}
 	}
@@ -1951,7 +1980,7 @@ func screenLayoutFor(height int, filterActive bool) screenLayout {
 	}
 	layout.footer = true
 	remaining := height - 2
-	if filterActive && remaining > 0 {
+	if searchRow && remaining > 0 {
 		layout.search = true
 		remaining--
 	}
@@ -2006,30 +2035,56 @@ func (m *Model) applyFilter() []row {
 		return m.rows
 	}
 
-	matches := fuzzy.FindFromNoSort(m.filter, searchableSource(m.rows))
+	terms := searchTerms(m.filter)
+	if len(terms) == 0 {
+		return m.rows
+	}
+	// The name matches fuzzily with the query's separators removed, so a
+	// spaced query such as "grill docs" still finds grill-with-docs.
+	// Metadata only matches when every query term begins one of its words,
+	// so letters scattered through a long description never match.
+	nameMatches := fuzzy.FindFromNoSort(strings.Join(terms, ""), searchNameSource(m.rows))
 
 	filtered := m.filterScratch[:0]
-	if cap(filtered) < len(matches) {
-		filtered = make([]row, 0, len(matches))
-	}
-	for _, match := range matches {
-		r := m.rows[match.Index]
+	next := 0
+	for i := range m.rows {
+		r := m.rows[i]
 		r.searchRanked = true
-		r.searchScore = match.Score
+		if next < len(nameMatches) && nameMatches[next].Index == i {
+			r.searchNameMatch = true
+			r.searchScore = nameMatches[next].Score
+			r.searchMatchRunes = runeIndexes(r.searchName, nameMatches[next].MatchedIndexes)
+			next++
+		} else if rowHasAllWordPrefixes(&r, terms) {
+			r.searchNameMatch = false
+			r.searchScore = 0
+			r.searchMatchRunes = nil
+		} else {
+			continue
+		}
 		filtered = append(filtered, r)
-	}
-	for _, nameMatch := range fuzzy.FindFromNoSort(m.filter, searchNameSource(filtered)) {
-		r := &filtered[nameMatch.Index]
-		r.searchMatchRunes = runeIndexes(r.searchName, nameMatch.MatchedIndexes)
 	}
 	m.filterScratch = filtered[:0]
 	return filtered
 }
 
-type searchableSource []row
+func rowHasAllWordPrefixes(r *row, terms []string) bool {
+	for _, term := range terms {
+		if !r.hasWordWithPrefix(term) {
+			return false
+		}
+	}
+	return true
+}
 
-func (s searchableSource) String(i int) string { return s[i].searchableLower }
-func (s searchableSource) Len() int            { return len(s) }
+// searchRankLess reports whether a ranks strictly above b: name matches
+// before metadata-only matches, then by descending fuzzy score.
+func searchRankLess(a, b row) bool {
+	if a.searchNameMatch != b.searchNameMatch {
+		return a.searchNameMatch
+	}
+	return a.searchScore > b.searchScore
+}
 
 type searchNameSource []row
 
@@ -2120,7 +2175,7 @@ func (m *Model) listHeightOffsets(width int) []int {
 // listVisibleHeight computes how many rows fit in the left pane,
 // mirroring the same calculation used in View().
 func (m Model) listVisibleHeight() int {
-	return max(1, screenLayoutFor(m.height, m.filterActive).mainHeight)
+	return max(1, screenLayoutFor(m.height, m.searchRowVisible()).mainHeight)
 }
 
 func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error {

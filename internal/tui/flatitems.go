@@ -228,8 +228,9 @@ func (m *Model) restoreSelectionAfterRebuild(anchor rebuildAnchor) {
 
 // recomputeView is called after any input change (rows/filter/fold/tab). It
 // reapplies the filter, rebuilds the flat item list, and adjusts the cursor.
-// When a filter is active, the cursor snaps to the first matching skill so
-// arrow-keys don't start from a section header or a stale row.
+// When a filter is active, the cursor snaps to the best-ranked match (the
+// first one on ties) so arrow-keys don't start from a section header or a
+// stale row.
 func (m *Model) recomputeView() {
 	m.filteredRows = m.applyFilter()
 	m.rebuildFlatItems()
@@ -241,15 +242,18 @@ func (m *Model) recomputeView() {
 	}
 
 	if m.filter != "" {
-		// Snap cursor to the first skill row (preferred) or section header.
+		// Scroll from the top so the best match keeps its section headers
+		// in view whenever it fits.
+		m.cursor, m.listOffset = 0, 0
+		best := -1
 		for i, it := range m.flatItems {
-			if it.Kind == flatArtifact {
-				m.cursor = i
-				m.clampListOffset()
-				return
+			if it.Kind == flatArtifact && (best < 0 || searchRankLess(it.Row, m.flatItems[best].Row)) {
+				best = i
 			}
 		}
-		m.cursor = 0
+		if best >= 0 {
+			m.cursor = best
+		}
 		m.clampListOffset()
 		return
 	}

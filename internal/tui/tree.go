@@ -394,15 +394,16 @@ func buildStatusTree(rows []row, foldState map[string]bool) []flatItem {
 	return out
 }
 
-// sortLeafRows orders rows inside one leaf section: scored filter matches
-// by descending score, then name, then stable identity; unfiltered rows
-// stay alphabetical. Section order is untouched.
+// sortLeafRows orders rows inside one leaf section: filter matches by
+// search rank (name matches first, then descending score), then name, then
+// stable identity; unfiltered rows stay alphabetical. Section order is
+// untouched.
 func sortLeafRows(rows []row) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		ri, rj := rows[i], rows[j]
 		if ri.searchRanked || rj.searchRanked {
-			if ri.searchScore != rj.searchScore {
-				return ri.searchScore > rj.searchScore
+			if searchRankLess(ri, rj) || searchRankLess(rj, ri) {
+				return searchRankLess(ri, rj)
 			}
 			if ri.Artifact.Name != rj.Artifact.Name {
 				return ri.Artifact.Name < rj.Artifact.Name

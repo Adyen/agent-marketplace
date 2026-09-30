@@ -2,9 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -23,10 +23,91 @@ func (m Model) driftStatusSegment() string {
 	return styleDriftPending.Render(fmt.Sprintf("~ %d out of sync", m.driftReport.PendingCount()))
 }
 
+// footerItem is one footer segment. Items render in display order, but
+// when space runs out they are admitted by ascending rank, so a lower-rank
+// item is never dropped to make room for a higher-rank one.
+type footerItem struct {
+	text  string
+	short string // optional shorter form tried when text does not fit
+	rank  int
+	hint  bool // hints are joined by " · ", other segments by two spaces
+	clip  bool // may be truncated to fill the remaining width
+}
+
+const (
+	rankCritical = iota // startup progress, error count
+	rankQuit
+	rankRecovery // error diagnostics and reload
+	rankToast
+	rankPalette
+	rankHelp
+	rankStatus // status segments, offset by their order
+	rankAction = rankStatus + 20
+)
+
+func hintItem(key, desc string, rank int, floor bool) footerItem {
+	keyStyle := shortcutKeyStyle
+	if floor {
+		keyStyle = styleSearchPrompt
+	}
+	return footerItem{text: keyStyle.Render(key) + " " + shortcutDescStyle.Render(desc), rank: rank, hint: true}
+}
+
+// footerFloor is the always-reachable entry points: the command palette,
+// help and quit. While search input is focused they are query text, so
+// the floor becomes how to apply or cancel the query instead.
+func (m Model) footerFloor() []footerItem {
+	if m.filterActive {
+		return []footerItem{
+			hintItem("enter", "apply", rankRecovery, true),
+			hintItem("esc", "cancel", rankRecovery, true),
+			hintItem("ctrl+c", "quit", rankQuit, true),
+		}
+	}
+	palette := hintItem(":", "commands", rankPalette, true)
+	palette.short = hintItem(":", "cmds", rankPalette, true).text
+	return []footerItem{palette, hintItem("?", "help", rankHelp, true), hintItem("q", "quit", rankQuit, true)}
+}
+
+// footerActionHints lists the optional list-pane hints in priority order;
+// they drop individually from the end when the footer runs out of room.
+func (m Model) footerActionHints() []footerItem {
+	actions := [][2]string{{"/", "search"}, {"space", "toggle"}, {"s", "sync"}, {"H", "harnesses"}, {"E", "config"}, {"1-3", "tabs"}}
+	if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
+		actions = append([][2]string{{"e", "errors"}, {"r", "reload"}}, actions...)
+	}
+	hints := make([]footerItem, len(actions))
+	for i, a := range actions {
+		hints[i] = hintItem(a[0], a[1], rankAction+i, false)
+	}
+	return hints
+}
+
 func renderFooter(m Model) string {
 	if len(m.errs) > 0 {
 		return renderErrorFooter(m)
 	}
+	priority, status := m.footerStatus()
+	var items []footerItem
+	if priority != "" {
+		items = append(items, footerItem{text: priority, rank: rankCritical, clip: true})
+	}
+	for i, s := range status {
+		items = append(items, footerItem{text: s, rank: rankStatus + i})
+	}
+	if !m.filterActive {
+		items = append(items, m.footerActionHints()...)
+	}
+	items = append(items, m.footerFloor()...)
+	if m.toast != "" && !m.toastExp.IsZero() {
+		items = append(items, footerItem{text: styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine)), rank: rankToast, clip: true})
+	}
+	return layoutFooter(m.width, items)
+}
+
+// footerStatus returns the priority status (startup verification, which
+// must never drop) and the remaining status segments in priority order.
+func (m Model) footerStatus() (string, []string) {
 	var leftParts []string
 
 	// Animated spinner + status indicator for in-flight work.
@@ -92,68 +173,99 @@ func renderFooter(m Model) string {
 		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("⚠ %d warnings", len(m.warnings))))
 	}
 
-	priority := ""
 	if m.verifyingResources() {
-		priority, leftParts = leftParts[0], leftParts[1:]
+		return leftParts[0], leftParts[1:]
 	}
-	status := strings.Join(leftParts, "  ")
-	if compactTerminalLayout(m) {
-		actions := "?:help · s:sync · q:quit"
-		if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
-			actions = "e:errors · r:reload · q:quit"
-		}
-		if m.filterActive {
-			actions = "enter apply · esc cancel · q quit"
-		}
-		if m.toast != "" && !m.toastExp.IsZero() {
-			status = styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
-		}
-		return statusBar(priority, status, actions, m.width)
-	}
-
-	bindings := m.keys.ShortHelp()
-	if len(bindings) > 0 {
-		bindings = bindings[:len(bindings)-1]
-	}
-	leftParts = append(leftParts, m.help.ShortHelpView(bindings))
-	right := "q quit"
-	if m.toast != "" && !m.toastExp.IsZero() {
-		right += " · " + styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
-	}
-	return statusBar(priority, strings.Join(leftParts, "  "), right, m.width)
+	return "", leftParts
 }
 
+// renderErrorFooter keeps the persistent error count and its recovery
+// hints ahead of every other segment, then spends any remaining width on
+// the latest error message.
 func renderErrorFooter(m Model) string {
-	actions := "e:errors · r:reload · q:quit"
-	if m.filterActive {
-		actions = "enter apply · esc cancel · q quit"
-	}
-	status := fmt.Sprintf("! %d errors", len(m.errs))
+	status := styleFooterError.Render(fmt.Sprintf("! %d errors", len(m.errs)))
 	if m.verifyingResources() {
-		status = m.spinner.View() + " verifying resources... · " + status
-		actions = fitStatusGroups(actions, " · ", max(0, m.width-ansi.StringWidth(status)-1))
+		status = m.spinner.View() + styleFooterError.Render(" verifying resources... · "+ansi.Strip(status))
 	}
-	budget := m.width - ansi.StringWidth(actions) - 1
-	if budget > ansi.StringWidth(status)+2 {
-		latest := ""
-		if err := m.errs[len(m.errs)-1]; err != nil {
-			latest = sanitizeTerminalData(fmt.Sprint(err), terminalSingleLine)
-		}
-		if latest != "" {
-			status += ": " + latest
-		}
+	items := []footerItem{{text: status, rank: rankCritical}}
+	if !m.filterActive {
+		items = append(items, hintItem("e", "errors", rankRecovery, false), hintItem("r", "reload", rankRecovery, false))
 	}
-	if m.width < 1 {
+	items = append(items, m.footerFloor()...)
+	footer := layoutFooter(m.width, items)
+	room := m.width - ansi.StringWidth(footer) - 2
+	if room < 4 {
+		return footer
+	}
+	latest := ""
+	if err := m.errs[len(m.errs)-1]; err != nil {
+		latest = sanitizeTerminalData(fmt.Sprint(err), terminalSingleLine)
+	}
+	if latest == "" {
+		return footer
+	}
+	items[0].text = status + styleFooterError.Render(": "+ansi.Truncate(latest, room, "…"))
+	return layoutFooter(m.width, items)
+}
+
+// layoutFooter admits items by ascending rank (display order breaks ties)
+// while the joined line still fits width, trying each item's short form
+// and then clipping clip-able items, and renders the admitted items in
+// display order.
+func layoutFooter(width int, items []footerItem) string {
+	if width <= 0 {
 		return ""
 	}
-	if budget < 0 {
-		budget = 0
+	order := make([]int, len(items))
+	for i := range order {
+		order[i] = i
 	}
-	status = ansi.Truncate(status, budget, "…")
-	if ansi.StringWidth(actions) >= m.width {
-		return ansi.Truncate(actions, m.width, "…")
+	sort.SliceStable(order, func(a, b int) bool { return items[order[a]].rank < items[order[b]].rank })
+	chosen := make([]string, len(items))
+	for _, i := range order {
+		for _, text := range []string{items[i].text, items[i].short} {
+			if text == "" {
+				continue
+			}
+			chosen[i] = text
+			if ansi.StringWidth(joinFooter(items, chosen)) <= width {
+				break
+			}
+			chosen[i] = ""
+		}
+		if chosen[i] != "" || !items[i].clip {
+			continue
+		}
+		chosen[i] = " "
+		if room := width - ansi.StringWidth(joinFooter(items, chosen)) + 1; room > 1 {
+			chosen[i] = ansi.Truncate(items[i].text, room, "…")
+		} else {
+			chosen[i] = ""
+		}
 	}
-	return styleFooterError.Render(status) + " " + actions
+	return joinFooter(items, chosen)
+}
+
+// joinFooter joins the chosen item texts in display order: consecutive
+// hints with " · ", anything else with two spaces.
+func joinFooter(items []footerItem, chosen []string) string {
+	var b strings.Builder
+	prev := -1
+	for i, text := range chosen {
+		if text == "" {
+			continue
+		}
+		if prev >= 0 {
+			if items[prev].hint && items[i].hint {
+				b.WriteString(" · ")
+			} else {
+				b.WriteString("  ")
+			}
+		}
+		b.WriteString(text)
+		prev = i
+	}
+	return b.String()
 }
 
 func rowsHaveUnavailable(rows []row) bool {
@@ -210,35 +322,4 @@ func fitStatusGroups(s, separator string, width int) string {
 		return ansi.Truncate(groups[len(groups)-1], width, "…")
 	}
 	return strings.Join(kept, separator)
-}
-
-// statusBar composes the footer's priority status, status segments, and
-// action hints into one bounded bar: the priority segment wins first, then
-// whole separator-joined groups are kept while they fit.
-func statusBar(priority, left, right string, width int) string {
-	if priority == "" {
-		return statusBarSegments(left, right, width)
-	}
-	priority = ansi.Truncate(priority, max(0, width), "…")
-	rest := statusBarSegments(left, right, width-ansi.StringWidth(priority)-1)
-	if rest == "" {
-		return priority
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Bottom, priority, " ", rest)
-}
-
-func statusBarSegments(left, right string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	right = fitStatusGroups(right, " · ", width)
-	rightWidth := ansi.StringWidth(right)
-	if rightWidth >= width {
-		return right
-	}
-	left = fitStatusGroups(left, "  ", width-rightWidth-1)
-	if left == "" {
-		return right
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Bottom, left, " ", right)
 }

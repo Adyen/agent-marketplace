@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -20,6 +21,7 @@ type paletteActionID string
 
 const (
 	actionSearch      paletteActionID = "search"
+	actionClearSearch paletteActionID = "clear-search"
 	actionDetail      paletteActionID = "detail"
 	actionToggle      paletteActionID = "toggle"
 	actionReload      paletteActionID = "reload"
@@ -39,10 +41,12 @@ const (
 )
 
 // paletteAction pairs a stable identity with the label the fuzzy matcher
-// scores. The identity is the deterministic tie break for equal scores.
+// scores and the keyboard shortcut shown beside it. The identity is the
+// deterministic tie break for equal scores.
 type paletteAction struct {
-	id    paletteActionID
-	label string
+	id       paletteActionID
+	label    string
+	shortcut string
 }
 
 // paletteActions is the complete palette-visible action set. It covers the
@@ -51,23 +55,24 @@ type paletteAction struct {
 // modal-only scope or confirmation key.
 func paletteActions() []paletteAction {
 	return []paletteAction{
-		{actionSearch, "Search resources (/)"},
-		{actionDetail, "View details / toggle fold (enter)"},
-		{actionToggle, "Toggle resource / fold (space)"},
-		{actionReload, "Reload from disk (r)"},
-		{actionSync, "Sync pending changes (s)"},
-		{actionUpdate, "Update caches (u)"},
-		{actionHarness, "Harness defaults (H)"},
-		{actionEditConfig, "Edit config (E)"},
-		{actionHelp, "Help (?)"},
-		{actionDiagnostics, "View errors and diagnostics (e)"},
-		{actionTabScope, "Scope tab (1)"},
-		{actionTabRegistry, "Registry tab (2)"},
-		{actionTabStatus, "Status tab (3)"},
-		{actionFoldToggle, "Toggle current fold (za)"},
-		{actionFoldAll, "Collapse all folds (zM)"},
-		{actionExpandAll, "Expand all folds (zR)"},
-		{actionQuit, "Quit (q)"},
+		{actionSearch, "Search resources", "/"},
+		{actionClearSearch, "Clear search", "esc"},
+		{actionDetail, "View details / toggle fold", "enter"},
+		{actionToggle, "Toggle resource / fold", "space"},
+		{actionReload, "Reload from disk", "r"},
+		{actionSync, "Sync pending changes", "s"},
+		{actionUpdate, "Update caches", "u"},
+		{actionHarness, "Harness defaults", "H"},
+		{actionEditConfig, "Edit config", "E"},
+		{actionHelp, "Help", "?"},
+		{actionDiagnostics, "View errors and diagnostics", "e"},
+		{actionTabScope, "Scope tab", "1"},
+		{actionTabRegistry, "Registry tab", "2"},
+		{actionTabStatus, "Status tab", "3"},
+		{actionFoldToggle, "Toggle current fold", "za"},
+		{actionFoldAll, "Collapse all folds", "zM"},
+		{actionExpandAll, "Expand all folds", "zR"},
+		{actionQuit, "Quit", "q"},
 	}
 }
 
@@ -109,6 +114,8 @@ func (m Model) actionEligible(id paletteActionID) bool {
 		return !m.configInvalid
 	case actionDiagnostics:
 		return len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0
+	case actionClearSearch:
+		return m.filter != ""
 	case actionToggle:
 		return m.paletteToggleable()
 	case actionDetail, actionFoldToggle, actionFoldAll, actionExpandAll:
@@ -135,7 +142,9 @@ func (m Model) paletteToggleable() bool {
 // fold prefix, and a terminal at or above the minimum size.
 func (m *Model) openPalette() tea.Cmd {
 	pi := textinput.New()
-	pi.Prompt = "> "
+	pi.Prompt = "› "
+	pi.Placeholder = "type to filter actions"
+	pi.SetWidth(m.paletteInnerWidth() - 2)
 	styles := textinput.DefaultStyles(m.isDark)
 	styles.Cursor.Color = m.theme.accent
 	pi.SetStyles(styles)
@@ -168,7 +177,7 @@ func (m *Model) recomputePaletteMatches() {
 			matches = append(matches, paletteMatch{action: action})
 			continue
 		}
-		match, ok := fuzzyMatch(query, action.label)
+		match, ok := fuzzyMatch(query, action.label+" "+action.shortcut)
 		if !ok {
 			continue
 		}
@@ -239,26 +248,49 @@ func (m Model) handlePalettePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 // paletteVisibleRows bounds how many matched actions render at once.
 const paletteVisibleRows = 8
 
+// paletteTop is the row the palette layer hangs from: below the header,
+// the tab bar, and the search row when a filter is applied.
+func (m Model) paletteTop() int {
+	if m.searchRowVisible() {
+		return 3
+	}
+	return 2
+}
+
 // paletteVisibleLimit bounds the visible action window to the terminal: the
-// layer hangs at Y=1 and its border, title, and input consume rows around
-// the actions, while the footer must stay uncovered. Actions outside the
-// window stay reachable by scrolling.
+// border, title, input and hint rows surround the actions, and the footer
+// must stay uncovered. Actions outside the window stay reachable by
+// scrolling.
 func (m Model) paletteVisibleLimit() int {
-	return min(paletteVisibleRows, max(1, m.height-6))
+	return min(paletteVisibleRows, max(1, m.height-m.paletteTop()-6))
 }
 
 // renderPalette builds the overlay layer: a titled box holding the query
-// input and the eligible actions around the cursor, bounded in both
-// dimensions so it can never clip or cover the footer controls.
+// input, the eligible actions around the cursor with their shortcuts in a
+// right-aligned column, and the palette's own key hints. It is bounded in
+// both dimensions so it can never clip or cover the footer controls.
 // Action labels are static; any user-typed query travels through the same
 // textinput the search field uses.
+// paletteInnerWidth is the palette's content width inside its border and
+// padding.
+func (m Model) paletteInnerWidth() int {
+	return min(56, max(24, m.width-8)) - 4
+}
+
 func renderPalette(m Model) string {
-	width := min(48, max(24, m.width-8))
-	labelWidth := max(0, width-6) // border + padding + cursor prefix
-	lines := []string{
-		accentStyle(m.theme).Render("Command palette"),
-		m.palette.input.View(),
+	t := m.currentTheme()
+	inner := m.paletteInnerWidth()
+	row := func(left, right string, style lipgloss.Style) string {
+		right = dimTextStyle(t).Render(right)
+		left = ansi.Truncate(left, max(0, inner-ansi.StringWidth(right)-1), "…")
+		gap := max(1, inner-ansi.StringWidth(left)-ansi.StringWidth(right))
+		return style.Render(left+strings.Repeat(" ", gap)) + right
 	}
+	position := "0/0"
+	if n := len(m.palette.matches); n > 0 {
+		position = fmt.Sprintf("%d/%d", m.palette.cursor+1, n)
+	}
+	lines := []string{row("Command palette", position, titleStyle(t)), m.palette.input.View()}
 	visible := m.paletteVisibleLimit()
 	start := 0
 	if m.palette.cursor >= visible {
@@ -266,30 +298,32 @@ func renderPalette(m Model) string {
 	}
 	end := min(len(m.palette.matches), start+visible)
 	for i := start; i < end; i++ {
-		label := ansi.Truncate(m.palette.matches[i].action.label, labelWidth, "…")
+		action := m.palette.matches[i].action
 		if i == m.palette.cursor {
-			lines = append(lines, accentStyle(m.theme).Render("> "+label))
+			lines = append(lines, row("▸ "+action.label, action.shortcut, accentStyle(t).Bold(true)))
 		} else {
-			lines = append(lines, textStyle(m.theme).Render("  "+label))
+			lines = append(lines, row("  "+action.label, action.shortcut, textStyle(t)))
 		}
 	}
 	if len(m.palette.matches) == 0 {
-		lines = append(lines, textStyle(m.theme).Render("  no matching actions"))
+		lines = append(lines, dimTextStyle(t).Render("  no matching actions"))
 	}
+	lines = append(lines, dimTextStyle(t).Render(ansi.Truncate("↑↓ move · enter run · esc close", inner, "…")))
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.accent).
 		Padding(0, 1).
-		Width(width).
+		Width(inner + 4).
 		Render(strings.Join(lines, "\n"))
 }
 
-// compositePalette overlays the palette below the header, horizontally
-// centered, without hiding the list or the footer controls.
-func compositePalette(base, layer string, width, height int) string {
+// compositePalette overlays the palette below the header and tab bar,
+// horizontally centered, without hiding the list or the footer controls.
+func compositePalette(base, layer string, width, height, top int) string {
 	col := max(0, (width-lipgloss.Width(layer))/2)
 	canvas := lipgloss.NewCanvas(max(1, width), max(1, height))
 	return canvas.Compose(lipgloss.NewCompositor(
 		lipgloss.NewLayer(base),
-		lipgloss.NewLayer(layer).X(col).Y(1).Z(1),
+		lipgloss.NewLayer(layer).X(col).Y(top).Z(1),
 	)).Render()
 }

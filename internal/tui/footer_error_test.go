@@ -28,7 +28,7 @@ func TestFooterErrorPriorityKeepsRecoveryActions(t *testing.T) {
 			if !strings.Contains(footer, "! 1 errors") {
 				t.Fatalf("width %d height %d omitted error count: %q", width, height, footer)
 			}
-			for _, action := range []string{"e:errors", "r:reload", "q:quit"} {
+			for _, action := range []string{"e errors", "r reload", "q quit"} {
 				if !strings.Contains(footer, action) {
 					t.Fatalf("width %d height %d omitted %q: %q", width, height, action, footer)
 				}
@@ -74,7 +74,7 @@ func TestFooterErrorHandlesNilValues(t *testing.T) {
 			m.loading = false
 			m.errs = []error{tc.err}
 			footer := ansi.Strip(renderFooter(m))
-			for _, want := range []string{"! 1 errors", tc.want, "e:errors", "r:reload", "q:quit"} {
+			for _, want := range []string{"! 1 errors", tc.want, "e errors", "r reload", "q quit"} {
 				if !strings.Contains(footer, want) {
 					t.Fatalf("footer %q missing %q", footer, want)
 				}
@@ -92,7 +92,7 @@ func TestFooterErrorFilterActions(t *testing.T) {
 	m.filterActive = true
 	m.errs = []error{errors.New("unsafe \x1b[2J mutation")}
 	footer := ansi.Strip(renderFooter(m))
-	if !strings.Contains(footer, "! 1 errors") || !strings.Contains(footer, "enter apply · esc cancel · q quit") {
+	if !strings.Contains(footer, "! 1 errors") || !strings.Contains(footer, "enter apply · esc cancel · ctrl+c quit") {
 		t.Fatalf("filter footer = %q", footer)
 	}
 	if strings.Contains(footer, "\x1b") {
