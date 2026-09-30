@@ -95,6 +95,29 @@ test.describe('Marketplace layout at 768px', () => {
     await expect(page.getByRole('checkbox', { name: 'team-tools', exact: true })).toBeVisible()
     await expectFirstResultWithinViewport(page)
   })
+
+  // spec: marketplace-browser/over-height-desktop-filter-rail-scrolls
+  test('scrolls an over-height desktop filter rail to its final control', async ({ page }) => {
+    await page.setViewportSize({ width: 768, height: 480 })
+    await page.goto('/')
+    await page.locator('article').last().evaluate((element) => {
+      element.style.minHeight = '1000px'
+    })
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+
+    const rail = page.locator('.catalog-sidebar__sticky')
+    const finalControl = rail.getByRole('checkbox').last()
+    await expect(rail).toHaveCSS('overflow-y', 'auto')
+    expect(await rail.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+    const railBox = await rail.boundingBox()
+    expect(railBox).not.toBeNull()
+    expect(railBox!.y).toBeGreaterThanOrEqual(0)
+    expect(railBox!.y + railBox!.height).toBeLessThanOrEqual(480)
+
+    await finalControl.evaluate(element => element.scrollIntoView({ block: 'end' }))
+    expect(await rail.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    await expect(finalControl).toBeInViewport()
+  })
 })
 
 test.describe('Marketplace layout at 1440px', () => {

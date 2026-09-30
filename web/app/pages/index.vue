@@ -672,6 +672,8 @@ useHead({
   .catalog-sidebar__sticky {
     position: sticky;
     top: 5.5rem;
+    max-height: calc(100vh - 7rem);
+    overflow-y: auto;
   }
 
   .catalog-sidebar h2 {
