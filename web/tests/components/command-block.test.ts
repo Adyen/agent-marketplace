@@ -19,8 +19,10 @@ describe('CommandBlock', () => {
     // The prompt glyph is decoration for a screen reader: the command text
     // is the content, and "$" is not part of what gets copied.
     expect(wrapper.get('[aria-hidden="true"]').text()).toBe('$')
-    // Input chrome is what made this read as a second search field.
-    expect(wrapper.get('div > div').classes()).not.toContain('border')
+    expect(wrapper.get('[data-testid="command-scroll"]').classes()).toContain('overflow-x-auto')
+    expect(wrapper.get('[data-testid="command-scroll"]').attributes('tabindex')).toBe('0')
+    expect(wrapper.get('[data-testid="command-scroll"]').attributes('aria-label')).toBe('Install command')
+    expect(wrapper.get('[data-testid="command-copy-area"]').find('button').exists()).toBe(true)
     expect(wrapper.find('input').exists()).toBe(false)
   })
 
