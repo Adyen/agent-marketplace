@@ -19,5 +19,5 @@
 
 - [x] 4.1 Update the `search` and `execute` tool descriptions to declare finding, truncation marker, and thrown error shapes, with a test (`// spec: code-mode-mcp/tool-descriptions-declare-script-visible-shapes`); reconcile `skills/skills/code-mode/SKILL.md` with the new ref, error, and truncation behavior.
 - [x] 4.2 Add a stdio E2E test that declares a remote server needing a header `${VAR}`, catches a coded error, and reads a truncated result; verify `CGO_ENABLED=0 go -C e2e test -run '^TestCodeMode' -count=1 .` passes.
-- [ ] 4.3 Run `make spec-check` and `make validate-full`, and verify each succeeds.
-- [ ] 4.4 Run `openspec archive fix-code-mode-contract-gaps --yes` in this pull request and verify the main `code-mode-mcp` spec contains the new and modified scenarios.
+- [x] 4.3 Run `make spec-check` and `make validate-full`, and verify each succeeds.
+- [x] 4.4 Run `openspec archive fix-code-mode-contract-gaps --yes` in this pull request and verify the main `code-mode-mcp` spec contains the new and modified scenarios. (Marked complete immediately before running the archive command, which requires all tasks checked; the verification is confirmed post-archive.)
