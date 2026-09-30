@@ -7,6 +7,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -60,5 +61,83 @@ func TestBuildStatusRowsOnlyErrorsMarkNotMaterialized(t *testing.T) {
 				t.Fatalf("row Target for a %v diagnostic = %q, want %q", tt.severity, rows[0].Target, tt.wantTarget)
 			}
 		})
+	}
+}
+
+// spec: status-reporting/status-marks-only-the-failed-resource
+func TestBuildStatusRowsSameNameOtherScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	const name = "deploy"
+	resolved := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: name, Path: "/repo/deploy"}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: name, Path: "/user/deploy"}, Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetFactory}},
+	}
+	report := &materialize.Report{
+		Diags:            []diag.Diagnostic{{Code: "materialize.compile.error", Severity: diag.SeverityError, Target: "factory", Resource: name}},
+		BlockedResources: []materialize.BlockedResource{{Kind: ir.KindSkill, Name: name, Target: hcc.TargetFactory, MachineScope: false}},
+	}
+	rows := buildStatusRows(t.TempDir(), resolved, nil, report)
+	bySource := make(map[config.Source]string)
+	for _, row := range rows {
+		bySource[row.Source] = row.Target
+	}
+	if len(rows) != 2 || bySource[config.RepoCommitted] != "error: not materialized" || bySource[config.UserPersonal] != "/user/deploy" {
+		t.Fatalf("scope attribution: %+v", rows)
+	}
+}
+
+// spec: status-reporting/same-named-resource-of-another-kind-is-not-marked
+func TestBuildStatusRowsSameNameOtherKind(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	const name = "deploy"
+	resolved := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: name, Path: "/repo/skill"}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		{Entry: catalog.Entry{Kind: ir.KindCommand, Name: name, Path: "/repo/command"}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+	}
+	report := &materialize.Report{
+		Diags:            []diag.Diagnostic{{Code: "materialize.compile.error", Severity: diag.SeverityError, Target: "factory", Resource: name}},
+		BlockedResources: []materialize.BlockedResource{{Kind: ir.KindSkill, Name: name, Target: hcc.TargetFactory, MachineScope: false}},
+	}
+	rows := buildStatusRows(t.TempDir(), resolved, nil, report)
+	if len(rows) != 2 || rows[0].Target != "/repo/command" || rows[1].Target != "error: not materialized" {
+		t.Fatalf("kind attribution: %+v", rows)
+	}
+}
+
+func TestBuildStatusRowsAmbiguousDiagnosticKeepsPaths(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	resolved := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "deploy", Path: "/repo/skill"}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "deploy", Path: "/repo/command"}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+	}
+	report := &materialize.Report{Diags: []diag.Diagnostic{{Code: "materialize.write.error", Severity: diag.SeverityError, Target: "factory", Resource: "deploy"}}}
+	rows := buildStatusRows(t.TempDir(), resolved, nil, report)
+	if len(rows) != 2 || rows[0].Target != "/repo/command" || rows[1].Target != "/repo/skill" {
+		t.Fatalf("ambiguous diagnostic attributed to a row: %+v", rows)
+	}
+}
+
+func TestBuildStatusRowsMatchesInstalledNameAndHarness(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	resolved := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "canonical", Path: "/repo/factory"}, IsMarketplace: true, InstalledName: "deploy", Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "canonical", Path: "/repo/claude"}, IsMarketplace: true, InstalledName: "deploy", Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude}},
+	}
+	report := &materialize.Report{BlockedResources: []materialize.BlockedResource{{Kind: ir.KindSkill, Name: "deploy", Target: hcc.TargetFactory}}}
+	rows := buildStatusRows(t.TempDir(), resolved, nil, report)
+	byHarness := make(map[string]string)
+	for _, row := range rows {
+		byHarness[row.Harness] = row.Target
+	}
+	if len(rows) != 2 || byHarness["claude"] != "/repo/claude" || byHarness["factory"] != "error: not materialized" {
+		t.Fatalf("installed name or harness attribution: %+v", rows)
 	}
 }
