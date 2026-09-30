@@ -871,6 +871,7 @@ harnesses:
 // many of its directories are missing, so staged edits, the loader, and lock
 // reconciliation agree on it. The home here is reached through a symlink, as
 // it is under macOS /tmp and /var.
+// spec: config-mutation/user-scope-install-creates-a-missing-user-root
 func TestCanonicalConfigPathTolerateMissingResolvesTheDeepestExistingAncestor(t *testing.T) {
 	root := t.TempDir()
 	real := filepath.Join(root, "real")
@@ -910,6 +911,7 @@ func TestCanonicalConfigPathTolerateMissingResolvesTheDeepestExistingAncestor(t 
 // A dangling symlink on the path, as the file or as one of its directories,
 // has no name that stays the same once its target exists. It is refused, and
 // the error still reports a missing file so readers treat the layer as absent.
+// spec: config-mutation/user-scope-install-through-a-dangling-symlink-is-refused
 func TestCanonicalConfigPathTolerateMissingRefusesADanglingSymlink(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")

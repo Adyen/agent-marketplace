@@ -9,6 +9,7 @@ import (
 // A Marketplace edit can target a config whose directory does not exist yet.
 // Its lock path must be the canonical name the lock has once both exist, even
 // when the home is reached through a symlink.
+// spec: config-mutation/marketplace-install-creates-a-missing-user-root-and-its-acquisition-lock
 func TestMarketplaceLayerLockPathForAConfigWhoseDirectoryIsMissing(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")

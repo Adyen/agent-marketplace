@@ -12,6 +12,7 @@ import (
 // does not exist yet. On macOS the sandbox home is under /var/folders, a
 // system alias into /private, which is where the two spellings of the new
 // root used to diverge.
+// spec: config-mutation/user-scope-install-creates-a-missing-user-root
 func TestInstallUserScopeCreatesAMissingUserConfig(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -50,6 +51,7 @@ func TestInstallUserScopeCreatesAMissingUserConfig(t *testing.T) {
 
 // With no harness set in any layer, the new user root gets the default
 // harnesses, the same list init and sync write, and the install succeeds.
+// spec: config-mutation/new-user-root-declares-the-default-harness-targets
 func TestInstallUserScopeWithoutHarnessesUsesTheDefaultTargets(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
@@ -67,6 +69,7 @@ func TestInstallUserScopeWithoutHarnessesUsesTheDefaultTargets(t *testing.T) {
 
 // A Marketplace install into user scope creates the user config and its lock
 // under the same conditions.
+// spec: config-mutation/marketplace-install-creates-a-missing-user-root-and-its-acquisition-lock
 func TestInstallUserScopeMarketplaceCreatesAMissingUserConfig(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("User scope body", false))
 	env := newEnv(t)
@@ -89,6 +92,8 @@ func TestInstallUserScopeMarketplaceCreatesAMissingUserConfig(t *testing.T) {
 // link whose target is not checked out, is never written through. User-scope
 // installs are refused, and read-only commands and sync keep treating the user
 // config as absent.
+// spec: config-mutation/user-scope-install-through-a-dangling-symlink-is-refused
+// spec: config-mutation/dangling-user-config-reads-as-absent
 func TestUserScopeRefusesToWriteThroughADanglingSymlink(t *testing.T) {
 	for _, link := range []string{".agents", filepath.Join(".agents", "config.yaml")} {
 		t.Run(link, func(t *testing.T) {
