@@ -2663,8 +2663,8 @@ func (s requiredShadows) remove(artifacts []ResolvedArtifact, warnings []error) 
 // is reported once.
 func addNameCollision(warnings []error, warning *NameCollisionWarning) []error {
 	for _, err := range warnings {
-		existing, ok := err.(*NameCollisionWarning)
-		if !ok || existing.Kind != warning.Kind || existing.Name != warning.Name ||
+		var existing *NameCollisionWarning
+		if !errors.As(err, &existing) || existing == nil || existing.Kind != warning.Kind || existing.Name != warning.Name ||
 			existing.WinnerURL != warning.WinnerURL || existing.WinnerPath != warning.WinnerPath || existing.WinnerRef != warning.WinnerRef {
 			continue
 		}

@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +11,55 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+func TestAddNameCollisionSkipsNilWarnings(t *testing.T) {
+	var typedNil *NameCollisionWarning
+	incoming := &NameCollisionWarning{Kind: ir.KindSkill, Name: "shared"}
+	for _, previous := range []error{nil, typedNil, fmt.Errorf("selection: %w", typedNil)} {
+		got := addNameCollision([]error{previous}, incoming)
+		if len(got) != 2 || got[0] != previous || got[1] != incoming {
+			t.Fatalf("nil warning changed the result: %v", got)
+		}
+	}
+}
+
+func TestAddNameCollisionPreservesWrappedWarning(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		wrap func(error) error
+	}{
+		{"direct", func(err error) error { return err }},
+		{"wrapped", func(err error) error { return fmt.Errorf("selection: %w", err) }},
+		{"nested", func(err error) error { return fmt.Errorf("resolution: %w", fmt.Errorf("selection: %w", err)) }},
+		{"joined", func(err error) error { return errors.Join(errors.New("other issue"), err) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := &NameCollisionWarning{
+				Kind: ir.KindSkill, Name: "shared", WinnerURL: "git@example.com:mandatory.git",
+				WinnerPath: "team", WinnerRef: "main", RunnersUp: []string{"first", "repeat"},
+			}
+			incoming := &NameCollisionWarning{
+				Kind: ir.KindSkill, Name: "shared", WinnerURL: "git@example.com:mandatory.git",
+				WinnerPath: "team", WinnerRef: "main", RunnersUp: []string{"repeat", "new"},
+			}
+			unrelated := errors.New("unrelated issue")
+			previous := tc.wrap(existing)
+			got := addNameCollision([]error{unrelated, previous}, incoming)
+			if len(got) != 2 || got[0] != unrelated || got[1] != previous {
+				t.Fatalf("warning list changed instead of merging the collision: %v", got)
+			}
+			if !errors.Is(got[1], existing) {
+				t.Fatal("existing collision warning lost its error identity")
+			}
+			if !slices.Equal(existing.RunnersUp, []string{"first", "repeat", "new"}) {
+				t.Fatalf("runners-up = %v, want [first repeat new]", existing.RunnersUp)
+			}
+			if !slices.Equal(incoming.RunnersUp, []string{"repeat", "new"}) {
+				t.Fatalf("incoming warning was modified: %v", incoming.RunnersUp)
+			}
+		})
+	}
+}
 
 // sharedSource is one registry entry that selects the skill "shared", either
 // directly or through a collection defined by the same registry.

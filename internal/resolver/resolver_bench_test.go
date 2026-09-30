@@ -139,6 +139,25 @@ func BenchmarkResolveCrossScopeCollectionMembers(b *testing.B) {
 	}
 }
 
+func BenchmarkAddNameCollision(b *testing.B) {
+	for _, name := range []string{"direct", "wrapped"} {
+		b.Run(name, func(b *testing.B) {
+			existing := &NameCollisionWarning{Kind: ir.KindSkill, Name: "shared", WinnerURL: "git@example.com:mandatory.git", RunnersUp: []string{"other"}}
+			incoming := &NameCollisionWarning{Kind: ir.KindSkill, Name: "shared", WinnerURL: "git@example.com:mandatory.git", RunnersUp: []string{"other"}}
+			var previous error = existing
+			if name == "wrapped" {
+				previous = fmt.Errorf("selection: %w", existing)
+			}
+			warnings := []error{previous}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = addNameCollision(warnings, incoming)
+			}
+		})
+	}
+}
+
 func BenchmarkResolveRequirements(b *testing.B) {
 	const skillCount = 100
 	url := "git@example.com:requirements.git"
