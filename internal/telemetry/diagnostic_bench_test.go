@@ -22,14 +22,14 @@ func BenchmarkDiagnosticRedaction(b *testing.B) {
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Harnesses: []string{"factory"},
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: "http://127.0.0.1:4318",
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -83,14 +83,14 @@ func BenchmarkDiagnosticPayloadSerialization(b *testing.B) {
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Harnesses: []string{"factory"},
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: "http://127.0.0.1:4318",
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		b.Fatal(err)
 	}

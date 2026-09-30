@@ -689,7 +689,7 @@ func TestMarketplaceCollisionUsesExactLockView(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(warm, ".factory", "skills", "cache-only", "SKILL.md"), []byte("---\nname: cache-only\ndescription: cache\n---\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			loaded := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot})
+			loaded := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 			if len(loaded.Errors) > 0 {
 				t.Fatal(errors.Join(loaded.Errors...))
 			}
@@ -753,10 +753,7 @@ func TestMarketplaceCollisionRejectsInvalidOrUnavailableExactLock(t *testing.T) 
 			ec, snapshot := exactLockViewGCFixture(t)
 			repoRoot := filepath.Dir(filepath.Dir(ec.Repo.Path))
 			tc.breakFixture(t, repoRoot, snapshot)
-			loaded := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot})
-			if len(loaded.Errors) > 0 {
-				t.Fatal(errors.Join(loaded.Errors...))
-			}
+			loaded := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 			var clones atomic.Int32
 			opts := InstallOptions{RepoRoot: repoRoot, CatalogOption: []catalog.LoadOption{catalog.WithCloneOrPull(func(string, string) (string, error) {
 				clones.Add(1)
@@ -792,13 +789,13 @@ func TestMarketplaceInstallDoesNotRefreshWarmRegistries(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(opts.RepoRoot, ".factory")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing-lock preflight created harness output: %v", err)
 	}
-	if _, err := syncAfterInstall(context.Background(), opts.RepoRoot, nil, silentSyncOptsForInstall(opts)...); err != nil {
+	if _, err := syncAfterInstall(context.Background(), opts, nil, silentSyncOptsForInstall(opts)...); err != nil {
 		t.Fatal(err)
 	}
 	if got := fetches.Load(); got != 0 {
 		t.Fatalf("warm registry refreshes = %d, want 0", got)
 	}
-	result := Sync(context.Background(), ResolveOptions{RepoRoot: opts.RepoRoot, CatalogOption: opts.CatalogOption})
+	result := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, opts.RepoRoot), CatalogOption: opts.CatalogOption})
 	if err := errors.Join(result.Errors...); err != nil {
 		t.Fatal(err)
 	}
@@ -818,7 +815,7 @@ func BenchmarkMarketplaceInstallWarmRegistries(b *testing.B) {
 		if err := checkMarketplaceInstallCollision(context.Background(), opts, ec, plan); err != nil {
 			b.Fatal(err)
 		}
-		if _, err := syncAfterInstall(context.Background(), opts.RepoRoot, nil, silentSyncOptsForInstall(opts)...); err != nil {
+		if _, err := syncAfterInstall(context.Background(), opts, nil, silentSyncOptsForInstall(opts)...); err != nil {
 			b.Fatal(err)
 		}
 	}

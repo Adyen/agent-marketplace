@@ -110,12 +110,27 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	}
 	repoRoot := config.FindRepoRoot()
 
-	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		RepoRoot:           repoRoot,
-		CatalogMode:        catalog.LoadModeInspect,
-		ReadOnlyExactLocks: true,
+	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return err
+	}
+	// Use the resolved scope policy for dry-run drift detection. status exists
+	// to explain misconfiguration, so an invalid mode or a failed drift probe
+	// is reported as an error row rather than suppressing every other
+	// diagnostic. File mode returns manifest and containment problems here as
+	// hard errors.
+	inspection, releaseExactLease := pipeline.Inspect(ctx, pipeline.InspectOptions{
+		Resolve: pipeline.ResolveOptions{
+			Workspace:          ws,
+			CatalogMode:        catalog.LoadModeInspect,
+			ReadOnlyExactLocks: true,
+		},
+		DryRun:                         runStatusMaterialize,
+		SkipMaterializeOnResolveErrors: true,
 	})
 	defer releaseExactLease()
+	result := inspection.ResolveResult
+	dryRunReport := inspection.Report
 
 	catalogEntries := make(map[string][]catalog.Entry, len(result.CatalogLoad.Catalogs))
 	for k, v := range result.CatalogLoad.Catalogs {
@@ -133,24 +148,8 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			}
 		}
 	}
-	// Use the resolved scope policy for dry-run drift detection. status exists
-	// to explain misconfiguration, so an invalid mode or a failed drift probe
-	// is reported as an error row rather than suppressing every other
-	// diagnostic. File mode returns manifest and containment problems here as
-	// hard errors.
-	var materializeErrs []error
-	modes, err := config.ResolveMaterializationModes(result.GlobalCfg, result.RepoCfg, result.LocalCfg)
-	if err != nil {
-		materializeErrs = append(materializeErrs, err)
-	}
-	var dryRunReport *materialize.Report
-	if len(result.Errors) == 0 && err == nil {
-		var dryRunErr error
-		dryRunReport, dryRunErr = runStatusMaterialize(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
-		if dryRunErr != nil {
-			slog.Warn("status drift check failed", "error", dryRunErr)
-			materializeErrs = append(materializeErrs, dryRunErr)
-		}
+	if inspection.MaterializeErr != nil {
+		slog.Warn("status drift check failed", "error", inspection.MaterializeErr)
 	}
 
 	// Build orphaned rows from files that would be removed.
@@ -234,7 +233,17 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		}
 	}
 
-	errorRows := buildErrorRows(materializeErrs, result.Errors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
+	inspectionErrors := make([]error, 0, len(inspection.Issues))
+	for _, issue := range inspection.Issues {
+		if issue.Severity != pipeline.IssueError {
+			continue
+		}
+		if issue.Category == pipeline.IssueMaterialization && pipeline.IsPromotedDiagnostic(issue.Err) {
+			continue
+		}
+		inspectionErrors = append(inspectionErrors, issue.Err)
+	}
+	errorRows := buildErrorRows(inspectionErrors, secondResolveRealErrs)
 
 	targetHarnesses := make([]string, len(result.TargetHarnesses))
 	for i, t := range result.TargetHarnesses {
@@ -246,9 +255,16 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		return fmt.Errorf("resolve harness target roots: %w", err)
 	}
 
+	var statusWarnings []error
+	for _, issue := range inspection.Issues {
+		if issue.Severity == pipeline.IssueWarning {
+			statusWarnings = append(statusWarnings, issue.Err)
+		}
+	}
+
 	if err := writeStatusSections(out, statusView{
 		diag:                result.Diagnostics,
-		warnings:            result.Warnings,
+		warnings:            statusWarnings,
 		statusRows:          statusRows,
 		locallyExcluded:     locallyExcluded,
 		localRegistries:     localRegistries,
@@ -266,11 +282,13 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		return err
 	}
 
-	if len(result.Errors) > 0 {
-		return errors.Join(result.Errors...)
+	var failureErrs []error
+	for _, issue := range inspection.Issues {
+		if issue.Severity == pipeline.IssueError {
+			failureErrs = append(failureErrs, issue.Err)
+		}
 	}
-
-	return nil
+	return errors.Join(failureErrs...)
 }
 
 func splitRequirementWarnings(errs []error) ([]requirementRow, []error) {
@@ -316,14 +334,6 @@ func describeCacheFreshness(catalogKey string, now time.Time) string {
 }
 
 const staleCacheThreshold = 24 * time.Hour
-
-func malformedSkillErrors(skills []skill.MalformedSkill) []error {
-	errs := make([]error, 0, len(skills))
-	for _, malformed := range skills {
-		errs = append(errs, fmt.Errorf("malformed skill %q (%s/SKILL.md): %w", malformed.DirName, malformed.Path, malformed.Error))
-	}
-	return errs
-}
 
 func applyExactLockFreshness(rows []statusRow, metadata []pipeline.LockMetadata) {
 	for i := range rows {

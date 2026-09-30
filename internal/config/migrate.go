@@ -829,15 +829,19 @@ func MigrateConfigFilesToV4WithHarnesses(ctx context.Context, paths MigratePaths
 			continue
 		}
 		if PeekAPIVersion(data) == APIVersionV4 {
-			v4, err := LoadV4ConfigFromPath(item.path)
+			li, err := readLayerIntent(item.path, canonical, data, item.kind, nil)
 			if err != nil {
 				return nil, err
 			}
-			if _, _, err := loadV4RuntimeConfig(v4, item.path, item.kind, nil); err != nil {
+			lockDoc, err := li.deployedLock(nil)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := li.bind(lockDoc); err != nil {
 				return nil, err
 			}
 			if item.kind == userLayer {
-				currentUser = v4
+				currentUser = li.v4
 			}
 			// An already-v4 file is valid input and needs no rewrite.
 			continue

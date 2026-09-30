@@ -16,7 +16,6 @@ import (
 	"testing/iotest"
 	"time"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/testutil"
 	"golang.org/x/sys/unix"
@@ -213,8 +212,8 @@ func TestExactGitLifecycleCoexistenceAndOffline(t *testing.T) {
 	if opened != firstPath {
 		t.Fatalf("OpenExactGit path = %q, want %q", opened, firstPath)
 	}
-	if _, err := GarbageCollect(false, &config.Config{}); err != nil {
-		t.Fatalf("GarbageCollect: %v", err)
+	if _, err := GarbageCollectLegacyCaches(context.Background(), false, nil); err != nil {
+		t.Fatalf("GarbageCollectLegacyCaches: %v", err)
 	}
 	if _, err := OpenExactGit(canonical, first); err != nil {
 		t.Fatalf("OpenExactGit after registry garbage collection: %v", err)
@@ -700,7 +699,7 @@ func testExactGitConsumptionBlocksGarbageCollection(t *testing.T, acquire bool) 
 
 	gcDone := make(chan error, 1)
 	go func() {
-		_, err := garbageCollectExactGit(false, nil)
+		_, err := garbageCollectExactGitWithContext(context.Background(), false, nil)
 		gcDone <- err
 	}()
 	select {
@@ -730,7 +729,7 @@ func TestExactGitNamespaceLeaseBlocksGarbageCollection(t *testing.T) {
 	started := make(chan struct{})
 	go func() {
 		close(started)
-		_, err := garbageCollectExactGit(false, nil)
+		_, err := garbageCollectExactGitWithContext(context.Background(), false, nil)
 		done <- err
 	}()
 	<-started

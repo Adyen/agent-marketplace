@@ -134,9 +134,6 @@ func WithCacheMutationLockWithContext[T any](ctx context.Context, fn func() (T, 
 }
 
 func withContextCacheMutationLock[T any](ctx context.Context, fn func() (T, error)) (T, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	select {
 	case cacheMutationMu <- struct{}{}:
 		defer func() { <-cacheMutationMu }()
@@ -201,37 +198,21 @@ func WithCacheMutation(fn func() error) error {
 
 var cacheMutationMu = make(chan struct{}, 1)
 
-func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
-	return WithCacheMutationLock(func() (GCResult, error) {
-		return garbageCollect(dryRun, cfgs...)
-	})
-}
-
-// GCReachability is the complete configuration and lock inventory that keeps
-// legacy cache entries and immutable exact snapshots reachable.
+// GCReachability is the lock and Git-source inventory that keeps legacy cache
+// entries and immutable exact snapshots reachable.
 type GCReachability struct {
 	Locks   []lockfile.Document
-	Configs []*config.Config
+	Sources []string
 }
 
 // GCReachabilityReader reloads the complete inventory while GC holds the
 // exclusive exact-cache namespace lease.
 type GCReachabilityReader func(context.Context) (GCReachability, error)
 
-func GarbageCollectWithLocks(dryRun bool, locks []lockfile.Document, cfgs ...*config.Config) (GCResult, error) {
-	return GarbageCollectWithReachabilityAndContext(context.Background(), dryRun, func(context.Context) (GCReachability, error) {
-		return GCReachability{Locks: locks, Configs: cfgs}, nil
-	})
-}
-
-// GarbageCollectWithReachabilityAndContext reloads both configuration and lock
-// reachability under one exclusive namespace lease before deriving either set.
-// This closes the gap where a newly published config layer and its lock could be
-// omitted from a GC inventory captured before publication.
-func GarbageCollectWithReachabilityAndContext(ctx context.Context, dryRun bool, reader GCReachabilityReader) (GCResult, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+// GarbageCollect reloads source and lock reachability under one exclusive
+// namespace lease so a config layer and its lock published together cannot be
+// omitted from the inventory.
+func GarbageCollect(ctx context.Context, dryRun bool, reader GCReachabilityReader) (GCResult, error) {
 	if reader == nil {
 		return GCResult{}, errors.New("cache garbage collection reachability reader is required")
 	}
@@ -252,13 +233,13 @@ func GarbageCollectWithReachabilityAndContext(ctx context.Context, dryRun bool, 
 					return GCResult{}, fmt.Errorf("validate layer lock %d: %w", i, err)
 				}
 			}
-			sources, err := activeExactGitSources(reachability.Configs...)
+			sources, err := activeExactGitSources(reachability.Sources)
 			if err != nil {
 				return GCResult{}, err
 			}
-			legacy, err := garbageCollectWithContext(ctx, dryRun, reachability.Configs...)
+			legacy, err := collectLegacyCaches(ctx, dryRun, reachability.Sources)
 			if err != nil {
-				return GCResult{}, err
+				return legacy, err
 			}
 			exact, _, err := garbageCollectExactGitUnderLease(ctx, dryRun, reachability.Locks, sources)
 			legacy.Removed = append(legacy.Removed, exact.Removed...)
@@ -277,26 +258,22 @@ func GarbageCollectWithReachabilityAndContext(ctx context.Context, dryRun bool, 
 	return result, err
 }
 
-func garbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
-	return garbageCollectWithContext(context.Background(), dryRun, cfgs...)
+// GarbageCollectLegacyCaches collects only the legacy URL-hash cache
+// directories reachable by the given Git source URLs.
+func GarbageCollectLegacyCaches(ctx context.Context, dryRun bool, sources []string) (GCResult, error) {
+	return withContextCacheMutationLock(ctx, func() (GCResult, error) {
+		return collectLegacyCaches(ctx, dryRun, sources)
+	})
 }
 
-func garbageCollectWithContext(ctx context.Context, dryRun bool, cfgs ...*config.Config) (GCResult, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func collectLegacyCaches(ctx context.Context, dryRun bool, sources []string) (GCResult, error) {
 	result := GCResult{}
 	defer slices.Sort(result.Removed)
 
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if !hasEffectiveConfig(cfgs...) {
-		err := errors.New("cache garbage collection requires effective configuration")
-		slog.Warn("cache garbage collection failed closed", "reason", err)
-		return result, err
-	}
-	active := activeRegistryHashes(cfgs...)
+	active := activeRegistryHashes(sources)
 	cacheRoot := CacheDir()
 	cacheBoundary := cacheRoot
 	if homeDir, homeErr := os.UserHomeDir(); homeErr == nil && homeDir != "" {
@@ -357,15 +334,6 @@ func garbageCollectWithContext(ctx context.Context, dryRun bool, cfgs ...*config
 	return result, nil
 }
 
-func hasEffectiveConfig(cfgs ...*config.Config) bool {
-	for _, cfg := range cfgs {
-		if cfg != nil {
-			return true
-		}
-	}
-	return false
-}
-
 // ValidateDirectoryAncestry rejects symlinks and non-directories from path up
 // through root, inclusive. The check is intentionally path based: it is a
 // best-effort process-local guard, not an atomic replacement for openat-style
@@ -409,26 +377,15 @@ func ValidateDirectoryAncestry(root, path string) error {
 	return missingErr
 }
 
-func activeRegistryHashes(cfgs ...*config.Config) map[string]struct{} {
+func activeRegistryHashes(sources []string) map[string]struct{} {
 	active := make(map[string]struct{})
 
-	for _, cfg := range cfgs {
-		if cfg == nil {
+	for _, source := range sources {
+		url := strings.TrimSpace(source)
+		if url == "" {
 			continue
 		}
-
-		for _, entry := range cfg.Registries {
-			if entry.IsLocal() {
-				continue
-			}
-
-			url := strings.TrimSpace(entry.URL)
-			if url == "" {
-				continue
-			}
-
-			active[HashURL(url)] = struct{}{}
-		}
+		active[HashURL(url)] = struct{}{}
 	}
 
 	return active

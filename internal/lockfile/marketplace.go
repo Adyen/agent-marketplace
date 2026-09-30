@@ -9,11 +9,6 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 )
 
-// ProvisionalMarketplaceInstanceID is the instance ID of the placeholder lock
-// used to load and validate policy before any acquisition. It never names a
-// verified Marketplace instance.
-const ProvisionalMarketplaceInstanceID = "bootstrap"
-
 func normalizeMarketplaces(doc *Document) error {
 	for i := range doc.Marketplaces {
 		if err := normalizeMarketplace(&doc.Marketplaces[i], i); err != nil {

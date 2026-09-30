@@ -25,7 +25,10 @@ func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 	writeConfig(t, root, "include: fragment.yaml\n")
 	writeConfig(t, fragment, "harnesses: [claude]\n")
 	opts := config.LoadEffectiveOptions{RepoRoot: repo, LocalConfigDir: repo}
-	loaded, before, err := loadStableEffectiveWith(context.Background(), opts, config.LoadEffective)
+	load := func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+		return pipeline.LoadEffective(ctx, pipeline.ConfigLoadStrict, opts, nil)
+	}
+	loaded, before, err := loadStableEffectiveWith(context.Background(), opts, load)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,35 +36,12 @@ func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 	if _, err := snapshotEffectiveConfigs(loaded, nil); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("stale parsed bytes accepted: %v", err)
 	}
-	_, after, err := loadStableEffectiveWith(context.Background(), opts, config.LoadEffective)
+	_, after, err := loadStableEffectiveWith(context.Background(), opts, load)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sameConfigSnapshots(before, after) {
 		t.Fatal("include-only change left snapshots equal")
-	}
-}
-
-func TestEffectiveReadAssertionsRequireTransientOrganizationLockAbsence(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
-	lockPath := filepath.Join(canonicalTempDir(t), "lock.yaml")
-	reads, err := effectiveReadAssertions(config.EffectiveConfig{
-		Organization: config.LayerResult{
-			Source: config.Organization,
-			Config: &config.Config{},
-			Reads: []config.ConfigRead{{
-				Path: lockPath, RequestedPath: lockPath, Digest: dependencytxn.Digest([]byte("runtime lock")),
-				Overlay: true, RuntimeLock: true, AcquisitionLock: true,
-			}},
-		},
-	}, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(reads) != 1 || reads[0].Path != lockPath || reads[0].RequestedPath != lockPath || reads[0].Expected.Exists {
-		t.Fatalf("runtime lock assertions = %#v, want one absence assertion", reads)
 	}
 }
 

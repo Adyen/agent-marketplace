@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"golang.org/x/sys/unix"
 )
@@ -58,6 +57,12 @@ func exactGitNamespaceLeaseHeld(ctx context.Context) bool {
 	return ctx != nil && ctx.Value(exactGitNamespaceLeaseContextKey{}) == true
 }
 
+type exactGitNamespaceExclusiveContextKey struct{}
+
+func exactGitNamespaceExclusiveHeld(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(exactGitNamespaceExclusiveContextKey{}) == true
+}
+
 func ResolveExactGitRef(canonicalSource, fetchURL, ref string) (GitOID, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), exactGitLockTimeout)
 	defer cancel()
@@ -65,7 +70,7 @@ func ResolveExactGitRef(canonicalSource, fetchURL, ref string) (GitOID, error) {
 }
 
 func ResolveExactGitRefWithContext(ctx context.Context, canonicalSource, fetchURL, ref string) (GitOID, error) {
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return GitOID{}, err
 	}
 	if err := validateExactGitInputs(canonicalSource, fetchURL); err != nil {
@@ -77,7 +82,7 @@ func ResolveExactGitRefWithContext(ctx context.Context, canonicalSource, fetchUR
 
 	var oid GitOID
 	err := withExactGitLock(ctx, sourceKey(canonicalSource), func() error {
-		if err := exactGitContextErr(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		store := exactGitObjectStorePath(canonicalSource)
@@ -126,7 +131,7 @@ func AcquireExactGit(canonicalSource, fetchURL string, oid GitOID) (string, erro
 }
 
 func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL string, oid GitOID) (string, error) {
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	if err := validateExactGitInputs(canonicalSource, fetchURL); err != nil {
@@ -138,7 +143,7 @@ func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL s
 
 	path := exactGitSnapshotPath(canonicalSource, oid)
 	err := withExactGitLock(ctx, snapshotKey(canonicalSource, oid), func() error {
-		if err := exactGitContextErr(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		exists, err := validateExactGitDirectory(path)
@@ -146,26 +151,26 @@ func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL s
 			return fmt.Errorf("validate exact git snapshot: %w", err)
 		}
 		if exists {
-			if err := exactGitContextErr(ctx); err != nil {
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 			if err := verifyExactGitSnapshotWithContext(ctx, path, oid); err == nil {
 				return nil
 			}
-			if err := exactGitContextErr(ctx); err != nil {
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 			if err := quarantineExactGitSnapshot(path); err != nil {
 				return err
 			}
 		}
-		if err := exactGitContextErr(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if err := ensureExactGitObject(ctx, canonicalSource, fetchURL, oid); err != nil {
 			return err
 		}
-		if err := exactGitContextErr(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		return publishExactGitSnapshotWithContext(ctx, path, exactGitObjectStorePath(canonicalSource), oid)
@@ -181,7 +186,7 @@ func WithAcquiredExactGit(ctx context.Context, canonicalSource, fetchURL string,
 	if consume == nil {
 		return errors.New("exact git consumer is required")
 	}
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := validateExactGitInputs(canonicalSource, fetchURL); err != nil {
@@ -202,7 +207,7 @@ func WithAcquiredExactGit(ctx context.Context, canonicalSource, fetchURL string,
 	if err != nil {
 		return err
 	}
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return consume(path)
@@ -235,7 +240,7 @@ func OpenExactGitReadOnlyWithContext(ctx context.Context, canonicalSource string
 // path with a shared namespace lease. The caller must release the lease after
 // every filesystem consumer has finished with the snapshot.
 func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource string, oid GitOID) (string, func(), error) {
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return "", nil, err
 	}
 	if err := validateCanonicalSource(canonicalSource); err != nil {
@@ -245,7 +250,7 @@ func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource strin
 		return "", nil, err
 	}
 	path := exactGitSnapshotPath(canonicalSource, oid)
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return "", nil, err
 	}
 	// Avoid creating read-only lock state for a snapshot that is not present.
@@ -254,7 +259,7 @@ func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource strin
 	if err := requireExactGitSnapshot(path, oid); err != nil {
 		return "", nil, err
 	}
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return "", nil, err
 	}
 	if exactGitNamespaceLeaseHeld(ctx) {
@@ -267,7 +272,7 @@ func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource strin
 	if err != nil {
 		return "", nil, err
 	}
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		release()
 		return "", nil, err
 	}
@@ -290,7 +295,7 @@ func WithExactGitReadOnly(ctx context.Context, canonicalSource string, oid GitOI
 		return err
 	}
 	defer release()
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return consume(path)
@@ -315,7 +320,7 @@ func openExactGitPathWithContext(ctx context.Context, path string, oid GitOID) e
 	if !exists {
 		return fmt.Errorf("%w: %s", ErrExactGitSnapshotUnavailable, oid.String())
 	}
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return verifyExactGitSnapshotWithContext(ctx, path, oid)
@@ -390,7 +395,7 @@ func cloneExactGitObjectStoreWithContext(ctx context.Context, fetchURL, store st
 	if _, err := exactGitOutputWithContext(ctx, stage, "rev-parse", "--show-object-format"); err != nil {
 		return fmt.Errorf("verify git object store format: %w", err)
 	}
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := publishRenamedDirectory(stage, store, syncExactGitDirectory); err != nil {
@@ -426,14 +431,14 @@ func ensureExactGitObject(ctx context.Context, canonicalSource, fetchURL string,
 		}
 		if _, err := exactGitOutputWithContext(ctx, store, "cat-file", "-e", oid.Hex()+"^{commit}"); err == nil {
 			return nil
-		} else if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
+		} else if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 		if err := runExactGitWithContext(ctx, store, "fetch", "--force", "--no-tags", "--no-write-fetch-head", "--", fetchURL, oid.Hex()); err != nil {
 			return fmt.Errorf("fetch exact git object %s: %w", oid.String(), err)
 		}
 		got, err := exactGitOutputWithContext(ctx, store, "rev-parse", "--verify", oid.Hex()+"^{commit}")
-		if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 		if err != nil || got != oid.Hex() {
@@ -468,7 +473,7 @@ func publishExactGitSnapshotWithContext(ctx context.Context, path, store string,
 	if err := verifyExactGitSnapshotWithContext(ctx, stage, oid); err != nil {
 		return err
 	}
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := publishRenamedDirectory(stage, path, syncExactGitDirectory); err != nil {
@@ -479,14 +484,14 @@ func publishExactGitSnapshotWithContext(ctx context.Context, path, store string,
 
 func verifyExactGitSnapshotWithContext(ctx context.Context, path string, oid GitOID) error {
 	if err := validateExactGitConfigWithContext(ctx, path); err != nil {
-		if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 		return fmt.Errorf("%w: %v", ErrExactGitSnapshotUntrusted, err)
 	}
 	format, err := exactGitOutputWithContext(ctx, path, "rev-parse", "--show-object-format")
 	if err != nil {
-		if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 		return fmt.Errorf("%w: query object format: %v", ErrExactGitSnapshotUntrusted, err)
@@ -496,7 +501,7 @@ func verifyExactGitSnapshotWithContext(ctx context.Context, path string, oid Git
 	}
 	head, err := exactGitOutputWithContext(ctx, path, "rev-parse", "--verify", "HEAD")
 	if err != nil {
-		if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 	}
@@ -505,7 +510,7 @@ func verifyExactGitSnapshotWithContext(ctx context.Context, path string, oid Git
 	}
 	top, err := exactGitOutputWithContext(ctx, path, "rev-parse", "--show-toplevel")
 	if err != nil {
-		if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 		return fmt.Errorf("%w: query worktree root: %v", ErrExactGitSnapshotUntrusted, err)
@@ -516,7 +521,7 @@ func verifyExactGitSnapshotWithContext(ctx context.Context, path string, oid Git
 		return fmt.Errorf("%w: worktree root differs from snapshot path", ErrExactGitSnapshotUntrusted)
 	}
 	if err := verifyExactGitTrackedTreeWithContext(ctx, path, oid.Algorithm()); err != nil {
-		if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 		return fmt.Errorf("%w: worktree differs from exact commit: %v", ErrExactGitSnapshotUntrusted, err)
@@ -780,26 +785,32 @@ func withExactGitExclusiveLock(ctx context.Context, fn func() error) error {
 	return withExactGitFileLock(ctx, "namespace", unix.LOCK_EX, fn)
 }
 
+// WithExactGitNamespaceExclusiveLease runs fn under the exclusive exact-git
+// namespace lease so a multi-phase garbage collection sees one reachability
+// generation (config/lock publication holds the shared lease). fn's context
+// marks the held lease so nested namespace acquisitions reuse it.
+func WithExactGitNamespaceExclusiveLease(ctx context.Context, fn func(context.Context) error) error {
+	if exactGitNamespaceExclusiveHeld(ctx) {
+		return fn(ctx)
+	}
+	return withExactGitExclusiveLock(ctx, func() error {
+		return fn(context.WithValue(ctx, exactGitNamespaceExclusiveContextKey{}, true))
+	})
+}
+
 func withExactGitFileLock(ctx context.Context, key string, operation int, fn func() error) error {
 	release, err := acquireExactGitFileLock(ctx, key, operation)
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return fn()
 }
 
 var ErrExactGitLockTimeout = errors.New("exact git cache lock timeout")
-
-func exactGitContextErr(ctx context.Context) error {
-	if ctx == nil {
-		return nil
-	}
-	return ctx.Err()
-}
 
 func acquireExactGitFileLock(ctx context.Context, key string, operation int) (func(), error) {
 	return acquireExactGitFileLockMode(ctx, key, operation, false)
@@ -810,11 +821,12 @@ func acquireExactGitReadOnlyFileLock(ctx context.Context, key string, operation 
 }
 
 func acquireExactGitFileLockMode(ctx context.Context, key string, operation int, readOnly bool) (func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(ErrExactGitLockTimeout, err)
+	}
+	if key == "namespace" && exactGitNamespaceExclusiveHeld(ctx) {
+		// The held lease already excludes every other participant; flocking again would deadlock.
+		return func() {}, nil
 	}
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -1075,34 +1087,22 @@ func snapshotKey(canonicalSource string, oid GitOID) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func activeExactGitSources(cfgs ...*config.Config) (map[string]struct{}, error) {
+func activeExactGitSources(urls []string) (map[string]struct{}, error) {
 	sources := make(map[string]struct{})
-	for i, cfg := range cfgs {
-		if cfg == nil {
+	for i, raw := range urls {
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		for j, entry := range cfg.Registries {
-			if entry.IsLocal() {
-				continue
-			}
-			source, err := lockfile.CanonicalGitConfigURL(entry.URL)
-			if err != nil {
-				return nil, fmt.Errorf("validate exact git reachability config %d registry %d: %w", i, j, err)
-			}
-			sources[sourceKey(source)] = struct{}{}
+		source, err := lockfile.CanonicalGitConfigURL(raw)
+		if err != nil {
+			return nil, fmt.Errorf("validate exact git reachability source %d: %w", i, err)
 		}
+		sources[sourceKey(source)] = struct{}{}
 	}
 	return sources, nil
 }
 
-func garbageCollectExactGit(dryRun bool, locks []lockfile.Document) (GCResult, error) {
-	return garbageCollectExactGitWithContext(context.Background(), dryRun, locks)
-}
-
 func garbageCollectExactGitWithContext(ctx context.Context, dryRun bool, locks []lockfile.Document) (result GCResult, resultErr error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	started := time.Now()
 	var reachable map[string]struct{}
 	slog.Debug("exact git cache garbage collection started", "dry_run", dryRun, "lock_layers", len(locks))
@@ -1148,7 +1148,7 @@ func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []
 			reachable[snapshotKey(registry.URL, oid)] = struct{}{}
 		}
 	}
-	if err := exactGitContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return result, reachable, err
 	}
 	roots := []struct {
@@ -1173,7 +1173,7 @@ func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []
 			return result, reachable, fmt.Errorf("read exact git GC root %q: %w", root.path, err)
 		}
 		for _, entry := range entries {
-			if err := exactGitContextErr(ctx); err != nil {
+			if err := ctx.Err(); err != nil {
 				return result, reachable, err
 			}
 			key := strings.TrimSuffix(entry.Name(), root.suffix)

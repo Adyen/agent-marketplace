@@ -380,7 +380,7 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 		return m.IncludePins(commitEntry, pins)
 	}, func() ([]error, error) {
 		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan, installScopeSource(prepared.options.Scope)), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan, ec.Merged)))
-		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, syncOpts...)
+		return syncAfterInstall(ctx, prepared.options, identities, syncOpts...)
 	})
 	if err != nil {
 		return nil, err
@@ -742,7 +742,11 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 	if overlays != nil {
 		marketplaceMode = marketplaceInstallResolveMode(plan, ec.Merged)
 	}
-	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true, EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, FileOverlays: overlays}})
+	ws, err := workspaceForRoots(opts.RepoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return err
+	}
+	resolved := Resolve(ctx, ResolveOptions{Workspace: ws, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode, ReadOnlyExactLocks: true, AllowMissingReadOnlyLocks: true, EffectiveOpts: config.LoadEffectiveOptions{FileOverlays: overlays}})
 	if len(resolved.Errors) > 0 {
 		return errors.Join(resolved.Errors...)
 	}

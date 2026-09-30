@@ -75,7 +75,7 @@ registries:
 	})
 	defer restoreLocal()
 
-	msg := runUpdateCmd(context.Background(), repoRoot, homeDir, 1)()
+	msg := runUpdateCmdForWorkspace(context.Background(), defaultTUIWorkspace(repoRoot), homeDir, 1)()
 	done, ok := msg.(updateDoneMsg)
 	if !ok {
 		t.Fatalf("runUpdateCmd returned %T, want updateDoneMsg", msg)

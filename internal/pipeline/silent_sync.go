@@ -11,19 +11,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
-// silentSyncOptsForPaths carries the non-default roots used by monorepo
-// commands into the shared sync path.
-func silentSyncOptsForPaths(repoRoot, materializeRoot, localConfigDir string) []silentSyncOpt {
-	var opts []silentSyncOpt
-	if materializeRoot != "" && materializeRoot != repoRoot {
-		opts = append(opts, withMaterializeRoot(materializeRoot))
-	}
-	if localConfigDir != "" && localConfigDir != repoRoot {
-		opts = append(opts, withLocalConfigDir(localConfigDir))
-	}
-	return opts
-}
-
 type DependencyLockView struct {
 	CatalogOption  catalog.LoadOption
 	ExactLockLease func(context.Context) (func(), error)
@@ -39,17 +26,23 @@ func (e *DependencyCommittedSyncError) Error() string {
 }
 func (e *DependencyCommittedSyncError) Unwrap() error { return e.Err }
 
-func silentSync(ctx context.Context, repoRoot string, opts ...silentSyncOpt) error {
-	_, err := silentSyncCollect(ctx, repoRoot, opts...)
+func silentSync(ctx context.Context, ws Workspace, opts ...silentSyncOpt) error {
+	_, err := silentSyncCollect(ctx, ws, opts...)
 	return err
 }
 
-func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncOpt) ([]error, error) {
+func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt) ([]error, error) {
 	var o silentSyncOptions
 	for _, opt := range opts {
 		opt(&o)
 	}
 	var dependencyWarnings []error
+	// A zero Workspace must fail before staged edits are collected or the
+	// dependency reconciler runs: both would otherwise operate on the ambient
+	// working directory ahead of the ErrInvalidWorkspace Sync already returns.
+	if err := ws.validate(); err != nil {
+		return nil, err
+	}
 	if o.DependencyReconciler != nil {
 		if o.ConfigStaging != nil {
 			var err error
@@ -58,7 +51,14 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 				return nil, fmt.Errorf("collect staged config edits: %w", err)
 			}
 		}
-		view, err := o.DependencyReconciler(ctx, repoRoot, o.LocalConfigDir, o.IgnoreBlockedRegistries, o.StagedConfigEdits)
+		// The reconciler keeps the pre-Workspace contract: an empty local dir
+		// means "no nested local root", so only a genuinely nested root is
+		// passed through.
+		localDir := ""
+		if ws.LocalConfigDir() != ws.RepoRoot() {
+			localDir = ws.LocalConfigDir()
+		}
+		view, err := o.DependencyReconciler(ctx, ws.RepoRoot(), localDir, o.IgnoreBlockedRegistries, o.StagedConfigEdits)
 		if err != nil {
 			return nil, fmt.Errorf("reconcile dependency locks: %w", err)
 		}
@@ -69,13 +69,7 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 		dependencyWarnings = view.Warnings
 		o.DependencyCommitted = true
 	}
-	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall, marketplaceInstallSource: o.marketplaceInstallSource}
-	if o.MaterializeRoot != "" && o.MaterializeRoot != repoRoot {
-		resolveOpts.MaterializeRoot = o.MaterializeRoot
-	}
-	if o.LocalConfigDir != "" && o.LocalConfigDir != repoRoot {
-		resolveOpts.LocalConfigDir = o.LocalConfigDir
-	}
+	resolveOpts := ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall, marketplaceInstallSource: o.marketplaceInstallSource}
 	syncResult := Sync(ctx, resolveOpts)
 	if o.resolved != nil {
 		*o.resolved = syncResult.Resolved
@@ -89,8 +83,6 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 }
 
 type silentSyncOptions struct {
-	MaterializeRoot          string
-	LocalConfigDir           string
 	IgnoreBlockedRegistries  bool
 	CatalogMode              catalog.LoadMode
 	CatalogOption            []catalog.LoadOption
@@ -117,19 +109,6 @@ func withMarketplaceInstall(plan *marketplace.PreparedInstall, source config.Sou
 		o.marketplaceInstall = plan
 		o.marketplaceInstallSource = source
 	}
-}
-
-// withMaterializeRoot sets a different root for materialization (where
-// harness files are written), while keeping RepoRoot for config loading
-// and catalog path resolution of repo-layer entries.
-func withMaterializeRoot(dir string) silentSyncOpt {
-	return func(o *silentSyncOptions) { o.MaterializeRoot = dir }
-}
-
-// withLocalConfigDir sets the base directory for resolving relative paths
-// in local-config-layer registry entries.
-func withLocalConfigDir(dir string) silentSyncOpt {
-	return func(o *silentSyncOptions) { o.LocalConfigDir = dir }
 }
 
 func withDependencyReconciler(reconciler DependencyReconciler) silentSyncOpt {

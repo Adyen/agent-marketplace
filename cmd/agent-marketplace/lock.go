@@ -19,7 +19,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
@@ -30,17 +29,7 @@ var (
 	lockSnapshotAcquiredHook    func()
 )
 
-type lockLifecycleError struct {
-	Code  string
-	Scope lockfile.Scope
-	Path  string
-	Err   error
-}
-
-func (e *lockLifecycleError) Error() string {
-	return fmt.Sprintf("%s: %s lock %q: %v", e.Code, e.Scope, e.Path, e.Err)
-}
-func (e *lockLifecycleError) Unwrap() error { return e.Err }
+type lockLifecycleError = pipeline.LockViewError
 
 type lockMode struct {
 	locked               bool
@@ -268,7 +257,7 @@ func resolveUpgradeTargets(ec config.EffectiveConfig, mode lockMode) (upgradeTar
 			if err != nil {
 				return result, err
 			}
-			for _, entry := range remoteEntries(layerRegistries(layer)) {
+			for _, entry := range pipeline.GitRegistryEntries(layer.Sources) {
 				entryURL, err := canonicalRegistryURL(entry.URL)
 				if err != nil || entryURL != canonical || targets.ref != "" && targets.ref != entry.Ref {
 					continue
@@ -347,7 +336,7 @@ func resolveUpgradeTargets(ec config.EffectiveConfig, mode lockMode) (upgradeTar
 }
 
 func loadExistingLayerDocument(layer config.LayerResult, scope lockfile.Scope) (*lockfile.Document, error) {
-	if len(remoteEntries(layerRegistries(layer))) == 0 {
+	if len(pipeline.GitRegistryEntries(layer.Sources)) == 0 {
 		return nil, nil
 	}
 	lockPath, err := lockfile.PathForConfig(layer.Path)
@@ -358,7 +347,7 @@ func loadExistingLayerDocument(layer config.LayerResult, scope lockfile.Scope) (
 		}
 		lockPath = filepath.Join(filepath.Dir(layer.Path), name)
 	}
-	doc, _, _, err := loadLayerLock(lockPath, scope)
+	doc, _, _, err := pipeline.ReadLayerLock(lockPath, scope)
 	return doc, err
 }
 
@@ -422,44 +411,13 @@ func (mode lockMode) readOnlyDependencies() bool {
 
 func prepareDependencyTransactions(ctx context.Context, readOnly bool) error {
 	if !readOnly {
-		return recoverDependencyTransactions(ctx)
+		return pipeline.RecoverDependencyTransactions(ctx)
 	}
 	stateDir, err := dependencyStateDir()
 	if err != nil {
 		return err
 	}
 	return dependencytxn.CheckPending(stateDir)
-}
-
-func recoverDependencyTransactions(ctx context.Context) error {
-	stateDir, err := dependencyStateDir()
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(stateDir); errors.Is(err, os.ErrNotExist) {
-		slog.Debug("lock transaction recovery skipped", "reason", "state absent")
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("inspect dependency transaction state: %w", err)
-	}
-
-	// Recovery can publish the same config/lock destinations as a normal
-	// dependency transaction. Hold the shared exact-cache namespace lease in
-	// the same order as normal publication so exclusive GC cannot inventory a
-	// half-recovered transaction and delete its newly reachable snapshots.
-	releaseExactNamespace, err := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
-	if err != nil {
-		return fmt.Errorf("acquire exact cache recovery lease: %w", err)
-	}
-	defer releaseExactNamespace()
-
-	started := time.Now()
-	if err := dependencytxn.Recover(ctx, stateDir); err != nil {
-		slog.Error("lock transaction recovery failed", "duration_ms", time.Since(started).Milliseconds(), "error", err)
-		return fmt.Errorf("recover dependency lock transaction: %w", err)
-	}
-	slog.Debug("lock transaction recovery completed", "duration_ms", time.Since(started).Milliseconds())
-	return nil
 }
 
 func rejectGeneratedLockSymlink(name string) (string, error) {
@@ -601,14 +559,6 @@ func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeli
 	byPath := make(map[string]string)
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
-			if read.RuntimeLock {
-				assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath}
-				if previous, exists := byAlias[read.RequestedPath]; exists && previous != assertion {
-					return nil, fmt.Errorf("%w: config alias changed at %s", dependencytxn.ErrGenerationConflict, read.RequestedPath)
-				}
-				byAlias[read.RequestedPath] = assertion
-				continue
-			}
 			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
 				return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
 			}
@@ -748,7 +698,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		return nil, 0, nil, err
 	}
 	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && len(mode.stagedLockEdits) == 0 && mode.commitScope == nil
-	if canBootstrapMarketplace && (marketplacelock.HasRequiredError(ec.Errors) || marketplacelock.HasMismatchError(ec.Errors)) {
+	if canBootstrapMarketplace && pipeline.NeedsLockBootstrap(ec.Errors) {
 		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects, mode.marketplacePolicy)
 		if err != nil {
 			return nil, 0, nil, err
@@ -784,6 +734,41 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if consumed[path] != 1 {
 			return nil, 0, nil, fmt.Errorf("%w: staged config %s matched %d effective writable layers", dependencytxn.ErrGenerationConflict, path, consumed[path])
 		}
+	}
+	if mode.reuseInstall != nil || mode.check && !mode.locked {
+		ec.Errors = slices.DeleteFunc(ec.Errors, func(err error) bool {
+			var lockErr *pipeline.LockViewError
+			if !errors.As(err, &lockErr) || lockErr.Code != "lock.missing" {
+				return false
+			}
+			if mode.reuseInstall != nil {
+				for _, path := range mode.reuseInstall.lockPaths {
+					if lockErr.Path == path {
+						return true
+					}
+				}
+			}
+			if mode.check && !mode.locked {
+				for _, layer := range ec.PresentLayers() {
+					if lockScopeForSource(layer.Source) == lockErr.Scope {
+						return true
+					}
+				}
+			}
+			return false
+		})
+	}
+	if mode.check && pipeline.NeedsLockBootstrap(ec.Errors) {
+		changeErr := &lockLifecycleError{Code: "lock.change-required", Err: errors.Join(ec.Errors...)}
+		for _, loadErr := range ec.Errors {
+			var lockErr *pipeline.LockViewError
+			if errors.As(loadErr, &lockErr) && lockErr.Code == "lock.missing" {
+				changeErr.Scope = lockErr.Scope
+				changeErr.Path = lockErr.Path
+				break
+			}
+		}
+		return nil, 1, nil, changeErr
 	}
 	if len(ec.Errors) > 0 && (!mode.ignoreBlocked || !config.OnlyRegistryURLBlockedErrors(ec.Errors)) {
 		return nil, 0, nil, errors.Join(ec.Errors...)
@@ -862,8 +847,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}()
 	for _, layer := range ec.PresentLayers() {
 		scope := lockScopeForSource(layer.Source)
-		entries := layerRegistries(layer)
-		remote := remoteEntries(entries)
+		remote := pipeline.GitRegistryEntries(layer.Sources)
 		if scope == lockfile.ScopeOrganization && len(remote) > 0 {
 			organizationRequiresLock = true
 		}
@@ -885,7 +869,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, changed, nil, fmt.Errorf("resolve lock destination %s: %w", requestedLockPath, pathErr)
 		}
 		selected := mode.selects == nil || mode.selects[scope]
-		current, generation, exists, loadErr := loadLayerLock(lockPath, scope)
+		current, generation, exists, loadErr := pipeline.ReadLayerLock(lockPath, scope)
 		if loadErr != nil {
 			if mode.upgrade && !selected {
 				continue
@@ -1493,55 +1477,6 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		}
 	}
 	return nil
-}
-
-func loadLayerLock(path string, scope lockfile.Scope) (*lockfile.Document, dependencytxn.Generation, bool, error) {
-	generation, err := dependencytxn.ReadGeneration(path)
-	if err != nil {
-		return nil, generation, false, err
-	}
-	if !generation.Exists {
-		return nil, generation, false, nil
-	}
-	data, err := lockfile.ReadBytes(path)
-	if err != nil {
-		return nil, generation, true, err
-	}
-	doc, err := lockfile.Decode(data)
-	if err == nil {
-		err = lockfile.ValidateScope(doc, scope)
-	}
-	if err != nil {
-		return nil, generation, true, &lockLifecycleError{Code: "lock.invalid", Scope: scope, Path: path, Err: err}
-	}
-	if doc.APIVersion == lockfile.APIVersionV1 {
-		slog.Warn("lock file uses the deprecated v1 schema; the next writable reconciliation upgrades it to v2",
-			slog.String("code", "lock.version-deprecated"),
-			slog.String("path", path),
-			slog.String("scope", string(scope)),
-		)
-	}
-	return &doc, generation, true, nil
-}
-
-func layerRegistries(layer config.LayerResult) []config.RegistryEntry {
-	if layer.Config != nil {
-		return layer.Config.Registries
-	}
-	if layer.Local != nil {
-		return layer.Local.Registries
-	}
-	return nil
-}
-
-func remoteEntries(entries []config.RegistryEntry) []config.RegistryEntry {
-	out := make([]config.RegistryEntry, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsLocal() {
-			out = append(out, entry)
-		}
-	}
-	return out
 }
 
 func lockScopeForSource(source config.Source) lockfile.Scope {
