@@ -13,5 +13,5 @@
 ## 3. Validation and delivery
 
 - [x] 3.1 Run focused tests, review consumers and the diff, and run `make validate`.
-- [ ] 3.2 Commit the implementation locally without pushing or opening a pull request.
-- [ ] 3.3 `openspec archive fix-cross-scope-sync-drift --yes`
+- [x] 3.2 Commit the implementation locally without pushing or opening a pull request.
+- [x] 3.3 `openspec archive fix-cross-scope-sync-drift --yes`
