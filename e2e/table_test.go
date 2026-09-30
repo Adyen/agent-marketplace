@@ -3891,6 +3891,33 @@ registries:
 	},
 
 	// ===== collections =====
+	// spec: resource-selection/top-level-collection-keeps-required-auto-selection
+	{
+		Name: "collection/required_org_survives_top_level_include",
+		Desc: "Given automatic required organization skills, When repository configuration selects a top-level collection, Then machine outputs survive and the repository collection expands",
+		Registries: []RegistryDef{
+			{Name: "mandatory-collection", Skills: []Skill{{Name: "mandatory-alpha"}, {Name: "mandatory-beta"}}},
+			{Name: "optional-collection", Skills: []Skill{{Name: "optional-member"}}, Files: map[string]string{
+				"collections/shared/COLLECTION.yaml": "name: shared\nversion: '1.0.0'\nresources:\n  - name: optional-member\n",
+			}},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nregistries: []\n",
+		OrgCfg:    "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nregistries:\n  - url: {{REG:mandatory-collection}}\n    ref: main\n    required: true\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nregistries:\n  - url: {{REG:optional-collection}}\n    ref: main\ncollections:\n  include: [shared]\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{
+				"/root/.factory/skills/mandatory-alpha/SKILL.md",
+				"/root/.factory/skills/mandatory-beta/SKILL.md",
+				"/workspace/.factory/skills/optional-member/SKILL.md",
+			}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{
+				"/root/.factory/skills/mandatory-alpha",
+				"/root/.factory/skills/mandatory-beta",
+				"/workspace/.factory/skills/optional-member",
+			}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
 	{
 		Name: "collection/multi_kind_resources_materialize",
 		Desc: "Given a registry with a collection referencing skills, commands, and subagents, When sync is run, Then all resource kinds materialize correctly",

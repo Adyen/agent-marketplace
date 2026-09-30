@@ -1162,6 +1162,9 @@ func cloneConfigForResolve(cfg *config.Config) *config.Config {
 // collection from their source layer.
 func propagateTopLevelCollections(cfg *config.Config) {
 	for i := range cfg.Registries {
+		if cfg.Registries[i].Required && !hasExplicitSelection(cfg.Registries[i]) {
+			continue
+		}
 		sel := cfg.Registries[i].SelectorForKindPtr(ir.KindCollection)
 		if sel == nil {
 			continue
@@ -2241,6 +2244,13 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 		harnessTargets := resolveEntryHarnesses(entry, targetSet)
 		byName := indexCatalog(catalog)
 		selectedResources := resolveSelectedResources(entry, catalog)
+		if entry.Required && !hasExplicitSelection(entry) {
+			for _, selected := range appendSelections(nil, ir.KindCollection, cfg.Collections.Include) {
+				if !slices.Contains(selectedResources, selected) {
+					selectedResources = append(selectedResources, selected)
+				}
+			}
+		}
 
 		for _, selected := range selectedResources {
 			if artifactShadowedByEntries(unresolvedSelectionArtifact(entry, selected), cfg.Registries) {
