@@ -180,6 +180,7 @@ func TestResolveReportsUnmetRequirement(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/registry-hint-credentials-are-redacted
 func TestUserFacingWarningsRedactURLCredentials(t *testing.T) {
 	const secretURL = "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/registry.git"
 	warnings := []struct {
@@ -252,6 +253,7 @@ func TestResolveAcceptsSelectedRequirement(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/excluded-prerequisite-is-required
 func TestResolveRequiredExcludedPrerequisiteRemainsSelected(t *testing.T) {
 	cfg := &config.Config{Registries: []config.RegistryEntry{
 		{
@@ -285,6 +287,92 @@ func TestResolveRequiredExcludedPrerequisiteRemainsSelected(t *testing.T) {
 	}
 	if resolved[1].Kind != ir.KindMcpServer || resolved[1].Name != "genai-atlassian" {
 		t.Fatalf("Resolve() prerequisite = %s:%s, want mcp:genai-atlassian", resolved[1].Kind, resolved[1].Name)
+	}
+}
+
+// spec: resource-prerequisites/prerequisite-supplied-by-another-registry
+func TestResolvePrerequisiteSatisfiedByAnotherRegistry(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{
+			URL:    "git@example.com:skills.git",
+			Ref:    "main",
+			Skills: ks("smoke-test-kb"),
+		},
+		{
+			URL: "git@example.com:other.git",
+			Ref: "main",
+			MCP: ks("genai-atlassian"),
+		},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck("git@example.com:skills.git", "main"): {
+			{
+				Kind: ir.KindSkill,
+				Name: "smoke-test-kb",
+				Resource: ir.NewSkill(
+					"smoke-test-kb",
+					"Smoke test knowledge",
+					"",
+					nil,
+					map[string]any{
+						"metadata": map[string]any{
+							"requires": []any{
+								map[string]any{
+									"kind":     "mcp",
+									"name":     "genai-atlassian",
+									"registry": "git@example.com:hinted.git",
+									"path":     "servers",
+								},
+							},
+						},
+					},
+					ir.SourceRef{},
+				),
+			},
+		},
+		ck("git@example.com:other.git", "main"): {
+			{Kind: ir.KindMcpServer, Name: "genai-atlassian"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve() errors = %v, want none; registry hint must not restrict satisfaction", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("Resolve() returned %d resources, want 2", len(resolved))
+	}
+}
+
+// spec: resource-prerequisites/same-name-with-another-kind
+func TestResolvePrerequisiteSameNameWithAnotherKind(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:    "git@example.com:skills.git",
+		Ref:    "main",
+		Skills: ks("docs", "smoke-test-kb"),
+	}}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck("git@example.com:skills.git", "main"): {
+			{Kind: ir.KindSkill, Name: "docs"},
+			{Kind: ir.KindSkill, Name: "smoke-test-kb", Resource: requirementTestSkillNamed("smoke-test-kb", "docs")},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 2 {
+		t.Fatalf("Resolve() returned %d resources, want 2", len(resolved))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("Resolve() errors = %v, want 1 unmet requirement warning", errs)
+	}
+	if !IsWarning(errs[0]) || !IsUnmetRequirement(errs[0]) {
+		t.Fatalf("Resolve() error = %v, want unmet requirement warning", errs[0])
+	}
+	want := `skill "smoke-test-kb" requires mcp "docs", but it is not selected`
+	if got := errs[0].Error(); got != want {
+		t.Fatalf("warning Error() = %q, want %q", got, want)
 	}
 }
 

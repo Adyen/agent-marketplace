@@ -26,70 +26,77 @@ sync skills (that's the `agent-marketplace` skill next to this one).
 
 Before touching anything, read these in order:
 
-1. `AGENTS.md` — project charter, design decisions, session-completion rules.
-2. The `agent-marketplace` skill next door — user-facing contract you
-   must not break.
+1. `AGENTS.md` — spec authority, build/test/validation gates, command-test
+   isolation, session-completion rules. It owns the Make targets and test
+   selection rules; this skill does not repeat them.
+2. `openspec/specs/` — the normative behavior. A behavior change needs an
+   OpenSpec change with a spec delta, and every scenario needs a
+   `// spec: <capability>/<scenario>` test binding.
+3. `CODING_STANDARDS.md` — design, security-boundary, testing, and logging
+   requirements.
+4. The `agent-marketplace` skill next door — the user-facing contract.
 
 Then skim:
 
 - `cmd/agent-marketplace/main.go` — Cobra root, subcommand wiring,
   TUI launch on bare TTY invocation.
-- `internal/config/config.go` — data model (`Config`, `LocalConfig`,
-  `RegistryEntry`).
-- `internal/config/merge.go` — `Merge(global, repo)` and
-  `resolveInheritedList` (the "specific wins over default" rule).
+- `internal/config/v4.go` — the strict v4 `sources`/`resources` model
+  (`V4Config`) and `ToLegacyConfig`, which adapts it into the internal
+  `Config`/`RegistryEntry` model the resolver consumes.
+- `internal/config/effective_config.go` — `LoadEffective` loads the four
+  layers (and their includes and locks).
+- `internal/config/merge.go` — `MergeLayers` and `resolveInheritedList`
+  (the "specific wins over default" rule for legacy per-entry lists).
+- `internal/pipeline/pipeline.go` — `Resolve`, `ResolveWithExactLockLease`,
+  and `Sync`: the one pipeline both CLI and TUI call.
 - `internal/resolver/resolver.go` — selects which resources are enabled.
-- `internal/harness/destinations.go` — resolves single-root and Codex
-  partitioned destinations for repo and machine scopes.
+- `internal/harness/roots.go`, `registry.go`, `destinations.go` —
+  `TargetInfo` metadata, the Devin/Codex installation adapters, and
+  single-root vs. Codex-partitioned destinations.
 - `internal/tui/state.go` — `Model` and `row` shape used by the TUI.
 
-## Build, Test, Lint
+## Build and smoke test
+
+Use the Make targets and scoped `TEST_PACKAGES` invocations in `AGENTS.md`.
+To smoke-test the TUI against the current checkout:
 
 ```bash
-make build           # CGO_ENABLED=0 go build -> ./agent-marketplace
-make test            # go test ./...
-make lint            # go mod tidy + go fmt + go vet + golangci-lint if present
-make ci-lint         # non-destructive equivalent used in CI
-
-# Scoped testing (faster iteration)
-go test ./internal/config/...
-go test ./internal/resolver/...
-go test ./internal/tui/... -run 'TestToggle' -count=1 -v
-go test ./cmd/agent-marketplace/...
-
-# Build + run the TUI against the current repo for smoke testing
 make build && ./agent-marketplace
 ```
 
-For local TUI QA or verification of a user-interaction change, follow
-[Local TUI QA](#local-tui-qa-real-terminal) below; a smoke launch or Go test
-run does not exercise the real-terminal journeys.
+A smoke launch or Go test run does not exercise the real-terminal journeys;
+for user-interaction changes, follow
+[Local TUI QA](#local-tui-qa-real-terminal) below.
 
-Pre-commit runs `make test`, `make lint`, `make build`. If `go fmt`
-modifies files during lint, re-stage and commit again.
+Pre-commit (`.pre-commit-config.yaml`) runs `make test`, `make lint`, and
+`make build`. `make lint` rewrites files (`go mod tidy`, `go fmt`); re-stage
+and commit again when it does.
 
 ## Architecture: Two Entry Points, One Data Flow
 
-Both the CLI subcommands and the TUI drive the same pipeline:
+Both the CLI subcommands and the TUI drive `internal/pipeline`:
 
 ```
-load configs (global + repo + local)
+pipeline.LoadEffective -> config.EffectiveConfig    [four layers + includes + locks;
+        |                                            v4 adapted via ToLegacyConfig]
+        v
+  config.MergeLayers(layers) -> *config.Config      [merge.go]
         |
         v
-  Merge(global, repo) -> *config.Config         [merge.go]
+  catalog.LoadRegistriesWithContext                 [exact Git snapshots, live dirs]
         |
         v
-  load catalogs (clone/pull git, read local)    [cache, catalog]
+  resolver.Resolve(cfg, catalogs, localCfg,
+      WithResources, WithTargetHarnesses, ...)      [resolver]
         |
         v
-  resolver.Resolve(cfg, catalogs, localCfg)     [resolver]
-        |
-        v
-  materialize.Run (compile non-skills, link skills) [materialize]
+  pipeline.Sync: backup.Create, materialize.Run     [compile, link/copy, reconcile]
 ```
 
 - **CLI** (`cmd/agent-marketplace/`) runs this pipeline once, prints,
-  exits.
+  exits. Mutating commands (`install`, `remove`, `update`) go through
+  `pipeline.Install`/`Remove`/`Update`, which publish config and the layer
+  lock in one dependency transaction (`internal/dependencytxn`).
 - **TUI** (`internal/tui/`) runs it on startup and after every config
   write, keeping a `Model` in memory and re-rendering.
 
@@ -119,8 +126,8 @@ belong in `cmd/agent-marketplace/` or `internal/tui/`.
 
 ## Materialization Invariants
 
-`internal/materialize` is the authoritative v2 sync/drift engine. It
-consumes `resolver.ResolvedSkill` values with attached IR resources,
+`internal/materialize` is the authoritative sync/drift engine. It
+consumes `resolver.ResolvedArtifact` values with attached IR resources,
 compiles non-skill artifacts through `harness-compilation`, and writes
 target roots for repo and machine scopes.
 
@@ -131,7 +138,9 @@ Preserve these invariants:
   `~/.cache/agent-marketplace`. File mode writes regular files/trees for
   every target through the generic materializer, including Devin regular
   skill/command trees and subagent files; aggregate ownership reconciliation
-  remains independent of installation mode.
+  remains independent of installation mode. `TargetInfo.FileCopyKinds` is the
+  one declared exception (Factory commands are always copied because the
+  Droid CLI does not follow symlinked command files).
 - **Non-skills are compiled artifacts, unless a target declares
   otherwise.** Commands, subagents, hooks, and MCP servers are selected
   like skills and are normally materialized through HCC into the target
@@ -176,6 +185,11 @@ Preserve these invariants:
   ownership is proven from durable state under
   `$XDG_STATE_HOME/agent-marketplace`, and missing or corrupt state must
   fail closed (every entry unmanaged; preserve everything, prune nothing).
+  Gemini MCP servers in `settings.json` use the same ownership store
+  (`internal/materialize/gemini_native.go`) while Gemini hooks keep markers;
+  aggregates installed outside the target root (Claude `.mcp.json` /
+  `~/.claude.json`, Gemini `settings.json`, Windsurf hooks) are routed by
+  `nativeAggregateInstalls` in `internal/harness/native_aggregates.go`.
 - **Codex has two resolved destinations per scope.** Repo output splits
   between `<repo>/.agents` and `<repo>/.codex`; machine output splits
   between `~/.agents` and an absolute `$CODEX_HOME` (default `~/.codex`).
@@ -210,20 +224,27 @@ These are load-bearing. Every PR must preserve them.
 
 ### Four-layer precedence (most → least specific)
 
-1. `.agents/config.local.yaml` (gitignored personal overrides; only
-   kind-specific resource lists and `exclude` are meaningful).
+1. `.agents/config.local.yaml` (gitignored personal overrides; no
+   `harnesses` or allowlists).
 2. `.agents/config.yaml` (committed repo config).
 3. `~/.agents/config.yaml` (user-personal machine config).
 4. `/etc/agent-marketplace/config.yaml` (organization-managed machine config;
-   `required: true` registries are org-mandatory).
+   root-owned trust rules; `required: true` groups are org-mandatory).
+
+Each layer owns a lock next to it (`lock.yaml`, `lock.local.yaml`). V4 is the
+only schema new files use; v2/v3 are read through the compatibility reader and
+writes to them warn `config.legacy-deprecated`. Which top-level fields each
+layer may set is enforced with `v4.layer-field`.
 
 ### Attribute inheritance: specific wins over default
 
-Inside a single config file, top-level resource lists (`skills`,
+In a legacy v2/v3 file, top-level resource lists (`skills`,
 `commands`, `subagents`, `hooks`, `mcp`), `tags`, and `exclude` are
 **defaults**. A `RegistryEntry` that sets its own resource lists,
 `tags`, or `exclude` **replaces** (does NOT merge with) the top-level
-for that entry. This is encoded in `resolveInheritedList`:
+for that entry. V4 resource groups are already per-source, and
+`ToLegacyConfig` emits per-entry lists. This is encoded in
+`resolveInheritedList`:
 
 ```go
 func resolveInheritedList(defaults, overrides []string) []string {
@@ -237,9 +258,10 @@ func resolveInheritedList(defaults, overrides []string) []string {
 **Consequence for editors**: when writing a resource into a config, if
 the matching registry entry has its own list for that kind, write into
 *that* list, not the top-level. The TUI toggle modal
-(`internal/tui/modal.go` → `runScopedToggle`) goes through
-`pipeline.EditLayerAtPath` with a `pipeline.LayerMutation` so skills,
-commands, subagents, hooks, and MCP servers stay aligned.
+(`internal/tui/modal.go` → `runScopedToggle`) runs inside the TUI's
+`MutateConfigWithDependencies` hook (`cmd/agent-marketplace/tui.go`) and
+edits the staged path through `pipeline.EditLayerAtPath` with a
+`pipeline.LayerMutation`, so every kind and both schemas share one editor.
 
 ### Required registries and machine scope ignore local excludes
 
@@ -263,20 +285,25 @@ removal of the current winner to change the result. Same URL+ref parent/child
 paths are merged as one physical source and the deeper path wins an overlap;
 cross-scope overlaps remain complementary. The same name may exist in different
 kinds; CLI install/remove paths must ask for `--kind` when needed.
-`cmd/install.go` mirrors this behavior for `install --all`.
+Hooks are the exception to single-winner collisions: hooks from independent
+sources all install. `cmd/agent-marketplace/install.go` mirrors the collision
+behavior for `install --all`.
 
 ### Config editing preserves comments
 
-`internal/config/editor.go` edits YAML at the node level
-(`yaml.Node` trees) rather than re-marshaling structs, so user
-comments are preserved. When adding a new editor function, follow the
-existing pattern:
+Config editors edit YAML at the node level (`yaml.Node` trees) rather
+than re-marshaling structs, so user comments are preserved:
 
-- Read bytes, `parseConfigDocument`, ensure mapping, locate nodes,
-  mutate content, `writeConfigDocument`.
-- Helpers: `findMappingValue`, `findTopLevelSequence`,
-  `findEntrySequence`, `removeMappingKey`, `ensureMappingSequence`.
-- Idempotent for missing files: treat `os.ErrNotExist` as a no-op for
+- `internal/config/layer_editor.go` (`OpenLayerEditor`) and `v4_editor.go`
+  are the v4-aware layer editors; callers reach them through
+  `pipeline.EditLayerAtPath`. They refuse edits owned by an included
+  fragment (`config.edit.include-owned`) and change nothing on refusal.
+- `editor_add.go` / `editor_remove.go` are the legacy node editors, built on
+  `editor_helpers.go`: `parseConfigDocument`, `findMappingValue`,
+  `findTopLevelSequence`, `findEntrySequence`, `removeMappingKey`,
+  `ensureMappingSequence`, `writeConfigDocument`.
+- Follow the same shape for new editors: read bytes, parse, ensure the
+  mapping, locate nodes, mutate, write. Treat `os.ErrNotExist` as a no-op for
   remove operations.
 
 ## TUI Conventions (Bubble Tea)
@@ -288,18 +315,29 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 
 | File | Responsibility |
 |---|---|
-| `app.go` | `Model`, `Update`, `View`, top-level key handling |
+| `app.go` | `NewModel`, `Update`, `View`, `handleKey` |
+| `keys.go` | `keyMap`: every binding and its help text |
 | `state.go` | `Model` fields, `row`, `pane`, glyph/status logic |
-| `actions.go` | Snapshot loading, catalog loading, tea.Cmd factories |
+| `actions.go` | Snapshot loading (`loadSnapshot`/`readSnapshot`), `buildRows`, tea.Cmd factories |
+| `requests.go` | `requestGeneration` bookkeeping for async results |
 | `modal.go` | Per-scope toggle modal (`paneToggleModal`) |
+| `harness.go` / `init.go` | `H` harness modal and first-run harness selection |
+| `migration.go` | Startup v4 migration prompt |
+| `edit_config.go` / `editor_process.go` | `E` config picker and `$EDITOR` lifecycle |
+| `discovery.go` | Hosted Marketplace discovery rows |
+| `diagnostics.go` | `e` errors/warnings view |
+| `bundle_tree*.go` | `enter` file browser for cached resource files |
 | `tabs.go` | Scope / Registry / Status tab switching + per-tab state |
-| `tree.go` | Section tree for the current tab |
-| `flatitems.go` | Flattens the tree into the rendered list |
+| `tree.go` / `flatitems.go` | Section tree and its flattened rendered list |
 | `list.go` / `detail.go` | Left and right panes |
-| `badges.go` | G/P/L/X origin badges next to each row |
-| `footer.go` / `help.go` | Keybinding footer and help overlay |
-| `overlay.go` | Centers the toggle modal on top of the base screen |
+| `badges.go` | `G`/`P`/`L`/`R`/`P-` origin badges next to each row |
+| `footer.go` / `help.go` | Footer hint line and `?` overlay, rendered from `keyMap` |
+| `overlay.go` | Centers modals on top of the base screen |
+| `sanitize.go` / `terminal*.go` | Untrusted-text sanitizing, terminal size and restore guard |
 | `theme.go` | lipgloss styles |
+
+`docs/tui-product-contract.md` describes the intended TUI behavior; the
+`tui-*` capabilities under `openspec/specs/` are normative once they exist.
 
 ### Message flow for a config-writing toggle
 
@@ -325,13 +363,15 @@ Each tab keeps its own cursor/offset/filter/fold state in
 restores incoming state. Any new per-tab concern goes into
 `tabViewState`, not the top-level `Model`.
 
-### Refresh token pattern
+### Request generation pattern
 
-Background catalog refreshes (`refreshLoadedMsg`) carry a
-`refreshToken`. `Update` ignores results whose token doesn't match
-`m.refreshToken`. This prevents a stale async git fetch from
-overwriting a newer user-triggered reload. Preserve this pattern when
-adding async work.
+Async results (`snapshotLoadedMsg`, `refreshLoadedMsg`, detail and
+Marketplace discovery loads) carry a `requestGeneration` issued by
+`m.beginRequest(kind)`. `Update` drops a result unless
+`m.acceptsRequest(kind, msg.generation)` matches the active generation for
+that kind (`requests.go`). This prevents a stale background fetch from
+overwriting a newer user-triggered reload. New async work gets a
+`requestKind` and follows the same pattern.
 
 ### UX for selecting skills across scopes and registries
 
@@ -357,30 +397,40 @@ them independently. When designing new flows:
 
 ### Adding a new keybinding
 
-1. Add the key handler branch in `app.go handleKey` (or the
-   appropriate `handle*Key` for a specific pane).
-2. Update `help.go` and `footer.go` so the key is discoverable.
+1. Add a `key.Binding` with help text to `keyMap` in `keys.go`; the footer
+   and `?` overlay render from it.
+2. Add the handler branch in `app.go` `handleKey` (or the pane-specific
+   handler it dispatches to).
 3. Write a test in `internal/tui/*_test.go` using `NewModel` and
    `Update(tea.KeyMsg{...})`. Mock file I/O with the `swap*` helpers in
    `toggle_flow_test.go` if the keybinding writes configs.
+4. Update `site/docs/reference/tui.md`, and add or extend a journey under
+   `tools/tui-qa` when the key changes a user-visible flow.
 
 ## CLI Conventions (Cobra)
 
-Every subcommand lives in its own file in `cmd/agent-marketplace/` and
-exposes `newFooCmd() *cobra.Command`. `main.go` registers them.
+Each subcommand exposes `newFooCmd() *cobra.Command`, usually in its own
+file in `cmd/agent-marketplace/` (`newRemoveCmd` lives in `main.go`).
+`main.go` registers them. A new command or flag needs a behavioral test
+witness, or `TestPublicCommandPathsHaveBehaviorTests` fails; new command
+tests open with the `isolateCommandTest` guard described in `AGENTS.md`.
 
 ### Subcommand responsibilities
 
 | Command | Writes dependency state? | Triggers sync? |
 |---|---|---|
-| `list` | no | no |
-| `install <name>` / `install --tag` / `install --all [--registry URL]` | config and its layer lock in one transaction | yes |
+| `init` | new v4 user config only | no |
+| `list` / `search` | no | no |
+| `install <name>` / `--tag` / `--all` / `--from` / Marketplace locator | config and its layer lock in one transaction | yes |
 | `remove <name>` | yes, transactionally with its layer lock | yes |
-| `lock [--check|--upgrade]` | generated locks unless checking | no |
-| `sync` | stale writable locks unless locked/check/offline | yes |
-| `update [--bump]` | locks; config too when bump rewrites a ref | yes (from exact snapshots) |
-| `status` | no | no (consumes exact lock views) |
+| `lock [--check\|--upgrade]` | generated locks unless checking | no |
+| `sync` | stale writable locks unless `--locked`/`--check`/`--offline` | yes |
+| `update [--bump]` | locks; config too when bump rewrites a legacy ref | yes (from exact snapshots) |
+| `migrate` | v2/v3 → v4 configs (and lock/v2 for proven Marketplace pins) | no |
+| `status` / `doctor` | no (`doctor --repair` adopts ownership state) | no |
 | `gc` | no | no (cleans only entries inactive in validated config and locks) |
+| `backup`, `deinit`, `telemetry`, `convert` | own state only | no |
+| `serve` | Marketplace operator state | no |
 | `tui` (or bare invocation on TTY) | config and its layer lock for mutations | on demand (`s`) |
 
 `remove` keeps machine- and repo-scoped occurrences distinct. If both copies
@@ -399,14 +449,18 @@ collision label is diagnostic text rather than part of the URL.
   `RunE`, so `cobra` prints nice usage errors.
 - `RunE` receives `cmd.OutOrStdout()` — use it, don't reach for
   `os.Stdout` directly. Tests rely on the writer injection.
-- For config-writing commands: load configs → mutate config file via
-  `internal/config` editors → call `runSync(io.Discard)` → print the
-  result.
+- For config-writing commands, call the `internal/pipeline` operation
+  (`Install`, `Remove`, `Update`) or wrap a layer edit in
+  `pipeline.MutateLayer` / `MutateConfigWithDependencies`, so the config and
+  its layer lock are staged and published in one dependency transaction, then
+  print the result.
 - Keep resource kind handling explicit. `--kind` accepts `skill`,
-  `command`, `subagent`, `hook`, or `mcp`; without it, ambiguous
-  same-name resources across kinds should error.
-- Never reimplement selection logic. Call `config.Merge`, pass to
-  `resolver.Resolve` with resource catalogs, consume the result.
+  `command`, `subagent`, `hook`, or `mcp` (plus `collection` for `list`,
+  `search`, and `remove`); without it, ambiguous same-name resources across
+  kinds should error.
+- Never reimplement selection logic. Go through `pipeline.Resolve` (which
+  loads effective config, merges layers, and calls `resolver.Resolve`) and
+  consume the result.
 
 ### When to add a CLI command vs a TUI keybinding
 
@@ -440,8 +494,10 @@ The guide owns the probe contracts, coverage gaps, image/release policy,
 required merge gate, fixture trust boundaries, and artifact diagnostics;
 do not duplicate that policy here or in always-loaded project guidance.
 
-For local verification, use `make harness-compat-check` and
-`make harness-compat-config`. Neither invokes vendor CLIs. Native executables
+For local verification, `make validate-e2e` runs every configuration
+compatibility scenario together with E2E; run `make harness-compat-check` or
+`make harness-compat-config` separately only when debugging those gates.
+None of them invokes vendor CLIs. Native executables
 and containers run only in GitHub Actions, with no model credentials or
 model turns; synchronization must never grant real workspace trust.
 
@@ -494,8 +550,8 @@ For journey coverage or an already-built test binary, read the
 
 ### Unit tests
 
-- `internal/config/editor_test.go` — round-trip YAML editing,
-  comment preservation, idempotency.
+- `internal/config/editor_test.go`, `layer_editor_test.go` — round-trip
+  YAML editing (legacy and v4), comment preservation, idempotency.
 - `internal/resolver/resolver_test.go` — selection rules, collisions,
   inheritance, local overrides.
 - `internal/tui/*_test.go` — construct `Model` directly, feed
@@ -511,8 +567,9 @@ config edit → rendered state).
 
 The key tools there:
 
-- `swapCloneOrPull`, `swapDiscoverSkills`, `swapLoadGlobalConfig`,
-  `swapLoadRepoConfig`, `swapLoadLocalConfig` — swap package-level
+- `swapCloneOrPull`, `swapDiscoverSkills` (`actions_test.go`) and
+  `swapLoadOrgConfig`, `swapLoadGlobalConfig`, `swapLoadRepoConfig`,
+  `swapLoadLocalConfig` (`toggle_flow_test.go`) — swap package-level
   function vars for deterministic test fixtures.
 - `config.LoadConfigFromPath` / `LoadLocalConfigFromPath` — load from
   an explicit path so tests don't read `~/.agents/config.yaml`.
@@ -526,8 +583,8 @@ restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) {
     return config.LoadConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
 })
 defer restoreRepo()
-// ... mock catalogs via swapDiscoverSkills
-snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+// ... swapLoadOrgConfig/swapLoadGlobalConfig, mock catalogs via swapDiscoverSkills
+snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 ```
 
 Never let tests reach the real `~/.agents/` or `~/.cache/` — always
@@ -579,25 +636,19 @@ function of `rows` — if rows are right, render is right.
 
 ### "Catalog load takes forever on TUI startup"
 
-`loadCatalogsForTUI` skips `cloneOrPull` when the cache is warm, then
-triggers a background refresh (`refreshAfterLoad=true`). If startup is
-slow, check that the warm-cache detection in that function still
-matches the `skill.DiscoverSkills` expectations for your new registry
-type.
-
-### "Pre-commit hook fails on `make lint`"
-
-`go fmt` modified files in place. Re-stage (`git add`) and commit
-again. The hook is not buggy — it's telling you to commit formatted
-code.
+`loadCatalogsForTUI` calls `catalog.LoadRegistries` in cached mode, which
+skips `cloneOrPull` for warm cache entries and reports `RefreshAfterLoad`
+(`internal/catalog/loader.go`); the TUI then starts a background
+`refreshSnapshot`. If startup is slow, check that the warm-cache detection
+there still matches discovery for your new registry type.
 
 ## What Not To Do
 
-- Don't re-derive selection logic in the TUI or a new subcommand. Call
-  `resolver.Resolve`.
+- Don't re-derive selection logic in the TUI or a new subcommand. Go
+  through `pipeline.Resolve`.
 - Don't edit YAML by re-marshaling `Config` structs. You'll drop
-  comments. Use the `internal/config/editor.go` helpers or add a new
-  one that follows the same node-level pattern.
+  comments. Use the layer editor (`pipeline.EditLayerAtPath`) or the
+  `internal/config/editor_helpers.go` node helpers.
 - Don't add a CLI command that duplicates a TUI-only flow. Either
   factor the shared logic into `internal/` first, or keep it
   TUI-only.

@@ -252,7 +252,7 @@ agent-marketplace sync [flags]
 | `--offline` | boolean | no | `false` | Uses only trusted local Git and Marketplace caches and never contacts a remote endpoint; lock behavior is the same as `--locked`. Cached revocation data may be stale. |
 | `--allow-revoked` | exact Marketplace revision; repeatable | no | none | Allows one revoked pin for this run: `marketplace/registry/kind/name@sha256:<64 lowercase hex>`. Cannot be combined with `--check`. |
 | `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories. The mandatory safety backups of shared configuration files still happen. |
-| `--strict` | boolean | no | `false` | Turns "selected but not found" and "found but failed to load" warnings into errors. |
+| `--strict` | boolean | no | `false` | Fails on unresolved selections ("selected but not found", "found but failed to load") and on unmet prerequisites. |
 | `--prune-stale` | boolean | no | `false` | After catalogs load successfully, removes direct, non-required selections that no longer exist from configuration, then syncs again. Cannot be combined with `--locked` or `--offline`. |
 | `-v`, `--verbose` | boolean | no | `false` | Prints affected files per target and malformed-resource details instead of only the summary. |
 
@@ -319,7 +319,7 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `LOCAL REGISTRIES` | Registry entries declared in repository-personal configuration. |
 | `ORPHANED FILES` | Generated files that a sync would remove. |
 | `NAME COLLISIONS` | Registry overlap and resource-name collision diagnostics. |
-| `UNMET REQUIREMENTS` | Advisory resource prerequisites and install hints. |
+| `UNMET REQUIREMENTS` | Advisory [resource prerequisites](./resource-prerequisites.md) and install hints. |
 | `WARNINGS` | Configuration and resolution warnings, with a remediation hint where one exists. |
 | `DRIFT` | `In sync`, the number of files to write and remove, or `Unknown (exact registry view incomplete)`. |
 | `ERRORS` | Configuration, catalog, or drift-inspection failures. |
@@ -671,9 +671,9 @@ The script is written to standard output.
 
 | Status | Condition |
 |---:|---|
-| `0` | The command succeeded. Warnings, such as a missing target set for `list`, unmet advisory prerequisites, or non-blocking compatibility findings, do not change this status. |
+| `0` | The command succeeded. Warnings, such as a missing target set for `list`, unmet advisory [prerequisites](./resource-prerequisites.md), or non-blocking compatibility findings, do not change this status. |
 | `1` | Argument validation, configuration loading, registry access, resolution, conversion, materialization, repair, backup, or filesystem work returned an error. |
 | `1` | `sync --check` found drift, or `lock --check` found a lock that would change. |
-| `1` | `sync --strict` found a selected resource that was missing or malformed. |
+| `1` | `sync --strict` found a selected resource that was missing or malformed, or an unmet prerequisite. |
 
 The CLI defines no other numeric statuses. Argument and runtime errors are printed to standard error. Reports and normal results are printed to standard output.

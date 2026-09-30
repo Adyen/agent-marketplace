@@ -21,6 +21,7 @@ registries: []
 	}
 }
 
+// spec: config-layering/v2-and-v3-roots-declare-marketplace-entries
 func TestV3MarketplaceRejectsDevelopmentAliasesEvenWithOtherConfigErrors(t *testing.T) {
 	data := []byte(`apiVersion: agent-marketplace/v2
 harnesses:

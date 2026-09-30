@@ -86,6 +86,7 @@ func TestStrictDecodeRejectsUnsafeOrAmbiguousYAML(t *testing.T) {
 	}
 }
 
+// spec: acquisition-lock-codec/registry-input-order-does-not-change-emitted-bytes
 func TestNormalizeEncodeDeterministic(t *testing.T) {
 	doc := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://B.example/r.git", Ref: "z", Commit: mustOID(t, sha1a)}, {URL: "https://a.example/r.git", Ref: "a", Commit: mustOID(t, sha1a)}}}
 	first, err := Encode(doc)
@@ -99,6 +100,7 @@ func TestNormalizeEncodeDeterministic(t *testing.T) {
 	}
 }
 
+// spec: acquisition-lock-codec/emitted-bytes-decode-to-the-normalized-document
 func TestEncodeSizeBoundary(t *testing.T) {
 	const prefix = "apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries:\n  - url: https://example.com/repo\n    ref: "
 	const suffix = "\n    commit: " + sha1a + "\n"

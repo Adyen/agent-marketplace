@@ -521,9 +521,6 @@ func verifyExactGitSnapshotWithContext(ctx context.Context, path string, oid Git
 		}
 		return fmt.Errorf("%w: worktree differs from exact commit: %v", ErrExactGitSnapshotUntrusted, err)
 	}
-	if err := validateExactGitTree(path); err != nil {
-		return fmt.Errorf("%w: %v", ErrExactGitSnapshotUntrusted, err)
-	}
 	return nil
 }
 
@@ -747,38 +744,6 @@ func gitBlobOID(algorithm string, reader io.Reader, size int64) (string, error) 
 		return "", fmt.Errorf("%w: read %d bytes, expected %d", errGitBlobSizeMismatch, copied, size)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func validateExactGitTree(root string) error {
-	rootAbs, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return err
-	}
-	return filepath.WalkDir(rootAbs, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			return nil
-		}
-		resolved, err := filepath.EvalSymlinks(path)
-		if err != nil {
-			return fmt.Errorf("symlink %q cannot be resolved", path)
-		}
-		resolvedAbs, err := filepath.Abs(resolved)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(rootAbs, resolvedAbs)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("symlink %q escapes snapshot", path)
-		}
-		return nil
-	})
 }
 
 func AcquireExactGitNamespaceLease() (func(), error) {

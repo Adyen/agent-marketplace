@@ -51,6 +51,7 @@ func TestMarketplaceExclusionMatchesExactOptionalPins(t *testing.T) {
 	}
 }
 
+// spec: config-layering/marketplace-entries-are-validated
 func TestValidateMarketplaceEntries(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -147,6 +148,7 @@ func TestValidateMarketplaceEntries(t *testing.T) {
 	}
 }
 
+// spec: config-layering/duplicate-and-reserved-marketplace-aliases-are-rejected
 func TestValidateMarketplaceEntriesRejectsDuplicateAndReservedAliases(t *testing.T) {
 	entries := []MarketplaceEntry{
 		{URL: "https://one.example", InstanceID: "one", Alias: "shared"},
@@ -166,6 +168,7 @@ func TestValidateMarketplaceEntriesRejectsDuplicateAndReservedAliases(t *testing
 	}
 }
 
+// spec: config-layering/layered-alias-accepted-for-one-endpoint-identity
 func TestValidateMarketplaceEntriesAllowsLayeredAliasForSameIdentity(t *testing.T) {
 	entries := []MarketplaceEntry{
 		{URL: "HTTPS://MARKET.example/base/", InstanceID: "instance", Alias: "public", Source: RepoCommitted},
@@ -184,6 +187,7 @@ func TestValidateMarketplaceEntriesAllowsLayeredAliasForSameIdentity(t *testing.
 	}
 }
 
+// spec: config-layering/provisional-instance-entry-defers-to-a-verified-layered-instance
 func TestValidateMarketplaceEntriesTreatsAProvisionalInstanceAsUnknown(t *testing.T) {
 	organization := MarketplaceEntry{URL: "https://market.example", InstanceID: lockfile.ProvisionalMarketplaceInstanceID, Alias: "org", Source: Organization}
 	for _, tc := range []struct {
@@ -214,6 +218,7 @@ func TestValidateMarketplaceEntriesTreatsAProvisionalInstanceAsUnknown(t *testin
 	}
 }
 
+// spec: config-layering/unsafe-identity-and-endpoint-fields-are-rejected
 func TestValidateMarketplaceEntriesRejectsUnsafeIdentityAndEndpointFields(t *testing.T) {
 	for _, entry := range []MarketplaceEntry{
 		{URL: "http://market.example?token=secret", InstanceID: "instance"},
@@ -233,6 +238,7 @@ func TestValidateMarketplaceEntriesRejectsUnsafeIdentityAndEndpointFields(t *tes
 	}
 }
 
+// spec: config-layering/marketplace-url-allowlist
 func TestValidateMarketplaceURLs(t *testing.T) {
 	entries := []MarketplaceEntry{
 		{URL: "https://market.example.com/skills"},
@@ -247,8 +253,9 @@ func TestValidateMarketplaceURLs(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected blocked URL error, got nil")
 	}
-	if !strings.Contains(err.Error(), "evil.example.com") {
-		t.Fatalf("expected error to mention evil.example.com, got %v", err)
+	var blocked *MarketplaceURLBlockedError
+	if !errors.As(err, &blocked) || len(blocked.BlockedURLs) != 1 || !strings.Contains(blocked.BlockedURLs[0], "evil.example.com") {
+		t.Fatalf("error = %#v, want *MarketplaceURLBlockedError listing only evil.example.com", err)
 	}
 
 	if err := ValidateMarketplaceURLs(entries, nil); err != nil {
@@ -260,6 +267,7 @@ func TestValidateMarketplaceURLs(t *testing.T) {
 	}
 }
 
+// spec: config-layering/v2-and-v3-roots-declare-marketplace-entries
 func TestMarketplaceConfigRoundTrip(t *testing.T) {
 	cfg := Config{
 		APIVersion: APIVersionV2,
@@ -325,6 +333,30 @@ func TestMarketplaceMerge(t *testing.T) {
 	}
 }
 
+// spec: config-layering/layered-merge-retains-per-layer-provenance-and-first-set-allowlist
+func TestMergeLayersKeepsMarketplaceProvenanceAndFirstAllowlist(t *testing.T) {
+	orgAllow := []string{`org\.example`}
+	userAllow := []string{`.*`}
+	merged := MergeLayers([]Layer{
+		{Source: Organization, Config: &Config{AllowedMarketplaces: &orgAllow, Marketplaces: []MarketplaceEntry{{URL: "https://org.example", InstanceID: "org"}}}},
+		{Source: UserPersonal, Config: &Config{AllowedMarketplaces: &userAllow, Marketplaces: []MarketplaceEntry{{URL: "https://user.example", InstanceID: "user"}}}},
+		{Source: RepoCommitted, Config: &Config{Marketplaces: []MarketplaceEntry{{URL: "https://repo.example", InstanceID: "repo"}}}},
+	})
+
+	var got []string
+	for _, entry := range merged.Marketplaces {
+		got = append(got, entry.InstanceID+"@"+entry.Source.String())
+	}
+	want := []string{"org@" + Organization.String(), "user@" + UserPersonal.String(), "repo@" + RepoCommitted.String()}
+	if !slices.Equal(got, want) {
+		t.Fatalf("merged marketplaces = %v, want %v", got, want)
+	}
+	if merged.AllowedMarketplaces == nil || !slices.Equal(*merged.AllowedMarketplaces, orgAllow) {
+		t.Fatalf("AllowedMarketplaces = %v, want organization allowlist %v", merged.AllowedMarketplaces, orgAllow)
+	}
+}
+
+// spec: config-layering/personal-local-duplicate-aliases-are-rejected-at-load
 func TestLocalMarketplaceValidationCoversAllEntries(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.local.yaml")
 	writeFile(t, path, "marketplaces:\n  - url: https://one.example\n    instance_id: one\n    alias: shared\n  - url: https://two.example\n    instance_id: two\n    alias: shared\n")

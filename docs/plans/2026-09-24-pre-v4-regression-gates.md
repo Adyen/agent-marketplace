@@ -41,7 +41,7 @@ These findings are based on source and PR inspection. No test suite or timing ba
 
 ## 3. Ownership and implementation boundaries
 
-Follow [CODING_STANDARDS.md](../../CODING_STANDARDS.md), [the precedence contract](../PRECEDENCE.md), and [the TUI product contract](../tui-product-contract.md).
+Follow [CODING_STANDARDS.md](../../CODING_STANDARDS.md) and [the TUI product contract](../tui-product-contract.md).
 
 | Layer | Responsibility |
 |---|---|

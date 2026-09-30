@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: resource-prerequisites/unrelated-unmet-prerequisite-is-omitted
 func TestFilterInstallWarnings(t *testing.T) {
 	t.Parallel()
 
@@ -49,6 +50,7 @@ func TestFilterInstallWarnings(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/collection-member-prerequisite-is-reported
 func TestExpandInstalledCollectionResourcesKeepsMemberWarnings(t *testing.T) {
 	t.Parallel()
 

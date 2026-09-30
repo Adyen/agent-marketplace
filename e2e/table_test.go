@@ -2440,6 +2440,8 @@ registries:
 				FilesAbsent: []string{"/root/.factory/skills/not-this-skill"}},
 		},
 	},
+	// spec: resource-prerequisites/install-finds-an-unmet-prerequisite
+	// spec: resource-prerequisites/commands-succeed-with-unmet-prerequisites
 	{
 		Name: "mcp/install_skill_prerequisite",
 		Desc: "Given a skill that requires an unselected MCP server, When the skill is installed, Then installation warns without selecting or materializing the MCP prerequisite",
@@ -2481,6 +2483,7 @@ registries:
 			},
 		},
 	},
+	// spec: resource-prerequisites/prerequisite-is-explicitly-excluded
 	{
 		Name: "mcp/install_skill_preserves_excluded_prerequisite",
 		Desc: "Given an explicitly excluded MCP prerequisite, When the requiring skill is installed, Then installation warns and preserves the explicit exclusion",
@@ -2521,6 +2524,10 @@ registries:
 			},
 		},
 	},
+	// spec: resource-prerequisites/sync-reports-without-mutation
+	// spec: resource-prerequisites/status-and-doctor-diagnostics
+	// spec: resource-prerequisites/commands-succeed-with-unmet-prerequisites
+	// spec: resource-prerequisites/strict-sync-rejects-unmet-prerequisites
 	{
 		Name: "mcp/sync_reports_unmet_prerequisite",
 		Desc: "Given a selected skill with an unselected MCP prerequisite, When sync runs, Then the skill is materialized and a remediable warning is emitted",
@@ -2564,9 +2571,132 @@ registries:
 				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
 			},
 			{
+				Args:           []string{"sync", "--strict"},
+				AssertExitCode: intPtr(1),
+				OutContains:    []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+			},
+			{
+				Args:           []string{"sync", "--strict", "--check"},
+				AssertExitCode: intPtr(1),
+				OutContains:    []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+			},
+			{
 				Args:        []string{"doctor"},
 				MustPass:    true,
 				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+			},
+		},
+	},
+	// spec: resource-prerequisites/strict-sync-succeeds-when-satisfied
+	{
+		Name: "mcp/sync_strict_succeeds_when_prerequisite_selected",
+		Desc: "Given a selected skill whose MCP prerequisite is also selected, When sync --strict runs, Then it emits no unmet-prerequisite warning and passes",
+		Registries: []RegistryDef{
+			{
+				Name: "mcp-prerequisite-satisfied",
+				Skills: []Skill{
+					{Name: "smoke-test-kb", Requires: []string{"mcp:genai-atlassian"}},
+				},
+				MCPServers: []MCPServer{
+					{Name: "genai-atlassian", Command: "npx", Args: []string{"-y", "@example/atlassian"}},
+				},
+			},
+		},
+		GlobalCfg: `
+harnesses:
+  - factory
+registries:
+  - url: {{REG:mcp-prerequisite-satisfied}}
+    ref: main
+    skills:
+      include:
+        - smoke-test-kb
+    mcp:
+      include:
+        - genai-atlassian
+`,
+		Steps: []Step{
+			{
+				Args:           []string{"sync", "--strict"},
+				MustPass:       true,
+				OutNotContains: []string{"but it is not selected"},
+				FilesExist:     []string{"/root/.factory/skills/smoke-test-kb/SKILL.md", "/root/.factory/mcp.json"},
+			},
+		},
+	},
+	// spec: resource-prerequisites/invalid-item-among-valid-items
+	// spec: resource-prerequisites/non-list-requires-value
+	{
+		Name: "mcp/invalid_prerequisite_items_warn_in_inspection",
+		Desc: "Given a loadable registry skill mixing a valid prerequisite with malformed items and another with a non-list requires, When list --from and doctor run, Then catalog.requires.invalid warnings name the resources and sources while the valid item still parses",
+		Registries: []RegistryDef{
+			{
+				Name: "mcp-prerequisite-invalid",
+				Files: map[string]string{
+					"skills/broken-prereq/SKILL.md": "---\nname: broken-prereq\ndescription: Mixed prerequisites\nmetadata:\n  requires:\n    - mcp:docs-server\n    - kind: all\n      name: everything\n    - kind: 42\n      name: secret-user:secret-token@example.com\n---\nbody\n",
+					"skills/scalar-prereq/SKILL.md": "---\nname: scalar-prereq\ndescription: Non-list prerequisites\nmetadata:\n  requires: secret-user:secret-token@example.com\n---\nbody\n",
+				},
+				Skills: []Skill{{Name: "sibling"}},
+			},
+		},
+		GlobalCfg: `
+harnesses:
+  - factory
+registries:
+  - url: {{REG:mcp-prerequisite-invalid}}
+    ref: main
+    skills:
+      include:
+        - sibling
+`,
+		Steps: []Step{
+			{
+				Args:           []string{"list", "--from", "{{REG:mcp-prerequisite-invalid}}", "--ref", "main"},
+				MustPass:       true,
+				OutContains:    []string{"catalog.requires.invalid", "broken-prereq", "scalar-prereq", "SKILL.md", "sibling"},
+				OutNotContains: []string{"secret-token", "secret-user"},
+			},
+			{
+				Args:       []string{"sync"},
+				MustPass:   true,
+				FilesExist: []string{"/root/.factory/skills/sibling/SKILL.md"},
+			},
+			{
+				Args:           []string{"doctor"},
+				MustPass:       true,
+				OutContains:    []string{"catalog.requires.invalid", "broken-prereq", "scalar-prereq", "SKILL.md"},
+				OutNotContains: []string{"secret-token", "secret-user"},
+			},
+		},
+	},
+	// spec: resource-prerequisites/malformed-item-stays-silent
+	{
+		Name: "mcp/sync_malformed_prerequisite_stays_silent",
+		Desc: "Given a selected skill whose only prerequisites are malformed, When sync runs, Then the skill is materialized and no prerequisite warning is printed",
+		Registries: []RegistryDef{
+			{
+				Name: "mcp-prerequisite-malformed",
+				Skills: []Skill{
+					{Name: "smoke-test-kb", Requires: []string{"weird:thing", `"mcp: "`, "collection:team-bundle"}},
+				},
+			},
+		},
+		GlobalCfg: `
+harnesses:
+  - factory
+registries:
+  - url: {{REG:mcp-prerequisite-malformed}}
+    ref: main
+    skills:
+      include:
+        - smoke-test-kb
+`,
+		Steps: []Step{
+			{
+				Args:           []string{"sync"},
+				MustPass:       true,
+				OutNotContains: []string{"but it is not selected"},
+				FilesExist:     []string{"/root/.factory/skills/smoke-test-kb/SKILL.md"},
 			},
 		},
 	},
