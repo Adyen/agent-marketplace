@@ -3,7 +3,9 @@ package testutil
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 )
 
 // IsolatedHome creates a temporary directory, sets HOME to it, and removes it
@@ -20,6 +22,21 @@ func IsolatedHome() (home string, cleanup func() error, err error) {
 		if home == "" {
 			return nil
 		}
+		// Tests that shell out to the Go toolchain (cross-compile build
+		// checks) populate a fresh module cache under the isolated HOME, and
+		// module-cache directories are read-only. Restore write permission
+		// only on directories so os.RemoveAll can traverse them; removing a
+		// file needs only its parent directory to be writable, and chmod on
+		// a symlink would modify its target outside the isolated home.
+		_ = filepath.WalkDir(home, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				_ = os.Chmod(path, 0o700)
+			}
+			return nil
+		})
 		if err := os.RemoveAll(home); err != nil {
 			return fmt.Errorf("remove isolated test home: %w", err)
 		}

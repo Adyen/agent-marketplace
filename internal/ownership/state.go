@@ -56,6 +56,12 @@ type Entry struct {
 	ValueDigest string `json:"value_digest"`
 	// Resource is the marketplace resource name that produced the entry.
 	Resource string `json:"resource"`
+	// SourceDigest optionally records the version-1 source-hook fingerprint
+	// ("sha256:" + hex) that binds an owned native hook entry to the source
+	// hook a different client version selected. Only hook entries may carry
+	// it, and only as a sha256 digest, so no hook payload can ride along in
+	// this field. Absent means "no source proof", never a guess.
+	SourceDigest string `json:"source_digest,omitempty"`
 }
 
 // EntryID is the identity half of an [Entry], with no value digest, so a caller
@@ -202,6 +208,9 @@ func validateEntry(e Entry) error {
 	}
 	if !digestPattern.MatchString(e.ValueDigest) {
 		return fmt.Errorf("%w: value digest is not a sha256 digest", ErrUnsafeStateValue)
+	}
+	if e.SourceDigest != "" && (e.Kind != KindHook || !digestPattern.MatchString(e.SourceDigest)) {
+		return fmt.Errorf("%w: source digest must be a sha256 digest on a hook entry", ErrUnsafeStateValue)
 	}
 	return nil
 }
@@ -525,6 +534,19 @@ func (p Proof) OwnedIDs() []EntryID {
 func (p Proof) Resource(id EntryID) (string, bool) {
 	e, ok := p.entries[id.mapKey()]
 	return e.Resource, ok
+}
+
+// SourceDigest returns the version-1 source-hook fingerprint recorded for an
+// owned hook identity. It is read-only evidence: a missing entry or a missing
+// digest returns ("", false) and proves nothing. It does not widen the
+// ownership decision — [Classify] remains the only authority on whether the
+// entry is ours and unchanged.
+func (p Proof) SourceDigest(id EntryID) (string, bool) {
+	e, ok := p.entries[id.mapKey()]
+	if !ok || e.SourceDigest == "" {
+		return "", false
+	}
+	return e.SourceDigest, true
 }
 
 // appendLengthPrefixed adds a length-prefixed string to buf. It is used to build

@@ -752,6 +752,11 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			Kind: w.skill.Kind, Name: name, Target: key.target, MachineScope: key.machineScope,
 		})
 	}
+	// Read-only native hook inspections are shared per output key: one
+	// cached refusal must fail every hook of the same target closed before
+	// any legacy mutation, and one cached entry set keeps classification
+	// consistent within the run.
+	nativeInspections := map[outputKey]*nativeHookInspection{}
 
 	for index, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
@@ -876,6 +881,30 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 						)
 					}
 				}
+			}
+		}
+
+		// Legacy tolerance for ownership-proven native hooks: a selected hook
+		// the durable record proves is already completely present in the
+		// target's documented native file — matching source fingerprint and
+		// ownership resource identity, never raw legacy rule equality — is
+		// satisfied and must not be re-emitted into the legacy file. A
+		// malformed or unsafe native file fails this whole (target, scope)
+		// closed before any legacy mutation.
+		if resourceKind == ir.KindHook && !harness.IsInstallationAdapterTarget(w.target) {
+			ins := nativeHookInspectionFor(nativeInspections, key, repoRoot)
+			if ins.err != nil {
+				blocked.blockResource(key, w)
+				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+				allDiags = append(allDiags, ownedAggregateCodedDiag(key, ins.root, "", ins.err, diag.CodeHookNativeToleranceRefused))
+				continue
+			}
+			if len(ins.entries) > 0 || ins.proof.OwnedCount() > 0 {
+				legacyRoot := repoRoot
+				if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
+					legacyRoot = roots.For(w.machineScope, repoRoot)
+				}
+				result.Artifacts = suppressNativeSatisfiedHookRules(w.skill, key, legacyRoot, ins, result.Artifacts)
 			}
 		}
 

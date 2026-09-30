@@ -450,6 +450,8 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		MarketplaceAlias:        entry.Alias,
 		MarketplaceRegistryID:   pin.RegistryID,
 		MarketplaceResourceName: pin.Name,
+		MarketplaceDigest:       pin.Digest,
+		MarketplaceAcquisition:  config.MarketplaceAcquisitionMirror,
 		InstalledName:           pin.InstalledName,
 		Revoked:                 rev.Revocation != nil,
 	}
@@ -643,7 +645,9 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		CatalogKey: marketplaceCatalogKey(entry, pin), Harnesses: targetSet,
 		IsMarketplace: true, MarketplaceURL: entry.URL, MarketplaceInstanceID: entry.InstanceID,
 		MarketplaceAlias: entry.Alias, MarketplaceRegistryID: pin.RegistryID,
-		MarketplaceResourceName: pin.Name, InstalledName: pin.InstalledName, Revoked: rev.Revocation != nil,
+		MarketplaceResourceName: pin.Name, MarketplaceDigest: pin.Digest,
+		MarketplaceAcquisition: config.MarketplaceAcquisitionIndexOnly,
+		InstalledName:          pin.InstalledName, Revoked: rev.Revocation != nil,
 	}
 	artifact.Ref = pin.RegistryCommit
 	if err := enforceMarketplaceUse(rev, policy); err != nil {
@@ -810,6 +814,9 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
 	artifact.Path = resourcePath
+	// The reconstructed staging area holds the exact resource source tree;
+	// record it so compatibility fingerprints can read the same bytes.
+	artifact.StagedSourceDir = filepath.Dir(resourcePath)
 	return artifact, ca, nil
 }
 

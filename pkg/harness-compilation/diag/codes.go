@@ -287,7 +287,14 @@ const (
 	CodeMaterializeCodexAggregateUnpatchable     = "materialize.codex.aggregate-unpatchable"       // A Codex aggregate entry uses a native form that cannot be safely patched
 	CodeMaterializeDestinationOverlap            = "materialize.destination.overlap"               // Resolved Codex destinations overlap in a way that cannot be safely coalesced
 	CodeMaterializeCodexTrustReview              = "materialize.codex.trust-review"                // Repository Codex hooks or MCP configuration changed and may require trust review
-	CodeMaterializeCodexTrustReviewPending       = "materialize.codex.trust-review-pending"        // A check found a pending repository Codex change without mutating files or trust state
+	// CodeHookNativeToleranceRefused is the read-only native-hook inspection
+	// refusal: a documented native hook file was malformed, ambiguous, or
+	// unsafe, so the affected target fails closed and keeps its existing
+	// native and legacy bytes. It sits with the materialization codes because
+	// internal/materialize emits it, but it writes nothing — the refusal is
+	// the whole outcome.
+	CodeHookNativeToleranceRefused         = "hook.native-tolerance-refused"          // A native hook file could not be inspected safely; the affected target fails closed
+	CodeMaterializeCodexTrustReviewPending = "materialize.codex.trust-review-pending" // A check found a pending repository Codex change without mutating files or trust state
 
 	// Devin DOCTOR warning codes (work package D11). Both are warnings and
 	// NEITHER blocks anything: "Sync does not require a Devin binary. `doctor`
@@ -641,6 +648,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMaterializeCodexTrustReview, SeverityWarning, "Repository Codex hooks or MCP configuration changed and may require project trust review", "Review or re-approve the repository in Codex before using the changed configuration"},
 	{CodeMaterializeCodexTrustReviewPending, SeverityWarning, "A check found a pending repository Codex change without mutating files or trust state", "A later sync may require reviewing or re-approving the repository in Codex"},
 	{CodeMaterializeDevinSymlinkRequired, SeverityError, "Devin skills and subagents must be symlinks, so file-copy materialization was refused for this target", "Devin has no real-file fallback; set the materialization mode back to symlink for the Devin harness"},
+	{CodeHookNativeToleranceRefused, SeverityError, "A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found", "Fix the reported native hook file by hand; no native or legacy hook bytes were changed"},
 	{CodeDoctorRepairFailed, SeverityError, "An authorized repair action failed; the aggregate was left exactly as found", "This is the partial repair failure outcome and exits 1; re-running the repair is safe"},
 }
 

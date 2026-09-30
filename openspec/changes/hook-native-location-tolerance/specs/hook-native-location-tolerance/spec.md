@@ -36,7 +36,9 @@ The client SHALL not recreate a legacy entry or report a pending legacy write fo
 
 ### Requirement: Source-hook fingerprints are stable across client versions
 
-The compatibility fingerprint SHALL be `sha256` over a versioned, length-prefixed sequence of UTF-8 fields in this order: the literal `hook-source/v1`, stable source identity, installed name, harness target, scope (`repository` or `machine`), source-layout-relative path of the original hook definition, its exact bytes, and a lexically sorted list of regular files in the definition's directory tree other than the definition itself. Each listed file contributes its slash-separated path relative to that directory, permission bits, and exact bytes. Stable source identity SHALL distinguish a registry occurrence or exact Marketplace resource revision; local directories use the canonical configured source identity. Paths SHALL be validated against traversal or symlink escape before reading. If a field is unavailable or the file set cannot be read safely within existing source-size limits, no fingerprint matches. The digest, not the underlying content, SHALL be stored with the native hook's ownership entry. Both the legacy reader and the future native writer SHALL use the same version-1 algorithm and shared golden vectors.
+For source trees with original definition files, the compatibility fingerprint SHALL be `sha256` over a versioned, length-prefixed sequence of byte fields in this order: the literal `hook-source/v1`, stable source identity, installed name, harness target, scope (`repository` or `machine`), source-layout-relative path of the original hook definition, its exact bytes, and a lexically sorted list of regular files in the definition's directory tree other than the definition itself. Each listed file contributes its slash-separated path relative to that directory, permission bits, and exact bytes. Stable source identity SHALL distinguish a registry occurrence or exact Marketplace resource revision; local directories use the canonical configured source identity. Paths SHALL be validated against traversal or symlink escape before reading. If a field is unavailable or the file set cannot be read safely within existing source-size limits, no fingerprint matches.
+
+For a verified Marketplace mirror artifact whose original definition files are unavailable, the fingerprint SHALL instead be `sha256` over a separate length-prefixed sequence: the literal `hook-source/mirror/v1`, Marketplace instance ID, registry ID, resource kind and name, verified resource-revision content digest, installed name, harness target, and scope. The mirror branch MUST use the same verified content digest that pins the artifact; an absent, stale, or unverified digest SHALL NOT establish proof. The two version prefixes SHALL be disjoint so a mirror digest cannot match a source-tree digest. The digest, not payload or support-file content, SHALL be stored with the native hook's ownership entry. Both the legacy reader and future native writer SHALL use shared, independently authored golden vectors for each branch.
 
 #### Scenario: Source and support changes invalidate the fingerprint
 
@@ -47,6 +49,17 @@ The compatibility fingerprint SHALL be `sha256` over a versioned, length-prefixe
 
 - **WHEN** two supported clients ingest the same original source files but represent native event or tool provenance differently in memory
 - **THEN** their version-1 fingerprints MUST match the same shared golden vector
+
+#### Scenario: Verified mirror revision uses its own fingerprint
+
+- **WHEN** a selected hook comes from a verified Marketplace mirror resource whose original definition is unavailable, and its native entry has clean ownership proof carrying a fingerprint for that exact resource revision
+- **THEN** the legacy-writing client MUST recognize that entry without recreating legacy output
+- **AND** the mirror fingerprint MUST differ from any source-tree fingerprint, even if other identity fields match
+
+#### Scenario: Unverified or changed mirror revision never satisfies
+
+- **WHEN** a mirror artifact's content digest is missing, unverified, or differs from the revision recorded with a native entry
+- **THEN** the legacy-writing client MUST NOT suppress legacy output or adopt that native entry
 
 ### Requirement: Incomplete proof does not suppress legacy output
 
