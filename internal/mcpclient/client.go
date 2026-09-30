@@ -236,19 +236,47 @@ func (s *stderrCapture) String() string {
 }
 
 func redactSecrets(s string, secrets []string) string {
-	ordered := slices.Clone(secrets)
-	slices.SortFunc(ordered, func(a, b string) int {
-		if len(a) != len(b) {
-			return len(b) - len(a)
+	type span struct{ start, end int }
+	var spans []span
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
 		}
-		return strings.Compare(a, b)
-	})
-	for _, secret := range ordered {
-		if secret != "" {
-			s = strings.ReplaceAll(s, secret, "<redacted>")
+		for off := 0; off <= len(s); {
+			i := strings.Index(s[off:], secret)
+			if i < 0 {
+				break
+			}
+			spans = append(spans, span{off + i, off + i + len(secret)})
+			off += i + 1
 		}
 	}
-	return s
+	if len(spans) == 0 {
+		return s
+	}
+	slices.SortFunc(spans, func(a, b span) int { return a.start - b.start })
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+	emit := func(sp span) {
+		b.WriteString(s[last:sp.start])
+		b.WriteString("<redacted>")
+		last = sp.end
+	}
+	cur := spans[0]
+	for _, sp := range spans[1:] {
+		if sp.start <= cur.end {
+			if sp.end > cur.end {
+				cur.end = sp.end
+			}
+			continue
+		}
+		emit(cur)
+		cur = sp
+	}
+	emit(cur)
+	b.WriteString(s[last:])
+	return b.String()
 }
 
 func (c *stdioClient) redact(s string) string {

@@ -659,6 +659,48 @@ func TestRedactSecretsLongestFirst(t *testing.T) {
 }
 
 // spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestRedactSecretsOverlappingNonContaining(t *testing.T) {
+	got := redactSecrets("denied ghp_abc123 rejected", []string{"ghp_abc", "abc123"})
+	if got != "denied <redacted> rejected" {
+		t.Fatalf("overlapping secrets left a tail: %q", got)
+	}
+	if strings.Contains(got, "ghp_") || strings.Contains(got, "abc") || strings.Contains(got, "123") {
+		t.Fatalf("secret material survived redaction: %q", got)
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestHTTPInitializeRejectionRedactsOverlappingSecrets(t *testing.T) {
+	t.Setenv("AM_OVERLAP_TOKEN", "abc123")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("denied ghp_abc123 rejected"))
+	}))
+	defer server.Close()
+
+	pool := NewPool(NewSchemaCache(t.TempDir()), 5*time.Second)
+	res := &codemode.Resource{Ref: "reg/mcp/remote", Kind: "mcp", Name: "remote", Registry: "reg", Assessment: "allow"}
+	res.SetOrigin(&codemode.Origin{Server: &codemode.ServerDef{
+		URL: server.URL,
+		Headers: map[string]string{
+			"Authorization": "ghp_abc",
+			"X-Token":       "${AM_OVERLAP_TOKEN}",
+		},
+	}})
+	_, err := pool.Tools(context.Background(), "remote", res)
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, "ghp_") || strings.Contains(ce.Message, "abc123") || strings.Contains(ce.Message, "123") {
+		t.Fatalf("overlapping secret tail leaked in start failure: %q", ce.Message)
+	}
+	if !strings.Contains(ce.Message, "denied <redacted> rejected") {
+		t.Fatalf("rejection lost its diagnostic: %q", ce.Message)
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
 func TestHTTPInitializeRejectionRedactsLongestSecret(t *testing.T) {
 	short := "prefix"
 	long := "prefixLONG"
