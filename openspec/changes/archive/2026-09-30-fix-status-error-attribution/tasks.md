@@ -12,4 +12,4 @@
 ## 3. Delivery
 
 - [x] 3.1 Review and commit implementation locally without pushing.
-- [ ] 3.2 `openspec archive fix-status-error-attribution --yes`
+- [x] 3.2 `openspec archive fix-status-error-attribution --yes`
