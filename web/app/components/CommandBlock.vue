@@ -30,7 +30,7 @@ const isCopied = computed(() => copied.value === 'command')
     <!-- Filled, unbordered, prompt-prefixed: a command is output to be taken,
          not a field to be typed in, so it must not borrow input chrome. -->
     <div data-testid="command-container" class="grid h-12 grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded border border-(--am-color-code-border) bg-(--am-color-code-bg)">
-      <pre data-testid="command-scroll" class="command-scroll m-0 flex h-full min-w-0 items-center gap-3 overflow-x-auto overflow-y-hidden px-4 pt-3 pb-1 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)" tabindex="0" aria-label="Install command"><span class="select-none font-mono text-sm leading-6 text-dimmed" aria-hidden="true">$</span><code
+      <pre data-testid="command-scroll" class="command-scroll m-0 flex h-full min-w-0 items-center gap-3 overflow-x-auto overflow-y-hidden pl-4 pr-10 py-2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)" tabindex="0" aria-label="Install command"><span class="select-none font-mono text-sm leading-6 text-dimmed" aria-hidden="true">$</span><code
           v-if="available"
           data-testid="command-text"
           class="whitespace-pre font-mono text-sm leading-6 text-(--am-color-code-text)"
@@ -57,6 +57,8 @@ const isCopied = computed(() => copied.value === 'command')
 .command-scroll {
   scrollbar-color: transparent transparent;
   scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
 }
 
 .command-scroll:hover,

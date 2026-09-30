@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import CopyButton from '~/components/CopyButton.vue'
 import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
@@ -34,13 +34,12 @@ type ContentMode = 'preview' | 'raw'
 type TechnicalEntry = { label: string, value: string, copyable?: boolean }
 type CollectionMember = { kind: ResourceKind, name: string, description?: string, to: string }
 
+const DESCRIPTION_PREVIEW_LENGTH = 320
+
 const props = defineProps<Props>()
 const activeTab = ref<Tab>(props.initialTab || 'content')
 const contentMode = ref<ContentMode>('preview')
-const descriptionElement = ref<HTMLElement | null>(null)
 const descriptionExpanded = ref(false)
-const descriptionOverflows = ref(false)
-let descriptionResizeObserver: ResizeObserver | undefined
 const { copied, copy } = useCopyText()
 
 const listItem = computed<ResourceListItem>(() => ({
@@ -64,6 +63,15 @@ const unavailableReason = computed(() => {
     case 'no-artifact': return 'This revision is available for inspection only and cannot be installed from this Marketplace.'
     default: return commandAvailable.value ? '' : 'An install command is not available for this revision.'
   }
+})
+const descriptionCharacters = computed(() => Array.from(props.resource.description ?? ''))
+const descriptionOverflows = computed(() => descriptionCharacters.value.length > DESCRIPTION_PREVIEW_LENGTH)
+const visibleDescription = computed(() => {
+  if (descriptionExpanded.value || !descriptionOverflows.value) return props.resource.description
+  const preview = descriptionCharacters.value.slice(0, DESCRIPTION_PREVIEW_LENGTH).join('')
+  const boundary = Math.max(preview.lastIndexOf(' '), preview.lastIndexOf('\n'), preview.lastIndexOf('\t'))
+  const text = boundary >= DESCRIPTION_PREVIEW_LENGTH * 0.8 ? preview.slice(0, boundary) : preview
+  return `${text.trimEnd()}…`
 })
 const selectedIsCurrent = computed(() => props.resource.content_digest === (props.currentRevisionDigest || props.resource.content_digest))
 const currentRevision = computed(() => props.currentRevisionDigest || props.resource.content_digest)
@@ -204,33 +212,9 @@ function selectTab(tab: Tab) {
   activeTab.value = tab
 }
 
-function measureDescriptionOverflow() {
-  const element = descriptionElement.value
-  if (!element) {
-    descriptionOverflows.value = false
-    return
-  }
-  const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight)
-  descriptionOverflows.value = Number.isFinite(lineHeight) && element.scrollHeight > lineHeight * 3 + 1
-  if (!descriptionOverflows.value) descriptionExpanded.value = false
-}
-
-onMounted(async () => {
-  await nextTick()
-  measureDescriptionOverflow()
-  if (typeof ResizeObserver !== 'undefined' && descriptionElement.value) {
-    descriptionResizeObserver = new ResizeObserver(measureDescriptionOverflow)
-    descriptionResizeObserver.observe(descriptionElement.value)
-  }
-})
-
-watch(() => props.resource.description, async () => {
+watch(() => props.resource.description, () => {
   descriptionExpanded.value = false
-  await nextTick()
-  measureDescriptionOverflow()
 })
-
-onBeforeUnmount(() => descriptionResizeObserver?.disconnect())
 
 function formatValue(value: unknown): string {
   if (typeof value === 'string') return value
@@ -253,7 +237,7 @@ function formatValue(value: unknown): string {
         <span data-testid="resource-kind-badge" class="inline-flex shrink-0 rounded border border-default bg-[var(--am-color-bg-subtle)] px-2 py-0.5 text-xs font-medium text-muted">{{ kindLabel(kind) }}</span>
       </div>
       <div v-if="resource.description" class="mt-2">
-        <p id="resource-description" ref="descriptionElement" data-testid="resource-description" class="whitespace-pre-wrap break-words text-sm leading-6 text-toned sm:text-base" :class="{ 'line-clamp-3': !descriptionExpanded }">{{ resource.description }}</p>
+        <p id="resource-description" data-testid="resource-description" class="whitespace-pre-wrap break-words text-sm leading-6 text-toned sm:text-base">{{ visibleDescription }}</p>
         <button v-if="descriptionOverflows" type="button" class="mt-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-controls="resource-description" :aria-expanded="descriptionExpanded" @click="descriptionExpanded = !descriptionExpanded">{{ descriptionExpanded ? 'Show less' : 'Read more' }}</button>
       </div>
       <div data-testid="revision-row" class="mt-4 flex flex-col items-start gap-3 text-sm sm:flex-row sm:gap-9">
