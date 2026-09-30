@@ -23,13 +23,13 @@ withDefaults(defineProps<Props>(), {
 <template>
   <button
     type="button"
-    class="inline-flex min-h-8 shrink-0 items-center rounded text-xs font-semibold text-[var(--am-color-text-primary)] transition-colors disabled:text-[var(--am-color-text-muted)] disabled:shadow-none motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--am-color-action-focus-ring)]"
+    class="inline-flex min-h-8 shrink-0 items-center rounded text-xs font-semibold transition-colors disabled:shadow-none motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)"
     :class="[
-      disabled ? 'cursor-not-allowed' : 'cursor-pointer',
+      disabled ? 'cursor-not-allowed text-(--am-color-text-muted)' : 'cursor-pointer text-(--am-color-text-primary)',
       iconOnly ? 'size-8 justify-center p-0' : 'gap-1.5 px-2',
       variant === 'ghost'
-        ? 'border-0 bg-transparent hover:bg-[var(--am-color-bg-hover)] disabled:bg-transparent'
-        : 'border border-[var(--am-color-border-default)] bg-[var(--am-color-bg-subtle)] hover:border-[var(--am-color-border-strong)] hover:bg-[var(--am-color-bg-hover)] disabled:border-[var(--am-color-border-default)] disabled:bg-[var(--am-color-bg-subtle)]',
+        ? ['border-0 bg-transparent', disabled ? '' : 'hover:bg-(--am-color-bg-hover)']
+        : ['border border-(--am-color-border-default) bg-(--am-color-bg-subtle)', disabled ? '' : 'hover:border-(--am-color-border-strong) hover:bg-(--am-color-bg-hover)'],
     ]"
     :aria-label="copied ? copiedLabel : copyLabel"
     :title="copied ? copiedLabel : copyLabel"

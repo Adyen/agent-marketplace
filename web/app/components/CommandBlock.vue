@@ -29,14 +29,14 @@ const isCopied = computed(() => copied.value === 'command')
   <div>
     <!-- Filled, unbordered, prompt-prefixed: a command is output to be taken,
          not a field to be typed in, so it must not borrow input chrome. -->
-    <div data-testid="command-container" class="grid h-12 grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded border border-[var(--am-color-code-border)] bg-[var(--am-color-code-bg)]">
-      <pre data-testid="command-scroll" class="command-scroll m-0 flex h-full min-w-0 items-center gap-3 overflow-x-auto overflow-y-hidden px-4 pt-3 pb-1 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--am-color-action-focus-ring)]" tabindex="0" aria-label="Install command"><span class="select-none font-mono text-sm leading-6 text-dimmed" aria-hidden="true">$</span><code
+    <div data-testid="command-container" class="grid h-12 grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded border border-(--am-color-code-border) bg-(--am-color-code-bg)">
+      <pre data-testid="command-scroll" class="command-scroll m-0 flex h-full min-w-0 items-center gap-3 overflow-x-auto overflow-y-hidden px-4 pt-3 pb-1 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)" tabindex="0" aria-label="Install command"><span class="select-none font-mono text-sm leading-6 text-dimmed" aria-hidden="true">$</span><code
           v-if="available"
           data-testid="command-text"
-          class="whitespace-pre font-mono text-sm leading-6 text-[var(--am-color-code-text)]"
+          class="whitespace-pre font-mono text-sm leading-6 text-(--am-color-code-text)"
         >{{ command }}</code><span v-else class="font-mono text-sm leading-6 text-dimmed">command unavailable</span></pre>
 
-      <div data-testid="command-copy-area" class="flex items-center border-l border-[var(--am-color-code-border)] bg-[var(--am-color-bg-subtle)] p-2">
+      <div data-testid="command-copy-area" class="flex items-center border-l border-(--am-color-code-border) bg-(--am-color-bg-subtle) p-2">
         <CopyButton
           class="border-primary bg-primary px-3 text-inverted hover:border-primary hover:bg-primary"
           :copied="isCopied"
