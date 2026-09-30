@@ -11,3 +11,4 @@
 ## 3. Verification
 
 - [x] 3.1 Run affected tests and `make spec-check`; verify strict validation and traceability pass
+- [x] 3.2 Replace the custom scroll observer and timer with native CSS scrollbar styling

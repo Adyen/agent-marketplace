@@ -69,7 +69,7 @@ describe('ResourceDetailView', () => {
     expect(revisionRow.get('button[aria-label^="Copy revision"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="installation-panel"]').text()).not.toContain('exact version')
     expect(wrapper.get('#installation-heading').text()).toBe('Install')
-    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').text()).toBe('Copy command')
+    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').text()).toBe('Copy')
     expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
     expect(wrapper.get('button[aria-label^="Copy revision"]').exists()).toBe(true)
     const setupLink = wrapper.get('a[href="/docs/"]')

@@ -12,7 +12,7 @@ type Props = {
 
 withDefaults(defineProps<Props>(), {
   copied: false,
-  copyText: 'Copy command',
+  copyText: 'Copy',
   copiedText: 'Copied',
   disabled: false,
   iconOnly: false,
