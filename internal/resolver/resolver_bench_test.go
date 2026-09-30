@@ -99,6 +99,46 @@ func BenchmarkResolveCrossScopeCollisions(b *testing.B) {
 	}
 }
 
+// BenchmarkResolveCrossScopeCollectionMembers covers required and optional
+// collection members whose installed names repository sources also select,
+// including the reselection a required collection member triggers when a
+// direct repository selection would shadow it.
+func BenchmarkResolveCrossScopeCollectionMembers(b *testing.B) {
+	const skills = 50
+	members := make([]ir.CollectionMember, skills)
+	names := make([]string, skills)
+	for i := range members {
+		names[i] = fmt.Sprintf("skill-%02d", i)
+		members[i] = ir.CollectionMember{Name: names[i], Kind: ir.KindSkill}
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "git@example.com:organization.git", Ref: "main", Source: config.Organization, Required: true, Collections: ks("bundle-organization")},
+		{URL: "git@example.com:user.git", Ref: "main", Source: config.UserPersonal, Collections: ks("bundle-user")},
+		{URL: "git@example.com:organization.git", Ref: "main", Source: config.RepoCommitted, Skills: ks(names...)},
+		{URL: "git@example.com:another.git", Ref: "main", Source: config.RepoCommitted, Skills: ks(names...)},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := make(map[string][]catalog.Entry, len(cfg.Registries))
+	for _, source := range cfg.Registries {
+		name := sharedCollectionName(source.URL)
+		entries := make([]catalog.Entry, 0, skills+1)
+		for _, skillName := range names {
+			entries = append(entries, catalog.Entry{Kind: ir.KindSkill, Name: skillName, Path: "/cache/" + source.URL + "/" + skillName})
+		}
+		collection := ir.NewCollection(name, "", "", members, nil, nil, ir.SourceRef{})
+		catalogs[source.CatalogKey] = append(entries, catalog.Entry{Kind: ir.KindCollection, Name: name, Resource: collection})
+	}
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer slog.SetDefault(previousLogger)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Resolve(cfg, catalogs, nil)
+	}
+}
+
 func BenchmarkResolveRequirements(b *testing.B) {
 	const skillCount = 100
 	url := "git@example.com:requirements.git"

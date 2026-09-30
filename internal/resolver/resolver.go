@@ -856,40 +856,72 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		slog.Debug("resolver marketplace occurrences built", "marketplaces", len(cfg.Marketplaces), "errors", len(mpErrs))
 	}
 
-	// Phase 2: Pick winners (deduplicate, detect collisions).
-	winners, pickErrs := pickWinners(occurrencesByName)
-	errs = append(errs, pickErrs...)
-	slog.Debug("resolver winners picked", "winners", len(winners), "collision_warnings", len(pickErrs))
+	// Phases 2-4 select the resolved artifacts. requiredWinners names required
+	// machine-scope artifacts that phase 2 must know but cannot see.
+	selectArtifacts := func(requiredWinners map[resourceSelection]skillOccurrence) ([]ResolvedArtifact, []error) {
+		// Phase 2: Pick winners (deduplicate, detect collisions).
+		winners, errs := pickWinnersReporting(occurrencesByName, true, requiredWinners)
+		slog.Debug("resolver winners picked", "winners", len(winners), "collision_warnings", len(errs))
 
-	resolved := make([]ResolvedArtifact, 0, len(winners))
-	for _, winner := range winners {
-		resolved = append(resolved, winner.resolved)
+		resolved := make([]ResolvedArtifact, 0, len(winners))
+		for _, winner := range winners {
+			resolved = append(resolved, winner.resolved)
+		}
+
+		// Phase 3: Apply cross-layer excludes and local selections.
+		resolved = applyCrossLayerExcludes(resolved, cfg.Registries)
+
+		var localErrs []error
+		resolved, localErrs = applyLocalResources(resolved, localSelections, localExcludes, excludeAllKinds, cfg, catalogs, ro.resources, targetSet)
+		errs = append(errs, localErrs...)
+		preExcludeResolved := append([]ResolvedArtifact(nil), resolved...)
+
+		resolved = applyPersonalExcludes(resolved, localExcludes, excludeAllKinds)
+		errs = append(errs, validateCrossLayerExcludes(preExcludeResolved, cfg.Registries, localCfg)...)
+
+		// Phase 4: Collections are virtual resources — they do not
+		// materialize to disk. Expand each resolved KindCollection into its
+		// member resources, carrying a Via annotation, and remove the
+		// collection artifacts themselves. This replaces the pre-resolver
+		// collection.Expand call, giving collections the same collision
+		// detection and disambiguation as skills/commands/etc.
+		var expandErrs []error
+		resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
+		return resolved, append(errs, expandErrs...)
 	}
 
-	// Phase 3: Apply cross-layer excludes and local selections.
-	resolved = applyCrossLayerExcludes(resolved, cfg.Registries)
-
-	var localErrs []error
-	resolved, localErrs = applyLocalResources(resolved, localSelections, localExcludes, excludeAllKinds, cfg, catalogs, ro.resources, targetSet)
-	errs = append(errs, localErrs...)
-	preExcludeResolved := append([]ResolvedArtifact(nil), resolved...)
-
-	resolved = applyPersonalExcludes(resolved, localExcludes, excludeAllKinds)
-	errs = append(errs, validateCrossLayerExcludes(preExcludeResolved, cfg.Registries, localCfg)...)
-
-	// Collections are virtual resources — they do not materialize to disk.
-	// Expand each resolved KindCollection into its member resources, carrying
-	// a Via annotation, and remove the collection artifacts themselves.
-	// This replaces the pre-resolver collection.Expand call, giving
-	// collections the same collision detection and disambiguation as
-	// skills/commands/etc.
-	var expandErrs []error
-	resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
-	errs = append(errs, expandErrs...)
+	resolved, selectErrs := selectArtifacts(nil)
+	// A required machine-scope artifact that only collection expansion
+	// revealed was unknown when phase 2 chose repository winners. If a direct
+	// repository selection shadows one, select again with it known so the
+	// repository winner is chosen as for a direct required selection. Only
+	// repository-scope choices can change: repository layers cannot suppress
+	// machine-scope artifacts, and collection members are admitted per scope.
+	shadows := findRequiredShadows(resolved)
+	if shadows.direct {
+		slog.Debug("resolver reselecting with required collection members", "names", len(shadows.winners))
+		resolved, selectErrs = selectArtifacts(shadows.winners)
+		shadows = findRequiredShadows(resolved)
+	}
+	// Repository collection members are never phase-2 occurrences, so any
+	// that still shadow a required artifact are removed here.
+	resolved, selectErrs = shadows.remove(resolved, selectErrs)
+	errs = append(errs, selectErrs...)
 	errs = append(errs, validateRequirements(resolved)...)
+	logNameCollisions(errs)
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
 
 	return resolved, errs
+}
+
+// logNameCollisions logs each name collision in the final resolution once.
+func logNameCollisions(errs []error) {
+	for _, err := range errs {
+		var warning *NameCollisionWarning
+		if errors.As(err, &warning) {
+			slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
+		}
+	}
 }
 
 type CatalogArtifact struct {
@@ -951,7 +983,7 @@ func ResolveCatalogView(cfg *config.Config, catalogs map[string][]catalog.Entry,
 		}
 	}
 
-	winners, _ := pickWinnersReporting(occurrences, false)
+	winners, _ := pickWinnersReporting(occurrences, false, nil)
 	for _, winner := range winners {
 		artifact := winner.resolved
 		selection := resourceSelection{kind: artifact.Kind, name: strings.TrimSpace(artifact.Name)}
@@ -1168,13 +1200,15 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 	var errs []error
 	expanded := false
 
-	// Build a set of directly-resolved resource names (kind:name) from
-	// non-collection artifacts. Collection members that are already directly
-	// resolved should NOT be duplicated — the direct resolution takes precedence.
-	directResolved := make(map[string]struct{})
+	// Build the set of installed names each install scope already selects
+	// directly. A collection member already selected in its own scope is not
+	// duplicated — the direct resolution takes precedence. Machine and
+	// repository scopes install separately, so a selection in one scope never
+	// displaces a member in the other.
+	directResolved := make(map[scopedSelection]struct{})
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
-			directResolved[ViaMapKey(artifact.Kind, artifact.Name)] = struct{}{}
+			directResolved[newScopedSelection(artifact.Kind, artifact.Name, artifact.Source)] = struct{}{}
 		}
 	}
 
@@ -1280,12 +1314,10 @@ func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, [
 			order += len(artifacts)
 		}
 		orderToIndex[order] = i
-		url := a.RegistryURL
-		if a.IsMarketplace {
-			url = a.MarketplaceURL
-		}
+		occ := artifactOccurrence(a)
+		occ.order = order
 		key := resourceSelection{kind: a.Kind, name: a.Name}
-		occurrences[key] = append(occurrences[key], skillOccurrence{resolved: a, url: url, order: order})
+		occurrences[key] = append(occurrences[key], occ)
 	}
 	if len(occurrences) == 0 {
 		return artifacts, nil
@@ -1312,8 +1344,9 @@ func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, [
 // another collection. Reporting the miss then is a false positive, and with an
 // all-required candidate set it would fail a sync for a resource that is
 // present. This mirrors the cross-registry suppression already applied to
-// collection lookups themselves in buildOccurrences.
-func suppressResolvedMemberMisses(errs []error, resolvedNames map[string]struct{}) []error {
+// collection lookups themselves in buildOccurrences. A name resolved in either
+// install scope counts as present.
+func suppressResolvedMemberMisses(errs []error, resolvedNames map[scopedSelection]struct{}) []error {
 	if len(errs) == 0 || len(resolvedNames) == 0 {
 		return errs
 	}
@@ -1321,7 +1354,7 @@ func suppressResolvedMemberMisses(errs []error, resolvedNames map[string]struct{
 	for _, err := range errs {
 		var snf *SelectedNotFoundError
 		if errors.As(err, &snf) && snf.Via != "" && !HasAdditiveSources(snf.Kind) {
-			if _, resolved := resolvedNames[ViaMapKey(snf.Kind, snf.Name)]; resolved {
+			if resolvedInEitherScope(resolvedNames, snf.Kind, snf.Name) {
 				slog.Debug("collection member miss suppressed: resolved elsewhere",
 					"kind", snf.Kind.String(), "name", snf.Name, "via", snf.Via)
 				continue
@@ -1492,7 +1525,7 @@ func expandMembersRecursive(
 	resources map[string]map[string]ir.Resource,
 	malformed *malformedIndex,
 	allCollectionsByName map[string][]collectionCandidate,
-	directResolved map[string]struct{},
+	directResolved map[scopedSelection]struct{},
 	excludedResources map[string]struct{},
 	localExcludes resourceSelections,
 	collectionExcludeAll bool,
@@ -1763,10 +1796,12 @@ func expandMembersRecursive(
 			continue
 		}
 
-		// Skip if already directly resolved (direct resolution takes
-		// precedence over collection expansion; no duplicates).
+		// Skip if already resolved in the member's install scope (direct
+		// resolution takes precedence over collection expansion; no
+		// duplicates).
 		memberKey := ViaMapKey(member.Kind, memberName)
-		if _, direct := directResolved[memberKey]; direct && !HasAdditiveSources(member.Kind) {
+		scopedKey := newScopedSelection(member.Kind, memberName, memberSource)
+		if _, direct := directResolved[scopedKey]; direct && !HasAdditiveSources(member.Kind) {
 			continue
 		}
 
@@ -1778,7 +1813,7 @@ func expandMembersRecursive(
 		}
 
 		// Mark as resolved to prevent duplicates from other collections.
-		directResolved[memberKey] = struct{}{}
+		directResolved[scopedKey] = struct{}{}
 
 		*out = append(*out, ResolvedArtifact{
 			Entry:          attachResource(catEntry, resources, memberCatalogKey),
@@ -2321,10 +2356,15 @@ func groupHookSourceVersions(occurrences []skillOccurrence) [][]skillOccurrence 
 // pickWinners deduplicates occurrences and detects multi-registry collisions.
 // Returns the winning occurrences in insertion order.
 func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]skillOccurrence, []error) {
-	return pickWinnersReporting(occurrencesByName, true)
+	return pickWinnersReporting(occurrencesByName, true, nil)
 }
 
-func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurrence, reportCollisions bool) ([]skillOccurrence, []error) {
+// pickWinnersReporting picks the winners for each installed name.
+// requiredWinners supplies required machine-scope resources that are not
+// among the occurrences, such as collection members, so repository
+// occurrences that would shadow them are removed exactly as they are for a
+// direct required selection.
+func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurrence, reportCollisions bool, requiredWinners map[resourceSelection]skillOccurrence) ([]skillOccurrence, []error) {
 	var errs []error
 	winners := make([]skillOccurrence, 0, len(occurrencesByName))
 
@@ -2349,12 +2389,27 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 				winner := pickCollisionWinner(group)
 				winners = append(winners, winner)
 				if len(group) > 1 && reportCollisions {
-					warning := newNameCollisionWarning(winner, group)
-					slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-					errs = append(errs, warning)
+					errs = append(errs, newNameCollisionWarning(winner, group))
 				}
 			}
 			continue
+		}
+
+		// A required machine-scope winner also owns its installed name in the
+		// repository harness. Repository occurrences from other sources are
+		// removed before the repository winner is chosen, so a repository copy
+		// from the required source wins whatever the other sources are named.
+		if required, ok := requiredShadowOwner(deduped, requiredWinners, key); ok {
+			var shadowing []skillOccurrence
+			requiredSource := logicalRegistryKey(required)
+			deduped, _ = partitionRequiredShadows(deduped, requiredSource)
+			occurrences, shadowing = partitionRequiredShadows(occurrences, requiredSource)
+			if reportCollisions && len(shadowing) > 0 {
+				errs = append(errs, newNameCollisionWarning(required, append([]skillOccurrence{required}, shadowing...)))
+			}
+			if len(deduped) == 0 {
+				continue
+			}
 		}
 
 		if len(deduped) > 1 && scopesSeparated(deduped) && hasMultiRegistryCollision(deduped) {
@@ -2365,37 +2420,17 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 			if reportCollisions {
 				originals = groupByScope(occurrences)
 			}
-			machineWinner := pickCollisionWinner(groups[0])
-			repoWinner := pickCollisionWinner(groups[1])
-			suppressRepo := machineWinner.resolved.Required && !repoWinner.resolved.Required &&
-				logicalRegistryKey(machineWinner) != logicalRegistryKey(repoWinner)
 			for i, group := range groups {
-				if i == 1 && suppressRepo {
-					// A non-required repository resource must not shadow a
-					// required machine resource in the repository harness.
-					if reportCollisions {
-						participants := append([]skillOccurrence{machineWinner}, originals[i]...)
-						warning := newNameCollisionWarning(machineWinner, participants)
-						slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-						errs = append(errs, warning)
-					}
-					continue
-				}
 				if hasMultiRegistryCollision(group) {
 					winner := pickCollisionWinner(group)
 					winners = append(winners, winner)
 					if reportCollisions {
-						warning := newNameCollisionWarning(winner, originals[i])
-						slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-						errs = append(errs, warning)
+						errs = append(errs, newNameCollisionWarning(winner, originals[i]))
 					}
 				} else {
 					winners = append(winners, group...)
 					if reportCollisions && len(originals[i]) > 1 && pathsDiffer(originals[i]) {
-						winner := pickCollisionWinner(originals[i])
-						warning := newNameCollisionWarning(winner, originals[i])
-						slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-						errs = append(errs, warning)
+						errs = append(errs, newNameCollisionWarning(pickCollisionWinner(originals[i]), originals[i]))
 					}
 				}
 			}
@@ -2407,9 +2442,7 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 			// Precedence: required > higher source precedence > alphabetically-first URL.
 			winner := pickCollisionWinner(deduped)
 			if reportCollisions {
-				warning := newNameCollisionWarning(winner, occurrences)
-				slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-				errs = append(errs, warning)
+				errs = append(errs, newNameCollisionWarning(winner, occurrences))
 			}
 			winners = append(winners, winner)
 			continue
@@ -2431,10 +2464,7 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 			if reportCollisions {
 				for _, group := range groupByScope(occurrences) {
 					if len(group) > 1 && pathsDiffer(group) {
-						winner := pickCollisionWinner(group)
-						warning := newNameCollisionWarning(winner, group)
-						slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-						errs = append(errs, warning)
+						errs = append(errs, newNameCollisionWarning(pickCollisionWinner(group), group))
 					}
 				}
 			}
@@ -2447,10 +2477,7 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 			// only install one to the shared target directory.
 			winners = append(winners, deduped...)
 			if reportCollisions {
-				winner := pickCollisionWinner(deduped)
-				warning := newNameCollisionWarning(winner, occurrences)
-				slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-				errs = append(errs, warning)
+				errs = append(errs, newNameCollisionWarning(pickCollisionWinner(deduped), occurrences))
 			}
 		} else {
 			winners = append(winners, deduped[0])
@@ -2462,6 +2489,193 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 	})
 
 	return winners, errs
+}
+
+// requiredShadowOwner returns the required machine-scope resource that owns an
+// installed name when optional repository occurrences could shadow it: a known
+// one supplied by the caller, otherwise the machine-scope winner among
+// occurrences when it is required.
+func requiredShadowOwner(occurrences []skillOccurrence, known map[resourceSelection]skillOccurrence, key resourceSelection) (skillOccurrence, bool) {
+	hasRequiredMachine, hasOptionalRepository := false, false
+	for i := range occurrences {
+		hasRequiredMachine = hasRequiredMachine || isRequiredMachineArtifact(&occurrences[i].resolved)
+		hasOptionalRepository = hasOptionalRepository || isOptionalRepositoryArtifact(&occurrences[i].resolved)
+	}
+	if !hasOptionalRepository {
+		return skillOccurrence{}, false
+	}
+	if winner, ok := known[key]; ok {
+		return winner, true
+	}
+	if !hasRequiredMachine {
+		return skillOccurrence{}, false
+	}
+	// pickCollisionWinner prefers required occurrences, so the winner among
+	// machine occurrences is required.
+	machine := slices.DeleteFunc(slices.Clone(occurrences), func(occ skillOccurrence) bool {
+		return !occ.resolved.Source.IsMachineScope()
+	})
+	return pickCollisionWinner(machine), true
+}
+
+func isRequiredMachineArtifact(a *ResolvedArtifact) bool {
+	return a.Required && a.Source.IsMachineScope() && !HasAdditiveSources(a.Kind)
+}
+
+// isOptionalRepositoryArtifact reports whether a could shadow a required
+// machine-scope artifact: only optional repository-scope artifacts can.
+func isOptionalRepositoryArtifact(a *ResolvedArtifact) bool {
+	return !a.Required && !a.Source.IsMachineScope() && !HasAdditiveSources(a.Kind)
+}
+
+// shadowsRequired reports whether occ would shadow a required machine-scope
+// resource from the source identified by requiredSource: it is an optional
+// repository-scope resource from any other source.
+func shadowsRequired(occ skillOccurrence, requiredSource string) bool {
+	return isOptionalRepositoryArtifact(&occ.resolved) && logicalRegistryKey(occ) != requiredSource
+}
+
+// partitionRequiredShadows splits occurrences into those kept and those that
+// would shadow a required resource from requiredSource. It returns
+// occurrences unchanged when none do.
+func partitionRequiredShadows(occurrences []skillOccurrence, requiredSource string) (kept, shadowing []skillOccurrence) {
+	for i, occ := range occurrences {
+		if !shadowsRequired(occ, requiredSource) {
+			if shadowing != nil {
+				kept = append(kept, occ)
+			}
+			continue
+		}
+		if shadowing == nil {
+			kept = append(make([]skillOccurrence, 0, len(occurrences)-1), occurrences[:i]...)
+		}
+		shadowing = append(shadowing, occ)
+	}
+	if shadowing == nil {
+		return occurrences, nil
+	}
+	return kept, shadowing
+}
+
+// artifactOccurrence describes a resolved artifact the way collision
+// reporting and source identity expect.
+func artifactOccurrence(a ResolvedArtifact) skillOccurrence {
+	url := a.RegistryURL
+	if a.IsMarketplace {
+		url = a.MarketplaceURL
+	}
+	return skillOccurrence{resolved: a, url: url}
+}
+
+// requiredShadows records the resolved repository artifacts that would shadow
+// a required machine-scope artifact with the same kind and installed name.
+// Winner selection removes such artifacts only when it knows the required
+// artifact; collection expansion can reveal required artifacts and add
+// repository artifacts after winners are chosen.
+type requiredShadows struct {
+	// winners holds the required machine-scope artifact per shadowed name.
+	winners map[resourceSelection]skillOccurrence
+	// shadowing holds the indices of shadowing artifacts in ascending order.
+	shadowing []int
+	// direct reports whether any shadowing artifact is a direct selection,
+	// which winner selection would have removed had it known the winner.
+	direct bool
+}
+
+func findRequiredShadows(artifacts []ResolvedArtifact) requiredShadows {
+	var shadows requiredShadows
+	hasRequiredMachine, hasOptionalRepository := false, false
+	for i := range artifacts {
+		hasRequiredMachine = hasRequiredMachine || isRequiredMachineArtifact(&artifacts[i])
+		hasOptionalRepository = hasOptionalRepository || isOptionalRepositoryArtifact(&artifacts[i])
+	}
+	if !hasRequiredMachine || !hasOptionalRepository {
+		return shadows
+	}
+	// owners maps each installed name to its first required machine-scope
+	// artifact.
+	owners := make(map[resourceSelection]int)
+	for i := range artifacts {
+		if !isRequiredMachineArtifact(&artifacts[i]) {
+			continue
+		}
+		key := resourceSelection{kind: artifacts[i].Kind, name: strings.TrimSpace(artifacts[i].Name)}
+		if _, seen := owners[key]; !seen {
+			owners[key] = i
+		}
+	}
+	for i := range artifacts {
+		a := &artifacts[i]
+		if !isOptionalRepositoryArtifact(a) {
+			continue
+		}
+		key := resourceSelection{kind: a.Kind, name: strings.TrimSpace(a.Name)}
+		owner, ok := owners[key]
+		if !ok {
+			continue
+		}
+		winner := artifactOccurrence(artifacts[owner])
+		if !shadowsRequired(artifactOccurrence(*a), logicalRegistryKey(winner)) {
+			continue
+		}
+		if shadows.winners == nil {
+			shadows.winners = make(map[resourceSelection]skillOccurrence)
+		}
+		shadows.winners[key] = winner
+		shadows.shadowing = append(shadows.shadowing, i)
+		shadows.direct = shadows.direct || a.Via == ""
+	}
+	return shadows
+}
+
+// remove drops the shadowing artifacts and reports each suppressed source in
+// a name-collision warning won by the required artifact.
+func (s requiredShadows) remove(artifacts []ResolvedArtifact, warnings []error) ([]ResolvedArtifact, []error) {
+	if len(s.shadowing) == 0 {
+		return artifacts, warnings
+	}
+	kept := make([]ResolvedArtifact, 0, len(artifacts)-len(s.shadowing))
+	var order []resourceSelection
+	suppressed := make(map[resourceSelection][]skillOccurrence, len(s.winners))
+	next := 0
+	for i, a := range artifacts {
+		if next < len(s.shadowing) && s.shadowing[next] == i {
+			next++
+			key := resourceSelection{kind: a.Kind, name: strings.TrimSpace(a.Name)}
+			if _, seen := suppressed[key]; !seen {
+				order = append(order, key)
+			}
+			suppressed[key] = append(suppressed[key], artifactOccurrence(a))
+			slog.Debug("resolver suppressed repository shadow of required resource", "kind", a.Kind.String(), "name", a.Name, "registry", a.RegistryURL, "via", a.Via)
+			continue
+		}
+		kept = append(kept, a)
+	}
+	for _, key := range order {
+		winner := s.winners[key]
+		warnings = addNameCollision(warnings, newNameCollisionWarning(winner, append([]skillOccurrence{winner}, suppressed[key]...)))
+	}
+	return kept, warnings
+}
+
+// addNameCollision appends warning, or adds its runners-up to an earlier
+// warning that names the same winner for the same resource, so one resource
+// is reported once.
+func addNameCollision(warnings []error, warning *NameCollisionWarning) []error {
+	for _, err := range warnings {
+		existing, ok := err.(*NameCollisionWarning)
+		if !ok || existing.Kind != warning.Kind || existing.Name != warning.Name ||
+			existing.WinnerURL != warning.WinnerURL || existing.WinnerPath != warning.WinnerPath || existing.WinnerRef != warning.WinnerRef {
+			continue
+		}
+		for _, runnerUp := range warning.RunnersUp {
+			if !slices.Contains(existing.RunnersUp, runnerUp) {
+				existing.RunnersUp = append(existing.RunnersUp, runnerUp)
+			}
+		}
+		return warnings
+	}
+	return append(warnings, warning)
 }
 
 // harnessTargetsFromEntry converts the entry's Harnesses field (inherited or
@@ -2597,6 +2811,23 @@ func attachResource(e catalog.Entry, resources map[string]map[string]ir.Resource
 type resourceSelection struct {
 	kind ir.ResourceKind
 	name string
+}
+
+// scopedSelection identifies an installed name within one install scope.
+type scopedSelection struct {
+	resourceSelection
+	machine bool
+}
+
+func newScopedSelection(kind ir.ResourceKind, name string, source config.Source) scopedSelection {
+	return scopedSelection{resourceSelection{kind: kind, name: strings.TrimSpace(name)}, source.IsMachineScope()}
+}
+
+func resolvedInEitherScope(resolved map[scopedSelection]struct{}, kind ir.ResourceKind, name string) bool {
+	selection := resourceSelection{kind: kind, name: strings.TrimSpace(name)}
+	_, machine := resolved[scopedSelection{selection, true}]
+	_, repo := resolved[scopedSelection{selection, false}]
+	return machine || repo
 }
 
 type missingResource struct {
