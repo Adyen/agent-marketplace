@@ -15,7 +15,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -268,11 +267,33 @@ resources:
 		bindings:  make(map[string][]lockfile.GitRegistry),
 	}
 	_, _, _, err := prepareRuntimeLocks(context.Background(), t.TempDir(), "", lockMode{reuseInstall: reuse})
-	if err == nil || !marketplacelock.HasRequiredError([]error{err}) {
+	if err == nil || !pipeline.NeedsLockBootstrap([]error{err}) {
 		t.Fatalf("install commit without prepared transient state error = %v, want v4 Marketplace lock requirement", err)
 	}
 	if got := requests.Load(); got != 0 {
 		t.Fatalf("install commit cache-only revalidation made %d Marketplace requests", got)
+	}
+}
+
+func TestInstallCommitReuseKeepsUnrelatedMissingLockError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://example.test/a.git\n    ref: main\n")
+	reuse := &preparedInstallLocks{
+		documents: make(map[string]lockfile.Document),
+		lockPaths: map[config.Source]string{config.RepoCommitted: filepath.Join(t.TempDir(), "lock.yaml")},
+		bindings:  make(map[string][]lockfile.GitRegistry),
+	}
+	_, _, _, err := prepareRuntimeLocks(context.Background(), t.TempDir(), "", lockMode{reuseInstall: reuse})
+	var lockErr *pipeline.LockViewError
+	if !errors.As(err, &lockErr) || lockErr.Code != "lock.missing" {
+		t.Fatalf("install commit with an unrelated missing lock error = %v, want lock.missing", err)
 	}
 }
 
@@ -358,7 +379,7 @@ resources:
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
 
-	if err := runTUIDependencyLifecycle(context.Background(), repo, false); err != nil {
+	if err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
@@ -396,8 +417,12 @@ resources:
 	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := t.TempDir()
+	ws, err := pipeline.NewWorkspace(repo, "")
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
 	opts := pipeline.ResolveOptions{
-		RepoRoot: repo,
+		Workspace: ws,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,
@@ -423,6 +448,7 @@ resources:
 	}
 }
 
+// spec: deployed-acquisition-locks/selection-edit-reuses-organization-evidence
 func TestTransientOrganizationMarketplaceLockSurvivesSelectionConfigEdits(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -447,6 +473,7 @@ func TestTransientOrganizationMarketplaceLockSurvivesSelectionConfigEdits(t *tes
 	}
 }
 
+// spec: deployed-acquisition-locks/harness-change-reacquires-organization-evidence
 func TestTransientOrganizationMarketplaceLockReacquiresWhenTargetHarnessesChange(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -567,7 +594,7 @@ resources:
 	repo := t.TempDir()
 	repoPath := filepath.Join(repo, ".agents", "config.yaml")
 	opts := pipeline.ResolveOptions{
-		RepoRoot: repo,
+		Workspace: mustWorkspace(t, repo),
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,

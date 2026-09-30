@@ -20,7 +20,6 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
-	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -69,7 +68,7 @@ func TestRootConfigLoadingModes(t *testing.T) {
 				before := requests.Load()
 				ec := pipeline.LoadEffective(ctx, test.mode, opts, nil)
 				if test.wantMissing {
-					if !marketplacelock.HasRequiredError(ec.Errors) {
+					if !pipeline.NeedsLockBootstrap(ec.Errors) {
 						t.Fatalf("mode %d: want missing-lock error, got %v", test.mode, ec.Errors)
 					}
 				} else if err := errors.Join(ec.Errors...); err != nil {
@@ -90,14 +89,14 @@ func TestRootConfigLoadingModes(t *testing.T) {
 				{Offline: true},
 				{CatalogMode: catalog.LoadModeCachedNoFetch},
 			} {
-				resolveOpts.RepoRoot = repo
+				resolveOpts.Workspace = mustWorkspace(t, repo)
 				result := pipeline.Resolve(ctx, resolveOpts)
-				if !marketplacelock.HasRequiredError(result.Errors) {
+				if !pipeline.NeedsLockBootstrap(result.Errors) {
 					t.Fatalf("strict resolve reused warm cache: %v", result.Errors)
 				}
 			}
 			_, _, _, err := prepareRuntimeLocks(ctx, repo, repo, lockMode{check: true})
-			if !marketplacelock.HasRequiredError([]error{err}) {
+			if !pipeline.NeedsLockBootstrap([]error{err}) {
 				t.Fatalf("lock --check reused warm cache: %v", err)
 			}
 			if requests.Load() != before {

@@ -54,7 +54,7 @@ func BenchmarkNewShutdown(b *testing.B) {
 
 	srv := benchServer()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
@@ -68,7 +68,7 @@ func BenchmarkNewShutdown(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		state, err := ResolveTelemetryConfig(nil, user, "", "")
+		state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -91,14 +91,14 @@ func BenchmarkCounterAdd(b *testing.B) {
 
 	srv := benchServer()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -131,14 +131,14 @@ func BenchmarkHistogramRecord(b *testing.B) {
 
 	srv := benchServer()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -169,8 +169,8 @@ func BenchmarkRecordInventory(b *testing.B) {
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 	srv := benchServer()
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -225,14 +225,14 @@ func BenchmarkStartSpanCommandPath(b *testing.B) {
 
 	srv := benchServer()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -269,14 +269,14 @@ func BenchmarkStartSpan(b *testing.B) {
 
 	srv := benchServer()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		b.Fatal(err)
 	}

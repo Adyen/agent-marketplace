@@ -29,7 +29,7 @@ func TestUnsetOrganizationConfigPathDoesNotResolveToTheRealFileInTests(t *testin
 func TestUnsetOrganizationConfigPathLoadsAnAbsentOrganizationLayer(t *testing.T) {
 	dir := t.TempDir()
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		RepoRoot:   dir,
 		GlobalPath: dir + "/missing-global.yaml",
 		RepoPath:   dir + "/missing-repo.yaml",

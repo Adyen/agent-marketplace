@@ -35,6 +35,7 @@ func readOpenAPIDocument(t *testing.T) map[string]any {
 	return doc
 }
 
+// spec: marketplace-api/openapi-document-declares-the-marketplace-paths-and-schemas
 func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths, ok := doc["paths"].(map[string]any)
@@ -85,6 +86,22 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
 		}
+	}
+}
+
+// spec: marketplace-api/capabilities-document-matches-the-openapi-contract
+func TestDefaultCapabilitiesMatchOpenAPIEnums(t *testing.T) {
+	caps := DefaultCapabilities()
+	if !slices.Equal(caps.APIVersions, []string{"v1"}) {
+		t.Errorf("APIVersions = %v, want [v1]", caps.APIVersions)
+	}
+	if !slices.Equal(caps.ArtifactSchemaVersions, []string{"v1"}) {
+		t.Errorf("ArtifactSchemaVersions = %v, want [v1]", caps.ArtifactSchemaVersions)
+	}
+	properties := readOpenAPIDocument(t)["components"].(map[string]any)["schemas"].(map[string]any)["Capabilities"].(map[string]any)["properties"].(map[string]any)
+	enum := properties["resource_kinds"].(map[string]any)["items"].(map[string]any)["enum"].([]any)
+	if !sameAnyStrings(enum, caps.ResourceKinds) {
+		t.Errorf("Capabilities.resource_kinds enum = %v, DefaultCapabilities().ResourceKinds = %v", enum, caps.ResourceKinds)
 	}
 }
 
@@ -217,6 +234,7 @@ func sameAnyStrings(raw []any, want []string) bool {
 	return true
 }
 
+// spec: marketplace-api/inspection-content-routes-serve-the-public-media-types
 func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths := doc["paths"].(map[string]any)
@@ -247,6 +265,7 @@ func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/well-known-document-exposes-browser-templates-only-when-configured
 func TestOpenAPIBrowserRoutesAreNuxtHTMLAndWellKnownTemplatesOptional(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths := doc["paths"].(map[string]any)

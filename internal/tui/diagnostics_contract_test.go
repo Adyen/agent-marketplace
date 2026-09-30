@@ -12,7 +12,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -38,6 +40,7 @@ func TestHardSnapshotFailureNeverRendersInSync(t *testing.T) {
 	}
 }
 
+// spec: inspection-outcomes/materialization-dry-run-failure
 func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	induced := errors.New("induced dry-run failure")
 	previousMaterialize := runMaterialize
@@ -63,6 +66,87 @@ func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	}
 	if errs := diagnosticErrors(snapshot.diagnostics); len(errs) != 1 || !errors.Is(errs[0], induced) {
 		t.Fatalf("dry-run failure not propagated: %v", errs)
+	}
+}
+
+// spec: inspection-outcomes/malformed-resource-warning
+func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	registryRoot := t.TempDir()
+	globalCfg := &config.Config{
+		APIVersion: config.APIVersionV2,
+		Harnesses:  []string{"factory"},
+		Registries: []config.RegistryEntry{
+			{URL: registryRoot, Skills: config.KindSelector{Include: []string{"healthy"}}},
+		},
+	}
+	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
+	t.Cleanup(restoreOrg)
+	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) { return globalCfg, nil })
+	t.Cleanup(restoreGlobal)
+	restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) { return nil, nil })
+	t.Cleanup(restoreRepo)
+	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
+	t.Cleanup(restoreLocal)
+	previousDiscover := discoverCatalog
+	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+		if dir != registryRoot {
+			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
+		}
+		return catalogInfo{
+			Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}},
+			Malformed: []skill.MalformedSkill{{
+				DirName: "broken-skill",
+				Path:    filepath.Join("skills", "broken-skill", "SKILL.md"),
+				Kind:    ir.KindSkill.String(),
+				Error:   errors.New("yaml: parse failure"),
+			}},
+		}, nil
+	}
+	t.Cleanup(func() { discoverCatalog = previousDiscover })
+
+	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
+	if errs := diagnosticErrors(snapshot.diagnostics); len(errs) != 0 {
+		t.Fatalf("malformed unselected resource produced error diagnostics: %v", errs)
+	}
+	var malformedWarning error
+	for _, d := range snapshot.diagnostics {
+		if d.severity == diagnosticWarning && strings.Contains(d.err.Error(), "broken-skill") {
+			malformedWarning = d.err
+		}
+	}
+	if malformedWarning == nil {
+		t.Fatalf("malformed resource missing from warning diagnostics: %+v", snapshot.diagnostics)
+	}
+	if strings.Contains(malformedWarning.Error(), filepath.Join("SKILL.md", "SKILL.md")) {
+		t.Fatalf("warning appended a second SKILL.md to a file path: %v", malformedWarning)
+	}
+	if snapshot.driftAssessment != driftReady {
+		t.Fatalf("warning-only malformed resource marked drift failed: %v", snapshot.driftAssessment)
+	}
+}
+
+func TestReadSnapshotReturnsBeforeMaterializeOnResolveFailure(t *testing.T) {
+	materializeRan := false
+	previousMaterialize := runMaterialize
+	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+		materializeRan = true
+		return nil, nil
+	}
+	t.Cleanup(func() { runMaterialize = previousMaterialize })
+
+	// An empty repository root yields the zero Workspace, so Resolve fails
+	// with a generic ErrInvalidWorkspace before any loader runs.
+	snapshot := readSnapshot(context.Background(), "", t.TempDir(), catalogLoadCached)
+	if materializeRan {
+		t.Fatal("runMaterialize ran after Resolve returned a generic error")
+	}
+	if errs := diagnosticErrors(snapshot.diagnostics); !errors.Is(errors.Join(errs...), pipeline.ErrInvalidWorkspace) {
+		t.Fatalf("resolve failure not exposed as diagnostics: %v", errs)
+	}
+	if len(snapshot.errs) == 0 {
+		t.Fatal("resolve failure did not populate snapshot errs")
 	}
 }
 

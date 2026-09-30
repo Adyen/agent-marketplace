@@ -82,7 +82,7 @@ Installed 2  Removed 0  Malformed 0  Errors 0
 
 "Installed" counts files written. The skill itself is one of them; the other is a Claude Code manifest that lists the installed skills.
 
-If you had no user configuration yet, this first sync also creates `~/.agents/config.yaml` in the older v2 format. The next command, or the TUI, may then ask whether to migrate that file to v4. Accept it (in the CLI prompt, press Enter). Only `~/.agents/config.yaml` changes.
+If you had no user configuration yet, this first sync also creates `~/.agents/config.yaml` with `harnesses: [factory, windsurf]`. The project's own `harnesses:` list takes precedence, so this sync still writes only for Claude Code. To change your personal harness list, press `H` in the TUI or edit that file.
 
 If sync fails:
 

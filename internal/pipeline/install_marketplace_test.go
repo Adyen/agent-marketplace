@@ -329,7 +329,7 @@ func TestMarketplaceCollisionsCannotBeBypassedWithInstalledName(t *testing.T) {
 			} else {
 				existing.RegistryURL = "file:///local"
 			}
-			if err := checkResolvedMarketplaceInstallCollision([]resolver.ResolvedArtifact{existing}, plan); err == nil {
+			if err := checkResolvedMarketplaceInstallCollision([]resolver.ResolvedArtifact{existing}, plan, config.RepoCommitted); err == nil {
 				t.Fatal("resource collision was bypassed with installed_name")
 			}
 		})
@@ -480,6 +480,44 @@ func TestCommitPreparedMarketplaceInstallSucceedsForOperatorExposedRejectedResou
 	}
 	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "second")); !os.IsNotExist(err) {
 		t.Fatalf("withdrawn exposure materialized output: %v", err)
+	}
+}
+
+func TestCommitPreparedMarketplaceInstallRevalidatesSelectedRejectedPin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(home, "missing-org.yaml"))
+	repo := t.TempDir()
+	writeFileMode(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n", 0o600)
+
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "guarded")
+	fake.addSkill(t, registry, "clean")
+	guarded := fake.resources["source/skill/guarded"]
+	guarded.revision = testAssessedResourceRevision(t, guarded.revision.ResourceRevision, store.AssessmentDecisionReject,
+		[]store.Finding{{Code: "policy-block", Severity: "high", Policy: "reject", Message: "blocked by policy"}})
+	guarded.availability = string(mpapi.AvailabilityOperatorExposed)
+	fake.resources["source/skill/guarded"] = guarded
+
+	prepared, err := PrepareMarketplaceInstall(context.Background(), InstallOptions{Args: []string{fake.URL + "/r/source/skill/guarded"}, RepoRoot: repo, Scope: ScopeUser})
+	if err != nil {
+		t.Fatalf("PrepareMarketplaceInstall: %v", err)
+	}
+	if _, err := CommitPreparedMarketplaceInstall(context.Background(), prepared); err != nil {
+		t.Fatalf("CommitPreparedMarketplaceInstall: %v", err)
+	}
+
+	prepared, err = PrepareMarketplaceInstall(context.Background(), InstallOptions{Args: []string{fake.URL + "/r/source/skill/clean"}, RepoRoot: repo, Scope: ScopeUser})
+	if err != nil {
+		t.Fatalf("PrepareMarketplaceInstall for clean: %v", err)
+	}
+	if _, err := CommitPreparedMarketplaceInstall(context.Background(), prepared); err != nil {
+		t.Fatalf("unrelated install failed with exposed rejected pin selected: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "clean", "SKILL.md")); err != nil {
+		t.Fatalf("materialized skill missing: %v", err)
 	}
 }
 
@@ -651,7 +689,7 @@ func TestMarketplaceCollisionUsesExactLockView(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(warm, ".factory", "skills", "cache-only", "SKILL.md"), []byte("---\nname: cache-only\ndescription: cache\n---\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			loaded := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot})
+			loaded := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 			if len(loaded.Errors) > 0 {
 				t.Fatal(errors.Join(loaded.Errors...))
 			}
@@ -715,10 +753,7 @@ func TestMarketplaceCollisionRejectsInvalidOrUnavailableExactLock(t *testing.T) 
 			ec, snapshot := exactLockViewGCFixture(t)
 			repoRoot := filepath.Dir(filepath.Dir(ec.Repo.Path))
 			tc.breakFixture(t, repoRoot, snapshot)
-			loaded := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot})
-			if len(loaded.Errors) > 0 {
-				t.Fatal(errors.Join(loaded.Errors...))
-			}
+			loaded := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 			var clones atomic.Int32
 			opts := InstallOptions{RepoRoot: repoRoot, CatalogOption: []catalog.LoadOption{catalog.WithCloneOrPull(func(string, string) (string, error) {
 				clones.Add(1)
@@ -754,13 +789,13 @@ func TestMarketplaceInstallDoesNotRefreshWarmRegistries(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(opts.RepoRoot, ".factory")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing-lock preflight created harness output: %v", err)
 	}
-	if _, err := syncAfterInstall(context.Background(), opts.RepoRoot, nil, silentSyncOptsForInstall(opts)...); err != nil {
+	if _, err := syncAfterInstall(context.Background(), opts, nil, silentSyncOptsForInstall(opts)...); err != nil {
 		t.Fatal(err)
 	}
 	if got := fetches.Load(); got != 0 {
 		t.Fatalf("warm registry refreshes = %d, want 0", got)
 	}
-	result := Sync(context.Background(), ResolveOptions{RepoRoot: opts.RepoRoot, CatalogOption: opts.CatalogOption})
+	result := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, opts.RepoRoot), CatalogOption: opts.CatalogOption})
 	if err := errors.Join(result.Errors...); err != nil {
 		t.Fatal(err)
 	}
@@ -780,7 +815,7 @@ func BenchmarkMarketplaceInstallWarmRegistries(b *testing.B) {
 		if err := checkMarketplaceInstallCollision(context.Background(), opts, ec, plan); err != nil {
 			b.Fatal(err)
 		}
-		if _, err := syncAfterInstall(context.Background(), opts.RepoRoot, nil, silentSyncOptsForInstall(opts)...); err != nil {
+		if _, err := syncAfterInstall(context.Background(), opts, nil, silentSyncOptsForInstall(opts)...); err != nil {
 			b.Fatal(err)
 		}
 	}

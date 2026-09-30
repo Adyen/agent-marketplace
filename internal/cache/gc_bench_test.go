@@ -1,12 +1,12 @@
 package cache
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
@@ -17,39 +17,25 @@ import (
 func BenchmarkActiveRegistryHashes(b *testing.B) {
 	const registriesPerLayer = 16
 
-	makeConfig := func(prefix string) *config.Config {
-		out := &config.Config{}
+	var sources []string
+	for l := 0; l < 3; l++ {
 		for i := 0; i < registriesPerLayer; i++ {
-			out.Registries = append(out.Registries, config.RegistryEntry{
-				URL: fmt.Sprintf("git@example.com:%s-%d.git", prefix, i),
-				Ref: "main",
-			})
+			sources = append(sources, fmt.Sprintf("git@example.com:%s-%d.git", []string{"org", "user", "repo"}[l], i))
 		}
-		// Sprinkle some non-git entries that must be skipped.
-		out.Registries = append(out.Registries,
-			config.RegistryEntry{URL: "/local/skills"},
-			config.RegistryEntry{URL: "   "},
-		)
-		return out
 	}
-
-	cfgs := []*config.Config{
-		makeConfig("org"),
-		makeConfig("user"),
-		makeConfig("repo"),
-		nil, // exercise the nil-skip branch
-	}
+	// Sprinkle a blank entry that must be skipped.
+	sources = append(sources, "   ")
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = activeRegistryHashes(cfgs...)
+		_ = activeRegistryHashes(sources)
 	}
 }
 
 func BenchmarkExactGitGCDryRunFilesystem(b *testing.B) {
 	b.Setenv("HOME", b.TempDir())
-	cfg := &config.Config{}
+	var sources []string
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}
 	oid, err := ParseGitOID("sha1:" + strings.Repeat("1", 40))
 	if err != nil {
@@ -60,7 +46,7 @@ func BenchmarkExactGitGCDryRunFilesystem(b *testing.B) {
 		if i < 16 {
 			doc.Registries = append(doc.Registries, lockfile.GitRegistry{URL: source, Ref: "main", Commit: oid})
 		} else if i < 32 {
-			cfg.Registries = append(cfg.Registries, config.RegistryEntry{URL: source, Ref: "main"})
+			sources = append(sources, source)
 		}
 		for _, path := range []string{exactGitObjectStorePath(source), exactGitSnapshotPath(source, oid)} {
 			if err := os.MkdirAll(path, 0o700); err != nil {
@@ -68,14 +54,14 @@ func BenchmarkExactGitGCDryRunFilesystem(b *testing.B) {
 			}
 		}
 	}
-	docs := []lockfile.Document{doc}
-	if _, err := GarbageCollectWithLocks(true, docs, cfg); err != nil {
+	reader := staticReachability([]lockfile.Document{doc}, sources...)
+	if _, err := GarbageCollect(context.Background(), true, reader); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := GarbageCollectWithLocks(true, docs, cfg); err != nil {
+		if _, err := GarbageCollect(context.Background(), true, reader); err != nil {
 			b.Fatal(err)
 		}
 	}

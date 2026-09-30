@@ -156,7 +156,7 @@ func scopedToggleConfigPath(repoRoot string, s scope) (string, error) {
 	return marketplaceToggleConfigPath(repoRoot, s)
 }
 
-func runMarketplaceScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mapper pipeline.ConfigPathMapper) error {
+func runMarketplaceScopedToggle(ctx context.Context, repoRoot, localConfigDir string, act toggleAction, mapper pipeline.ConfigPathMapper) error {
 	if act.scope == scopeUserExclude {
 		if !act.allowMarketplaceExclude || !act.hasMarketplaceSelection || act.marketplaceSelection.Pin.RegistrySlug == "" {
 			return fmt.Errorf("marketplace resource has no overridable organization pin")
@@ -196,14 +196,13 @@ func runMarketplaceScopedToggle(ctx context.Context, repoRoot string, act toggle
 	default:
 		return fmt.Errorf("unsupported Marketplace toggle scope")
 	}
-	localDir := config.FindLocalConfigDir()
 	if act.scope == scopeLocal {
-		rel, err := filepath.Rel(repoRoot, localDir)
+		rel, err := filepath.Rel(repoRoot, localConfigDir)
 		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			configPath = config.LocalConfigPath(localDir)
+			configPath = config.LocalConfigPath(localConfigDir)
 		}
 	}
-	return pipeline.ToggleMarketplacePin(ctx, repoRoot, localDir, configPath, source, selection.Entry, selection.Pin, act.enable)
+	return pipeline.ToggleMarketplacePin(ctx, repoRoot, localConfigDir, configPath, source, selection.Entry, selection.Pin, act.enable)
 }
 
 func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
@@ -219,7 +218,12 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 			return mapper(path)
 		}
 		if act.isMarketplace {
-			err := runMarketplaceScopedToggle(context.Background(), repoRoot, act, mapper)
+			localConfigDir := repoRoot
+			candidate := config.FindLocalConfigDir()
+			if rel, err := filepath.Rel(repoRoot, candidate); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				localConfigDir = candidate
+			}
+			err := runMarketplaceScopedToggle(context.Background(), repoRoot, localConfigDir, act, mapper)
 			if err != nil {
 				slog.Error("TUI Marketplace toggle failed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable, "error", err)
 			} else {
@@ -314,19 +318,25 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 	}
 }
 
-func runDependencyScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
-	if mutate == nil {
-		return runScopedToggle(repoRoot, act)
-	}
-	if act.isMarketplace && act.scope != scopeUserExclude {
-		return func() tea.Msg {
-			err := runMarketplaceScopedToggle(ctx, repoRoot, act, nil)
+func runDependencyScopedToggle(ctx context.Context, workspace pipeline.Workspace, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
+	return func() tea.Msg {
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
 			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
 		}
-	}
-	return func() tea.Msg {
-		err := mutate(ctx, repoRoot, func(mapper pipeline.ConfigPathMapper) error {
-			msg, ok := runScopedToggleAt(repoRoot, act, mapper)().(configWrittenMsg)
+		writeRoot := ws.RepoRoot()
+		if act.scope == scopeLocal || act.scope == scopeLocalExclude {
+			writeRoot = ws.LocalConfigDir()
+		}
+		if mutate == nil {
+			return runScopedToggle(writeRoot, act)()
+		}
+		if act.isMarketplace && act.scope != scopeUserExclude {
+			err = runMarketplaceScopedToggle(ctx, ws.RepoRoot(), ws.LocalConfigDir(), act, nil)
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
+		}
+		err = mutate(ctx, ws, func(mapper pipeline.ConfigPathMapper) error {
+			msg, ok := runScopedToggleAt(writeRoot, act, mapper)().(configWrittenMsg)
 			if !ok {
 				return fmt.Errorf("toggle did not produce a config result")
 			}
@@ -615,7 +625,7 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 	if act.enable && !act.isMarketplace && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 		m.pendingExcludeAction = &act
 	}
-	return m, correlateOperation(runDependencyScopedToggle(ctxOrBackground(m.ctx), m.repoRoot, act, m.dependencyLifecycle.Mutate), operation, false)
+	return m, correlateOperation(runDependencyScopedToggle(ctxOrBackground(m.ctx), m.workspace, act, m.dependencyLifecycle.Mutate), operation, false)
 }
 
 // handleToggleModalKey routes modal key presses. Returns (newModel, cmd).

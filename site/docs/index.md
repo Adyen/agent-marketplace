@@ -43,7 +43,8 @@ You maintain a Git repository of skills that other people install.
 |---|---|
 | Create a registry from nothing and install from it | [Tutorial: create your first registry](./tutorials/create-your-first-registry.md) |
 | Add a skill or command | [Add a resource to a registry](./how-to/author/add-a-resource-to-a-registry.md) |
-| Make resources discoverable by tag and declare what they need | [Declare tags and prerequisites](./how-to/author/declare-tags-and-prerequisites.md) |
+| Make resources discoverable by tag and licensed | [Declare tags and a license](./how-to/author/declare-tags-and-licenses.md) |
+| Declare what a resource needs to be installed | [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) |
 | Ship a bundle consumers can install in one step | [Publish resource collections](./how-to/author/publish-resource-collections.md) |
 | Catch broken resources before consumers do | [Validate a registry in CI](./how-to/author/validate-a-registry-in-ci.md) |
 | Cut a release consumers can pin | [Version and release a registry](./how-to/author/version-and-release-a-registry.md) |

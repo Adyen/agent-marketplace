@@ -42,7 +42,7 @@ func renderEditConfigModal(m Model) string {
 		globalPath = fmt.Sprintf("<global config path unavailable: %s>", err.Error())
 	}
 	projectPath := config.ProjectConfigPath(m.repoRoot)
-	localPath := config.LocalConfigPath(m.repoRoot)
+	localPath := config.LocalConfigPath(m.workspace.LocalConfigDir())
 
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"})
 
@@ -99,7 +99,7 @@ func (m Model) handleEditConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.EditConfigProject):
 		return m.openConfigEditor("project", config.ProjectConfigPath(m.repoRoot))
 	case key.Matches(msg, m.keys.EditConfigLocal):
-		return m.openConfigEditor("local", config.LocalConfigPath(m.repoRoot))
+		return m.openConfigEditor("local", config.LocalConfigPath(m.workspace.LocalConfigDir()))
 	}
 	return m, nil
 }

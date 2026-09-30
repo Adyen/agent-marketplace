@@ -34,7 +34,11 @@ func (p migrationPrompt) hasConfigs() bool {
 	return len(p.configs) > 0
 }
 
-func pendingMigrationFor(repoRoot, homeDir string) migrationPrompt {
+// pendingMigrationFor reports legacy configs the startup migration modal may
+// offer. Startup migration only migrates the user config; repository and local
+// configs are left unchanged until migrated deliberately. The repoRoot and
+// localDir parameters keep the validated Workspace roots available at this seam.
+func pendingMigrationFor(repoRoot, localDir, homeDir string) migrationPrompt {
 	paths := config.MigratePaths{}
 	if homeDir != "" {
 		paths.User = filepath.Join(homeDir, ".agents", "config.yaml")

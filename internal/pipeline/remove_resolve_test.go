@@ -602,7 +602,7 @@ func TestRemoveLocalResourceShadowsIncludedRegistry(t *testing.T) {
 	if len(rootCfg.Registries) != 1 || !slices.Contains(rootCfg.Registries[0].Skills.Exclude, "included-local-skill") {
 		t.Fatalf("local root registries = %#v, want resource exclusion", rootCfg.Registries)
 	}
-	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
 	if len(resolved.Errors) != 0 {
 		t.Fatalf("resolve errors = %v", resolved.Errors)
 	}
@@ -694,7 +694,7 @@ func TestRemoveCollectionDuplicateInRootAndIncludeRetainsExclusion(t *testing.T)
 	if !strings.Contains(string(rootData), "include: collections.yaml") {
 		t.Fatalf("root include directive lost:\n%s", rootData)
 	}
-	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: repoRoot})
+	ec := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: repoRoot}, nil)
 	if len(ec.Errors) != 0 {
 		t.Fatalf("effective config errors = %v", ec.Errors)
 	}
@@ -944,7 +944,7 @@ func TestRemoveRequiredMachineCollectionRejectsRepoScope(t *testing.T) {
 
 func assertResourceNotResolved(t *testing.T, repoRoot, name string) {
 	t.Helper()
-	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
 	if len(resolved.Errors) != 0 {
 		t.Fatalf("resolve errors = %v", resolved.Errors)
 	}
@@ -987,7 +987,7 @@ func TestRemovePathOnlyLocalResourceUsesOnlyRequestedRegistry(t *testing.T) {
 	if !slices.Contains(cfg.Registries[1].Skills.Include, "selected") || slices.Contains(cfg.Registries[1].Skills.Exclude, "selected") {
 		t.Fatalf("other alias = %#v, want untouched", cfg.Registries[1])
 	}
-	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
 	if len(resolved.Errors) != 0 || len(resolved.Resolved) != 1 || resolved.Resolved[0].RegistryURL != localB {
 		t.Fatalf("resolved = %#v, errors = %v; want only the other local registry", resolved.Resolved, resolved.Errors)
 	}
@@ -1012,7 +1012,7 @@ func TestRemoveAdHocRefTargetsOnlyNamedRef(t *testing.T) {
 	if len(cfg.Registries) != 2 || !slices.Contains(cfg.Registries[0].Skills.Include, "shared") || slices.Contains(cfg.Registries[0].Skills.Exclude, "shared") || slices.Contains(cfg.Registries[1].Skills.Include, "shared") || slices.Contains(cfg.Registries[1].Skills.Exclude, "shared") {
 		t.Fatalf("registries = %#v, want only the release selection dropped, without an exclusion", cfg.Registries)
 	}
-	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
 	if len(resolved.Errors) != 0 || len(resolved.Resolved) != 1 || resolved.Resolved[0].Ref != "main" {
 		t.Fatalf("resolved after release exclusion = %#v, errors = %v; want main only", resolved.Resolved, resolved.Errors)
 	}

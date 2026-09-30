@@ -110,9 +110,19 @@ type outputKey struct {
 
 // Report holds the aggregate outcome of a materialization run.
 type Report struct {
-	PerTarget map[hcc.Target]TargetReport
-	PerRoot   []TargetReport
-	Diags     []diag.Diagnostic
+	PerTarget        map[hcc.Target]TargetReport
+	PerRoot          []TargetReport
+	Diags            []diag.Diagnostic
+	BlockedResources []BlockedResource
+}
+
+// BlockedResource identifies a resource omitted during compilation for one
+// harness target and install scope.
+type BlockedResource struct {
+	Kind         ir.ResourceKind
+	Name         string
+	Target       hcc.Target
+	MachineScope bool
 }
 
 // TargetReport describes what happened for a single harness target.
@@ -433,11 +443,12 @@ type targetWork struct {
 
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
-	allDiags   []diag.Diagnostic
-	byTarget   map[outputKey]*targetWork
-	skillLinks map[outputKey]map[string]*skillLinkGroup
-	allOutputs map[outputKey]bool
-	blocked    blockedOutputs
+	allDiags         []diag.Diagnostic
+	byTarget         map[outputKey]*targetWork
+	skillLinks       map[outputKey]map[string]*skillLinkGroup
+	allOutputs       map[outputKey]bool
+	blocked          blockedOutputs
+	blockedResources []BlockedResource
 	// artifactMeta maps (outputKey → artifact relative path → skillLink metadata)
 	// for artifacts that remain in result.Artifacts (not extracted into skillLinks).
 	// Used to generate rich collision hints in syncArtifactLinks.
@@ -730,12 +741,23 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	ownedState := make(map[outputKey]any)
 	ownedAggregates := ownedAggregateState{values: ownedState}
 	hookSupport, supportConflicts := prepareHookSupport(work)
+	var blockedResources []BlockedResource
+	blockResource := func(key outputKey, w skillTarget) {
+		blocked.blockResource(key, w)
+		name := w.skill.Name
+		if w.skill.IsMarketplace && w.skill.InstalledName != "" {
+			name = w.skill.InstalledName
+		}
+		blockedResources = append(blockedResources, BlockedResource{
+			Kind: w.skill.Kind, Name: name, Target: key.target, MachineScope: key.machineScope,
+		})
+	}
 
 	for index, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
 		binding, hasBinding, bindingErr := materializeAdapterFor(w.target)
 		if bindingErr != nil {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.adapter.error", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: bindingErr.Error()})
 			continue
 		}
@@ -744,7 +766,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			aggregateHandler = binding.handler
 		}
 		if paths := supportConflicts[index]; len(paths) > 0 {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeMaterializeHookSupportConflict, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: fmt.Sprintf("hook support paths conflict across selected sources: %s; affected hooks were not emitted", strings.Join(paths, ", ")), Hint: "Rename the conflicting support files or exclude one hook provider", Source: compilepkg.SourceOf(w.skill.Resource)})
 			continue
@@ -752,7 +774,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if w.skill.IsMarketplace && w.skill.InstalledName != "" {
 			renamed, err := marketplaceResourceForInstallName(w.skill.Resource, w.skill.InstalledName)
 			if err != nil {
-				blocked.blockResource(key, w)
+				blockResource(key, w)
 				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 				allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.marketplace.alias-invalid", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Resource.Name(), Message: "Marketplace installed name cannot be materialized safely"})
 				continue
@@ -786,7 +808,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		}
 		result, err := hcc.Compile(w.skill.Resource, w.target, compileOptions...)
 		if err != nil {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			allDiags = append(allDiags, diag.Diagnostic{
 				Code:     "materialize.compile.error",
@@ -799,14 +821,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		}
 
 		if result == nil {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			continue
 		}
 
 		result.Artifacts = append([]artifact.Artifact(nil), result.Artifacts...)
 		if diag.HasErrors(result.Diagnostics) {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			tw := byTarget[key]
 			if tw == nil {
@@ -823,7 +845,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if aggregateHandler != nil {
 			rest, aggregateErr := aggregateHandler.extract(ownedAggregates, key, result.Artifacts, w.skill.Name)
 			if aggregateErr != nil {
-				blocked.blockResource(key, w)
+				blockResource(key, w)
 				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 				allDiags = append(allDiags, aggregateHandler.malformedDiagnostic(key, w.skill.Name, aggregateErr))
 				continue
@@ -831,22 +853,20 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			result.Artifacts = rest
 		}
 
-		// For hooks, expand ${DROID_PLUGIN_ROOT} to a relative path.
+		// For hooks, expand ${DROID_PLUGIN_ROOT} to an installed root.
 		// Factory Droid only sets DROID_PLUGIN_ROOT for plugin-scoped hooks,
-		// not workspace-level hooks (.factory/hooks/). By expanding to a
-		// relative path at materialization time, the hook command works
-		// without the env var. Factory Droid runs hooks from the repo root,
-		// so ".factory/hooks/script.sh" resolves correctly.
+		// not workspace-level hooks (.factory/hooks/). Repository hooks run
+		// from the repo root, so their paths can be relative. Machine hooks
+		// run from any repo and must always use the absolute machine root.
 		if resourceKind == ir.KindHook && !harness.IsInstallationAdapterTarget(w.target) {
 			if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
 				pluginRoot := roots.For(w.machineScope, repoRoot)
 				if pluginRoot != "" {
-					// Use a relative path when the plugin root is inside the
-					// repo (repo-scope). For machine-scope (outside the repo),
-					// fall back to the absolute path.
-					relPath, err := filepath.Rel(repoRoot, pluginRoot)
-					if err == nil && !strings.HasPrefix(relPath, "..") {
-						pluginRoot = relPath
+					if !w.machineScope {
+						relPath, err := filepath.Rel(repoRoot, pluginRoot)
+						if err == nil && !strings.HasPrefix(relPath, "..") {
+							pluginRoot = relPath
+						}
 					}
 					for i := range result.Artifacts {
 						result.Artifacts[i].Bytes = bytes.ReplaceAll(
@@ -877,7 +897,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					}
 				}
 				if len(declaredSupport) > 0 && sourceDir == "" {
-					blocked.blockResource(key, w)
+					blockResource(key, w)
 					markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 					allDiags = append(allDiags, diag.Diagnostic{
 						Code:     "materialize.support-source.missing",
@@ -966,13 +986,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	}
 
 	return compilePhaseResult{
-		allDiags:     allDiags,
-		byTarget:     byTarget,
-		skillLinks:   skillLinks,
-		allOutputs:   allOutputs,
-		blocked:      blocked,
-		artifactMeta: artifactMeta,
-		ownedState:   ownedState,
+		allDiags:         allDiags,
+		byTarget:         byTarget,
+		skillLinks:       skillLinks,
+		allOutputs:       allOutputs,
+		blocked:          blocked,
+		blockedResources: blockedResources,
+		artifactMeta:     artifactMeta,
+		ownedState:       ownedState,
 	}
 }
 
@@ -1020,8 +1041,9 @@ func markOwnedAggregateIncomplete(handler ownedAggregateHandler, state ownedAggr
 // critical sections must abandon a contended wait when the run is cancelled.
 func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResult, dryRun bool, repoRoot string, modes config.MaterializationModes) *Report {
 	report := &Report{
-		PerTarget: make(map[hcc.Target]TargetReport),
-		Diags:     compileResult.allDiags,
+		PerTarget:        make(map[hcc.Target]TargetReport),
+		Diags:            compileResult.allDiags,
+		BlockedResources: compileResult.blockedResources,
 	}
 	coalescedCodexPartitions, preflightDiag := preflightCodexDestinations(&compileResult, repoRoot, modes)
 	if preflightDiag != nil {

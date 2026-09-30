@@ -180,6 +180,7 @@ func TestResolveReportsUnmetRequirement(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/registry-hint-credentials-are-redacted
 func TestUserFacingWarningsRedactURLCredentials(t *testing.T) {
 	const secretURL = "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/registry.git"
 	warnings := []struct {
@@ -252,6 +253,7 @@ func TestResolveAcceptsSelectedRequirement(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/excluded-prerequisite-is-required
 func TestResolveRequiredExcludedPrerequisiteRemainsSelected(t *testing.T) {
 	cfg := &config.Config{Registries: []config.RegistryEntry{
 		{
@@ -285,6 +287,92 @@ func TestResolveRequiredExcludedPrerequisiteRemainsSelected(t *testing.T) {
 	}
 	if resolved[1].Kind != ir.KindMcpServer || resolved[1].Name != "genai-atlassian" {
 		t.Fatalf("Resolve() prerequisite = %s:%s, want mcp:genai-atlassian", resolved[1].Kind, resolved[1].Name)
+	}
+}
+
+// spec: resource-prerequisites/prerequisite-supplied-by-another-registry
+func TestResolvePrerequisiteSatisfiedByAnotherRegistry(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{
+			URL:    "git@example.com:skills.git",
+			Ref:    "main",
+			Skills: ks("smoke-test-kb"),
+		},
+		{
+			URL: "git@example.com:other.git",
+			Ref: "main",
+			MCP: ks("genai-atlassian"),
+		},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck("git@example.com:skills.git", "main"): {
+			{
+				Kind: ir.KindSkill,
+				Name: "smoke-test-kb",
+				Resource: ir.NewSkill(
+					"smoke-test-kb",
+					"Smoke test knowledge",
+					"",
+					nil,
+					map[string]any{
+						"metadata": map[string]any{
+							"requires": []any{
+								map[string]any{
+									"kind":     "mcp",
+									"name":     "genai-atlassian",
+									"registry": "git@example.com:hinted.git",
+									"path":     "servers",
+								},
+							},
+						},
+					},
+					ir.SourceRef{},
+				),
+			},
+		},
+		ck("git@example.com:other.git", "main"): {
+			{Kind: ir.KindMcpServer, Name: "genai-atlassian"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve() errors = %v, want none; registry hint must not restrict satisfaction", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("Resolve() returned %d resources, want 2", len(resolved))
+	}
+}
+
+// spec: resource-prerequisites/same-name-with-another-kind
+func TestResolvePrerequisiteSameNameWithAnotherKind(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:    "git@example.com:skills.git",
+		Ref:    "main",
+		Skills: ks("docs", "smoke-test-kb"),
+	}}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck("git@example.com:skills.git", "main"): {
+			{Kind: ir.KindSkill, Name: "docs"},
+			{Kind: ir.KindSkill, Name: "smoke-test-kb", Resource: requirementTestSkillNamed("smoke-test-kb", "docs")},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 2 {
+		t.Fatalf("Resolve() returned %d resources, want 2", len(resolved))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("Resolve() errors = %v, want 1 unmet requirement warning", errs)
+	}
+	if !IsWarning(errs[0]) || !IsUnmetRequirement(errs[0]) {
+		t.Fatalf("Resolve() error = %v, want unmet requirement warning", errs[0])
+	}
+	want := `skill "smoke-test-kb" requires mcp "docs", but it is not selected`
+	if got := errs[0].Error(); got != want {
+		t.Fatalf("warning Error() = %q, want %q", got, want)
 	}
 }
 
@@ -525,6 +613,134 @@ func TestResolveDetectsNameCollisionAcrossDifferentRegistries(t *testing.T) {
 	}
 	if _, ok := gotByName["only-b"]; !ok {
 		t.Fatal("expected only-b to be resolved")
+	}
+}
+
+// spec: resource-selection/repository-winner-does-not-displace-a-user-scope-selection
+// spec: resource-selection/same-scope-collision-keeps-one-winner
+func TestResolveDifferentRegistriesCollideOnlyWithinInstallScope(t *testing.T) {
+	tests := []struct {
+		name    string
+		sources []config.RegistryEntry
+		want    []string
+		warning bool
+	}{
+		{
+			name: "different scopes are complementary",
+			sources: []config.RegistryEntry{
+				{URL: "git@example.com:user.git", Ref: "main", Source: config.UserPersonal, Skills: ks("shared")},
+				{URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared")},
+			},
+			want: []string{"git@example.com:user.git", "git@example.com:repo.git"},
+		},
+		{
+			name: "machine collision does not include repository",
+			sources: []config.RegistryEntry{
+				{URL: "git@example.com:user.git", Ref: "main", Source: config.UserPersonal, Skills: ks("shared")},
+				{URL: "git@example.com:required.git", Ref: "main", Source: config.Organization, Skills: ks("shared")},
+				{URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared")},
+			},
+			want:    []string{"git@example.com:user.git", "git@example.com:repo.git"},
+			warning: true,
+		},
+		{
+			name: "same scope still collides",
+			sources: []config.RegistryEntry{
+				{URL: "git@example.com:user.git", Ref: "main", Source: config.UserPersonal, Skills: ks("shared")},
+				{URL: "git@example.com:required.git", Ref: "main", Source: config.Organization, Required: true, Skills: ks("shared")},
+			},
+			want:    []string{"git@example.com:required.git"},
+			warning: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Registries: tt.sources}
+			setCatalogKeys(cfg)
+			catalogs := make(map[string][]catalog.Entry)
+			for _, source := range cfg.Registries {
+				catalogs[source.CatalogKey] = []catalog.Entry{{Kind: ir.KindSkill, Name: "shared", Path: "/cache/" + source.URL}}
+			}
+			got, errs := Resolve(cfg, catalogs, nil)
+			if len(got) != len(tt.want) {
+				t.Fatalf("resolved %d artifacts, want %d: %#v", len(got), len(tt.want), got)
+			}
+			for i, want := range tt.want {
+				if got[i].RegistryURL != want {
+					t.Errorf("artifact %d registry = %q, want %q", i, got[i].RegistryURL, want)
+				}
+			}
+			if !tt.warning {
+				if len(errs) != 0 {
+					t.Fatalf("cross-scope pair must not warn: %v", errs)
+				}
+				return
+			}
+			if len(errs) != 1 {
+				t.Fatalf("expected one within-scope collision warning, got %v", errs)
+			}
+			var warning *NameCollisionWarning
+			if !errors.As(errs[0], &warning) {
+				t.Fatalf("expected name collision warning, got %T", errs[0])
+			}
+			wantWinner := "git@example.com:required.git"
+			if tt.name == "machine collision does not include repository" {
+				wantWinner = "git@example.com:user.git"
+			}
+			if warning.WinnerURL != wantWinner || len(warning.RunnersUp) != 1 || strings.Contains(errs[0].Error(), "repo.git") {
+				t.Fatalf("warning must describe only machine participants: %+v", warning)
+			}
+		})
+	}
+}
+
+func TestResolveCrossScopeRegistryCollisionRetainsSameRegistryPaths(t *testing.T) {
+	const machineURL = "git@example.com:machine.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: machineURL, Ref: "main", Path: "teams/alpha", Source: config.Organization, Default: true},
+		{URL: machineURL, Ref: "main", Path: "teams/beta", Source: config.UserPersonal, Default: true},
+		{URL: "git@example.com:repository.git", Ref: "main", Source: config.RepoCommitted, Default: true},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := make(map[string][]catalog.Entry)
+	for _, source := range cfg.Registries {
+		catalogs[source.CatalogKey] = []catalog.Entry{{Kind: ir.KindSkill, Name: "shared", Path: "/cache/shared"}}
+	}
+	got, errs := Resolve(cfg, catalogs, nil)
+	if len(got) != 3 || got[0].RegistryPath != "teams/alpha" || got[1].RegistryPath != "teams/beta" || got[2].Source != config.RepoCommitted {
+		t.Fatalf("both machine paths and repository occurrence must survive: %#v", got)
+	}
+	if len(errs) != 1 || !IsNameCollision(errs[0]) || strings.Contains(errs[0].Error(), "repository.git") {
+		t.Fatalf("only the machine path collision should be reported: %v", errs)
+	}
+}
+
+// spec: resource-selection/required-user-scope-selection-suppresses-a-repository-selection
+func TestResolveRequiredMachineSelectionSuppressesDifferentRepository(t *testing.T) {
+	for _, machineSource := range []config.Source{config.UserPersonal, config.Organization} {
+		t.Run(machineSource.String(), func(t *testing.T) {
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: "git@example.com:mandatory.git", Ref: "main", Source: machineSource, Required: true, Skills: ks("shared")},
+				{URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared")},
+			}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "shared", Path: "/cache/mandatory/shared"}},
+				cfg.Registries[1].CatalogKey: {{Kind: ir.KindSkill, Name: "shared", Path: "/cache/repo/shared"}},
+			}
+			got, warnings := Resolve(cfg, catalogs, nil)
+			if len(got) != 1 || got[0].RegistryURL != cfg.Registries[0].URL || !got[0].Source.IsMachineScope() {
+				t.Fatalf("required machine resource must be the only selection: %#v", got)
+			}
+			if len(warnings) != 1 {
+				t.Fatalf("expected one cross-scope warning, got %v", warnings)
+			}
+			var warning *NameCollisionWarning
+			if !errors.As(warnings[0], &warning) || warning.WinnerURL != cfg.Registries[0].URL ||
+				len(warning.RunnersUp) != 1 || !strings.Contains(warning.RunnersUp[0], "repo") {
+				t.Fatalf("required source must win with repository as runner-up: %v", warnings)
+			}
+		})
 	}
 }
 

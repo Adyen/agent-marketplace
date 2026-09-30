@@ -147,7 +147,7 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`, and disambiguates a named registry resource. |
 | `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Works only in `repo` scope (or with no `--scope`). Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
 | `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Works only in `repo` scope (or with no `--scope`). |
-| `--registry` | string | no | all configured registries | Limits `--all` to one configured registry URL. Requires `--all`. |
+| `--registry` | string | no | all configured registries | Limits `--all` to one configured registry. Requires `--all`. Matches the URL the way `update` and `lock` do, so a `.git` suffix or a trailing slash makes no difference, and looks in every config layer. The same source declared in several layers counts as one. If the URL names entries with different refs or paths, the command refuses and lists them. |
 | `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the whole registry. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
@@ -172,13 +172,15 @@ A successful Marketplace install prints a short confirmation:
 ✓ Installed coderabbit-skills · 3 skills
 ```
 
-Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. Missing prerequisites are reported as warnings; `install` does not install them for you.
+Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. The line lists only resources that the resulting configuration selects. A tag or bundle install keeps any existing exclusion and names the resources it left out, for example `Not installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly`. Installing a resource by name clears its exclusion. Missing prerequisites are reported as warnings; `install` does not install them for you.
 
 For configured Git registries, discovery uses the exact locked inventory of every layer that already has a valid lock. A registry can bootstrap from its branch or tag only when its own configuration layer has no lock. A missing lock in one layer does not make content that appeared after another layer's lock installable.
 
 ## `remove`
 
 Removes an explicit selection, or records an exclusion when the resource was selected some other way (for example, by a collection or a registry default). It then syncs output. Required organization resources cannot be removed or excluded.
+
+`--from` and `--ref` follow the same rule, so an explicit selection in the target config is dropped. If a selected collection also provides the resource, it stays installed through the collection until a second `remove` excludes it from the collection.
 
 For hosted Marketplace pins, removing a direct resource clears its direct selection but keeps it if a collection still includes it. Removing a collection clears that collection and removes the members no longer kept by anything else. You can remove a resource installed with `--as` by either its local name or its canonical Marketplace name. A name that matches more than one direct pin is refused.
 
@@ -250,7 +252,7 @@ agent-marketplace sync [flags]
 | `--offline` | boolean | no | `false` | Uses only trusted local Git and Marketplace caches and never contacts a remote endpoint; lock behavior is the same as `--locked`. Cached revocation data may be stale. |
 | `--allow-revoked` | exact Marketplace revision; repeatable | no | none | Allows one revoked pin for this run: `marketplace/registry/kind/name@sha256:<64 lowercase hex>`. Cannot be combined with `--check`. |
 | `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories. The mandatory safety backups of shared configuration files still happen. |
-| `--strict` | boolean | no | `false` | Turns "selected but not found" and "found but failed to load" warnings into errors. |
+| `--strict` | boolean | no | `false` | Fails on unresolved selections ("selected but not found", "found but failed to load") and on unmet prerequisites. |
 | `--prune-stale` | boolean | no | `false` | After catalogs load successfully, removes direct, non-required selections that no longer exist from configuration, then syncs again. Cannot be combined with `--locked` or `--offline`. |
 | `-v`, `--verbose` | boolean | no | `false` | Prints affected files per target and malformed-resource details instead of only the summary. |
 
@@ -262,7 +264,9 @@ Installed 3  Removed 1  Malformed 0  Errors 0
 
 The counts are colored on a terminal. Set `NO_COLOR`, `CLICOLOR=0`, or `TERM=dumb` to turn color off.
 
-With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
+If `~/.agents/config.yaml` does not exist, a plain `sync` creates it the way `agent-marketplace init --harnesses factory,windsurf` would: a v4 config with only `apiVersion` and `harnesses: [factory, windsurf]`. An existing user config is never read or changed by this step, and `--check`, `--locked`, and `--offline` skip it.
+
+With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1, including a dry-run materialization failure, which is printed as an `error:` line alongside the run's warnings. Warning-severity materialization diagnostics are printed as `warning:` lines and do not affect the exit status. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
 
 If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. Run a plain `sync` or `lock` (without those flags) to finish the recovery, then retry. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
@@ -319,12 +323,12 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `LOCAL REGISTRIES` | Registry entries declared in repository-personal configuration. |
 | `ORPHANED FILES` | Generated files that a sync would remove. |
 | `NAME COLLISIONS` | Registry overlap and resource-name collision diagnostics. |
-| `UNMET REQUIREMENTS` | Advisory resource prerequisites and install hints. |
-| `WARNINGS` | Configuration and resolution warnings, with a remediation hint where one exists. |
+| `UNMET REQUIREMENTS` | Advisory [resource prerequisites](./resource-prerequisites.md) and install hints. |
+| `WARNINGS` | Configuration, resolution, and materialization warnings, with a remediation hint where one exists. |
 | `DRIFT` | `In sync`, the number of files to write and remove, or `Unknown (exact registry view incomplete)`. |
-| `ERRORS` | Configuration, catalog, or drift-inspection failures. |
+| `ERRORS` | Configuration, catalog, materialization, or drift-inspection failures. |
 
-Fatal resolution errors return exit status 1 after the report is printed.
+Fatal resolution and error-severity materialization diagnostics return exit status 1 after the report is printed; warning-severity diagnostics do not affect the exit status.
 
 ## Configuration authoring
 
@@ -349,9 +353,9 @@ agent-marketplace migrate [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--to` | string | no | `v4` | Target schema: `v4` or `v2`. |
-| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. |
-| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. |
-| `--harnesses` | comma-separated strings | v2 only | none | Target harnesses for legacy structural remediation. Without a terminal, `--to v2` requires it when the user config needs a harness list. |
+| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. `--to v2` rejects it, because that flow always covers every layer. |
+| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. `--to v2` rejects it, because that flow always writes. |
+| `--harnesses` | comma-separated strings | no | none | Target harnesses for the user config. Both migration paths write them only into a user config that has no list, accept a list equal to the existing one, and refuse a different one. V4 migration also refuses them when `--scope` leaves out the user config or no user config exists. Without a terminal, `--to v2` requires it when the user config needs a harness list. |
 
 `--to v4` is accepted as an explicit spelling of the default. V4 migration refuses input that would lose information, include trees, and Marketplace entries without complete verified cache evidence, and it changes no files when it refuses. Migration does not promise to keep comments or formatting. Git and directory-only conversion leaves locks unchanged. A Marketplace entry with verified evidence creates or upgrades the owning layer lock to `agent-marketplace-lock/v2`, published together with the migrated config in one transaction. Organization configuration is never edited.
 
@@ -671,9 +675,9 @@ The script is written to standard output.
 
 | Status | Condition |
 |---:|---|
-| `0` | The command succeeded. Warnings, such as a missing target set for `list`, unmet advisory prerequisites, or non-blocking compatibility findings, do not change this status. |
+| `0` | The command succeeded. Warnings, such as a missing target set for `list`, unmet advisory [prerequisites](./resource-prerequisites.md), or non-blocking compatibility findings, do not change this status. |
 | `1` | Argument validation, configuration loading, registry access, resolution, conversion, materialization, repair, backup, or filesystem work returned an error. |
 | `1` | `sync --check` found drift, or `lock --check` found a lock that would change. |
-| `1` | `sync --strict` found a selected resource that was missing or malformed. |
+| `1` | `sync --strict` found a selected resource that was missing or malformed, or an unmet prerequisite. |
 
 The CLI defines no other numeric statuses. Argument and runtime errors are printed to standard error. Reports and normal results are printed to standard output.

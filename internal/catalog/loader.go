@@ -316,7 +316,7 @@ func hasDiscoveryBoundaryDiagnostics(diagnostics []diag.Diagnostic) bool {
 			case diag.CodeIngestClaudeUnconsumedConfig, diag.CodeIngestFactoryUnconsumedConfig,
 				diag.CodeIngestCursorUnconsumedConfig, diag.CodeIngestGeminiUnconsumedConfig,
 				diag.CodeIngestWindsurfUnconsumedConfig, diag.CodeIngestDevinUnconsumedConfig,
-				diag.CodeIngestCodexUnconsumedConfig:
+				diag.CodeIngestCodexUnconsumedConfig, CodeRequiresInvalid:
 				continue
 			}
 		}

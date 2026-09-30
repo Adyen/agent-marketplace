@@ -10,6 +10,27 @@ import (
 	"testing"
 )
 
+func loadEffectiveForTest(ctx context.Context, opts LoadEffectiveOptions) EffectiveConfig {
+	intent := ReadIntent(ctx, opts)
+	ev := Evidence{}
+	for _, source := range intentLayerOrder {
+		doc, reads, errs := deployedLayerEvidence(intent.Layers[source], source, opts)
+		ev.Locks[source] = doc
+		ev.errors[source] = errs
+		ev.reads[source] = reads
+		ev.Reads = append(ev.Reads, reads...)
+	}
+	ec := bindLayers(intent, ev)
+	if ec.Organization.Config != nil && len(ec.Organization.Errors) == 0 && organizationHasRemoteRequirements(ec.Organization.Config) {
+		if trustErr := ValidateOrganizationTrustUnit(ec.Organization.Path, true, true); trustErr != nil {
+			ev.errors[Organization] = append(ev.errors[Organization], trustErr)
+			ec.Organization.Config = nil
+			ec.Organization.Errors = append(ec.Organization.Errors, trustErr)
+		}
+	}
+	return finishBind(intent, ev, ec)
+}
+
 func TestLoadEffectiveRejectsOversizedConfigBeforeYAMLParsing(t *testing.T) {
 	dir := t.TempDir()
 	userPath := filepath.Join(dir, "user.yaml")
@@ -17,7 +38,7 @@ func TestLoadEffectiveRejectsOversizedConfigBeforeYAMLParsing(t *testing.T) {
 	if err := os.WriteFile(userPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -44,7 +65,7 @@ registries:
 `)
 	writeTrustedOrganizationLock(t, orgPath)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
@@ -80,7 +101,7 @@ registries:
     ref: main
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -128,7 +149,7 @@ registries:
     ref: main
 `)
 
-		ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+		ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,
 			RepoPath:         repoPath,
@@ -164,7 +185,7 @@ registries:
     ref: main
 `)
 
-		ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+		ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 			OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 			GlobalPath:       userPath,
 			RepoPath:         repoPath,
@@ -197,7 +218,7 @@ registries:
     ref: main
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       userPath,
 		RepoPath:         repoPath,
@@ -227,7 +248,7 @@ harnesses:
 registries: []
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:         repoPath,
@@ -254,7 +275,7 @@ func TestLoadEffectiveNoLegacyOrgFallbackSkipsMissingOrg(t *testing.T) {
 		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
 	}
 
-	ec := LoadEffective(context.Background(), opts)
+	ec := loadEffectiveForTest(context.Background(), opts)
 
 	if ec.Organization.Config != nil {
 		t.Fatalf("expected no organization config, got %v", ec.Organization.Config)
@@ -283,7 +304,7 @@ registries: []
 	t.Setenv("AGENT_MARKETPLACE_ORG_CONFIG", legacyPath)
 	SetTestOrganizationConfigPath(t, filepath.Join(dir, "missing-org.yaml"))
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		GlobalPath: filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:   filepath.Join(dir, "missing-repo.yaml"),
 		LocalPath:  filepath.Join(dir, "missing-local.yaml"),
@@ -309,7 +330,7 @@ harnesses:
 registries: []
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -346,7 +367,7 @@ registries:
 `)
 	writeTrustedOrganizationLock(t, orgPath)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -391,7 +412,7 @@ registries: []
 		_ = os.Chmod(orgPath, 0o644)
 	}()
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -424,7 +445,7 @@ harnesses:
 registries: []
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -456,7 +477,7 @@ registries: []
 registries: []
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -483,7 +504,7 @@ registries:
 `)
 
 	// Avoid falling back to embedded org defaults which carry harnesses.
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -511,7 +532,7 @@ registries:
   - url: /local/skills
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:         repoPath,
@@ -645,7 +666,7 @@ registries: []
 			p := filepath.Join(t.TempDir(), "org.yaml")
 			tc.setup(t, p)
 
-			ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+			ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 				OrganizationPath: p,
 				GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),
 				RepoPath:         filepath.Join(t.TempDir(), "missing-repo.yaml"),
@@ -689,5 +710,44 @@ func writeFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
+	}
+}
+
+// spec: configuration-intent/reading-authored-selections-without-acquisition
+func TestReadIntentPerformsNoLockIO(t *testing.T) {
+	dir := t.TempDir()
+	userDir := filepath.Join(dir, "user")
+	userPath := filepath.Join(userDir, "config.yaml")
+	writeFile(t, userPath, `apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [main/collection/onboarding]
+`)
+	if err := os.MkdirAll(filepath.Join(userDir, "lock.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	opts := LoadEffectiveOptions{
+		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
+		GlobalPath:       userPath,
+		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
+		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
+	}
+	intent := ReadIntent(context.Background(), opts)
+	if len(intent.Errors) != 0 {
+		t.Fatalf("intent errors = %v", intent.Errors)
+	}
+	if !intent.Layers[UserPersonal].NeedsMarketplaceLock() {
+		t.Fatal("expected user layer to need a Marketplace lock")
+	}
+	for _, read := range intent.Layers[UserPersonal].Reads {
+		if read.AcquisitionLock {
+			t.Fatalf("ReadIntent recorded acquisition lock read %#v", read)
+		}
+	}
+	effective := Bind(intent, Evidence{})
+	var validation *V4ValidationError
+	if !errors.As(errors.Join(effective.Errors...), &validation) || validation.Code != "v4.marketplace-lock-required" {
+		t.Fatalf("errors = %v, want v4.marketplace-lock-required", effective.Errors)
 	}
 }

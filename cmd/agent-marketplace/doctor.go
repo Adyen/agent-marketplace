@@ -51,8 +51,10 @@ type doctorOptions struct {
 	// resolve produces the currently selected resources, which are what
 	// "exact current desired matches" is measured against. It is a seam so a
 	// test can pin the repair contract against a known selection instead of a
-	// cloned registry.
-	resolve func(ctx context.Context, repoRoot string) []resolver.ResolvedArtifact
+	// cloned registry. Its error reaches the caller, so a Workspace
+	// construction failure keeps its wrapped cause instead of degrading to a
+	// silently empty selection.
+	resolve func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error)
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -111,8 +113,12 @@ func runDoctor(opts doctorOptions) error {
 		opts.probe = func(ctx context.Context) devincli.Probe { return devincli.Detect(ctx) }
 	}
 	if opts.resolve == nil {
-		opts.resolve = func(ctx context.Context, repoRoot string) []resolver.ResolvedArtifact {
-			return pipeline.Resolve(ctx, pipeline.ResolveOptions{RepoRoot: repoRoot}).Resolved
+		opts.resolve = func(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
+			ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+			if err != nil {
+				return nil, err
+			}
+			return pipeline.Resolve(ctx, pipeline.ResolveOptions{Workspace: ws}).Resolved, nil
 		}
 	}
 	out := opts.out
@@ -299,8 +305,12 @@ func writeDoctorDevinSection(out io.Writer, opts doctorOptions, ec config.Effect
 
 func writeDoctorRequirementWarnings(out io.Writer, ctx context.Context, repoRoot string) error {
 	slog.Debug("doctor prerequisite resolve start")
+	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return err
+	}
 	resolved, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		RepoRoot:           repoRoot,
+		Workspace:          ws,
 		CatalogMode:        catalog.LoadModeInspect,
 		ReadOnlyExactLocks: true,
 	})
@@ -313,6 +323,7 @@ func writeDoctorRequirementWarnings(out io.Writer, ctx context.Context, repoRoot
 		}
 		requirementDiagnostics = append(requirementDiagnostics, warning)
 	}
+	requirementDiagnostics = append(requirementDiagnostics, requiresInvalidWarnings(resolved.CatalogLoad.Catalogs)...)
 	slices.SortFunc(requirementDiagnostics, func(a, b error) int {
 		return strings.Compare(a.Error(), b.Error())
 	})
@@ -375,7 +386,11 @@ func devinHarnessSelection(ec config.EffectiveConfig) (bool, []string) {
 func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string) error {
 	ctx := opts.ctx
 	slog.Info("doctor repair preview start", "repo_root", repoRoot)
-	previews, err := materialize.RepairPreviews(ctx, repoRoot, opts.resolve(ctx, repoRoot))
+	selection, err := opts.resolve(ctx, repoRoot)
+	if err != nil {
+		return err
+	}
+	previews, err := materialize.RepairPreviews(ctx, repoRoot, selection)
 	if err != nil {
 		slog.Error("doctor repair preview failed", "repo_root", repoRoot, "status", "error", "code", diag.CodeDoctorRepairFailed)
 		return fmt.Errorf("repair preview: %w", err)

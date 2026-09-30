@@ -292,7 +292,7 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	// v4-aware version used: the loader also enforces Marketplace lock
 	// policy, so a schema-valid harness save on a marketplace-source root
 	// whose acquisition lock was absent or malformed wrote the file and
-	// still failed with v4.marketplace-lock-required. Lock availability is
+	// still failed with a Marketplace lock validation error. Lock availability is
 	// runtime acquisition state, not a property of the document, and the
 	// harness edit does not touch it. cfg.Validate() is deliberately not
 	// run either: it hardcodes the user-personal layer flavor and would

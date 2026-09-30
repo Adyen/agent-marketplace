@@ -69,14 +69,14 @@ func TestNewDeliversMetricsAndTraces(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestTelemetryOffDoesNotCreateProviders(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
 
-	state, err := ResolveTelemetryConfig(nil, nil, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, amconfig.Settings{}, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -155,13 +155,13 @@ func TestCounterAndHistogramDoNotLeakSDKTypes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -212,14 +212,14 @@ func TestMetricAttributeAllowlist(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

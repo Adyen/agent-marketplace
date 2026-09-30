@@ -60,7 +60,7 @@ func newSyncCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			locked = locked || checkOnly || offline
 			if checkOnly {
-				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), offline, locked)
+				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), strict, offline, locked)
 			}
 			return runSyncWithLocks(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, lockRunOptions{locked: locked, marketplacePolicy: policy})
 		},
@@ -68,7 +68,7 @@ func newSyncCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "Check drift without reconciling; exits 1 if out of sync")
 	cmd.Flags().BoolVar(&noBackup, "no-backup", false, "Skip pre-sync backup of machine-scope harness directories")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Treat all unresolved-selection warnings — 'selected but not found' and 'found but failed to load' — as hard errors (exit 1)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on unresolved selections ('selected but not found', 'found but failed to load') and on unmet prerequisites (exit 1)")
 	cmd.Flags().BoolVar(&pruneStale, "prune-stale", false, "Auto-remove stale skill selections from config after successful sync")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print per-file detail for each target and list malformed resources")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use only trusted local registry and Marketplace caches; never fetch or contact remote endpoints")
@@ -83,20 +83,37 @@ type lockRunOptions struct {
 	marketplacePolicy resolver.MarketplaceRevocationPolicy
 }
 
+var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as warnings; select the prerequisite resources or run without --strict")
+
+// discoverSyncWorkspace is the single Workspace discovery point for sync and
+// sync-check. It runs before lock preparation so one validated value carries
+// the repository, local-config, and materialization roots through locks,
+// effective config, stale-selection inspection, dry-run materialization, and
+// real materialization. It is a package var so tests can observe ordering and
+// reuse.
+var discoverSyncWorkspace = pipeline.DiscoverWorkspace
+var ensureGlobalConfigForSync = config.EnsureGlobalConfig
+
+var runSyncCheckMaterialize = materialize.Run
+
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
 	if len(lockOpts) > 0 {
 		marketplacePolicy = lockOpts[0].marketplacePolicy
 	}
+	ws, err := discoverSyncWorkspace()
+	if err != nil {
+		return err
+	}
 	if !offline && !locked {
-		if err := config.EnsureGlobalConfig(); err != nil {
+		if err := ensureGlobalConfigForSync(); err != nil {
 			slog.Warn("failed to create global config skeleton", "error", err)
 		}
 	}
 
-	repoRoot := config.FindRepoRoot()
-	localDir := config.FindLocalConfigDir()
+	repoRoot := ws.RepoRoot()
+	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
 	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: locked || offline, offline: offline, warningSink: &lockWarnings, marketplacePolicy: marketplacePolicy})
 	if err != nil {
@@ -116,12 +133,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
-
-	if localDir != "" && localDir != repoRoot {
-		resolveOpts.MaterializeRoot = localDir
-		resolveOpts.LocalConfigDir = localDir
-	}
+	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors
@@ -153,10 +165,14 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	// In strict mode, re-elevate soft SelectedNotFound warnings to hard errors.
 	// Present-but-malformed selections elevate too: they are equally unresolved,
 	// and a strict caller (CI) wants the run to fail either way.
+	unmetRequirements := false
 	if strict {
 		strictErrors := make([]error, 0, len(syncResult.Warnings))
 		strictWarnings := make([]error, 0, len(syncResult.Warnings))
 		for _, w := range syncResult.Warnings {
+			if resolver.IsUnmetRequirement(w) {
+				unmetRequirements = true
+			}
 			if resolver.IsSoftSelectedNotFound(w) || resolver.IsSoftSelectedMalformed(w) {
 				strictErrors = append(strictErrors, w)
 			} else {
@@ -175,6 +191,9 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	// the same message from different resources remains a distinct counted issue.
 	// Presentation grouping happens later and never changes this count.
 	errs = dedupIssues(errs)
+	if unmetRequirements {
+		errs = append(errs, errStrictUnmetPrerequisites)
+	}
 
 	totalWritten := 0
 	totalRemoved := 0
@@ -321,23 +340,17 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 }
 
 func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
-	effective := pipeline.LoadEffective(ctx, pipeline.ConfigLoadCached, config.LoadEffectiveOptions{
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
-	}, nil)
+	})
 	seen := make(map[string]struct{})
-	for _, layer := range effective.PresentLayers() {
-		var entries []config.RegistryEntry
-		if layer.Config != nil {
-			entries = layer.Config.Registries
-		} else if layer.Local != nil {
-			entries = layer.Local.Registries
+	for _, source := range []config.Source{config.Organization, config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {
+		layer := intent.Layers[source]
+		if !layer.Present() || layer.Err() != nil {
+			continue
 		}
-		for _, entry := range entries {
-			for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindCollection} {
-				for _, name := range entry.SelectorForKind(kind).Include {
-					seen[fmt.Sprintf("%s %q", skill.KindLabel(kind), name)] = struct{}{}
-				}
-			}
+		for _, selection := range layer.ExplicitSelections() {
+			seen[fmt.Sprintf("%s %q", skill.KindLabel(selection.Kind), selection.Name)] = struct{}{}
 		}
 	}
 	labels := make([]string, 0, len(seen))
@@ -405,10 +418,14 @@ func printRemediations(out io.Writer, issues []error) error {
 	return nil
 }
 
-func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
-	repoRoot := config.FindRepoRoot()
+func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bool) error {
 	isOffline := len(offline) > 0 && offline[0]
-	localDir := config.FindLocalConfigDir()
+	ws, err := discoverSyncWorkspace()
+	if err != nil {
+		return err
+	}
+	repoRoot := ws.RepoRoot()
+	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
 	configLoadMode := pipeline.ConfigLoadStrict
 	if !isOffline {
@@ -433,26 +450,21 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	ctx = cache.ContextWithExactGitNamespaceLease(ctx)
 
 	resolveOpts := pipeline.ResolveOptions{
-		RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
+		Workspace: ws, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
 		ConfigLoadMode: configLoadMode,
 	}
 	resolveOpts.RequireTargetSet = true
-	if localDir != "" && localDir != repoRoot {
-		resolveOpts.MaterializeRoot = localDir
-		resolveOpts.LocalConfigDir = localDir
-	}
-	resolvedResult := pipeline.Resolve(ctx, resolveOpts)
-
-	// Use materialize in dry-run mode to check for drift.
-	matRoot := localDir
-	if matRoot == "" {
-		matRoot = repoRoot
-	}
-	report, matErr := materialize.Run(ctx, matRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
-	if matErr != nil {
-		return matErr
-	}
+	// Use materialize in dry-run mode to check for drift; the Workspace derives
+	// the same materialization root the real sync would write beneath.
+	inspection, inspectRelease := pipeline.Inspect(ctx, pipeline.InspectOptions{
+		Resolve: resolveOpts,
+		DryRun:  runSyncCheckMaterialize,
+	})
+	defer inspectRelease()
+	resolvedResult := inspection.ResolveResult
+	report := inspection.Report
+	matErr := inspection.MaterializeErr
 
 	// Surface every warning the run produced, not just the ineffective-subdir
 	// ones. --check used to recompute AncestorMaterializedExcludeWarnings and
@@ -464,9 +476,15 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	// one diagnostic affecting several harness targets prints once.
 	//
 	// Warnings do not affect drift detection or the --check exit code.
-	// Concat, not append: appending to resolvedResult.Warnings could write into
-	// its spare capacity and mutate the caller's slice.
-	allWarnings := slices.Concat(lockWarnings, resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult))
+	// Concat keeps the separately collected lock and inspection warnings
+	// independent before deduplication.
+	var inspectionWarnings []error
+	for _, issue := range inspection.Issues {
+		if issue.Severity == pipeline.IssueWarning {
+			inspectionWarnings = append(inspectionWarnings, issue.Err)
+		}
+	}
+	allWarnings := slices.Concat(lockWarnings, inspectionWarnings)
 	for _, warning := range dedupIssues(allWarnings) {
 		if _, err := fmt.Fprintf(out, "warning: %v\n", warning); err != nil {
 			return err
@@ -485,9 +503,17 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	if err := writeGroupedWarnings(out, requirementWarnings, false); err != nil {
 		return err
 	}
-	errorRows := buildErrorRows(resolvedResult.Errors)
+	checkErrs := slices.Clone(resolvedResult.Errors)
+	if matErr != nil {
+		checkErrs = append(checkErrs, matErr)
+	}
+	errorRows := buildErrorRows(checkErrs)
 
-	return writeSyncCheckSummary(out, report, errorRows, resolvedResult.Errors)
+	summaryErr := writeSyncCheckSummary(out, report, errorRows, checkErrs)
+	if strict && len(requirementWarnings) > 0 {
+		return errors.Join(summaryErr, errStrictUnmetPrerequisites)
+	}
+	return summaryErr
 }
 
 // writeSyncCheckSummary renders the `sync --check` verdict and returns the
@@ -509,16 +535,19 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 // harness set configured", which is both the most common cause and the one with
 // an actionable remedy.
 func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows []errorRow, configErrs []error) error {
-	if report.InSync() && len(errorRows) == 0 {
+	inSync := report != nil && report.InSync()
+	if inSync && len(errorRows) == 0 {
 		return nil
 	}
 
-	pendingCount := report.TotalWritten() + report.TotalRemoved()
-
+	pendingCount := 0
 	var errorDiags []diag.Diagnostic
-	for _, d := range report.Diags {
-		if d.IsError() {
-			errorDiags = append(errorDiags, d)
+	if report != nil {
+		pendingCount = report.TotalWritten() + report.TotalRemoved()
+		for _, d := range report.Diags {
+			if d.IsError() {
+				errorDiags = append(errorDiags, d)
+			}
 		}
 	}
 

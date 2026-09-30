@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: marketplace-api/canonical-artifact-round-trip
+// spec: marketplace-api/payload-contains-resource-name
 func TestCanonicalArtifactRoundTripForKinds(t *testing.T) {
 	cases := []struct {
 		name string
@@ -157,6 +160,7 @@ func TestCanonicalArtifactEncodeRejectsBadPaths(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsLinks(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -175,6 +179,7 @@ func TestCanonicalArtifactDecodeRejectsLinks(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsHardLinks(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -193,6 +198,7 @@ func TestCanonicalArtifactDecodeRejectsHardLinks(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsAbsolutePaths(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -211,6 +217,7 @@ func TestCanonicalArtifactDecodeRejectsAbsolutePaths(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsPathTraversal(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -229,6 +236,7 @@ func TestCanonicalArtifactDecodeRejectsPathTraversal(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsDeviceFiles(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -258,6 +266,7 @@ func TestCanonicalArtifactVerifyRejectsBadContentDigest(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/archive-digest-verification-catches-archive-tampering
 func TestCanonicalArtifactVerifyRejectsBadArchiveDigest(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -282,6 +291,7 @@ func TestCanonicalArtifactVerifyRejectsBadArchiveDigest(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/oversized-resource-rejection
 func TestCanonicalArtifactValidateRejectsOversizedPayload(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -298,6 +308,7 @@ func TestCanonicalArtifactValidateRejectsOversizedPayload(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/oversized-resource-rejection
 func TestCanonicalArtifactValidateRejectsOversizedAsset(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -365,6 +376,7 @@ func writeTarGz(t *testing.T, prepare func(tw *tar.Writer)) []byte {
 	return buf.Bytes()
 }
 
+// spec: marketplace-api/payload-contains-resource-name
 func TestFromIRPreservesExtraAndNameWins(t *testing.T) {
 	extra := map[string]any{
 		"x-agent-marketplace-foo": "bar",
@@ -502,5 +514,48 @@ func TestCanonicalManifestValidateFindings(t *testing.T) {
 				t.Fatalf("expected %q error, got %v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+// spec: marketplace-api/canonical-artifact-round-trip
+func TestCanonicalArtifactRoundTripCarriesAssetsLicensesAndSupport(t *testing.T) {
+	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	a.Assets = map[string][]byte{"diagram.png": []byte("png-bytes")}
+	a.Licenses = map[string][]byte{"LICENSE": []byte("MIT")}
+	a.Support = map[string]SupportFile{
+		"run.sh":        {Data: []byte("#!/bin/sh\necho hi\n"), Executable: true},
+		"docs/guide.md": {Data: []byte("guide")},
+	}
+	raw, digest, err := Encode(a)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	again, digestAgain, err := Encode(a)
+	if err != nil || digestAgain != digest || !bytes.Equal(raw, again) {
+		t.Fatalf("Encode is not deterministic: err=%v digest %s vs %s", err, digest, digestAgain)
+	}
+
+	got, gotRaw, err := Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got.Manifest.ArchiveDigest != digest {
+		t.Fatalf("decoded archive digest = %s, want %s", got.Manifest.ArchiveDigest, digest)
+	}
+	if !bytes.Equal(got.Payload, a.Payload) || !reflect.DeepEqual(got.Assets, a.Assets) ||
+		!reflect.DeepEqual(got.Licenses, a.Licenses) || !reflect.DeepEqual(got.Support, a.Support) {
+		t.Fatalf("decoded artifact differs:\npayload %q\nassets %v\nlicenses %v\nsupport %v", got.Payload, got.Assets, got.Licenses, got.Support)
+	}
+	if err := got.VerifyContentDigest(); err != nil {
+		t.Fatalf("VerifyContentDigest: %v", err)
+	}
+	if err := got.VerifyArchiveDigest(gotRaw); err != nil {
+		t.Fatalf("VerifyArchiveDigest: %v", err)
+	}
+	if err := got.ValidateArchive(nil); err != nil {
+		t.Fatalf("ValidateArchive: %v", err)
 	}
 }

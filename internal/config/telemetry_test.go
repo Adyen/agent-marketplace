@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -182,10 +183,10 @@ func TestSourceCanConfigureTelemetry(t *testing.T) {
 	}
 }
 
-func TestOrganizationTelemetryPolicyToleratesOnlyAbsentMarketplaceLock(t *testing.T) {
+func TestOrganizationSettingsIgnoreMarketplaceLock(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(root, []byte("apiVersion: agent-marketplace/v4\ntelemetry: {level: basic}\nsources:\n  hosted: {marketplace: https://market.example}\n  shared: {git: https://example.com/shared.git, ref: main}\nresources:\n  hosted: {include: [tools/skill/review]}\n"), 0o644); err != nil {
+	if err := os.WriteFile(root, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\ntelemetry: {level: basic}\nsources:\n  hosted: {marketplace: https://market.example}\n  shared: {git: https://example.com/shared.git, ref: main}\nresources:\n  hosted: {include: [tools/skill/review]}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	SetTestOrganizationConfigPath(t, root)
@@ -193,18 +194,43 @@ func TestOrganizationTelemetryPolicyToleratesOnlyAbsentMarketplaceLock(t *testin
 	if _, err := LoadOrganizationConfig(); err == nil || !strings.Contains(err.Error(), "v4.marketplace-lock-required") {
 		t.Fatalf("source-bearing view error = %v, want lock requirement", err)
 	}
-	cfg, err := LoadOrganizationPolicyConfig()
+	settings, err := LoadOrganizationSettings()
 	if err != nil {
-		t.Fatalf("absent organization lock policy: %v", err)
+		t.Fatalf("absent organization lock settings: %v", err)
 	}
-	if cfg.Telemetry == nil || cfg.Telemetry.Level != telemetryconfig.LevelBasic || len(cfg.Registries) != 0 || len(cfg.Marketplaces) != 0 {
-		t.Fatalf("policy view = %#v, want telemetry without sources", cfg)
+	if settings.Telemetry == nil || settings.Telemetry.Level != telemetryconfig.LevelBasic {
+		t.Fatalf("settings telemetry = %#v, want basic policy", settings.Telemetry)
+	}
+	if len(settings.Harnesses) != 1 || settings.Harnesses[0] != "factory" {
+		t.Fatalf("settings harnesses = %v, want [factory]", settings.Harnesses)
 	}
 
 	if err := os.WriteFile(filepath.Join(dir, "lock.yaml"), []byte("apiVersion: agent-marketplace-lock/v1\nscope: organization\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadOrganizationPolicyConfig(); err == nil || !strings.Contains(err.Error(), "v4.marketplace-lock-required") {
-		t.Fatalf("present v1 organization lock error = %v, want fail-closed lock requirement", err)
+	settings, err = LoadOrganizationSettings()
+	if err != nil {
+		t.Fatalf("present v1 organization lock settings: %v", err)
+	}
+	if settings.Telemetry == nil || settings.Telemetry.Level != telemetryconfig.LevelBasic {
+		t.Fatalf("settings telemetry = %#v, want basic policy", settings.Telemetry)
+	}
+	if len(settings.Harnesses) != 1 || settings.Harnesses[0] != "factory" {
+		t.Fatalf("settings harnesses = %v, want [factory]", settings.Harnesses)
+	}
+}
+
+func TestOrganizationSettingsRejectLayerInvalidV4(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(root, []byte("apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\ntelemetry: {level: basic}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	SetTestOrganizationConfigPath(t, root)
+
+	_, err := LoadOrganizationSettings()
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.layer-field" {
+		t.Fatalf("error = %v, want v4.layer-field", err)
 	}
 }

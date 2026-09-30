@@ -276,8 +276,7 @@ In practice:
   gitignored. Files that coordinate in-progress transactions live under the XDG
   state directory (`$XDG_STATE_HOME`, default `~/.local/state`), outside
   repositories.
-- Any layer can pull in other local files with `include`. See the
-  [precedence reference](./docs/PRECEDENCE.md) for include syntax.
+- Any layer can pull in other local files with `include`.
 
 A minimal committed repository configuration looks like this. Each `sources:`
 entry names a Git, directory, or Marketplace origin, and the `resources:` group
@@ -317,9 +316,6 @@ registries:
     skills:
       include: [vm-lifecycle, k8s-basics]
 ```
-
-The full precedence and selection rules, including edge cases and error
-handling, are in [`docs/PRECEDENCE.md`](./docs/PRECEDENCE.md).
 
 ### Monorepos and nested configs
 
@@ -377,8 +373,7 @@ resources:
 ```
 
 An exclusion removes a matching selection, and an include in a more specific
-layer can select the same resource again. See
-[`docs/PRECEDENCE.md`](./docs/PRECEDENCE.md) for the full decision order.
+layer can select the same resource again.
 
 ### Machine-wide opt-in with `required` and `all`
 
@@ -752,9 +747,9 @@ for each target harness.
 | Collection | Supported (a named bundle of the kinds above, not a resource of its own) |
 
 Hooks with the same name from independent registries are all installed. For
-every other kind, one registry wins a name collision (see
-[`docs/PRECEDENCE.md`](./docs/PRECEDENCE.md)). A hook event that the target harness
-cannot represent is skipped with a diagnostic such as `hook.event-unmappable`.
+every other kind, one registry wins a name collision. A hook event that the
+target harness cannot represent is skipped with a diagnostic such as
+`hook.event-unmappable`.
 
 When a target harness cannot represent a resource, the compiler reports a
 structured diagnostic (visible in `status`) and skips that file instead of
@@ -1004,12 +999,13 @@ Read [`CODING_STANDARDS.md`](./CODING_STANDARDS.md) before changing code, and
 
 ```bash
 make build          # build the local binary
-make test           # run root-module tests (TEST_PACKAGES / TEST_FLAGS narrow them)
-make test-fast      # the same tests in -short mode
+make test           # short-mode tests for packages changed vs origin/main (TEST_PACKAGES / TEST_FLAGS override)
+make test-fast      # alias of make test
+make test-full      # the previous behavior: all root-module tests, no -short
 make lint           # tidy, gofmt, go vet, golangci-lint (rewrites files)
 make ci-lint        # the same checks without rewriting files, as CI runs them
-make validate-fast  # short-mode tests, ci-lint, and build
-make validate       # tests, ci-lint, and build
+make validate-fast  # alias of make validate
+make validate       # short-mode selected tests, ci-lint, and build
 make validate-full  # fresh full tests, ci-lint, build, E2E, compatibility checks, TUI QA
 make validate-e2e   # E2E and configuration-compatibility scenarios in one run
 make e2e            # run the end-to-end suite (see below)
@@ -1018,8 +1014,17 @@ make release        # cross-compile darwin-arm64/amd64 and linux-amd64/arm64 int
 ```
 
 While you iterate, run the affected package first, for example
-`make test-fast TEST_PACKAGES=./internal/resolver TEST_FLAGS="-run TestResolve -count=1"`,
-and run the full gates once before you hand off. `make lint` rewrites files, so
+`make test TEST_PACKAGES=./internal/resolver TEST_FLAGS="-run TestResolve -count=1"`,
+then run `make validate` and any E2E, TUI QA, or spec gate your change touches
+before you hand off; CI runs the full root suite. Without `TEST_PACKAGES`,
+`make test` asks `tools/test-local` for the packages changed since the merge
+base with `origin/main` (staged, unstaged, untracked, and committed work);
+root Markdown, `docs/**/*.md`, recognized OpenSpec/CI/deployment metadata,
+and exact root metadata such as `.gitignore` select no Go tests when outside Go
+packages. Other unmappable paths fall back to `./...`; e2e-module changes are
+never selected, and reverse dependencies are left to `make test-full` and CI's
+witnessed run. OpenSpec and deployment/workflow edits still need their applicable
+spec, E2E, container, Helm, or CI checks. `make lint` rewrites files, so
 do not run it at the same time as other checks.
 
 ### E2E tests

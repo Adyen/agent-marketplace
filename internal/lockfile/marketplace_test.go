@@ -1,7 +1,6 @@
 package lockfile
 
 import (
-	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
@@ -123,6 +122,8 @@ marketplaces:
             revision: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 `
 
+// spec: acquisition-lock-codec/v2-marketplace-lock-emits-stable-golden-bytes
+// spec: acquisition-lock-codec/emitted-bytes-decode-to-the-normalized-document
 func TestV2MarketplaceGolden(t *testing.T) {
 	got, err := Encode(v2GoldenDocument())
 	if err != nil {
@@ -352,35 +353,8 @@ func TestMarketplaceInvalidDocuments(t *testing.T) {
 	}
 }
 
-func TestMarketplacePermutationAndDedupStable(t *testing.T) {
-	want, err := Encode(v2GoldenDocument())
-	if err != nil {
-		t.Fatal(err)
-	}
-	random := rand.New(rand.NewSource(11))
-	for i := 0; i < 50; i++ {
-		doc := v2GoldenDocument()
-		mp := &doc.Marketplaces[0]
-		random.Shuffle(len(mp.RegistryBindings), func(a, b int) {
-			mp.RegistryBindings[a], mp.RegistryBindings[b] = mp.RegistryBindings[b], mp.RegistryBindings[a]
-		})
-		random.Shuffle(len(mp.Resources), func(a, b int) {
-			mp.Resources[a], mp.Resources[b] = mp.Resources[b], mp.Resources[a]
-		})
-		if i%3 == 0 {
-			mp.RegistryBindings = append(mp.RegistryBindings, mp.RegistryBindings[0])
-			mp.Resources = append(mp.Resources, mp.Resources[0])
-		}
-		got, err := Encode(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(want) {
-			t.Fatalf("permutation %d changed bytes", i)
-		}
-	}
-}
-
+// spec: acquisition-lock-codec/marketplace-records-are-ordered-and-exact-duplicates-collapse
+// spec: acquisition-lock-codec/selection-edges-are-ordered-and-deduplicated
 func TestMarketplaceEndpointAndSelectionOrderingDedup(t *testing.T) {
 	edgeOnboarding := MarketplaceSelectionLock{RegistryID: "collections-id", Name: "onboarding", Revision: Digest(sha256c)}
 	edgeStarters := MarketplaceSelectionLock{RegistryID: "collections-id", Name: "starters", Revision: Digest(sha256e)}
@@ -446,6 +420,28 @@ func TestMarketplaceEndpointAndSelectionOrderingDedup(t *testing.T) {
 	wantEdges := []MarketplaceSelectionLock{edgeOnboarding, edgeStarters}
 	if !reflect.DeepEqual(resources[2].SelectedBy, wantEdges) {
 		t.Fatalf("selection edges = %#v, want %#v", resources[2].SelectedBy, wantEdges)
+	}
+	encoded, err := Encode(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(encoded)
+	for _, url := range []string{"url: https://market.example", "url: https://zeta.example"} {
+		if strings.Count(output, url) != 1 {
+			t.Fatalf("endpoint %q occurrences in emitted bytes = %d, want 1", url, strings.Count(output, url))
+		}
+	}
+	if strings.Index(output, "url: https://market.example") > strings.Index(output, "url: https://zeta.example") {
+		t.Fatalf("endpoint order in emitted bytes:\n%s", output)
+	}
+	onboarding := strings.Index(output, "\n        name: onboarding\n")
+	starters := strings.Index(output, "\n        name: starters\n")
+	review := strings.Index(output, "\n        name: review\n")
+	if onboarding < 0 || starters < 0 || review < 0 || onboarding >= starters || starters >= review {
+		t.Fatalf("resource order in emitted bytes:\n%s", output)
+	}
+	if strings.Count(output, "\n            name: starters\n") != 1 {
+		t.Fatalf("selection edge dedupe failed in emitted bytes:\n%s", output)
 	}
 }
 
@@ -520,6 +516,7 @@ func TestV1GitOnlyPlanUpgradesToV2(t *testing.T) {
 	}
 }
 
+// spec: acquisition-lock-codec/non-canonical-marketplace-endpoint-spellings-normalize-on-read
 func TestV2NormalizesNonCanonicalEndpointOnDecode(t *testing.T) {
 	data := []byte(strings.Replace(v2GoldenBytes, "url: https://market.example", "url: https://MARKET.example/", 1))
 	doc, err := Decode(data)

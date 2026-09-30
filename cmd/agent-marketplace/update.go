@@ -65,7 +65,6 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 	}
 	if localDir != "" && localDir != repoRoot {
 		opts.LocalConfigDir = localDir
-		opts.MaterializeRoot = localDir
 	}
 	result, err := pipeline.Update(ctx, opts)
 	if err != nil {

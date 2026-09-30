@@ -35,7 +35,6 @@ type RefBump struct {
 // UpdateOptions holds the arguments for an update operation.
 type UpdateOptions struct {
 	RepoRoot            string
-	MaterializeRoot     string
 	LocalConfigDir      string
 	Bump                bool
 	BumpScopes          map[lockfile.Scope]bool
@@ -101,6 +100,10 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	}()
 
 	repoRoot := opts.RepoRoot
+	ws, err := workspaceForRoots(repoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
 	if len(ec.Errors) > 0 {
@@ -187,7 +190,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 			if !bumpScopeSelected(opts.BumpScopes, scope) {
 				continue
 			}
-			registries := layerRegistriesForUpdate(layer)
+			registries := GitRegistryEntries(layer.Sources)
 			if len(registries) == 0 {
 				continue
 			}
@@ -207,15 +210,14 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 	}
 
-	syncOpts := silentSyncOptsForPaths(repoRoot, opts.MaterializeRoot, opts.LocalConfigDir)
-	syncOpts = append(syncOpts, withConfigStaging(staging), withDependencyReconciler(func(ctx context.Context, repoRoot, localDir string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
+	syncOpts := []silentSyncOpt{withConfigStaging(staging), withDependencyReconciler(func(ctx context.Context, repoRoot, localDir string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
 		ordered := make([]StagedLockEdit, 0, len(lockEditOrder))
 		for _, path := range lockEditOrder {
 			ordered = append(ordered, lockEdits[path])
 		}
 		return opts.DependencyReconcile(ctx, repoRoot, localDir, bumps, edits, ordered)
-	}))
-	if _, err := silentSyncCollect(ctx, repoRoot, syncOpts...); err != nil {
+	})}
+	if _, err := silentSyncCollect(ctx, ws, syncOpts...); err != nil {
 		if hasUnsupportedMarketplacePlan(plans) && isUnsupportedMarketplaceSyncError(err) {
 			err = fmt.Errorf("sync was required, but unsupported Marketplace pins prevented synchronization; index-only and collection updates are not implemented — remove or disable those pins before retrying: %w", err)
 		}
@@ -538,16 +540,6 @@ func isUnsupportedMarketplaceSyncError(err error) bool {
 		}
 	}
 	return false
-}
-
-func layerRegistriesForUpdate(layer config.LayerResult) []config.RegistryEntry {
-	if layer.Config != nil {
-		return layer.Config.Registries
-	}
-	if layer.Local != nil {
-		return layer.Local.Registries
-	}
-	return nil
 }
 
 func bumpScopeSelected(scopes map[lockfile.Scope]bool, scope lockfile.Scope) bool {

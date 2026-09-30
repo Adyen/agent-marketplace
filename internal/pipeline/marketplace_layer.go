@@ -125,11 +125,17 @@ func MutateMarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, confi
 	if mutate == nil {
 		return nil, errors.New("marketplace layer mutation callback is required")
 	}
-	if _, err := os.Lstat(configPath); err != nil {
+	info, err := os.Lstat(configPath)
+	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
 		return mutateV4MarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, mutate, sync)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("config %s is a symlink to a missing target: %w", configPath, err)
+		}
 	}
 	v4, err := config.LoadV4ConfigIfPresent(configPath, source)
 	if err != nil {
@@ -366,19 +372,12 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 }
 
 func marketplaceLayerLockPath(configPath string) (string, error) {
-	paths, err := config.ResolveConfigLockPaths(configPath)
+	resolve := config.ResolveConfigLockPaths
+	if _, err := os.Lstat(configPath); errors.Is(err, os.ErrNotExist) {
+		resolve = config.ResolveConfigLockPathsTolerateMissing
+	}
+	paths, err := resolve(configPath)
 	if err != nil {
-		if _, statErr := os.Lstat(configPath); errors.Is(statErr, os.ErrNotExist) {
-			dir, dirErr := filepath.EvalSymlinks(filepath.Dir(configPath))
-			if dirErr != nil {
-				return "", err
-			}
-			lock, lockErr := lockfile.PathForConfig(filepath.Join(dir, filepath.Base(configPath)))
-			if lockErr != nil {
-				return "", lockErr
-			}
-			return dependencytxn.ValidateDestination(filepath.Clean(lock))
-		}
 		return "", err
 	}
 	return dependencytxn.ValidateDestination(filepath.Clean(paths.CanonicalLock))
@@ -408,14 +407,6 @@ func marketplaceLayerReadAssertions(ec config.EffectiveConfig, configEdit Staged
 	lockDigest := dependencytxn.Digest(lockData)
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
-			if read.RuntimeLock {
-				assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath}
-				if previous, exists := byAlias[read.RequestedPath]; exists && previous != assertion {
-					return nil, fmt.Errorf("%w: config alias changed at %s", dependencytxn.ErrGenerationConflict, read.RequestedPath)
-				}
-				byAlias[read.RequestedPath] = assertion
-				continue
-			}
 			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
 				return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
 			}
@@ -453,7 +444,11 @@ func marketplaceLayerReadAssertions(ec config.EffectiveConfig, configEdit Staged
 }
 
 func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configPath string, source config.Source, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, enable bool) error {
-	_, err := MutateMarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, func(m *MarketplaceLayerMutation) error {
+	ws, err := NewWorkspace(repoRoot, localConfigDir)
+	if err != nil {
+		return err
+	}
+	_, err = MutateMarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, func(m *MarketplaceLayerMutation) error {
 		if enable {
 			pin := pin
 			pin.Direct = true
@@ -462,8 +457,7 @@ func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configP
 		}
 		return m.RemoveDirectPin(entry, pin)
 	}, func() ([]error, error) {
-		syncOpts := append(silentSyncOptsForPaths(repoRoot, localConfigDir, localConfigDir), withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
-		return nil, silentSync(ctx, repoRoot, syncOpts...)
+		return nil, silentSync(ctx, ws, withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
 	})
 	return err
 }
