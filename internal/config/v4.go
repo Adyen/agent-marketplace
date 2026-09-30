@@ -1250,13 +1250,7 @@ func loadV4TreeWithResolvedRoot(file, resolvedRoot string, root bool, visiting m
 	} else {
 		canonical, err = canonicalConfigPathTolerateMissing(file)
 		if err != nil {
-			if rootData == nil || !errors.Is(err, fs.ErrNotExist) {
-				return nil, err
-			}
-			canonical, err = canonicalEffectiveLayerPath(file)
-			if err != nil {
-				return nil, err
-			}
+			return nil, err
 		}
 	}
 	if visiting[canonical] {
