@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // tab represents the active top-level view.
@@ -78,12 +78,12 @@ func prevTab(current tab) tab {
 var (
 	styleTabActive = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#FFFFFF"}).
-			Background(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"}).
+			Foreground(lipgloss.ANSIColor(15)).
+			Background(paletteAccent).
 			Padding(0, 2)
 
 	styleTabInactive = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"}).
+				Foreground(paletteMuted).
 				Padding(0, 2)
 )
 

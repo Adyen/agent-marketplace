@@ -10,9 +10,10 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -24,17 +25,10 @@ type editConfigPathMsg struct {
 	err       error
 }
 
-var styleEditConfigModal = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"}).
-	Background(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1A1A1A"}).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1A1A1A", Dark: "#F8F8F2"}).
-	Padding(1, 2)
-
 func renderEditConfigModal(m Model) string {
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"}).
+		Foreground(m.currentTheme().accent).
 		Render("Edit Config")
 
 	globalPath, err := config.GlobalConfigPath()
@@ -44,17 +38,20 @@ func renderEditConfigModal(m Model) string {
 	projectPath := config.ProjectConfigPath(m.repoRoot)
 	localPath := config.LocalConfigPath(m.workspace.LocalConfigDir())
 
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"})
+	dimStyle := lipgloss.NewStyle().Foreground(m.currentTheme().muted)
+
+	keyStyle := lipgloss.NewStyle().Foreground(m.currentTheme().mark).Bold(true)
 
 	if compactTerminalLayout(m) {
-		keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
 		var b strings.Builder
 		b.WriteString(title + "\n")
-		b.WriteString(keyStyle.Render("[g]") + " edit global config\n")
-		b.WriteString(keyStyle.Render("[p]") + " edit project config\n")
-		b.WriteString(keyStyle.Render("[l]") + " edit local config\n")
+		m.ensureEditConfigForm()
+		if m.editConfigForm != nil {
+			b.WriteString(m.editConfigForm.View())
+			b.WriteString("\n")
+		}
 		b.WriteString(keyStyle.Render("[esc]") + " cancel")
-		return compactModalStyle(styleEditConfigModal, m).Render(b.String())
+		return compactModalStyle(modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent), m).Render(b.String())
 	}
 
 	var b strings.Builder
@@ -63,30 +60,44 @@ func renderEditConfigModal(m Model) string {
 	fmt.Fprintf(&b, "  Project:   %s\n", dimStyle.Render(sanitizeTerminalData(projectPath, terminalSingleLine)))
 	fmt.Fprintf(&b, "  Local:     %s\n\n", dimStyle.Render(sanitizeTerminalData(localPath, terminalSingleLine)))
 
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
-
-	actions := []struct{ key, label string }{
-		{"[g]", "edit global config"},
-		{"[p]", "edit project config"},
-		{"[l]", "edit local config"},
-		{"[esc]", "cancel"},
+	m.ensureEditConfigForm()
+	if m.editConfigForm != nil {
+		b.WriteString(m.editConfigForm.View())
+		b.WriteString("\n")
 	}
-	for i, a := range actions {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString("  " + keyStyle.Render(a.key) + "  " + a.label)
-	}
+	b.WriteString("  " + keyStyle.Render("[esc]") + "  cancel")
 
-	return styleEditConfigModal.Render(b.String())
+	return modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent).Render(b.String())
 }
 
-func (m Model) handleEditConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleEditConfigModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.ensureEditConfigForm()
 	switch {
 	case key.Matches(msg, m.keys.EditConfigCancel):
 		m.pane = paneList
 		return m, nil
 	case key.Matches(msg, m.keys.EditConfigGlobal):
+		return m.editConfigScope("g")
+	case key.Matches(msg, m.keys.EditConfigProject):
+		return m.editConfigScope("p")
+	case key.Matches(msg, m.keys.EditConfigLocal):
+		return m.editConfigScope("l")
+	default:
+		m.editConfigForm = updateModalForm(m.editConfigForm, msg)
+		if m.editConfigForm != nil && m.editConfigForm.State == huh.StateCompleted && m.editConfigChoice != nil && *m.editConfigChoice != "" {
+			choice := *m.editConfigChoice
+			m.editConfigForm = nil
+			return m.editConfigScope(choice)
+		}
+		return m, nil
+	}
+}
+
+// editConfigScope opens the external editor for the config layer selected
+// by its accelerator letter (g/p/l).
+func (m Model) editConfigScope(letter string) (tea.Model, tea.Cmd) {
+	switch letter {
+	case "g":
 		path, err := config.GlobalConfigPath()
 		if err != nil {
 			slog.Warn("config editor path resolution failed", "scope", "global", "err", err)
@@ -96,9 +107,9 @@ func (m Model) handleEditConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m.openConfigEditor("global", path)
-	case key.Matches(msg, m.keys.EditConfigProject):
+	case "p":
 		return m.openConfigEditor("project", config.ProjectConfigPath(m.repoRoot))
-	case key.Matches(msg, m.keys.EditConfigLocal):
+	case "l":
 		return m.openConfigEditor("local", config.LocalConfigPath(m.workspace.LocalConfigDir()))
 	}
 	return m, nil

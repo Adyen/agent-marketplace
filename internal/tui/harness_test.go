@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -17,7 +17,7 @@ func TestHarnessKeyOpensGlobalHarnessModal(t *testing.T) {
 	m.projectHarnesses = []string{"factory"}
 	m.globalHarnesses = []string{"cursor"}
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'H', Text: string('H')})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("opening harness modal should not emit command")
@@ -117,15 +117,15 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	m.openHarnessModal()
 	// Walk to Devin and toggle it on without assuming it remains last.
 	for knownHarnessOptions[m.harnessModal.cursor].ID != "devin" {
-		mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mi.(Model)
 	}
 	if got := knownHarnessOptions[m.harnessModal.cursor].ID; got != "devin" {
 		t.Fatalf("cursor landed on %q, want devin", got)
 	}
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatal("saving harnesses should emit a command")
@@ -157,22 +157,22 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	m.projectHarnesses = []string{"factory"}
 	m.openHarnessModal()
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("switching scope should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("moving cursor should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("toggling harness should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("saving harnesses should emit command")
@@ -199,7 +199,7 @@ func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 	m.openHarnessModal()
 	m.harnessModal.selected = map[string]bool{}
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("expected toast command for empty harness selection")
@@ -233,17 +233,17 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 	m.globalHarnesses = []string{"factory"}
 	m.openHarnessModal()
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("moving cursor should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("toggling harness should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("saving global harnesses should emit command")
@@ -289,17 +289,17 @@ func TestHarnessModalSavesGlobalHarnessesToV4Config(t *testing.T) {
 	m.globalHarnesses = []string{"factory"}
 	m.openHarnessModal()
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("moving cursor should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("toggling harness should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("saving harnesses should emit command")

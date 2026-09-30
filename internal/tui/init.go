@@ -6,9 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -18,9 +19,13 @@ import (
 // harness modal but is always scoped to the user-personal layer and
 // pre-selects any harness installation roots detected on the machine.
 type initModalState struct {
-	cursor   int
-	selected map[string]bool
-	detected bool
+	cursor     int
+	selected   map[string]bool
+	detected   bool
+	form       *huh.Form
+	multi      *huh.MultiSelect[string]
+	multiValue *[]string
+	optionIDs  []string
 }
 
 // newInitModalState detects installed harnesses under homeDir and returns a
@@ -34,28 +39,25 @@ func newInitModalState(homeDir string) (initModalState, error) {
 }
 
 func renderInitModal(m Model) string {
+	m.ensureInitForm()
 	modal := m.initModal
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
+		Foreground(m.currentTheme().accent)
 	keyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).
+		Foreground(m.currentTheme().mark).
 		Bold(true)
-	activeStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.AdaptiveColor{Light: "#5C8A1E", Dark: "#A6E22E"})
-	cursorStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
 
 	compact := compactTerminalLayout(m)
-	modalStyle := compactModalStyle(styleHarnessModal, m)
-	optionStart, optionEnd := 0, len(knownHarnessOptions)
+	modalStyle := compactModalStyle(modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent), m)
 	var b strings.Builder
 	if compact {
 		contentRows := max(1, m.height-modalStyle.GetVerticalFrameSize())
 		visibleOptions := max(1, contentRows-3)
-		optionStart, optionEnd = harnessOptionWindow(len(knownHarnessOptions), modal.cursor, visibleOptions)
+		if modal.multi != nil {
+			modal.multi.Height(visibleOptions)
+		}
 		b.WriteString(titleStyle.Render("Initialize target harnesses") + "\n")
 		if modal.detected {
 			b.WriteString("Detected targets are pre-selected.\n")
@@ -72,17 +74,9 @@ func renderInitModal(m Model) string {
 		}
 	}
 
-	for i := optionStart; i < optionEnd; i++ {
-		opt := knownHarnessOptions[i]
-		cursor := "  "
-		if i == modal.cursor {
-			cursor = cursorStyle.Render("> ")
-		}
-		box := "[ ]"
-		if modal.selected[opt.ID] {
-			box = activeStyle.Render("[x]")
-		}
-		fmt.Fprintf(&b, "%s%s %-14s %s\n", cursor, box, opt.Label, styleDim.Render(opt.ID))
+	if modal.form != nil {
+		b.WriteString(modal.form.View())
+		b.WriteString("\n")
 	}
 
 	unknown := unknownSelectedHarnesses(modal.selected)
@@ -101,34 +95,20 @@ func renderInitModal(m Model) string {
 	return modalStyle.Render(b.String())
 }
 
-func (m Model) handleInitModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleInitModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.ensureInitForm()
 	switch {
 	case key.Matches(msg, m.keys.HarnessCancel):
 		m.pane = paneList
 		return m, nil
-	case key.Matches(msg, m.keys.Up):
-		if m.initModal.cursor > 0 {
-			m.initModal.cursor--
-		}
-		return m, nil
-	case key.Matches(msg, m.keys.Down):
-		if m.initModal.cursor < len(knownHarnessOptions)-1 {
-			m.initModal.cursor++
-		}
-		return m, nil
-	case key.Matches(msg, m.keys.Space):
-		if m.initModal.cursor < 0 || m.initModal.cursor >= len(knownHarnessOptions) {
+	case key.Matches(msg, m.keys.HarnessSave):
+		m.delegateInitForm(msg)
+		if m.initModal.form == nil || m.initModal.form.State != huh.StateCompleted {
 			return m, nil
 		}
-		opt := knownHarnessOptions[m.initModal.cursor]
-		if m.initModal.selected == nil {
-			m.initModal.selected = map[string]bool{}
-		}
-		m.initModal.selected[opt.ID] = !m.initModal.selected[opt.ID]
-		return m, nil
-	case key.Matches(msg, m.keys.HarnessSave):
 		harnesses := selectedHarnessIDs(m.initModal.selected)
 		if len(harnesses) == 0 {
+			m.initModal.form, m.initModal.multi, m.initModal.multiValue = newHarnessSelectForm(m.initModal.selected)
 			return m, func() tea.Msg {
 				return toastMsg{text: "select at least one harness", duration: 2 * time.Second}
 			}
@@ -139,8 +119,20 @@ func (m Model) handleInitModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.pane = paneList
 		return m, correlateOperation(runInitSaveCmd(harnesses), operation, false)
+	default:
+		m.delegateInitForm(msg)
+		return m, nil
 	}
-	return m, nil
+}
+
+func (m *Model) delegateInitForm(msg tea.Msg) {
+	var selected map[string]bool
+	m.initModal.form, selected, m.initModal.cursor = updateHarnessMulti(
+		m.initModal.form, m.initModal.multi, m.initModal.multiValue,
+		m.initModal.optionIDs, m.initModal.cursor, msg)
+	if selected != nil {
+		m.initModal.selected = selected
+	}
 }
 
 func runInitSaveCmd(harnesses []string) tea.Cmd {

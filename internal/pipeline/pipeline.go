@@ -341,6 +341,8 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	var ec config.EffectiveConfig
 	var transientOrganizationMarketplaceLock transientOrganizationMarketplaceLockUse
 
+	ObservePhase(ctx, PhaseConfigure)
+
 	var configLoadSpan telemetry.Span
 	if tel != nil {
 		_, configLoadSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.config_load", nil)
@@ -554,6 +556,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	if opts.Workspace.LocalConfigDir() != opts.Workspace.RepoRoot() {
 		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.Workspace.LocalConfigDir()))
 	}
+	ObservePhase(ctx, PhaseResolve)
 	loadResult := catalog.LoadRegistriesWithContext(ctx, mergedCfg, opts.Workspace.RepoRoot(), opts.CatalogMode, catalogOpts...)
 	result.CatalogLoad = loadResult
 	result.CatalogErrors = loadResult.Errors
@@ -866,6 +869,8 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			}
 		}
 	}
+
+	ObservePhase(ctx, PhaseMaterialize)
 
 	if hook, ok := ctx.Value(syncPhaseHookContextKey{}).(func(string)); ok {
 		hook("before-materialization")

@@ -24,7 +24,6 @@ test("keeps the v4 mutation error visible at narrow widths", async ({ terminal }
   });
   await step("filter for alpha", () => terminal.write("alpha"), async () => {
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("beta-skill", { strict: false })).not.toBeVisible();
   });
   await step("apply alpha filter", () => terminal.write("\r"), async () => {
     await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();

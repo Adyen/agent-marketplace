@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -91,7 +91,7 @@ func TestConfigMutationInvalidatesCleanDriftBeforeReload(t *testing.T) {
 
 	updated, _ := model.Update(configWrittenMsg{operation: operation, skillName: "review", enabled: true})
 	model = updated.(Model)
-	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, command := model.Update(tea.KeyPressMsg{Code: 's', Text: string('s')})
 	model = updated.(Model)
 	for _, command := range batchCmds(command) {
 		if _, ok := command().(syncDoneMsg); ok {
@@ -112,7 +112,7 @@ func TestSuccessfulSyncClearsPendingDriftBeforeReload(t *testing.T) {
 
 	updated, _ := model.Update(syncDoneMsg{})
 	model = updated.(Model)
-	_, command := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, command := model.Update(tea.KeyPressMsg{Code: 'q', Text: string('q')})
 	if !cmdProducesQuitMsg(command) {
 		t.Fatal("successful sync retained stale pending drift and blocked quit")
 	}

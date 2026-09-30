@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -98,25 +99,18 @@ func migrationPathsForPrompt(prompt migrationPrompt) config.MigratePaths {
 	return paths
 }
 
-var styleMigrationModal = lipgloss.NewStyle().
-	Border(lipgloss.DoubleBorder()).
-	BorderForeground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"}).
-	Background(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1A1A1A"}).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1A1A1A", Dark: "#F8F8F2"}).
-	Padding(1, 2)
-
 func renderMigrationModal(m Model) string {
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"}).
+		Foreground(m.currentTheme().warn).
 		Render("Configuration migration required")
 
 	keyStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"})
+		Foreground(m.currentTheme().mark)
 
 	dim := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"})
+		Foreground(m.currentTheme().muted)
 
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
@@ -133,23 +127,36 @@ func renderMigrationModal(m Model) string {
 	b.WriteString("\n")
 	b.WriteString(dim.Render("Migration is transactional; unsupported or lossy inputs are left unchanged."))
 	b.WriteString("\n\n")
+	m.ensureMigrationForm()
+	if m.migrationForm != nil {
+		b.WriteString(m.migrationForm.View())
+		b.WriteString("\n\n")
+	}
 	b.WriteString("  " + keyStyle.Render("[enter]") + " or " + keyStyle.Render("[m]") + "  migrate to v4\n")
 	b.WriteString("  " + keyStyle.Render("[l]") + " or " + keyStyle.Render("[esc]") + "  leave config unchanged")
 
-	return styleMigrationModal.Render(b.String())
+	return modalBoxStyle(m.currentTheme(), lipgloss.DoubleBorder(), m.currentTheme().warn).Render(b.String())
 }
 
-func (m Model) handleMigrationModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, m.keys.MigrationRun):
-		m.pane = paneList
-		return m, m.runMigrationCmd()
-	case key.Matches(msg, m.keys.MigrationLeave):
-		m.pane = paneList
-		m.migrationDismissed = true
-		m.toast = "Config left unchanged"
-		m.toastExp = time.Now().Add(2 * time.Second)
-		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), toastExpiryCmd(2*time.Second))
+func (m Model) handleMigrationModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.ensureMigrationForm()
+	if key.Matches(msg, m.keys.MigrationLeave) {
+		return m.leaveMigration()
+	}
+	m.migrationForm = updateModalForm(m.migrationForm, msg)
+	if m.migrationForm != nil && m.migrationForm.State == huh.StateCompleted {
+		if m.migrationValue != nil && *m.migrationValue {
+			m.pane = paneList
+			return m, m.runMigrationCmd()
+		}
+		return m.leaveMigration()
 	}
 	return m, nil
+}
+
+func (m Model) leaveMigration() (tea.Model, tea.Cmd) {
+	m.pane = paneList
+	m.migrationDismissed = true
+	m.pushToast("Config left unchanged", 2*time.Second)
+	return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), toastExpiryCmd(2*time.Second))
 }

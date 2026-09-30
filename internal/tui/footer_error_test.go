@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -39,9 +39,9 @@ func TestFooterErrorPriorityKeepsRecoveryActions(t *testing.T) {
 			if ansi.StringWidth(footer) > width {
 				t.Fatalf("width %d exceeded: %d %q", width, ansi.StringWidth(footer), footer)
 			}
-			output := m.View()
+			output := m.View().Content
 			assertTerminalBounds(t, output, width, height)
-			mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+			mi, _ := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
 			updated, ok := mi.(Model)
 			if !ok {
 				t.Fatalf("error key update type %T", mi)

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // noopSyncCmd replaces runSyncCmd in tests so that anyCmdProducesQuitMsg

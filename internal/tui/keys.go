@@ -1,8 +1,9 @@
 package tui
 
 import (
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
 )
 
 // keyMap defines all keyboard shortcuts for the TUI. It is the single source
@@ -38,6 +39,7 @@ type keyMap struct {
 	Update     key.Binding
 	Harness    key.Binding
 	EditConfig key.Binding
+	Palette    key.Binding
 
 	// Fold (vim-style z-prefix)
 	FoldPrefix key.Binding
@@ -109,7 +111,7 @@ var defaultKeyMap = keyMap{
 	Search:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "fuzzy search")),
 	Clear:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search / close")),
 	Enter:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view details / toggle fold")),
-	Space:      key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle modal / fold section")),
+	Space:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle modal / fold section")),
 	Collapse:   key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "collapse section")),
 	Expand:     key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "expand section")),
 	Reload:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reload from disk")),
@@ -117,6 +119,7 @@ var defaultKeyMap = keyMap{
 	Update:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "update caches")),
 	Harness:    key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "harness defaults")),
 	EditConfig: key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit config")),
+	Palette:    key.NewBinding(key.WithKeys("ctrl+k", ":"), key.WithHelp("ctrl+k/:", "command palette")),
 
 	// Fold (vim-style z-prefix)
 	FoldPrefix: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "fold prefix")),
@@ -192,7 +195,7 @@ func (k keyMap) navigationBindings() []key.Binding {
 
 // actionBindings returns the action-related key bindings.
 func (k keyMap) actionBindings() []key.Binding {
-	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.Harness, k.EditConfig, k.Sync, k.Update}
+	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.Harness, k.EditConfig, k.Sync, k.Update, k.Palette}
 }
 
 // toggleModalBindings returns the toggle-modal key bindings.
@@ -213,18 +216,25 @@ func (k keyMap) otherBindings() []key.Binding {
 	return []key.Binding{k.Reload, k.Errors, k.Help, k.Quit}
 }
 
-// newHelpModel creates a help.Model styled to match the TUI theme.
-func newHelpModel() help.Model {
-	h := help.New()
-	h.ShortSeparator = " · "
-	h.Styles = help.Styles{
+// helpStyles builds the help.Model styles for one model theme. The full-key
+// and full-desc styles follow the model's reported background; the rest use
+// background-independent roles.
+func helpStyles(t theme) help.Styles {
+	return help.Styles{
 		ShortKey:       shortcutKeyStyle,
 		ShortDesc:      shortcutDescStyle,
 		ShortSeparator: shortcutSepStyle,
 		Ellipsis:       shortcutSepStyle,
-		FullKey:        helpFullKeyStyle,
-		FullDesc:       helpFullDescStyle,
+		FullKey:        lipgloss.NewStyle().Foreground(t.mark).Width(13),
+		FullDesc:       lipgloss.NewStyle().Foreground(t.text),
 		FullSeparator:  helpFullSepStyle,
 	}
+}
+
+// newHelpModel creates a help.Model styled to match the model theme.
+func newHelpModel(t theme) help.Model {
+	h := help.New()
+	h.ShortSeparator = " · "
+	h.Styles = helpStyles(t)
 	return h
 }

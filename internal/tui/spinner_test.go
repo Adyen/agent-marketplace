@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // newSpinnerTestModel returns a minimal Model with the spinner initialised,
@@ -37,7 +37,7 @@ func TestStartupProgressSurvivesFooterCrowding(t *testing.T) {
 				if withError {
 					m.errs = []error{errors.New("catalog failed")}
 				}
-				view := m.View()
+				view := m.View().Content
 				if !strings.Contains(view, "verifying resources...") {
 					t.Errorf("width=%d assessment=%t error=%t hides progress:\n%s", width, assessment, withError, view)
 				}
@@ -61,7 +61,7 @@ func TestFooterShowsSpinnerWhenLoading(t *testing.T) {
 	footer := renderFooter(m)
 	spinnerView := m.spinner.View()
 	if spinnerView == "" {
-		t.Fatalf("spinner.View() should produce output; got empty string")
+		t.Fatalf("spinner.View().Content should produce output; got empty string")
 	}
 	if !strings.Contains(footer, spinnerView) {
 		t.Fatalf("footer should contain spinner view %q when loading; got %q", spinnerView, footer)
@@ -230,7 +230,7 @@ func TestSpinnerStartsWhenSyncBegins(t *testing.T) {
 	m.resolved = nil // sync will fail quickly but that's fine for testing the cmd
 
 	// Simulate pressing 's'
-	updatedModel, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updatedModel, cmd := m.handleKey(tea.KeyPressMsg{Code: 's', Text: string('s')})
 	if cmd == nil {
 		t.Fatalf("expected sync keypress to return a command")
 	}

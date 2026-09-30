@@ -30,7 +30,7 @@ func BenchmarkMarketplaceDiscoveryMerge(b *testing.B) {
 		m.width, m.height = 120, 40
 		m.filter = "resource team"
 		m.applyDiscovery("resource team", outcomes)
-		_ = m.View()
+		_ = m.View().Content
 	}
 }
 
@@ -74,6 +74,6 @@ func BenchmarkTUIMarketplaceBrowseWarmCacheDiskIONoNetwork(b *testing.B) {
 				b.Fatal(msg.err)
 			}
 		}
-		_ = m.View()
+		_ = m.View().Content
 	}
 }

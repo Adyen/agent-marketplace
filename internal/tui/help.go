@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/cellbuf"
 
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -37,25 +37,17 @@ func renderHelp(m Model) string {
 	b.WriteString(styleHelpOverlay.Render(""))
 	b.WriteString("\n")
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.currentTheme().accent)
 	b.WriteString(titleStyle.Render("agent-marketplace — Keyboard Shortcuts"))
 	b.WriteString("\n\n")
 
-	// Render each section using the keyMap bindings with help.Model styles.
+	// Each section renders as one FullHelpView group stacked vertically so
+	// the retained help viewport can scroll to every binding at any size.
 	for _, sec := range m.helpSections() {
 		b.WriteString(styleHelpSection.Render(sec.title))
 		b.WriteString("\n")
-		for _, kb := range sec.bindings {
-			if !kb.Enabled() {
-				continue
-			}
-			b.WriteString("  ")
-			b.WriteString(m.help.Styles.FullKey.Render(kb.Help().Key))
-			b.WriteString(m.help.Styles.FullSeparator.Inline(true).Render("  "))
-			b.WriteString(m.help.Styles.FullDesc.Render(kb.Help().Desc))
-			b.WriteString("\n")
-		}
-		b.WriteString("\n")
+		b.WriteString(m.help.FullHelpView([][]key.Binding{sec.bindings}))
+		b.WriteString("\n\n")
 	}
 
 	b.WriteString(styleDim.Render("Press esc or ? to close"))
@@ -86,10 +78,10 @@ func renderErrors(m Model) string {
 		b.WriteString(styleErrorTitle.Render(fmt.Sprintf("Errors (%d)", len(m.errs))))
 		b.WriteString("\n\n")
 		for _, err := range m.errs {
-			writeDiagnostic(styleErrorMsg, "• ", err.Error())
+			writeDiagnostic(lipgloss.NewStyle().Foreground(m.currentTheme().text), "• ", err.Error())
 			var r resolver.Remediable
 			if errors.As(err, &r) {
-				writeDiagnostic(styleErrorMsg, "  → ", r.Remediation())
+				writeDiagnostic(lipgloss.NewStyle().Foreground(m.currentTheme().text), "  → ", r.Remediation())
 			}
 		}
 	}
@@ -128,9 +120,15 @@ func renderErrors(m Model) string {
 }
 
 func renderConfirm(m Model) string {
+	m.ensureSyncQuitForm()
+	form := ""
+	if m.syncQuitForm != nil {
+		form = m.syncQuitForm.View() + "\n\n"
+	}
 	return styleHelpOverlay.Render(
 		styleConfirmTitle.Render("Confirm") +
 			"\n\n" + sanitizeTerminalData(m.confirmMsg, terminalSingleLine) +
-			"\n\ny = yes · n = no · esc = cancel",
+			"\n\n" + form +
+			"y = yes · n = no · esc = cancel",
 	)
 }

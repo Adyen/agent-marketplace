@@ -3,7 +3,8 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // originBadge returns the short letter badge that summarizes which
@@ -45,9 +46,62 @@ func originBadge(r row) string {
 	return b.String()
 }
 
-// badgeStyle returns the style used to render a badge. Single-letter scope
-// badges get a dim accent color; multi-scope and the ineffective-project
-// variant get a brighter color to draw attention.
+// scopeChips returns the semantic scope labels rendered as chips in the
+// non-compact layout, in stable global → project → local order.
+func scopeChips(r row) []string {
+	switch badge := originBadge(r); badge {
+	case "":
+		return nil
+	case "R":
+		return []string{"required"}
+	case "P-":
+		return []string{"project", "local-excluded"}
+	default:
+		chips := make([]string, 0, len(badge))
+		for _, letter := range badge {
+			switch letter {
+			case 'G':
+				chips = append(chips, "global")
+			case 'P':
+				chips = append(chips, "project")
+			case 'L':
+				chips = append(chips, "local")
+			}
+		}
+		return chips
+	}
+}
+
+// scopeBadgeText renders scope chips at normal widths and falls back to the
+// letter badge when the layout is compact.
+func scopeBadgeText(r row, compact bool) string {
+	if compact {
+		return originBadge(r)
+	}
+	return strings.Join(scopeChips(r), " ")
+}
+
+// scopeBadgeSuffix returns the styled-able badge suffix for a list row.
+// Chips are used only when they fit inside remaining cells; otherwise the
+// compact letter badge keeps the row on one line.
+func scopeBadgeSuffix(r row, compact bool, remaining int) string {
+	badge := scopeBadgeText(r, compact)
+	if badge == "" {
+		return ""
+	}
+	if !compact && 1+ansi.StringWidth(badge) > remaining {
+		if letters := originBadge(r); letters != "" && 1+ansi.StringWidth(letters) <= remaining {
+			badge = letters
+		} else {
+			return ""
+		}
+	}
+	return " " + badge
+}
+
+// badgeStyle returns the style used to render a badge or chip. Single-scope
+// marks get a dim accent color; multi-scope, the ineffective-project
+// variant, and local-excluded get a brighter color to draw attention.
 func badgeStyle(badge string) lipgloss.Style {
 	switch badge {
 	case "":
@@ -55,18 +109,17 @@ func badgeStyle(badge string) lipgloss.Style {
 	case "R":
 		return styleGlyphRequired
 	case "P-":
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"})
+		return lipgloss.NewStyle().Foreground(paletteWarn)
 	}
 	if len(badge) > 1 {
 		// Multi-scope: use a brighter accent.
 		return lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
+			Foreground(paletteAccent)
 	}
-	// Single-letter scope badge (G/P/L): dim.
+	// Single-scope badge (G/P/L): dim.
 	return lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#888888"})
+		Foreground(paletteMuted)
 }
 
 func harnessBadge(r row) string {
@@ -78,5 +131,5 @@ func harnessBadge(r row) string {
 
 func harnessBadgeStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"})
+		Foreground(paletteMuted)
 }

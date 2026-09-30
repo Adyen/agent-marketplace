@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -22,7 +23,6 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 type snapshotStage uint8
@@ -78,6 +78,90 @@ func toastExpiryCmd(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg {
 		return toastExpiredMsg{}
 	})
+}
+
+// toastStackMax bounds the visible toast stack so transient notices can
+// never grow unbounded or bury required controls.
+const toastStackMax = 3
+
+type queuedToast struct {
+	text string
+	exp  time.Time
+}
+
+// pushToast adds a toast to the visible stack, keeping the newest
+// toastStackMax entries, and mirrors the newest one for the footer segment.
+func (m *Model) pushToast(text string, duration time.Duration) {
+	exp := time.Now().Add(duration)
+	m.toast = text
+	m.toastExp = exp
+	m.toastQueue = append(m.toastQueue, queuedToast{text: text, exp: exp})
+	if len(m.toastQueue) > toastStackMax {
+		m.toastQueue = append([]queuedToast(nil), m.toastQueue[len(m.toastQueue)-toastStackMax:]...)
+	}
+}
+
+// enqueueToast pushes text onto the visible toast stack and schedules its
+// expiry tick.
+func (m *Model) enqueueToast(text string, duration time.Duration) tea.Cmd {
+	m.pushToast(text, duration)
+	return toastExpiryCmd(duration)
+}
+
+// visibleToasts returns the live toast stack, oldest first. A footer toast
+// set outside pushToast (legacy direct write) still renders as a
+// single-entry stack.
+func (m Model) visibleToasts() []queuedToast {
+	now := time.Now()
+	var out []queuedToast
+	for _, t := range m.toastQueue {
+		if now.Before(t.exp) {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 && m.toast != "" && now.Before(m.toastExp) {
+		out = append(out, queuedToast{text: m.toast, exp: m.toastExp})
+	}
+	return out
+}
+
+// layeredToasts returns the toasts rendered in the top-right layer. The
+// footer already mirrors the newest toast, so the layer carries only the
+// remaining stack and each notification appears exactly once. The error
+// footer renders no toast, so there the whole stack goes to the layer.
+func (m Model) layeredToasts() []queuedToast {
+	toasts := m.visibleToasts()
+	if len(m.errs) > 0 {
+		return toasts
+	}
+	if len(toasts) <= 1 {
+		return nil
+	}
+	return toasts[:len(toasts)-1]
+}
+
+// expireToast drops every toast whose timer elapsed, mirrors the newest
+// survivor for the footer, and re-arms a tick for the next expiry.
+func (m *Model) expireToast() tea.Cmd {
+	now := time.Now()
+	kept := m.toastQueue[:0]
+	for _, t := range m.toastQueue {
+		if now.Before(t.exp) {
+			kept = append(kept, t)
+		}
+	}
+	m.toastQueue = kept
+	if !m.toastExp.IsZero() && !now.Before(m.toastExp) {
+		m.toast = ""
+		m.toastExp = time.Time{}
+	}
+	if len(m.toastQueue) == 0 {
+		return nil
+	}
+	newest := m.toastQueue[len(m.toastQueue)-1]
+	m.toast = newest.text
+	m.toastExp = newest.exp
+	return toastExpiryCmd(time.Until(m.toastQueue[0].exp))
 }
 
 func invalidConfigToastCmd() tea.Cmd {
@@ -1479,11 +1563,11 @@ func ReadSkillMarkdown(path string) (string, error) {
 // loadDetailContent reads and glamour-renders a skill's SKILL.md in a
 // background goroutine so the TUI can transition to the detail pane
 // immediately without blocking on file I/O or markdown rendering.
-func loadDetailContent(r row, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
+func loadDetailContent(t theme, r row, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
 	return func() tea.Msg {
 		return detailContentMsg{
 			generation: generation,
-			content:    renderDetailFullContent(r, width),
+			content:    renderDetailFullContent(t, r, width),
 			width:      width,
 			keepScroll: keepScroll,
 		}
@@ -1539,6 +1623,7 @@ func runDependencyUpdateCmd(ctx context.Context, workspace pipeline.Workspace, h
 			return updateDoneMsg{generation: generation, stage: updateStageRefresh, err: err}
 		}
 		lifecycleErr := update(ctx, ws)
+		pipeline.ObservePhase(ctx, pipeline.PhaseReload)
 		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh}
@@ -1553,17 +1638,19 @@ func runDependencyUpdateCmd(ctx context.Context, workspace pipeline.Workspace, h
 }
 
 func (m Model) dependencySyncCmd() tea.Cmd {
+	ctx := m.observedContext(ctxOrBackground(m.ctx))
 	if m.dependencyLifecycle.Sync != nil {
-		return runDependencySyncCmd(ctxOrBackground(m.ctx), m.workspace, m.dependencyLifecycle.Sync)
+		return runDependencySyncCmd(ctx, m.workspace, m.dependencyLifecycle.Sync)
 	}
-	return runSyncCmd(ctxOrBackground(m.ctx), m.workspace)
+	return runSyncCmd(ctx, m.workspace)
 }
 
 func (m Model) dependencyUpdateCmd(generation requestGeneration) tea.Cmd {
+	ctx := m.observedContext(ctxOrBackground(m.ctx))
 	if m.dependencyLifecycle.Update != nil {
-		return runDependencyUpdateCmd(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation, m.dependencyLifecycle.Update)
+		return runDependencyUpdateCmd(ctx, m.workspace, m.homeDir, generation, m.dependencyLifecycle.Update)
 	}
-	return runUpdateCmdForWorkspace(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
+	return runUpdateCmdForWorkspace(ctx, m.workspace, m.homeDir, generation)
 }
 
 func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
@@ -1573,6 +1660,7 @@ func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace,
 			return updateDoneMsg{generation: generation, stage: updateStageMaterialization, err: err}
 		}
 		syncResult := runPipelineSync(ctx, tuiPipelineOptionsForWorkspace(ws))
+		pipeline.ObservePhase(ctx, pipeline.PhaseReload)
 		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		for _, warning := range syncResult.Warnings {

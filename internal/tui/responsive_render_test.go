@@ -83,6 +83,37 @@ func TestLongResourceNameWrapsWithoutObscuring(t *testing.T) {
 	}
 }
 
+// TestCompactListRowKeepsResourceNameContiguous covers the minimum-terminal
+// compact layout: a hyphenated resource name with scope and harness badges
+// must stay whole on one rendered line instead of splitting mid-name.
+func TestCompactListRowKeepsResourceNameContiguous(t *testing.T) {
+	stubColorCapable(t, true)
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width = 50
+	m.height = 12
+	m.rows = []row{mkRow("beta-skill", withProject,
+		withHarnesses("factory", "droid"), withHarnessSource("registry override"),
+		withRegistry("r.git", "r"))}
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+
+	out := ansi.Strip(renderList(m, 12))
+	listWidth, _ := paneWidths(50)
+	contiguous := false
+	for _, line := range strings.Split(out, "\n") {
+		if w := ansi.StringWidth(line); w > listWidth {
+			t.Fatalf("row line exceeds list width %d: %q", listWidth, line)
+		}
+		if strings.Contains(line, "beta-skill") {
+			contiguous = true
+		}
+	}
+	if !contiguous {
+		t.Fatalf("compact row split the resource name across lines:\n%s", out)
+	}
+}
+
 func TestErrorsOverlayPreservesCompleteLongMessages(t *testing.T) {
 	long := "registry https://example.com/" + strings.Repeat("nested/path/", 12) + " failed: verification rejected the revision"
 	m := NewModel(t.TempDir(), t.TempDir())
@@ -91,7 +122,7 @@ func TestErrorsOverlayPreservesCompleteLongMessages(t *testing.T) {
 	m.pane = paneErrors
 	m.errs = []error{errors.New(long)}
 
-	output := m.View()
+	output := m.View().Content
 	assertTerminalBounds(t, output, 50, 12)
 
 	content := ansi.Strip(renderErrors(m))
@@ -111,19 +142,19 @@ func TestErrorsOverlayPreservesCompleteLongMessages(t *testing.T) {
 func TestFooterActionsDropWholeActionsNotPartialWords(t *testing.T) {
 	actions := "k1:aaaaaaaaaa · k2:bbbbbbbbbb · q:quit"
 
-	if got := ansi.Strip(fitFooterGroups(actions, " · ", 40)); got != actions {
+	if got := ansi.Strip(fitStatusGroups(actions, " · ", 40)); got != actions {
 		t.Fatalf("fitting footer changed actions that already fit: %q", got)
 	}
-	got := ansi.Strip(fitFooterGroups(actions, " · ", 20))
+	got := ansi.Strip(fitStatusGroups(actions, " · ", 20))
 	if got != "q:quit" {
 		t.Fatalf("expected only whole actions that fit, got %q", got)
 	}
-	got = ansi.Strip(fitFooterGroups(actions, " · ", 25))
+	got = ansi.Strip(fitStatusGroups(actions, " · ", 25))
 	if got != "k2:bbbbbbbbbb · q:quit" {
 		t.Fatalf("expected whole-action fitting, got %q", got)
 	}
 	for _, fragment := range []string{"k2:bbbb", "k1:aaaa", "· q"} {
-		if strings.Contains(ansi.Strip(fitFooterGroups(actions, " · ", 20)), fragment) {
+		if strings.Contains(ansi.Strip(fitStatusGroups(actions, " · ", 20)), fragment) {
 			t.Fatalf("footer emitted a partial action containing %q", fragment)
 		}
 	}
@@ -131,7 +162,7 @@ func TestFooterActionsDropWholeActionsNotPartialWords(t *testing.T) {
 
 func TestFooterStatusDropsWholeGroups(t *testing.T) {
 	left := "in sync  Marketplace: 2 failed  ! 3 errors"
-	got := ansi.Strip(fitFooterGroups(left, "  ", 25))
+	got := ansi.Strip(fitStatusGroups(left, "  ", 25))
 	if got != "in sync  ! 3 errors" {
 		t.Fatalf("expected whole status groups that fit, got %q", got)
 	}

@@ -4,11 +4,23 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
 func (m Model) verifyingResources() bool {
 	return m.assessmentPending || (m.loading && len(m.provisionalRows) > 0)
+}
+
+// driftStatusSegment renders the drift portion of the status bar.
+func (m Model) driftStatusSegment() string {
+	if m.driftAssessment != driftReady || m.hasUnavailableRows() {
+		return styleDriftPending.Render("~ drift unavailable")
+	}
+	if m.driftReport.InSync() {
+		return styleDriftOK.Render("~ in sync")
+	}
+	return styleDriftPending.Render(fmt.Sprintf("~ %d out of sync", m.driftReport.PendingCount()))
 }
 
 func renderFooter(m Model) string {
@@ -26,17 +38,33 @@ func renderFooter(m Model) string {
 		}
 		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(status))
 	} else if m.syncing {
-		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" syncing..."))
+		status := " syncing..."
+		if m.progress != nil {
+			phase := m.operationPhase
+			if phase == "" {
+				phase = "running"
+			}
+			status = " " + m.progressLabel + ": " + phase + "..."
+		}
+		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(status))
+	} else if m.progress != nil && m.operations.active != nil {
+		phase := m.operationPhase
+		if phase == "" {
+			phase = "running"
+		}
+		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" "+m.progressLabel+": "+phase+"..."))
 	} else if m.refreshing {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterRefreshing.Render(" refreshing cache..."))
 	} else if m.assessmentPending {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" verifying resources..."))
-	} else if m.driftAssessment != driftReady || m.hasUnavailableRows() {
-		leftParts = append(leftParts, styleDriftPending.Render("~ drift unavailable"))
-	} else if m.driftReport.InSync() {
-		leftParts = append(leftParts, styleDriftOK.Render("~ in sync"))
 	} else {
-		leftParts = append(leftParts, styleDriftPending.Render(fmt.Sprintf("~ %d out of sync", m.driftReport.PendingCount())))
+		leftParts = append(leftParts, m.driftStatusSegment())
+	}
+	// An active operation replaces the leading status but drift remains a
+	// separate segment, so the status bar still shows drift, Marketplace
+	// health, the operation, and diagnostic counts at once.
+	if m.syncing || (m.progress != nil && m.operations.active != nil) {
+		leftParts = append(leftParts, m.driftStatusSegment())
 	}
 
 	var staleEndpoints, truncatedEndpoints int
@@ -80,7 +108,7 @@ func renderFooter(m Model) string {
 		if m.toast != "" && !m.toastExp.IsZero() {
 			status = styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
 		}
-		return footerWithPriority(priority, status, actions, m.width)
+		return statusBar(priority, status, actions, m.width)
 	}
 
 	bindings := m.keys.ShortHelp()
@@ -92,7 +120,7 @@ func renderFooter(m Model) string {
 	if m.toast != "" && !m.toastExp.IsZero() {
 		right += " · " + styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
 	}
-	return footerWithPriority(priority, strings.Join(leftParts, "  "), right, m.width)
+	return statusBar(priority, strings.Join(leftParts, "  "), right, m.width)
 }
 
 func renderErrorFooter(m Model) string {
@@ -103,7 +131,7 @@ func renderErrorFooter(m Model) string {
 	status := fmt.Sprintf("! %d errors", len(m.errs))
 	if m.verifyingResources() {
 		status = m.spinner.View() + " verifying resources... · " + status
-		actions = fitFooterGroups(actions, " · ", max(0, m.width-ansi.StringWidth(status)-1))
+		actions = fitStatusGroups(actions, " · ", max(0, m.width-ansi.StringWidth(status)-1))
 	}
 	budget := m.width - ansi.StringWidth(actions) - 1
 	if budget > ansi.StringWidth(status)+2 {
@@ -148,12 +176,12 @@ func (m Model) failuresOrDrift() bool {
 	return m.driftAssessment == driftFailed || m.hasUnavailableRows() || (m.driftAssessment == driftReady && !m.driftReport.InSync())
 }
 
-// fitFooterGroups adapts a separator-joined footer segment (actions joined
-// by " · ", status groups joined by "  ") to the available width by keeping
-// whole trailing groups that fit rather than cutting a partial word. When
-// no single group fits, the last group is truncated with an ellipsis so the
-// output stays bounded.
-func fitFooterGroups(s, separator string, width int) string {
+// fitStatusGroups adapts a separator-joined status bar segment (actions
+// joined by " · ", status groups joined by "  ") to the available width by
+// keeping whole trailing groups that fit rather than cutting a partial word.
+// When no single group fits, the last group is truncated with an ellipsis so
+// the output stays bounded.
+func fitStatusGroups(s, separator string, width int) string {
 	if width <= 0 {
 		return ""
 	}
@@ -184,30 +212,33 @@ func fitFooterGroups(s, separator string, width int) string {
 	return strings.Join(kept, separator)
 }
 
-func footerWithPriority(priority, left, right string, width int) string {
+// statusBar composes the footer's priority status, status segments, and
+// action hints into one bounded bar: the priority segment wins first, then
+// whole separator-joined groups are kept while they fit.
+func statusBar(priority, left, right string, width int) string {
 	if priority == "" {
-		return footerWithRight(left, right, width)
+		return statusBarSegments(left, right, width)
 	}
 	priority = ansi.Truncate(priority, max(0, width), "…")
-	rest := footerWithRight(left, right, width-ansi.StringWidth(priority)-1)
+	rest := statusBarSegments(left, right, width-ansi.StringWidth(priority)-1)
 	if rest == "" {
 		return priority
 	}
-	return priority + " " + rest
+	return lipgloss.JoinHorizontal(lipgloss.Bottom, priority, " ", rest)
 }
 
-func footerWithRight(left, right string, width int) string {
+func statusBarSegments(left, right string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	right = fitFooterGroups(right, " · ", width)
+	right = fitStatusGroups(right, " · ", width)
 	rightWidth := ansi.StringWidth(right)
 	if rightWidth >= width {
 		return right
 	}
-	left = fitFooterGroups(left, "  ", width-rightWidth-1)
+	left = fitStatusGroups(left, "  ", width-rightWidth-1)
 	if left == "" {
 		return right
 	}
-	return left + " " + right
+	return lipgloss.JoinHorizontal(lipgloss.Bottom, left, " ", right)
 }

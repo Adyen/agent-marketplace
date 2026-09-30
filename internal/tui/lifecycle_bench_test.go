@@ -124,7 +124,7 @@ func BenchmarkTUIStartupDiskIO(b *testing.B) {
 				m := NewModel(repo, home)
 				m.width, m.height, m.loading = 120, 40, false
 				m.applySnapshotData(snapshot)
-				_ = m.View()
+				_ = m.View().Content
 			}
 		})
 	}
@@ -197,7 +197,7 @@ func BenchmarkTUIStartupStages(b *testing.B) {
 					}
 					next = follow
 				}
-				_ = m.View()
+				_ = m.View().Content
 				b.StopTimer()
 				for range stages {
 				}
@@ -310,7 +310,7 @@ func BenchmarkTUIStartupStages(b *testing.B) {
 				}
 				next = follow
 			}
-			_ = m.View()
+			_ = m.View().Content
 			b.StopTimer()
 			for range stages {
 			}

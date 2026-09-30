@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/glamour"
+	"charm.land/glamour/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -19,7 +19,7 @@ func TestUntrustedFieldsCannotCreateTerminalStructure(t *testing.T) {
 	m.width = 100
 	m.height = 24
 
-	output := m.View()
+	output := m.View().Content
 	for _, unsafe := range []string{"\x1b]0;owned", "\x1b[2J", "\x1b[10;10H", "\x1b[31m", "\x1b[?1049l", "\u202e", "\r"} {
 		if strings.Contains(output, unsafe) {
 			t.Fatalf("rendered unsafe terminal structure %q: %q", unsafe, output)
@@ -38,7 +38,7 @@ func TestDiagnosticBoundaryNeutralizesControls(t *testing.T) {
 	m.height = 30
 	m.errs = []error{errors.New("failure\nErrors (99)\x1b]2;owned\x07\u202e")}
 	m.pane = paneErrors
-	output := m.View()
+	output := m.View().Content
 	for _, unsafe := range []string{"\x1b]2;owned", "\u202e", "\nErrors (99)"} {
 		if strings.Contains(output, unsafe) {
 			t.Fatalf("diagnostic boundary emitted %q: %q", unsafe, output)

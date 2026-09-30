@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -48,7 +48,7 @@ func marketplaceDiscoveryRow(kind, name string, availability mpapi.Availability)
 
 func enterDetail(t *testing.T, m Model) (Model, tea.Cmd) {
 	t.Helper()
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	return updated.(Model), cmd
 }
 
@@ -61,7 +61,7 @@ func TestMarketplaceDiscoveryDetailShowsOperatorExposedRejection(t *testing.T) {
 	if !ok {
 		t.Fatal("no selected row")
 	}
-	content := renderDetailFullContent(selected, 100)
+	content := renderDetailFullContent(newTheme(true), selected, 100)
 	if !strings.Contains(content, "Operator-exposed rejection") || !strings.Contains(content, "Press space to install") {
 		t.Fatalf("operator-exposed detail = %q", content)
 	}
@@ -335,18 +335,18 @@ func TestMarketplaceDetailResizeKeepsMetadataAndRejectsStalePreview(t *testing.T
 }
 
 func TestRenderDetailFullContentMarketplaceRows(t *testing.T) {
-	discovery := renderDetailFullContent(marketplaceDiscoveryRow("collection", "bundle", mpapi.AvailabilityAvailable), 80)
+	discovery := renderDetailFullContent(newTheme(true), marketplaceDiscoveryRow("collection", "bundle", mpapi.AvailabilityAvailable), 80)
 	if strings.Contains(discovery, "no source path") || !contains(discovery, "bundle") {
 		t.Fatalf("collection discovery full detail = %q", discovery)
 	}
 
 	artifactPath := writeVerifiedArtifact(t, "command", "deploy", []byte(`{"name":"deploy","run":"go deploy"}`), nil)
-	out := ansi.Strip(renderDetailFullContent(installedMarketplaceRow(ir.KindCommand, "deploy", artifactPath), 80))
+	out := ansi.Strip(renderDetailFullContent(newTheme(true), installedMarketplaceRow(ir.KindCommand, "deploy", artifactPath), 80))
 	if !contains(out, "go deploy") {
 		t.Fatalf("installed archive full detail did not render payload:\n%s", out)
 	}
 
-	missing := ansi.Strip(renderDetailFullContent(installedMarketplaceRow(ir.KindSkill, "gone", filepath.Join(t.TempDir(), "artifact.tar.gz")), 80))
+	missing := ansi.Strip(renderDetailFullContent(newTheme(true), installedMarketplaceRow(ir.KindSkill, "gone", filepath.Join(t.TempDir(), "artifact.tar.gz")), 80))
 	if !contains(missing, "Error reading resource") {
 		t.Fatalf("missing archive full detail = %q", missing)
 	}

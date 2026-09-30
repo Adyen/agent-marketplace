@@ -26,6 +26,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func progressiveFixture(t *testing.T) (repoRoot, homeDir string) {
@@ -788,7 +789,7 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 		t.Fatalf("resolve advanced past acquisition while blocked: %+v closed=%t", extra, !ok)
 	default:
 	}
-	view := m.View()
+	view := ansi.Strip(m.View().Content)
 	if !strings.Contains(view, "remote") {
 		t.Fatalf("rendered view lacks the pending configured row:\n%s", view)
 	}
@@ -801,7 +802,7 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	if status := m.rows[pendingRow].StatusText(); !strings.Contains(status, "verification pending") || !strings.Contains(status, "enabled in config") {
 		t.Fatalf("early checked row does not distinguish configuration from installation: %q", status)
 	}
-	if !strings.Contains(view, "[x]") || !strings.Contains(view, "remote G") {
+	if !strings.Contains(view, "[x]") || !strings.Contains(view, "remote global") {
 		t.Fatalf("configured selection does not render an early checked badge:\n%s", view)
 	}
 }

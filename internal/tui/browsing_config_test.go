@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -168,7 +168,7 @@ func TestBrowsingConfigStageRendersCachedRowsBeforeBlockedAcquisition(t *testing
 		t.Fatalf("resolve advanced past acquisition while blocked: %+v closed=%t", extra, !ok)
 	default:
 	}
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "remote") {
 		t.Fatalf("rendered view lacks the cached resource row:\n%s", view)
 	}

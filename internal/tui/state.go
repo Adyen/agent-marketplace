@@ -2,9 +2,15 @@ package tui
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	"charm.land/huh/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -12,10 +18,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
 )
 
 type driftAssessment uint8
@@ -92,6 +94,12 @@ type row struct {
 	// ensureSearchable so applyFilter does not re-allocate this string on
 	// every keystroke while the user is typing in the search input.
 	searchableLower string
+	searchName      string
+	searchRanked    bool
+	searchScore     int
+	// searchMatchRunes holds rune indexes into the sanitized name that the
+	// query genuinely matched; it is empty for metadata-only matches.
+	searchMatchRunes []int
 }
 
 // ensureSearchable populates searchableLower on first use and short-circuits
@@ -127,13 +135,19 @@ func (r *row) ensureSearchable() {
 		b.WriteString(r.MarketplaceDiscovery.Item.RegistrySlug)
 		b.WriteByte(' ')
 		b.WriteString(string(r.MarketplaceDiscovery.Item.Availability))
-		for key, value := range r.MarketplaceDiscovery.Item.Metadata {
+		metadataKeys := make([]string, 0, len(r.MarketplaceDiscovery.Item.Metadata))
+		for key := range r.MarketplaceDiscovery.Item.Metadata {
+			metadataKeys = append(metadataKeys, key)
+		}
+		sort.Strings(metadataKeys)
+		for _, key := range metadataKeys {
 			b.WriteByte(' ')
 			b.WriteString(key)
 			b.WriteByte(' ')
-			b.WriteString(value)
+			b.WriteString(r.MarketplaceDiscovery.Item.Metadata[key])
 		}
 	}
+	r.searchName = strings.ToLower(sanitizeTerminalData(r.Artifact.Name, terminalSingleLine))
 	r.searchableLower = strings.ToLower(b.String())
 	if r.searchableLower == "" {
 		// Guarantee a non-empty sentinel so the cached-check above keeps
@@ -293,6 +307,11 @@ type Model struct {
 	// key (a/M/R) to complete a vim-style fold command.
 	zPending bool
 
+	// palette is the command-palette overlay state. It opens only in the
+	// list pane with no active search input, modal, overlay, or pending
+	// fold prefix; see palette.go.
+	palette paletteState
+
 	// modalSkill is the row whose state is displayed in paneToggleModal.
 	// Captured at modal-open time so rapid reloads can't change what the
 	// user is acting on mid-interaction.
@@ -309,6 +328,11 @@ type Model struct {
 	operations                  operationState
 	pendingToggleOperation      operationID
 	pendingToggleReload         requestGeneration
+	// updateReload is the superseding snapshot generation that must be
+	// accepted (or fail) before a stale updateDoneMsg's operation ends;
+	// updatePendingErr retains that update's own error for the verdict.
+	updateReload     requestGeneration
+	updatePendingErr error
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.
@@ -336,10 +360,33 @@ type Model struct {
 	detailSelectedPath string
 	detailLegacyRender bool
 
-	toast    string
-	toastExp time.Time
+	// toast/toastExp mirror the newest visible toast for the single-line
+	// footer segment; toastQueue holds the whole visible stack (newest
+	// last, bounded by toastStackMax) rendered as a top-right layer.
+	toast      string
+	toastExp   time.Time
+	toastQueue []queuedToast
+
+	// progress is the active operation's phase observation source;
+	// operationPhase is the newest accepted phase label (empty = generic
+	// running), and progressLabel names the operation for the status bar.
+	progress       *operationProgressSource
+	progressLabel  string
+	operationPhase string
 
 	confirmMsg string
+
+	// Huh forms owned by the interactive modals (AC4). Each form carries
+	// its option state; letter accelerators are routed before delegation.
+	toggleForm       *huh.Form
+	toggleFormFor    string
+	toggleChoice     *string
+	migrationForm    *huh.Form
+	migrationValue   *bool
+	editConfigForm   *huh.Form
+	editConfigChoice *string
+	syncQuitForm     *huh.Form
+	syncQuitValue    *bool
 
 	// quitAfterSync is set when the user confirms "sync+quit" in the
 	// confirm dialog. The syncDoneMsg handler checks this flag and emits
@@ -366,4 +413,10 @@ type Model struct {
 	// ? help overlay are driven from this keymap via the help model.
 	keys keyMap
 	help help.Model
+
+	// isDark records the terminal background reported by the most recent
+	// tea.BackgroundColorMsg; theme carries the semantic colors built from
+	// it so every model renders against its own reported background.
+	isDark bool
+	theme  theme
 }

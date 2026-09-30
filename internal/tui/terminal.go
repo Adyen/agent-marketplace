@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 )
@@ -48,7 +48,7 @@ func fitTerminalWithFooter(content, footer string, width, height int) string {
 	if width < 1 || height < 1 {
 		return ""
 	}
-	footer = fitFooterGroups(footer, " · ", width)
+	footer = fitStatusGroups(footer, " · ", width)
 	if height == 1 {
 		return footer
 	}

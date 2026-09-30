@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -102,7 +102,7 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 	m.pane = paneMigrationModal
 	m.migrationPrompt = pendingMigrationFor("", "", repoRoot)
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'l', Text: string('l')})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("leave should schedule toast expiry")
@@ -158,7 +158,7 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	m.pane = paneMigrationModal
 	m.migrationPrompt = pendingMigrationFor(repoRoot, repoRoot, homeDir)
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: string('m')})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("run should emit a migration command")
@@ -239,7 +239,7 @@ func TestMigrationModalRunMigratesMarketplaceConfig(t *testing.T) {
 	m.pane = paneMigrationModal
 	m.migrationPrompt = pendingMigrationFor(repoRoot, repoRoot, homeDir)
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: string('m')})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatal("run should emit a migration command")

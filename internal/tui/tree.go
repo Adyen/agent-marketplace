@@ -191,9 +191,7 @@ func appendKindRegistrySections(out []flatItem, parentPath string, rows []row, f
 			subPath := topPath + ":" + name
 			subCollapsed := foldState[subPath]
 			sub := byRegistry[name]
-			sort.SliceStable(sub, func(i, j int) bool {
-				return sub[i].Artifact.Name < sub[j].Artifact.Name
-			})
+			sortLeafRows(sub)
 			out = append(out, flatItem{
 				Kind:         flatSection,
 				SectionPath:  subPath,
@@ -375,9 +373,7 @@ func buildStatusTree(rows []row, foldState map[string]bool) []flatItem {
 		if len(rowsIn) == 0 {
 			continue
 		}
-		sort.SliceStable(rowsIn, func(i, j int) bool {
-			return rowsIn[i].Artifact.Name < rowsIn[j].Artifact.Name
-		})
+		sortLeafRows(rowsIn)
 		path := s.path()
 		collapsed := foldState[path]
 		out = append(out, flatItem{
@@ -396,6 +392,25 @@ func buildStatusTree(rows []row, foldState map[string]bool) []flatItem {
 		}
 	}
 	return out
+}
+
+// sortLeafRows orders rows inside one leaf section: scored filter matches
+// by descending score, then name, then stable identity; unfiltered rows
+// stay alphabetical. Section order is untouched.
+func sortLeafRows(rows []row) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		ri, rj := rows[i], rows[j]
+		if ri.searchRanked || rj.searchRanked {
+			if ri.searchScore != rj.searchScore {
+				return ri.searchScore > rj.searchScore
+			}
+			if ri.Artifact.Name != rj.Artifact.Name {
+				return ri.Artifact.Name < rj.Artifact.Name
+			}
+			return rowKey(ri) < rowKey(rj)
+		}
+		return ri.Artifact.Name < rj.Artifact.Name
+	})
 }
 
 // registryDisplayLabel returns the display name used for registry grouping.

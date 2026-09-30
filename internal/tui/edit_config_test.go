@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestEditConfigKeyOpensModal(t *testing.T) {
@@ -16,7 +16,7 @@ func TestEditConfigKeyOpensModal(t *testing.T) {
 	m := NewModel(repoDir, homeDir)
 	m.pane = paneList
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: 'E', Text: string('E')})
 	m = mi.(Model)
 
 	if m.pane != paneEditConfigModal {
@@ -29,7 +29,7 @@ func TestEditConfigModalCancelReturnsToList(t *testing.T) {
 	m := NewModel(repoDir, homeDir)
 	m.pane = paneEditConfigModal
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mi.(Model)
 
 	if m.pane != paneList {
@@ -52,7 +52,7 @@ func TestEditConfigModalScopeLaunchesEditor(t *testing.T) {
 			m := NewModel(repoDir, homeDir)
 			m.pane = paneEditConfigModal
 
-			mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			mi, cmd := m.Update(tea.KeyPressMsg{Code: tc.key, Text: string(tc.key)})
 			m = mi.(Model)
 
 			if m.pane != paneList {

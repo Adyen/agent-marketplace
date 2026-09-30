@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestFilteredOutSectionsHidden(t *testing.T) {
@@ -187,19 +188,19 @@ func TestSearchInputShowsSpinnerWhileMarketplaceResultsLoad(t *testing.T) {
 	if len(lines) < 3 {
 		t.Fatalf("rendered screen has no search line: %q", lines)
 	}
-	searchLine := lines[2]
-	spinnerPosition := strings.Index(searchLine, m.spinner.View())
+	searchLine := ansi.Strip(lines[2])
+	spinnerPosition := strings.Index(searchLine, ansi.Strip(m.spinner.View()))
 	queryPosition := strings.Index(searchLine, "audit")
 	if spinnerPosition < 0 || queryPosition < 0 || spinnerPosition > queryPosition || strings.Contains(searchLine, "/") {
 		t.Fatalf("search spinner should replace the slash before the query: %q", searchLine)
 	}
-	if strings.Contains(lines[len(lines)-1], "Marketplace...") {
+	if strings.Contains(ansi.Strip(lines[len(lines)-1]), "Marketplace...") {
 		t.Fatalf("footer should not duplicate the search loading indicator: %q", lines[len(lines)-1])
 	}
 
 	m.discoveryLoading = false
 	lines = strings.Split(m.renderBaseScreen(), "\n")
-	if strings.Contains(lines[2], m.spinner.View()) || !strings.Contains(lines[2], "/ audit") {
+	if strings.Contains(lines[2], m.spinner.View()) || !strings.Contains(ansi.Strip(lines[2]), "/ audit") {
 		t.Fatalf("idle search line should restore the slash prompt: %q", lines[2])
 	}
 }
@@ -292,7 +293,7 @@ func TestSearchInputEscapeClearsFilter(t *testing.T) {
 	}
 
 	// Escape should clear and close
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mi.(Model)
 	if m.filterActive {
 		t.Fatalf("expected filterActive false after Escape")
@@ -314,7 +315,7 @@ func TestSearchInputEnterCommitsFilter(t *testing.T) {
 	m = mi.(Model)
 
 	// Enter should close the input but keep the filter
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.filterActive {
 		t.Fatalf("expected filterActive false after Enter")
@@ -338,7 +339,7 @@ func TestSearchInputBackspace(t *testing.T) {
 	}
 
 	// Backspace deletes the character before the cursor
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	m = mi.(Model)
 	if m.filter != "a" {
 		t.Fatalf("expected filter 'a' after backspace, got %q", m.filter)
@@ -361,21 +362,21 @@ func TestSearchInputCursorMovement(t *testing.T) {
 	}
 
 	// Move cursor left
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	m = mi.(Model)
 	if m.searchInput.Position() != 1 {
 		t.Fatalf("expected cursor at position 1 after left, got %d", m.searchInput.Position())
 	}
 
 	// Backspace now deletes 'a' (before cursor), not 'b'
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	m = mi.(Model)
 	if m.filter != "b" {
 		t.Fatalf("expected filter 'b' after backspace at mid-cursor, got %q", m.filter)
 	}
 
 	// Move cursor right to end
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	m = mi.(Model)
 	if m.searchInput.Position() != 1 {
 		t.Fatalf("expected cursor at position 1 after right, got %d", m.searchInput.Position())
@@ -388,10 +389,9 @@ func TestSearchInputPaste(t *testing.T) {
 	mi, _ := m.Update(keyPress('/'))
 	m = mi.(Model)
 
-	// Simulate a paste event: multiple runes delivered in one KeyMsg
-	// with Paste=true. The textinput handles this via insertRunesFromUserInput.
-	pasteKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("audit"), Paste: true}
-	mi, _ = m.Update(pasteKey)
+	// Simulate a bracketed paste event: the whole payload arrives as one
+	// PasteMsg. The textinput inserts it via insertRunesFromUserInput.
+	mi, _ = m.Update(tea.PasteMsg{Content: "audit"})
 	m = mi.(Model)
 
 	if m.filter != "audit" {
@@ -415,7 +415,7 @@ func TestSearchInputFocusState(t *testing.T) {
 	}
 
 	// Escape blurs it
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mi.(Model)
 	if m.searchInput.Focused() {
 		t.Fatalf("searchInput should not be focused after Escape")
@@ -424,7 +424,7 @@ func TestSearchInputFocusState(t *testing.T) {
 	// Open again and Enter blurs it
 	mi, _ = m.Update(keyPress('/'))
 	m = mi.(Model)
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.searchInput.Focused() {
 		t.Fatalf("searchInput should not be focused after Enter")

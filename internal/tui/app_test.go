@@ -7,11 +7,11 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
-	tea "github.com/charmbracelet/bubbletea"
 	ansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -138,10 +138,10 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 		width:        80,
 		height:       24,
 		keys:         defaultKeyMap,
-		help:         newHelpModel(),
+		help:         newHelpModel(newTheme(true)),
 	}
 
-	updatedModel, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	updatedModel, cmd := m.handleKey(tea.KeyPressMsg{Code: 'r', Text: string('r')})
 	if cmd == nil {
 		t.Fatalf("expected reload key to return a command")
 	}
@@ -171,7 +171,7 @@ func TestViewFitsTerminalWithLongContent(t *testing.T) {
 	m := modelWithSelectedRow(t, r)
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
-	out := ansi.Strip(updated.(Model).View())
+	out := ansi.Strip(updated.(Model).View().Content)
 	lines := strings.Split(out, "\n")
 	if len(lines) > 12 {
 		t.Fatalf("View() produced %d lines for a 12-line terminal:\n%s", len(lines), out)
@@ -198,8 +198,8 @@ func TestDownKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	}
 	m.cursor = 1
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	out := updated.(Model).View()
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	out := updated.(Model).View().Content
 	if !strings.Contains(visibleListPane(out, 20), "selected") {
 		t.Fatalf("selected resource is outside the visible list pane:\n%s", ansi.Strip(out))
 	}
@@ -220,20 +220,20 @@ func TestNavigationKeepsSelectionVisibleFromLoadedSnapshot(t *testing.T) {
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
 	loaded, _ := resized.(Model).Update(snapshotLoadedMsg{generation: 1, rows: rows})
 	m = loaded.(Model)
-	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
-		t.Fatalf("initial view did not start at the top of the list:\n%s", ansi.Strip(m.View()))
+	if out := visibleListPane(m.View().Content, 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
+		t.Fatalf("initial view did not start at the top of the list:\n%s", ansi.Strip(m.View().Content))
 	}
 
-	bottom, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	bottom, _ := m.Update(tea.KeyPressMsg{Code: 'G', Text: string('G')})
 	m = bottom.(Model)
-	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "omega") {
-		t.Fatalf("bottom navigation moved the selection outside the list pane:\n%s", ansi.Strip(m.View()))
+	if out := visibleListPane(m.View().Content, 20); !strings.Contains(out, "omega") {
+		t.Fatalf("bottom navigation moved the selection outside the list pane:\n%s", ansi.Strip(m.View().Content))
 	}
 
-	top, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	top, _ := m.Update(tea.KeyPressMsg{Code: 'g', Text: string('g')})
 	m = top.(Model)
-	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
-		t.Fatalf("top navigation did not restore the first list rows:\n%s", ansi.Strip(m.View()))
+	if out := visibleListPane(m.View().Content, 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
+		t.Fatalf("top navigation did not restore the first list rows:\n%s", ansi.Strip(m.View().Content))
 	}
 }
 
@@ -251,7 +251,7 @@ func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m.clampListOffset()
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
-	out := updated.(Model).View()
+	out := updated.(Model).View().Content
 	if !strings.Contains(visibleListPane(out, 20), "selected") {
 		t.Fatalf("selected resource is outside the visible list pane after resize:\n%s", ansi.Strip(out))
 	}
@@ -266,31 +266,31 @@ func TestHalfPageNavigationMovesListSelection(t *testing.T) {
 		m.flatItems = append(m.flatItems, flatItem{Kind: flatArtifact, Row: mkRow(fmt.Sprintf("resource-%d", i), withGlobal)})
 	}
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 	m = updated.(Model)
 	if m.cursor != 10 {
 		t.Fatalf("ctrl+d moved cursor to %d, want 10", m.cursor)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'f', Text: string('f')})
 	m = updated.(Model)
 	if m.cursor != 31 {
 		t.Fatalf("f moved cursor to %d, want 31", m.cursor)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
 	m = updated.(Model)
 	if m.cursor != 10 {
 		t.Fatalf("ctrl+b moved cursor to %d, want 10", m.cursor)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = updated.(Model)
 	if m.cursor != 39 {
 		t.Fatalf("end moved cursor to %d, want 39", m.cursor)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyHome})
 	m = updated.(Model)
 	if m.cursor != 0 {
 		t.Fatalf("home moved cursor to %d, want 0", m.cursor)
@@ -318,7 +318,7 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 				m.searchInput.SetValue("skill")
 			}
 			updated, _ := m.Update(tea.WindowSizeMsg{Width: tc.width, Height: tc.height})
-			out := ansi.Strip(updated.(Model).View())
+			out := ansi.Strip(updated.(Model).View().Content)
 			if lines := strings.Split(out, "\n"); len(lines) > tc.height {
 				t.Fatalf("View() produced %d lines for a %d-line terminal: %q", len(lines), tc.height, out)
 			}
@@ -340,7 +340,7 @@ func TestInitialModalFitsTerminal(t *testing.T) {
 	m.pane = paneInitModal
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
-	out := ansi.Strip(updated.(Model).View())
+	out := ansi.Strip(updated.(Model).View().Content)
 	lines := strings.Split(out, "\n")
 	if len(lines) > 8 {
 		t.Fatalf("View() produced %d lines for an 8-line terminal: %q", len(lines), out)
@@ -359,7 +359,7 @@ func TestViewWrapsUnicodeDetailWithoutDataLoss(t *testing.T) {
 	m := modelWithSelectedRow(t, r)
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
-	out := ansi.Strip(updated.(Model).View())
+	out := ansi.Strip(updated.(Model).View().Content)
 	if !utf8.ValidString(out) {
 		t.Fatalf("View() split a Unicode code point: %q", out)
 	}

@@ -13,17 +13,20 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/cursor"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
-	"github.com/charmbracelet/bubbles/cursor"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/sahilm/fuzzy"
 )
 
 type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) error
@@ -53,17 +56,23 @@ func WithWorkspace(workspace pipeline.Workspace) Option {
 }
 
 func NewModel(repoRoot, homeDir string, options ...Option) Model {
+	// Snapshot the detected background once; tea.BackgroundColorMsg updates
+	// the model's own isDark/theme afterwards.
+	isDark := compat.HasDarkBackground
+	theme := newTheme(isDark)
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Line
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"})
+	sp.Style = lipgloss.NewStyle().Foreground(paletteWarn)
 
 	si := textinput.New()
 	si.Prompt = "/ "
-	si.PromptStyle = styleSearchPrompt
-	si.TextStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#1A1A1A", Dark: "#F8F8F2"})
-	si.Cursor.Style = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
+	searchStyles := textinput.DefaultStyles(isDark)
+	searchStyles.Focused.Prompt = styleSearchPrompt
+	searchStyles.Focused.Text = lipgloss.NewStyle().
+		Foreground(theme.text)
+	searchStyles.Cursor.Color = theme.accent
+	si.SetStyles(searchStyles)
 
 	workspace := defaultTUIWorkspace(repoRoot)
 	if workspace.RepoRoot() != "" {
@@ -80,12 +89,14 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 		tabStates:                  newTabStates(),
 		spinner:                    sp,
 		searchInput:                si,
-		detailViewport:             viewport.New(80, 24),
-		helpViewport:               viewport.New(80, 23),
-		errorsViewport:             viewport.New(80, 23),
-		marketplaceConsentViewport: viewport.New(80, 22),
+		detailViewport:             viewport.New(viewport.WithWidth(80), viewport.WithHeight(24)),
+		helpViewport:               viewport.New(viewport.WithWidth(80), viewport.WithHeight(23)),
+		errorsViewport:             viewport.New(viewport.WithWidth(80), viewport.WithHeight(23)),
+		marketplaceConsentViewport: viewport.New(viewport.WithWidth(80), viewport.WithHeight(22)),
 		keys:                       defaultKeyMap,
-		help:                       newHelpModel(),
+		help:                       newHelpModel(theme),
+		isDark:                     isDark,
+		theme:                      theme,
 	}
 	for _, option := range options {
 		option(&m)
@@ -215,8 +226,7 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	msg.driftAssessment = m.driftAssessment
 	failure := snapshotAcceptanceError(msg)
 	m.recordOperationFailure(operationMutation, diagnosticMutation, failure)
-	m.toast = fmt.Sprintf("error: %v", failure)
-	m.toastExp = time.Now().Add(5 * time.Second)
+	m.pushToast(fmt.Sprintf("error: %v", failure), 5*time.Second)
 }
 
 func (m *Model) dismissInvalidConfigMutationPane() bool {
@@ -238,6 +248,37 @@ func (m *Model) dismissInvalidConfigMutationPane() bool {
 		return true
 	}
 	return false
+}
+
+// finishUpdateReload resolves an update operation whose completion arrived
+// after a newer snapshot superseded its reload generation. The operation
+// stayed serialized and observed through that superseding reload; the
+// accepted (or failed) snapshot is what now ends it. The update's own
+// error, when it carried one, wins over the reload verdict so a failed
+// update is never reported as success.
+func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error) tea.Cmd {
+	if m.updateReload == 0 || generation < m.updateReload {
+		return nil
+	}
+	m.updateReload = 0
+	pendingErr := m.updatePendingErr
+	m.updatePendingErr = nil
+	m.syncing = false
+	m.clearOperationProgress()
+	switch {
+	case pendingErr != nil:
+		m.recordOperationFailure(operationUpdate, diagnosticUpdate, pendingErr)
+		m.pushToast(fmt.Sprintf("update error: %v", pendingErr), 5*time.Second)
+		return toastExpiryCmd(5 * time.Second)
+	case reloadErr != nil:
+		m.recordOperationFailure(operationUpdate, diagnosticUpdate, reloadErr)
+		m.pushToast(fmt.Sprintf("update reload failed: %v", reloadErr), 5*time.Second)
+		return toastExpiryCmd(5 * time.Second)
+	default:
+		m.recordOperationSuccess(operationUpdate)
+		m.pushToast("Update complete", 2*time.Second)
+		return toastExpiryCmd(2 * time.Second)
+	}
 }
 
 func snapshotAcceptanceError(msg snapshotLoadedMsg) error {
@@ -294,19 +335,31 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	}
 }
 
+// Update delegates to update and closes the palette whenever the pane
+// leaves the list, so async snapshot, migration, and consent transitions the
+// palette cannot intercept never resurrect the overlay or its input.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if n, ok := next.(Model); ok && n.pane != paneList && n.palette.open {
+		n.closePalette()
+		return n, cmd
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		oldWidth, oldHeight := m.width, m.height
 		detailAtBottom := m.pane == paneDetail && m.detailViewport.AtBottom()
 		m.width = msg.Width
 		m.height = msg.Height
-		m.detailViewport.Width = msg.Width
-		m.detailViewport.Height = max(1, msg.Height-1)
-		m.helpViewport.Width = msg.Width
-		m.helpViewport.Height = max(1, msg.Height-1)
-		m.errorsViewport.Width = msg.Width
-		m.errorsViewport.Height = max(1, msg.Height-1)
+		m.detailViewport.SetWidth(msg.Width)
+		m.detailViewport.SetHeight(max(1, msg.Height-1))
+		m.helpViewport.SetWidth(msg.Width)
+		m.helpViewport.SetHeight(max(1, msg.Height-1))
+		m.errorsViewport.SetWidth(msg.Width)
+		m.errorsViewport.SetHeight(max(1, msg.Height-1))
 		m.resizeMarketplaceConsentViewport(false)
 		m.clampListOffset()
 		layout := screenLayoutFor(m.height, m.filterActive)
@@ -320,12 +373,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
+	case tea.PasteMsg:
+		return m.handlePaste(msg)
+
+	case tea.BackgroundColorMsg:
+		m.isDark = msg.IsDark()
+		m.theme = newTheme(m.isDark)
+		m.help.Styles = helpStyles(m.theme)
+		return m, nil
+
 	case cursor.BlinkMsg:
-		// Forward cursor blink ticks to the search input so the cursor
-		// blinks while the search input is focused.
+		// Forward cursor blink ticks to whichever text input is focused
+		// (palette or search) so its cursor blinks.
+		if m.palette.open {
+			var cmd tea.Cmd
+			m.palette.input, cmd = m.palette.input.Update(msg)
+			return m, cmd
+		}
 		if m.filterActive {
 			var cmd tea.Cmd
 			m.searchInput, cmd = m.searchInput.Update(msg)
@@ -380,19 +447,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.assessmentPending = false
 		m.applySnapshotStatus(msg)
+		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg))
 		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(msg)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg))
+			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg)), updateCmd)
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.provisionalRows = nil
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
+			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd)
 		}
 		m.applySnapshotData(msg)
 		discoveryCmd := m.beginMarketplaceDiscovery(m.filter, false)
@@ -400,10 +468,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.refreshAfterLoad {
 			m.refreshing = true
 			generation := m.beginRequest(requestSnapshot)
-			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), discoveryCmd, installCmd, m.spinner.Tick)
+			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), discoveryCmd, installCmd, updateCmd, m.spinner.Tick)
 		}
 		m.refreshing = false
-		return m, tea.Batch(discoveryCmd, installCmd)
+		return m, tea.Batch(discoveryCmd, installCmd, updateCmd)
 
 	case refreshLoadedMsg:
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
@@ -412,20 +480,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.assessmentPending = false
 		m.applySnapshotStatus(msg.snapshotLoadedMsg)
+		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(msg.snapshotLoadedMsg)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
+			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)), updateCmd)
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
+			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd)
 		}
 		m.applySnapshotData(msg.snapshotLoadedMsg)
-		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)))
+		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)), updateCmd)
 
 	case reloadMsg:
 		snapshot := snapshotLoadedMsg(msg)
@@ -442,22 +511,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncing = false
 		m.refreshing = false
 		m.applySnapshotStatus(snapshot)
+		updateCmd := m.finishUpdateReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		if snapshot.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(snapshot)
 			m.migrationPrompt = snapshot.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot))
+			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd)
 		}
 		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
-			return m, m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...))
+			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...)), updateCmd)
 		}
 		m.applySnapshotData(snapshot)
-		m.toast = "Reloaded"
-		m.toastExp = time.Now().Add(2 * time.Second)
-		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)))
+		m.pushToast("Reloaded", 2*time.Second)
+		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd)
 
 	case discoveryDebounceMsg:
 		if m.requests.active(requestDiscovery) != msg.generation {
@@ -502,10 +571,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.marketplaceInstallOperation = msg.operation
 			m.marketplacePreparedInstall = msg.prepared
 			if !msg.prepared.RequiresRiskAcceptance() {
-				return m, commitDiscoveryInstall(ctxOrBackground(m.ctx), msg.operation, msg.options, msg.prepared)
+				return m, commitDiscoveryInstall(m.observedContext(ctxOrBackground(m.ctx)), msg.operation, msg.options, msg.prepared)
 			}
 			m.setMarketplaceConsentPreview(msg.preview)
 			m.pane = paneMarketplaceConsent
+			if m.progress != nil {
+				m.operationPhase = operationPhaseConsent
+			}
 			return m, nil
 		}
 		var consent *pipeline.MarketplaceConsentError
@@ -515,35 +587,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.marketplacePreparedInstall = consent.Prepared
 			m.setMarketplaceConsentPreview(consent.Preview)
 			m.pane = paneMarketplaceConsent
+			if m.progress != nil {
+				m.operationPhase = operationPhaseConsent
+			}
 			return m, nil
 		}
 		m.marketplacePreparedInstall = nil
 		m.marketplaceInstallPreview = ""
 		if msg.err != nil {
+			m.clearOperationProgress()
 			m.finishOperation(msg.operation)
 			m.marketplaceInstallOperation = 0
 			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
-			m.toast = "Marketplace install failed: " + msg.err.Error()
-			m.toastExp = time.Now().Add(5 * time.Second)
+			m.pushToast("Marketplace install failed: "+msg.err.Error(), 5*time.Second)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
 		generation := m.beginRequest(requestSnapshot)
 		m.marketplaceInstallReload = generation
+		if m.progress != nil {
+			m.operationPhase = string(pipeline.PhaseReload)
+		}
 		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 
+	case operationProgressMsg:
+		if !m.applyOperationProgress(msg) {
+			return m, nil
+		}
+		return m, m.operationProgressCmd()
+
+	case operationProgressDoneMsg:
+		return m, nil
+
+	case operationProgressPollMsg:
+		// Idle wake: keep the pump alive only while its own source is the
+		// active observation; a stale wake must not spawn a second pump.
+		if m.progress == nil || msg.source != m.progress {
+			return m, nil
+		}
+		return m, m.operationProgressCmd()
+
 	case toastMsg:
-		m.toast = msg.text
-		m.toastExp = time.Now().Add(msg.duration)
-		return m, toastExpiryCmd(msg.duration)
+		return m, m.enqueueToast(msg.text, msg.duration)
 
 	case toastExpiredMsg:
 		// Clear the toast if it has expired. Check the expiry time to
 		// avoid clearing a toast that was replaced more recently.
-		if !m.toastExp.IsZero() && time.Now().After(m.toastExp) {
-			m.toast = ""
-			m.toastExp = time.Time{}
-		}
-		return m, nil
+		return m, m.expireToast()
 
 	case configWrittenMsg:
 		if !m.acceptsOperation(msg.operation) {
@@ -553,8 +642,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.finishOperation(msg.operation)
 			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
 			m.pendingExcludeAction = nil
-			m.toast = fmt.Sprintf("error: %v", msg.err)
-			m.toastExp = time.Now().Add(5 * time.Second)
+			m.pushToast(fmt.Sprintf("error: %v", msg.err), 5*time.Second)
 			slog.Error("config write failed", "resource", msg.skillName, "enabled", msg.enabled, "err", msg.err)
 			action := "remove"
 			if msg.enabled {
@@ -567,8 +655,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.enabled {
 			action = "Disabled"
 		}
-		m.toast = fmt.Sprintf("%s %s", action, msg.skillName)
-		m.toastExp = time.Now().Add(2 * time.Second)
+		m.pushToast(fmt.Sprintf("%s %s", action, msg.skillName), 2*time.Second)
 		m.refreshing = false
 		m.driftAssessment = driftUnknown
 		if msg.selectNext {
@@ -598,15 +685,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishOperation(msg.operation)
 		if msg.err != nil {
 			m.recordOperationFailure(operationTargets, diagnosticMutation, msg.err)
-			m.toast = fmt.Sprintf("error: %v", msg.err)
-			m.toastExp = time.Now().Add(5 * time.Second)
+			m.pushToast(fmt.Sprintf("error: %v", msg.err), 5*time.Second)
 			slog.Error("harness configuration write failed", "scope", msg.scopeLabel, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "harness", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
 		m.recordOperationSuccess(operationTargets)
-		m.toast = fmt.Sprintf("Saved %s harnesses", msg.scopeLabel)
-		m.toastExp = time.Now().Add(2 * time.Second)
+		m.pushToast(fmt.Sprintf("Saved %s harnesses", msg.scopeLabel), 2*time.Second)
 		m.refreshing = false
 		generation := m.beginRequest(requestSnapshot)
 		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), toastExpiryCmd(2*time.Second))
@@ -614,17 +699,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case syncDoneMsg:
 		m.syncing = false
 		m.refreshing = false
+		m.clearOperationProgress()
 		if msg.err != nil {
 			m.recordOperationFailure(operationSync, diagnosticSync, msg.err)
-			m.toast = fmt.Sprintf("sync error: %v", msg.err)
-			m.toastExp = time.Now().Add(5 * time.Second)
+			m.pushToast(fmt.Sprintf("sync error: %v", msg.err), 5*time.Second)
 			slog.Error("sync failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "sync", msg.err)
 		} else {
 			m.recordOperationSuccess(operationSync)
 			m.driftReport = materialize.DriftReport{}
-			m.toast = "Sync complete"
-			m.toastExp = time.Now().Add(2 * time.Second)
+			m.pushToast("Sync complete", 2*time.Second)
 		}
 		// If the user confirmed "sync+quit", quit now that the sync has
 		// actually completed. This avoids the race where tea.Quit in a
@@ -643,11 +727,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
 			// A failed update can still leave partial on-disk effects. Re-read
 			// them under a new generation without applying this stale outcome.
-			m.syncing = false
+			// The operation stays active — serialization and phase observation
+			// end only when the superseding reload is accepted or fails.
+			m.updatePendingErr = msg.err
+			if m.progress != nil {
+				m.operationPhase = string(pipeline.PhaseReload)
+			}
 			generation := m.beginRequest(requestSnapshot)
+			m.updateReload = generation
 			return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 		}
 		m.syncing = false
+		m.clearOperationProgress()
 		var installCmd tea.Cmd
 		if msg.snapshot.generation != 0 {
 			m.applySnapshotStatus(msg.snapshot)
@@ -665,8 +756,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.quitAfterSync = false
 		if msg.err != nil {
 			m.recordOperationFailure(operationUpdate, diagnosticUpdate, msg.err)
-			m.toast = fmt.Sprintf("update error: %v", msg.err)
-			m.toastExp = time.Now().Add(5 * time.Second)
+			m.pushToast(fmt.Sprintf("update error: %v", msg.err), 5*time.Second)
 			slog.Error("update failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "update", msg.err)
 			if msg.snapshot.generation != 0 {
@@ -675,8 +765,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(toastExpiryCmd(5*time.Second), installCmd)
 		} else {
 			m.recordOperationSuccess(operationUpdate)
-			m.toast = "Update complete"
-			m.toastExp = time.Now().Add(2 * time.Second)
+			m.pushToast("Update complete", 2*time.Second)
 		}
 		if msg.snapshot.generation != 0 {
 			installCmd = m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshot))
@@ -688,15 +777,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recordOperationFailure(operationMigration, diagnosticMigration, msg.err)
 			m.migrationPrompt = migrationPrompt{}
 			m.pane = paneList
-			m.toast = fmt.Sprintf("v4 migration skipped: %v", msg.err)
-			m.toastExp = time.Now().Add(5 * time.Second)
+			m.pushToast(fmt.Sprintf("v4 migration skipped: %v", msg.err), 5*time.Second)
 			slog.Warn("migration refused; continuing with legacy configuration", "count", msg.count, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "migrate", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
 		m.recordOperationSuccess(operationMigration)
-		m.toast = fmt.Sprintf("Migrated %d config file(s)", msg.count)
-		m.toastExp = time.Now().Add(2 * time.Second)
+		m.pushToast(fmt.Sprintf("Migrated %d config file(s)", msg.count), 2*time.Second)
 		m.migrationPrompt = migrationPrompt{}
 		generation := m.beginRequest(requestSnapshot)
 		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), toastExpiryCmd(2*time.Second))
@@ -708,8 +795,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishOperation(msg.operation)
 		if msg.err != nil {
 			m.recordOperationFailure(operationEditor, diagnosticEditor, msg.err)
-			m.toast = fmt.Sprintf("editor error: %v", msg.err)
-			m.toastExp = time.Now().Add(5 * time.Second)
+			m.pushToast(fmt.Sprintf("editor error: %v", msg.err), 5*time.Second)
 			slog.Error("config editor result handled", "path", msg.path, "reload", false, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "edit_config", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
@@ -737,7 +823,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detailRenderWidth = renderedWidth
 		if msg.keepScroll {
-			offset := m.detailViewport.YOffset
+			offset := m.detailViewport.YOffset()
 			stickyBottom := m.detailStickyBottom || m.detailViewport.AtBottom()
 			m.detailStickyBottom = false
 			m.detailViewport.SetContent(msg.content)
@@ -812,7 +898,7 @@ func (m *Model) moveCursorByRows(direction, step int) {
 	m.clampListOffset()
 }
 
-func (m Model) handleViewportPageKey(msg tea.KeyMsg, viewport *viewport.Model) bool {
+func (m Model) handleViewportPageKey(msg tea.KeyPressMsg, viewport *viewport.Model) bool {
 	if key.Matches(msg, m.keys.PageDown) {
 		viewport.PageDown()
 		return true
@@ -824,17 +910,17 @@ func (m Model) handleViewportPageKey(msg tea.KeyMsg, viewport *viewport.Model) b
 	return false
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Toast auto-expire check
 	if !m.toastExp.IsZero() && time.Now().After(m.toastExp) {
-		m.toast = ""
+		m.expireToast()
 	}
 
 	// Ctrl+C always quits immediately regardless of the active pane.
 	// This ensures the user can escape the TUI even from overlays or
 	// modals. Unlike the 'q' key, Ctrl+C does not prompt for unsaved
 	// changes — it is a hard exit that restores the terminal cleanly.
-	if msg.Type == tea.KeyCtrlC {
+	if msg.Code == 'c' && msg.Mod.Contains(tea.ModCtrl) {
 		return m, tea.Quit
 	}
 	if m.belowMinimumTerminal() {
@@ -914,31 +1000,30 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditConfigModalKey(msg)
 	}
 
+	// The command palette owns all keys while open (its input takes
+	// typing and paste; esc closes; enter dispatches).
+	if m.palette.open {
+		return m.handlePaletteKey(msg)
+	}
+
 	// Search mode
 	if m.filterActive {
 		return m.handleSearchKey(msg)
 	}
 
 	// z-prefix: vim-style fold commands (za/zM/zR). Any other key cancels
-	// the pending prefix and is processed normally.
+	// the pending prefix and is processed normally — except the palette
+	// opener, which a pending prefix swallows rather than layering over.
 	if m.zPending {
 		m.zPending = false
 		switch {
 		case key.Matches(msg, m.keys.FoldToggle):
-			m.toggleFoldAtCursor()
-			m.rebuildFlatItems()
-			m.clampListOffset()
-			return m, nil
+			return m.dispatchAction(actionFoldToggle)
 		case key.Matches(msg, m.keys.FoldAll):
-			m.collapseAllSections()
-			m.rebuildFlatItems()
-			m.cursor = 0
-			m.clampListOffset()
-			return m, nil
+			return m.dispatchAction(actionFoldAll)
 		case key.Matches(msg, m.keys.ExpandAll):
-			m.expandAllSections()
-			m.rebuildFlatItems()
-			m.clampListOffset()
+			return m.dispatchAction(actionExpandAll)
+		case key.Matches(msg, m.keys.Palette):
 			return m, nil
 		default:
 			// fall through: treat the key as a fresh input
@@ -948,12 +1033,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Normal mode
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		if m.driftReport.PendingCount() > 0 {
-			m.pane = paneConfirm
-			m.confirmMsg = fmt.Sprintf("%d pending changes not synced. Sync+quit? y/n/esc", m.driftReport.PendingCount())
-			return m, nil
-		}
-		return m, tea.Quit
+		return m.dispatchAction(actionQuit)
 
 	case key.Matches(msg, m.keys.Up):
 		if m.cursor > 0 {
@@ -996,55 +1076,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Search):
-		resetRemoteSearch := m.filter != ""
-		m.filterActive = true
-		m.searchInput.SetValue("")
-		cmd := m.searchInput.Focus()
-		m.filter = ""
-		if resetRemoteSearch {
-			m.restoreBrowseDiscovery()
-			return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false))
-		}
-		return m, cmd
+		return m.dispatchAction(actionSearch)
+
+	case key.Matches(msg, m.keys.Palette):
+		return m, m.openPalette()
 
 	case key.Matches(msg, m.keys.Help):
-		m.pane = paneHelp
-		return m, nil
+		return m.dispatchAction(actionHelp)
 
 	case key.Matches(msg, m.keys.Errors):
-		if len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0 {
-			m.pane = paneErrors
-		}
-		return m, nil
+		return m.dispatchAction(actionDiagnostics)
 
 	case key.Matches(msg, m.keys.Harness):
-		if m.configInvalid {
-			return m, invalidConfigToastCmd()
-		}
-		m.openHarnessModal()
-		return m, nil
+		return m.dispatchAction(actionHarness)
 
 	case key.Matches(msg, m.keys.EditConfig):
-		m.pane = paneEditConfigModal
-		return m, nil
+		return m.dispatchAction(actionEditConfig)
 
 	case key.Matches(msg, m.keys.Enter):
-		if _, ok := m.selectedSectionPath(); ok {
-			m.toggleFoldAtCursor()
-			m.rebuildFlatItems()
-			m.clampListOffset()
-			return m, nil
-		}
-		if r, ok := m.selectedRow(); ok {
-			m.enterDetailPane()
-			generation := m.beginRequest(requestDetail)
-			recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(m.activeTab), "view": "detail", "resource.kind": r.Artifact.Kind.String()})
-			if m.bundle == nil || m.detailSelectedPath == "" {
-				return m, nil
-			}
-			return m, loadBundleDetailContent(m.bundle, m.detailSelectedPath, generation, m.previewWidth(), false)
-		}
-		return m, nil
+		return m.dispatchAction(actionDetail)
 
 	case key.Matches(msg, m.keys.Collapse):
 		m.setFoldAtCursor(true)
@@ -1064,24 +1114,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Reload):
-		m.refreshing = false
-		generation := m.beginRequest(requestSnapshot)
-		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
+		return m.dispatchAction(actionReload)
 
 	case key.Matches(msg, m.keys.Tab1):
-		m.switchTab(tabScope)
-		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(tabScope)})
-		return m, nil
+		return m.dispatchAction(actionTabScope)
 
 	case key.Matches(msg, m.keys.Tab2):
-		m.switchTab(tabRegistry)
-		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(tabRegistry)})
-		return m, nil
+		return m.dispatchAction(actionTabRegistry)
 
 	case key.Matches(msg, m.keys.Tab3):
-		m.switchTab(tabStatus)
-		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(tabStatus)})
-		return m, nil
+		return m.dispatchAction(actionTabStatus)
 
 	case key.Matches(msg, m.keys.NextTab):
 		next := nextTab(m.activeTab)
@@ -1096,6 +1138,85 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Space):
+		return m.dispatchAction(actionToggle)
+
+	case key.Matches(msg, m.keys.Sync):
+		return m.dispatchAction(actionSync)
+
+	case key.Matches(msg, m.keys.Update):
+		return m.dispatchAction(actionUpdate)
+	}
+
+	return m, nil
+}
+
+// dispatchAction performs one list action by stable identity. It is the
+// single guarded path shared by physical key bindings, z-prefix fold
+// completions, and command-palette submissions — the palette can therefore
+// never reach behavior the keyboard path guards against, and prefix actions
+// dispatch the identity directly rather than synthesizing key sequences.
+func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
+	switch id {
+	case actionQuit:
+		if m.driftReport.PendingCount() > 0 {
+			m.pane = paneConfirm
+			m.confirmMsg = fmt.Sprintf("%d pending changes not synced. Sync+quit? y/n/esc", m.driftReport.PendingCount())
+			return m, nil
+		}
+		return m, tea.Quit
+
+	case actionSearch:
+		resetRemoteSearch := m.filter != ""
+		m.filterActive = true
+		m.searchInput.SetValue("")
+		cmd := m.searchInput.Focus()
+		m.filter = ""
+		if resetRemoteSearch {
+			m.restoreBrowseDiscovery()
+			return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false))
+		}
+		return m, cmd
+
+	case actionHelp:
+		m.pane = paneHelp
+		return m, nil
+
+	case actionDiagnostics:
+		if len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0 {
+			m.pane = paneErrors
+		}
+		return m, nil
+
+	case actionHarness:
+		if m.configInvalid {
+			return m, invalidConfigToastCmd()
+		}
+		m.openHarnessModal()
+		return m, nil
+
+	case actionEditConfig:
+		m.pane = paneEditConfigModal
+		return m, nil
+
+	case actionDetail:
+		if _, ok := m.selectedSectionPath(); ok {
+			m.toggleFoldAtCursor()
+			m.rebuildFlatItems()
+			m.clampListOffset()
+			return m, nil
+		}
+		if r, ok := m.selectedRow(); ok {
+			m.enterDetailPane()
+			generation := m.beginRequest(requestDetail)
+			recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(m.activeTab), "view": "detail", "resource.kind": r.Artifact.Kind.String()})
+			if m.bundle == nil || m.detailSelectedPath == "" {
+				return m, nil
+			}
+			return m, loadBundleDetailContent(m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), false)
+		}
+		return m, nil
+
+	case actionToggle:
 		if m.syncing {
 			return m, nil
 		}
@@ -1114,7 +1235,46 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.applyRowSpaceEligibility(r)
 
-	case key.Matches(msg, m.keys.Sync):
+	case actionFoldToggle:
+		m.toggleFoldAtCursor()
+		m.rebuildFlatItems()
+		m.clampListOffset()
+		return m, nil
+
+	case actionFoldAll:
+		m.collapseAllSections()
+		m.rebuildFlatItems()
+		m.cursor = 0
+		m.clampListOffset()
+		return m, nil
+
+	case actionExpandAll:
+		m.expandAllSections()
+		m.rebuildFlatItems()
+		m.clampListOffset()
+		return m, nil
+
+	case actionReload:
+		m.refreshing = false
+		generation := m.beginRequest(requestSnapshot)
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
+
+	case actionTabScope:
+		m.switchTab(tabScope)
+		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(tabScope)})
+		return m, nil
+
+	case actionTabRegistry:
+		m.switchTab(tabRegistry)
+		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(tabRegistry)})
+		return m, nil
+
+	case actionTabStatus:
+		m.switchTab(tabStatus)
+		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(tabStatus)})
+		return m, nil
+
+	case actionSync:
 		if m.configInvalid {
 			return m, invalidConfigToastCmd()
 		}
@@ -1131,10 +1291,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Sync does not allocate a snapshot generation until syncDoneMsg
 		// actually schedules the authoritative post-sync reload.
 		m.syncing = true
+		m.beginOperationProgress("sync", m.requests.active(requestSnapshot))
 		recordActionSpan(m.ctx, "sync", nil)
-		return m, tea.Batch(m.dependencySyncCmd(), m.spinner.Tick)
+		return m, tea.Batch(m.dependencySyncCmd(), m.operationProgressCmd(), m.spinner.Tick)
 
-	case key.Matches(msg, m.keys.Update):
+	case actionUpdate:
 		if m.configInvalid {
 			return m, invalidConfigToastCmd()
 		}
@@ -1144,8 +1305,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		generation := m.beginRequest(requestSnapshot)
 		m.syncing = true
+		m.beginOperationProgress("update", generation)
 		recordActionSpan(m.ctx, "update", nil)
-		return m, tea.Batch(m.dependencyUpdateCmd(generation), m.spinner.Tick)
+		return m, tea.Batch(m.dependencyUpdateCmd(generation), m.operationProgressCmd(), m.spinner.Tick)
 	}
 
 	return m, nil
@@ -1160,7 +1322,20 @@ func (m *Model) restoreBrowseDiscovery() {
 	}
 }
 
-func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if m.belowMinimumTerminal() || m.pane != paneList {
+		return m, nil
+	}
+	if m.palette.open {
+		return m.handlePalettePaste(msg)
+	}
+	if !m.filterActive {
+		return m, nil
+	}
+	return m.applySearchInput(msg)
+}
+
+func (m Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Clear):
 		m.filterActive = false
@@ -1179,21 +1354,25 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	default:
 		// Delegate to textinput for cursor movement, backspace,
-		// paste, and character input.
-		var cmd tea.Cmd
-		previous := m.filter
-		m.searchInput, cmd = m.searchInput.Update(msg)
-		m.filter = m.searchInput.Value()
-		m.recomputeView()
-		if m.filter == previous {
-			return m, cmd
-		}
-		if m.filter == "" {
-			m.restoreBrowseDiscovery()
-			return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false), m.spinner.Tick)
-		}
-		return m, tea.Batch(cmd, m.beginMarketplaceDiscovery(m.filter, true), m.spinner.Tick)
+		// and character input.
+		return m.applySearchInput(msg)
 	}
+}
+
+func (m Model) applySearchInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	previous := m.filter
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	m.filter = m.searchInput.Value()
+	m.recomputeView()
+	if m.filter == previous {
+		return m, cmd
+	}
+	if m.filter == "" {
+		m.restoreBrowseDiscovery()
+		return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false), m.spinner.Tick)
+	}
+	return m, tea.Batch(cmd, m.beginMarketplaceDiscovery(m.filter, true), m.spinner.Tick)
 }
 
 func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
@@ -1240,14 +1419,14 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 		m.bundle = nil
 		m.detailSelectedPath = ""
 		m.cancelRequest(requestDetail)
-		m.detailViewport.SetContent(renderDetailFullContent(current, m.previewWidth()))
+		m.detailViewport.SetContent(renderDetailFullContent(m.currentTheme(), current, m.previewWidth()))
 		return
 	}
 	if isMarketplaceDetailOnly(current) {
 		m.bundle = nil
 		m.detailSelectedPath = ""
 		m.cancelRequest(requestDetail)
-		m.detailViewport.SetContent(renderMarketplaceDetailContent(current))
+		m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), current))
 		return
 	}
 	tree, err := bundleTreeForRow(current)
@@ -1273,42 +1452,74 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	m.ensureBundleCursorVisible()
 }
 
-func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
+// toggleDenial identifies why the guarded row toggle cannot proceed, in the
+// order the keyboard Space dispatch reports it. toggleEligible means the
+// toggle modal may open. This is the single authoritative toggle policy:
+// the keyboard path maps each denial to its toast/no-op outcome and the
+// palette maps any denial to hiding the toggle action.
+type toggleDenial int
+
+const (
+	toggleEligible toggleDenial = iota
+	toggleBusy
+	toggleConfigInvalid
+	toggleMalformed
+	togglePendingVerification
+	toggleMarketplaceBlocked
+	toggleRequired
+	toggleCollectionOnly
+)
+
+// rowToggleEligibility evaluates the shared toggle guards against the
+// current model and row without dispatching.
+func (m Model) rowToggleEligibility(r row) toggleDenial {
 	if m.loading || m.syncing {
-		return m, nil
+		return toggleBusy
 	}
 	if m.configInvalid {
-		return m, invalidConfigToastCmd()
+		return toggleConfigInvalid
 	}
-	if r.IsMalformed {
+	switch {
+	case r.IsMalformed:
+		return toggleMalformed
+	case r.PendingVerification:
+		return togglePendingVerification
+	case r.MarketplaceDiscovery != nil && !marketplaceDiscoveryInstallable(r):
+		return toggleMarketplaceBlocked
+	case r.Artifact.Required:
+		return toggleRequired
+	case r.MarketplaceCollectionOnly && !r.canOverrideMarketplace():
+		return toggleCollectionOnly
+	}
+	return toggleEligible
+}
+
+func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
+	toast := func(text string) tea.Cmd {
+		return func() tea.Msg {
+			return toastMsg{text: text, duration: 2 * time.Second}
+		}
+	}
+	switch m.rowToggleEligibility(r) {
+	case toggleBusy, toggleMalformed:
 		return m, nil
-	}
-	if r.PendingVerification {
-		return m, func() tea.Msg {
-			return toastMsg{text: "selection is still being verified", duration: 2 * time.Second}
-		}
-	}
-	if r.MarketplaceDiscovery != nil && !marketplaceDiscoveryInstallable(r) {
-		return m, func() tea.Msg {
-			return toastMsg{text: "this Marketplace resource is not installable", duration: 2 * time.Second}
-		}
-	}
-	if r.Artifact.Required {
-		return m, func() tea.Msg {
-			return toastMsg{text: "required items cannot be toggled", duration: 2 * time.Second}
-		}
-	}
-	if r.MarketplaceCollectionOnly && !r.canOverrideMarketplace() {
-		return m, func() tea.Msg {
-			return toastMsg{text: "collection-selected Marketplace items must be toggled through their collection", duration: 2 * time.Second}
-		}
+	case toggleConfigInvalid:
+		return m, invalidConfigToastCmd()
+	case togglePendingVerification:
+		return m, toast("selection is still being verified")
+	case toggleMarketplaceBlocked:
+		return m, toast("this Marketplace resource is not installable")
+	case toggleRequired:
+		return m, toast("required items cannot be toggled")
+	case toggleCollectionOnly:
+		return m, toast("collection-selected Marketplace items must be toggled through their collection")
 	}
 	m.pane = paneToggleModal
 	m.modalSkill = r
 	return m, nil
 }
 
-func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleDetailKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Space) {
 		for _, r := range m.rows {
 			if rowKey(r) != m.detailKey {
@@ -1421,7 +1632,7 @@ func (m Model) queueBundlePreview(keepScroll bool) (tea.Model, tea.Cmd) {
 		if rowKey(r) == m.detailKey {
 			generation := m.beginRequest(requestDetail)
 			m.detailViewport.SetContent("Loading…")
-			return m, loadBundleDetailContent(m.bundle, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
+			return m, loadBundleDetailContent(m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
 		}
 	}
 	return m, nil
@@ -1455,10 +1666,10 @@ func (m *Model) enterDetailPane() {
 			m.detailViewport.SetContent("Verification pending: " + sanitizeTerminalData(resourceLabel(r), terminalSingleLine) + "\n\nThis selection is configured, but exact-lock and catalog verification have not completed.")
 		} else if r.UnavailableReason != "" {
 			m.bundle = nil
-			m.detailViewport.SetContent(renderDetailFullContent(r, m.previewWidth()))
+			m.detailViewport.SetContent(renderDetailFullContent(m.currentTheme(), r, m.previewWidth()))
 		} else if isMarketplaceDetailOnly(r) {
 			m.bundle = nil
-			m.detailViewport.SetContent(renderMarketplaceDetailContent(r))
+			m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), r))
 		} else if bundle, err := bundleTreeForRow(r); err != nil {
 			m.bundle = nil
 			m.detailViewport.SetContent("Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine))
@@ -1471,8 +1682,8 @@ func (m *Model) enterDetailPane() {
 		m.bundle = nil
 	}
 	m.bundleOffset = 0
-	m.detailViewport.Width = m.width
-	m.detailViewport.Height = max(1, m.height-1)
+	m.detailViewport.SetWidth(m.width)
+	m.detailViewport.SetHeight(max(1, m.height-1))
 	m.detailRenderWidth = m.previewWidth()
 	m.detailStickyBottom = false
 	if m.bundle != nil && m.detailSelectedPath != "" {
@@ -1498,48 +1709,66 @@ func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
 		}
 		generation := m.beginRequest(requestDetail)
 		if m.detailLegacyRender || m.bundle == nil || m.detailSelectedPath == "" {
-			return loadDetailContent(r, generation, width, true)
+			return loadDetailContent(m.currentTheme(), r, generation, width, true)
 		}
-		return loadBundleDetailContent(m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
+		return loadBundleDetailContent(m.currentTheme(), m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
 	}
 	return nil
 }
 
-func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, m.keys.ConfirmYes):
-		// A sync may already be running if the user pressed 'q' during an
-		// active sync (the Quit key opens the confirm pane without checking
-		// m.syncing). Don't start a second sync that would race the first.
-		if m.syncing {
-			m.pane = paneList
-			m.quitAfterSync = true
-			return m, nil
-		}
-		// Sync then quit — start the sync and defer tea.Quit to the
-		// syncDoneMsg handler. Including tea.Quit in the batch here
-		// would race the sync goroutine and quit before materialization
-		// completes.
-		m.pane = paneList
-		m.syncing = true
-		m.quitAfterSync = true
-		slog.Debug("sync+quit confirmed, deferring quit until sync completes")
-		return m, tea.Batch(m.dependencySyncCmd(), m.spinner.Tick)
-	case key.Matches(msg, m.keys.ConfirmNo):
-		m.pane = paneList
-		m.quitAfterSync = false
-		recordActionSpan(m.ctx, "modal_outcome", map[string]string{"outcome": "cancelled", "modal": "sync+quit"})
-		return m, tea.Quit
-	case key.Matches(msg, m.keys.ConfirmCancel):
+func (m Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.ensureSyncQuitForm()
+	if key.Matches(msg, m.keys.ConfirmCancel) {
 		m.pane = paneList
 		m.quitAfterSync = false
 		recordActionSpan(m.ctx, "modal_outcome", map[string]string{"outcome": "cancelled", "modal": "sync+quit"})
 		return m, nil
 	}
-	return m, nil
+	m.syncQuitForm = updateModalForm(m.syncQuitForm, msg)
+	if m.syncQuitForm == nil || m.syncQuitForm.State != huh.StateCompleted {
+		return m, nil
+	}
+	if m.syncQuitValue != nil && *m.syncQuitValue {
+		return m.confirmSyncQuitYes()
+	}
+	return m.confirmSyncQuitNo()
 }
 
-func (m Model) View() string {
+func (m Model) confirmSyncQuitYes() (tea.Model, tea.Cmd) {
+	// A sync may already be running if the user pressed 'q' during an
+	// active sync (the Quit key opens the confirm pane without checking
+	// m.syncing). Don't start a second sync that would race the first.
+	if m.syncing {
+		m.pane = paneList
+		m.quitAfterSync = true
+		return m, nil
+	}
+	// Sync then quit — start the sync and defer tea.Quit to the
+	// syncDoneMsg handler. Including tea.Quit in the batch here
+	// would race the sync goroutine and quit before materialization
+	// completes.
+	m.pane = paneList
+	m.syncing = true
+	m.quitAfterSync = true
+	m.beginOperationProgress("sync", m.requests.active(requestSnapshot))
+	slog.Debug("sync+quit confirmed, deferring quit until sync completes")
+	return m, tea.Batch(m.dependencySyncCmd(), m.operationProgressCmd(), m.spinner.Tick)
+}
+
+func (m Model) confirmSyncQuitNo() (tea.Model, tea.Cmd) {
+	m.pane = paneList
+	m.quitAfterSync = false
+	recordActionSpan(m.ctx, "modal_outcome", map[string]string{"outcome": "cancelled", "modal": "sync+quit"})
+	return m, tea.Quit
+}
+
+func (m Model) View() tea.View {
+	v := tea.NewView(m.viewContent())
+	v.AltScreen = true
+	return v
+}
+
+func (m Model) viewContent() string {
 	if m.belowMinimumTerminal() {
 		return renderResizeRequired(m)
 	}
@@ -1547,13 +1776,13 @@ func (m Model) View() string {
 	// Full-screen overlays.
 	switch m.pane {
 	case paneHelp:
-		m.helpViewport.Width = m.width
-		m.helpViewport.Height = max(1, m.height-1)
+		m.helpViewport.SetWidth(m.width)
+		m.helpViewport.SetHeight(max(1, m.height-1))
 		m.helpViewport.SetContent(renderHelp(m))
 		return fitTerminalWithFooter(m.helpViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/? close · Ctrl+C quit", m.width, m.height)
 	case paneErrors:
-		m.errorsViewport.Width = m.width
-		m.errorsViewport.Height = max(1, m.height-1)
+		m.errorsViewport.SetWidth(m.width)
+		m.errorsViewport.SetHeight(max(1, m.height-1))
 		m.errorsViewport.SetContent(renderErrors(m))
 		return fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/e close · Ctrl+C quit", m.width, m.height)
 	case paneConfirm:
@@ -1564,8 +1793,8 @@ func (m Model) View() string {
 		listWidth, previewWidth := paneWidths(m.width)
 		bodyHeight := max(1, m.height-1)
 		preview := m.detailViewport
-		preview.Width = max(1, previewWidth-1)
-		preview.Height = bodyHeight
+		preview.SetWidth(max(1, previewWidth-1))
+		preview.SetHeight(bodyHeight)
 		tree := renderBundleTree(m, listWidth, bodyHeight)
 		joined := lipgloss.JoinHorizontal(lipgloss.Top, tree, preview.View())
 		footer := "esc/q back · ↑/↓/j/k navigate · h/l fold · enter toggle · pgup/pgdn preview · Ctrl+C quit"
@@ -1576,6 +1805,14 @@ func (m Model) View() string {
 	}
 
 	base := m.renderBaseScreen()
+
+	// The command palette renders as a Lip Gloss layer over the list
+	// without hiding the underlying controls.
+	if m.palette.open && m.pane == paneList {
+		if layer := renderPalette(m); layer != "" {
+			base = compositePalette(base, layer, m.width, m.height)
+		}
+	}
 
 	// paneToggleModal renders as an overlay on top of the normal two-pane
 	// layout so the user can still see the list behind the modal.
@@ -1593,9 +1830,9 @@ func (m Model) View() string {
 		modal = renderEditConfigModal(m)
 	}
 	if modal == "" {
-		return base
+		return compositeToasts(base, m.layeredToasts(), m.width, m.height)
 	}
-	return fitTerminal(centerOverlay(base, modal, m.width, m.height), m.width, m.height)
+	return fitTerminal(compositeToasts(compositeModal(base, modal, m.width, m.height), m.layeredToasts(), m.width, m.height), m.width, m.height)
 }
 
 // renderBaseScreen renders the standard header + tabs + two-pane layout +
@@ -1707,19 +1944,55 @@ func (m *Model) applyFilter() []row {
 		return m.rows
 	}
 
-	filter := strings.ToLower(m.filter)
 	filtered := m.filterScratch[:0]
 	if cap(filtered) < len(m.rows) {
 		filtered = make([]row, 0, len(m.rows))
 	}
 	for i := range m.rows {
 		m.rows[i].ensureSearchable()
-		if strings.Contains(m.rows[i].searchableLower, filter) {
-			filtered = append(filtered, m.rows[i])
+		match, ok := fuzzyMatch(m.filter, m.rows[i].searchableLower)
+		if !ok {
+			continue
 		}
+		r := m.rows[i]
+		r.searchRanked = true
+		r.searchScore = match.Score
+		if nameMatch, nameOK := fuzzyMatch(m.filter, r.searchName); nameOK {
+			r.searchMatchRunes = runeIndexes(r.searchName, nameMatch.MatchedIndexes)
+		}
+		filtered = append(filtered, r)
 	}
 	m.filterScratch = filtered[:0]
 	return filtered
+}
+
+func fuzzyMatch(pattern, text string) (fuzzy.Match, bool) {
+	for _, match := range fuzzy.FindFromIterNoSort(pattern, func(yield func(string) bool) {
+		yield(text)
+	}) {
+		return match, true
+	}
+	return fuzzy.Match{}, false
+}
+
+func runeIndexes(s string, byteIdx []int) []int {
+	if len(byteIdx) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(byteIdx))
+	want := 0
+	runeIdx := 0
+	for offset := range s {
+		if byteIdx[want] == offset {
+			out = append(out, runeIdx)
+			want++
+			if want == len(byteIdx) {
+				return out
+			}
+		}
+		runeIdx++
+	}
+	return out
 }
 
 // clampListOffset adjusts listOffset so the cursor stays visible in the
@@ -1768,7 +2041,7 @@ func (m *Model) listHeightOffsets(width int) []int {
 		m.listHeightPrefix[0] = 0
 	}
 	for i := range m.flatItems {
-		m.listHeightPrefix[i+1] = m.listHeightPrefix[i] + flatItemHeight(m.flatItems[i], width)
+		m.listHeightPrefix[i+1] = m.listHeightPrefix[i] + flatItemHeight(m.flatItems[i], width, compactTerminalLayout(*m))
 	}
 	m.listHeightWidth = width
 	return m.listHeightPrefix
@@ -1799,7 +2072,7 @@ func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error
 }
 
 func defaultTUIProgramOptions() []tea.ProgramOption {
-	return []tea.ProgramOption{tea.WithAltScreen()}
+	return nil
 }
 
 func runTUIModel(model tea.Model, options ...tea.ProgramOption) error {

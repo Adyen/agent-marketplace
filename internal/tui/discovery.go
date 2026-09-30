@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -16,8 +18,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -124,32 +124,35 @@ func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 	m.pane = paneList
 	m.marketplaceInstallOptions = options
 	m.marketplaceInstallOperation = operation
-	return m, prepareDiscoveryInstall(ctxOrBackground(m.ctx), operation, options)
+	m.beginOperationProgressFor(operation, "install", m.requests.active(requestSnapshot))
+	return m, tea.Batch(
+		prepareDiscoveryInstall(m.observedContext(ctxOrBackground(m.ctx)), operation, options),
+		m.operationProgressCmd(),
+	)
 }
 
 func (m *Model) finishMarketplaceInstallReload(generation requestGeneration, err error) tea.Cmd {
 	if m.marketplaceInstallReload == 0 || generation < m.marketplaceInstallReload {
 		return nil
 	}
+	m.clearOperationProgress()
 	m.finishOperation(m.marketplaceInstallOperation)
 	m.marketplaceInstallOperation = 0
 	m.marketplaceInstallReload = 0
 	if err != nil {
 		m.recordOperationFailure(operationMutation, diagnosticMutation, err)
-		m.toast = "Marketplace install reload failed: " + err.Error()
-		m.toastExp = time.Now().Add(5 * time.Second)
+		m.pushToast("Marketplace install reload failed: "+err.Error(), 5*time.Second)
 		return toastExpiryCmd(5 * time.Second)
 	}
 	m.recordOperationSuccess(operationMutation)
-	m.toast = "Marketplace resource installed"
-	m.toastExp = time.Now().Add(2 * time.Second)
+	m.pushToast("Marketplace resource installed", 2*time.Second)
 	return toastExpiryCmd(2 * time.Second)
 }
 
 func (m *Model) resizeMarketplaceConsentViewport(reset bool) {
-	m.marketplaceConsentViewport.Width = max(1, m.width)
-	m.marketplaceConsentViewport.Height = max(1, m.height-3)
-	m.marketplaceConsentViewport.SetContent(ansi.Hardwrap(m.marketplaceInstallPreview, m.marketplaceConsentViewport.Width, true))
+	m.marketplaceConsentViewport.SetWidth(max(1, m.width))
+	m.marketplaceConsentViewport.SetHeight(max(1, m.height-3))
+	m.marketplaceConsentViewport.SetContent(ansi.Hardwrap(m.marketplaceInstallPreview, m.marketplaceConsentViewport.Width(), true))
 	if reset {
 		m.marketplaceConsentViewport.GotoTop()
 	}
@@ -161,6 +164,7 @@ func (m *Model) setMarketplaceConsentPreview(preview string) {
 }
 
 func (m *Model) clearMarketplaceConsent() {
+	m.clearOperationProgress()
 	m.finishOperation(m.marketplaceInstallOperation)
 	m.marketplaceInstallOperation = 0
 	m.marketplacePreparedInstall = nil
@@ -173,11 +177,11 @@ func renderMarketplaceConsent(m Model) string {
 	return styleConfirmTitle.Render("Verified Marketplace install") + "\nInstall this exact verified revision?\n" + m.marketplaceConsentViewport.View()
 }
 
-func (m Model) handleMarketplaceConsentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleMarketplaceConsentKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
 		m.pane = paneList
-		return m, commitDiscoveryInstall(ctxOrBackground(m.ctx), m.marketplaceInstallOperation, m.marketplaceInstallOptions, m.marketplacePreparedInstall)
+		return m, commitDiscoveryInstall(m.observedContext(ctxOrBackground(m.ctx)), m.marketplaceInstallOperation, m.marketplaceInstallOptions, m.marketplacePreparedInstall)
 	case "n", "N", "esc":
 		m.pane = paneList
 		m.clearMarketplaceConsent()
