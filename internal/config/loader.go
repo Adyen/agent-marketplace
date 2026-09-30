@@ -288,28 +288,37 @@ func canonicalConfigPath(path string) (string, error) {
 	return filepath.Clean(canonical), nil
 }
 
-// canonicalConfigPathTolerateMissing canonicalizes path even when the file
-// does not exist yet. A layer being created has no symlink of its own, so its
-// parent directory is resolved instead: that yields the same name the loader
-// produces once the file exists, which keeps provenance and lock-path
-// comparisons stable across the creating edit.
+// canonicalConfigPathTolerateMissing canonicalizes path even when the file,
+// or some of its directories, do not exist yet. It resolves the deepest
+// existing ancestor and appends the missing components, which yields the same
+// name canonicalConfigPath produces once the file exists. That keeps staged
+// edits, provenance, and lock-path comparisons stable across the creating edit.
+// A dangling symlink on the path has no such stable name, so it is refused
+// with an error that still reports the file as not existing.
 func canonicalConfigPathTolerateMissing(path string) (string, error) {
-	canonical, err := canonicalConfigPath(path)
-	if err == nil {
-		return canonical, nil
+	current, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve config path %q: %w", path, err)
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return "", err
+	var missing []string
+	for {
+		canonical, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				canonical = filepath.Join(canonical, missing[i])
+			}
+			return filepath.Clean(canonical), nil
+		}
+		parent := filepath.Dir(current)
+		if !errors.Is(err, fs.ErrNotExist) || parent == current {
+			return "", fmt.Errorf("resolve config path %q: %w", path, err)
+		}
+		if _, lstatErr := os.Lstat(current); lstatErr == nil {
+			return "", fmt.Errorf("resolve config path %q: %s is a symlink to a missing target: %w", path, current, err)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
 	}
-	absolute, absErr := filepath.Abs(path)
-	if absErr != nil {
-		return "", absErr
-	}
-	dir, dirErr := filepath.EvalSymlinks(filepath.Dir(absolute))
-	if dirErr != nil {
-		return filepath.Clean(absolute), nil
-	}
-	return filepath.Join(dir, filepath.Base(absolute)), nil
 }
 
 // ConfigLockPaths identifies one config and its layer-owned lock through both
@@ -319,6 +328,16 @@ type ConfigLockPaths struct {
 	CanonicalConfig string
 	RequestedLock   string
 	CanonicalLock   string
+}
+
+// ResolveConfigLockPathsTolerateMissing is ResolveConfigLockPaths for a config
+// that may not exist yet, such as a layer root an edit is about to create.
+func ResolveConfigLockPathsTolerateMissing(path string) (ConfigLockPaths, error) {
+	canonical, err := canonicalConfigPathTolerateMissing(path)
+	if err != nil {
+		return ConfigLockPaths{}, err
+	}
+	return configLockPaths(path, canonical)
 }
 
 // ResolveConfigLockPaths resolves path before deriving its layer-owned lock.

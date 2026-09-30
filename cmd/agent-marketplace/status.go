@@ -339,33 +339,68 @@ func applyExactLockFreshness(rows []statusRow, metadata []pipeline.LockMetadata)
 }
 
 func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cacheFreshness map[string]string, report *materialize.Report) []statusRow {
-	// Collect skills that would be written (i.e. missing from disk).
-	missingSet := make(map[string]bool)
+	blocked := make(map[materialize.BlockedResource]bool)
 	if report != nil {
-		for _, tr := range report.TargetReports() {
-			for _, w := range tr.Written {
-				// Written paths are relative to the target dir; use as-is.
-				_ = w
-			}
+		for _, resource := range report.BlockedResources {
+			blocked[resource] = true
 		}
-		// Check for error diagnostics indicating compile or write errors.
+	}
+	// A diagnostic without a blocked identity may arise later, during writing
+	// or aggregate reconciliation. Attribute it only when exactly one resolved
+	// row matches its name and (if provided) harness target. Ambiguous errors
+	// remain visible in ERRORS, without accusing unrelated rows.
+	fallback := make(map[int]bool)
+	if report != nil {
 		for _, d := range report.Diags {
-			if d.IsError() && d.Resource != "" {
-				missingSet[d.Resource] = true
+			if !d.IsError() || d.Resource == "" {
+				continue
+			}
+			known := false
+			for _, identity := range report.BlockedResources {
+				if identity.Name == d.Resource && (d.Target == "" || string(identity.Target) == d.Target) {
+					known = true
+					break
+				}
+			}
+			if known {
+				continue
+			}
+			candidate := -1
+			for i, artifact := range resolved {
+				if artifact.Name != d.Resource && artifact.InstalledName != d.Resource {
+					continue
+				}
+				if d.Target != "" && !slices.Contains(statusHarnesses(artifact), hcc.Target(d.Target)) {
+					continue
+				}
+				if candidate >= 0 {
+					candidate = -1
+					break
+				}
+				candidate = i
+			}
+			if candidate >= 0 {
+				fallback[candidate] = true
 			}
 		}
 	}
 
 	rows := make([]statusRow, 0, len(resolved))
 
-	for _, resolvedArtifact := range resolved {
+	for i, resolvedArtifact := range resolved {
 		cacheKey := resolvedArtifact.CatalogKey
 		if cacheKey == "" {
 			cacheKey = cache.RegistryCachePath(resolvedArtifact.RegistryURL, resolvedArtifact.Ref)
 		}
 
 		target := resolvedArtifact.Path
-		if missingSet[resolvedArtifact.Name] {
+		name := resolvedArtifact.Name
+		if resolvedArtifact.IsMarketplace && resolvedArtifact.InstalledName != "" {
+			name = resolvedArtifact.InstalledName
+		}
+		if fallback[i] || slices.ContainsFunc(statusHarnesses(resolvedArtifact), func(target hcc.Target) bool {
+			return blocked[materialize.BlockedResource{Kind: resolvedArtifact.Kind, Name: name, Target: target, MachineScope: resolvedArtifact.Source.IsMachineScope()}]
+		}) {
 			target = "error: not materialized"
 		}
 
@@ -396,6 +431,13 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 	})
 
 	return rows
+}
+
+func statusHarnesses(artifact resolver.ResolvedArtifact) []hcc.Target {
+	if artifact.Harnesses == nil {
+		return []hcc.Target{hcc.TargetClaude}
+	}
+	return artifact.Harnesses
 }
 
 func buildOrphanedRows(report *materialize.Report) []orphanedSymlinkRow {

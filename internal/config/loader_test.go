@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -862,5 +864,78 @@ harnesses:
 	}
 	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory"}) {
 		t.Fatalf("expected v3 repo harnesses [factory], got %#v", cfg.Harnesses)
+	}
+}
+
+// A config root that does not exist yet must get one canonical name however
+// many of its directories are missing, so staged edits, the loader, and lock
+// reconciliation agree on it. The home here is reached through a symlink, as
+// it is under macOS /tmp and /var.
+// spec: config-mutation/user-scope-install-creates-a-missing-user-root
+func TestCanonicalConfigPathTolerateMissingResolvesTheDeepestExistingAncestor(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolvedReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ path, want string }{
+		{filepath.Join(link, "config.yaml"), filepath.Join(resolvedReal, "config.yaml")},
+		{filepath.Join(link, ".agents", "config.yaml"), filepath.Join(resolvedReal, ".agents", "config.yaml")},
+		{filepath.Join(link, "a", "b", "config.yaml"), filepath.Join(resolvedReal, "a", "b", "config.yaml")},
+	} {
+		got, err := canonicalConfigPathTolerateMissing(tc.path)
+		if err != nil || got != tc.want {
+			t.Fatalf("canonicalConfigPathTolerateMissing(%q) = %q, %v; want %q", tc.path, got, err, tc.want)
+		}
+		if err := os.MkdirAll(filepath.Dir(tc.path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(tc.path, []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		existing, err := canonicalConfigPath(tc.path)
+		if err != nil || existing != got {
+			t.Fatalf("name after creating %q = %q, %v; want the pre-creation name %q", tc.path, existing, err, got)
+		}
+	}
+}
+
+// A dangling symlink on the path, as the file or as one of its directories,
+// has no name that stays the same once its target exists. It is refused, and
+// the error still reports a missing file so readers treat the layer as absent.
+// spec: config-mutation/user-scope-install-through-a-dangling-symlink-is-refused
+func TestCanonicalConfigPathTolerateMissingRefusesADanglingSymlink(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "dotfiles", "agents"), filepath.Join(home, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	leafDir := filepath.Join(root, "leaf")
+	if err := os.MkdirAll(leafDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "dotfiles", "config.yaml"), filepath.Join(leafDir, "config.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".agents", "config.yaml"),
+		filepath.Join(home, ".agents", "nested", "config.yaml"),
+		filepath.Join(leafDir, "config.yaml"),
+	} {
+		got, err := canonicalConfigPathTolerateMissing(path)
+		if err == nil || !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "symlink to a missing target") {
+			t.Fatalf("canonicalConfigPathTolerateMissing(%q) = %q, %v; want a dangling-symlink error that wraps fs.ErrNotExist", path, got, err)
+		}
 	}
 }
