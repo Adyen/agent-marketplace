@@ -2357,6 +2357,51 @@ func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurre
 			continue
 		}
 
+		if len(deduped) > 1 && scopesSeparated(deduped) && hasMultiRegistryCollision(deduped) {
+			// Machine and repository roots have separate installed names.
+			// Resolve competing registries only within the same install scope.
+			groups := groupByScope(deduped)
+			var originals [][]skillOccurrence
+			if reportCollisions {
+				originals = groupByScope(occurrences)
+			}
+			machineWinner := pickCollisionWinner(groups[0])
+			repoWinner := pickCollisionWinner(groups[1])
+			suppressRepo := machineWinner.resolved.Required && !repoWinner.resolved.Required &&
+				logicalRegistryKey(machineWinner) != logicalRegistryKey(repoWinner)
+			for i, group := range groups {
+				if i == 1 && suppressRepo {
+					// A non-required repository resource must not shadow a
+					// required machine resource in the repository harness.
+					if reportCollisions {
+						participants := append([]skillOccurrence{machineWinner}, originals[i]...)
+						warning := newNameCollisionWarning(machineWinner, participants)
+						slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
+						errs = append(errs, warning)
+					}
+					continue
+				}
+				if hasMultiRegistryCollision(group) {
+					winner := pickCollisionWinner(group)
+					winners = append(winners, winner)
+					if reportCollisions {
+						warning := newNameCollisionWarning(winner, originals[i])
+						slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
+						errs = append(errs, warning)
+					}
+				} else {
+					winners = append(winners, group...)
+					if reportCollisions && len(originals[i]) > 1 && pathsDiffer(originals[i]) {
+						winner := pickCollisionWinner(originals[i])
+						warning := newNameCollisionWarning(winner, originals[i])
+						slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
+						errs = append(errs, warning)
+					}
+				}
+			}
+			continue
+		}
+
 		if hasMultiRegistryCollision(deduped) {
 			// Pick a deterministic winner instead of skipping the resource.
 			// Precedence: required > higher source precedence > alphabetically-first URL.

@@ -65,7 +65,11 @@ func TestLoadConfigTreeFromRootDataUsesSuppliedBytes(t *testing.T) {
 	if err := os.Remove(root); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadConfigTreeFromRootData(canonical, data, repoLayer)
+	li, err := readLayerIntent(canonical, canonical, data, repoLayer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := li.bind(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +242,7 @@ func TestConfigIncludesAcrossAllLayers(t *testing.T) {
 	writeIncludeConfig(t, user, "apiVersion: agent-marketplace/v2\ninclude: user-fragment.yaml\n")
 	writeIncludeConfig(t, repo, "apiVersion: agent-marketplace/v2\ninclude: repo-fragment.yaml\n")
 	writeIncludeConfig(t, local, "include: local-fragment.yaml\n")
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{OrganizationPath: org, GlobalPath: user, RepoPath: repo, LocalPath: local, RepoRoot: dir, LocalConfigDir: dir})
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{OrganizationPath: org, GlobalPath: user, RepoPath: repo, LocalPath: local, RepoRoot: dir, LocalConfigDir: dir})
 	if len(ec.Errors) != 0 {
 		t.Fatalf("errors = %v", ec.Errors)
 	}
@@ -305,6 +309,26 @@ func TestUserLoggingLoaderResolvesIncludes(t *testing.T) {
 	logging, err := LoadUserLoggingConfig()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if logging == nil || logging.Level == nil || *logging.Level != "debug" {
+		t.Fatalf("logging = %#v", logging)
+	}
+}
+
+// spec: configuration-settings/settings-with-an-unreadable-acquisition-lock
+func TestLoadUserLoggingConfigIgnoresUnreadableLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIncludeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+logging: {level: debug}
+sources: {hosted: {marketplace: https://marketplace.invalid}}
+`)
+	if err := os.MkdirAll(filepath.Join(home, ".agents", "lock.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logging, err := LoadUserLoggingConfig()
+	if err != nil {
+		t.Fatalf("LoadUserLoggingConfig: %v", err)
 	}
 	if logging == nil || logging.Level == nil || *logging.Level != "debug" {
 		t.Fatalf("logging = %#v", logging)

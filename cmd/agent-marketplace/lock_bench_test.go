@@ -84,7 +84,9 @@ func BenchmarkLoadStableEffectiveIncludes(b *testing.B) {
 		name string
 		load func(context.Context, config.LoadEffectiveOptions) config.EffectiveConfig
 	}{
-		{"raw", config.LoadEffective},
+		{"raw", func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+			return pipeline.LoadEffective(ctx, pipeline.ConfigLoadStrict, opts, nil)
+		}},
 		{"online", func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
 			return pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, opts, nil)
 		}},

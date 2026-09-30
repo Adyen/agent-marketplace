@@ -214,6 +214,7 @@ func (r row) StatusText() string {
 
 type Model struct {
 	repoRoot            string
+	workspace           pipeline.Workspace
 	homeDir             string
 	rows                []row
 	authoritativeRows   []row

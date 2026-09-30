@@ -294,9 +294,6 @@ func execGit(repoDir string, args []string) ([]byte, error) {
 // execGitContext runs git with cancellation while retaining the protocol and
 // environment hardening shared by registry and exact-snapshot operations.
 func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	hardened := []string{
 		"-c", "protocol.ext.allow=never",
 		"-c", "protocol.remote.allow=never",

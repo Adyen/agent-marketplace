@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 	"gopkg.in/yaml.v3"
@@ -205,7 +204,7 @@ func ValidateMarketplaceEntries(entries []MarketplaceEntry) []error {
 		normalizedURL, normalizeErr := urlutil.NormalizeEndpointURL(e.URL)
 		current := aliasUse{index: i, url: normalizedURL, instanceID: e.InstanceID, source: e.Source, valid: normalizeErr == nil}
 		if previous, ok := aliases[e.Alias]; ok {
-			if previous.valid && current.valid && previous.source != SourceUnset && current.source != SourceUnset && previous.url == current.url && sameMarketplaceInstance(previous.instanceID, current.instanceID) {
+			if previous.valid && current.valid && previous.source != SourceUnset && current.source != SourceUnset && previous.url == current.url && previous.instanceID == current.instanceID {
 				continue
 			}
 			errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q duplicates marketplaces[%d].alias", i, e.Alias, previous.index))
@@ -214,13 +213,6 @@ func ValidateMarketplaceEntries(entries []MarketplaceEntry) []error {
 		aliases[e.Alias] = current
 	}
 	return errs
-}
-
-// sameMarketplaceInstance reports whether two entries for one URL can name the
-// same instance. An entry loaded from a provisional lock has no verified
-// instance yet, so it matches any instance; acquisition verifies the real one.
-func sameMarketplaceInstance(a, b string) bool {
-	return a == b || a == lockfile.ProvisionalMarketplaceInstanceID || b == lockfile.ProvisionalMarketplaceInstanceID
 }
 
 func validateMarketplaceEntry(i int, e MarketplaceEntry) []error {

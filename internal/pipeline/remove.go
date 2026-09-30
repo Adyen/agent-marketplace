@@ -57,6 +57,7 @@ type RemoveOptions struct {
 	DependencyReconcile DependencyReconciler
 	CleanupDependencies CleanupDependencyCommitter
 	configStaging       *configStagingManager
+	workspace           *Workspace
 	warningSink         *[]error
 }
 
@@ -76,11 +77,22 @@ type RemoveResult struct {
 // Remove removes a resource from the appropriate config layer and re-syncs.
 // It handles collection detection, scope inference, scope boundary validation,
 // per-scope config editing, and --from ad-hoc registry removal.
+func removeWorkspace(opts RemoveOptions) (Workspace, error) {
+	if opts.workspace != nil {
+		return *opts.workspace, nil
+	}
+	return workspaceForRoots(opts.RepoRoot, "")
+}
+
 func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyncOpt) error {
 	if opts.DependencyReconcile != nil {
 		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
 	}
-	warnings, err := silentSyncCollect(ctx, opts.RepoRoot, extra...)
+	ws, err := removeWorkspace(opts)
+	if err != nil {
+		return err
+	}
+	warnings, err := silentSyncCollect(ctx, ws, extra...)
 	if opts.warningSink != nil {
 		*opts.warningSink = append(*opts.warningSink, warnings...)
 	}
@@ -90,6 +102,11 @@ func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyn
 func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retErr error) {
 	var warnings []error
 	opts.warningSink = &warnings
+	ws, err := workspaceForRoots(opts.RepoRoot, "")
+	if err != nil {
+		return nil, err
+	}
+	opts.workspace = &ws
 	defer func() {
 		if result != nil {
 			result.Warnings = warnings
@@ -149,7 +166,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
 			return m.RemoveCollection(entry, collection)
 		}, func() ([]error, error) {
-			return nil, silentSync(ctx, opts.RepoRoot)
+			return nil, syncAfterRemove(ctx, opts)
 		}); err != nil {
 			return nil, err
 		}
@@ -179,7 +196,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
 			return m.RemoveDirectPin(entry, pin)
 		}, func() ([]error, error) {
-			return nil, silentSync(ctx, opts.RepoRoot)
+			return nil, syncAfterRemove(ctx, opts)
 		}); err != nil {
 			return nil, err
 		}
@@ -260,7 +277,11 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		}
 	}
 
-	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, SkipInventory: true, ReadOnlyExactLocks: true})
+	ws, err = removeWorkspace(opts)
+	if err != nil {
+		return nil, err
+	}
+	resolvedResult := Resolve(ctx, ResolveOptions{Workspace: ws, SkipInventory: true, ReadOnlyExactLocks: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
@@ -1451,7 +1472,11 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// resource like a skill enabled at both user and repo scope would be
 	// reported as spuriously "ambiguous" even though --from already names the
 	// entry to operate on).
-	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: true, SkipInventory: true, ReadOnlyExactLocks: true})
+	ws, err := removeWorkspace(opts)
+	if err != nil {
+		return nil, err
+	}
+	resolvedResult := Resolve(ctx, ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: true, SkipInventory: true, ReadOnlyExactLocks: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}

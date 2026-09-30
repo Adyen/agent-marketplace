@@ -63,15 +63,16 @@ type InstallOptions struct {
 	PrepareDependencies InstallDependencyPreparer
 	bindRegistry        func(config.RegistryEntry) error
 	configStaging       *configStagingManager
+	workspace           *Workspace
 }
 
 // silentSyncOptsForInstall builds silentSync options from InstallOptions.
-// When LocalConfigDir is set (monorepo subdir with --scope local), it
-// passes both MaterializeRoot and LocalConfigDir so that materialization
+// When LocalConfigDir is set (monorepo subdir with --scope local), the
+// Workspace built by syncAfterInstall carries it so that materialization
 // happens in the subdirectory and local entries' relative paths resolve
 // against it.
 func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
-	syncOpts := silentSyncOptsForPaths(opts.RepoRoot, opts.LocalConfigDir, opts.LocalConfigDir)
+	var syncOpts []silentSyncOpt
 	syncOpts = append(syncOpts, withCatalogMode(catalog.LoadModeCached), withMarketplaceMode(resolver.MarketplaceResolveModeRefresh))
 	if len(opts.CatalogOption) > 0 {
 		syncOpts = append(syncOpts, withCatalogOptions(opts.CatalogOption))
@@ -129,6 +130,11 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 	kind, hasKind := opts.Kind, opts.HasKind
 	repoRoot := opts.RepoRoot
+	workspace, err := workspaceForRoots(repoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	opts.workspace = &workspace
 	marketplaceInstallRequested := isMarketplaceInstall(opts) && !marketplaceEndpointRequested
 	if marketplaceInstallRequested {
 		prepared, err := PrepareMarketplaceInstall(ctx, opts)
@@ -236,6 +242,11 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	}
 
 	configDestination := configPath
+	workspace, err = workspaceForRoots(repoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	opts.workspace = &workspace
 	if opts.DependencyReconcile != nil && !marketplaceEndpointRequested {
 		opts.configStaging, err = newConfigStagingManager()
 		if err != nil {
@@ -460,7 +471,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			}); err != nil {
 				return nil, err
 			}
-			requirementWarnings, err := syncAfterInstall(ctx, repoRoot, collectionResources, silentSyncOptsForInstall(opts)...)
+			requirementWarnings, err := syncAfterInstall(ctx, opts, collectionResources, silentSyncOptsForInstall(opts)...)
 			if err != nil {
 				return nil, err
 			}
@@ -529,7 +540,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	if err != nil {
 		return nil, err
 	}
-	return syncInstalledResources(ctx, repoRoot, installed, installedResources, silentSyncOptsForInstall(opts)...)
+	return syncInstalledResources(ctx, opts, installed, installedResources, silentSyncOptsForInstall(opts)...)
 }
 
 func resourceIdentities(kind ir.ResourceKind, names []string) []resourceIdentity {
@@ -579,9 +590,9 @@ func expandInstalledCollectionResources(installed []resourceIdentity, available 
 
 // syncInstalledResources syncs after an install and reports the named
 // resources the final resolution selected separately from those it did not.
-func syncInstalledResources(ctx context.Context, repoRoot string, names []string, resources []resourceIdentity, opts ...silentSyncOpt) (*InstallResult, error) {
+func syncInstalledResources(ctx context.Context, iopts InstallOptions, names []string, resources []resourceIdentity, opts ...silentSyncOpt) (*InstallResult, error) {
 	var resolved []resolver.ResolvedArtifact
-	requirementWarnings, err := syncAfterInstall(ctx, repoRoot, resources, append(slices.Clip(opts), withResolvedCapture(&resolved))...)
+	requirementWarnings, err := syncAfterInstall(ctx, iopts, resources, append(slices.Clip(opts), withResolvedCapture(&resolved))...)
 	if err != nil {
 		return nil, err
 	}
@@ -616,8 +627,16 @@ func partitionInstalledNames(names []string, resources []resourceIdentity, resol
 	return installed, notSelected
 }
 
-func syncAfterInstall(ctx context.Context, repoRoot string, installed []resourceIdentity, opts ...silentSyncOpt) ([]error, error) {
-	warnings, err := silentSyncCollect(ctx, repoRoot, opts...)
+func syncAfterInstall(ctx context.Context, iopts InstallOptions, installed []resourceIdentity, opts ...silentSyncOpt) ([]error, error) {
+	ws := iopts.workspace
+	if ws == nil {
+		resolved, err := workspaceForRoots(iopts.RepoRoot, iopts.LocalConfigDir)
+		if err != nil {
+			return nil, err
+		}
+		ws = &resolved
+	}
+	warnings, err := silentSyncCollect(ctx, *ws, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -708,7 +727,7 @@ func loadInstallDiscoveryConfig(ctx context.Context, opts InstallOptions, ec *co
 		return nil, errors.Join(ec.Errors...)
 	}
 
-	// config.LoadEffective already merged the layers, stamped registry
+	// LoadEffective already merged the layers, stamped registry
 	// sources, and enforced the resolved allowlist.
 	return ec.Merged, nil
 }
@@ -1291,7 +1310,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			if err := addSelectedResource(ir.KindCollection, col.Name); err != nil {
 				return nil, err
 			}
-			requirementWarnings, err := syncAfterInstall(ctx, repoRoot, collectionResources, silentSyncOptsForInstall(opts)...)
+			requirementWarnings, err := syncAfterInstall(ctx, opts, collectionResources, silentSyncOptsForInstall(opts)...)
 			if err != nil {
 				return nil, err
 			}
@@ -1319,7 +1338,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		if err := clearInstallExcludes(repoRoot, binding.Entry, match.kind, resourceName, opts.configStaging); err != nil {
 			return nil, err
 		}
-		return syncInstalledResources(ctx, repoRoot, []string{resourceName}, []resourceIdentity{{kind: match.kind, name: resourceName}}, silentSyncOptsForInstall(opts)...)
+		return syncInstalledResources(ctx, opts, []string{resourceName}, []resourceIdentity{{kind: match.kind, name: resourceName}}, silentSyncOptsForInstall(opts)...)
 	}
 
 	// No name arg: try to infer a single resource name from the URL path.
@@ -1349,7 +1368,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 				if err := clearInstallExcludes(repoRoot, binding.Entry, match.kind, inferredName, opts.configStaging); err != nil {
 					return nil, err
 				}
-				return syncInstalledResources(ctx, repoRoot, []string{inferredName}, []resourceIdentity{{kind: match.kind, name: inferredName}}, silentSyncOptsForInstall(opts)...)
+				return syncInstalledResources(ctx, opts, []string{inferredName}, []resourceIdentity{{kind: match.kind, name: inferredName}}, silentSyncOptsForInstall(opts)...)
 			}
 		}
 		// Inferred name not found — fall through to bundle mode.
@@ -1397,7 +1416,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err != nil {
 		return nil, err
 	}
-	return syncInstalledResources(ctx, repoRoot, allInstalled, installedResources, silentSyncOptsForInstall(opts)...)
+	return syncInstalledResources(ctx, opts, allInstalled, installedResources, silentSyncOptsForInstall(opts)...)
 }
 
 func adHocEntryMatchesBinding(candidate, bound config.RegistryEntry) bool {

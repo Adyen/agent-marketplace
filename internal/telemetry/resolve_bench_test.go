@@ -11,7 +11,7 @@ func BenchmarkResolveTelemetryConfig(b *testing.B) {
 	defer benchDiscardLogs()()
 
 	b.Setenv("XDG_STATE_HOME", b.TempDir())
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			Endpoint:           "https://org.example.com",
@@ -19,7 +19,7 @@ func BenchmarkResolveTelemetryConfig(b *testing.B) {
 			CommunityReporting: boolPtr(true),
 		},
 	}
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelDetailed,
 			Endpoint:           "https://user.example.com",

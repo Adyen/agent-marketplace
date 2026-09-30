@@ -46,8 +46,12 @@ func TestV4DirectoryGlobalToggleUsesStagedMutationAndRealDiscovery(t *testing.T)
 	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
 	loadGlobalConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(globalPath) }
 	loadRepoConfig = func() (*config.Config, error) { return nil, nil }
-	loadLocalConfig = func() (*config.LocalConfig, error) { return nil, nil }
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 
+	workspace, err := pipeline.NewWorkspace(repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	initial := readSnapshot(context.Background(), repo, home, catalogLoadRefresh)
 	if len(initial.errs) > 0 {
 		t.Fatalf("initial snapshot errors: %v", initial.errs)
@@ -65,9 +69,10 @@ func TestV4DirectoryGlobalToggleUsesStagedMutationAndRealDiscovery(t *testing.T)
 		}
 		return pipeline.DependencyLockView{}, nil
 	}
-	msg, ok := runDependencyScopedToggle(context.Background(), repo, act, func(ctx context.Context, root string, mutation func(pipeline.ConfigPathMapper) error) error {
-		return pipeline.MutateConfigWithDependencies(ctx, root, root, mutation, reconcile)
-	})().(configWrittenMsg)
+	mutate := func(ctx context.Context, ws pipeline.Workspace, mutation func(pipeline.ConfigPathMapper) error) error {
+		return pipeline.MutateConfigWithDependencies(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mutation, reconcile)
+	}
+	msg, ok := runDependencyScopedToggle(context.Background(), workspace, act, mutate)().(configWrittenMsg)
 	if !ok || msg.err != nil {
 		t.Fatalf("enable message = %#v", msg)
 	}
@@ -99,9 +104,7 @@ func TestV4DirectoryGlobalToggleUsesStagedMutationAndRealDiscovery(t *testing.T)
 	}
 
 	disable := scopedToggleAction(alpha, scopeGlobal)
-	msg, ok = runDependencyScopedToggle(context.Background(), repo, disable, func(ctx context.Context, root string, mutation func(pipeline.ConfigPathMapper) error) error {
-		return pipeline.MutateConfigWithDependencies(ctx, root, root, mutation, reconcile)
-	})().(configWrittenMsg)
+	msg, ok = runDependencyScopedToggle(context.Background(), workspace, disable, mutate)().(configWrittenMsg)
 	if !ok || msg.err != nil {
 		t.Fatalf("disable message = %#v", msg)
 	}
@@ -123,9 +126,7 @@ func TestV4DirectoryGlobalToggleUsesStagedMutationAndRealDiscovery(t *testing.T)
 	}
 
 	reenable := scopedToggleAction(alpha, scopeGlobal)
-	msg, ok = runDependencyScopedToggle(context.Background(), repo, reenable, func(ctx context.Context, root string, mutation func(pipeline.ConfigPathMapper) error) error {
-		return pipeline.MutateConfigWithDependencies(ctx, root, root, mutation, reconcile)
-	})().(configWrittenMsg)
+	msg, ok = runDependencyScopedToggle(context.Background(), workspace, reenable, mutate)().(configWrittenMsg)
 	if !ok || msg.err != nil {
 		t.Fatalf("re-enable message = %#v", msg)
 	}

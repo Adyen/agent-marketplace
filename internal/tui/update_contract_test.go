@@ -55,7 +55,7 @@ func TestRunUpdateCmdClassifiesPipelineAndReloadFailures(t *testing.T) {
 			runPipelineSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
 				return test.result
 			}
-			readSnapshotForUpdate = func(context.Context, string, string, catalogLoadMode) snapshotLoadedMsg {
+			readSnapshotForUpdate = func(context.Context, pipeline.Workspace, string, catalogLoadMode) snapshotLoadedMsg {
 				return test.snapshot
 			}
 			t.Cleanup(func() {
@@ -63,7 +63,7 @@ func TestRunUpdateCmdClassifiesPipelineAndReloadFailures(t *testing.T) {
 				readSnapshotForUpdate = previousSnapshot
 			})
 
-			msg := runUpdateCmd(context.Background(), "/repo", "/home", 7)()
+			msg := runUpdateCmdForWorkspace(context.Background(), defaultTUIWorkspace("/repo"), "/home", 7)()
 			done, ok := msg.(updateDoneMsg)
 			if !ok {
 				t.Fatalf("message type = %T, want updateDoneMsg", msg)

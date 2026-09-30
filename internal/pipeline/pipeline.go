@@ -20,7 +20,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
-	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -41,9 +40,10 @@ type Loaders struct {
 }
 
 type ResolveOptions struct {
-	RepoRoot         string
-	MaterializeRoot  string // where to materialize harness files; defaults to RepoRoot if empty
-	LocalConfigDir   string // base dir for resolving local-config entries' relative paths; defaults to RepoRoot
+	// Workspace is the single root-bearing field: it carries the validated
+	// repository, local-config, and derived materialization roots shared by
+	// Resolve and Sync.
+	Workspace        Workspace
 	CatalogMode      catalog.LoadMode
 	Offline          bool
 	Loaders          Loaders
@@ -51,7 +51,7 @@ type ResolveOptions struct {
 	Gitignore        bool
 	NoBackup         bool
 	RequireTargetSet bool
-	// EffectiveOpts overrides the paths used by config.LoadEffective.
+	// EffectiveOpts overrides the paths used by LoadEffective.
 	EffectiveOpts config.LoadEffectiveOptions
 	// IgnoreBlockedRegistries treats RegistryURLBlockedError from the allowlist
 	// validation as non-fatal. Used by the remove path so a previously-allowed
@@ -69,8 +69,9 @@ type ResolveOptions struct {
 	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
 	// MarketplaceMode overrides the mode derived from CatalogMode when set,
 	// except that Offline always forces CachedNoFetch.
-	MarketplaceMode    *resolver.MarketplaceResolveMode
-	marketplaceInstall *marketplace.PreparedInstall
+	MarketplaceMode          *resolver.MarketplaceResolveMode
+	marketplaceInstall       *marketplace.PreparedInstall
+	marketplaceInstallSource config.Source
 	// ConfigLoadMode selects organization-lock loading semantics; the default
 	// is online. Offline and cached-only catalog operations always force strict
 	// loading, preserving their existing requirement for on-disk evidence.
@@ -271,7 +272,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	if opts.Offline {
 		opts.CatalogMode = catalog.LoadModeInspect
 	}
-	slog.Debug("pipeline resolve start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
+	slog.Debug("pipeline resolve start", "repo_root", opts.Workspace.RepoRoot(), "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
 	var result ResolveResult
 	// Every early return below must still hand back a valid policy: an unset
 	// mode matches neither "symlink" nor "file" and would silently pick a
@@ -311,6 +312,18 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		result.Errors = []error{ctx.Err()}
 		return result, releaseExactLease
 	}
+	// The Workspace is the only root-bearing value: reject a zero Workspace
+	// and any EffectiveOpts root override that conflicts with it before a
+	// config loader, catalog read, backup, or materialization can act on
+	// disagreeing roots.
+	if err := opts.Workspace.validate(); err != nil {
+		result.Errors = []error{err}
+		return result, releaseExactLease
+	}
+	if err := checkEffectiveOptsRoots(opts.EffectiveOpts, opts.Workspace); err != nil {
+		result.Errors = []error{err}
+		return result, releaseExactLease
+	}
 	if opts.ExactLockLease != nil {
 		release, err := opts.ExactLockLease(ctx)
 		if err != nil {
@@ -338,10 +351,10 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 
 	effectiveOpts := opts.EffectiveOpts
 	if effectiveOpts.RepoRoot == "" {
-		effectiveOpts.RepoRoot = opts.RepoRoot
+		effectiveOpts.RepoRoot = opts.Workspace.RepoRoot()
 	}
 	if effectiveOpts.LocalConfigDir == "" {
-		effectiveOpts.LocalConfigDir = opts.LocalConfigDir
+		effectiveOpts.LocalConfigDir = opts.Workspace.LocalConfigDir()
 	}
 	loadMode := opts.ConfigLoadMode
 	if opts.Offline || opts.CatalogMode == catalog.LoadModeCachedNoFetch {
@@ -387,7 +400,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			Local:        localCfg,
 			Errors:       errs,
 		}
-		if loadMode != ConfigLoadStrict && marketplacelock.HasRequiredError(ec.Errors) {
+		if loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors) {
 			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy)
 		}
 	} else {
@@ -414,11 +427,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	}
 
 	if opts.Gitignore {
-		gitignoreDir := opts.LocalConfigDir
-		if gitignoreDir == "" {
-			gitignoreDir = opts.RepoRoot
-		}
-		EnsureLocalConfigGitignored(gitignoreDir)
+		EnsureLocalConfigGitignored(opts.Workspace.LocalConfigDir())
 	}
 	if len(ec.Errors) > 0 {
 		result.ConfigErrors = ec.Errors
@@ -435,11 +444,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 
 	var mergedCfg *config.Config
 	if ec.Merged != nil {
-		// config.LoadEffective already merged the layers and validated the
+		// LoadEffective already merged the layers and validated the
 		// registry URLs against the resolved allowlist.
 		mergedCfg = ec.Merged
 	} else {
-		// Custom loaders bypass config.LoadEffective, so we still need to
+		// Custom loaders bypass LoadEffective, so we still need to
 		// merge the layers and enforce the allowlist here.
 		layers := make([]config.Layer, 0, 4)
 		if result.OrgCfg != nil {
@@ -525,10 +534,10 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		result.LockMetadata = readOnlyView.gitMetadata
 		result.Warnings = append(result.Warnings, readOnlyView.warnings...)
 	}
-	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
-		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.LocalConfigDir))
+	if opts.Workspace.LocalConfigDir() != opts.Workspace.RepoRoot() {
+		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.Workspace.LocalConfigDir()))
 	}
-	loadResult := catalog.LoadRegistriesWithContext(ctx, mergedCfg, opts.RepoRoot, opts.CatalogMode, catalogOpts...)
+	loadResult := catalog.LoadRegistriesWithContext(ctx, mergedCfg, opts.Workspace.RepoRoot(), opts.CatalogMode, catalogOpts...)
 	result.CatalogLoad = loadResult
 	result.CatalogErrors = loadResult.Errors
 	slog.Debug("catalogs loaded", "catalogs", len(loadResult.Catalogs), "errors", len(loadResult.Errors))
@@ -644,7 +653,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		}
 		opts.Gitignore = true
 	}
-	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
+	slog.Debug("pipeline sync start", "repo_root", opts.Workspace.RepoRoot(), "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
 	opts.RequireTargetSet = true
 
 	tel := telemetry.TelemetryFromContext(ctx)
@@ -677,6 +686,23 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			syncSpan.End()
 		}
 	}()
+
+	// A zero Workspace or a conflicting EffectiveOpts root override is
+	// rejected before locks, config loaders, catalog access, backup, or
+	// materialization; both are pre-materialization trust failures, so they
+	// land in Errors and CatalogTrustErrors together. Checking the override
+	// here — not only inside resolve — keeps the rejection ahead of either
+	// exact-lock path, whose acquisition can write reconciled lockfiles.
+	if err := opts.Workspace.validate(); err != nil {
+		result.Errors = []error{err}
+		result.CatalogTrustErrors = []error{err}
+		return result
+	}
+	if err := checkEffectiveOptsRoots(opts.EffectiveOpts, opts.Workspace); err != nil {
+		result.Errors = []error{err}
+		result.CatalogTrustErrors = []error{err}
+		return result
+	}
 
 	var releaseExactLocks func()
 	if opts.ExactLockLease != nil {
@@ -714,18 +740,15 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		result.Warnings = append(result.Warnings, warning)
 	}
 
-	// Compute the materialization root once and reuse it for both the
-	// ancestor-exclude detection (below) and the actual materialize.Run
-	// call further down. The warning root and the write root must always
-	// agree, so deriving them from a single value avoids future drift.
-	matRoot := opts.MaterializeRoot
-	if matRoot == "" {
-		matRoot = opts.RepoRoot
-	}
+	// The Workspace derives the materialization root once; both the
+	// ancestor-exclude detection (below) and the actual materialize.Run call
+	// further down consume it, so the warning root and the write root cannot
+	// drift apart.
+	matRoot := opts.Workspace.MaterializeRoot()
 	targets := resolved.TargetHarnesses
 	result.Warnings = append(result.Warnings, detectAncestorMaterializedExcludes(
 		matRoot,
-		opts.RepoRoot,
+		opts.Workspace.RepoRoot(),
 		targets,
 		skillExcludesFromLocal(resolved.LocalCfg),
 		resolved.Resolved,
@@ -759,7 +782,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		return result
 	}
 	if opts.marketplaceInstall != nil {
-		if err := checkResolvedMarketplaceInstallCollision(resolved.Resolved, opts.marketplaceInstall); err != nil {
+		if err := checkResolvedMarketplaceInstallCollision(resolved.Resolved, opts.marketplaceInstall, opts.marketplaceInstallSource); err != nil {
 			slog.Warn("Marketplace install refused after dependency resolution", "error", err)
 			result.addMaterializeError(err)
 			return result

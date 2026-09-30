@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,7 +83,7 @@ func TestOrganizationConfigLockTrustUnit(t *testing.T) {
 			if test.set != nil {
 				test.set(t, configPath, lockPath)
 			}
-			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+			ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 			assertOrganizationTrustFailure(t, ec, test.code)
 		})
 	}
@@ -107,7 +108,7 @@ func TestOrganizationV4MarketplaceLockTrustUnit(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+			ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 			if test.code != "" {
 				assertOrganizationTrustFailure(t, ec, test.code)
 				return
@@ -123,7 +124,7 @@ func TestOrganizationRemoteRequirementsLoadWithoutLock(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
 	writeFile(t, configPath, remoteOrganizationFixture)
-	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+	ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 	if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
 		t.Fatalf("organization config without lock was blocked: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
 	}
@@ -138,7 +139,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 		if err := os.Symlink(target, configPath); err != nil {
 			t.Fatal(err)
 		}
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.config.symlink")
 	})
 
@@ -153,7 +154,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 		if err := os.Symlink(realDir, linkDir); err != nil {
 			t.Fatal(err)
 		}
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(filepath.Join(linkDir, "config.yaml")))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(filepath.Join(linkDir, "config.yaml")))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.symlink")
 	})
 
@@ -165,7 +166,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.writable")
 	})
 
@@ -182,7 +183,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 		configPath := filepath.Join(link, "authority", "config.yaml")
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.symlink")
 	})
 
@@ -198,7 +199,7 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(filepath.Join(authority, "config.yaml")))
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(filepath.Join(authority, "config.yaml")))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.writable")
 	})
 }
@@ -214,7 +215,7 @@ func TestOrganizationTrustRejectsWrongOwnerWhenFeasible(t *testing.T) {
 	if err := os.Chown(filepath.Join(dir, "lock.yaml"), 65534, -1); err != nil {
 		t.Skipf("cannot create wrong-owner fixture: %v", err)
 	}
-	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+	ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 	assertOrganizationTrustFailure(t, ec, "organization.trust.lock.owner")
 }
 
@@ -224,7 +225,7 @@ func TestOrganizationTrustedFixtureLoadsAsManaged(t *testing.T) {
 	writeFile(t, configPath, remoteOrganizationFixture)
 	writeTrustedOrganizationLock(t, configPath)
 
-	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+	ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
 	if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
 		t.Fatalf("trusted organization fixture was blocked: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
 	}
@@ -338,7 +339,7 @@ func TestOrganizationIncludesRequireTrustedLexicalPaths(t *testing.T) {
 						}
 					})
 				}
-				ec := LoadEffective(context.Background(), isolatedEffectiveOptions(root))
+				ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(root))
 				if test.code != "" {
 					assertOrganizationTrustFailure(t, ec, test.code)
 					var trustErr *OrganizationTrustError
@@ -386,7 +387,7 @@ func TestV4OrganizationIncludesRequireTrustedAuthority(t *testing.T) {
 			}
 			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: fragment.yaml\n")
 
-			ec := LoadEffective(context.Background(), isolatedEffectiveOptions(root))
+			ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(root))
 			if test.code != "" {
 				assertOrganizationTrustFailure(t, ec, test.code)
 				return
@@ -414,7 +415,7 @@ func TestOrganizationIncludeRetainsRootLexicalPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	requested := dir + "/alias/../authority/config.yaml"
-	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(requested))
+	ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(requested))
 	assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.symlink")
 }
 
@@ -431,7 +432,15 @@ func TestNonOrganizationIncludesKeepSymlinkAndWritableCompatibility(t *testing.T
 			t.Fatal(err)
 		}
 		writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: alias/../nested/leaf.yaml\n")
-		cfg, err := loadConfigTree(root, kind)
+		data, err := readConfigFile(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		li, err := readLayerIntent(root, "", data, kind, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := li.bind(nil)
 		if err != nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != "/live-registry" {
 			t.Fatalf("non-organization layer %v changed: cfg=%v err=%v", kind, cfg, err)
 		}
@@ -453,6 +462,85 @@ func TestOrganizationIncludeCannotEnableTestTrustFromFragmentPath(t *testing.T) 
 	if !errors.As(err, &trustErr) || trustErr.Code != "organization.trust.ancestor.owner" || trustErr.Path != dir {
 		t.Fatalf("production authority accepted fixture owner: %v", err)
 	}
+}
+
+func TestLoadEffectivePreservesOrganizationLockErrorPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		lock     string
+		code     string
+		contains string
+	}{
+		{name: "malformed lock", lock: "not: [yaml", contains: "decode lock"},
+		{name: "wrong scope", lock: "apiVersion: agent-marketplace-lock/v2\nscope: user\nmarketplaces:\n  - url: https://marketplace.example\n    instance_id: marketplace\n", code: "v4.marketplace-lock-mismatch"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			lockPath := filepath.Join(dir, "lock.yaml")
+			writeFile(t, configPath, v4MarketplaceOrganizationFixture)
+			writeFile(t, lockPath, test.lock)
+			if err := os.Chmod(lockPath, 0o666); err != nil {
+				t.Fatal(err)
+			}
+
+			ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
+			if len(ec.Errors) == 0 {
+				t.Fatal("expected a lock error, got none")
+			}
+			joined := errors.Join(ec.Errors...)
+			var trustErr *OrganizationTrustError
+			if errors.As(joined, &trustErr) {
+				t.Fatalf("trust error %v masked the lock failure in %v", trustErr, ec.Errors)
+			}
+			if test.contains != "" && !strings.Contains(joined.Error(), test.contains) {
+				t.Fatalf("errors = %v, want substring %q", ec.Errors, test.contains)
+			}
+			if test.code != "" {
+				var validation *V4ValidationError
+				if !errors.As(errors.Join(ec.Errors...), &validation) || validation.Code != test.code {
+					t.Fatalf("errors = %v, want V4ValidationError %q", ec.Errors, test.code)
+				}
+			}
+			if ec.Diagnostics.Validation != "invalid" {
+				t.Fatalf("diagnostics validation = %q, want invalid", ec.Diagnostics.Validation)
+			}
+			for _, warning := range ec.Warnings {
+				if errors.As(warning, &trustErr) {
+					t.Fatalf("trust warning %v added for a lock failure", warning)
+				}
+			}
+		})
+	}
+
+	t.Run("untrusted valid lock still blocked", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		lockPath := filepath.Join(dir, "lock.yaml")
+		writeFile(t, configPath, v4MarketplaceOrganizationFixture)
+		writeFile(t, lockPath, v4MarketplaceOrganizationLock)
+		if err := os.Chmod(lockPath, 0o666); err != nil {
+			t.Fatal(err)
+		}
+
+		ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(configPath))
+		var trustErr *OrganizationTrustError
+		if !errors.As(errors.Join(ec.Errors...), &trustErr) {
+			t.Fatalf("errors = %v, want OrganizationTrustError", ec.Errors)
+		}
+		if ec.Diagnostics.Validation != "blocked" {
+			t.Fatalf("diagnostics validation = %q, want blocked", ec.Diagnostics.Validation)
+		}
+		warned := false
+		for _, warning := range ec.Warnings {
+			if errors.As(warning, &trustErr) {
+				warned = true
+			}
+		}
+		if !warned {
+			t.Fatalf("warnings = %v, want an OrganizationTrustError warning", ec.Warnings)
+		}
+	})
 }
 
 func isolatedEffectiveOptions(configPath string) LoadEffectiveOptions {

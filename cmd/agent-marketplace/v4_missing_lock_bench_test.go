@@ -43,7 +43,7 @@ resources:
 	config.SetTestOrganizationConfigPath(b, orgPath)
 	repo := b.TempDir()
 	opts := pipeline.ResolveOptions{
-		RepoRoot: repo,
+		Workspace: mustWorkspace(b, repo),
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,
