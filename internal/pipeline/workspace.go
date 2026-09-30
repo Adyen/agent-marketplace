@@ -103,6 +103,13 @@ func workspaceForRoots(repoRoot, localConfigDir string) (Workspace, error) {
 	return NewWorkspace(repoRoot, localConfigDir)
 }
 
+// WorkspaceForRoots is the exported form of workspaceForRoots for command
+// packages that hold explicit roots and need the same validated Workspace the
+// pipeline constructs internally.
+func WorkspaceForRoots(repoRoot, localConfigDir string) (Workspace, error) {
+	return workspaceForRoots(repoRoot, localConfigDir)
+}
+
 // RepoRoot returns the repository root: the committed config layer's base and
 // the root used for catalog path resolution of repo-layer entries.
 func (w Workspace) RepoRoot() string { return w.repoRoot }

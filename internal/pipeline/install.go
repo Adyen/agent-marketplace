@@ -266,8 +266,8 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	// Load the effective configuration once to validate config versions and resolve
 	// the registry allowlist before mutating any config files.
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
-		RepoRoot:       repoRoot,
-		LocalConfigDir: opts.LocalConfigDir,
+		RepoRoot:       workspace.RepoRoot(),
+		LocalConfigDir: workspace.LocalConfigDir(),
 	}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
@@ -817,10 +817,14 @@ func prepareInstallDiscovery(ctx context.Context, opts *InstallOptions) (Prepare
 
 func loadInstallDiscoveryConfig(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig) (*config.Config, error) {
 	if ec == nil {
+		ws, err := workspaceForRoots(opts.RepoRoot, opts.LocalConfigDir)
+		if err != nil {
+			return nil, err
+		}
 		ec = new(config.EffectiveConfig)
 		*ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
-			RepoRoot:       opts.RepoRoot,
-			LocalConfigDir: opts.LocalConfigDir,
+			RepoRoot:       ws.RepoRoot(),
+			LocalConfigDir: ws.LocalConfigDir(),
 		}, nil)
 	}
 	if len(ec.Errors) > 0 {
@@ -1228,11 +1232,15 @@ func pathBase(p string) string {
 // installFromAdHoc handles the --from code path: validate the URL against
 // policy, persist the registry entry, discover resources, and install.
 func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, kind ir.ResourceKind, hasKind bool, ec *config.EffectiveConfig) (result *InstallResult, retErr error) {
+	ws, err := workspaceForRoots(opts.RepoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
 	if ec == nil {
 		ec = new(config.EffectiveConfig)
 		*ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
-			RepoRoot:       opts.RepoRoot,
-			LocalConfigDir: opts.LocalConfigDir,
+			RepoRoot:       ws.RepoRoot(),
+			LocalConfigDir: ws.LocalConfigDir(),
 		}, nil)
 	}
 	if len(ec.Errors) > 0 {
@@ -1329,8 +1337,8 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		}
 	}
 	*ec = LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
-		RepoRoot:       repoRoot,
-		LocalConfigDir: opts.LocalConfigDir,
+		RepoRoot:       ws.RepoRoot(),
+		LocalConfigDir: ws.LocalConfigDir(),
 		FileOverlays:   overlays,
 	}, nil)
 	if len(ec.Errors) > 0 {
