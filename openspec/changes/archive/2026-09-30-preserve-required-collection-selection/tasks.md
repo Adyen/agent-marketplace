@@ -8,4 +8,4 @@
 
 - [x] Run affected resolver and consumer tests and before/after benchmarks.
 - [x] Complete an adversarial delegated review of the entire layer.
-- [ ] Archive with `openspec archive preserve-required-collection-selection --yes` in the final commit.
+- [x] Archive with `openspec archive preserve-required-collection-selection --yes` in the final commit.
