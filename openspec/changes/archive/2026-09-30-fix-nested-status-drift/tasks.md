@@ -6,4 +6,4 @@
 
 ## 2. Publication
 
-- [ ] 2.1 Run `openspec archive fix-nested-status-drift --yes` in the same pull request; verify the status-reporting main spec contains the new scenarios.
+- [x] 2.1 Run `openspec archive fix-nested-status-drift --yes` in the same pull request; verify the status-reporting main spec contains the new scenarios.
