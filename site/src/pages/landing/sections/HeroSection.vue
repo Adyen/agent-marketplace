@@ -28,7 +28,7 @@ import TuiPreview from '../components/TuiPreview.vue'
           <CommandBar :command="INSTALL_COMMAND" class="install" />
 
           <div class="actions">
-            <ActionLink class="hero-action" :href="MARKETPLACE_PATH">
+            <ActionLink class="hero-action" :href="MARKETPLACE_PATH" target="_self">
               Browse Marketplace
             </ActionLink>
             <ActionLink
