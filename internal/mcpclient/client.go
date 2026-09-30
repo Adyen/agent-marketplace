@@ -236,7 +236,14 @@ func (s *stderrCapture) String() string {
 }
 
 func redactSecrets(s string, secrets []string) string {
-	for _, secret := range secrets {
+	ordered := slices.Clone(secrets)
+	slices.SortFunc(ordered, func(a, b string) int {
+		if len(a) != len(b) {
+			return len(b) - len(a)
+		}
+		return strings.Compare(a, b)
+	})
+	for _, secret := range ordered {
 		if secret != "" {
 			s = strings.ReplaceAll(s, secret, "<redacted>")
 		}
@@ -461,15 +468,12 @@ func NewHTTP(def *codemode.ServerDef, extraSecrets ...string) (*httpClient, erro
 }
 
 func (c *httpClient) redact(s string) string {
+	secrets := make([]string, 0, len(c.headers)+len(c.secrets))
 	for _, v := range c.headers {
-		if v != "" {
-			s = strings.ReplaceAll(s, v, "<redacted>")
-		}
+		secrets = append(secrets, v)
 	}
-	for _, secret := range c.secrets {
-		s = strings.ReplaceAll(s, secret, "<redacted>")
-	}
-	return s
+	secrets = append(secrets, c.secrets...)
+	return redactSecrets(s, secrets)
 }
 
 func (c *httpClient) errf(format string, args ...any) error {

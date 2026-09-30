@@ -647,6 +647,44 @@ func TestHTTPInitializeRPCErrorFailsStart(t *testing.T) {
 	}
 }
 
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestRedactSecretsLongestFirst(t *testing.T) {
+	got := redactSecrets("x prefixLONG y", []string{"prefix", "prefixLONG"})
+	if got != "x <redacted> y" {
+		t.Fatalf("overlapping secrets left a tail: %q", got)
+	}
+	if strings.Contains(got, "prefix") || strings.Contains(got, "LONG") {
+		t.Fatalf("secret material survived redaction: %q", got)
+	}
+}
+
+// spec: code-mode-mcp/remote-initialization-rejection-reports-start-failure
+func TestHTTPInitializeRejectionRedactsLongestSecret(t *testing.T) {
+	short := "prefix"
+	long := "prefixLONG"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("denied credential " + long + " rejected"))
+	}))
+	defer server.Close()
+
+	c, err := NewHTTP(&codemode.ServerDef{
+		URL:     server.URL,
+		Headers: map[string]string{"Authorization": short},
+	}, long)
+	if err != nil {
+		t.Fatalf("NewHTTP: %v", err)
+	}
+	err = c.Initialize(context.Background())
+	var ce *codemode.Error
+	if !errors.As(err, &ce) || ce.Code != codemode.ErrCodeStartFailed {
+		t.Fatalf("expected %s, got %v", codemode.ErrCodeStartFailed, err)
+	}
+	if strings.Contains(ce.Message, long) || strings.Contains(ce.Message, "LONG") {
+		t.Fatalf("longer secret tail leaked in start failure: %q", ce.Message)
+	}
+}
+
 func assertRichResult(t *testing.T, out any) {
 	t.Helper()
 	m, ok := out.(map[string]any)
