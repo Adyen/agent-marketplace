@@ -182,7 +182,7 @@ func TestV4DirectorySnapshotIgnoresSkillsGitMetadata(t *testing.T) {
 	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
 	loadGlobalConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(globalPath) }
 	loadRepoConfig = func() (*config.Config, error) { return nil, nil }
-	loadLocalConfig = func() (*config.LocalConfig, error) { return nil, nil }
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 
 	snap := readSnapshot(context.Background(), repo, home, catalogLoadRefresh)
 	if len(snap.errs) > 0 {
