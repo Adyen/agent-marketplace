@@ -177,88 +177,72 @@ func (r row) canOverrideMarketplace() bool {
 	return r.Artifact.IsMarketplace && r.Artifact.Source == config.Organization && !r.Artifact.Required
 }
 
-func (r row) Glyph() string {
-	if r.PendingVerification {
-		if r.IsAvailable {
-			return "[ ]"
-		}
-		return "[x]"
-	}
-	if r.IsMalformed {
-		return "[!]"
-	}
-	if r.UnavailableReason != "" {
-		return "[!]"
-	}
-	if r.IsAvailable {
-		return "[ ]"
-	}
-	if r.Artifact.Required {
-		return "[R]"
-	}
-	if r.DriftItem != nil {
-		switch r.DriftItem.Reason {
-		case materialize.DriftMissing:
-			return "[*]"
-		case materialize.DriftOrphaned:
-			return "[-]"
-		case materialize.DriftBroken:
-			return "[!]"
-		}
-	}
-	return "[x]"
+// rowStatus is the authoritative result of a row's status precedence: one
+// decision derives the ASCII glyph, the color-profile symbol, and the status
+// label so the three can never diverge.
+type rowStatus struct {
+	glyph  string
+	symbol string
+	label  string
 }
 
-func (r row) StatusText() string {
+func (r row) status() rowStatus {
 	if r.PendingVerification {
-		switch {
-		case r.IsExcluded:
-			return "excluded; verification pending"
-		case r.IsAvailable:
-			return "available; verification pending"
+		label := "enabled in config; verification pending"
+		if r.IsExcluded {
+			label = "excluded; verification pending"
+		} else if r.IsAvailable {
+			label = "available; verification pending"
 		}
-		return "enabled in config; verification pending"
+		if r.IsAvailable {
+			return rowStatus{"[ ]", "○", label}
+		}
+		return rowStatus{"[x]", "●", label}
 	}
 	if r.IsMalformed {
-		return "malformed: " + r.MalformedMsg
+		return rowStatus{"[!]", "✗", "malformed: " + r.MalformedMsg}
 	}
 	if r.UnavailableReason != "" {
-		return "unavailable: " + r.UnavailableReason
+		return rowStatus{"[!]", "✗", "unavailable: " + r.UnavailableReason}
 	}
 	if r.IsAvailable {
 		if r.IsExcluded {
-			return "excluded"
+			return rowStatus{"[ ]", "○", "excluded"}
 		}
 		if r.MarketplaceDiscovery != nil {
-			status := string(r.MarketplaceDiscovery.Item.Availability)
-			if status == "" {
-				status = "unknown"
+			label := string(r.MarketplaceDiscovery.Item.Availability)
+			if label == "" {
+				label = "unknown"
 			}
 			if r.MarketplaceDiscovery.CacheState == marketplace.DiscoveryCacheStale {
-				status += ", stale"
+				label += ", stale"
 			}
-			return status + " via Marketplace"
+			return rowStatus{"[ ]", "○", label + " via Marketplace"}
 		}
-		return "available"
+		return rowStatus{"[ ]", "○", "available"}
 	}
 	if r.Artifact.Required {
 		if r.Artifact.Source == config.Organization {
-			return "required (org)"
+			return rowStatus{"[R]", "■", "required (org)"}
 		}
-		return "required"
+		return rowStatus{"[R]", "■", "required"}
 	}
 	if r.DriftItem != nil {
 		switch r.DriftItem.Reason {
 		case materialize.DriftMissing:
-			return "enabled (pending sync)"
+			return rowStatus{"[*]", "◐", "enabled (pending sync)"}
 		case materialize.DriftOrphaned:
-			return "orphaned"
+			return rowStatus{"[-]", "◌", "orphaned"}
 		case materialize.DriftBroken:
-			return "broken"
+			return rowStatus{"[!]", "✗", "broken"}
 		}
 	}
-	return "enabled"
+	return rowStatus{"[x]", "●", "enabled"}
 }
+
+func (r row) Glyph() string { return r.status().glyph }
+
+func (r row) StatusText() string { return r.status().label }
 
 type Model struct {
 	repoRoot            string
@@ -350,6 +334,11 @@ type Model struct {
 	// updatePendingErr retains that update's own error for the verdict.
 	updateReload     requestGeneration
 	updatePendingErr error
+	// syncReload is the snapshot generation scheduled by syncDoneMsg that
+	// must be accepted (or fail) before the sync operation ends;
+	// syncPendingErr retains the pipeline's own error for the verdict.
+	syncReload     requestGeneration
+	syncPendingErr error
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.

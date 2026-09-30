@@ -2,8 +2,6 @@ package tui
 
 import (
 	"strings"
-
-	"charm.land/lipgloss/v2"
 )
 
 // tab represents the active top-level view.
@@ -74,18 +72,6 @@ func prevTab(current tab) tab {
 	}
 	return allTabs[0]
 }
-
-var (
-	styleTabActive = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.ANSIColor(15)).
-			Background(paletteAccent).
-			Padding(0, 2)
-
-	styleTabInactive = lipgloss.NewStyle().
-				Foreground(paletteMuted).
-				Padding(0, 2)
-)
 
 // renderTabBar returns a single-line string with all tabs, highlighting the
 // active tab. Numeric mnemonics are prefixed for discoverability (1/2/3).

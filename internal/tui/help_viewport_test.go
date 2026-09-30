@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// spec: tui-navigation/narrow-help
 func TestHelpEveryBindingReachableByScrollingAtMinimumSize(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
@@ -58,6 +59,7 @@ func TestHelpCloseAndQuitHintsStayVisibleWhileScrolling(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/narrow-help
 func TestHelpOffsetPreservedAcrossReopen(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})

@@ -53,6 +53,7 @@ func stubColorCapable(t *testing.T, capable bool) {
 
 // TestStatusSymbolsColorProfile verifies styled status symbols on
 // color-capable terminals and the retained ASCII glyphs on no-color ones.
+// spec: tui-rendering/colorless-and-narrow-rendering
 func TestStatusSymbolsColorProfile(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -175,6 +176,7 @@ func TestStatusBarFitsWithinTerminal(t *testing.T) {
 // TestRenderBundleTreeNativeBounds verifies the bundle browser renders its
 // native tree bounded to the pane, keeps the fold glyphs and selection, and
 // sanitizes hostile entry names at the 50x12 minimum.
+// spec: tui-rendering/hostile-input-at-minimum-size
 func TestRenderBundleTreeNativeBounds(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "scripts"), 0o755); err != nil {

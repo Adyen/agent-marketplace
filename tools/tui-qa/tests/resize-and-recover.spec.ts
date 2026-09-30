@@ -9,6 +9,7 @@ test.use(journey.options);
 test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
+// spec: tui-rendering/undersized-terminal
 test("minimum-size gate preserves selection and blocks toggles", async ({ terminal }) => {
   await declineLegacyMigration(terminal);
   await step("settled fixture baseline", () => {}, async () => {

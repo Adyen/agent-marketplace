@@ -72,10 +72,10 @@ func migrationFormKeyMap() *huh.KeyMap {
 	return km
 }
 
-func newModalForm(field huh.Field, keymap *huh.KeyMap) *huh.Form {
+func newModalForm(field huh.Field, keymap *huh.KeyMap, t theme) *huh.Form {
 	form := huh.NewForm(huh.NewGroup(field)).
 		WithKeyMap(keymap).
-		WithTheme(huh.ThemeFunc(huh.ThemeBase)).
+		WithTheme(huh.ThemeFunc(func(bool) *huh.Styles { return huhTheme(t) })).
 		WithShowHelp(false).
 		WithShowErrors(true)
 	drainFormCmd(form, form.Init())
@@ -92,13 +92,13 @@ func harnessOptionIDList(selected map[string]bool) []string {
 	return append(ids, unknownSelectedHarnesses(selected)...)
 }
 
-func newHarnessSelectForm(selected map[string]bool) (*huh.Form, *huh.MultiSelect[string], *[]string) {
+func newHarnessSelectForm(selected map[string]bool, t theme) (*huh.Form, *huh.MultiSelect[string], *[]string) {
 	options := make([]huh.Option[string], 0, len(knownHarnessOptions))
 	for _, opt := range knownHarnessOptions {
 		options = append(options, huh.NewOption(fmt.Sprintf("%-14s %s", opt.Label, opt.ID), opt.ID))
 	}
 	for _, id := range unknownSelectedHarnesses(selected) {
-		options = append(options, huh.NewOption(fmt.Sprintf("%-14s %s", "other", id), id))
+		options = append(options, huh.NewOption(fmt.Sprintf("%-14s %s", "other", sanitizeTerminalData(id, terminalSingleLine)), id))
 	}
 	value := selectedHarnessIDs(selected)
 	multi := huh.NewMultiSelect[string]().
@@ -106,7 +106,7 @@ func newHarnessSelectForm(selected map[string]bool) (*huh.Form, *huh.MultiSelect
 		Value(&value).
 		Height(len(options)).
 		Filterable(false)
-	return newModalForm(multi, modalFormKeyMap()), multi, &value
+	return newModalForm(multi, modalFormKeyMap(), t), multi, &value
 }
 
 // reconcileMultiCursor drives a Huh multiselect cursor to the model's
@@ -160,7 +160,7 @@ func syncMultiState(multi *huh.MultiSelect[string], value *[]string, optionIDs [
 // buildHarnessForm rebuilds the harness modal's multiselect form for the
 // modal's current selection.
 func (m *Model) buildHarnessForm() {
-	m.harnessModal.form, m.harnessModal.multi, m.harnessModal.multiValue = newHarnessSelectForm(m.harnessModal.selected)
+	m.harnessModal.form, m.harnessModal.multi, m.harnessModal.multiValue = newHarnessSelectForm(m.harnessModal.selected, m.currentTheme())
 	m.harnessModal.optionIDs = harnessOptionIDList(m.harnessModal.selected)
 	m.harnessModal.cursor = 0
 }
@@ -175,7 +175,7 @@ func (m *Model) ensureHarnessForm() {
 
 func (m *Model) ensureInitForm() {
 	if m.initModal.form == nil {
-		m.initModal.form, m.initModal.multi, m.initModal.multiValue = newHarnessSelectForm(m.initModal.selected)
+		m.initModal.form, m.initModal.multi, m.initModal.multiValue = newHarnessSelectForm(m.initModal.selected, m.currentTheme())
 	}
 	m.initModal.optionIDs = harnessOptionIDList(m.initModal.selected)
 }
@@ -225,7 +225,7 @@ func (m *Model) buildToggleForm() {
 		Options(options...).
 		Value(&choice).
 		Height(len(options) + 1)
-	m.toggleForm = newModalForm(sel, modalFormKeyMap())
+	m.toggleForm = newModalForm(sel, modalFormKeyMap(), m.currentTheme())
 	m.toggleChoice = &choice
 	m.toggleFormFor = rowKey(m.modalSkill)
 }
@@ -243,7 +243,7 @@ func (m *Model) buildMigrationForm() {
 		Value(&value).
 		Affirmative("migrate to v4").
 		Negative("leave unchanged")
-	m.migrationForm = newModalForm(confirm, migrationFormKeyMap())
+	m.migrationForm = newModalForm(confirm, migrationFormKeyMap(), m.currentTheme())
 	m.migrationValue = &value
 }
 
@@ -263,7 +263,7 @@ func (m *Model) buildEditConfigForm() {
 		).
 		Value(&choice).
 		Height(4)
-	m.editConfigForm = newModalForm(sel, modalFormKeyMap())
+	m.editConfigForm = newModalForm(sel, modalFormKeyMap(), m.currentTheme())
 	m.editConfigChoice = &choice
 }
 
@@ -280,7 +280,7 @@ func (m *Model) buildSyncQuitForm() {
 		Value(&value).
 		Affirmative("sync+quit").
 		Negative("quit")
-	m.syncQuitForm = newModalForm(confirm, modalFormKeyMap())
+	m.syncQuitForm = newModalForm(confirm, modalFormKeyMap(), m.currentTheme())
 	m.syncQuitValue = &value
 }
 

@@ -1,13 +1,13 @@
 # TUI Product Contract
 
-This document defines the `agent-marketplace tui` behavior covered by GitHub issue #41. It does not redefine configuration schema, migration, target precedence, or materialization policy; `AGENTS.md` and their owning packages govern those. The TUI consumes those contracts and must report their outcomes truthfully.
+This document records the `agent-marketplace tui` behavior covered by GitHub issue #41. It is a reference lead for maintainers, not a normative contract: `openspec/specs/` is the normative description of user-observable behavior, including the `tui-navigation`, `tui-rendering`, `tui-interactions`, and `tui-feedback` capabilities. It does not redefine configuration schema, migration, target precedence, or materialization policy; `AGENTS.md`, `openspec/specs/`, and their owning packages govern those. The TUI consumes those contracts and must report their outcomes truthfully.
 
 ## Authority and enforcement
 
 Contract sources apply in this order:
 
 1. Repository security and configuration rules.
-2. Current normative product documentation, including this contract.
+2. Normative `openspec/specs/` specifications, including the `tui-*` capabilities.
 3. Behavioral tests through public TUI, pipeline, and materialization paths.
 4. Direct real-terminal QA reports. These are evidence and never define intended behavior by themselves.
 

@@ -110,6 +110,7 @@ func TestPaletteToggleFollowsKeyboardEligibility(t *testing.T) {
 // AC5: eligibility is re-evaluated on submit against the row/config/operation
 // state at that moment; a stale selection neither opens the toggle modal nor
 // writes config.
+// spec: tui-feedback/state-changes-after-opening
 func TestPaletteToggleSubmitReevaluatesCurrentState(t *testing.T) {
 	openWithToggle := func(t *testing.T) Model {
 		m := modelWithRows(mkRow("tool", withGlobal, withRegistry("sec.git", "security")))

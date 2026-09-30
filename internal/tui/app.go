@@ -23,7 +23,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	"github.com/Adyen/agent-marketplace/internal/logging"
-	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/sahilm/fuzzy"
@@ -63,14 +62,13 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Line
-	sp.Style = lipgloss.NewStyle().Foreground(paletteWarn)
+	sp.Style = styleSpinner
 
 	si := textinput.New()
 	si.Prompt = "/ "
 	searchStyles := textinput.DefaultStyles(isDark)
 	searchStyles.Focused.Prompt = styleSearchPrompt
-	searchStyles.Focused.Text = lipgloss.NewStyle().
-		Foreground(theme.text)
+	searchStyles.Focused.Text = textStyle(theme)
 	searchStyles.Cursor.Color = theme.accent
 	si.SetStyles(searchStyles)
 
@@ -281,6 +279,49 @@ func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error
 	}
 }
 
+// finishSyncReload resolves a sync operation when its authoritative reload —
+// or a newer superseding snapshot — is accepted or fails. The sync's own
+// pipeline error, when it carried one, wins over the reload verdict so a
+// failed sync is never reported as success.
+func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) tea.Cmd {
+	if m.syncReload == 0 || generation < m.syncReload {
+		return nil
+	}
+	m.syncReload = 0
+	pendingErr := m.syncPendingErr
+	m.syncPendingErr = nil
+	m.syncing = false
+	m.clearOperationProgress()
+	// A sync+quit confirmed while the reload was already in flight still
+	// quits once the authoritative reload lands; the verdict is carried to
+	// Run() rather than toasted.
+	if m.quitAfterSync {
+		m.quitAfterSync = false
+		m.syncQuitErr = pendingErr
+		if m.syncQuitErr == nil {
+			m.syncQuitErr = reloadErr
+		}
+		slog.Debug("sync reload complete, quitting as requested", "err", m.syncQuitErr)
+		return tea.Quit
+	}
+	switch {
+	case pendingErr != nil:
+		m.recordOperationFailure(operationSync, diagnosticSync, pendingErr)
+		m.pushToast(fmt.Sprintf("sync error: %v", pendingErr), 5*time.Second)
+		slog.Error("sync failed", "err", pendingErr)
+		recordControlledErrorSpan(m.ctx, "sync", pendingErr)
+		return toastExpiryCmd(5 * time.Second)
+	case reloadErr != nil:
+		m.recordOperationFailure(operationSync, diagnosticSync, reloadErr)
+		m.pushToast(fmt.Sprintf("sync reload failed: %v", reloadErr), 5*time.Second)
+		return toastExpiryCmd(5 * time.Second)
+	default:
+		m.recordOperationSuccess(operationSync)
+		m.pushToast("Sync complete", 2*time.Second)
+		return toastExpiryCmd(2 * time.Second)
+	}
+}
+
 func snapshotAcceptanceError(msg snapshotLoadedMsg) error {
 	hardErrors := append([]error(nil), msg.errs...)
 	hardErrors = append(hardErrors, diagnosticErrors(msg.diagnostics)...)
@@ -448,19 +489,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.assessmentPending = false
 		m.applySnapshotStatus(msg)
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg))
+		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg))
 		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(msg)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg)), updateCmd)
+			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg)), updateCmd, syncCmd)
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.provisionalRows = nil
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd)
+			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
 		}
 		m.applySnapshotData(msg)
 		discoveryCmd := m.beginMarketplaceDiscovery(m.filter, false)
@@ -468,10 +510,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.refreshAfterLoad {
 			m.refreshing = true
 			generation := m.beginRequest(requestSnapshot)
-			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), discoveryCmd, installCmd, updateCmd, m.spinner.Tick)
+			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), discoveryCmd, installCmd, updateCmd, syncCmd, m.spinner.Tick)
 		}
 		m.refreshing = false
-		return m, tea.Batch(discoveryCmd, installCmd, updateCmd)
+		return m, tea.Batch(discoveryCmd, installCmd, updateCmd, syncCmd)
 
 	case refreshLoadedMsg:
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
@@ -481,20 +523,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.assessmentPending = false
 		m.applySnapshotStatus(msg.snapshotLoadedMsg)
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
+		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(msg.snapshotLoadedMsg)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)), updateCmd)
+			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)), updateCmd, syncCmd)
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd)
+			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
 		}
 		m.applySnapshotData(msg.snapshotLoadedMsg)
-		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)), updateCmd)
+		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)), updateCmd, syncCmd)
 
 	case reloadMsg:
 		snapshot := snapshotLoadedMsg(msg)
@@ -502,31 +545,36 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Update may have changed disk after a newer snapshot started. Its
 			// stale delivery cannot be applied, so schedule a current snapshot
 			// rather than leaving either result as authoritative.
-			m.syncing = false
+			if m.syncReload == 0 {
+				m.syncing = false
+			}
 			generation := m.beginRequest(requestSnapshot)
 			return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 		}
 		m.loading = false
 		m.assessmentPending = false
-		m.syncing = false
+		if m.syncReload == 0 {
+			m.syncing = false
+		}
 		m.refreshing = false
 		m.applySnapshotStatus(snapshot)
 		updateCmd := m.finishUpdateReload(snapshot.generation, snapshotAcceptanceError(snapshot))
+		syncCmd := m.finishSyncReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		if snapshot.pendingMigration.hasConfigs() && !m.migrationDismissed {
 			m.applySnapshotData(snapshot)
 			m.migrationPrompt = snapshot.pendingMigration
 			m.pane = paneMigrationModal
 			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd)
+			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd, syncCmd)
 		}
 		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...)), updateCmd)
+			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
 		}
 		m.applySnapshotData(snapshot)
 		m.pushToast("Reloaded", 2*time.Second)
-		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd)
+		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd, syncCmd)
 
 	case discoveryDebounceMsg:
 		if m.requests.active(requestDiscovery) != msg.generation {
@@ -697,31 +745,29 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case syncDoneMsg:
-		m.syncing = false
 		m.refreshing = false
-		m.clearOperationProgress()
-		if msg.err != nil {
-			m.recordOperationFailure(operationSync, diagnosticSync, msg.err)
-			m.pushToast(fmt.Sprintf("sync error: %v", msg.err), 5*time.Second)
-			slog.Error("sync failed", "err", msg.err)
-			recordControlledErrorSpan(m.ctx, "sync", msg.err)
-		} else {
-			m.recordOperationSuccess(operationSync)
-			m.driftReport = materialize.DriftReport{}
-			m.pushToast("Sync complete", 2*time.Second)
-		}
 		// If the user confirmed "sync+quit", quit now that the sync has
 		// actually completed. This avoids the race where tea.Quit in a
 		// tea.Batch kills the program before the sync goroutine finishes.
 		if m.quitAfterSync {
+			m.syncing = false
 			m.quitAfterSync = false
+			m.clearOperationProgress()
 			slog.Debug("sync complete, quitting as requested", "err", msg.err)
 			m.syncQuitErr = msg.err
 			return m, tea.Quit
 		}
-		// Re-load to pick up on-disk changes.
+		// Completion is not the verdict: the sync stays serialized and
+		// observed through the authoritative reload it schedules here; the
+		// accepted (or failed) snapshot ends it. The pipeline's own error
+		// is retained so a failed sync can never be reported as success.
+		m.syncPendingErr = msg.err
+		if m.progress != nil {
+			m.operationPhase = string(pipeline.PhaseReload)
+		}
 		generation := m.beginRequest(requestSnapshot)
-		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), toastExpiryCmd(5*time.Second))
+		m.syncReload = generation
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 
 	case updateDoneMsg:
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
@@ -1721,6 +1767,8 @@ func (m Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.ConfirmCancel) {
 		m.pane = paneList
 		m.quitAfterSync = false
+		m.syncQuitForm = nil
+		m.syncQuitValue = nil
 		recordActionSpan(m.ctx, "modal_outcome", map[string]string{"outcome": "cancelled", "modal": "sync+quit"})
 		return m, nil
 	}
@@ -1728,7 +1776,10 @@ func (m Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.syncQuitForm == nil || m.syncQuitForm.State != huh.StateCompleted {
 		return m, nil
 	}
-	if m.syncQuitValue != nil && *m.syncQuitValue {
+	syncQuit := m.syncQuitValue != nil && *m.syncQuitValue
+	m.syncQuitForm = nil
+	m.syncQuitValue = nil
+	if syncQuit {
 		return m.confirmSyncQuitYes()
 	}
 	return m.confirmSyncQuitNo()

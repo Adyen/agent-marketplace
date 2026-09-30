@@ -3,6 +3,7 @@ package tui
 import (
 	"image/color"
 
+	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	"github.com/charmbracelet/colorprofile"
@@ -80,6 +81,70 @@ func modalBoxStyle(t theme, border lipgloss.Border, borderColor color.Color) lip
 		Background(t.card).
 		Foreground(t.text).
 		Padding(1, 2)
+}
+
+// Style factories for the background-dependent roles. Every color decision
+// lives here so renderers share the semantic theme instead of restating
+// inline colors.
+func textStyle(t theme) lipgloss.Style   { return lipgloss.NewStyle().Foreground(t.text) }
+func accentStyle(t theme) lipgloss.Style { return lipgloss.NewStyle().Foreground(t.accent) }
+func titleStyle(t theme) lipgloss.Style  { return lipgloss.NewStyle().Bold(true).Foreground(t.accent) }
+func warnTitleStyle(t theme) lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(t.warn)
+}
+func markKeyStyle(t theme) lipgloss.Style { return lipgloss.NewStyle().Foreground(t.mark).Bold(true) }
+func okStyle(t theme) lipgloss.Style      { return lipgloss.NewStyle().Foreground(t.ok) }
+func okBoldStyle(t theme) lipgloss.Style  { return lipgloss.NewStyle().Bold(true).Foreground(t.ok) }
+func errStyle(t theme) lipgloss.Style     { return lipgloss.NewStyle().Foreground(t.err) }
+func dimTextStyle(t theme) lipgloss.Style { return lipgloss.NewStyle().Foreground(t.muted) }
+func warnBoldStyle(t theme) lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(t.warn)
+}
+func fullKeyStyle(t theme) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(t.mark).Width(13)
+}
+
+// huhTheme adapts the model's semantic ANSI-16 theme onto Huh form chrome so
+// modal forms inherit the same roles as the rest of the TUI instead of the
+// generic base palette.
+func huhTheme(t theme) *huh.Styles {
+	s := huh.ThemeBase(t.dark)
+	button := lipgloss.NewStyle().Padding(0, 2).MarginRight(1)
+
+	s.Focused.Base = s.Focused.Base.BorderForeground(t.accent)
+	s.Focused.Card = s.Focused.Base
+	s.Focused.Title = s.Focused.Title.Foreground(t.accent).Bold(true)
+	s.Focused.NoteTitle = s.Focused.NoteTitle.Foreground(t.accent).Bold(true)
+	s.Focused.Description = s.Focused.Description.Foreground(t.muted)
+	s.Focused.ErrorIndicator = s.Focused.ErrorIndicator.Foreground(t.err)
+	s.Focused.ErrorMessage = s.Focused.ErrorMessage.Foreground(t.err)
+	s.Focused.SelectSelector = s.Focused.SelectSelector.Foreground(t.accent)
+	s.Focused.NextIndicator = s.Focused.NextIndicator.Foreground(t.accent)
+	s.Focused.PrevIndicator = s.Focused.PrevIndicator.Foreground(t.accent)
+	s.Focused.Option = s.Focused.Option.Foreground(t.text)
+	s.Focused.MultiSelectSelector = s.Focused.MultiSelectSelector.Foreground(t.accent)
+	s.Focused.SelectedOption = s.Focused.SelectedOption.Foreground(t.ok)
+	s.Focused.SelectedPrefix = s.Focused.SelectedPrefix.Foreground(t.ok)
+	s.Focused.UnselectedOption = s.Focused.UnselectedOption.Foreground(t.text)
+	s.Focused.UnselectedPrefix = s.Focused.UnselectedPrefix.Foreground(t.muted)
+	s.Focused.FocusedButton = button.Foreground(t.onSurf).Background(t.accent)
+	s.Focused.Next = s.Focused.FocusedButton
+	s.Focused.BlurredButton = button.Foreground(t.text).Background(t.surface)
+	s.Focused.TextInput.Cursor = s.Focused.TextInput.Cursor.Foreground(t.ok)
+	s.Focused.TextInput.Placeholder = s.Focused.TextInput.Placeholder.Foreground(t.muted)
+	s.Focused.TextInput.Prompt = s.Focused.TextInput.Prompt.Foreground(t.accent)
+	s.Focused.TextInput.Text = s.Focused.TextInput.Text.Foreground(t.text)
+
+	s.Blurred = s.Focused
+	s.Blurred.Base = s.Blurred.Base.BorderStyle(lipgloss.HiddenBorder())
+	s.Blurred.Card = s.Blurred.Base
+	s.Blurred.MultiSelectSelector = lipgloss.NewStyle().SetString("  ")
+	s.Blurred.NextIndicator = lipgloss.NewStyle()
+	s.Blurred.PrevIndicator = lipgloss.NewStyle()
+
+	s.Group.Title = s.Focused.Title
+	s.Group.Description = s.Focused.Description
+	return s
 }
 
 // colorCapable reports whether the detected terminal profile can render the
@@ -173,6 +238,21 @@ var (
 	styleSearchMatch = lipgloss.NewStyle().
 				Bold(true).
 				Underline(true)
+
+	styleTabActive = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(paletteOnSurface).
+			Background(paletteAccent).
+			Padding(0, 2)
+
+	styleTabInactive = lipgloss.NewStyle().
+				Foreground(paletteMuted).
+				Padding(0, 2)
+
+	styleBadgeWarn  = lipgloss.NewStyle().Foreground(paletteWarn)
+	styleBadgeMulti = lipgloss.NewStyle().Bold(true).Foreground(paletteAccent)
+
+	styleSpinner = lipgloss.NewStyle().Foreground(paletteWarn)
 )
 
 func glyphStyle(glyph string) lipgloss.Style {
@@ -194,26 +274,12 @@ func glyphStyle(glyph string) lipgloss.Style {
 	}
 }
 
-// statusSymbol renders the row status as a styled symbol on color-capable
-// profiles and the original ASCII glyph on monochrome terminals.
+// statusSymbol renders the row's authoritative status as a styled symbol on
+// color-capable profiles and its ASCII glyph on monochrome terminals.
 func statusSymbol(r row) string {
+	st := r.status()
 	if !colorCapable() {
-		return r.Glyph()
+		return st.glyph
 	}
-	switch r.Glyph() {
-	case "[x]":
-		return "●"
-	case "[ ]":
-		return "○"
-	case "[*]":
-		return "◐"
-	case "[-]":
-		return "◌"
-	case "[!]":
-		return "✗"
-	case "[R]":
-		return "■"
-	default:
-		return r.Glyph()
-	}
+	return st.symbol
 }

@@ -42,12 +42,8 @@ func renderInitModal(m Model) string {
 	m.ensureInitForm()
 	modal := m.initModal
 
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.currentTheme().accent)
-	keyStyle := lipgloss.NewStyle().
-		Foreground(m.currentTheme().mark).
-		Bold(true)
+	titleStyle := titleStyle(m.currentTheme())
+	keyStyle := markKeyStyle(m.currentTheme())
 
 	compact := compactTerminalLayout(m)
 	modalStyle := compactModalStyle(modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent), m)
@@ -108,7 +104,7 @@ func (m Model) handleInitModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		harnesses := selectedHarnessIDs(m.initModal.selected)
 		if len(harnesses) == 0 {
-			m.initModal.form, m.initModal.multi, m.initModal.multiValue = newHarnessSelectForm(m.initModal.selected)
+			m.initModal.form, m.initModal.multi, m.initModal.multiValue = newHarnessSelectForm(m.initModal.selected, m.currentTheme())
 			return m, func() tea.Msg {
 				return toastMsg{text: "select at least one harness", duration: 2 * time.Second}
 			}

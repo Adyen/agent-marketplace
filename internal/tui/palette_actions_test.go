@@ -29,6 +29,7 @@ func TestPaletteActionsExposeStableUniqueIdentities(t *testing.T) {
 // TestPaletteExcludesModalOnlyActions pins the exposed action set: list
 // actions and prefix-fold identities only — never modal scope or
 // confirmation keys.
+// spec: tui-feedback/prefix-action-and-excluded-controls
 func TestPaletteExcludesModalOnlyActions(t *testing.T) {
 	want := map[string]bool{
 		"search": true, "detail": true, "toggle": true,

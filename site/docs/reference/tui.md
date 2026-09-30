@@ -39,6 +39,8 @@ If a config layer has no lock, the TUI can browse its source's current content a
 
 A configuration load error blocks selection changes until you fix the file with `E`. Catalog, resolution, and materialization failures keep the loaded rows visible. Rows that can normally be toggled still open the scope dialog, including selections shown as unavailable, and drift stays marked as failed.
 
+The status bar reports sync drift, Marketplace endpoint health, the active operation, and error or warning counts when space permits. It shows `running` until an operation reports a phase it has entered. Progress alone never reports success; the operation and its on-disk reload must finish. Up to three short result notices appear as toasts and expire after a few seconds. At narrow widths, the footer keeps the quit and recovery keys visible.
+
 ## Keys
 
 | Action | Key |
@@ -55,6 +57,7 @@ A configuration load error blocks selection changes until you fix the file with 
 | View resource details or cached files | `enter` |
 | Collapse / expand a section | `h` / `l` or left / right |
 | Toggle the current fold / collapse all / expand all | `za` / `zM` / `zR` |
+| Open the command palette | `ctrl+k` or `:` |
 | Sync pending changes | `s` |
 | Reload from disk | `r` |
 | Upgrade Git locks and sync | `u` |
@@ -65,6 +68,8 @@ A configuration load error blocks selection changes until you fix the file with 
 | Quit | `q` |
 
 In the file browser that `enter` opens, `j` / `k` and the arrow keys move through entries, `h` / left folds a directory, `l` / right expands it, and `enter` toggles a directory. `esc` or `q` returns to the resource list.
+
+The command palette (`ctrl+k` or `:`) lists the resource-list actions — search, details, toggle, reload, sync, update, harnesses, config editor, help, diagnostics, tab switches, fold commands, and quit — as a fuzzy-filtered overlay. It opens only over the resource list at a supported size: not while a search, dialog, or overlay is active, not while a `z` fold prefix is pending, and not below the minimum terminal size. Type to filter the action labels (`q` and other letters are filter text, not list keys), move with `up` / `down`, run the highlighted action with `enter`, and close the palette with `esc`; `ctrl+c` still exits immediately. Actions that are not currently allowed are hidden, eligibility is checked again when you confirm, and the same guards and confirmations apply as for the key itself.
 
 ## Dialogs
 

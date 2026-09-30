@@ -42,6 +42,7 @@ func TestSeedTerminalSizeDoesNotAssumeAValidFirstFrame(t *testing.T) {
 	}
 }
 
+// spec: tui-rendering/undersized-terminal
 func TestBelowMinimumTerminalGatesWorkflowButKeepsQuit(t *testing.T) {
 	m := modelWithSelectedRow(t, mkRow("resource", withProject))
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 49, Height: 12})
@@ -113,6 +114,7 @@ func TestHelpAndErrorsScrollAtSupportedMinimum(t *testing.T) {
 	}
 }
 
+// spec: tui-rendering/colorless-and-narrow-rendering
 func TestCoreViewsFitSupportedMinimumWithRecoveryActions(t *testing.T) {
 	base := modelWithSelectedRow(t, mkRow("resource", withProject))
 	base.width = 50

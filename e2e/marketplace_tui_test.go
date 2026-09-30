@@ -147,6 +147,10 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	waitForMarketplaceTUI(t, &output, func(value string) bool { return strings.Contains(value, "use installation scopes") })
+	waitForMarketplaceTUI(t, &output, func(value string) bool {
+		return strings.Contains(value, "skill skill-one project")
+	})
+	beforeToggle := len(output.String())
 	if _, err := terminal.Write([]byte("l")); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +170,12 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 	if !consumer.CheckFileContains("/workspace/.agents/lock.local.yaml", digest) {
 		t.Fatalf("local lock missing the exact pin %s:\n%s", digest, consumer.ReadFile("/workspace/.agents/lock.local.yaml"))
 	}
-	waitForMarketplaceTUI(t, &output, func(value string) bool { return strings.Contains(value, "skill skill-one PL") })
+	waitForMarketplaceTUI(t, &output, func(value string) bool {
+		emitted := value[beforeToggle:]
+		return strings.Contains(emitted, " local") &&
+			strings.Contains(emitted, "Local") &&
+			strings.Contains(emitted, "(1)")
+	})
 	for _, key := range []byte(" l") {
 		if _, err := terminal.Write([]byte{key}); err != nil {
 			t.Fatal(err)

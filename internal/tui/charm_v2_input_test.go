@@ -76,6 +76,7 @@ func TestV2HarnessModalSpaceSelectsWithoutSaving(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/paste-in-search
 func TestV2BracketedPasteReachesFocusedSearch(t *testing.T) {
 	m := newTestModel()
 	m.rows = []row{
@@ -98,6 +99,7 @@ func TestV2BracketedPasteReachesFocusedSearch(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/paste-in-search
 func TestV2BracketedPasteSchedulesRemoteSearchDebounce(t *testing.T) {
 	m := newTestModel()
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", InstanceID: "market"}}}
@@ -112,6 +114,7 @@ func TestV2BracketedPasteSchedulesRemoteSearchDebounce(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/paste-outside-search
 func TestV2PasteSuspendedInModal(t *testing.T) {
 	m := newTestModel()
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", InstanceID: "market"}}}
@@ -128,6 +131,7 @@ func TestV2PasteSuspendedInModal(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/paste-outside-search
 func TestV2PasteSuspendedBelowMinimumSize(t *testing.T) {
 	m := newTestModel()
 	m = asModel(t, mustUpdate(m.Update(v2KeyPress('/'))))
@@ -140,6 +144,7 @@ func TestV2PasteSuspendedBelowMinimumSize(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/paste-in-search
 func TestV2PasteNeverInvokesActionShortcuts(t *testing.T) {
 	m := newTestModel()
 	m = asModel(t, mustUpdate(m.Update(v2KeyPress('/'))))

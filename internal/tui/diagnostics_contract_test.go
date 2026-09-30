@@ -166,10 +166,8 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 
 	updated, _ = m.Update(syncDoneMsg{err: syncFailure})
 	m = updated.(Model)
-	if len(m.errs) != 1 || !errors.Is(m.errs[0], syncFailure) {
-		t.Fatalf("sync failure not retained: %v", m.errs)
-	}
-
+	// The failed sync ends when the authoritative reload it scheduled is
+	// accepted; only then is its own error recorded as the verdict.
 	generation := m.requests.active(requestSnapshot)
 	updated, _ = m.Update(snapshotLoadedMsg{
 		generation:      generation,
@@ -178,13 +176,20 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 	})
 	m = updated.(Model)
 	if len(m.errs) != 1 || !errors.Is(m.errs[0], syncFailure) {
-		t.Fatalf("snapshot erased operation failure: %v", m.errs)
+		t.Fatalf("sync failure not retained: %v", m.errs)
 	}
 	if len(m.warnings) != 0 {
 		t.Fatalf("replacement snapshot retained stale warning: %v", m.warnings)
 	}
 
 	updated, _ = m.Update(syncDoneMsg{})
+	m = updated.(Model)
+	generation = m.requests.active(requestSnapshot)
+	updated, _ = m.Update(snapshotLoadedMsg{
+		generation:      generation,
+		driftAssessment: driftReady,
+		mergedCfg:       &config.Config{},
+	})
 	m = updated.(Model)
 	if len(m.errs) != 0 {
 		t.Fatalf("successful sync did not recover its failure: %v", m.errs)

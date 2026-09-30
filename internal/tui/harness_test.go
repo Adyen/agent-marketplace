@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -86,7 +87,7 @@ func TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice(t *testing.T) {
 		t.Fatal("Codex must not be pre-selected: it is opt-in")
 	}
 
-	out := renderHarnessModal(m)
+	out := ansi.Strip(renderHarnessModal(m))
 	if !strings.Contains(out, "Devin CLI") || !strings.Contains(out, "devin") {
 		t.Fatalf("harness modal does not offer Devin:\n%s", out)
 	}
@@ -143,6 +144,7 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/save-selected-harnesses
 func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	repoRoot := t.TempDir()
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
@@ -194,6 +196,7 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/empty-selection
 func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.openHarnessModal()

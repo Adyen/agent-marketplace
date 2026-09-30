@@ -37,8 +37,7 @@ func renderHelp(m Model) string {
 	b.WriteString(styleHelpOverlay.Render(""))
 	b.WriteString("\n")
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.currentTheme().accent)
-	b.WriteString(titleStyle.Render("agent-marketplace — Keyboard Shortcuts"))
+	b.WriteString(titleStyle(m.currentTheme()).Render("agent-marketplace — Keyboard Shortcuts"))
 	b.WriteString("\n\n")
 
 	// Each section renders as one FullHelpView group stacked vertically so
@@ -78,10 +77,10 @@ func renderErrors(m Model) string {
 		b.WriteString(styleErrorTitle.Render(fmt.Sprintf("Errors (%d)", len(m.errs))))
 		b.WriteString("\n\n")
 		for _, err := range m.errs {
-			writeDiagnostic(lipgloss.NewStyle().Foreground(m.currentTheme().text), "• ", err.Error())
+			writeDiagnostic(textStyle(m.currentTheme()), "• ", err.Error())
 			var r resolver.Remediable
 			if errors.As(err, &r) {
-				writeDiagnostic(lipgloss.NewStyle().Foreground(m.currentTheme().text), "  → ", r.Remediation())
+				writeDiagnostic(textStyle(m.currentTheme()), "  → ", r.Remediation())
 			}
 		}
 	}

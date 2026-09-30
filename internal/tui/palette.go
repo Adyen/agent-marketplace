@@ -256,7 +256,7 @@ func renderPalette(m Model) string {
 	width := min(48, max(24, m.width-8))
 	labelWidth := max(0, width-6) // border + padding + cursor prefix
 	lines := []string{
-		lipgloss.NewStyle().Foreground(m.theme.accent).Render("Command palette"),
+		accentStyle(m.theme).Render("Command palette"),
 		m.palette.input.View(),
 	}
 	visible := m.paletteVisibleLimit()
@@ -268,13 +268,13 @@ func renderPalette(m Model) string {
 	for i := start; i < end; i++ {
 		label := ansi.Truncate(m.palette.matches[i].action.label, labelWidth, "…")
 		if i == m.palette.cursor {
-			lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.accent).Render("> "+label))
+			lines = append(lines, accentStyle(m.theme).Render("> "+label))
 		} else {
-			lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.text).Render("  "+label))
+			lines = append(lines, textStyle(m.theme).Render("  "+label))
 		}
 	}
 	if len(m.palette.matches) == 0 {
-		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.text).Render("  no matching actions"))
+		lines = append(lines, textStyle(m.theme).Render("  no matching actions"))
 	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

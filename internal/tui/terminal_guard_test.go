@@ -61,6 +61,7 @@ func (m guardProbeModel) View() tea.View {
 	return v
 }
 
+// spec: tui-rendering/error-after-entering-alternate-screen
 func TestRunWithTerminalGuardRestoresAroundEveryRunOutcome(t *testing.T) {
 	sentinel := errors.New("cancel reader initialization failed")
 	for _, tc := range []struct {

@@ -56,6 +56,7 @@ func TestFuzzySearchMatchesNonContiguousQuery(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/clear-and-refresh
 func TestFuzzySearchClearRestoresAlphabeticalOrderAndFolds(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{

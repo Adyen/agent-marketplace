@@ -103,7 +103,7 @@ func TestConfigMutationInvalidatesCleanDriftBeforeReload(t *testing.T) {
 	}
 }
 
-func TestSuccessfulSyncClearsPendingDriftBeforeReload(t *testing.T) {
+func TestSuccessfulSyncClearsPendingDriftAfterReload(t *testing.T) {
 	model := NewModel("/repo", "/home")
 	model.loading = false
 	model.syncing = true
@@ -111,6 +111,12 @@ func TestSuccessfulSyncClearsPendingDriftBeforeReload(t *testing.T) {
 	model.driftReport = materialize.DriftReport{Missing: []materialize.DriftItem{{Name: "review", Reason: materialize.DriftMissing}}}
 
 	updated, _ := model.Update(syncDoneMsg{})
+	model = updated.(Model)
+	updated, _ = model.Update(snapshotLoadedMsg{
+		generation:      model.requests.active(requestSnapshot),
+		mergedCfg:       &config.Config{},
+		driftAssessment: driftReady,
+	})
 	model = updated.(Model)
 	_, command := model.Update(tea.KeyPressMsg{Code: 'q', Text: string('q')})
 	if !cmdProducesQuitMsg(command) {
@@ -133,6 +139,14 @@ func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 	}))
 	model.syncing = true
 	updated, _ := model.Update(model.dependencySyncCmd()())
+	model = updated.(Model)
+	// The pipeline failure is the verdict; it surfaces once the authoritative
+	// reload the completion scheduled is accepted.
+	updated, _ = model.Update(snapshotLoadedMsg{
+		generation:      model.requests.active(requestSnapshot),
+		mergedCfg:       &config.Config{},
+		driftAssessment: driftReady,
+	})
 	model = updated.(Model)
 	if !strings.Contains(model.toast, failure.Error()) || len(model.errs) == 0 || !errors.Is(model.errs[0], failure) {
 		t.Fatalf("sync lock failure not shown: toast %q, errors %v", model.toast, model.errs)

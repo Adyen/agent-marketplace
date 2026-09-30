@@ -452,20 +452,14 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 // selected skill. Shows per-scope state plus the available key actions.
 func renderToggleModal(m Model) string {
 	r := m.modalSkill
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.currentTheme().accent).
+	title := titleStyle(m.currentTheme()).
 		Render(fmt.Sprintf(`"%s"`, sanitizeTerminalData(r.Artifact.Name, terminalSingleLine)))
 
 	check := func(on bool) string {
 		if on {
-			return lipgloss.NewStyle().
-				Foreground(m.currentTheme().ok).
-				Render("✓")
+			return okStyle(m.currentTheme()).Render("✓")
 		}
-		return lipgloss.NewStyle().
-			Foreground(m.currentTheme().muted).
-			Render("✗")
+		return dimTextStyle(m.currentTheme()).Render("✗")
 	}
 	yesno := func(b bool) string {
 		if b {
@@ -475,7 +469,7 @@ func renderToggleModal(m Model) string {
 	}
 
 	if compactTerminalLayout(m) {
-		keyStyle := lipgloss.NewStyle().Foreground(m.currentTheme().mark).Bold(true)
+		keyStyle := markKeyStyle(m.currentTheme())
 		var b strings.Builder
 		b.WriteString(title + "\n")
 		if hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name) {
@@ -503,9 +497,7 @@ func renderToggleModal(m Model) string {
 
 	// Check for name collision errors affecting this resource.
 	if hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name) {
-		warnStyle := lipgloss.NewStyle().
-			Foreground(m.currentTheme().warn).
-			Bold(true)
+		warnStyle := warnBoldStyle(m.currentTheme())
 		b.WriteString("  " + warnStyle.Render("⚠ Name collision — toggle may not take effect until you exclude the other source") + "\n\n")
 	}
 
@@ -518,7 +510,7 @@ func renderToggleModal(m Model) string {
 		fmt.Fprintf(&b, "  Local exclude: %s  (%s)\n\n", yesno(r.ExcludedLocally), skill.KindLabel(r.Artifact.Kind))
 	}
 
-	keyStyle := lipgloss.NewStyle().Foreground(m.currentTheme().mark).Bold(true)
+	keyStyle := markKeyStyle(m.currentTheme())
 
 	m.ensureToggleForm()
 	if m.toggleForm != nil {

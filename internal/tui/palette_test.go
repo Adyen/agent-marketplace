@@ -212,6 +212,7 @@ func TestPaletteSyncHiddenWhileLoading(t *testing.T) {
 	}
 }
 
+// spec: tui-feedback/state-changes-after-opening
 func TestPaletteSubmitReevaluatesEligibility(t *testing.T) {
 	m := openPaletteFor(t, readyPaletteModel())
 	m = typePaletteQuery(t, m, "sync")
@@ -258,6 +259,7 @@ func TestPaletteToggleResourceOpensToggleModal(t *testing.T) {
 	}
 }
 
+// spec: tui-feedback/prefix-action-and-excluded-controls
 func TestPaletteFoldToggleDispatchesIdentityDirectly(t *testing.T) {
 	m := readyPaletteModel()
 	m.cursor = 0 // scope section header

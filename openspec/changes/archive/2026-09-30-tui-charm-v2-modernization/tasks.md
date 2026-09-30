@@ -31,4 +31,4 @@
 ## 6. Delivery evidence
 
 - [x] 6.1 Extend all affected real-terminal QA journeys and hot-path benchmarks; verify 13 journeys and report repeated identical-fixture base/head allocation comparisons.
-- [ ] 6.2 Reconcile published TUI product contract and OpenSpec specs with implemented behavior; verify `openspec validate tui-charm-v2-modernization --strict`, `make spec-check`, and `make validate`.
+- [x] 6.2 Reconcile published TUI product contract and OpenSpec specs with implemented behavior; verify `openspec validate tui-charm-v2-modernization --strict`, `make spec-check`, and `make validate`.

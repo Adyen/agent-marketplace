@@ -26,10 +26,7 @@ type editConfigPathMsg struct {
 }
 
 func renderEditConfigModal(m Model) string {
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.currentTheme().accent).
-		Render("Edit Config")
+	title := titleStyle(m.currentTheme()).Render("Edit Config")
 
 	globalPath, err := config.GlobalConfigPath()
 	if err != nil {
@@ -38,9 +35,9 @@ func renderEditConfigModal(m Model) string {
 	projectPath := config.ProjectConfigPath(m.repoRoot)
 	localPath := config.LocalConfigPath(m.workspace.LocalConfigDir())
 
-	dimStyle := lipgloss.NewStyle().Foreground(m.currentTheme().muted)
+	dimStyle := dimTextStyle(m.currentTheme())
 
-	keyStyle := lipgloss.NewStyle().Foreground(m.currentTheme().mark).Bold(true)
+	keyStyle := markKeyStyle(m.currentTheme())
 
 	if compactTerminalLayout(m) {
 		var b strings.Builder

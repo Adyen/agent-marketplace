@@ -3,7 +3,6 @@ package tui
 import (
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/lipgloss/v2"
 )
 
 // keyMap defines all keyboard shortcuts for the TUI. It is the single source
@@ -225,8 +224,8 @@ func helpStyles(t theme) help.Styles {
 		ShortDesc:      shortcutDescStyle,
 		ShortSeparator: shortcutSepStyle,
 		Ellipsis:       shortcutSepStyle,
-		FullKey:        lipgloss.NewStyle().Foreground(t.mark).Width(13),
-		FullDesc:       lipgloss.NewStyle().Foreground(t.text),
+		FullKey:        fullKeyStyle(t),
+		FullDesc:       textStyle(t),
 		FullSeparator:  helpFullSepStyle,
 	}
 }

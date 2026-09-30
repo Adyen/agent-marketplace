@@ -128,12 +128,9 @@ func renderHarnessModal(m Model) string {
 		modal.selected = harnessSelection(m.globalHarnesses)
 	}
 
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.currentTheme().accent).
-		Render("Target harnesses")
-	keyStyle := lipgloss.NewStyle().Foreground(m.currentTheme().mark).Bold(true)
-	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(m.currentTheme().ok)
+	title := titleStyle(m.currentTheme()).Render("Target harnesses")
+	keyStyle := markKeyStyle(m.currentTheme())
+	activeStyle := okBoldStyle(m.currentTheme())
 
 	compact := compactTerminalLayout(m)
 	modalStyle := compactModalStyle(modalBoxStyle(m.currentTheme(), lipgloss.RoundedBorder(), m.currentTheme().accent), m)

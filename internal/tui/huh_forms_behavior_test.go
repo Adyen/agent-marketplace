@@ -6,12 +6,15 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
 // AC4: scope switching and Space selection inside the harness Huh
 // multiselect never write config; only Enter submits a non-empty
 // selection through the guarded save.
 
+// spec: tui-interactions/scope-and-selection-without-write
 func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
@@ -63,6 +66,7 @@ func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/save-selected-harnesses
 func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.globalHarnesses = []string{"factory", "mystery-harness"}
@@ -82,6 +86,7 @@ func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/cancel-or-stale-completion
 func TestHarnessFormEscCancelsWithoutWrite(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.globalHarnesses = []string{"factory"}
@@ -140,5 +145,65 @@ func TestSyncQuitFormConfirmAndDecline(t *testing.T) {
 	}
 	if m.quitAfterSync {
 		t.Fatal("declined sync+quit must not arm quitAfterSync")
+	}
+}
+
+// spec: tui-interactions/cancel-or-stale-completion
+func TestMigrationFormResetsAfterCompletion(t *testing.T) {
+	home := t.TempDir()
+	m := NewModel(t.TempDir(), home)
+	m.pane = paneMigrationModal
+	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{
+		label: "User",
+		path:  filepath.Join(home, ".agents", "config.yaml"),
+		scope: config.V4MigrationUser,
+	}}}
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	m = mi.(Model)
+	if cmd == nil {
+		t.Fatal("'m' should dispatch the migration command")
+	}
+
+	m.pane = paneMigrationModal
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	m = mi.(Model)
+	if cmd != nil {
+		t.Fatal("stale completed form re-dispatched the migration")
+	}
+	if m.pane != paneMigrationModal {
+		t.Fatalf("unbound 'n' should keep the migration modal open, got pane=%v", m.pane)
+	}
+	mi, _ = m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	m = mi.(Model)
+	if !m.migrationDismissed {
+		t.Fatal("declining a re-presented migration must mark it dismissed")
+	}
+}
+
+// spec: tui-interactions/cancel-or-stale-completion
+func TestSyncQuitFormResetsAfterCompletion(t *testing.T) {
+	origRunSyncCmd := runSyncCmd
+	runSyncCmd = noopSyncCmd
+	defer func() { runSyncCmd = origRunSyncCmd }()
+
+	m := newTestModel()
+	m.pane = paneConfirm
+	mi, _ := m.Update(keyPress('y'))
+	m = mi.(Model)
+	if !m.quitAfterSync {
+		t.Fatal("'y' through the confirm form should arm sync+quit")
+	}
+
+	m.pane = paneConfirm
+	m.syncing = false
+	m.quitAfterSync = false
+	m.confirmMsg = "2 pending changes not synced. Sync+quit? y/n/esc"
+	mi, cmd := m.Update(keyPress('n'))
+	m = mi.(Model)
+	if m.syncing || m.quitAfterSync {
+		t.Fatalf("'n' on a re-presented confirm must not trigger sync+quit: syncing=%t quitAfterSync=%t", m.syncing, m.quitAfterSync)
+	}
+	if !cmdProducesQuitMsg(cmd) {
+		t.Fatal("'n' on a re-presented confirm should quit without syncing")
 	}
 }

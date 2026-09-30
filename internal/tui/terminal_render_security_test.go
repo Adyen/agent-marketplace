@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// spec: tui-rendering/hostile-input-at-minimum-size
 func TestUntrustedFieldsCannotCreateTerminalStructure(t *testing.T) {
 	r := mkRow("safe\nConfirm\ny = yes\x1b[2J\u202e", withProject, withRegistry("registry\x1b]0;owned\x07.git", "registry\rname"))
 	r.Artifact.RegistryURL = "registry\x1b]0;owned\x07.git"
@@ -29,6 +30,29 @@ func TestUntrustedFieldsCannotCreateTerminalStructure(t *testing.T) {
 		if !strings.Contains(ansi.Strip(output), escaped) {
 			t.Fatalf("render omitted readable escape %q:\n%s", escaped, ansi.Strip(output))
 		}
+	}
+}
+
+func TestHarnessFormUnknownIDLabelCannotEmitTerminalControls(t *testing.T) {
+	hostile := "evil\x1b]0;owned\x07\nid"
+	m := NewModel("/repo", "/home")
+	m.globalHarnesses = []string{hostile}
+	m.openHarnessModal()
+	if m.harnessModal.form == nil {
+		t.Fatal("harness modal must own a Huh form")
+	}
+	view := m.harnessModal.form.View()
+	for _, unsafe := range []string{"\x1b]0;owned", "\x07", "\nid"} {
+		if strings.Contains(view, unsafe) {
+			t.Fatalf("harness form emitted unsafe terminal content %q: %q", unsafe, view)
+		}
+	}
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, `evil\x1B]0;owned\x07\x0Aid`) {
+		t.Fatalf("harness form omitted the readable escaped label: %s", stripped)
+	}
+	if got := m.harnessModal.optionIDs[len(m.harnessModal.optionIDs)-1]; got != hostile {
+		t.Fatalf("option value = %q, want the exact unknown ID %q", got, hostile)
 	}
 }
 

@@ -149,7 +149,7 @@ func keyValueTable(t theme, pairs [][2]string) string {
 	// Cells are single-line sanitized values in an unconstrained table, so
 	// wrapping can never produce extra lines; disabling it skips the
 	// per-cell wrap writer while rendering identical output.
-	valueStyle := lipgloss.NewStyle().Foreground(t.text)
+	valueStyle := textStyle(t)
 	return ltable.New().
 		Border(lipgloss.Border{}).
 		BorderTop(false).BorderBottom(false).BorderLeft(false).BorderRight(false).
@@ -186,7 +186,7 @@ func renderDetail(m Model) string {
 	var b strings.Builder
 	safe := func(value string) string { return sanitizeTerminalData(value, terminalSingleLine) }
 
-	value := lipgloss.NewStyle().Foreground(m.currentTheme().text).Render
+	value := textStyle(m.currentTheme()).Render
 	// The enclosing detail box already wraps at contentWidth and pads every
 	// line to the pane width, so bare lines here render identically without
 	// a second wrap/pad pass.
@@ -644,7 +644,7 @@ func isJSONPath(path string) bool {
 // filesystem lookup — and ends with an actionable next step.
 func renderMarketplaceDetailContent(t theme, r row) string {
 	safe := func(value string) string { return sanitizeTerminalData(value, terminalSingleLine) }
-	value := lipgloss.NewStyle().Foreground(t.text).Render
+	value := textStyle(t).Render
 	var b strings.Builder
 	fields := [][2]string{
 		{"Kind:", skill.KindLabel(r.Artifact.Kind)},

@@ -106,6 +106,7 @@ func TestFinishTUIRunSanitizesSyncAndQuitErrorAfterRestoration(t *testing.T) {
 	}
 }
 
+// spec: tui-rendering/error-after-entering-alternate-screen
 func TestFinishTUIRunSanitizesReturnedProgramError(t *testing.T) {
 	renderer := errors.New("cancel reader /dev/tty\x1b[2J failed")
 	err := finishTUIRun(nil, renderer)

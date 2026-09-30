@@ -100,17 +100,11 @@ func migrationPathsForPrompt(prompt migrationPrompt) config.MigratePaths {
 }
 
 func renderMigrationModal(m Model) string {
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.currentTheme().warn).
-		Render("Configuration migration required")
+	title := warnTitleStyle(m.currentTheme()).Render("Configuration migration required")
 
-	keyStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.currentTheme().mark)
+	keyStyle := markKeyStyle(m.currentTheme())
 
-	dim := lipgloss.NewStyle().
-		Foreground(m.currentTheme().muted)
+	dim := dimTextStyle(m.currentTheme())
 
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
@@ -147,6 +141,8 @@ func (m Model) handleMigrationModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	if m.migrationForm != nil && m.migrationForm.State == huh.StateCompleted {
 		if m.migrationValue != nil && *m.migrationValue {
 			m.pane = paneList
+			m.migrationForm = nil
+			m.migrationValue = nil
 			return m, m.runMigrationCmd()
 		}
 		return m.leaveMigration()
@@ -156,6 +152,8 @@ func (m Model) handleMigrationModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 
 func (m Model) leaveMigration() (tea.Model, tea.Cmd) {
 	m.pane = paneList
+	m.migrationForm = nil
+	m.migrationValue = nil
 	m.migrationDismissed = true
 	m.pushToast("Config left unchanged", 2*time.Second)
 	return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), toastExpiryCmd(2*time.Second))

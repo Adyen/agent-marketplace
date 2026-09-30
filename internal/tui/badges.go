@@ -109,17 +109,14 @@ func badgeStyle(badge string) lipgloss.Style {
 	case "R":
 		return styleGlyphRequired
 	case "P-":
-		return lipgloss.NewStyle().Foreground(paletteWarn)
+		return styleBadgeWarn
 	}
 	if len(badge) > 1 {
 		// Multi-scope: use a brighter accent.
-		return lipgloss.NewStyle().
-			Bold(true).
-			Foreground(paletteAccent)
+		return styleBadgeMulti
 	}
 	// Single-scope badge (G/P/L): dim.
-	return lipgloss.NewStyle().
-		Foreground(paletteMuted)
+	return styleDim
 }
 
 func harnessBadge(r row) string {
@@ -130,6 +127,5 @@ func harnessBadge(r row) string {
 }
 
 func harnessBadgeStyle() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(paletteMuted)
+	return styleDim
 }

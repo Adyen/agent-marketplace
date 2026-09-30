@@ -125,8 +125,8 @@ func TestSyncDoneMsgWithoutQuitAfterSyncDoesNotQuit(t *testing.T) {
 	updated, cmd := m.Update(syncDoneMsg{err: nil})
 	got := updated.(Model)
 
-	if got.syncing {
-		t.Fatalf("syncDoneMsg should clear syncing")
+	if !got.syncing {
+		t.Fatalf("syncDoneMsg should keep syncing active until the authoritative reload")
 	}
 	if got.quitAfterSync {
 		t.Fatalf("syncDoneMsg should not set quitAfterSync")
@@ -188,6 +188,7 @@ func TestConfirmCancelClearsQuitAfterSync(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/guarded-submission
 func TestConfirmYesWhileSyncingDoesNotStartSecondSync(t *testing.T) {
 	m := newTestModel()
 	m.pane = paneConfirm
