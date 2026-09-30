@@ -320,6 +320,86 @@ registries: []
 	}
 }
 
+func writeInstallRedirectFixture(t *testing.T) (parent, localDir, sibling string) {
+	t.Helper()
+	parent = canonicalTempDir(t)
+	writeFile(t, filepath.Join(parent, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+registries: []
+`)
+	localDir = filepath.Join(parent, "sub")
+	writeFile(t, filepath.Join(localDir, ".agents", "config.local.yaml"), `registries: []
+`)
+	sibling = filepath.Join(parent, "sibling")
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatalf("mkdir sibling: %v", err)
+	}
+	return parent, localDir, sibling
+}
+
+// spec: workspace-resolution/escaping-personal-local-root
+func TestInstallRepoScopeRedirectRejectsEscapingLocalRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	parent, localDir, sibling := writeInstallRedirectFixture(t)
+	committedPath := filepath.Join(parent, ".agents", "config.yaml")
+	committedBefore, err := os.ReadFile(committedPath)
+	if err != nil {
+		t.Fatalf("read committed config: %v", err)
+	}
+	t.Chdir(sibling)
+	config.ResetRepoRootCache()
+
+	_, err = Install(context.Background(), InstallOptions{
+		RepoRoot:       parent,
+		LocalConfigDir: localDir,
+		Scope:          ScopeRepo,
+		ScopeSpecified: true,
+		Args:           []string{"some-skill"},
+	})
+	if !errors.Is(err, ErrInvalidWorkspace) {
+		t.Fatalf("Install error = %v; want ErrInvalidWorkspace", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(sibling, ".agents")); !os.IsNotExist(statErr) {
+		t.Fatalf("install seeded a config before rejecting the redirected workspace; stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(parent, ".agents", "lock.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("install prepared a lock before rejecting the redirected workspace; stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(sibling, ".factory")); !os.IsNotExist(statErr) {
+		t.Fatalf("install materialized output before rejecting the redirected workspace; stat err = %v", statErr)
+	}
+	committedAfter, err := os.ReadFile(committedPath)
+	if err != nil {
+		t.Fatalf("re-read committed config: %v", err)
+	}
+	if string(committedAfter) != string(committedBefore) {
+		t.Fatal("install mutated the committed config before rejecting the redirected workspace")
+	}
+}
+
+func TestInstallRepoScopeRedirectSeedsValidSiblingRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	parent, _, sibling := writeInstallRedirectFixture(t)
+	t.Chdir(sibling)
+	config.ResetRepoRootCache()
+
+	_, err := Install(context.Background(), InstallOptions{
+		RepoRoot:       parent,
+		LocalConfigDir: sibling,
+		Scope:          ScopeRepo,
+		ScopeSpecified: true,
+		Args:           []string{"some-skill"},
+	})
+	if errors.Is(err, ErrInvalidWorkspace) {
+		t.Fatalf("valid repo-scope redirect rejected: %v", err)
+	}
+	if err == nil {
+		t.Fatal("install without registries must fail after seeding the sibling config")
+	}
+	if _, statErr := os.Stat(filepath.Join(sibling, ".agents", "config.yaml")); statErr != nil {
+		t.Fatalf("valid repo-scope redirect did not seed the sibling config: %v", statErr)
+	}
+}
+
 // spec: workspace-resolution/nested-personal-local-synchronization
 func TestSyncNestedLocalLoadsRepoConfigAndMaterializesBelowIt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

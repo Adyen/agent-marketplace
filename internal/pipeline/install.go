@@ -194,6 +194,9 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			// genuinely absent. A non-NotExist stat error (permission, I/O)
 			// must be surfaced instead of clobbering an existing config.
 			if _, statErr := os.Stat(cwdProjectConfig); errors.Is(statErr, os.ErrNotExist) {
+				if _, err := workspaceForRoots(filepath.Clean(cwd), opts.LocalConfigDir); err != nil {
+					return nil, err
+				}
 				if marketplaceMutationRequested {
 					repoRoot = filepath.Clean(cwd)
 					configPath = config.ProjectConfigPath(repoRoot)
