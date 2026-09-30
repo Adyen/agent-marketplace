@@ -293,7 +293,7 @@ func listSubdirs(src fs.FS, root string) ([]string, error) {
 	}
 	var dirs []string
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() && entry.Name() != ".git" {
 			dirs = append(dirs, path.Join(root, entry.Name()))
 		}
 	}

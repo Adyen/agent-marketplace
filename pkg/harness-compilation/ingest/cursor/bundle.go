@@ -329,7 +329,7 @@ func listSubdirs(src fs.FS, root string) ([]string, error) {
 	}
 	var dirs []string
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && e.Name() != ".git" {
 			dirs = append(dirs, root+"/"+e.Name())
 		}
 	}

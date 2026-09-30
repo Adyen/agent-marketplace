@@ -115,7 +115,7 @@ func loadSkills(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 	var resources []ir.Resource
 	var diagnostics []diag.Diagnostic
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || entry.Name() == ".git" {
 			continue
 		}
 		skillFile, err := codexResourceFile(ir.KindSkill, entry.Name())
