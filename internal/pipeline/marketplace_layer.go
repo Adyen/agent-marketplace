@@ -125,11 +125,17 @@ func MutateMarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, confi
 	if mutate == nil {
 		return nil, errors.New("marketplace layer mutation callback is required")
 	}
-	if _, err := os.Lstat(configPath); err != nil {
+	info, err := os.Lstat(configPath)
+	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
 		return mutateV4MarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, mutate, sync)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("config %s is a symlink to a missing target: %w", configPath, err)
+		}
 	}
 	v4, err := config.LoadV4ConfigIfPresent(configPath, source)
 	if err != nil {
@@ -366,19 +372,12 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 }
 
 func marketplaceLayerLockPath(configPath string) (string, error) {
-	paths, err := config.ResolveConfigLockPaths(configPath)
+	resolve := config.ResolveConfigLockPaths
+	if _, err := os.Lstat(configPath); errors.Is(err, os.ErrNotExist) {
+		resolve = config.ResolveConfigLockPathsTolerateMissing
+	}
+	paths, err := resolve(configPath)
 	if err != nil {
-		if _, statErr := os.Lstat(configPath); errors.Is(statErr, os.ErrNotExist) {
-			dir, dirErr := filepath.EvalSymlinks(filepath.Dir(configPath))
-			if dirErr != nil {
-				return "", err
-			}
-			lock, lockErr := lockfile.PathForConfig(filepath.Join(dir, filepath.Base(configPath)))
-			if lockErr != nil {
-				return "", lockErr
-			}
-			return dependencytxn.ValidateDestination(filepath.Clean(lock))
-		}
 		return "", err
 	}
 	return dependencytxn.ValidateDestination(filepath.Clean(paths.CanonicalLock))
