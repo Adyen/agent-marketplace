@@ -1,11 +1,11 @@
 ## 1. Regression evidence
 
-- [ ] 1.1 Add annotated local HTTP and isolated-cache regressions for exact metadata refresh, canonical support and legacy asset access, offline reuse, and refusal of stale fallback; verify intended focused failures before implementation and on the base commit.
+- [x] 1.1 Add annotated local HTTP and isolated-cache regressions for exact metadata refresh, canonical support and legacy asset access, offline reuse, and refusal of stale fallback; verify intended focused failures before implementation and on the base commit.
 
 ## 2. Marketplace content loader
 
-- [ ] 2.1 Refresh exact metadata online, retain verified-cache-only offline access, enforce fresh availability and expected artifact digests; verify focused regression tests pass.
-- [ ] 2.2 Expose the sorted bounded canonical support and legacy asset namespace with ambiguous-path refusal and existing path/byte limits; verify script load/read regressions pass.
+- [x] 2.1 Refresh exact metadata online, retain verified-cache-only offline access, enforce fresh availability and expected artifact digests; verify focused regression tests pass.
+- [x] 2.2 Expose the sorted bounded canonical support and legacy asset namespace with ambiguous-path refusal and existing path/byte limits; verify script load/read regressions pass.
 
 ## 3. Verification and publication claims
 

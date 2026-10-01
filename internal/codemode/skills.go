@@ -67,6 +67,23 @@ func (l *FileSkillLoader) Gate(ctx context.Context, res *Resource) error {
 	return err
 }
 
+func matchRevisionIdentity(mo *MarketplaceOrigin, rev store.AssessedResourceRevision) error {
+	c := rev.Coordinate
+	if mo.Entry.InstanceID != "" && string(c.Marketplace) != mo.Entry.InstanceID {
+		return CodeError(ErrCodeNotFound, "revision %q: marketplace %q does not match entry", mo.Revision, c.Marketplace)
+	}
+	if string(c.Registry) != mo.RegistryID || c.Kind != mo.Kind || c.Name != mo.Name || string(rev.ContentDigest) != mo.Revision {
+		return CodeError(ErrCodeNotFound, "revision %q: cached identity does not match request", mo.Revision)
+	}
+	if err := rev.Assessment.Validate(); err != nil {
+		return CodeError(ErrCodeNotFound, "revision %q: invalid assessment: %v", mo.Revision, err)
+	}
+	if rev.Assessment.Coordinate != rev.Coordinate || rev.Assessment.ContentDigest != rev.ContentDigest {
+		return CodeError(ErrCodeNotFound, "revision %q: assessment does not match revision identity", mo.Revision)
+	}
+	return nil
+}
+
 func cleanRel(path string) (string, error) {
 	if path == "" {
 		return "", CodeError(ErrCodeNotFound, "empty path")
@@ -112,8 +129,12 @@ func (l *FileSkillLoader) loadMarketplace(ctx context.Context, res *Resource) (S
 	if !ok {
 		return SkillContent{}, CodeError(ErrCodeUnsupportedKind, "artifact decoded to %T, not a skill", resource)
 	}
-	files := make([]string, 0, len(ca.Assets))
-	for name := range ca.Assets {
+	fileMap, err := marketplaceFiles(ca)
+	if err != nil {
+		return SkillContent{}, err
+	}
+	files := make([]string, 0, len(fileMap))
+	for name := range fileMap {
 		files = append(files, name)
 	}
 	sort.Strings(files)
@@ -133,31 +154,66 @@ func (l *FileSkillLoader) readMarketplace(ctx context.Context, res *Resource, cl
 	if err != nil {
 		return "", err
 	}
-	raw, ok := ca.Assets[filepath.ToSlash(clean)]
+	files, err := marketplaceFiles(ca)
+	if err != nil {
+		return "", err
+	}
+	raw, ok := files[filepath.ToSlash(clean)]
 	if !ok {
 		return "", CodeError(ErrCodeNotFound, "artifact has no file %q", clean)
 	}
 	return string(raw), nil
 }
 
-func (l *FileSkillLoader) verifiedArtifact(ctx context.Context, mo *MarketplaceOrigin) (hccartifact.CanonicalArtifact, store.AssessedResourceRevision, error) {
-	rev, ok, err := l.Cache.ReadResourceRevision(mo.Entry.URL, mo.RegistryID, mo.Kind, mo.Name, mo.Revision)
-	if !ok || err != nil {
-		if l.Online {
-			client, cerr := marketplace.NewClient(mo.Entry.URL)
-			if cerr != nil {
-				return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "marketplace client: %v", cerr)
-			}
-			rev, err = client.GetResourceRevisionForRegistry(ctx, mo.RegistryID, mo.RegistryID, mo.Kind, mo.Name, mo.Revision)
-			if err != nil {
-				return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "revision %q: %v", mo.Revision, err)
-			}
-			if _, werr := l.Cache.WriteResourceRevision(mo.Entry.URL, mo.RegistryID, mo.Kind, mo.Name, mo.Revision, rev); werr != nil {
-				return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "cache revision: %v", werr)
-			}
-		} else {
-			return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "revision %q not in cache (offline)", mo.Revision)
+func marketplaceFiles(ca hccartifact.CanonicalArtifact) (map[string][]byte, error) {
+	files := make(map[string][]byte, len(ca.Assets)+len(ca.Support))
+	for name, data := range ca.Assets {
+		files[name] = data
+	}
+	for name, support := range ca.Support {
+		if _, dup := files[name]; dup {
+			return nil, CodeError(ErrCodeNotFound, "artifact has ambiguous file %q", name)
 		}
+		files[name] = support.Data
+	}
+	return files, nil
+}
+
+func (l *FileSkillLoader) verifiedArtifact(ctx context.Context, mo *MarketplaceOrigin) (hccartifact.CanonicalArtifact, store.AssessedResourceRevision, error) {
+	var rev store.AssessedResourceRevision
+	if l.Online {
+		client, cerr := marketplace.NewClient(mo.Entry.URL)
+		if cerr != nil {
+			return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "marketplace client: %v", cerr)
+		}
+		var err error
+		rev, err = client.GetResourceRevisionForRegistry(ctx, mo.RegistryID, mo.RegistryID, mo.Kind, mo.Name, mo.Revision)
+		if err != nil {
+			return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "revision %q: %v", mo.Revision, err)
+		}
+	} else {
+		cached, ok, err := l.Cache.ReadResourceRevision(mo.Entry.URL, mo.RegistryID, mo.Kind, mo.Name, mo.Revision)
+		if !ok || err != nil {
+			return hccartifact.CanonicalArtifact{}, cached, CodeError(ErrCodeNotFound, "revision %q not in cache (offline)", mo.Revision)
+		}
+		rev = cached
+	}
+	if err := matchRevisionIdentity(mo, rev); err != nil {
+		return hccartifact.CanonicalArtifact{}, rev, err
+	}
+	if l.Online {
+		if _, werr := l.Cache.WriteResourceRevision(mo.Entry.URL, mo.RegistryID, mo.Kind, mo.Name, mo.Revision, rev); werr != nil {
+			return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "cache revision: %v", werr)
+		}
+	}
+	switch rev.EffectiveAvailability {
+	case "", "available":
+	case "revoked":
+		return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeRevoked, "%s is revoked", mo.Name)
+	case "blocked", "policy-blocked", "operator-exposed":
+		return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeRejected, "%s is rejected", mo.Name)
+	default:
+		return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "%s is unavailable (%s)", mo.Name, rev.EffectiveAvailability)
 	}
 	if rev.Revocation != nil {
 		return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeRevoked, "%s is revoked", mo.Name)
@@ -165,7 +221,6 @@ func (l *FileSkillLoader) verifiedArtifact(ctx context.Context, mo *MarketplaceO
 	if rev.Assessment.Decision == store.AssessmentDecisionReject {
 		return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeRejected, "%s is rejected by assessment", mo.Name)
 	}
-
 	digest := string(rev.ArchiveDigest)
 	raw, verified, err := l.Cache.ReadArtifact(digest)
 	if err != nil || raw == nil || !verified {
@@ -199,6 +254,14 @@ func (l *FileSkillLoader) verifiedArtifact(ctx context.Context, mo *MarketplaceO
 	if err := ca.VerifyContentDigest(); err != nil {
 		l.Cache.InvalidateArtifactVerified(digest)
 		return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeScriptError, "verify content digest: %v", err)
+	}
+	if ca.Manifest.ArchiveDigest != digest {
+		l.Cache.InvalidateArtifactVerified(digest)
+		return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeScriptError, "archive digest %q does not match expected %q", ca.Manifest.ArchiveDigest, digest)
+	}
+	if ca.Manifest.ContentDigest != string(rev.ContentDigest) {
+		l.Cache.InvalidateArtifactVerified(digest)
+		return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeScriptError, "content digest %q does not match expected %q", ca.Manifest.ContentDigest, rev.ContentDigest)
 	}
 	_ = l.Cache.MarkArtifactVerified(digest)
 	return ca, rev, nil

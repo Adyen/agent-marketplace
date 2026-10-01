@@ -480,11 +480,16 @@ func TestServerStartLogsContentDigest(t *testing.T) {
 func TestResolveServerDefSeparatesArchiveAndContentDigests(t *testing.T) {
 	loader := &FileSkillLoader{Cache: marketplace.NewCache(t.TempDir()), Online: false}
 	srv := ir.NewMcpServer("remote", "echo", []string{"hi"}, nil, nil, ir.SourceRef{})
-	rev, archiveDigest := seedMarketplaceArtifact(t, loader.Cache, "https://mp.example", "src", "mcpserver", "remote", "r1", srv)
-	res := &Resource{Ref: "mp:tools/mcp/remote", Kind: "mcp", Name: "remote", Revision: "r1"}
+	probe, err := hccartifact.FromIR(srv)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	revision := probe.Manifest.ContentDigest
+	rev, archiveDigest := seedMarketplaceArtifact(t, loader.Cache, "https://mp.example", "src", "mcpserver", "remote", revision, srv)
+	res := &Resource{Ref: "mp:tools/mcp/remote", Kind: "mcp", Name: "remote", Revision: revision}
 	res.SetOrigin(&Origin{Marketplace: &MarketplaceOrigin{
 		Entry:      config.MarketplaceEntry{URL: "https://mp.example"},
-		RegistryID: "src", Kind: "mcpserver", Name: "remote", Revision: "r1",
+		RegistryID: "src", Kind: "mcpserver", Name: "remote", Revision: revision,
 	}})
 	def, err := loader.ResolveServerDef(context.Background(), res)
 	if err != nil {
