@@ -85,6 +85,8 @@ func TestPrepareRuntimeLocksRejectsCrossLayerObjectAlias(t *testing.T) {
 	writeSkill(t, originDir, "a", "alpha", nil)
 	commitAndPushAll(t, originDir, "seed")
 
+	writeSkill(t, originDir, "b", "beta", nil)
+	commitAndPushAll(t, originDir, "add independent install target")
 	repo := t.TempDir()
 	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
 	writeConfig(t, repoConfig, "harnesses: [factory]\nskills: [a]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
@@ -105,6 +107,10 @@ func TestPrepareRuntimeLocksRejectsCrossLayerObjectAlias(t *testing.T) {
 	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("cross-layer alias: %v, want ErrUnsafePath", err)
+	}
+	withWorkingDir(t, repo)
+	if out, err := executeCommand("install", "b", "--scope", "user"); !errors.Is(err, dependencytxn.ErrUnsafePath) {
+		t.Fatalf("staged cross-layer alias: %v, want ErrUnsafePath\n%s", err, out)
 	}
 
 	got, err := os.ReadFile(repoConfig)

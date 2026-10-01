@@ -556,13 +556,25 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 
 func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, stagedLocks map[string]pipeline.StagedLockEdit) ([]dependencytxn.ReadAssertion, error) {
 	byAlias := make(map[string]dependencytxn.ReadAssertion)
-	byPath := make(map[string]string)
+	byPath := make(map[string]config.ConfigRead)
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
-			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
-				return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
+			if previous, exists := byPath[read.Path]; exists {
+				if dependencytxn.ClassifyDestination(previous.RequestedPath) != dependencytxn.AuthorityLegacy && dependencytxn.ClassifyDestination(read.RequestedPath) != dependencytxn.AuthorityLegacy {
+					priorPath, priorErr := canonicalConfigDependencyPath(previous.RequestedPath)
+					readPath, readErr := canonicalConfigDependencyPath(read.RequestedPath)
+					if priorErr != nil || readErr != nil {
+						return nil, errors.Join(priorErr, readErr)
+					}
+					if priorPath != readPath {
+						return nil, fmt.Errorf("%w: layer destinations %s and %s resolve to the same object", dependencytxn.ErrUnsafePath, priorPath, readPath)
+					}
+				}
+				if previous.Digest != read.Digest {
+					return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
+				}
 			}
-			byPath[read.Path] = read.Digest
+			byPath[read.Path] = read
 			expected := dependencytxn.Generation{Exists: true, Digest: read.Digest}
 			if read.Overlay {
 				if staged == nil && stagedLocks == nil {
