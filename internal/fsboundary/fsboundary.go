@@ -20,20 +20,22 @@ var (
 	ErrTooLarge = errors.New("fsboundary: file too large")
 	// ErrGenerationConflict rejects an object whose captured identity no
 	// longer matches, whether replaced, linked, or mutated in place.
-	ErrGenerationConflict = errors.New("fsboundary: generation conflict")
+	ErrGenerationConflict  = errors.New("fsboundary: generation conflict")
+	ErrDurabilityUncertain = errors.New("fsboundary: namespace mutated with uncertain durability")
 )
 
 // Identity pins one opened filesystem object. It is captured from the
 // descriptor itself (fstat), so it describes the object the operation is
 // bound to regardless of how the path changes afterwards.
 type Identity struct {
-	Device    uint64
-	Inode     uint64
-	Size      int64
-	ModTimeNS int64
-	Links     uint64
-	Mode      os.FileMode
-	UID       uint32
+	Device       uint64
+	Inode        uint64
+	Size         int64
+	ModTimeNS    int64
+	ChangeTimeNS int64
+	Links        uint64
+	Mode         os.FileMode
+	UID          uint32
 }
 
 // SameObject reports whether both identities name the same filesystem
@@ -43,12 +45,13 @@ func (id Identity) SameObject(other Identity) bool {
 }
 
 // SameState reports whether both identities describe one unchanged object:
-// same device and inode, and identical size, modification time, link count,
-// mode, and owner. Any difference is a generation change.
+// same device and inode, and identical size, modification and change times,
+// link count, mode, and owner. Any difference is a generation change.
 func (id Identity) SameState(other Identity) bool {
 	return id.SameObject(other) &&
 		id.Size == other.Size &&
 		id.ModTimeNS == other.ModTimeNS &&
+		id.ChangeTimeNS == other.ChangeTimeNS &&
 		id.Links == other.Links &&
 		id.Mode == other.Mode &&
 		id.UID == other.UID

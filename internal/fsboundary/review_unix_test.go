@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -167,5 +168,117 @@ func TestReadLimitCannotOverflow(t *testing.T) {
 	defer func() { _ = file.Close() }()
 	if data, _, err := ReadFile(file, math.MaxInt64); !errors.Is(err, ErrTooLarge) || data != nil {
 		t.Fatalf("overflowing limit was not refused: bytes=%q error=%v", data, err)
+	}
+}
+
+func TestLinkResolutionRejectsNonLeadingParentComponents(t *testing.T) {
+	for _, policy := range []LinkPolicy{LinkPolicyUser, LinkPolicyRepository} {
+		t.Run(strconv.Itoa(int(policy)), func(t *testing.T) {
+			root, path := tempRoot(t)
+			mustWrite(t, filepath.Join(path, "config.yaml"), []byte("contained"), 0o600)
+			outside := filepath.Join(t.TempDir(), "outside")
+			mustMkdir(t, filepath.Join(outside, "sub"))
+			mustWrite(t, filepath.Join(outside, "config.yaml"), []byte("external"), 0o600)
+			mustSymlink(t, filepath.Join(outside, "sub"), filepath.Join(path, "sub"))
+			mustSymlink(t, "sub/../config.yaml", filepath.Join(path, "link"))
+			if dest, err := CaptureDestination(root, "link", policy); !errors.Is(err, ErrUnsafePath) {
+				if dest != nil {
+					_ = dest.Close()
+				}
+				t.Fatalf("ambiguous link text was not refused: %v", err)
+			}
+			if mustRead(t, filepath.Join(path, "config.yaml")) != "contained" || mustRead(t, filepath.Join(outside, "config.yaml")) != "external" {
+				t.Fatal("capture refusal changed bytes")
+			}
+			mustMkdir(t, filepath.Join(path, "nested"))
+			mustSymlink(t, "../config.yaml", filepath.Join(path, "nested", "control"))
+			control, err := CaptureDestination(root, "nested/control", policy)
+			if err != nil {
+				t.Fatalf("leading parent component control: %v", err)
+			}
+			defer func() { _ = control.Close() }()
+			if data, _, err := control.ReadTarget(64); err != nil || string(data) != "contained" {
+				t.Fatalf("leading parent component read: %q %v", data, err)
+			}
+		})
+	}
+}
+
+func TestReadTargetDetectsRewriteWithRestoredMtime(t *testing.T) {
+	root, path := tempRoot(t)
+	leaf := filepath.Join(path, "config.yaml")
+	mustWrite(t, leaf, []byte("before"), 0o600)
+	before := statOf(t, leaf)
+	dest, err := CaptureDestination(root, "config.yaml", LinkPolicyRepository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dest.Close() }()
+	if data, _, err := dest.ReadTarget(64); err != nil || string(data) != "before" {
+		t.Fatalf("stable control: %q %v", data, err)
+	}
+	mustWrite(t, leaf, []byte("change"), 0o600)
+	if err := os.Chtimes(leaf, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if data, _, err := dest.ReadTarget(64); !errors.Is(err, ErrGenerationConflict) || data != nil {
+		t.Fatalf("restored-mtime rewrite was accepted: %q %v", data, err)
+	}
+}
+
+func TestLinkedStagingUsesEffectiveParent(t *testing.T) {
+	root, path := tempRoot(t)
+	external, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(external, "config.yaml")
+	mustWrite(t, target, []byte("before"), 0o600)
+	mustSymlink(t, target, filepath.Join(path, "config.yaml"))
+	dest, err := CaptureDestination(root, "config.yaml", LinkPolicyUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dest.Close() }()
+	staging, err := dest.StagingDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = staging.Close() }()
+	if staging.Path() != external {
+		t.Fatalf("staging parent = %q, want target parent %q", staging.Path(), external)
+	}
+	file, name, err := staging.CreateTemp(".stage-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("updated")); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dest.Publish(staging, name); err != nil || mustRead(t, target) != "updated" {
+		t.Fatalf("target publication: %v", err)
+	}
+	if text, err := os.Readlink(filepath.Join(path, "config.yaml")); err != nil || text != target {
+		t.Fatalf("publication replaced logical link: %q %v", text, err)
+	}
+}
+
+func TestPostMutationSyncErrorRetainsUncertainOutcome(t *testing.T) {
+	root, _ := tempRoot(t)
+	if err := fsyncMutation(root.file); err != nil {
+		t.Fatalf("valid sync control: %v", err)
+	}
+	file, err := os.Open(root.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fsyncMutation(file); !errors.Is(err, ErrDurabilityUncertain) || !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("post-mutation sync error lost its outcome or cause: %v", err)
 	}
 }

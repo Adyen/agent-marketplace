@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -93,21 +94,22 @@ func validLeafName(name string) error {
 	return nil
 }
 
-// StagingDir returns a captured Dir for the destination's logical leaf
-// parent, re-verifying the logical ancestor chain against capture. A
+// StagingDir returns a captured Dir for the effective target parent,
+// re-verifying the logical and target ancestor chains against capture. A
 // renamed, removed, or replaced component is a generation conflict, so a
 // staged file can never be created below a replacement tree.
 func (d *Destination) StagingDir() (*Dir, error) {
-	parent, err := d.verifyLogical()
+	parent, err := d.verifyTarget()
 	if err != nil {
 		return nil, err
 	}
+	path := filepath.Dir(d.Path())
 	id, err := identityOf(parent)
 	if err != nil {
 		_ = parent.Close()
-		return nil, fmt.Errorf("inspect staging directory %s: %w", d.logicalParentPath, err)
+		return nil, fmt.Errorf("inspect staging directory %s: %w", path, err)
 	}
-	return &Dir{file: parent, path: d.logicalParentPath, id: id}, nil
+	return &Dir{file: parent, path: path, id: id}, nil
 }
 
 // ReadTarget reads the effective destination content below the captured

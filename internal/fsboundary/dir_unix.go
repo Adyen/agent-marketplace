@@ -220,13 +220,14 @@ func identityOf(file *os.File) (Identity, error) {
 		return Identity{}, fmt.Errorf("unexpected stat payload for %s", file.Name())
 	}
 	return Identity{
-		Device:    uint64(st.Dev),
-		Inode:     st.Ino,
-		Size:      info.Size(),
-		ModTimeNS: info.ModTime().UnixNano(),
-		Links:     uint64(st.Nlink),
-		Mode:      info.Mode(),
-		UID:       st.Uid,
+		Device:       uint64(st.Dev),
+		Inode:        st.Ino,
+		Size:         info.Size(),
+		ModTimeNS:    info.ModTime().UnixNano(),
+		ChangeTimeNS: changeTimeNS(st),
+		Links:        uint64(st.Nlink),
+		Mode:         info.Mode(),
+		UID:          st.Uid,
 	}, nil
 }
 

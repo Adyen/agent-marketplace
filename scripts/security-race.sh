@@ -29,5 +29,5 @@ run_race() {
 # (internal/fsboundary): leaf/parent replacement barriers and post-read
 # identity stability.
 run_race ./internal/fsboundary \
-    -run '^Test(Descriptor(Leaf|Parent)ReplacementBarrier|ReadFilePostReadStability|ReadTargetRejectsReplacementAfterPrecheck|NestedOpenFailureClosesCapturedDirectories|PublishRejectsPathShapedStagedNames|ReadLimitCannotOverflow|ChainedLinkRetargetingRefuses)$' \
+    -run '^Test(Descriptor(Leaf|Parent)ReplacementBarrier|ReadFilePostReadStability|ReadTargetRejectsReplacementAfterPrecheck|NestedOpenFailureClosesCapturedDirectories|PublishRejectsPathShapedStagedNames|ReadLimitCannotOverflow|ChainedLinkRetargetingRefuses|LinkResolutionRejectsNonLeadingParentComponents|ReadTargetDetectsRewriteWithRestoredMtime|LinkedStagingUsesEffectiveParent)$' \
     -count=20

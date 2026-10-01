@@ -112,13 +112,14 @@ func identityFromFileInfo(t *testing.T, info os.FileInfo) Identity {
 		t.Fatalf("no stat_t for %s", info.Name())
 	}
 	return Identity{
-		Device:    uint64(st.Dev),
-		Inode:     st.Ino,
-		Size:      st.Size,
-		ModTimeNS: info.ModTime().UnixNano(),
-		Links:     uint64(st.Nlink),
-		Mode:      info.Mode().Perm(),
-		UID:       st.Uid,
+		Device:       uint64(st.Dev),
+		Inode:        st.Ino,
+		Size:         st.Size,
+		ModTimeNS:    info.ModTime().UnixNano(),
+		ChangeTimeNS: changeTimeNS(st),
+		Links:        uint64(st.Nlink),
+		Mode:         info.Mode().Perm(),
+		UID:          st.Uid,
 	}
 }
 
@@ -336,10 +337,10 @@ func TestReadFilePostReadStability(t *testing.T) {
 		path := filepath.Join(rootPath, "rewrite-mid")
 		mustWrite(t, path, bytes.Repeat([]byte("x"), limit), 0o600)
 		file := open("rewrite-mid")
+		original := statOf(t, path).ModTime()
 		barrier := func(_ *os.File) {
 			mustWrite(t, path, bytes.Repeat([]byte("y"), limit), 0o600)
-			later := time.Now().Add(time.Hour)
-			if err := os.Chtimes(path, later, later); err != nil {
+			if err := os.Chtimes(path, original, original); err != nil {
 				t.Fatalf("chtimes: %v", err)
 			}
 		}

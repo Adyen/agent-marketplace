@@ -16,16 +16,18 @@
 // with an explicit link policy ([LinkPolicyUser] or
 // [LinkPolicyRepository]); publication re-verifies the captured generation
 // immediately before the descriptor-relative rename and reports
-// [ErrGenerationConflict] on any replacement.
+// [ErrGenerationConflict] for replacements observed by that validation.
 //
-// Exclusion across a capture/publish window is the caller's domain lock
-// (for example the dependency-transaction path locks or the ownership
-// flock); these primitives make every check descriptor-relative so that
-// holding such a lock is sufficient.
+// Exclusion across a capture/publish window is the caller's responsibility.
+// Domain locks coordinate cooperating writers; they do not exclude processes
+// that ignore the lock. Descriptor-relative operations contain ancestor
+// redirection but validation and the final rename or unlink are not an atomic
+// namespace compare-and-swap against uncooperative directory-entry writers.
 //
-// Refusal preserves state: a failed capture, read, precondition, or
-// publication changes no user bytes, modes, mtimes, or links, and removes
-// only residue created by the failed attempt itself.
+// Pre-mutation refusal preserves user bytes, modes, mtimes, and links.
+// Directory-sync failures after a successful rename or unlink report
+// ErrDurabilityUncertain: namespace mutation occurred, but durable persistence
+// is uncertain. Callers must inspect or recover that state, not assume refusal.
 //
 // Supported platforms are macOS and Linux only.
 package fsboundary

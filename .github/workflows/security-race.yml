@@ -18,7 +18,7 @@ on:
 concurrency:
   # Never cancel an in-progress run: each pushed SHA owes its own completed
   # run as evidence, and a cancelled run blocks submission for that SHA.
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
 
 permissions:

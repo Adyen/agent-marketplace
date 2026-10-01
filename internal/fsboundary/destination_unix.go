@@ -171,6 +171,13 @@ func (d *Destination) captureTarget(root *Dir, policy LinkPolicy) error {
 		if hops > maxLinkHops {
 			return fmt.Errorf("%w: link chain over %d hops at %s", ErrUnsafePath, maxLinkHops, d.leafName)
 		}
+		seenComponent := false
+		for _, component := range strings.Split(text, string(filepath.Separator)) {
+			if component == ".." && seenComponent {
+				return fmt.Errorf("%w: non-leading parent component in link target", ErrUnsafePath)
+			}
+			seenComponent = seenComponent || component != "" && component != "." && component != ".."
+		}
 		candidate := text
 		if !filepath.IsAbs(candidate) {
 			candidate = filepath.Join(basePath, text)
@@ -428,10 +435,10 @@ func (d *Destination) Publish(stagedParent *Dir, stagedName string) error {
 	); err != nil {
 		return fmt.Errorf("publish %s: %w", d.Path(), err)
 	}
-	if err := fsyncFd(targetParent); err != nil {
+	if err := fsyncMutation(targetParent); err != nil {
 		return err
 	}
-	return fsyncFd(stagedParent.file)
+	return fsyncMutation(stagedParent.file)
 }
 
 // RemoveLeaf removes the captured logical leaf. For an honored user or
@@ -471,7 +478,7 @@ func (d *Destination) RemoveLeaf() error {
 		if err := unix.Unlinkat(int(logicalFd.Fd()), d.leafName, 0); err != nil {
 			return fmt.Errorf("remove link %s: %w", d.leafName, err)
 		}
-		return fsyncFd(logicalFd)
+		return fsyncMutation(logicalFd)
 	}
 
 	if err := d.verifyLeaf(logicalFd); err != nil {
@@ -483,7 +490,7 @@ func (d *Destination) RemoveLeaf() error {
 	if err := unix.Unlinkat(int(logicalFd.Fd()), d.leafName, 0); err != nil {
 		return fmt.Errorf("remove %s: %w", d.leafName, err)
 	}
-	return fsyncFd(logicalFd)
+	return fsyncMutation(logicalFd)
 }
 
 // walkCapture opens each component of parts below start with no-follow
@@ -644,6 +651,13 @@ func openFilesystemRoot() (*os.File, error) {
 	}
 	file := os.NewFile(uintptr(fd), "/")
 	return file, nil
+}
+
+func fsyncMutation(file *os.File) error {
+	if err := fsyncFd(file); err != nil {
+		return fmt.Errorf("%w: %w", ErrDurabilityUncertain, err)
+	}
+	return nil
 }
 
 // fsyncFd flushes a directory descriptor's metadata to stable storage.
