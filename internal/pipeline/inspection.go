@@ -97,7 +97,8 @@ func isSoftResolveIssue(err error) bool {
 	return resolver.IsSoftSelectedNotFound(err) ||
 		resolver.IsSoftSelectedMalformed(err) ||
 		resolver.IsNameCollision(err) ||
-		resolver.IsWarning(err)
+		resolver.IsWarning(err) ||
+		IsMarketplaceCacheMetadataMissingWarning(err)
 }
 
 func buildInspection(resolved ResolveResult, report *materialize.Report, matErr error) InspectionResult {

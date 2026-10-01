@@ -80,6 +80,13 @@ type ResolveOptions struct {
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
+	// MarketplaceArtifactsFromCache resolves Marketplace selections into
+	// materializable artifacts from verified local cache evidence during
+	// inspect-mode resolution — exactly the semantics offline sync uses. No
+	// artifacts are downloaded and no config or lock file is written; the
+	// inspect-mode pin table is computed unchanged. Only status and doctor set
+	// it; every other caller keeps metadata-only inspect behavior.
+	MarketplaceArtifactsFromCache bool
 }
 
 type ResolveResult struct {
@@ -95,15 +102,21 @@ type ResolveResult struct {
 	LockMetadata          []LockMetadata
 	MarketplaceStatuses   []marketplace.PinStatus
 	MarketplaceInspection *marketplace.Inspection
-	ConfigErrors          []error
-	CatalogErrors         []error
-	ResolveErrors         []error
-	Errors                []error
-	Warnings              []error
-	TargetHarnesses       []hcc.Target
-	TargetHarnessSource   config.Source
-	Managed               bool
-	Diagnostics           config.ManagedInstallationDiagnostics
+	// MarketplaceArtifactResolver resolves Marketplace selections to artifacts
+	// from the verified local cache. It is set only when
+	// MarketplaceArtifactsFromCache was honored, and lets a caller that
+	// re-resolves outside the pipeline — status's local-exclude diff — select
+	// the same Marketplace artifacts the pipeline did.
+	MarketplaceArtifactResolver resolver.MarketplaceResolver
+	ConfigErrors                []error
+	CatalogErrors               []error
+	ResolveErrors               []error
+	Errors                      []error
+	Warnings                    []error
+	TargetHarnesses             []hcc.Target
+	TargetHarnessSource         config.Source
+	Managed                     bool
+	Diagnostics                 config.ManagedInstallationDiagnostics
 }
 
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
@@ -580,6 +593,19 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		result.MarketplaceStatuses = inspection.Pins
 		result.MarketplaceInspection = &inspection
 		mpResolver = inspection
+		if opts.MarketplaceArtifactsFromCache {
+			// The read-only commands need the same desired set sync computes,
+			// from the verified local cache only. The transient organization
+			// wrapper is applied whenever the transient organization lock is
+			// in use — it forces organization entries to CachedNoFetch — so
+			// organization selections expand exactly as in sync.
+			var artifactDelegate resolver.MarketplaceResolver = marketplaceResolver
+			if transientOrganizationMarketplaceLock != transientOrganizationMarketplaceLockUnused {
+				artifactDelegate = transientOrganizationMarketplaceResolver{delegate: marketplaceResolver}
+			}
+			result.MarketplaceArtifactResolver = marketplaceCacheArtifactResolver{delegate: artifactDelegate, pins: inspection.Pins}
+			mpResolver = result.MarketplaceArtifactResolver
+		}
 	}
 	marketplaceCfg := loadedCfg
 	if loadedCfg != nil && opts.MarketplaceSourceFilter != nil {
@@ -613,7 +639,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			errs = append(errs, resolveErr)
 			continue
 		}
-		if resolver.IsWarning(resolveErr) {
+		if resolver.IsWarning(resolveErr) || IsMarketplaceCacheMetadataMissingWarning(resolveErr) {
 			continue
 		}
 		if resolver.IsSoftSelectedNotFound(resolveErr) || resolver.IsSoftSelectedMalformed(resolveErr) {
