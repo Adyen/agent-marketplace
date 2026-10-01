@@ -55,3 +55,7 @@ run_race ./internal/fsboundary \
 run_race ./internal/materialize \
     -run '^TestRun(CacheLinkPublicationRefusesReplacedParent|CacheLinkPublicationRefusesReplacedLeaf|ManagedCacheLinksUpdateAndRepeat)$' \
     -count=20
+
+run_race ./internal/materialize \
+    -run '^TestRun(MarkerMergeRefusesExternalAlias|ContainedMarkerAliasesPreserveNativeContent|ReadOnlyMarkerMergeRefusesExternalAlias|McpServerReplacesExistingSymlinkWithMergedFile)$' \
+    -count=20
