@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
 // stateVersion is the on-disk schema version. A record with an unknown version
@@ -62,6 +63,20 @@ type Entry struct {
 	// it, and only as a sha256 digest, so no hook payload can ride along in
 	// this field. Absent means "no source proof", never a guess.
 	SourceDigest string `json:"source_digest,omitempty"`
+	// SourceEvidence records every additional (resource, source fingerprint)
+	// pair a multi-source native writer proved for this entry, under the
+	// same non-secret validation rules as the scalar evidence. Readers must
+	// never add tuples while reading, and a tuple only ever matches its
+	// exact pair.
+	SourceEvidence []HookSourceEvidence `json:"source_evidence,omitempty"`
+}
+
+// HookSourceEvidence is one additional contributing source for an owned
+// native hook entry: the marketplace resource name and the version-1
+// source-hook fingerprint of one selected hook that produced the entry.
+type HookSourceEvidence struct {
+	Resource     string `json:"resource"`
+	SourceDigest string `json:"source_digest"`
 }
 
 // EntryID is the identity half of an [Entry], with no value digest, so a caller
@@ -212,6 +227,17 @@ func validateEntry(e Entry) error {
 	if e.SourceDigest != "" && (e.Kind != KindHook || !digestPattern.MatchString(e.SourceDigest)) {
 		return fmt.Errorf("%w: source digest must be a sha256 digest on a hook entry", ErrUnsafeStateValue)
 	}
+	if len(e.SourceEvidence) > 0 && e.Kind != KindHook {
+		return fmt.Errorf("%w: source evidence is valid only on hook entries", ErrUnsafeStateValue)
+	}
+	for _, ev := range e.SourceEvidence {
+		if !safeToken.MatchString(ev.Resource) {
+			return fmt.Errorf("%w: source evidence resource name", ErrUnsafeStateValue)
+		}
+		if !digestPattern.MatchString(ev.SourceDigest) {
+			return fmt.Errorf("%w: source evidence digest is not a sha256 digest", ErrUnsafeStateValue)
+		}
+	}
 	return nil
 }
 
@@ -317,8 +343,11 @@ func (s *Store) Load() (*Record, error) {
 		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %v", ErrStateCorrupt, err))
 	}
 	var rec Record
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: malformed JSON", ErrStateCorrupt))
+	// The typed jsonc decode rejects literal duplicate keys and case-folded
+	// aliases for modeled fields (including nested source_evidence members)
+	// before any value reaches the record.
+	if err := jsonc.Unmarshal(s.StateFile(), data, &rec); err != nil {
+		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: malformed state JSON", ErrStateCorrupt))
 	}
 	normalizeHookEntries(&rec)
 	if err := validateRecord(&rec, s.canonicalRoot, s.rootKey); err != nil {
@@ -547,6 +576,32 @@ func (p Proof) SourceDigest(id EntryID) (string, bool) {
 		return "", false
 	}
 	return e.SourceDigest, true
+}
+
+// HasHookSource reports whether the recorded entry for id proves that the
+// selected hook named by (resource, digest) contributed to it — either as the
+// entry's scalar resource/fingerprint pair or as one exact source_evidence
+// tuple. It is evidence lookup only, never a current-byte grant: an absent
+// digest, an unknown identity, a non-hook entry, and the zero Proof all
+// return false, and the caller remains responsible for the complete
+// owned-clean classification of every matching entry.
+func (p Proof) HasHookSource(id EntryID, resource, digest string) bool {
+	if digest == "" {
+		return false
+	}
+	e, ok := p.entries[id.mapKey()]
+	if !ok || e.Kind != KindHook {
+		return false
+	}
+	if e.Resource == resource && e.SourceDigest == digest {
+		return true
+	}
+	for _, ev := range e.SourceEvidence {
+		if ev.Resource == resource && ev.SourceDigest == digest {
+			return true
+		}
+	}
+	return false
 }
 
 // appendLengthPrefixed adds a length-prefixed string to buf. It is used to build
