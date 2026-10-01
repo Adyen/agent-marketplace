@@ -123,7 +123,7 @@ test.describe('Marketplace layout at 768px', () => {
 
     await page.evaluate(() => window.scrollTo(0, 500))
     expect((await sidebar.boundingBox())!.y).toBeCloseTo(88, 0)
-    expect((await search.boundingBox())!.y).toBeLessThan(88)
+    expect((await search.boundingBox())!.y).toBeCloseTo(88, 0)
   })
 
   // spec: marketplace-browser/expanded-filter-rail-scrolls-to-final-registry
@@ -181,6 +181,45 @@ test.describe('Marketplace layout at 1440px', () => {
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeInViewport()
     await expect(page.getByRole('tab', { name: 'Content', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByTestId('safe-markdown')).toBeInViewport()
+  })
+
+  // spec: marketplace-browser/catalog-controls-stick-while-resource-rows-scroll
+  test('keeps catalog controls and filters sticky while resource rows scroll', async ({ page }) => {
+    await page.goto('/')
+    await page.locator('article').last().evaluate((element) => {
+      element.style.minHeight = '2000px'
+    })
+
+    const introduction = page.locator('.marketplace-intro')
+    const controls = page.locator('.catalog-results__controls')
+    const filters = page.locator('.catalog-sidebar__sticky')
+    const firstResult = page.locator('article').first()
+    await expect(controls).toHaveCSS('position', 'sticky')
+
+    await page.evaluate(() => window.scrollTo(0, 500))
+    await expect(introduction).not.toBeInViewport()
+    const [controlsBefore, filtersBefore, resultBefore] = await Promise.all([
+      controls.boundingBox(),
+      filters.boundingBox(),
+      firstResult.boundingBox(),
+    ])
+
+    expect(controlsBefore).not.toBeNull()
+    expect(filtersBefore).not.toBeNull()
+    expect(resultBefore).not.toBeNull()
+    expect(controlsBefore!.y).toBeCloseTo(88, 0)
+    expect(filtersBefore!.y).toBeCloseTo(88, 0)
+
+    await page.evaluate(() => window.scrollTo(0, 700))
+    const [controlsAfter, filtersAfter, resultAfter] = await Promise.all([
+      controls.boundingBox(),
+      filters.boundingBox(),
+      firstResult.boundingBox(),
+    ])
+
+    expect(controlsAfter!.y).toBeCloseTo(controlsBefore!.y, 0)
+    expect(filtersAfter!.y).toBeCloseTo(filtersBefore!.y, 0)
+    expect(resultAfter!.y).toBeLessThan(resultBefore!.y)
   })
 
   test('keeps search and results anchored while search applies', async ({ page }) => {

@@ -197,120 +197,122 @@ useHead({
             </aside>
 
             <div class="catalog-results">
-              <form
-                id="marketplace-search"
-                class="catalog-search"
-                role="search"
-                @submit.prevent="submitSearch"
-              >
-                <label for="search-query" class="sr-only">Search</label>
-                <UInput
-                  id="search-query"
-                  v-model="draft.q"
-                  size="lg"
-                  placeholder="Search resources..."
-                  autocomplete="off"
-                  icon="i-lucide-search"
-                  color="primary"
-                  class="w-full"
-                  :ui="{ base: 'h-10 focus-visible:ring-primary' }"
-                />
-                <UButton
-                  type="button"
-                  size="sm"
-                  color="neutral"
-                  variant="outline"
-                  icon="i-lucide-list-filter"
-                  aria-controls="mobile-resource-filters"
-                  :aria-expanded="filtersOpen"
-                  class="mobile-filter-toggle"
-                  @click="filtersOpen = !filtersOpen"
+              <div class="catalog-results__controls">
+                <form
+                  id="marketplace-search"
+                  class="catalog-search"
+                  role="search"
+                  @submit.prevent="submitSearch"
                 >
-                  Filters<span v-if="activeFilterCount"> ({{ activeFilterCount }})</span>
-                </UButton>
-              </form>
-
-              <div
-                id="mobile-resource-filters"
-                class="mobile-resource-filters"
-                :data-open="filtersOpen"
-              >
-                <CatalogFilterRail
-                  id-prefix="mobile-catalog-filter"
-                  :kind="draft.kind"
-                  :registry="draft.registry"
-                  :registries="registries ?? []"
-                  :kinds="supportedKinds"
-                  @update:kind="updateKind"
-                  @update:registry="updateRegistries"
-                />
-              </div>
-
-              <header class="catalog-results__header">
-                <h2 id="results-heading" tabindex="-1">Resources</h2>
-                <p>
-                  {{ resultCountLabel }}
-                  <span
-                    data-testid="search-update-status"
-                    :class="{ 'catalog-results__updating--visible': searchUpdating }"
-                    class="catalog-results__updating"
+                  <label for="search-query" class="sr-only">Search</label>
+                  <UInput
+                    id="search-query"
+                    v-model="draft.q"
+                    size="lg"
+                    placeholder="Search resources..."
+                    autocomplete="off"
+                    icon="i-lucide-search"
+                    color="primary"
+                    class="w-full"
+                    :ui="{ base: 'h-10 focus-visible:ring-primary' }"
+                  />
+                  <UButton
+                    type="button"
+                    size="sm"
+                    color="neutral"
+                    variant="outline"
+                    icon="i-lucide-list-filter"
+                    aria-controls="mobile-resource-filters"
+                    :aria-expanded="filtersOpen"
+                    class="mobile-filter-toggle"
+                    @click="filtersOpen = !filtersOpen"
                   >
-                    · Updating…
-                  </span>
+                    Filters<span v-if="activeFilterCount"> ({{ activeFilterCount }})</span>
+                  </UButton>
+                </form>
+
+                <div
+                  id="mobile-resource-filters"
+                  class="mobile-resource-filters"
+                  :data-open="filtersOpen"
+                >
+                  <CatalogFilterRail
+                    id-prefix="mobile-catalog-filter"
+                    :kind="draft.kind"
+                    :registry="draft.registry"
+                    :registries="registries ?? []"
+                    :kinds="supportedKinds"
+                    @update:kind="updateKind"
+                    @update:registry="updateRegistries"
+                  />
+                </div>
+
+                <header class="catalog-results__header">
+                  <h2 id="results-heading" tabindex="-1">Resources</h2>
+                  <p>
+                    {{ resultCountLabel }}
+                    <span
+                      data-testid="search-update-status"
+                      :class="{ 'catalog-results__updating--visible': searchUpdating }"
+                      class="catalog-results__updating"
+                    >
+                      · Updating…
+                    </span>
+                  </p>
+                </header>
+
+                <div
+                  v-if="activeFilterCount"
+                  class="catalog-active-filters"
+                  aria-label="Active filters"
+                >
+                  <button
+                    v-if="draft.kind"
+                    type="button"
+                    class="catalog-filter-chip"
+                    :aria-label="`Remove ${kindLabel(draft.kind)} kind filter`"
+                    @click="draft.kind = ''"
+                  >
+                    {{ kindLabel(draft.kind) }}
+                    <UIcon name="i-lucide-x" aria-hidden="true" />
+                  </button>
+                  <button
+                    v-for="registry in draft.registry"
+                    :key="registry"
+                    type="button"
+                    class="catalog-filter-chip"
+                    :aria-label="`Remove ${registry} registry filter`"
+                    @click="removeRegistry(registry)"
+                  >
+                    {{ registry }}
+                    <UIcon name="i-lucide-x" aria-hidden="true" />
+                  </button>
+                  <UButton
+                    type="button"
+                    size="sm"
+                    color="primary"
+                    variant="link"
+                    class="clear-filters"
+                    @click="resetSearch"
+                  >
+                    Clear
+                  </UButton>
+                </div>
+
+                <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                  {{ resultStatus }}
                 </p>
-              </header>
 
-              <div
-                v-if="activeFilterCount"
-                class="catalog-active-filters"
-                aria-label="Active filters"
-              >
-                <button
-                  v-if="draft.kind"
-                  type="button"
-                  class="catalog-filter-chip"
-                  :aria-label="`Remove ${kindLabel(draft.kind)} kind filter`"
-                  @click="draft.kind = ''"
-                >
-                  {{ kindLabel(draft.kind) }}
-                  <UIcon name="i-lucide-x" aria-hidden="true" />
-                </button>
-                <button
-                  v-for="registry in draft.registry"
-                  :key="registry"
-                  type="button"
-                  class="catalog-filter-chip"
-                  :aria-label="`Remove ${registry} registry filter`"
-                  @click="removeRegistry(registry)"
-                >
-                  {{ registry }}
-                  <UIcon name="i-lucide-x" aria-hidden="true" />
-                </button>
-                <UButton
-                  type="button"
-                  size="sm"
-                  color="primary"
-                  variant="link"
-                  class="clear-filters"
-                  @click="resetSearch"
-                >
-                  Clear
-                </UButton>
+                <UAlert
+                  v-if="metadataError"
+                  color="warning"
+                  variant="subtle"
+                  icon="i-lucide-info"
+                  title="Instance metadata is unavailable"
+                  description="Search still works, but this instance's capability filters may be incomplete."
+                  class="my-4"
+                />
               </div>
-
-              <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
-                {{ resultStatus }}
-              </p>
-
-              <UAlert
-                v-if="metadataError"
-                color="warning"
-                variant="subtle"
-                icon="i-lucide-info"
-                title="Instance metadata is unavailable"
-                description="Search still works, but this instance's capability filters may be incomplete."
-                class="my-4"
-              />
 
               <div
                 v-if="pending && !results"
@@ -711,6 +713,19 @@ useHead({
 
   .catalog-results {
     padding-top: 1.55rem;
+  }
+
+  .catalog-results__controls {
+    position: sticky;
+    top: 88px;
+    z-index: 10;
+    display: flow-root;
+    padding-bottom: 14px;
+    background: var(--am-color-bg-surface);
+  }
+
+  .catalog-search-content {
+    margin-top: 0;
   }
 
   .catalog-search {
