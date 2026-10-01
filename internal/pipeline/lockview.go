@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
@@ -193,16 +194,31 @@ func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries
 			return lockfile.Document{}, &LockViewError{Code: "lock.trust", Scope: scope, Path: path, Err: err}
 		}
 	}
-	data, err := lockfile.ReadBytes(path)
-	if err != nil {
-		if scope == lockfile.ScopeOrganization && errors.Is(err, os.ErrNotExist) {
-			return lockfile.Document{}, nil
+	var data []byte
+	var err error
+	if dependencytxn.ClassifyDestination(path) != dependencytxn.AuthorityLegacy {
+		// A managed layer lock reads through the descriptor boundary so an
+		// approved contained link resolves to its captured target.
+		raw, generation, _, readErr := dependencytxn.ReadSnapshot(path)
+		if readErr != nil {
+			return lockfile.Document{}, &LockViewError{Code: "lock.read", Scope: scope, Path: path, Err: readErr}
 		}
-		code := "lock.read"
-		if errors.Is(err, os.ErrNotExist) {
-			code = "lock.missing"
+		if !generation.Exists {
+			return lockfile.Document{}, &LockViewError{Code: "lock.missing", Scope: scope, Path: path, Err: os.ErrNotExist}
 		}
-		return lockfile.Document{}, &LockViewError{Code: code, Scope: scope, Path: path, Err: err}
+		data = raw
+	} else {
+		data, err = lockfile.ReadBytes(path)
+		if err != nil {
+			if scope == lockfile.ScopeOrganization && errors.Is(err, os.ErrNotExist) {
+				return lockfile.Document{}, nil
+			}
+			code := "lock.read"
+			if errors.Is(err, os.ErrNotExist) {
+				code = "lock.missing"
+			}
+			return lockfile.Document{}, &LockViewError{Code: code, Scope: scope, Path: path, Err: err}
+		}
 	}
 	doc, err := lockfile.Decode(data)
 	if err == nil {

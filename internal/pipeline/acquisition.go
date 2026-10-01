@@ -33,7 +33,17 @@ func NeedsLockBootstrap(errs []error) bool {
 }
 
 func ReadLayerLock(path string, scope lockfile.Scope) (*lockfile.Document, dependencytxn.Generation, bool, error) {
-	data, err := lockfile.ReadBytes(path)
+	var data []byte
+	var err error
+	if dependencytxn.ClassifyDestination(path) != dependencytxn.AuthorityLegacy {
+		var generation dependencytxn.Generation
+		data, generation, _, err = dependencytxn.ReadSnapshot(path)
+		if err == nil && !generation.Exists {
+			return nil, dependencytxn.Generation{}, false, nil
+		}
+	} else {
+		data, err = lockfile.ReadBytes(path)
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, dependencytxn.Generation{}, false, nil
 	}
