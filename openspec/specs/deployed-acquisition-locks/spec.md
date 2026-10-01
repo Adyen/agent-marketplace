@@ -65,3 +65,12 @@ An online consumer MAY reuse verified in-memory organization Marketplace evidenc
 
 - **WHEN** the effective target harnesses change between two resolutions in the same invocation
 - **THEN** the second resolution MUST reacquire organization Marketplace evidence for the new target harnesses
+
+### Requirement: Organization acquisition errors preserve independent diagnostics
+
+An organization acquisition failure SHALL replace the stale organization missing-evidence diagnostic without discarding errors from independent configuration layers.
+
+#### Scenario: Independent layer errors survive organization acquisition failure
+
+- **WHEN** organization acquisition fails and another configuration layer has an independent error
+- **THEN** both the actual organization acquisition failure and the independent error SHALL remain available to the consumer

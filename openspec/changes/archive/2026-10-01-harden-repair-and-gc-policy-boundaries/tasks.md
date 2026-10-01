@@ -15,6 +15,6 @@
 ## 3. Verification and archive
 
 - [x] 3.1 Record baseline and final doctor and GC benchmark measurements.
-- [ ] 3.2 Run focused tests, local validation, combined E2E/configuration compatibility, and final adversarial review; address findings.
-- [ ] 3.3 Validate strict OpenSpec deltas, scenario annotations, and the PR behavior-change gate.
-- [ ] 3.4 Run `openspec archive harden-repair-and-gc-policy-boundaries --yes` as the final commit of the implementation.
+- [x] 3.2 Run focused tests, local validation, combined E2E/configuration compatibility, and final adversarial review; address findings.
+- [x] 3.3 Validate strict OpenSpec deltas, scenario annotations, and the PR behavior-change gate.
+- [x] 3.4 Run `openspec archive harden-repair-and-gc-policy-boundaries --yes` as the final commit of the implementation.
