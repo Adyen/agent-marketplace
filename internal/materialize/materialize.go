@@ -164,6 +164,7 @@ type portableState struct {
 }
 
 type portableSyncContext struct {
+	boundary     *destinationBoundary
 	state        *portableState
 	target       hcc.Target
 	reportPrefix string
@@ -399,9 +400,10 @@ func (s *portableState) save(dryRun bool) error {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	dryRun      bool
-	scopeFilter *bool // nil = all scopes; true = machine only; false = repo only
-	modes       config.MaterializationModes
+	dryRun              bool
+	scopeFilter         *bool // nil = all scopes; true = machine only; false = repo only
+	modes               config.MaterializationModes
+	linkPublicationHook func(string)
 }
 
 // WithMaterializationModes supplies the already-resolved scope policy. Keeping
@@ -444,13 +446,14 @@ type targetWork struct {
 
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
-	scopeFilter      *bool
-	allDiags         []diag.Diagnostic
-	byTarget         map[outputKey]*targetWork
-	skillLinks       map[outputKey]map[string]*skillLinkGroup
-	allOutputs       map[outputKey]bool
-	blocked          blockedOutputs
-	blockedResources []BlockedResource
+	linkPublicationHook func(string)
+	scopeFilter         *bool
+	allDiags            []diag.Diagnostic
+	byTarget            map[outputKey]*targetWork
+	skillLinks          map[outputKey]map[string]*skillLinkGroup
+	allOutputs          map[outputKey]bool
+	blocked             blockedOutputs
+	blockedResources    []BlockedResource
 	// artifactMeta maps (outputKey → artifact relative path → skillLink metadata)
 	// for artifacts that remain in result.Artifacts (not extracted into skillLinks).
 	// Used to generate rich collision hints in syncArtifactLinks.
@@ -517,6 +520,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	slog.Debug("materialize compile complete", "targets", len(compileResult.byTarget), "diagnostics", len(compileResult.allDiags))
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
+	compileResult.linkPublicationHook = rc.linkPublicationHook
 	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes)
 	slog.Info("materialize end",
 		"duration_ms", time.Since(start).Milliseconds(),
@@ -1176,7 +1180,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				continue
 			}
 		}
-		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome}
+		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook}
 		if key.target == hcc.TargetFactory {
 			boundary.legacySkillsDir = filepath.Join(outDir, "skills")
 		}
@@ -1326,7 +1330,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		if mode == config.MaterializationModeFile {
 			writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired)
 		} else {
-			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired})
+			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired, boundary: &boundary})
 		}
 		if matErr != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{
@@ -1487,7 +1491,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			if mode == config.MaterializationModeFile {
 				tr, err = syncPortableSkillTrees(groupDir, symlinkLinks, dryRun, state, key.target, group.reportPrefix, fileDesired)
 			} else {
-				tr, err = syncSkillLinks(groupDir, symlinkLinks, dryRun, !componentBlocked(blocked, group.installDirRel), portableSyncContext{state: state, target: key.target, reportPrefix: group.reportPrefix, desired: fileDesired})
+				tr, err = syncSkillLinks(groupDir, symlinkLinks, dryRun, !componentBlocked(blocked, group.installDirRel), portableSyncContext{state: state, target: key.target, reportPrefix: group.reportPrefix, desired: fileDesired, boundary: &boundary})
 			}
 			report = appendGroupReport(report, key, outDir, group.reportPrefix, tr, err, "materialize target %s to %s")
 			if err != nil {
@@ -2674,7 +2678,7 @@ func ensureSymlinkPath(linkPath, target string, dryRun bool) ensureSymlinkResult
 	return ensureSymlinkPathWithOwnership(linkPath, target, dryRun, false)
 }
 
-func ensureSymlinkPathWithOwnership(linkPath, target string, dryRun bool, manifestOwned bool) ensureSymlinkResult {
+func ensureSymlinkPathWithOwnership(linkPath, target string, dryRun bool, manifestOwned bool, boundary ...*destinationBoundary) ensureSymlinkResult {
 	info, err := os.Lstat(linkPath)
 	switch {
 	case err == nil:
@@ -2708,34 +2712,11 @@ func ensureSymlinkPathWithOwnership(linkPath, target string, dryRun bool, manife
 		return ensureSymlinkResult{}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
-		return ensureSymlinkResult{err: err}
+	var capturedBoundary *destinationBoundary
+	if len(boundary) > 0 {
+		capturedBoundary = boundary[0]
 	}
-	if info != nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
-		if err := os.RemoveAll(linkPath); err != nil && !os.IsNotExist(err) {
-			return ensureSymlinkResult{err: err}
-		}
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(linkPath), ".agent-marketplace-link-*")
-	if err != nil {
-		return ensureSymlinkResult{err: err}
-	}
-	tmpPath := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return ensureSymlinkResult{err: err}
-	}
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
-		return ensureSymlinkResult{err: err}
-	}
-	if err := os.Symlink(target, tmpPath); err != nil {
-		return ensureSymlinkResult{err: err}
-	}
-	if err := os.Rename(tmpPath, linkPath); err != nil {
-		return ensureSymlinkResult{err: err}
-	}
-	return ensureSymlinkResult{}
+	return ensureSymlinkResult{err: publishCacheLink(linkPath, target, info, capturedBoundary)}
 }
 
 // portableOwnership is the verdict for a manifest-claimed output that is no
@@ -3247,7 +3228,11 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 				migrationAllowed = true
 			}
 		}
-		result := ensureSymlinkPathWithOwnership(linkPath, cacheTarget, dryRun, migrationAllowed)
+		var boundary *destinationBoundary
+		if len(portable) > 0 {
+			boundary = portable[0].boundary
+		}
+		result := ensureSymlinkPathWithOwnership(linkPath, cacheTarget, dryRun, migrationAllowed, boundary)
 		if result.err != nil {
 			return report, diags, result.err
 		}
@@ -3870,7 +3855,11 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				migrationAllowed = true
 			}
 		}
-		result := ensureSymlinkPathWithOwnership(linkPath, targetPath, dryRun, migrationAllowed)
+		var boundary *destinationBoundary
+		if len(portable) > 0 {
+			boundary = portable[0].boundary
+		}
+		result := ensureSymlinkPathWithOwnership(linkPath, targetPath, dryRun, migrationAllowed, boundary)
 		if result.err != nil {
 			return report, result.err
 		}

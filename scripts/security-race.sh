@@ -47,3 +47,11 @@ run_race ./internal/fsboundary \
 run_race ./internal/materialize \
     -run '^TestRun(RejectsEscapingHarnessRoot|HarnessRootAliasesRemainUsable|UnsafeRootShapesPreserveState|UnsafeOutputAncestorPreservesState|RootAdmissionDryRunCreatesNoOutput|CreatesMissingMachineScope|CodexRelocationCreatesOnlyConfiguredPartition)$' \
     -count=20
+
+run_race ./internal/fsboundary \
+    -run '^TestNativeRootRetainsCapturedDirectoryAuthority$' \
+    -count=20
+
+run_race ./internal/materialize \
+    -run '^TestRun(CacheLinkPublicationRefusesReplacedParent|CacheLinkPublicationRefusesReplacedLeaf|ManagedCacheLinksUpdateAndRepeat)$' \
+    -count=20

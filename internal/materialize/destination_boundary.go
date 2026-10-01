@@ -13,14 +13,23 @@ import (
 )
 
 type destinationBoundary struct {
-	machineScope    bool
-	repoRoot        string
-	homeDir         string
-	roots           []string
-	legacySkillsDir string
+	machineScope        bool
+	repoRoot            string
+	homeDir             string
+	roots               []string
+	legacySkillsDir     string
+	linkPublicationHook func(string)
 }
 
 func (b destinationBoundary) directory(dir string, create bool) error {
+	captured, err := b.captureDirectory(dir, create)
+	if err != nil || captured == nil {
+		return err
+	}
+	return captured.Close()
+}
+
+func (b destinationBoundary) captureDirectory(dir string, create bool) (*fsboundary.Dir, error) {
 	originalDir := dir
 	scope := b.repoRoot
 	if b.machineScope {
@@ -28,13 +37,13 @@ func (b destinationBoundary) directory(dir string, create bool) error {
 	}
 	absoluteScope, err := filepath.Abs(scope)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	canonicalScope, err := filepath.EvalSymlinks(absoluteScope)
 	if errors.Is(err, fs.ErrNotExist) {
 		canonicalScope = absoluteScope
 	} else if err != nil {
-		return fmt.Errorf("%w: resolve destination scope %s: %w", fsboundary.ErrUnsafePath, absoluteScope, err)
+		return nil, fmt.Errorf("%w: resolve destination scope %s: %w", fsboundary.ErrUnsafePath, absoluteScope, err)
 	}
 	normalize := func(path string) string {
 		absolute, err := filepath.Abs(path)
@@ -58,27 +67,26 @@ func (b destinationBoundary) directory(dir string, create bool) error {
 		root = dir
 	}
 	if root == "" {
-		return fmt.Errorf("%w: output directory outside admitted harness roots", fsboundary.ErrUnsafePath)
+		return nil, fmt.Errorf("%w: output directory outside admitted harness roots", fsboundary.ErrUnsafePath)
 	}
 	rel, err := filepath.Rel(root, dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if originalDir == b.legacySkillsDir {
 		if text, err := os.Readlink(originalDir); err == nil && text == "../.agents/skills" {
 			if err := harness.ValidateDestinationPath(b.machineScope, b.repoRoot, b.homeDir, root, filepath.Dir(rel)); err != nil {
-				return err
+				return nil, err
 			}
 			if !create {
-				return nil
+				return nil, nil
 			}
-			return ensureDirectoryReplacingSymlink(originalDir)
+			if err := ensureDirectoryReplacingSymlink(originalDir); err != nil {
+				return nil, err
+			}
 		}
 	}
-	if create {
-		return harness.EnsureDestinationPath(b.machineScope, b.repoRoot, b.homeDir, root, rel)
-	}
-	return harness.ValidateDestinationPath(b.machineScope, b.repoRoot, b.homeDir, root, rel)
+	return harness.CaptureDestinationPath(b.machineScope, b.repoRoot, b.homeDir, root, rel, create)
 }
 
 func (b destinationBoundary) validate(dirs []string) error {
