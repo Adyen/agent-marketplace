@@ -95,6 +95,79 @@ test.describe('Marketplace layout at 768px', () => {
     await expect(page.getByRole('checkbox', { name: 'team-tools', exact: true })).toBeVisible()
     await expectFirstResultWithinViewport(page)
   })
+
+  // spec: marketplace-browser/collapsed-filter-rail-follows-the-resource-list
+  test('scrolls collapsed filters together with the resource list', async ({ page }) => {
+    await page.goto('/')
+    await page.locator('article').last().evaluate((element) => {
+      element.style.minHeight = '1000px'
+    })
+
+    const sidebar = page.locator('.catalog-sidebar__sticky')
+    const filterRail = sidebar.locator('.catalog-filter-rail')
+    const search = page.locator('#marketplace-search')
+    await expect(sidebar.getByRole('button', { name: 'Show all (40)' })).toBeInViewport()
+    await expect(sidebar).toHaveCSS('overflow-y', 'visible')
+    await expect(filterRail).toHaveCSS('overflow-y', 'visible')
+    const [railBefore, searchBefore] = await Promise.all([sidebar.boundingBox(), search.boundingBox()])
+
+    await page.evaluate(() => window.scrollTo(0, 60))
+    const [railAfter, searchAfter] = await Promise.all([sidebar.boundingBox(), search.boundingBox()])
+
+    expect(railBefore).not.toBeNull()
+    expect(searchBefore).not.toBeNull()
+    expect(railAfter).not.toBeNull()
+    expect(searchAfter).not.toBeNull()
+    expect(railAfter!.y - railBefore!.y).toBeCloseTo(searchAfter!.y - searchBefore!.y, 0)
+    expect(await filterRail.evaluate(element => element.scrollTop)).toBe(0)
+
+    await page.evaluate(() => window.scrollTo(0, 500))
+    expect((await sidebar.boundingBox())!.y).toBeCloseTo(88, 0)
+    expect((await search.boundingBox())!.y).toBeCloseTo(88, 0)
+  })
+
+  // spec: marketplace-browser/expanded-filter-rail-scrolls-to-final-registry
+  // spec: marketplace-browser/expanded-scrollbar-appears-on-interaction
+  test('scrolls the expanded filters to the final registry without moving resources', async ({ page }) => {
+    await page.goto('/')
+
+    const sidebar = page.locator('.catalog-sidebar__sticky')
+    const filterRail = sidebar.locator('.catalog-filter-rail')
+    await sidebar.getByRole('button', { name: 'Show all (40)' }).click()
+
+    await expect(filterRail).toHaveAttribute('data-expanded', 'true')
+    await expect(filterRail).toHaveCSS('max-height', '872px')
+    await expect(filterRail).toHaveCSS('overflow-y', 'auto')
+    await expect(filterRail).toHaveCSS('scrollbar-width', 'thin')
+    await expect(filterRail.getByRole('checkbox')).toHaveCount(40)
+    expect(await filterRail.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+
+    const scrollbarStyle = () => filterRail.evaluate(element => ({
+      thumb: getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor,
+      width: getComputedStyle(element, '::-webkit-scrollbar').width,
+    }))
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await page.mouse.move(767, 0)
+    await expect.poll(scrollbarStyle).toEqual({ thumb: 'rgba(0, 0, 0, 0)', width: '6px' })
+    await filterRail.hover()
+    await expect.poll(async () => (await scrollbarStyle()).thumb).not.toBe('rgba(0, 0, 0, 0)')
+    await page.mouse.move(767, 0)
+    await filterRail.getByRole('checkbox').first().focus()
+    await expect.poll(async () => (await scrollbarStyle()).thumb).not.toBe('rgba(0, 0, 0, 0)')
+
+    const finalControl = filterRail.getByRole('checkbox').last()
+    const pageScrollBefore = await page.evaluate(() => window.scrollY)
+    await filterRail.evaluate(element => { element.scrollTop = element.scrollHeight })
+
+    expect(await filterRail.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    expect(await page.evaluate(() => window.scrollY)).toBe(pageScrollBefore)
+    await expect(finalControl).toBeInViewport()
+
+    await filterRail.getByRole('button', { name: 'Show fewer' }).click()
+    await expect(filterRail).toHaveAttribute('data-expanded', 'false')
+    await expect(filterRail).toHaveCSS('overflow-y', 'visible')
+    await expect(filterRail.getByRole('checkbox')).toHaveCount(7)
+  })
 })
 
 test.describe('Marketplace layout at 1440px', () => {
@@ -108,6 +181,53 @@ test.describe('Marketplace layout at 1440px', () => {
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeInViewport()
     await expect(page.getByRole('tab', { name: 'Content', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByTestId('safe-markdown')).toBeInViewport()
+  })
+
+  // spec: marketplace-browser/catalog-controls-stick-while-resource-rows-scroll
+  // spec: marketplace-browser/sticky-catalog-controls-occlude-resource-rows
+  test('keeps catalog controls and filters sticky while resource rows scroll', async ({ page }) => {
+    await page.goto('/')
+    await page.locator('article').last().evaluate((element) => {
+      element.style.minHeight = '2000px'
+    })
+
+    const introduction = page.locator('.marketplace-intro')
+    const controls = page.locator('.catalog-results__controls')
+    const filters = page.locator('.catalog-sidebar__sticky')
+    const firstResult = page.locator('article').first()
+    await expect(controls).toHaveCSS('position', 'sticky')
+
+    await page.evaluate(() => window.scrollTo(0, 500))
+    await expect(introduction).not.toBeInViewport()
+    const [controlsBefore, filtersBefore, resultBefore] = await Promise.all([
+      controls.boundingBox(),
+      filters.boundingBox(),
+      firstResult.boundingBox(),
+    ])
+
+    expect(controlsBefore).not.toBeNull()
+    expect(filtersBefore).not.toBeNull()
+    expect(resultBefore).not.toBeNull()
+    expect(controlsBefore!.y).toBeCloseTo(88, 0)
+    expect(filtersBefore!.y).toBeCloseTo(88, 0)
+    const controlsOwnPoint = ({ x, y }: { x: number, y: number }) => controls.evaluate((element, point) => {
+      const hit = document.elementFromPoint(point.x, point.y)
+      return hit === element || (hit !== null && element.contains(hit))
+    }, { x, y })
+    const controlCenterX = controlsBefore!.x + controlsBefore!.width / 2
+    expect(await controlsOwnPoint({ x: controlCenterX, y: 76 })).toBe(true)
+    expect(await controlsOwnPoint({ x: controlCenterX, y: controlsBefore!.y + controlsBefore!.height / 2 })).toBe(true)
+
+    await page.evaluate(() => window.scrollTo(0, 700))
+    const [controlsAfter, filtersAfter, resultAfter] = await Promise.all([
+      controls.boundingBox(),
+      filters.boundingBox(),
+      firstResult.boundingBox(),
+    ])
+
+    expect(controlsAfter!.y).toBeCloseTo(controlsBefore!.y, 0)
+    expect(filtersAfter!.y).toBeCloseTo(filtersBefore!.y, 0)
+    expect(resultAfter!.y).toBeLessThan(resultBefore!.y)
   })
 
   test('keeps search and results anchored while search applies', async ({ page }) => {
