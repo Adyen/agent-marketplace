@@ -127,6 +127,7 @@ test.describe('Marketplace layout at 768px', () => {
   })
 
   // spec: marketplace-browser/expanded-filter-rail-scrolls-to-final-registry
+  // spec: marketplace-browser/expanded-scrollbar-appears-on-interaction
   test('scrolls the expanded filters to the final registry without moving resources', async ({ page }) => {
     await page.goto('/')
 
@@ -135,21 +136,37 @@ test.describe('Marketplace layout at 768px', () => {
     await sidebar.getByRole('button', { name: 'Show all (40)' }).click()
 
     await expect(filterRail).toHaveAttribute('data-expanded', 'true')
+    await expect(filterRail).toHaveCSS('max-height', '872px')
     await expect(filterRail).toHaveCSS('overflow-y', 'auto')
+    await expect(filterRail).toHaveCSS('scrollbar-width', 'thin')
     await expect(filterRail.getByRole('checkbox')).toHaveCount(40)
     expect(await filterRail.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
 
+    const scrollbarStyle = () => filterRail.evaluate(element => ({
+      thumb: getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor,
+      width: getComputedStyle(element, '::-webkit-scrollbar').width,
+    }))
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await page.mouse.move(767, 0)
+    await expect.poll(scrollbarStyle).toEqual({ thumb: 'rgba(0, 0, 0, 0)', width: '6px' })
+    await filterRail.hover()
+    await expect.poll(async () => (await scrollbarStyle()).thumb).not.toBe('rgba(0, 0, 0, 0)')
+    await page.mouse.move(767, 0)
+    await filterRail.getByRole('checkbox').first().focus()
+    await expect.poll(async () => (await scrollbarStyle()).thumb).not.toBe('rgba(0, 0, 0, 0)')
+
     const finalControl = filterRail.getByRole('checkbox').last()
+    const pageScrollBefore = await page.evaluate(() => window.scrollY)
     await filterRail.evaluate(element => { element.scrollTop = element.scrollHeight })
 
     expect(await filterRail.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
-    expect(await page.evaluate(() => window.scrollY)).toBe(0)
+    expect(await page.evaluate(() => window.scrollY)).toBe(pageScrollBefore)
     await expect(finalControl).toBeInViewport()
 
     await filterRail.getByRole('button', { name: 'Show fewer' }).click()
     await expect(filterRail).toHaveAttribute('data-expanded', 'false')
     await expect(filterRail).toHaveCSS('overflow-y', 'visible')
-    await expect(filterRail.getByRole('checkbox')).toHaveCount(5)
+    await expect(filterRail.getByRole('checkbox')).toHaveCount(7)
   })
 })
 

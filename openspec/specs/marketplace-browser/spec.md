@@ -5,15 +5,6 @@ Defines browser behavior that keeps Marketplace resource discovery controls usab
 
 ## Requirements
 
-### Requirement: Collapsed registry filters surface expansion
-
-The Marketplace browser SHALL limit the collapsed registry filter list to five initial registry options while keeping any selected registry visible.
-
-#### Scenario: Expansion action follows five initial registries
-
-- **WHEN** more than five registries are available and the registry filter is collapsed
-- **THEN** the browser MUST show the first five registry options, any additionally selected registry, and the action that expands the complete registry list
-
 ### Requirement: Collapsed desktop filters follow page scrolling
 
 The Marketplace browser SHALL keep the collapsed desktop filter rail in natural page flow without an independent vertical scrollport.
@@ -25,9 +16,25 @@ The Marketplace browser SHALL keep the collapsed desktop filter rail in natural 
 
 ### Requirement: Expanded desktop filters scroll independently
 
-The Marketplace browser SHALL render every registry after the expansion action is activated and SHALL bound the expanded desktop filter controls to an independently scrollable viewport region.
+The Marketplace browser SHALL render every registry after the expansion action is activated and SHALL bound the expanded desktop filter controls to an independently scrollable region that fills the available sticky viewport area. Its scrollbar SHALL be thin, with a thumb that is transparent at rest and visible while the expanded filters are hovered or contain keyboard focus.
 
 #### Scenario: Expanded filter rail scrolls to final registry
 
 - **WHEN** the user activates the registry expansion action and the complete registry list exceeds the available desktop viewport height
 - **THEN** every registry MUST be rendered and the user MUST be able to scroll the expanded filters to the final registry without scrolling the resource list
+
+#### Scenario: Expanded scrollbar appears on interaction
+
+- **WHEN** the expanded desktop filters are at rest
+- **THEN** the scrollbar thumb MUST be transparent
+- **AND WHEN** the user hovers the expanded filters or moves keyboard focus within them
+- **THEN** the scrollbar thumb MUST become visible while remaining thin
+
+### Requirement: Collapsed registry filters fill available space
+
+The Marketplace browser SHALL limit the collapsed registry filter list to seven initial registry options while keeping any selected registry visible.
+
+#### Scenario: Expansion action follows seven initial registries
+
+- **WHEN** more than seven registries are available and the registry filter is collapsed
+- **THEN** the browser MUST show the first seven registry options, any additionally selected registry, and the action that expands the complete registry list

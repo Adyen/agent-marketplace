@@ -675,9 +675,30 @@ useHead({
   }
 
   .catalog-sidebar :deep(.catalog-filter-rail[data-expanded="true"]) {
-    max-height: max(0px, calc(100vh - 280px));
+    max-height: max(0px, calc(100dvh - 152px));
     overflow-y: auto;
     overscroll-behavior: contain;
+    scrollbar-color: transparent transparent;
+    scrollbar-width: thin;
+  }
+
+  .catalog-sidebar :deep(.catalog-filter-rail[data-expanded="true"]:hover),
+  .catalog-sidebar :deep(.catalog-filter-rail[data-expanded="true"]:focus-within) {
+    scrollbar-color: var(--am-color-border-strong) transparent;
+  }
+
+  .catalog-sidebar :deep(.catalog-filter-rail[data-expanded="true"])::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .catalog-sidebar :deep(.catalog-filter-rail[data-expanded="true"])::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  .catalog-sidebar :deep(.catalog-filter-rail[data-expanded="true"]:hover)::-webkit-scrollbar-thumb,
+  .catalog-sidebar :deep(.catalog-filter-rail[data-expanded="true"]:focus-within)::-webkit-scrollbar-thumb {
+    background: var(--am-color-border-strong);
   }
 
   .catalog-sidebar h2 {
