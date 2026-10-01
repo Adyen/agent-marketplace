@@ -36,6 +36,7 @@ describe('CatalogFilterRail', () => {
     expect(wrapper.emitted('update:registry')).toEqual([[['one']]])
   })
 
+  // spec: marketplace-browser/expansion-action-follows-five-initial-registries
   it('keeps selected registries visible and expands long registry lists', async () => {
     const wrapper = mount(CatalogFilterRail, {
       props: {
@@ -46,7 +47,7 @@ describe('CatalogFilterRail', () => {
     })
 
     expect(wrapper.get('input[type="checkbox"][value="eight"]').element).toHaveProperty('checked', true)
-    expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(7)
+    expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(6)
 
     const showAll = wrapper.get('button')
     expect(showAll.text()).toBe('Show all (8)')

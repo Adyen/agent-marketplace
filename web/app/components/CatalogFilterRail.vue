@@ -19,7 +19,7 @@ const emit = defineEmits<{
   'update:registry': [value: string[]]
 }>()
 
-const INITIAL_REGISTRY_LIMIT = 6
+const INITIAL_REGISTRY_LIMIT = 5
 const showAllRegistries = ref(false)
 
 const registryOptions = computed(() => props.registries.map(registry => ({
