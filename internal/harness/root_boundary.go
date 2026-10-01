@@ -24,6 +24,14 @@ func EnsureDestinationPath(machineScope bool, repoRoot, homeDir, root, sub strin
 }
 
 func destinationPath(machineScope bool, repoRoot, homeDir, root, sub string, create bool) error {
+	directory, err := CaptureDestinationPath(machineScope, repoRoot, homeDir, root, sub, create)
+	if err != nil || directory == nil {
+		return err
+	}
+	return directory.Close()
+}
+
+func CaptureDestinationPath(machineScope bool, repoRoot, homeDir, root, sub string, create bool) (*fsboundary.Dir, error) {
 	scope := repoRoot
 	if machineScope {
 		if canonicalHome, err := filepath.EvalSymlinks(homeDir); err == nil {
@@ -35,7 +43,7 @@ func destinationPath(machineScope bool, repoRoot, homeDir, root, sub string, cre
 		if info, err := os.Lstat(root); err == nil && info.Mode()&os.ModeSymlink != 0 {
 			canonical, err := filepath.EvalSymlinks(root)
 			if err != nil {
-				return fmt.Errorf("%w: resolve machine harness alias: %w", fsboundary.ErrUnsafePath, err)
+				return nil, fmt.Errorf("%w: resolve machine harness alias: %w", fsboundary.ErrUnsafePath, err)
 			}
 			root = canonical
 		}
@@ -49,11 +57,11 @@ func destinationPath(machineScope bool, repoRoot, homeDir, root, sub string, cre
 	}
 	absolute, err := filepath.Abs(scope)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	base, err := fsboundary.OpenDir(absolute)
 	for create && machineScope && errors.Is(err, fs.ErrNotExist) && filepath.Dir(absolute) != absolute {
@@ -61,10 +69,10 @@ func destinationPath(machineScope bool, repoRoot, homeDir, root, sub string, cre
 		base, err = fsboundary.OpenDir(absolute)
 	}
 	if !create && errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("%w: capture destination scope: %w", fsboundary.ErrUnsafePath, err)
+		return nil, fmt.Errorf("%w: capture destination scope: %w", fsboundary.ErrUnsafePath, err)
 	}
 	defer func() { _ = base.Close() }()
 	rel, err := filepath.Rel(absolute, root)
@@ -72,7 +80,7 @@ func destinationPath(machineScope bool, repoRoot, homeDir, root, sub string, cre
 		rel, err = filepath.Rel(base.Path(), root)
 	}
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return fmt.Errorf("%w: harness root escapes its authorized scope", fsboundary.ErrUnsafePath)
+		return nil, fmt.Errorf("%w: harness root escapes its authorized scope", fsboundary.ErrUnsafePath)
 	}
 	var directory *fsboundary.Dir
 	if create {
@@ -81,10 +89,10 @@ func destinationPath(machineScope bool, repoRoot, homeDir, root, sub string, cre
 		directory, err = base.OpenRoot(rel)
 	}
 	if !create && errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = directory.Close() }()
 	var child *fsboundary.Dir
@@ -94,10 +102,10 @@ func destinationPath(machineScope bool, repoRoot, homeDir, root, sub string, cre
 		child, err = directory.OpenPath(sub)
 	}
 	if !create && errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return child.Close()
+	return child, nil
 }
