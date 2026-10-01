@@ -3,8 +3,11 @@ package materialize
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -12,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -39,6 +43,50 @@ func configureSharedGeminiHome(tb testing.TB) string {
 	tb.Setenv("XDG_CACHE_HOME", tb.TempDir())
 	tb.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	return home
+}
+
+func TestGeminiSharedScopeDecodeErrorsIncludeContext(t *testing.T) {
+	for _, fixture := range []struct {
+		name      string
+		payload   string
+		container bool
+	}{
+		{name: "fragment", payload: `{"mcpServers":`},
+		{name: "servers", payload: `{"mcpServers":[]}`, container: true},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			home := configureSharedGeminiHome(t)
+			key := outputKey{target: hcc.TargetGemini}
+			const artifactPath = "gemini-extension.json"
+			result := compilePhaseResult{
+				allOutputs: map[outputKey]bool{key: true},
+				byTarget: map[outputKey]*targetWork{
+					key: {artifacts: []artifact.Artifact{{Path: artifactPath, Bytes: []byte(fixture.payload)}}},
+				},
+			}
+			coalesced, err := coalesceGeminiNativeAggregates(&result, home)
+			if err == nil || coalesced {
+				t.Fatalf("invalid fragment was not refused: coalesced=%v err=%v", coalesced, err)
+			}
+			if fixture.container {
+				if _, ok := errors.AsType[*json.UnmarshalTypeError](err); !ok {
+					t.Fatalf("JSON type error was not preserved: %v", err)
+				}
+				if !strings.Contains(err.Error(), "mcpServers") {
+					t.Fatalf("decode error omits container context: %v", err)
+				}
+			} else if _, ok := errors.AsType[*json.SyntaxError](err); !ok {
+				t.Fatalf("JSON syntax error was not preserved: %v", err)
+			}
+			if !strings.Contains(err.Error(), artifactPath) {
+				t.Fatalf("decode error omits artifact context: %v", err)
+			}
+			report := executeMaterializePlans(t.Context(), result, false, home, config.MaterializationModes{})
+			if !hasDiagCode(report.Diags, "materialize.destination.overlap") || len(report.Diags) != 1 || report.Diags[0].Message != err.Error() {
+				t.Fatalf("decode error context did not reach the diagnostic: %+v", report.Diags)
+			}
+		})
+	}
 }
 
 // spec: owned-entry-reconciliation/gemini-shared-settings-retain-both-scopes

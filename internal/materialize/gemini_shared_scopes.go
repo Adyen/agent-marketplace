@@ -51,12 +51,12 @@ func coalesceGeminiNativeAggregates(result *compilePhaseResult, repoRoot string)
 			if container == "mcpServers" {
 				var fragment map[string]json.RawMessage
 				if err := json.Unmarshal(a.Bytes, &fragment); err != nil {
-					return false, err
+					return false, fmt.Errorf("decode Gemini native fragment %s: %w", a.Path, err)
 				}
 				var servers map[string]json.RawMessage
 				if rawServers, exists := fragment[container]; exists && len(rawServers) > 0 {
 					if err := json.Unmarshal(rawServers, &servers); err != nil {
-						return false, err
+						return false, fmt.Errorf("decode Gemini %s in %s: %w", container, a.Path, err)
 					}
 				}
 				for name, raw := range servers {
