@@ -568,9 +568,15 @@ func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeli
 				if staged == nil && stagedLocks == nil {
 					continue
 				}
-				if edit, exists := staged[read.Path]; exists && dependencytxn.Digest(edit.Bytes) == read.Digest {
+				path := read.Path
+				if _, exists := staged[path]; !exists {
+					if canonical, err := canonicalConfigDependencyPath(read.RequestedPath); err == nil {
+						path = canonical
+					}
+				}
+				if edit, exists := staged[path]; exists && dependencytxn.Digest(edit.Bytes) == read.Digest {
 					expected = edit.Expected
-				} else if lockEdit, exists := stagedLocks[read.Path]; exists && dependencytxn.Digest(lockEdit.Bytes) == read.Digest {
+				} else if lockEdit, exists := stagedLocks[path]; exists && dependencytxn.Digest(lockEdit.Bytes) == read.Digest {
 					expected = lockEdit.Expected
 				} else {
 					return nil, fmt.Errorf("%w: unmatched config overlay at %s", dependencytxn.ErrGenerationConflict, read.Path)
@@ -1045,6 +1051,15 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 		}
 		for _, file := range desiredFiles {
+			if dependencytxn.ClassifyDestination(file.Path) != dependencytxn.AuthorityLegacy {
+				// Managed layer directories are created below the captured
+				// layer root so a replaced or symlinked .agents cannot
+				// redirect the creation into another tree.
+				if err := dependencytxn.EnsureDestinationDir(file.Path); err != nil {
+					return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
+				}
+				continue
+			}
 			if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
 				return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
 			}

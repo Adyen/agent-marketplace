@@ -31,3 +31,11 @@ run_race() {
 run_race ./internal/fsboundary \
     -run '^Test(Descriptor(Leaf|Parent)ReplacementBarrier|ReadFilePostReadStability|ReadTargetRejectsReplacementAfterPrecheck|NestedOpenFailureClosesCapturedDirectories|PublishRejectsPathShapedStagedNames|ReadLimitCannotOverflow|ChainedLinkRetargetingRefuses|LinkResolutionRejectsNonLeadingParentComponents|ReadTargetDetectsRewriteWithRestoredMtime|LinkedStagingUsesEffectiveParent)$' \
     -count=20
+
+# fs-02: config layer authority and replacement races
+# (internal/dependencytxn, internal/config): descriptor parent/leaf
+# replacement barriers at capture, open, and publication for the
+# dependency transaction and the config editor.
+run_race ./internal/dependencytxn ./internal/config \
+    -run '^Test(Config|Transaction)DescriptorParentReplacement$' \
+    -count=20

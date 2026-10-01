@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"sort"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	telemetryconfig "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -431,11 +432,7 @@ func readRootLayerIntent(path string, data []byte, kind layerKind) (LayerIntent,
 }
 
 func readDeployedLock(path string, overlays map[string][]byte) (*lockfile.Document, *ConfigRead, error) {
-	canonical, err := canonicalConfigPathTolerateMissing(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	paths, err := configLockPaths(path, canonical)
+	paths, err := ResolveConfigLockPathsTolerateMissing(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -444,7 +441,15 @@ func readDeployedLock(path string, overlays map[string][]byte) (*lockfile.Docume
 		data, overlaid = overlays[paths.RequestedLock]
 	}
 	if !overlaid {
-		data, err = lockfile.ReadBytes(paths.CanonicalLock)
+		if dependencytxn.ClassifyDestination(paths.CanonicalLock) != dependencytxn.AuthorityLegacy {
+			var generation dependencytxn.Generation
+			data, generation, _, err = dependencytxn.ReadSnapshot(paths.CanonicalLock)
+			if err == nil && !generation.Exists {
+				return nil, nil, nil
+			}
+		} else {
+			data, err = lockfile.ReadBytes(paths.CanonicalLock)
+		}
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, nil, nil

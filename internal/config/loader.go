@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -333,6 +334,9 @@ type ConfigLockPaths struct {
 // ResolveConfigLockPathsTolerateMissing is ResolveConfigLockPaths for a config
 // that may not exist yet, such as a layer root an edit is about to create.
 func ResolveConfigLockPathsTolerateMissing(path string) (ConfigLockPaths, error) {
+	if absolute, err := filepath.Abs(path); err == nil && dependencytxn.ClassifyDestination(absolute) != dependencytxn.AuthorityLegacy {
+		return ResolveConfigLockPaths(absolute)
+	}
 	canonical, err := canonicalConfigPathTolerateMissing(path)
 	if err != nil {
 		return ConfigLockPaths{}, err
@@ -342,7 +346,18 @@ func ResolveConfigLockPathsTolerateMissing(path string) (ConfigLockPaths, error)
 
 // ResolveConfigLockPaths resolves path before deriving its layer-owned lock.
 func ResolveConfigLockPaths(path string) (ConfigLockPaths, error) {
-	canonical, err := canonicalConfigPath(path)
+	requested, err := filepath.Abs(path)
+	if err != nil {
+		return ConfigLockPaths{}, fmt.Errorf("resolve config path %q: %w", path, err)
+	}
+	var canonical string
+	if dependencytxn.ClassifyDestination(requested) != dependencytxn.AuthorityLegacy {
+		// The lock belongs to the logical layer, not an approved config
+		// link's target (which can be outside the .agents directory).
+		canonical, err = dependencytxn.CanonicalConfigDestination(filepath.Clean(requested))
+	} else {
+		canonical, err = canonicalConfigPath(path)
+	}
 	if err != nil {
 		return ConfigLockPaths{}, err
 	}
