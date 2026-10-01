@@ -1,6 +1,7 @@
 package dependencytxn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -434,7 +435,23 @@ func PublishDestination(path string, expected Generation, data []byte, mode fs.F
 		return fmt.Errorf("dependency transaction: invalid mode %o for %s", mode, path)
 	}
 	cfg := applyOptions(opts)
-	bound, err := bindDestinationForWrite(path)
+	canonical, err := ValidateDestination(path)
+	if err != nil {
+		return err
+	}
+	locks, err := acquireLocks(context.Background(), []string{canonical})
+	if err != nil {
+		return err
+	}
+	defer releaseLocks(locks)
+	state, err := StateDir()
+	if err != nil {
+		return err
+	}
+	if err := checkPendingDestinations(state, []string{canonical}); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	bound, err := bindDestinationForWrite(canonical)
 	if err != nil {
 		return err
 	}

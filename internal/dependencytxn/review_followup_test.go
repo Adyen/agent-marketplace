@@ -96,3 +96,35 @@ func TestRecoverUserLinkFromTargetParentStaging(t *testing.T) {
 		t.Fatalf("recovery left a journal: %v", err)
 	}
 }
+
+func TestDirectPublicationRefusesPendingTransaction(t *testing.T) {
+	home, agents, _ := userLayer(t)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	state, err := StateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(agents, "config.yaml")
+	mustWrite(t, path, []byte("original\n"), 0o600)
+	if err := PublishDestination(path, generation(t, path), []byte("control\n"), 0o600); err != nil {
+		t.Fatalf("valid direct publication control: %v", err)
+	}
+	interrupted := errors.New("publication interrupted")
+	_, err = Commit(t.Context(), state, []DesiredFile{{Path: path, Expected: generation(t, path), Bytes: []byte("transaction\n"), Mode: 0o600}}, WithFaultHook(func(point FaultPoint) error {
+		if point.Stage == FaultAfterJournal {
+			return interrupted
+		}
+		return nil
+	}))
+	if !errors.Is(err, interrupted) {
+		t.Fatalf("journal interruption was not reached: %v", err)
+	}
+	if err := PublishDestination(path, Generation{}, []byte("foreign\n"), 0o600); !errors.Is(err, ErrRecoveryRequired) {
+		t.Fatalf("direct publication overwrote pending transaction: %v", err)
+	}
+	assertFile(t, path, "control\n", 0o600)
+	if err := Recover(t.Context(), state); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, path, "transaction\n", 0o600)
+}
