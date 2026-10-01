@@ -2,9 +2,7 @@
 
 ## Purpose
 Defines the public Marketplace protocol surface shared by the server, CLI, and generated clients: the OpenAPI contract, the capabilities and well-known discovery documents, the wire vocabulary of selectable resource kinds, the analyzer finding-code catalog, and the artifact and collection-manifest wire formats.
-
 ## Requirements
-
 ### Requirement: OpenAPI contract
 
 The repository SHALL contain a canonical OpenAPI 3.0.3 document describing the
@@ -125,8 +123,8 @@ schema v1 containing:
 - optional `assets/<relative-path>` files
 - optional `licenses/<relative-path>` files
 - optional `support/<url-escaped-relative-path>` files carrying the declared
-  support bytes and executable modes of a mirrored skill; declared paths may
-  be flat or nested and are url-escaped into member names
+  support bytes and executable modes of a mirrored skill or hook; declared paths
+  may be flat or nested and are url-escaped into member names
 
 `support/` members remain within artifact schema v1 but change the archive
 digest; because `archive_digest` is immutable per content digest, they can
@@ -200,3 +198,43 @@ virtual collection revisions. Collection manifests are not tar archives.
 - **THEN** verification MUST recompute the digest with `content_digest`
   cleared
 - **AND** a tampered `content_digest` value MUST fail verification
+
+### Requirement: Mirrored hooks carry integrity-bound support files
+
+Mirror acquisition MUST package the adjacent support files selected by the
+source-layout hook materialization policy, excluding native aggregate
+definitions. Their relative paths, bytes, and executable modes MUST be bound
+into the canonical hook content revision. Consumers MUST verify declaration
+membership and integrity before staging and materializing those files. Existing
+published archives MUST NOT be repaired in place.
+
+#### Scenario: Mirrored hook support installation
+
+- **GIVEN** a mirrored hook whose command references a plugin-root script with adjacent support files
+- **WHEN** a consumer resolves and materializes it at repository or machine scope
+- **THEN** the support bytes and executable mode MUST be available through the target's native support component or verified support cache, the command MUST refer to that script, and verified cached resolution MUST work without network access
+
+#### Scenario: Mirrored hook support integrity
+
+- **GIVEN** a mirrored hook with declared support files
+- **WHEN** a declared file is missing, its bytes or executable mode differ, or an undeclared support file is present
+- **THEN** resolution MUST refuse before staging or materializing the hook
+
+#### Scenario: Mirrored hook support safe publication
+
+- **GIVEN** hook support files in a registry repository
+- **WHEN** publication reads those files
+- **THEN** it MUST use bounded descriptor-based reads within the resource root and refuse symlinks, multiply linked files, special files, and oversized files without altering external bytes
+
+#### Scenario: Mirrored hook support revision changes
+
+- **GIVEN** a published hook with support files
+- **WHEN** a support file's bytes or executable mode change
+- **THEN** publication MUST produce a new content revision without changing the old artifact
+
+#### Scenario: Legacy mirrored script hook refusal
+
+- **GIVEN** a legacy mirrored hook referencing a plugin-root script without packaged support files
+- **WHEN** a consumer resolves the hook
+- **THEN** resolution MUST fail with `marketplace.hook.support-missing` instead of reporting a healthy hook
+- **AND** legacy support-free hooks without plugin-root asset references MUST remain usable
