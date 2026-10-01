@@ -99,6 +99,16 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
 					if group.Matcher != "" {
 						r.Matcher = group.Matcher
 					}
+					// Group-level fields (e.g. Factory's commandRegex)
+					// apply to every handler in the group.
+					for k, v := range group.ExtraFields {
+						if r.ExtraFields == nil {
+							r.ExtraFields = make(map[string]any)
+						}
+						if _, exists := r.ExtraFields[k]; !exists {
+							r.ExtraFields[k] = v
+						}
+					}
 					flatRules = append(flatRules, r)
 				}
 			} else if group.Type != "" || group.Command != "" {

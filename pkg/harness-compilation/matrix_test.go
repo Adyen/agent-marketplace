@@ -33,13 +33,15 @@ type matrixSpec struct {
 }
 
 type matrixCell struct {
-	From           Harness  `yaml:"from"`
-	To             Harness  `yaml:"to"`
-	Class          string   `yaml:"class"`
-	Diagnostics    []string `yaml:"diagnostics"`
-	AllowedLosses  []string `yaml:"allowedLosses"`
-	ExpectedModel  *string  `yaml:"expectedModel"`
-	ExpectedEffort *string  `yaml:"expectedEffort"`
+	From            Harness  `yaml:"from"`
+	To              Harness  `yaml:"to"`
+	Class           string   `yaml:"class"`
+	Diagnostics     []string `yaml:"diagnostics"`
+	AllowedLosses   []string `yaml:"allowedLosses"`
+	RoundTripLosses []string `yaml:"roundTripLosses"`
+	ExpectedModel   *string  `yaml:"expectedModel"`
+	ExpectedEffort  *string  `yaml:"expectedEffort"`
+	ExpectedTools   []string `yaml:"expectedTools"`
 }
 
 type canonicalFixture struct {
@@ -130,7 +132,7 @@ func TestMatrix_RoundTripSameHarness(t *testing.T) {
 				}
 				got := requireSingleResource(t, kind, harness, reingested.Resources)
 
-				assertCanonicalEqual(t, normalizeResource(resource), normalizeResource(got), nil)
+				assertCanonicalEqual(t, normalizeResource(resource), normalizeResource(got), cell.RoundTripLosses)
 			})
 		}
 	}
@@ -182,6 +184,10 @@ func TestMatrix_CrossHarnessLossProfile(t *testing.T) {
 				if cell.ExpectedEffort != nil {
 					expected.Effort = *cell.ExpectedEffort
 					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "effort" })
+				}
+				if cell.ExpectedTools != nil {
+					expected.Tools = cell.ExpectedTools
+					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "tools" })
 				}
 				assertCanonicalEqual(t, expected, normalizeResource(got), losses)
 			})

@@ -1497,7 +1497,7 @@ func TestRunFactorySubagentModelMapping(t *testing.T) {
 	}
 }
 
-func TestRunFactorySubagentWriteToolExpanded(t *testing.T) {
+func TestRunFactorySubagentWriteToolTranslated(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoRoot := t.TempDir()
@@ -1525,11 +1525,11 @@ func TestRunFactorySubagentWriteToolExpanded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read droid: %v", err)
 	}
-	if !strings.Contains(string(body), "Edit") || !strings.Contains(string(body), "Create") {
-		t.Errorf("expected Write expanded to Edit+Create, got:\n%s", body)
+	if !strings.Contains(string(body), "Create") {
+		t.Errorf("expected Write translated to Create (file.write concept), got:\n%s", body)
 	}
-	if strings.Contains(string(body), "Write") {
-		t.Errorf("frontmatter should not contain Write (expanded to Edit+Create), got:\n%s", body)
+	if strings.Contains(string(body), "Write") || strings.Contains(string(body), "Edit") {
+		t.Errorf("frontmatter should not contain Write/Edit (Write maps to Create only, no widening), got:\n%s", body)
 	}
 }
 

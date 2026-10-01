@@ -36,3 +36,9 @@ tools:
   exit_plan_mode: {concepts: [plan.exit], surfaces: [hook_matcher]}
   skill: {concepts: [skill], surfaces: [hook_matcher]}
   run_subagent: {concepts: [subagent], surfaces: [hook_matcher]}
+  read_subagent: {concepts: [subagent.read], surfaces: [hook_matcher]}
+  request_scope: {concepts: [access.request], surfaces: [hook_matcher]}
+  mcp_list_servers: {concepts: [mcp.servers], surfaces: [hook_matcher]}
+  mcp_list_tools: {concepts: [mcp.tools], surfaces: [hook_matcher]}
+  mcp_call_tool: {concepts: [mcp.call], surfaces: [hook_matcher]}
+  mcp_read_resource: {concepts: [mcp.read], surfaces: [hook_matcher]}

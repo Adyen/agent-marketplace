@@ -52,19 +52,6 @@ func TestCodexModelMappingsDoNotInventCrossVendorEquivalents(t *testing.T) {
 	}
 }
 
-func TestCodexToolMappingsDoNotInventSubagentRestrictions(t *testing.T) {
-	for _, entry := range toolTable {
-		got, ok := entry.Targets[TargetCodex]
-		if !ok {
-			t.Errorf("tool entry %q has no explicit Codex cell", entry.Claude)
-			continue
-		}
-		if got != nil {
-			t.Errorf("tool entry %q Codex mapping = %v, want nil", entry.Claude, got)
-		}
-	}
-}
-
 func TestCodexHookEvent(t *testing.T) {
 	tests := []struct {
 		name   string

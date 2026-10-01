@@ -1,0 +1,36 @@
+# Catalog data for pkg/harness-compilation/toolpolicy/catalogs/gemini.yaml.
+schema: 1
+harness: gemini
+evidence:
+  checked: "2026-09-29"
+  refs:
+    - https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/tools.md
+    - https://geminicli.com/docs/hooks/reference/
+    - https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md
+  notes: >-
+    MCP tools use a single underscore separator. Subagent tool lists accept the
+    wildcards `*`, `mcp_*`, and `mcp_<server>_*`.
+
+mcp:
+  pattern: "mcp_{server}_{tool}"
+  all: "mcp_.*"
+  server_scoped: true
+
+surfaces: [hook_matcher, subagent_tools]
+
+tools:
+  run_shell_command: {concepts: [shell]}
+  read_file: {concepts: [file.read]}
+  read_many_files: {concepts: [file.read]}
+  list_directory: {concepts: [file.list]}
+  write_file: {concepts: [file.write]}
+  replace: {concepts: [file.edit]}
+  glob: {concepts: [search.glob]}
+  grep_search: {concepts: [search.grep], aliases: [search_file_content]}
+  web_fetch: {concepts: [web.fetch]}
+  google_web_search: {concepts: [web.search]}
+  write_todos: {concepts: [todo]}
+  enter_plan_mode: {concepts: [plan.enter]}
+  exit_plan_mode: {concepts: [plan.exit]}
+  activate_skill: {concepts: [skill]}
+  ask_user: {concepts: [ask.user]}

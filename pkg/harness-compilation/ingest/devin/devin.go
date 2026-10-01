@@ -58,6 +58,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 // Canonical Devin 3000.3 path components, relative to a Devin root. They mirror
@@ -292,7 +293,10 @@ func localOverrideDiagnostics(src fs.FS, r root) []diag.Diagnostic {
 	return diags
 }
 
-// reverseTools maps a Devin allowed-tools list back to canonical tool IDs.
+// validateDevinTools enforces Devin's closed allowed-tools vocabulary against
+// the shipped tool catalog. The names themselves are kept verbatim and the
+// resource records ToolSource=devin; translation to other vocabularies is the
+// compiler's toolpolicy pass, not ingestion.
 //
 // Devin's vocabulary is CLOSED (read, edit, grep, glob, exec), so a name
 // outside it is not "an unknown tool to pass through" — it is a restriction
@@ -307,22 +311,18 @@ func localOverrideDiagnostics(src fs.FS, r root) []diag.Diagnostic {
 // Claude-style scoped permission strings such as `Bash(git push --force:*)`,
 // i.e. command strings the plan keeps out of diagnostics and logs. The resource
 // name and source location localize the failure instead.
-func reverseTools(tools []string, resource, file string) ([]string, []diag.Diagnostic) {
+func validateDevinTools(tools []string, surface, resource, file string) ([]string, []diag.Diagnostic) {
 	if tools == nil {
 		return nil, nil
 	}
-	canonical := make([]string, 0, len(tools))
 	unreversible := 0
 	for _, tool := range tools {
-		mapped, ok := mapping.ReverseTool(tool, mapping.TargetDevin)
-		if !ok {
+		if !toolpolicy.IsToolOnSurface(mapping.TargetDevin, surface, tool) {
 			unreversible++
-			continue
 		}
-		canonical = append(canonical, mapped)
 	}
 	if unreversible == 0 {
-		return canonical, nil
+		return tools, nil
 	}
 	slog.Warn("devin allowed-tools entry unreversible", "source", ingest.HarnessDevin,
 		"resource", resource, "unreversible_count", unreversible)

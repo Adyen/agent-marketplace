@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 // maxNestingKey is Devin's documented flat-subagent nesting limit key
@@ -74,7 +75,7 @@ func translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifac
 	// suppression gate so a subagent that is unrepresentable for several reasons
 	// still reports the tool loss alongside the blocking ones — the user should
 	// see every finding in one compile even when one of them costs the artifact.
-	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(name, source, s.Tools, s.Tools != nil, s.Extra, opts, diag.CodeSubagentDevinToolUnknown)
+	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(name, source, s.Tools, s.Tools != nil, s.Extra, opts, s.ToolSource, toolpolicy.SurfaceSubagentTools, diag.CodeSubagentDevinToolUnknown)
 
 	if len(errs) > 0 {
 		// Plan, subagent-only rules for Isolation, DisallowedTools, and

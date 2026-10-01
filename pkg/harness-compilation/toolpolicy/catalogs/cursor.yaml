@@ -1,0 +1,30 @@
+# Catalog data for pkg/harness-compilation/toolpolicy/catalogs/cursor.yaml.
+schema: 1
+harness: cursor
+evidence:
+  checked: "2026-09-29"
+  refs:
+    - https://cursor.com/docs/hooks
+    - https://cursor.com/docs/reference/third-party-hooks
+    - https://cursor.com/docs/agent/subagents
+  notes: >-
+    Cursor's own Claude import maps Edit and Write to the single Cursor tool
+    Write and has no Glob equivalent. Cursor subagents have no tool allow-list
+    (only `readonly`), so no subagent_tools surface is declared.
+
+mcp:
+  pattern: "MCP:{tool}"
+  all: "MCP:.*"
+  server_scoped: false
+
+surfaces: [hook_matcher]
+
+tools:
+  Shell: {concepts: [shell]}
+  Read: {concepts: [file.read]}
+  Write: {concepts: [file.write, file.edit]}
+  Delete: {concepts: [file.delete]}
+  Grep: {concepts: [search.grep]}
+  Task: {concepts: [subagent]}
+  WebFetch: {concepts: [web.fetch]}
+  WebSearch: {concepts: [web.search]}

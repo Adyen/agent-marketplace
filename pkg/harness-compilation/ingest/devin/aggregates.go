@@ -303,9 +303,8 @@ func hooksFromEvents(events map[string][]hookRule, file string, names *hookNamer
 			if rule.Matcher != "" {
 				matcher = rule.Matcher
 			}
-
 			name := names.next(event, hookType)
-			options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt)}
+			options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt), ir.WithHookSource(string(mapping.TargetDevin))}
 			if rule.Timeout != nil {
 				options = append(options, ir.WithHookTimeoutPtr(rule.Timeout))
 			}

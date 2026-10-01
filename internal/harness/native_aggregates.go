@@ -1,11 +1,14 @@
 package harness
 
 import (
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 type AggregateRoute struct {
@@ -22,9 +25,31 @@ type NativeAggregateInstall struct {
 }
 
 var nativeAggregateInstalls = map[hcc.Target][]NativeAggregateInstall{
-	hcc.TargetClaude:   {{ID: "mcp", ProjectPath: ".mcp.json", UserPath: ".claude.json", ScopeRoot: true, Routes: []AggregateRoute{{ArtifactPath: ".mcp.json", Container: "mcpServers"}}}},
-	hcc.TargetGemini:   {{ID: "settings", ProjectPath: "settings.json", UserPath: "settings.json", Routes: []AggregateRoute{{ArtifactPath: "gemini-extension.json", Container: "mcpServers"}, {ArtifactPath: ".gemini/settings.json", Container: "hooks"}}}},
-	hcc.TargetWindsurf: {{ID: "hooks", ProjectPath: ".windsurf/hooks.json", UserPath: "hooks.json", Routes: []AggregateRoute{{ArtifactPath: ".windsurf/hooks.json", Container: "hooks"}}}},
+	hcc.TargetClaude: {{ID: "mcp", ProjectPath: ".mcp.json", UserPath: ".claude.json", ScopeRoot: true, Routes: []AggregateRoute{{ArtifactPath: ".mcp.json", Container: "mcpServers"}}}},
+	// The Gemini settings file and the Windsurf hook file are the targets'
+	// declared hook aggregates; their per-scope paths come from the native
+	// layout so this table cannot drift from the topology authority. Only
+	// the artifact paths the current compilers emit stay literal here.
+	hcc.TargetGemini:   {{ID: "settings", ProjectPath: nativeAggregateInstallPath(hcc.TargetGemini, false), UserPath: nativeAggregateInstallPath(hcc.TargetGemini, true), Routes: []AggregateRoute{{ArtifactPath: "gemini-extension.json", Container: "mcpServers"}, {ArtifactPath: ".gemini/settings.json", Container: "hooks"}}}},
+	hcc.TargetWindsurf: {{ID: "hooks", ProjectPath: nativeAggregateInstallPath(hcc.TargetWindsurf, false), UserPath: nativeAggregateInstallPath(hcc.TargetWindsurf, true), Routes: []AggregateRoute{{ArtifactPath: ".windsurf/hooks.json", Container: "hooks"}}}},
+}
+
+// nativeAggregateInstallPath resolves the file the target's hook artifacts
+// merge into in one scope. While the native write switch is pending the
+// emitted location is the declared legacy file (Windsurf's repository-scope
+// .windsurf/hooks.json); the declared native path takes over once the
+// compilers emit it. A missing declaration is a programming error in the
+// registry, not a runtime condition, so it panics like
+// mustNativeAggregatePath does.
+func nativeAggregateInstallPath(target hcc.Target, machineScope bool) string {
+	file, ok := targetmeta.NativeAggregateFileForScope(targetmeta.Target(target), ir.KindHook, machineScope)
+	if !ok || file.Path == "" {
+		panic(fmt.Sprintf("%s native hook aggregate at machine_scope=%v is not registered", target, machineScope))
+	}
+	if len(file.Legacy) > 0 {
+		return file.Legacy[0]
+	}
+	return file.Path
 }
 
 func NativeAggregateBackupFiles(target hcc.Target) (map[string]string, error) {

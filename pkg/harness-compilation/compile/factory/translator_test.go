@@ -252,19 +252,19 @@ func TestFactorySubagent_NoLossyFields(t *testing.T) {
 }
 
 // --- Factory Hook test (~ translated) ---
+// spec: hook-resources/repository-scope-commands-use-the-project-directory-variable
 func TestFactoryHook_CommandType(t *testing.T) {
-	c := &factoryCompiler{}
 	hook := ir.NewHook("pre-tool-command", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/run.sh", "command", map[string]any{}, ir.SourceRef{File: "hooks/hooks.json", Line: 0})
 
-	arts, diags, err := c.Translate(hook)
+	result, err := compile.Compile(hook, compile.TargetFactory, compile.WithPluginRoot("/plugins/acme"))
 	if err != nil {
-		t.Fatalf("Translate(hook) error: %v", err)
+		t.Fatalf("Compile(hook, factory) error: %v", err)
 	}
-	if hasDiagnostic(diags, diag.CodeHookFactoryNonCommandTypeDropped) {
+	if hasDiagnostic(result.Diagnostics, diag.CodeHookFactoryNonCommandTypeDropped) {
 		t.Error("command-type hook should not emit non-command-type-dropped diagnostic")
 	}
 
-	hookArt := findArtifactByPath(arts, "hooks/hooks.json")
+	hookArt := findArtifactByPath(result.Artifacts, "hooks/hooks.json")
 	if hookArt == nil {
 		t.Fatal("missing artifact hooks/hooks.json")
 	}
@@ -272,7 +272,9 @@ func TestFactoryHook_CommandType(t *testing.T) {
 		t.Error("hooks.json artifact should be a fragment")
 	}
 
-	// Verify ${CLAUDE_PLUGIN_ROOT} → ${DROID_PLUGIN_ROOT}
+	// Under the catalog-driven resolver the plugin-root token resolves to the
+	// installed support directory behind Factory's project-directory variable;
+	// no plugin-only variable may reach the artifact.
 	// Factory hooks.json format: { "<event>": [{ "matcher": ..., "hooks": [{ "type": ..., "command": ... }] }] }
 	var hookData map[string]any
 	if err := json.Unmarshal(hookArt.Bytes, &hookData); err != nil {
@@ -283,19 +285,23 @@ func TestFactoryHook_CommandType(t *testing.T) {
 	hooksArr := ruleGroup["hooks"].([]any)
 	hookEntry := hooksArr[0].(map[string]any)
 	cmd := hookEntry["command"].(string)
-	if !strings.Contains(cmd, "${DROID_PLUGIN_ROOT}") {
-		t.Errorf("hook command = %q, want ${DROID_PLUGIN_ROOT}", cmd)
+	if !strings.Contains(cmd, "$FACTORY_PROJECT_DIR") {
+		t.Errorf("hook command = %q, want the $FACTORY_PROJECT_DIR support base", cmd)
 	}
-	if strings.Contains(cmd, "${CLAUDE_PLUGIN_ROOT}") {
-		t.Errorf("hook command should not contain ${CLAUDE_PLUGIN_ROOT}, got: %q", cmd)
+	if !strings.HasSuffix(cmd, "/run.sh") {
+		t.Errorf("hook command = %q, want the authored script path preserved", cmd)
+	}
+	if strings.Contains(cmd, "${CLAUDE_PLUGIN_ROOT}") || strings.Contains(cmd, "${DROID_PLUGIN_ROOT}") {
+		t.Errorf("hook command must not contain a plugin-only variable, got: %q", cmd)
 	}
 }
 
-// --- Factory Hook: non-command type dropped ---
-// spec: hook-resources/factory-drops-other-non-command-types-with-a-warning
+// --- Factory Hook: non-command type refused ---
+// The catalog declares only command handlers for Factory events; any other
+// type suppresses this one hook with the kept Factory code at error severity.
 func TestFactoryHook_NonCommandTypeDropped(t *testing.T) {
 	c := &factoryCompiler{}
-	hook := ir.NewHook("post-commit-http", "post-commit", "http://example.com", "http", map[string]any{}, ir.SourceRef{File: "hooks/hooks.json", Line: 0})
+	hook := ir.NewHook("stop-http", "Stop", "http://example.com", "http", map[string]any{}, ir.SourceRef{File: "hooks/hooks.json", Line: 0})
 
 	arts, diags, err := c.Translate(hook)
 	if err != nil {
@@ -304,6 +310,11 @@ func TestFactoryHook_NonCommandTypeDropped(t *testing.T) {
 
 	if !hasDiagnostic(diags, diag.CodeHookFactoryNonCommandTypeDropped) {
 		t.Error("missing diagnostic hook.factory.non-command-type-dropped for http hook type")
+	}
+	for _, d := range diags {
+		if d.Code == diag.CodeHookFactoryNonCommandTypeDropped && d.Severity != diag.SeverityError {
+			t.Errorf("undeclared handler types are errors under the catalog resolver, got severity %v", d.Severity)
+		}
 	}
 
 	// Non-command hooks should produce no artifact

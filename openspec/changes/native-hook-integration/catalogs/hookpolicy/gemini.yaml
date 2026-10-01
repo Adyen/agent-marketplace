@@ -6,11 +6,13 @@ evidence:
   refs:
     - https://geminicli.com/docs/hooks/
     - https://geminicli.com/docs/hooks/reference/
+    - https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/reference.md
   notes: >-
     Hooks run with a sanitized environment. Timeouts are milliseconds (default
     60000). Tool-event matchers are regexes; lifecycle matchers are exact
     strings. AfterAgent ("when the agent loop ends", can force a retry) is
-    linked to Stop. ${extensionPath} is set only for extension hooks.
+    linked to Stop. ${extensionPath} is substituted only inside an extension's
+    hooks/hooks.json.
 
 env:
   project_dir: [GEMINI_PROJECT_DIR, CLAUDE_PROJECT_DIR]

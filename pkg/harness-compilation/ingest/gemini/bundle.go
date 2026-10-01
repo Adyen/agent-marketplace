@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm"
@@ -243,7 +244,7 @@ func LoadSkill(src fs.FS, root string) (*ir.Skill, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ingest/gemini: invalid allowed-tools in %s: %w", mdPath, err)
 		}
-		options = append(options, ir.WithSkillAllowedTools(allowed))
+		options = append(options, ir.WithSkillAllowedTools(allowed), ir.WithSkillToolSource("gemini"))
 	}
 	if value, ok := fm["permissions"]; ok {
 		permissions, err := skillPermissions(value)
@@ -477,6 +478,9 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		ir.SourceRef{File: path, Line: 1}, options...,
 	)
 	subagent.ModelSource = "gemini"
+	if tools != nil {
+		subagent.ToolSource = "gemini"
+	}
 	subagent.Ext.Gemini = &extpkg.Gemini{
 		Kind:             kind,
 		KindSet:          kindSet,
@@ -645,46 +649,42 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 				hookType = "command"
 			}
 
-			claudeEvent, matcher, ok := mapping.ReverseHookEvent(event, mapping.TargetGemini)
-			if !ok {
-				claudeEvent = event
+			// Native provenance (design D7): keep the Gemini event name,
+			// matcher, millisecond timeout, and command spelling as authored
+			// and record HookSource so the catalog resolver sees Gemini
+			// values instead of early-canonicalized ones.
+			if !hookpolicy.IsDeclaredEvent(mapping.TargetGemini, event) {
 				diags = append(diags, diag.Diagnostic{
 					Code:     diag.CodeIngestGeminiHookEventPartialMapping,
 					Severity: diag.SeverityWarning,
 					Resource: event,
-					Message:  fmt.Sprintf("Gemini hook event %q has no exact Claude equivalent; preserving the original event name", event),
-					Hint:     "Use BeforeTool, AfterTool, or PreCompress for lossless cross-harness mapping",
+					Message:  fmt.Sprintf("Gemini hook event %q is outside the documented hook vocabulary; preserving the original event name", event),
+					Hint:     "Use a documented Gemini hook event",
 					Source:   diag.SourceRef{File: path, Line: 0},
 				})
 			}
 
-			extra := make(map[string]any, len(rule.ExtraFields)+1)
+			extra := make(map[string]any, len(rule.ExtraFields))
 			for key, value := range rule.ExtraFields {
 				extra[key] = value
-			}
-			if !ok {
-				extra["gemini_event"] = event
 			}
 			if len(extra) == 0 {
 				extra = nil
 			}
 
-			baseName := strings.ToLower(strings.ReplaceAll(claudeEvent, " ", "-")) + "-" + hookType
+			baseName := strings.ToLower(strings.ReplaceAll(event, " ", "-")) + "-" + hookType
 			name := baseName
 			for suffix := 2; usedNames[name]; suffix++ {
 				name = fmt.Sprintf("%s-%d", baseName, suffix)
 			}
 			usedNames[name] = true
-			command := normalizeEnvTokens(rule.Command)
-			options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt)}
+			options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt), ir.WithHookSource(string(mapping.TargetGemini))}
 			if rule.Timeout != nil {
 				options = append(options, ir.WithHookTimeoutPtr(rule.Timeout))
 			}
 
-			if matcher == "" {
-				matcher = rule.Matcher
-			}
-			hook := ir.NewHookWithMatcherOptions(name, claudeEvent, matcher, command, hookType, extra, ir.SourceRef{File: path, Line: 0}, options...)
+			matcher := rule.Matcher
+			hook := ir.NewHookWithMatcherOptions(name, event, matcher, rule.Command, hookType, extra, ir.SourceRef{File: path, Line: 0}, options...)
 			if len(rule.GroupExtra) > 0 {
 				hook.Ext.Gemini = &extpkg.Gemini{HookGroupExtra: rule.GroupExtra}
 			}

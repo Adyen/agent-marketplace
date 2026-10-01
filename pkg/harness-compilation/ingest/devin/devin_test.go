@@ -255,9 +255,9 @@ func TestSkillIngest(t *testing.T) {
 			wantTriggers: []string{},
 		},
 		{
-			name:      "devin allowed-tools reverse to canonical ids",
+			name:      "devin allowed-tools keep native names and record their source",
 			doc:       "---\nname: demo-skill\ndescription: A demo skill\nallowed-tools:\n  - read\n  - exec\n  - glob\n---\nBody\n",
-			wantTools: []string{"Read", "Bash", "Glob"},
+			wantTools: []string{"read", "exec", "glob"},
 		},
 		{
 			name:      "explicit empty allowed-tools stay explicitly empty",
@@ -291,6 +291,9 @@ func TestSkillIngest(t *testing.T) {
 			}
 			if !reflect.DeepEqual(skill.AllowedTools, tt.wantTools) {
 				t.Errorf("AllowedTools = %#v, want %#v", skill.AllowedTools, tt.wantTools)
+			}
+			if tt.wantTools != nil && skill.ToolSource != "devin" {
+				t.Errorf("ToolSource = %q, want devin", skill.ToolSource)
 			}
 			if skill.Model != tt.wantModel {
 				t.Errorf("Model = %q, want %q", skill.Model, tt.wantModel)
@@ -404,7 +407,7 @@ func TestSubagentIngest(t *testing.T) {
 			name:           "canonical flat profile",
 			doc:            agentDoc,
 			wantModel:      "sonnet",
-			wantTools:      []string{"Read", "Bash"},
+			wantTools:      []string{"read", "exec"},
 			wantMaxNesting: &three,
 		},
 		{
@@ -423,7 +426,7 @@ func TestSubagentIngest(t *testing.T) {
 		{
 			name:      "allowed-tools wins over tools and reports the drop",
 			doc:       "---\nname: demo-agent\ndescription: A demo agent\ntools:\n  - WebFetch\nallowed-tools:\n  - read\n---\nBody\n",
-			wantTools: []string{"Read"},
+			wantTools: []string{"read"},
 			wantCodes: []string{diag.CodeIngestDevinReservedFieldDropped},
 		},
 	}
@@ -443,6 +446,9 @@ func TestSubagentIngest(t *testing.T) {
 			}
 			if !reflect.DeepEqual(subagent.Tools, tt.wantTools) {
 				t.Errorf("Tools = %#v, want %#v", subagent.Tools, tt.wantTools)
+			}
+			if tt.wantTools != nil && subagent.ToolSource != "devin" {
+				t.Errorf("ToolSource = %q, want devin", subagent.ToolSource)
 			}
 			if !reflect.DeepEqual(subagent.MaxNesting, tt.wantMaxNesting) {
 				t.Errorf("MaxNesting = %v, want %v", derefInt(subagent.MaxNesting), derefInt(tt.wantMaxNesting))

@@ -735,7 +735,10 @@ func resourceJSON(r ir.Resource) ([]byte, error) {
 	}
 	modelBearing := r.Kind() == ir.KindSkill || r.Kind() == ir.KindSubagent
 	for k, v := range extra {
-		if modelBearing && strings.EqualFold(k, "ModelSource") {
+		if modelBearing && (strings.EqualFold(k, "ModelSource") || strings.EqualFold(k, "ToolSource")) {
+			continue
+		}
+		if r.Kind() == ir.KindHook && strings.EqualFold(k, "HookSource") {
 			continue
 		}
 		if _, ok := m[k]; !ok {

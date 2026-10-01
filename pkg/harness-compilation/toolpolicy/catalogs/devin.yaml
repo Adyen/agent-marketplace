@@ -1,0 +1,44 @@
+# Catalog data for pkg/harness-compilation/toolpolicy/catalogs/devin.yaml.
+schema: 1
+harness: devin
+evidence:
+  checked: "2026-09-29"
+  refs:
+    - https://docs.devin.ai/cli/extensibility/hooks/lifecycle-hooks
+    - internal/devinprobe/probe_test.go (TestProbeAllowedToolVocabulary)
+  notes: >-
+    Hook matchers see the full tool list below. Skill and subagent
+    allowed-tools accept only read, edit, grep, glob, and exec; other names are
+    silently dropped by Devin (probe evidence), hence the surface narrowing.
+
+mcp:
+  pattern: "mcp__{server}__{tool}"
+  all: "mcp__.*"
+  server_scoped: true
+
+surfaces: [hook_matcher, subagent_tools, skill_allowed_tools]
+
+tools:
+  exec: {concepts: [shell]}
+  get_output: {concepts: [shell.session], surfaces: [hook_matcher]}
+  write_to_process: {concepts: [shell.session], surfaces: [hook_matcher]}
+  kill_shell: {concepts: [shell.session], surfaces: [hook_matcher]}
+  read: {concepts: [file.read]}
+  write: {concepts: [file.write], surfaces: [hook_matcher]}
+  edit: {concepts: [file.edit]}
+  apply_patch: {concepts: [file.write, file.edit], surfaces: [hook_matcher]}
+  notebook_read: {concepts: [notebook.read], surfaces: [hook_matcher]}
+  notebook_edit: {concepts: [notebook.edit], surfaces: [hook_matcher]}
+  grep: {concepts: [search.grep]}
+  glob: {concepts: [search.glob]}
+  webfetch: {concepts: [web.fetch], surfaces: [hook_matcher]}
+  todo_write: {concepts: [todo], surfaces: [hook_matcher]}
+  exit_plan_mode: {concepts: [plan.exit], surfaces: [hook_matcher]}
+  skill: {concepts: [skill], surfaces: [hook_matcher]}
+  run_subagent: {concepts: [subagent], surfaces: [hook_matcher]}
+  read_subagent: {concepts: [subagent.read], surfaces: [hook_matcher]}
+  request_scope: {concepts: [access.request], surfaces: [hook_matcher]}
+  mcp_list_servers: {concepts: [mcp.servers], surfaces: [hook_matcher]}
+  mcp_list_tools: {concepts: [mcp.tools], surfaces: [hook_matcher]}
+  mcp_call_tool: {concepts: [mcp.call], surfaces: [hook_matcher]}
+  mcp_read_resource: {concepts: [mcp.read], surfaces: [hook_matcher]}

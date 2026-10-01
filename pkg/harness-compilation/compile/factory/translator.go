@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 func init() {
@@ -168,7 +170,7 @@ func (f *factoryCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact
 //   - disallowedTools → drop + emit diagnostic
 //   - isolation: worktree → drop + emit diagnostic
 //   - model and effort via the shared catalog resolver
-//   - tools via mapping.Tool() (expand Write → Edit,Create)
+//   - tools via toolpolicy.TranslateToolList (Write expands to Edit,Create per the factory catalog)
 func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	var diags []diag.Diagnostic
 	isolation := ""
@@ -185,23 +187,28 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 	if s.Tools != nil {
 		mappedTools = make([]string, 0, len(s.Tools))
 	}
-	toolsUnknown := false
-	for _, t := range s.Tools {
-		mapped, ok := mapping.ToolWithOverride(t, mapping.TargetFactory, opts.ToolOverride())
-		if ok {
-			mappedTools = append(mappedTools, mapped...)
-		} else {
-			toolsUnknown = true
-			diags = append(diags, diag.Diagnostic{
-				Code:     diag.CodeSubagentFactoryToolUnknown,
-				Severity: diag.SeverityError,
-				Target:   string(mapping.TargetFactory),
-				Resource: s.Name(),
-				Message:  "Factory cannot map an explicit subagent tool; subagent artifact suppressed",
-				Hint:     "Use a supported tool mapping or remove the restriction explicitly",
-				Source:   compile.DiagSource(s.Source),
-			})
+	emittedTools, uncoveredTools, toolErr := toolpolicy.TranslateToolList(mapping.Target(s.ToolSource), mapping.TargetFactory, toolpolicy.SurfaceSubagentTools, s.Tools, opts.ToolOverride())
+	if toolErr != nil {
+		return nil, nil, fmt.Errorf("factory: translate subagent tools: %w", toolErr)
+	}
+	if s.Tools != nil {
+		mappedTools = emittedTools
+		if mappedTools == nil {
+			mappedTools = []string{}
 		}
+	}
+	toolsUnknown := false
+	for range uncoveredTools {
+		toolsUnknown = true
+		diags = append(diags, diag.Diagnostic{
+			Code:     diag.CodeSubagentFactoryToolUnknown,
+			Severity: diag.SeverityError,
+			Target:   string(mapping.TargetFactory),
+			Resource: s.Name(),
+			Message:  "Factory cannot map an explicit subagent tool; subagent artifact suppressed",
+			Hint:     "Use a supported tool mapping or remove the restriction explicitly",
+			Source:   compile.DiagSource(s.Source),
+		})
 	}
 	if toolsUnknown {
 		slog.Warn("factory subagent tool unrepresentable", "target", mapping.TargetFactory, "resource", s.Name(), "outcome", "artifact suppressed")
@@ -285,61 +292,60 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 	return []artifact.Artifact{agentArt}, append(diags, extraDiags...), nil
 }
 
-// translateHook translates to hooks/hooks.json fragment with env token swap.
-// Non-command type hooks are dropped with a diagnostic.
+// translateHook translates to hooks/hooks.json fragment.
+//
+// Event, matcher, timeout, handler type, and command translation come from
+// the catalog-driven hookpolicy resolver (OpenSpec native-hook-integration,
+// task 3.7). Factory declares only command handlers, so prompt and other
+// undeclared types suppress this one entry with an error; a Factory-sourced
+// hook keeps its native matcher spelling and group-level fields such as
+// commandRegex rather than round-tripping through canonical tool names.
 func (f *factoryCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	if h.Type == "prompt" || h.Prompt != "" {
+	scope := hookpolicy.ScopeRepository
+	if opts.Scope() == compile.ScopeUser {
+		scope = hookpolicy.ScopeMachine
+	}
+	resolved := hookpolicy.Resolve(h, target.TargetFactory, scope, opts.PluginRoot())
+	if resolved.Failed() {
+		return nil, resolved.Diagnostics, nil
+	}
+	// A stray prompt payload has no Factory representation either; never
+	// emit both a command and a prompt for one handler.
+	if h.Prompt != "" {
 		return nil, []diag.Diagnostic{{Code: diag.CodeHookPromptUnsupported, Severity: diag.SeverityError, Target: string(mapping.TargetFactory), Resource: h.Name(), Message: "Factory cannot represent prompt hooks; hook artifact suppressed", Hint: "Use a command hook on Factory", Source: diag.SourceRef(h.Source)}}, nil
 	}
-	// Drop non-command hook types
-	if h.Type != "command" {
-		diags := []diag.Diagnostic{
-			{
-				Code:     diag.CodeHookFactoryNonCommandTypeDropped,
-				Severity: diag.SeverityWarning,
-				Target:   string(mapping.TargetFactory),
-				Resource: h.Name(),
-				Message:  fmt.Sprintf("Factory only supports command-type hooks; hook type %q dropped for event %q", h.Type, h.Event),
-				Hint:     "Convert the hook to a command type or remove it",
-				Source:   compile.DiagSource(h.Source),
-			},
-		}
-		return nil, diags, nil
-	}
-
-	event, supported := mapping.HookEvent(h.Event, h.Matcher, mapping.TargetFactory)
-	if !supported {
-		return nil, []diag.Diagnostic{{Code: diag.CodeHookEventUnmappable, Severity: diag.SeverityError, Target: string(mapping.TargetFactory), Resource: h.Name(), Message: "Factory cannot preserve this hook event; hook artifact suppressed", Hint: "Use a hook event documented for Factory", Source: compile.DiagSource(h.Source)}}, nil
-	}
-
-	// Swap ${CLAUDE_PLUGIN_ROOT} → ${DROID_PLUGIN_ROOT} in the command
-	mappedCommand := swapEnvTokens(h.Command)
 
 	// Build the hook entry (type + command + extra fields)
-	hookEntry := map[string]any{"type": h.Type, "command": mappedCommand}
-	if h.Prompt != "" {
-		hookEntry["prompt"] = h.Prompt
+	hookEntry := map[string]any{"type": resolved.Type}
+	if resolved.Command != "" {
+		hookEntry["command"] = resolved.Command
 	}
-	if h.Timeout != nil {
-		hookEntry["timeout"] = *h.Timeout
+	if resolved.Timeout != nil {
+		hookEntry["timeout"] = *resolved.Timeout
 	}
-	extraKeys, diags := compile.HookExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": h.Matcher != "", "type": true, "command": h.Command != "", "prompt": h.Prompt != "", "timeout": h.Timeout != nil}), mapping.TargetFactory, h.Name(), diag.SourceRef(h.Source))
-	for _, k := range extraKeys {
-		hookEntry[k] = h.Extra[k]
-	}
+	extraKeys, diags := compile.HookExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": resolved.Matcher != "", "type": true, "command": resolved.Command != "", "prompt": h.Prompt != "", "timeout": resolved.Timeout != nil}), mapping.TargetFactory, h.Name(), diag.SourceRef(h.Source))
 
-	// Build the rule group: matcher + hooks array
+	// Build the rule group: matcher + hooks array. commandRegex is a
+	// Factory-only group-level field, not a handler member.
 	ruleGroup := map[string]any{
 		"hooks": []any{hookEntry},
 	}
-	if h.Matcher != "" {
-		ruleGroup["matcher"] = h.Matcher
+	if resolved.Matcher != "" {
+		ruleGroup["matcher"] = resolved.Matcher
 	}
+	for _, k := range extraKeys {
+		if k == "commandRegex" {
+			ruleGroup[k] = h.Extra[k]
+			continue
+		}
+		hookEntry[k] = h.Extra[k]
+	}
+	diags = append(resolved.Diagnostics, diags...)
 
 	// Factory hooks.json: top-level keys are event names, each mapping to
 	// an array of rule groups (matcher + hooks).
 	fragment := map[string]any{
-		event: []any{ruleGroup},
+		resolved.Event: []any{ruleGroup},
 	}
 	fragBytes, err := json.Marshal(fragment)
 	if err != nil {
@@ -387,18 +393,6 @@ func (f *factoryCompiler) translateMcpServer(m *ir.McpServer, opts compile.Optio
 	art.MergeWithExisting = art.ManagedByField != ""
 
 	return []artifact.Artifact{art}, diags, nil
-}
-
-// swapEnvTokens replaces ${CLAUDE_PLUGIN_ROOT} with ${DROID_PLUGIN_ROOT}
-// in the given string, using the mapping.EnvToken function.
-func swapEnvTokens(s string) string {
-	// Look for known env tokens and replace them.
-	// We scan for ${CLAUDE_PLUGIN_ROOT} specifically.
-	replacement, literal := mapping.EnvToken("${CLAUDE_PLUGIN_ROOT}", mapping.TargetFactory)
-	if literal {
-		return s // No substitution for literal replacements
-	}
-	return strings.ReplaceAll(s, "${CLAUDE_PLUGIN_ROOT}", replacement)
 }
 
 // getCompiler returns the registered Factory compiler. Used by tests.

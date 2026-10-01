@@ -367,7 +367,21 @@ func appendUnique(list []string, rel string) []string {
 // exactly as the descriptor declares it.
 func appendAggregateFiles(set *AggregateFileSet, prefix string, aggregates []targetmeta.NativeAggregate) {
 	for _, aggregate := range aggregates {
+		// AggregateFiles must name the files the compilers merge into
+		// today: while the native write switch is pending, a hook
+		// aggregate's emitted file is its declared legacy location (the
+		// plugin-layout file the compilers still emit), not the declared
+		// native file it will move to. This keeps backup coverage exactly
+		// equal to produced output in both phases.
 		project, user := aggregate.Project.Path, aggregate.User.Path
+		if aggregate.Kind == ir.KindHook {
+			if len(aggregate.Project.Legacy) > 0 {
+				project = aggregate.Project.Legacy[0]
+			}
+			if len(aggregate.User.Legacy) > 0 {
+				user = aggregate.User.Legacy[0]
+			}
+		}
 		if prefix != "" {
 			project = path.Join(prefix, project)
 			user = path.Join(prefix, user)
@@ -474,92 +488,72 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	// Claude deliberately leaves SkillPathPattern unset: materialize
 	// activates frontmatter injection when a pattern is declared, and the
 	// Claude compiler already renders it.
+	// Hook resources still install under the hooks component until the
+	// hook-support migration (design D8) moves them.
+	claudeInfo.ResourceDirs[ir.KindHook] = "hooks"
+
+	factoryInfo, err := targetInfoFromLayout(targetmeta.TargetFactory)
+	if err != nil {
+		return nil, err
+	}
+	factoryInfo.Roots = roots[hcc.TargetFactory]
+	factoryInfo.SkillPathPattern = "skills/%s/SKILL.md"
+	factoryInfo.ResourceDirs[ir.KindHook] = "hooks"
+	// TEMPORARY WORKAROUND: Factory's droid CLI does not follow
+	// symlinked command files, so commands must be materialized as
+	// real files. Remove this once Factory resolves symlink loading.
+	factoryInfo.FileCopyKinds = map[ir.ResourceKind]bool{ir.KindCommand: true}
+	// The Factory compiler emits no .factory-plugin/plugin.json or
+	// settings.json; hooks and MCP servers are its merge artifacts.
+
+	cursorInfo, err := targetInfoFromLayout(targetmeta.TargetCursor)
+	if err != nil {
+		return nil, err
+	}
+	cursorInfo.Roots = roots[hcc.TargetCursor]
+	cursorInfo.SkillPathPattern = "skills/%s/SKILL.md"
+	cursorInfo.ResourceDirs[ir.KindHook] = "hooks"
+
+	windsurfInfo, err := targetInfoFromLayout(targetmeta.TargetWindsurf)
+	if err != nil {
+		return nil, err
+	}
+	windsurfInfo.Roots = roots[hcc.TargetWindsurf]
+	windsurfInfo.PlanStrategy = PlanWindsurf
+	windsurfInfo.SkillPathPattern = ".windsurf/skills/%s/SKILL.md"
+	// Windsurf only discovers machine-wide slash commands under
+	// ~/.codeium/windsurf/global_workflows; skills and hooks keep their
+	// names at the Windsurf machine root.
+	windsurfInfo.MachineComponentDirs = map[string]string{
+		"workflows": "global_workflows",
+	}
+	// Windsurf's aggregate path is genuinely scope-dependent, like its
+	// component directories: the repo-scope install root is the
+	// repository itself, so the file lands under .devin/, while the
+	// machine-scope install root already IS ~/.codeium/windsurf.
+	windsurfInfo.PreservedLegacyDirs = AggregateFileSet{
+		Project: []string{".windsurf/hooks"},
+		User:    []string{"hooks"},
+	}
+	windsurfInfo.ResourceDirs[ir.KindHook] = ".windsurf/hook-support"
+
+	geminiInfo, err := targetInfoFromLayout(targetmeta.TargetGemini)
+	if err != nil {
+		return nil, err
+	}
+	geminiInfo.Roots = roots[hcc.TargetGemini]
+	// The Gemini compiler emits artifacts under a .gemini/ prefix, which the
+	// ArtifactRootPrefix strips; hooks merge into settings.json and MCP
+	// servers into gemini-extension.json.
+	geminiInfo.ArtifactRootPrefix = ".gemini"
+	geminiInfo.SkillPathPattern = "skills/%s/SKILL.md"
 
 	m := map[hcc.Target]TargetInfo{
-		hcc.TargetClaude: claudeInfo,
-		hcc.TargetFactory: {
-			Roots:            roots[hcc.TargetFactory],
-			Components:       []string{"skills", "commands", "droids", "hooks", ".factory-plugin"},
-			PlanStrategy:     PlanSubtree,
-			SkillPathPattern: "skills/%s/SKILL.md",
-			ResourceDirs: map[ir.ResourceKind]string{
-				ir.KindCommand:  "commands",
-				ir.KindSubagent: "droids",
-				ir.KindHook:     "hooks",
-			},
-			// TEMPORARY WORKAROUND: Factory's droid CLI does not follow
-			// symlinked command files, so commands must be materialized as
-			// real files. Remove this once Factory resolves symlink loading.
-			FileCopyKinds: map[ir.ResourceKind]bool{
-				ir.KindCommand: true,
-			},
-			// The Factory compiler emits no .factory-plugin/plugin.json or
-			// settings.json; hooks and MCP servers are its merge artifacts.
-			AggregateFiles: AggregateFileSet{
-				Project: []string{"hooks/hooks.json", "mcp.json"},
-				User:    []string{"hooks/hooks.json", "mcp.json"},
-			},
-		},
-		hcc.TargetCursor: {
-			Roots:            roots[hcc.TargetCursor],
-			Components:       []string{"skills", "commands", "agents", "hooks"},
-			PlanStrategy:     PlanSubtree,
-			SkillPathPattern: "skills/%s/SKILL.md",
-			ResourceDirs: map[ir.ResourceKind]string{
-				ir.KindCommand:  "commands",
-				ir.KindSubagent: "agents",
-				ir.KindHook:     "hooks",
-			},
-			AggregateFiles: AggregateFileSet{
-				Project: []string{"hooks/hooks.json", "mcp.json"},
-				User:    []string{"hooks/hooks.json", "mcp.json"},
-			},
-		},
-		hcc.TargetWindsurf: {
-			Roots:            roots[hcc.TargetWindsurf],
-			Components:       []string{"skills", "workflows", "hook-support"},
-			PlanStrategy:     PlanWindsurf,
-			SkillPathPattern: ".windsurf/skills/%s/SKILL.md",
-			// Windsurf only discovers machine-wide slash commands under
-			// ~/.codeium/windsurf/global_workflows; skills and hooks keep their
-			// names at the Windsurf machine root.
-			MachineComponentDirs: map[string]string{
-				"workflows": "global_workflows",
-			},
-			ResourceDirs: map[ir.ResourceKind]string{
-				ir.KindCommand: ".windsurf/workflows",
-				ir.KindHook:    ".windsurf/hook-support",
-			},
-			// Windsurf's aggregate path is genuinely scope-dependent, like its
-			// component directories: the repo-scope install root is the
-			// repository itself, so the file lands under .windsurf/, while the
-			// machine-scope install root already IS ~/.codeium/windsurf.
-			AggregateFiles: AggregateFileSet{
-				Project: []string{".windsurf/hooks.json", ".windsurf/mcp_config.json"},
-				User:    []string{"hooks.json", "mcp_config.json"},
-			},
-			PreservedLegacyDirs: AggregateFileSet{
-				Project: []string{".windsurf/hooks"},
-				User:    []string{"hooks"},
-			},
-		},
-		hcc.TargetGemini: {
-			Roots:              roots[hcc.TargetGemini],
-			Components:         []string{"skills", "commands"},
-			ArtifactRootPrefix: ".gemini",
-			PlanStrategy:       PlanSubtree,
-			SkillPathPattern:   "skills/%s/SKILL.md",
-			ResourceDirs: map[ir.ResourceKind]string{
-				ir.KindCommand: "commands",
-			},
-			// MCP servers merge into gemini-extension.json and hooks merge into
-			// settings.json (compiled as ".gemini/settings.json", which the
-			// ArtifactRootPrefix above strips).
-			AggregateFiles: AggregateFileSet{
-				Project: []string{"gemini-extension.json", "settings.json"},
-				User:    []string{"gemini-extension.json", "settings.json"},
-			},
-		},
+		hcc.TargetClaude:   claudeInfo,
+		hcc.TargetFactory:  factoryInfo,
+		hcc.TargetCursor:   cursorInfo,
+		hcc.TargetWindsurf: windsurfInfo,
+		hcc.TargetGemini:   geminiInfo,
 	}
 
 	// Validate every declared aggregate path before it is ever joined onto an

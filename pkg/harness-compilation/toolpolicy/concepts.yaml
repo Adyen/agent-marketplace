@@ -1,0 +1,52 @@
+# Catalog data for pkg/harness-compilation/toolpolicy/concepts.yaml.
+#
+# The shared, harness-neutral vocabulary. Every harness catalog maps its native
+# tool names onto these concepts, and every hook catalog maps its native events
+# onto the canonical events below. Adding a concept is a deliberate design
+# change; renaming a native tool is a one-line catalog edit.
+schema: 1
+
+tools:
+  shell: Run a shell command.
+  shell.powershell: Run a PowerShell command.
+  shell.session: Poll, feed, or stop an already running shell session.
+  file.read: Read file contents.
+  file.write: Create or overwrite a whole file.
+  file.edit: Modify an existing file in place, including patch application.
+  file.list: List a directory.
+  file.delete: Delete a file.
+  search.grep: Search file contents.
+  search.glob: Find files by path pattern.
+  web.fetch: Fetch a URL.
+  web.search: Run a web search.
+  subagent: Start a subagent.
+  subagent.read: Read a running subagent's output.
+  access.request: Ask the user for filesystem access.
+  mcp.servers: List configured MCP servers.
+  mcp.tools: List tools on MCP servers.
+  mcp.call: Call a tool on an MCP server.
+  mcp.read: Read an MCP resource.
+  notebook.read: Read notebook cells.
+  notebook.edit: Modify notebook cells.
+  todo: Maintain the agent's task list.
+  plan.enter: Enter plan mode.
+  plan.exit: Leave plan mode.
+  skill: Load a skill.
+  ask.user: Ask the user a question.
+
+# Canonical hook events. Keys keep the existing IR spelling so legacy canonical
+# hooks (no source provenance) keep their meaning.
+events:
+  PreToolUse: Before a tool call runs; can block it.
+  PostToolUse: After a tool call succeeds.
+  PostToolUseFailure: After a tool call fails.
+  PermissionRequest: When a tool call needs a permission decision.
+  UserPromptSubmit: After the user submits a prompt, before the model sees it.
+  Stop: When the main agent is about to finish its turn; can request continuation.
+  SubagentStart: When a subagent starts.
+  SubagentStop: When a subagent finishes.
+  SessionStart: When a session starts or resumes.
+  SessionEnd: When a session ends.
+  PreCompact: Before context compaction.
+  PostCompact: After context compaction.
+  Notification: When the harness sends a user notification.

@@ -34,7 +34,7 @@ var testPluginFS = fstest.MapFS{
 	},
 	// Hook
 	"hooks/hooks.json": &fstest.MapFile{
-		Data: []byte(`{"hooks":{"on-save":[{"type":"command","command":"echo saved"}]}}`),
+		Data: []byte(`{"hooks":{"PreToolUse":[{"type":"command","command":"echo saved"}]}}`),
 	},
 	// MCP server
 	".mcp.json": &fstest.MapFile{

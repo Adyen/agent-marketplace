@@ -1,6 +1,6 @@
 ## 0. Preconditions
 
-- [ ] 0.1 Confirm `baseline-hooks` is archived and
+- [x] 0.1 Confirm `baseline-hooks` is archived and
   `openspec/specs/hook-resources/spec.md` exists. Verify that
   `openspec validate native-hook-integration --strict` passes, and that a dry
   archive in a scratch copy of `openspec/` applies with no dropped-scenario
@@ -9,7 +9,7 @@
   (design, Migration Plan step 0) is the latest release pinned in
   `e2e/released_client_compat_test.go`. Verify by reading the pinned version
   and its changelog entry. Do not merge section 6 until this holds
-- [ ] 0.3 Rebase on PR #276 if it has merged, so that `make catalog-check` and
+- [x] 0.3 Rebase on PR #276 if it has merged, so that `make catalog-check` and
   the drift audit can extend its targets and tool. If it has not merged,
   keep `modelpolicy` untouched and add the audit sources in a follow-up.
   Verify `make model-catalog-check` still passes either way
@@ -22,13 +22,13 @@
   `toolpolicy/concepts.yaml`, `toolpolicy/catalogs/<harness>.yaml`, and
   `hookpolicy/catalogs/<harness>.yaml`. Verify each file's refs are
   first-party
-- [ ] 1.2 Add `toolpolicy`: an embedded strict loader, validation (design
+- [x] 1.2 Add `toolpolicy`: an embedded strict loader, validation (design
   D2), and indexes built once. Write red tests first: unknown key,
   duplicate key, unknown concept, colliding alias, surface narrowing to an
   undeclared surface, missing evidence. Annotate
   `// spec: harness-tool-catalogs/colliding-alias-fails-the-check`. Verify
   `go test ./pkg/harness-compilation/toolpolicy -count=1` passes
-- [ ] 1.3 Add `hookpolicy`: an embedded strict loader and validation (design
+- [x] 1.3 Add `hookpolicy`: an embedded strict loader and validation (design
   D2). Write red tests first: overlapping split events, a type on an event
   that allows none, bad unit, bad repository base, invalid or duplicate env
   name, missing evidence. Annotate
@@ -47,27 +47,27 @@
   `hook-resources/shipped-catalogs-pass-the-check` and
   `harness-tool-catalogs/stale-generated-reference-fails-the-check`. Verify
   both targets run offline
-- [ ] 1.6 Add `HookSource` to `ir.Hook`, and `ToolSource` to `ir.Subagent` and
+- [x] 1.6 Add `HookSource` to `ir.Hook`, and `ToolSource` to `ir.Subagent` and
   `ir.Skill`. Cover canonical round-trips, extras-collision rejection, and
   case-alias rejection. Verify with `go test ./pkg/harness-compilation/ir ./pkg/harness-compilation/artifact -count=1`
-- [ ] 1.7 Extend `target.NativeLayout` for all seven targets with the hook
+- [x] 1.7 Extend `target.NativeLayout` for all seven targets with the hook
   aggregate (path, member, envelope, shape), the support directory root, and
   legacy locations. Windsurf's repository file is `.devin/hooks.json`, with
   legacy `.windsurf/hooks.json`. Move the Factory, Cursor, Windsurf, and
   Gemini hook declarations out of `internal/harness`. Verify
   `ValidateTargetRegistrations` and the native layout tests pass
-- [ ] 1.8 Add the new shared diagnostic codes (design D13) and raise existing
+- [x] 1.8 Add the new shared diagnostic codes (design D13) and raise existing
   loss codes to error severity where the spec requires it. Verify the diag
   catalog tests pass
 
 ## 2. Tool translation on toolpolicy
 
-- [ ] 2.1 Implement concept-set translation (design D5): exact coverage for
+- [x] 2.1 Implement concept-set translation (design D5): exact coverage for
   hook matchers, subset-only for allow-lists, plus matcher parsing, output
   syntax, anchoring, and MCP pattern rewriting. Keep `WithToolOverride` as
   the per-invocation override. Verify `go test ./pkg/harness-compilation/toolpolicy -count=1`
   passes against the `matchers` and `allow_lists` fixtures
-- [ ] 2.2 Move subagent `tools` translation in the Claude, Factory, Cursor,
+- [x] 2.2 Move subagent `tools` translation in the Claude, Factory, Cursor,
   Gemini, and Devin compilers, and Devin skill `allowed-tools`, onto
   `toolpolicy`, keeping each target's existing unknown-tool codes and
   effects. Annotate:
@@ -80,12 +80,12 @@
 
   Refresh the subagent matrix goldens deliberately and review the diff.
   Verify `go test ./pkg/harness-compilation/... -count=1` passes
-- [ ] 2.3 Move Devin and Cursor ingestion tool reversal onto `toolpolicy` and
+- [x] 2.3 Move Devin and Cursor ingestion tool reversal onto `toolpolicy` and
   record `ToolSource`. Annotate
   `harness-tool-catalogs/renamed-tools-are-accepted-through-aliases` and
   `gemini-wildcards-survive-same-harness-output`. Verify the ingest tests
   pass
-- [ ] 2.4 Delete `compile/mapping/tools.go`, apart from the frozen legacy alias
+- [x] 2.4 Delete `compile/mapping/tools.go`, apart from the frozen legacy alias
   table. Verify no production code references `mapping.Tool`,
   `ToolWithOverride`, or `ReverseTool`
 
@@ -95,27 +95,27 @@ For each target, write red tests first, switch the translator to
 `hookpolicy.Resolve`, delete that target's hard-coded checks, and refresh its
 hook matrix goldens deliberately.
 
-- [ ] 3.1 Implement `hookpolicy.Resolve` (design D4 and D6): events, types,
+- [x] 3.1 Implement `hookpolicy.Resolve` (design D4 and D6): events, types,
   timeouts, matcher via `toolpolicy`, and env and plugin-root rewriting
   against an opaque support base. Verify the `events`, `env`, and `timeouts`
   fixtures pass
-- [ ] 3.2 Gemini CLI. Annotate
+- [x] 3.2 Gemini CLI. Annotate
   `gemini-timeouts-are-converted-to-milliseconds`,
   `gemini-millisecond-timeouts-round-up-on-ingestion`,
   `gemini-hooks-keep-millisecond-timeouts`, and
   `mcp-matchers-follow-the-target-s-mcp-naming`
-- [ ] 3.3 Windsurf. Annotate
+- [x] 3.3 Windsurf. Annotate
   `windsurf-splits-pretooluse-by-translated-tool-matcher` and
   `windsurf-refuses-explicit-timeouts`
-- [ ] 3.4 Devin CLI and Codex. Annotate `codex-caps-sessionend-timeouts`,
+- [x] 3.4 Devin CLI and Codex. Annotate `codex-caps-sessionend-timeouts`,
   `negative-timeouts-are-refused-on-every-target`, and
   `tool-names-are-translated-per-target`
-- [ ] 3.5 Claude Code. Annotate `claude-code-refuses-unknown-events`,
+- [x] 3.5 Claude Code. Annotate `claude-code-refuses-unknown-events`,
   `unknown-handler-types-are-refused-on-claude-code`,
   `prompt-hooks-compile-where-the-catalog-declares-them`, and
   `renamed-tools-are-accepted-through-aliases`
-- [ ] 3.6 Cursor. Annotate `cursor-receives-native-event-names`
-- [ ] 3.7 Factory Droid. Annotate `factory-hooks-keep-native-tool-names`
+- [x] 3.6 Cursor. Annotate `cursor-receives-native-event-names`
+- [x] 3.7 Factory Droid. Annotate `factory-hooks-keep-native-tool-names`
 - [ ] 3.8 Add cross-target tests through the public `Compile` path and
   annotate them:
   - `unmappable-events-are-errors-on-every-target`

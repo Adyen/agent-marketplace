@@ -1,7 +1,6 @@
 package mapping
 
 import (
-	"sort"
 	"testing"
 )
 
@@ -31,59 +30,6 @@ func TestDevinModel(t *testing.T) {
 	}
 }
 
-func TestDevinTool(t *testing.T) {
-	tests := []struct {
-		name   string
-		source string
-		want   []string
-		wantOK bool
-	}{
-		{"Read", "Read", []string{"read"}, true},
-		{"Edit", "Edit", []string{"edit"}, true},
-		{"Grep", "Grep", []string{"grep"}, true},
-		{"Glob", "Glob", []string{"glob"}, true},
-		{"Bash", "Bash", []string{"exec"}, true},
-		{"Write is unsupported", "Write", nil, false},
-		{"MultiEdit is unsupported", "MultiEdit", nil, false},
-		{"WebFetch is unsupported", "WebFetch", nil, false},
-		{"WebSearch is unsupported", "WebSearch", nil, false},
-		{"unknown tool", "NoSuchTool", nil, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := Tool(tt.source, TargetDevin)
-			if ok != tt.wantOK || !sliceEqual(got, tt.want) {
-				t.Errorf("Tool(%q, Devin) = (%v, %v), want (%v, %v)", tt.source, got, ok, tt.want, tt.wantOK)
-			}
-		})
-	}
-}
-
-// TestDevinToolVocabularyIsClosed asserts that the Devin allowed-tools
-// vocabulary produced by the mapping table is exactly the five documented
-// values, so a future table edit cannot widen Devin's privileges silently.
-func TestDevinToolWithOverride(t *testing.T) {
-	tests := []struct {
-		name      string
-		source    string
-		overrides map[string]string
-		want      []string
-		wantOK    bool
-	}{
-		{"curated value overridden", "Read", map[string]string{"Read": "custom-read"}, []string{"custom-read"}, true},
-		{"unknown tool rescued by override", "NoSuchTool", map[string]string{"NoSuchTool": "custom"}, []string{"custom"}, true},
-		{"no override falls back to table", "Read", map[string]string{"Other": "x"}, []string{"read"}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := ToolWithOverride(tt.source, TargetDevin, tt.overrides)
-			if ok != tt.wantOK || !sliceEqual(got, tt.want) {
-				t.Errorf("ToolWithOverride(%q, Devin, %v) = (%v, %v), want (%v, %v)", tt.source, tt.overrides, got, ok, tt.want, tt.wantOK)
-			}
-		})
-	}
-}
-
 func TestDevinModelWithOverride(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -103,24 +49,6 @@ func TestDevinModelWithOverride(t *testing.T) {
 				t.Errorf("ModelWithOverride(%q, Devin, %v) = (%q, %v), want (%q, %v)", tt.source, tt.overrides, got, ok, tt.want, tt.wantOK)
 			}
 		})
-	}
-}
-
-func TestDevinToolVocabularyIsClosed(t *testing.T) {
-	want := []string{"edit", "exec", "glob", "grep", "read"}
-
-	var got []string
-	for _, entry := range toolTable {
-		mapped, ok := entry.Targets[TargetDevin]
-		if !ok || len(mapped) == 0 {
-			continue
-		}
-		got = append(got, mapped...)
-	}
-	sort.Strings(got)
-
-	if !sliceEqual(got, want) {
-		t.Errorf("Devin allowed-tools vocabulary = %v, want %v", got, want)
 	}
 }
 

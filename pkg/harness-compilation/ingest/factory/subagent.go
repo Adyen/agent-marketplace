@@ -40,7 +40,7 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		if err != nil {
 			return nil, nil, fmt.Errorf("ingest/factory: invalid tools in %s: %w", path, err)
 		}
-		tools = normalizeFactoryTools(parsed)
+		tools = parsed
 	}
 	var disallowedTools []string
 	if value, ok := fm["disallowedTools"]; ok {
@@ -66,25 +66,8 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 	}
 	subagent := ir.NewSubagentWithOptions(name, description, body, model, tools, reasoningEffort, disallowedTools, isolation, extraFields(fm, subagentKnownKeys), sourceRef(path), options...)
 	subagent.ModelSource = "factory"
+	if tools != nil {
+		subagent.ToolSource = "factory"
+	}
 	return subagent, nil, nil
-}
-
-func normalizeFactoryTools(tools []string) []string {
-	if tools == nil {
-		return nil
-	}
-	result := make([]string, 0, len(tools))
-	for i := 0; i < len(tools); i++ {
-		if i+1 < len(tools) && isEditCreatePair(tools[i], tools[i+1]) {
-			result = append(result, "Write")
-			i++
-			continue
-		}
-		result = append(result, tools[i])
-	}
-	return result
-}
-
-func isEditCreatePair(a, b string) bool {
-	return (a == "Edit" && b == "Create") || (a == "Create" && b == "Edit")
 }

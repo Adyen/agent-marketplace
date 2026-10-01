@@ -39,7 +39,10 @@ func TestCursorSubagentExtPrecedence(t *testing.T) {
 	})
 
 	t.Run("falls back to canonical derivation when ext missing", func(t *testing.T) {
-		sub := ir.NewSubagent("reviewer", "Review code", "Body", "sonnet", []string{"Read"}, "medium", nil, "", nil, ir.SourceRef{})
+		// Cursor has no subagent tool surface, so a canonical tools list
+		// would suppress the artifact; canonical derivation is exercised
+		// with the restriction absent here.
+		sub := ir.NewSubagent("reviewer", "Review code", "Body", "sonnet", nil, "medium", nil, "", nil, ir.SourceRef{})
 
 		arts, diags, err := newCursorCompiler().Translate(sub)
 		if err != nil {
@@ -53,8 +56,8 @@ func TestCursorSubagentExtPrecedence(t *testing.T) {
 		if !strings.Contains(body, "model: claude-sonnet-4-5-20250929") {
 			t.Fatalf("frontmatter missing canonical mapped model:\n%s", body)
 		}
-		if !strings.Contains(body, "- Read") {
-			t.Fatalf("frontmatter missing canonical tools:\n%s", body)
+		if strings.Contains(body, "tools:") {
+			t.Fatalf("frontmatter emitted a tools field Cursor cannot enforce:\n%s", body)
 		}
 		if strings.Contains(body, "effort:") {
 			t.Fatalf("frontmatter emitted unsupported standalone effort:\n%s", body)

@@ -1,0 +1,34 @@
+# Catalog data for pkg/harness-compilation/toolpolicy/catalogs/factory.yaml.
+schema: 1
+harness: factory
+evidence:
+  checked: "2026-09-29"
+  refs:
+    - https://docs.factory.ai/reference/hooks-reference
+    - https://docs.factory.ai/cli/configuration/custom-droids
+  notes: >-
+    Droid tool IDs are case-sensitive and unknown IDs fail droid validation.
+    TodoWrite and Skill are always granted to droids and must not be listed;
+    ExitSpecMode and GenerateDroid are forbidden in droid tool lists.
+
+mcp:
+  pattern: "mcp__{server}__{tool}"
+  all: "mcp__.*"
+  server_scoped: true
+
+surfaces: [hook_matcher, subagent_tools]
+
+tools:
+  Execute: {concepts: [shell]}
+  Read: {concepts: [file.read]}
+  LS: {concepts: [file.list]}
+  Create: {concepts: [file.write]}
+  Edit: {concepts: [file.edit]}
+  ApplyPatch: {concepts: [file.write, file.edit]}
+  Grep: {concepts: [search.grep]}
+  Glob: {concepts: [search.glob]}
+  FetchUrl: {concepts: [web.fetch]}
+  WebSearch: {concepts: [web.search]}
+  Task: {concepts: [subagent], surfaces: [hook_matcher]}
+  TodoWrite: {concepts: [todo], surfaces: [hook_matcher]}
+  Skill: {concepts: [skill], surfaces: [hook_matcher]}

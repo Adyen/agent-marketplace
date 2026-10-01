@@ -20,6 +20,12 @@ tools:
   web.fetch: Fetch a URL.
   web.search: Run a web search.
   subagent: Start a subagent.
+  subagent.read: Read a running subagent's output.
+  access.request: Ask the user for filesystem access.
+  mcp.servers: List configured MCP servers.
+  mcp.tools: List tools on MCP servers.
+  mcp.call: Call a tool on an MCP server.
+  mcp.read: Read an MCP resource.
   notebook.read: Read notebook cells.
   notebook.edit: Modify notebook cells.
   todo: Maintain the agent's task list.

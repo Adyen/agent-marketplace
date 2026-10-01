@@ -79,10 +79,7 @@ comparison in non-test code.
 | `ingest.factory.resource-shadowed` | Factory resource was shadowed by an earlier resource of the same kind and name | Use distinct resource names or remove the lower-priority definition |
 | `subagent.windsurf.no-primitive` | Windsurf has no subagent primitive; resource dropped | Consider expressing the subagent as a Windsurf workflow instead |
 | `hook.claude.unsupported-type` | Unsupported hook type in Claude format; only command-type is universally supported in v0 | Convert the hook to a command type or remove it |
-| `hook.factory.non-command-type-dropped` | Factory only supports command-type hooks; non-command type dropped | Convert the hook to a command type or remove it |
-| `hook.cursor.unsupported-type` | Cursor only supports command-type hooks; non-command type dropped | Convert the hook to a command type or remove it |
 | `hook.windsurf.env-token-expanded` | Windsurf expanded env token to a literal path | Verify the expanded path is correct for the target environment |
-| `hook.windsurf.event-unmappable` | Claude hook event has no Windsurf equivalent; hook dropped | Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop) |
 | `ingest.gemini.hook-event-partial-mapping` | Gemini hook event has no exact Claude equivalent; original event preserved | Use BeforeTool, AfterTool, or PreCompress for lossless cross-harness mapping |
 | `ingest.windsurf.hook-event-unmappable` | Windsurf hook event has no Claude equivalent; original event preserved | Use a mappable Windsurf event or preserve the native event through the Windsurf sidecar |
 | `mcp.interpolation-unsupported` | One MCP value uses an interpolation style the target cannot represent; that value was omitted and the entry was still emitted | Replace the interpolated value with a literal value, or use an interpolation style the target documents |
@@ -99,10 +96,12 @@ comparison in non-test code.
 | `ingest.codex.field-dropped` | A benign native Codex field has no canonical equivalent and was omitted | Remove the field or keep the resource in Codex format |
 | `rule.factory.metadata-dropped` | Factory rules are plain markdown; description/globs/alwaysApply metadata dropped | Factory does not support rule frontmatter (description or conditional glob-scoped application); the rule body is emitted verbatim |
 | `compile.canonical-field-overrides-extra` | Canonical field overrides a conflicting preserved extra | The canonical modeled value wins; rename the extension field to preserve both values |
-| `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook dropped | Use a command hook on this target |
-| `hook.gemini.event-unmappable` | Gemini has no equivalent hook event; hook dropped | Use a documented Gemini hook event |
-| `hook.gemini.unsupported-type` | Gemini cannot represent this hook type; hook dropped | Use a command or prompt hook on Gemini |
-| `hook.windsurf.unsupported-type` | Windsurf cannot represent this hook type; hook dropped | Use a command hook on Windsurf |
+| `hook.timeout-rounded` | Timeout unit conversion to seconds rounded up to the next whole second | Use a whole-second timeout or accept the rounded value |
+| `hook.timeout-capped` | Timeout exceeded the documented per-event limit and was lowered to the limit | Set a timeout within the documented limit |
+| `hook.duplicate-execution-risk` | Two selected harness targets load the same hook files by default, so the hook may run twice | Deselect one of the targets for this scope, or accept the duplicate execution |
+| `materialize.hook.review` | Repository hook output changed on a target that may require trust review | Review the changed hooks before using the configuration |
+| `materialize.hook.review-pending` | A check found a pending hook change without mutating files | A later sync will apply the pending hook change |
+| `materialize.hook.satisfied-by-unmanaged` | A semantically identical handwritten hook already exists; no entry was added | No action needed; the handwritten entry satisfies the desired hook |
 | `skill.support-files-deferred` | Skill support file names were preserved but bytes were not materialized | Materialize source-relative support files in the owning layer |
 | `mcp.credentials.literal-secret` | MCP configuration contains a literal credential-like value | Use environment interpolation or an external secret reference |
 | `skill.devin.model-unmappable` | Explicit skill model has no resolved Devin representation; model omitted | Update the shipped Devin model catalog or use an explicit model override |
@@ -565,6 +564,19 @@ key or a hook event name), the resource name, and content digests are reported.
 | `subagent.factory.tool-unknown` | Factory cannot map an explicit subagent tool; subagent artifact suppressed | Use a supported tool mapping or remove the restriction explicitly |
 | `skill.codex.security-restriction-unsupported` | Codex skills cannot enforce an explicit security restriction; artifact suppressed | Remove the restriction explicitly or use a target that represents it |
 | `hook.event-unmappable` | Target cannot preserve this hook event; hook suppressed | Use a hook event documented by the target |
+| `hook.gemini.event-unmappable` | Gemini has no equivalent hook event; hook suppressed | Use a Gemini-supported event such as PreToolUse, PostToolUse, or PreCompact |
+| `hook.windsurf.event-unmappable` | Claude hook event has no Windsurf equivalent; hook suppressed | Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop) |
+| `hook.matcher-untranslatable` | No exact tool-matcher coverage exists for the target; hook suppressed | Rewrite the matcher with tools the target's catalog covers, or remove it |
+| `hook.env-unrepresentable` | The hook command references a variable with no target equivalent; hook suppressed | Rewrite the command with variables the target documents, or use an absolute path |
+| `hook.timeout-unsupported` | Target cannot represent an explicit hook timeout; hook suppressed | Remove the timeout explicitly or use a target that supports it |
+| `hook.type-unsupported` | The target's catalog does not declare this hook type for the event; hook suppressed | Use a hook type the target documents for this event |
+| `hook.support-path-unrepresentable` | The hook command references the plugin root but the target declares no repository base; hook suppressed | Use an absolute command path or a target with a repository base |
+| `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook suppressed | Use a command hook on this target |
+| `hook.factory.non-command-type-dropped` | Factory only supports command-type hooks; hook suppressed | Convert the hook to a command type or remove it |
+| `hook.cursor.unsupported-type` | Cursor only supports command-type hooks; hook suppressed | Convert the hook to a command type or remove it |
+| `hook.gemini.unsupported-type` | Gemini cannot represent this hook type; hook suppressed | Use a command or prompt hook on Gemini |
+| `hook.windsurf.unsupported-type` | Windsurf cannot represent this hook type; hook suppressed | Use a command hook on Windsurf |
+| `materialize.hook.legacy-malformed` | A legacy hook file could not be parsed or reconciled safely; both files were left unchanged | Fix the legacy hook file by hand; the migration runs again on the next sync |
 | `hook.native-literal-unsupported` | Target would reinterpret a native Codex hook literal; hook suppressed | Remove the target-specific interpolation token or keep the hook in Codex format |
 | `hook.codex.native-fields-unsupported` | Target cannot preserve native Codex hook execution or context fields; hook suppressed | Remove async, commandWindows, and additionalContextLimit explicitly or keep the hook in Codex format |
 | `hook.codex.unsupported` | Codex does not execute this hook event or handler; hook suppressed | Use a documented Codex command hook event |
@@ -583,6 +595,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `subagent.factory.isolation-dropped` | Factory cannot represent isolation; artifact suppressed | Use a target that supports isolation or remove the restriction explicitly |
 | `subagent.gemini.tool-unknown` | Gemini tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
 | `subagent.cursor.tool-unknown` | Cursor tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
+| `subagent.claude.tool-unknown` | Claude has no tool covering a foreign-source tool name; artifact suppressed | Use a tool name the Claude tool catalog covers, or remove the restriction explicitly |
 | `subagent.security-restriction-unsupported` | Unsupported subagent security restriction suppresses the artifact | Use a target that represents the restriction or remove it explicitly |
 | `bundle.conflict.duplicate-artifact-path` | Two resources produce the same artifact output path; neither resource is emitted | Rename one of the conflicting resources or adjust the output path |
 | `bundle.conflict.cross-kind-artifact-path` | Resources of different kinds produce the same artifact output path; neither artifact is emitted | Rename one of the conflicting resources: on targets that compile commands as skills, a skill and a command cannot share a name |

@@ -63,8 +63,11 @@ func TestLoadSubagent(t *testing.T) {
 	if subagent.Model != "claude-sonnet-4-5-20250929" || subagent.ModelSource != "factory" {
 		t.Fatalf("native model identity lost: %+v", subagent)
 	}
-	if got, want := strings.Join(subagent.Tools, ","), "Read,Write"; got != want {
+	if got, want := strings.Join(subagent.Tools, ","), "Read,Edit,Create"; got != want {
 		t.Fatalf("Tools = %q, want %q", got, want)
+	}
+	if subagent.ToolSource != "factory" {
+		t.Fatalf("ToolSource = %q, want factory", subagent.ToolSource)
 	}
 	if subagent.Effort != "high" {
 		t.Fatalf("Effort = %q, want %q", subagent.Effort, "high")

@@ -44,6 +44,9 @@ cells:
       class: cross
       expectedModel: claude-opus-5
       expectedEffort: high
+      # Cursor's Write covers file.write AND file.edit, so exact coverage
+      # emits both Claude tools.
+      expectedTools: [Read, Write, Edit]
       allowedLosses: [disallowedTools, isolation]
     - from: cursor
       to: cursor
@@ -51,16 +54,13 @@ cells:
       expectedModel: claude-opus-5[effort=high]
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation]
-    # subagent.devin.tool-unknown is a WARNING since bead
-    # agent-marketplace-pu6b, so this cell now PRODUCES a profile with the
-    # allowed-tools key omitted instead of being suppressed. `tools` therefore
-    # joins the expected losses. The captured Devin catalog resolves the Opus
-    # high selection to its reasoning-encoded variant UID.
+    # Cursor-native tool names translate cleanly onto Devin's closed
+    # vocabulary through the catalogs, so this cell no longer warns. The
+    # captured Devin catalog resolves the Opus high selection to its
+    # reasoning-encoded variant UID.
     - from: cursor
       to: devin
       class: cross
-      diagnostics:
-        - subagent.devin.tool-unknown
       expectedModel: claude-opus-5-high
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation, tools]
@@ -69,6 +69,9 @@ cells:
       class: cross
       expectedModel: claude-opus-5
       expectedEffort: high
+      # file.write+file.edit coverage reaches Create, Edit, and the combined
+      # ApplyPatch tool.
+      expectedTools: [Read, Create, Edit, ApplyPatch]
       allowedLosses: [disallowedTools, isolation]
     - from: cursor
       to: gemini
@@ -76,6 +79,7 @@ cells:
       diagnostics: [model.unresolved, model.reasoning-omitted]
       expectedModel: ""
       expectedEffort: ""
+      expectedTools: [read_file, read_many_files, write_file, replace]
       allowedLosses: [disallowedTools, isolation]
     - from: cursor
       to: windsurf
@@ -91,7 +95,7 @@ cells:
     - from: devin
       to: cursor
       class: cross
-      diagnostics: [ingest.devin.bundle-manifest-synthesized, model.selector-pinned]
+      diagnostics: [ingest.devin.bundle-manifest-synthesized, model.selector-pinned, subagent.cursor.tool-unknown]
       expectedModel: claude-sonnet-4-5-20250929
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation, tools]
@@ -126,11 +130,12 @@ cells:
       diagnostics: [model.reasoning-omitted]
       expectedModel: claude-sonnet-4-5-20250929
       expectedEffort: ""
+      expectedTools: [Read, Edit, Write]
       allowedLosses: [disallowedTools, isolation]
     - from: factory
       to: cursor
       class: cross
-      diagnostics: [model.reasoning-omitted]
+      diagnostics: [model.reasoning-omitted, subagent.cursor.tool-unknown]
       expectedModel: claude-sonnet-4-5-20250929
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation]
@@ -151,6 +156,8 @@ cells:
       class: identity
       expectedModel: claude-sonnet-4-5-20250929
       expectedEffort: high
+      # Native names are kept verbatim (ToolSource), not merged into Write.
+      expectedTools: [Read, Edit, Create]
       allowedLosses: [disallowedTools, isolation]
     - from: factory
       to: gemini
@@ -158,6 +165,7 @@ cells:
       diagnostics: [model.unresolved, model.reasoning-omitted]
       expectedModel: ""
       expectedEffort: ""
+      expectedTools: [read_file, read_many_files, replace, write_file]
       allowedLosses: [disallowedTools, isolation]
     - from: factory
       to: windsurf
@@ -166,14 +174,14 @@ cells:
     - from: gemini
       to: claude
       class: cross
-      diagnostics: [ingest.gemini.bundle-manifest-synthesized, model.unresolved]
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized, model.unresolved, subagent.claude.tool-unknown, subagent.claude.tool-unknown]
       expectedModel: ""
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation]
     - from: gemini
       to: cursor
       class: cross
-      diagnostics: [ingest.gemini.bundle-manifest-synthesized, model.unresolved]
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized, model.unresolved, subagent.cursor.tool-unknown]
       expectedModel: ""
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation]
@@ -187,13 +195,14 @@ cells:
         - ingest.gemini.bundle-manifest-synthesized
         - subagent.devin.model-unmappable
         - subagent.devin.tool-unknown
+        - subagent.devin.tool-unknown
       expectedModel: ""
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation, tools]
     - from: gemini
       to: factory
       class: cross
-      diagnostics: [ingest.gemini.bundle-manifest-synthesized, model.unresolved]
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized, subagent.factory.tool-unknown, subagent.factory.tool-unknown]
       expectedModel: ""
       expectedEffort: ""
       allowedLosses: [disallowedTools, isolation]

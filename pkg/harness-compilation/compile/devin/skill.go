@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 const (
@@ -51,7 +52,7 @@ func translateSkill(s *ir.Skill, opts compile.Options) ([]artifact.Artifact, []d
 	// present=false with warnings, the key is omitted, and the skill is still
 	// published. The diagnostics come first so the loss the user most needs to
 	// see is the first one reported.
-	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(s.Name(), source, s.AllowedTools, s.AllowedTools != nil, s.Extra, opts, diag.CodeSkillDevinToolUnknown)
+	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(s.Name(), source, s.AllowedTools, s.AllowedTools != nil, s.Extra, opts, s.ToolSource, toolpolicy.SurfaceSkillAllowedTools, diag.CodeSkillDevinToolUnknown)
 
 	var diags []diag.Diagnostic
 	diags = append(diags, toolDiags...)
@@ -144,7 +145,7 @@ func translateCommand(c *ir.Command, opts compile.Options) ([]artifact.Artifact,
 	// instead of suppressing the command (bead agent-marketplace-pu6b). This is
 	// the path the openspec commands and skills take: `Bash(openspec:*)` is a
 	// scoped specifier Devin cannot express.
-	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(c.Name(), source, nil, false, c.Extra, opts, diag.CodeSkillDevinToolUnknown)
+	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(c.Name(), source, nil, false, c.Extra, opts, "", toolpolicy.SurfaceSkillAllowedTools, diag.CodeSkillDevinToolUnknown)
 
 	fm := &compile.Frontmatter{}
 	fm.Set("name", c.Name())

@@ -116,7 +116,7 @@ func TestAdditiveHooksAllTargetsScopesAndModes(t *testing.T) {
 	}{
 		{hcc.TargetFactory, ".factory/hooks/hooks.json", ".factory/hooks/hooks.json", "", "PreToolUse"},
 		{hcc.TargetClaude, ".claude/hooks/hooks.json", ".claude/hooks/hooks.json", "hooks", "PreToolUse"},
-		{hcc.TargetCursor, ".cursor/hooks/hooks.json", ".cursor/hooks/hooks.json", "hooks", "PreToolUse"},
+		{hcc.TargetCursor, ".cursor/hooks/hooks.json", ".cursor/hooks/hooks.json", "hooks", "preToolUse"},
 		{hcc.TargetGemini, ".gemini/settings.json", ".gemini/settings.json", "hooks", "BeforeTool"},
 		{hcc.TargetDevin, ".devin/hooks.v1.json", ".config/devin/config.json", "", "PreToolUse"},
 		{hcc.Target("codex"), ".codex/hooks.json", ".codex/hooks.json", "hooks", "PreToolUse"},

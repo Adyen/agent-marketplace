@@ -155,6 +155,7 @@ type Skill struct {
 	Model          string         // Optional model identifier
 	ModelSource    string         `json:"ModelSource,omitempty"`
 	AllowedTools   []string       // Explicitly allowed tool IDs; nil means absent, empty means explicit empty
+	ToolSource     string         `json:"ToolSource,omitempty"` // Harness whose native tool names AllowedTools carries; empty means canonical
 	Permissions    Permissions    // Optional allow/ask/deny permission policy
 	PermissionsSet bool           // Whether permissions was explicitly present in source
 	Triggers       []string       // Activation triggers (e.g. "user", "model")
@@ -188,6 +189,10 @@ func WithSkillSubagent(v string) SkillOption { return func(s *Skill) { s.Subagen
 
 // WithSkillAgent sets the optional named agent.
 func WithSkillAgent(v string) SkillOption { return func(s *Skill) { s.Agent = v } }
+
+// WithSkillToolSource records the harness whose native tool names AllowedTools
+// carries; empty means the canonical vocabulary.
+func WithSkillToolSource(v string) SkillOption { return func(s *Skill) { s.ToolSource = v } }
 
 // NewSkill creates a Skill with the stable constructor signature.
 func NewSkill(name, description, body string, triggers []string, extra map[string]any, source SourceRef) *Skill {
@@ -274,6 +279,7 @@ type Subagent struct {
 	Model           string         // Model identifier (e.g. "sonnet")
 	ModelSource     string         `json:"ModelSource,omitempty"`
 	Tools           []string       // Allowed tool IDs
+	ToolSource      string         `json:"ToolSource,omitempty"` // Harness whose native tool names Tools carries; empty means canonical
 	Effort          string         // Reasoning effort level (e.g. "high")
 	DisallowedTools []string       // Explicitly disallowed tool IDs
 	Isolation       string         // Isolation mode (e.g. "worktree")
@@ -291,6 +297,10 @@ func WithSubagentMaxNesting(v int) SubagentOption { return func(s *Subagent) { s
 
 // WithSubagentMaxNestingPtr sets the maximum recursive nesting depth pointer.
 func WithSubagentMaxNestingPtr(v *int) SubagentOption { return func(s *Subagent) { s.MaxNesting = v } }
+
+// WithSubagentToolSource records the harness whose native tool names Tools
+// carries; empty means the canonical vocabulary.
+func WithSubagentToolSource(v string) SubagentOption { return func(s *Subagent) { s.ToolSource = v } }
 
 // NewSubagent creates a Subagent with the stable constructor signature.
 func NewSubagent(name, description, body, model string, tools []string, effort string, disallowedTools []string, isolation string, extra map[string]any, source SourceRef) *Subagent {
@@ -318,16 +328,17 @@ func (s *Subagent) SetName(name string) { s.name = name }
 
 // Hook represents a compilable hook resource.
 type Hook struct {
-	name    string         // Unique kebab-case name
-	Event   string         // Triggering event (e.g. "PreToolUse", "UserPromptSubmit")
-	Matcher string         // Optional tool matcher for tool-specific events
-	Command string         // Shell command to run
-	Prompt  string         // Prompt payload for prompt hooks
-	Timeout *int           // Optional timeout in seconds; nil means absent
-	Type    string         // Hook type (e.g. "command" or "prompt")
-	Ext     extpkg.Bag     // Optional target-specific sidecars
-	Extra   map[string]any // Preserved unknown fields
-	Source  SourceRef      // Origin in the source bundle
+	name       string         // Unique kebab-case name
+	Event      string         // Triggering event (e.g. "PreToolUse", "UserPromptSubmit")
+	Matcher    string         // Optional tool matcher for tool-specific events
+	Command    string         // Shell command to run
+	Prompt     string         // Prompt payload for prompt hooks
+	Timeout    *int           // Optional timeout in seconds; nil means absent
+	Type       string         // Hook type (e.g. "command" or "prompt")
+	HookSource string         `json:"HookSource,omitempty"` // Harness whose native event/matcher/env values the hook carries; empty means canonical
+	Ext        extpkg.Bag     // Optional target-specific sidecars
+	Extra      map[string]any // Preserved unknown fields
+	Source     SourceRef      // Origin in the source bundle
 }
 
 // HookOption customizes the additive hook fields.
@@ -341,6 +352,10 @@ func WithHookTimeout(v int) HookOption { return func(h *Hook) { h.Timeout = &v }
 
 // WithHookTimeoutPtr sets the hook timeout pointer.
 func WithHookTimeoutPtr(v *int) HookOption { return func(h *Hook) { h.Timeout = v } }
+
+// WithHookSource records the harness whose native event, matcher, and env
+// values the hook carries; empty means the canonical vocabulary.
+func WithHookSource(v string) HookOption { return func(h *Hook) { h.HookSource = v } }
 
 // WithHookWindsurfSidecar preserves Windsurf-native hook fields during ingestion.
 func WithHookWindsurfSidecar(v *extpkg.Windsurf) HookOption {

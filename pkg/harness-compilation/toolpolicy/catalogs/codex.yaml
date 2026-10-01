@@ -1,0 +1,27 @@
+# Catalog data for pkg/harness-compilation/toolpolicy/catalogs/codex.yaml.
+schema: 1
+harness: codex
+evidence:
+  checked: "2026-09-29"
+  refs:
+    - https://developers.openai.com/codex/hooks
+    - https://developers.openai.com/codex/subagents
+  notes: >-
+    Shell commands and unified exec (exec_command) both match as Bash.
+    apply_patch also answers to the matcher aliases Edit and Write, but hook
+    input always reports apply_patch, so output uses apply_patch. Hosted tools
+    such as web search do not run tool hooks. Custom agents have no tool
+    allow-list, so no subagent_tools surface is declared.
+
+mcp:
+  pattern: "mcp__{server}__{tool}"
+  all: "mcp__.*"
+  server_scoped: true
+
+surfaces: [hook_matcher]
+
+tools:
+  Bash: {concepts: [shell]}
+  apply_patch: {concepts: [file.write, file.edit], aliases: [Edit, Write]}
+  spawn_agent: {concepts: [subagent], aliases: [Agent]}
+  update_plan: {concepts: [todo]}

@@ -275,7 +275,8 @@ func TestTranslateHook_WithPluginRoot(t *testing.T) {
 	assertGoldenFile(t, "testdata/hook_with_plugin_root.golden", artifact.Bytes)
 }
 
-// spec: hook-resources/missing-plugin-root-leaves-the-token-with-a-warning
+// Under the catalog-driven resolver a plugin-root token with no installed
+// support base refuses the hook; no plugin-only variable may be emitted.
 func TestTranslateHook_WithoutPluginRoot(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHookWithMatcher(
@@ -292,26 +293,29 @@ func TestTranslateHook_WithoutPluginRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TranslateWithOptions(hook): %v", err)
 	}
+	if len(artifacts) != 0 {
+		t.Fatalf("plugin-root token without a support base must suppress the hook; artifacts = %d", len(artifacts))
+	}
 	if len(diags) != 1 {
 		t.Fatalf("TranslateWithOptions(hook) diags = %d, want 1", len(diags))
 	}
-	if diags[0].Code != diag.CodeHookWindsurfEnvTokenExpanded {
-		t.Fatalf("diag code = %q, want %q", diags[0].Code, diag.CodeHookWindsurfEnvTokenExpanded)
+	if diags[0].Code != diag.CodeHookSupportPathUnrepresentable {
+		t.Fatalf("diag code = %q, want %q", diags[0].Code, diag.CodeHookSupportPathUnrepresentable)
 	}
-	if diags[0].Severity != diag.SeverityWarning {
-		t.Fatalf("diag severity = %v, want %v", diags[0].Severity, diag.SeverityWarning)
+	if diags[0].Severity != diag.SeverityError {
+		t.Fatalf("diag severity = %v, want %v", diags[0].Severity, diag.SeverityError)
 	}
-
-	artifact := singleArtifact(t, artifacts)
-	assertGoldenFile(t, "testdata/hook_without_plugin_root.golden", artifact.Bytes)
 }
 
 func TestTranslateHook_PreToolUse_Write(t *testing.T) {
 	translator := Compiler{}
+	// The catalog-driven resolver requires the exact tool concept set:
+	// pre_write_code covers file.write and file.edit, so the matcher names
+	// both tools.
 	hook := ir.NewHookWithMatcher(
 		"PreToolUse-Write-command",
 		"PreToolUse",
-		"Write",
+		"Write|Edit",
 		"scripts/check-write.sh",
 		"command",
 		nil,
@@ -333,7 +337,7 @@ func TestTranslateHook_PreToolUse_Write(t *testing.T) {
 	assertGoldenFile(t, "testdata/hook_pre_write_code.golden", artifact.Bytes)
 }
 
-// spec: hook-resources/windsurf-splits-pretooluse-by-tool-matcher
+// spec: hook-resources/windsurf-splits-pretooluse-by-translated-tool-matcher
 func TestTranslateHook_PreToolUse_Bash(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHookWithMatcher(
@@ -455,12 +459,12 @@ func TestTranslateHook_SubagentStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Translate(hook): %v", err)
 	}
-	if len(artifacts) != 0 || len(diags) != 1 || diags[0].Code != diag.CodeHookWindsurfEventUnmappable || diags[0].Severity != diag.SeverityWarning {
-		t.Fatalf("SubagentStop must be suppressed with an unmappable warning: artifacts=%v diagnostics=%v", artifacts, diags)
+	if len(artifacts) != 0 || len(diags) != 1 || diags[0].Code != diag.CodeHookWindsurfEventUnmappable || diags[0].Severity != diag.SeverityError {
+		t.Fatalf("SubagentStop must be suppressed with an unmappable error: artifacts=%v diagnostics=%v", artifacts, diags)
 	}
 }
 
-// spec: hook-resources/gemini-and-windsurf-suppress-unmappable-events-with-a-warning
+// spec: hook-resources/unmappable-events-are-errors-on-every-target
 func TestTranslateHook_UnmappableEvent(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHook(
@@ -485,12 +489,12 @@ func TestTranslateHook_UnmappableEvent(t *testing.T) {
 	if diags[0].Code != diag.CodeHookWindsurfEventUnmappable {
 		t.Fatalf("diag code = %q, want %q", diags[0].Code, diag.CodeHookWindsurfEventUnmappable)
 	}
-	if diags[0].Severity != diag.SeverityWarning {
-		t.Fatalf("diag severity = %v, want %v", diags[0].Severity, diag.SeverityWarning)
+	if diags[0].Severity != diag.SeverityError {
+		t.Fatalf("diag severity = %v, want %v", diags[0].Severity, diag.SeverityError)
 	}
 }
 
-// spec: hook-resources/windsurf-splits-pretooluse-by-tool-matcher
+// spec: hook-resources/windsurf-splits-pretooluse-by-translated-tool-matcher
 func TestTranslateHook_PreToolUse_EmptyMatcher(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHook(

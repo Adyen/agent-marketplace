@@ -4,9 +4,9 @@ harness: cursor
 evidence:
   checked: "2026-09-29"
   refs:
-    - https://cursor.com/docs/hooks.md
-    - https://cursor.com/docs/reference/third-party-hooks.md
-    - https://cursor.com/docs/subagents.md
+    - https://cursor.com/docs/hooks
+    - https://cursor.com/docs/reference/third-party-hooks
+    - https://cursor.com/docs/agent/subagents
   notes: >-
     Cursor's own Claude import maps Edit and Write to the single Cursor tool
     Write and has no Glob equivalent. Cursor subagents have no tool allow-list

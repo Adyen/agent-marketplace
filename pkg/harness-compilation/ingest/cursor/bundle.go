@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -120,10 +119,8 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, error) {
 	}
 	sub.Source.File = normalizeSourcePath(sub.Source.File)
 	sub.ModelSource = "cursor"
-	for i, tool := range sub.Tools {
-		if reversed, ok := mapping.ReverseTool(tool, mapping.TargetCursor); ok {
-			sub.Tools[i] = reversed
-		}
+	if sub.Tools != nil {
+		sub.ToolSource = "cursor"
 	}
 	return sub, nil
 }

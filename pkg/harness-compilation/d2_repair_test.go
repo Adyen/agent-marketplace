@@ -73,10 +73,11 @@ func TestD2RemoteMCPDoesNotFabricateStdio(t *testing.T) {
 	}
 }
 
-// spec: hook-resources/prompt-hooks-compile-where-supported
+// spec: hook-resources/prompt-hooks-compile-where-the-catalog-declares-them
+// spec: hook-resources/prompt-hooks-are-refused-where-undeclared
 func TestD2PromptHookSupportAndSuppression(t *testing.T) {
 	hook := ir.NewHookWithOptions("prompt", "UserPromptSubmit", "", "prompt", nil, ir.SourceRef{}, ir.WithHookPrompt("Review this"))
-	for _, target := range []compile.Target{compile.TargetClaude, compile.TargetGemini} {
+	for _, target := range []compile.Target{compile.TargetClaude, compile.TargetCursor} {
 		result, err := compile.Compile(hook, target)
 		if err != nil || len(result.Artifacts) != 1 {
 			t.Fatalf("Compile(%s) prompt hook: artifacts=%d err=%v", target, len(result.Artifacts), err)
@@ -88,7 +89,7 @@ func TestD2PromptHookSupportAndSuppression(t *testing.T) {
 			t.Errorf("Compile(%s) omitted prompt: %s", target, result.Artifacts[0].Bytes)
 		}
 	}
-	for _, target := range []compile.Target{compile.TargetFactory, compile.TargetCursor, compile.TargetWindsurf} {
+	for _, target := range []compile.Target{compile.TargetFactory, compile.TargetWindsurf, compile.TargetGemini} {
 		result, err := compile.Compile(hook, target)
 		if err != nil || len(result.Artifacts) != 0 || len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != diag.CodeHookPromptUnsupported {
 			t.Fatalf("Compile(%s) unsupported prompt hook = %#v, err=%v", target, result, err)

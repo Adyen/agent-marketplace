@@ -1,0 +1,41 @@
+# Catalog data for pkg/harness-compilation/toolpolicy/catalogs/claude.yaml.
+schema: 1
+harness: claude
+evidence:
+  checked: "2026-09-29"
+  refs:
+    - https://code.claude.com/docs/en/tools-reference.md
+    - https://code.claude.com/docs/en/hooks.md
+    - https://code.claude.com/docs/en/sub-agents.md
+
+# How MCP tools are named. {server} and {tool} are placeholders; `all` matches
+# every MCP tool. `server_scoped: false` would mean the harness drops the server.
+mcp:
+  pattern: "mcp__{server}__{tool}"
+  all: "mcp__.*"
+  server_scoped: true
+
+# Surfaces this harness exposes. Omitting a surface means the harness has no
+# such field; the compiler never invents one.
+surfaces: [hook_matcher, subagent_tools, skill_allowed_tools]
+
+# Keyed by the native name exactly as the vendor documents it. `aliases` are
+# other spellings accepted on ingestion (renamed tools); output always uses the
+# key. `surfaces` narrows a tool to some surfaces (default: all above).
+tools:
+  Bash: {concepts: [shell]}
+  PowerShell: {concepts: [shell.powershell]}
+  Read: {concepts: [file.read]}
+  Write: {concepts: [file.write]}
+  Edit: {concepts: [file.edit], aliases: [MultiEdit]}
+  Glob: {concepts: [search.glob]}
+  Grep: {concepts: [search.grep]}
+  WebFetch: {concepts: [web.fetch]}
+  WebSearch: {concepts: [web.search]}
+  Agent: {concepts: [subagent], aliases: [Task]}
+  NotebookEdit: {concepts: [notebook.edit]}
+  TodoWrite: {concepts: [todo]}
+  EnterPlanMode: {concepts: [plan.enter]}
+  ExitPlanMode: {concepts: [plan.exit]}
+  Skill: {concepts: [skill]}
+  AskUserQuestion: {concepts: [ask.user]}

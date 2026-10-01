@@ -534,7 +534,7 @@ func TestDevinBundleMergesHookFragments(t *testing.T) {
 	timeout := 30
 	resources := []ir.Resource{
 		devinHook("pre-read", "PreToolUse", "Read", "read-guard.sh"),
-		devinHook("pre-edit", "PreToolUse", "Edit", "edit-guard.sh"),
+		devinHook("pre-bash", "PreToolUse", "Bash", "bash-guard.sh"),
 		devinHook("session-start", "SessionStart", "", "seed.sh", ir.WithHookTimeoutPtr(&timeout)),
 		ir.NewHookWithOptions("submit", "UserPromptSubmit", "", "prompt", nil,
 			ir.SourceRef{File: "hooks/hooks.json", Line: 1}, ir.WithHookPrompt("Summarize the diff")),
@@ -558,16 +558,16 @@ func TestDevinBundleMergesHookFragments(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     },
     {
       "hooks": [
         {
-          "command": "edit-guard.sh",
+          "command": "bash-guard.sh",
           "type": "command"
         }
       ],
-      "matcher": "Edit"
+      "matcher": "^exec$"
     }
   ],
   "SessionStart": [
@@ -607,16 +607,16 @@ func TestDevinBundleMergesHookFragments(t *testing.T) {
             "type": "command"
           }
         ],
-        "matcher": "Read"
+        "matcher": "^read$"
       },
       {
         "hooks": [
           {
-            "command": "edit-guard.sh",
+            "command": "bash-guard.sh",
             "type": "command"
           }
         ],
-        "matcher": "Edit"
+        "matcher": "^exec$"
       }
     ],
     "SessionStart": [
@@ -703,7 +703,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     }
   ]
 }`,
@@ -712,7 +712,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
 			name: "a different matcher is a different behavior",
 			resources: []ir.Resource{
 				devinHook("a", "PreToolUse", "Read", "guard.sh"),
-				devinHook("b", "PreToolUse", "Edit", "guard.sh"),
+				devinHook("b", "PreToolUse", "Bash", "guard.sh"),
 			},
 			wantBytes: `{
   "PreToolUse": [
@@ -723,7 +723,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     },
     {
       "hooks": [
@@ -732,7 +732,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Edit"
+      "matcher": "^exec$"
     }
   ]
 }`,
@@ -752,7 +752,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     },
     {
       "hooks": [
@@ -761,7 +761,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     }
   ]
 }`,
@@ -782,7 +782,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     },
     {
       "hooks": [
@@ -792,7 +792,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     }
   ]
 }`,
@@ -812,7 +812,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     },
     {
       "hooks": [
@@ -822,7 +822,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     }
   ]
 }`,
@@ -843,7 +843,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     },
     {
       "hooks": [
@@ -853,7 +853,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     }
   ]
 }`,
@@ -903,7 +903,7 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
 // not change the merged bytes.
 func TestDevinBundleDuplicateCollapseIsOrderIndependent(t *testing.T) {
 	first := devinHook("first", "PreToolUse", "Read", "guard.sh")
-	second := devinHook("second", "PreToolUse", "Edit", "other.sh")
+	second := devinHook("second", "PreToolUse", "Bash", "other.sh")
 	duplicateOfFirst := devinHook("duplicate", "PreToolUse", "Read", "guard.sh")
 
 	want := `{
@@ -915,7 +915,7 @@ func TestDevinBundleDuplicateCollapseIsOrderIndependent(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     },
     {
       "hooks": [
@@ -924,7 +924,7 @@ func TestDevinBundleDuplicateCollapseIsOrderIndependent(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Edit"
+      "matcher": "^exec$"
     }
   ]
 }`
@@ -982,7 +982,7 @@ func TestDevinBundleBadHookDoesNotSuppressGoodOnes(t *testing.T) {
 	}
 	assertSkippedResources(t, result.Skipped, []SkippedResource{
 		{Kind: KindHook, Name: "unmappable-event", Codes: []string{diag.CodeHookDevinEventUnmappable}},
-		{Kind: KindHook, Name: "matcher-on-non-tool-event", Codes: []string{diag.CodeHookDevinMatcherUnsupportedEvent}},
+		{Kind: KindHook, Name: "matcher-on-non-tool-event", Codes: []string{diag.CodeHookMatcherUntranslatable}},
 		{Kind: KindHook, Name: "bad-type", Codes: []string{diag.CodeHookDevinUnsupportedType}},
 		{Kind: KindHook, Name: "no-payload", Codes: []string{diag.CodeHookDevinPayloadMissing}},
 	})
@@ -999,7 +999,7 @@ func TestDevinBundleBadHookDoesNotSuppressGoodOnes(t *testing.T) {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     }
   ]
 }`,
@@ -1020,7 +1020,7 @@ func TestDevinBundleBadHookDoesNotSuppressGoodOnes(t *testing.T) {
 
 	wantDiags := map[string]string{
 		"unmappable-event":          diag.CodeHookDevinEventUnmappable,
-		"matcher-on-non-tool-event": diag.CodeHookDevinMatcherUnsupportedEvent,
+		"matcher-on-non-tool-event": diag.CodeHookMatcherUntranslatable,
 		"bad-type":                  diag.CodeHookDevinUnsupportedType,
 		"no-payload":                diag.CodeHookDevinPayloadMissing,
 	}

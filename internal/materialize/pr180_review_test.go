@@ -66,7 +66,9 @@ func TestNativeHookDefinitionsDoNotConflict(t *testing.T) {
 			sourceHarness: "gemini",
 			write: func(t *testing.T, root, command string, index int) {
 				dir := filepath.Join(root, ".gemini")
-				additiveSafetyWrite(t, filepath.Join(dir, "settings.json"), fmt.Sprintf(`{"hooks":{"BeforeTool":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}}`, command))
+				// run_shell_command is Gemini's exact shell tool name; the
+				// catalog resolver maps it to Windsurf's pre_run_command.
+				additiveSafetyWrite(t, filepath.Join(dir, "settings.json"), fmt.Sprintf(`{"hooks":{"BeforeTool":[{"matcher":"run_shell_command","hooks":[{"type":"command","command":%q}]}]}}`, command))
 				addHookSupportFiles(t, dir, index)
 			},
 			excluded:    []string{"settings.json"},

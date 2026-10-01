@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 const (
@@ -23,7 +24,7 @@ const (
 //   - description: one-line description
 //   - kind: always "local" for compiled subagents
 //   - model: resolved through the shared model catalog
-//   - tools: mapped via mapping.Tool() for Gemini target
+//   - tools: translated via toolpolicy.TranslateToolList for the Gemini catalog
 //
 // Effort is omitted with a warning; agent Markdown has no field. Temperature,
 // max_turns, timeout_mins, and inline mcpServers are Gemini-specific fields
@@ -85,26 +86,28 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 	// Gemini agent Markdown has no standalone effort representation.
 	diags = append(diags, modelDiags...)
 
-	// Map tools via mapping table.
+	// Map tools via the shipped tool catalogs (design D5).
 	var mappedTools []string
-	if sub.Tools != nil {
-		mappedTools = make([]string, 0, len(sub.Tools))
+	emittedTools, uncoveredTools, toolErr := toolpolicy.TranslateToolList(mapping.Target(sub.ToolSource), mapping.TargetGemini, toolpolicy.SurfaceSubagentTools, sub.Tools, opts.ToolOverride())
+	if toolErr != nil {
+		return nil, nil, fmt.Errorf("gemini: translate subagent tools: %w", toolErr)
 	}
-	for _, toolID := range sub.Tools {
-		mapped, ok := mapping.ToolWithOverride(toolID, mapping.TargetGemini, opts.ToolOverride())
-		if !ok {
-			diags = append(diags, diag.Diagnostic{
-				Code:     diag.CodeSubagentGeminiToolUnknown,
-				Severity: diag.SeverityError,
-				Target:   string(mapping.TargetGemini),
-				Resource: sub.Name(),
-				Message:  "Gemini cannot map an explicit subagent tool; artifact suppressed",
-				Hint:     "Add the tool to the mapping table or remove the explicit tool",
-				Source:   compile.DiagSource(sub.Source),
-			})
-		} else {
-			mappedTools = append(mappedTools, mapped...)
+	if sub.Tools != nil {
+		mappedTools = emittedTools
+		if mappedTools == nil {
+			mappedTools = []string{}
 		}
+	}
+	for range uncoveredTools {
+		diags = append(diags, diag.Diagnostic{
+			Code:     diag.CodeSubagentGeminiToolUnknown,
+			Severity: diag.SeverityError,
+			Target:   string(mapping.TargetGemini),
+			Resource: sub.Name(),
+			Message:  "Gemini cannot map an explicit subagent tool; artifact suppressed",
+			Hint:     "Add the tool to the mapping table or remove the explicit tool",
+			Source:   compile.DiagSource(sub.Source),
+		})
 	}
 	if diag.HasErrors(diags) {
 		return nil, diags, nil

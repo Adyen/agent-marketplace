@@ -14,7 +14,7 @@ evidence:
 env:
   project_dir: [CLAUDE_PROJECT_DIR]
   remote: [CLAUDE_CODE_REMOTE]
-  env_file: {names: [CLAUDE_ENV_FILE], events: [SessionStart]}
+  env_file: {names: [CLAUDE_ENV_FILE], events: [SessionStart, Setup, CwdChanged, FileChanged]}
 plugin_env:
   plugin_root: [CLAUDE_PLUGIN_ROOT]
   plugin_data: [CLAUDE_PLUGIN_DATA]
