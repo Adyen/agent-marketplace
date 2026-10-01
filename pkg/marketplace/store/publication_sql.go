@@ -40,14 +40,13 @@ func legacyPublicationAlreadyCurrent(ctx context.Context, q ManagedSQLQueries, m
 			return false, err
 		}
 	}
-	for _, expected := range req.ResourceOccurrences {
-		expected, err := NormalizeResourceOccurrence(expected)
-		if err != nil {
-			return false, err
+	for _, occurrence := range req.ResourceOccurrences {
+		expected, normalizeErr := NormalizeResourceOccurrence(occurrence)
+		if normalizeErr != nil {
+			return false, normalizeErr
 		}
 		var matches bool
-		err = q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM all_resource_occurrences WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5 AND revision_commit=$6 AND manifest_digest=$7 AND COALESCE(source_path,'')=$8)`, expected.Coordinate.Marketplace, expected.Coordinate.Registry, expected.Coordinate.Kind, expected.Coordinate.Name, expected.ContentDigest, expected.Commit, expected.ManifestDigest, expected.SourcePath).Scan(&matches)
-		if err != nil || !matches {
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM all_resource_occurrences WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5 AND revision_commit=$6 AND manifest_digest=$7 AND COALESCE(source_path,'')=$8)`, expected.Coordinate.Marketplace, expected.Coordinate.Registry, expected.Coordinate.Kind, expected.Coordinate.Name, expected.ContentDigest, expected.Commit, expected.ManifestDigest, expected.SourcePath).Scan(&matches); err != nil || !matches {
 			return false, err
 		}
 	}
