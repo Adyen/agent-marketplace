@@ -1,3 +1,7 @@
+## Purpose
+
+Defines deterministic marketplace content findings and source-location fidelity while preserving existing detection and processing policies.
+
 ## ADDED Requirements
 
 ### Requirement: Ordered text finding ranges retain rune-location fidelity
