@@ -383,6 +383,28 @@ func TestMarketplaceCollectionLeavesAllowSameExactMarketplaceIdentity(t *testing
 	}
 }
 
+// spec: workspace-resolution/escaping-personal-local-root
+func TestCommitPreparedMarketplaceInstallRejectsInvalidWorkspaceBeforeConfigRead(t *testing.T) {
+	repoRoot := t.TempDir()
+	configPath := filepath.Join(repoRoot, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: invalid\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prepared := &PreparedMarketplaceInstall{
+		options: InstallOptions{
+			RepoRoot:       repoRoot,
+			LocalConfigDir: t.TempDir(),
+		},
+		configPath: configPath,
+		plan:       &marketplace.PreparedInstall{},
+	}
+
+	_, err := CommitPreparedMarketplaceInstall(context.Background(), prepared)
+	if !errors.Is(err, ErrInvalidWorkspace) {
+		t.Fatalf("error = %v, want ErrInvalidWorkspace before malformed config is read", err)
+	}
+}
+
 func TestCommitPreparedMarketplaceInstallRejectsPolicyChangeWithoutMutation(t *testing.T) {
 	for _, test := range []struct {
 		name       string
