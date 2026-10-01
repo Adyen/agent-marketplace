@@ -1158,15 +1158,23 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			report.Diags = append(report.Diags, targetDiags...)
 		}
 
-		boundaryHome, homeErr := os.UserHomeDir()
-		if homeErr != nil {
-			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: homeErr.Error()})
-			continue
+		boundaryHome := home
+		if boundaryHome == "" {
+			var homeErr error
+			boundaryHome, homeErr = os.UserHomeDir()
+			if homeErr != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: homeErr.Error()})
+				continue
+			}
 		}
-		destinations, destinationErr := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
-		if destinationErr != nil {
-			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: destinationErr.Error()})
-			continue
+		destinations := adapterDestinations
+		if len(destinations) == 0 {
+			var destinationErr error
+			destinations, destinationErr = harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+			if destinationErr != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: destinationErr.Error()})
+				continue
+			}
 		}
 		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome}
 		if key.target == hcc.TargetFactory {
