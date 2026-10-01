@@ -32,6 +32,61 @@ import (
 var ErrArtifactIdentityMismatch = errors.New("marketplace artifact identity mismatch")
 var ErrArtifactSourcePath = errors.New("marketplace artifact source path is invalid")
 
+// PinError reports that one Marketplace pin failed to resolve. It carries the
+// pin's configuration identity — endpoint, registry, kind, and name — so
+// read-only surfaces can attribute the failure to the exact Marketplace pin
+// instead of an ambiguous row, and merge or deduplicate diagnostics per pin.
+type PinError struct {
+	Entry config.MarketplaceEntry
+	Pin   config.MarketplaceResourcePin
+	Err   error
+}
+
+func (e *PinError) Error() string {
+	return fmt.Sprintf("marketplace %s pin %s/%s/%s: %v", e.Entry.URL, e.Pin.RegistryID, e.Pin.Kind, e.Pin.Name, e.Err)
+}
+
+func (e *PinError) Unwrap() error { return e.Err }
+
+// Cache-evidence failures report that a pinned Marketplace revision cannot be
+// resolved because required local cache evidence — revision metadata, a
+// verified artifact, or a verified collection manifest — is missing or
+// unverified. Acquiring that evidence requires a network run.
+var (
+	errCachedRevisionMetadataMissing          = errors.New("resource revision metadata is missing from cache")
+	errCachedArtifactMissing                  = errors.New("verified artifact is missing from cache")
+	errCachedArtifactUnverified               = errors.New("cached artifact is not verified")
+	errCachedIndexOnlyRevisionMetadataMissing = errors.New("missing cached index-only revision metadata for exact registry occurrence")
+	errCachedIndexOnlyArtifactMissing         = errors.New("missing cached index-only artifact for exact registry occurrence")
+	errCachedIndexOnlyArtifactUnverified      = errors.New("cached index-only artifact is not verified")
+	errCachedCollectionManifestMissing        = errors.New("verified collection manifest is missing from cache")
+)
+
+// IsCacheEvidenceError reports whether err says a Marketplace pin could not be
+// resolved because required local cache evidence is missing or unverified.
+// The remedy is an acquisition run: `agent-marketplace sync`.
+func IsCacheEvidenceError(err error) bool {
+	return errors.Is(err, errCachedRevisionMetadataMissing) ||
+		errors.Is(err, errCachedArtifactMissing) ||
+		errors.Is(err, errCachedArtifactUnverified) ||
+		errors.Is(err, errCachedIndexOnlyRevisionMetadataMissing) ||
+		errors.Is(err, errCachedIndexOnlyArtifactMissing) ||
+		errors.Is(err, errCachedIndexOnlyArtifactUnverified) ||
+		errors.Is(err, errCachedCollectionManifestMissing)
+}
+
+// IsCacheMetadataMissingError reports whether err says a Marketplace pin's
+// revision metadata or collection manifest was never acquired into the local
+// cache — the pin was selected but never synced, so no local evidence exists
+// at all. Inspection-based surfaces already report such pins with their cache
+// state; callers resolving artifacts from cache keep them soft rather than
+// failing a run that was merely never synced.
+func IsCacheMetadataMissingError(err error) bool {
+	return errors.Is(err, errCachedRevisionMetadataMissing) ||
+		errors.Is(err, errCachedIndexOnlyRevisionMetadataMissing) ||
+		errors.Is(err, errCachedCollectionManifestMissing)
+}
+
 // Resolver resolves Marketplace entries into resolver.ResolvedArtifact values.
 type Resolver struct {
 	HTTPClient        *http.Client
@@ -121,11 +176,11 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				revErr = enforceMarketplaceUse(rev, policy)
 			}
 			if revErr != nil {
-				errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, revErr))
+				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: revErr})
 				continue
 			}
 			if graphErr := r.enforceExpandedCollectionRevocations(ctx, client, cache, entry, pin, rev, mode, policy); graphErr != nil {
-				errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, graphErr))
+				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: graphErr})
 				blockedCollections[collectionSelectionKey(pin.RegistryID, pin.Name, pin.Revision)] = graphErr
 			}
 		}
@@ -144,7 +199,7 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 			}
 			resolved, err := r.resolvePinWithPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err))
+				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: err})
 				continue
 			}
 			out = append(out, resolved)
@@ -228,7 +283,7 @@ func (r *Resolver) collectionManifest(ctx context.Context, client *Client, cache
 		return manifest, payload, nil
 	}
 	if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch {
-		return hccartifact.CollectionManifest{}, nil, fmt.Errorf("verified collection manifest is missing from cache")
+		return hccartifact.CollectionManifest{}, nil, errCachedCollectionManifestMissing
 	}
 	if client == nil {
 		return hccartifact.CollectionManifest{}, nil, fmt.Errorf("online collection resolution requires a Marketplace client")
@@ -469,9 +524,9 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	}
 	if mode == resolver.MarketplaceResolveModeCachedNoFetch && (!verified || raw == nil) {
 		if raw == nil {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verified artifact is missing from cache")
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, errCachedArtifactMissing
 		}
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached artifact is not verified")
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, errCachedArtifactUnverified
 	}
 	if !verified || raw == nil {
 		if mode == resolver.MarketplaceResolveModeCached {
@@ -735,10 +790,10 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("read cached index-only artifact: %w", err)
 		}
 		if raw == nil {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("missing cached index-only artifact for exact registry occurrence")
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, errCachedIndexOnlyArtifactMissing
 		}
 		if !verified {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached index-only artifact is not verified")
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, errCachedIndexOnlyArtifactUnverified
 		}
 	}
 	ca, caRaw, err := hccartifact.Decode(bytes.NewReader(raw))
@@ -1018,7 +1073,7 @@ func (r *Resolver) getIndexOnlyResourceRevision(ctx context.Context, client *Cli
 		}
 		if !ok {
 			if mode == resolver.MarketplaceResolveModeCachedNoFetch {
-				return store.AssessedResourceRevision{}, fmt.Errorf("missing cached index-only revision metadata for exact registry occurrence")
+				return store.AssessedResourceRevision{}, errCachedIndexOnlyRevisionMetadataMissing
 			}
 			return store.AssessedResourceRevision{}, fmt.Errorf("index-only revision metadata is missing from cache")
 		}
@@ -1056,7 +1111,7 @@ func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cach
 				return store.AssessedResourceRevision{}, fmt.Errorf("resource revision not in cache")
 			}
 			if mode == resolver.MarketplaceResolveModeCachedNoFetch {
-				return store.AssessedResourceRevision{}, fmt.Errorf("resource revision metadata is missing from cache")
+				return store.AssessedResourceRevision{}, errCachedRevisionMetadataMissing
 			}
 		}
 	}

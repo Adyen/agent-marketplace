@@ -310,9 +310,14 @@ func writeDoctorRequirementWarnings(out io.Writer, ctx context.Context, repoRoot
 		return err
 	}
 	resolved, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		Workspace:          ws,
-		CatalogMode:        catalog.LoadModeInspect,
-		ReadOnlyExactLocks: true,
+		Workspace:   ws,
+		CatalogMode: catalog.LoadModeInspect,
+		// Prerequisites are checked against the same desired set status
+		// computes: Marketplace selections count as satisfying providers, from
+		// the verified local cache only. Nothing is downloaded and no file is
+		// written.
+		ReadOnlyExactLocks:            true,
+		MarketplaceArtifactsFromCache: true,
 	})
 	defer releaseExactLease()
 	var requirementDiagnostics []error
@@ -324,6 +329,11 @@ func writeDoctorRequirementWarnings(out io.Writer, ctx context.Context, repoRoot
 		requirementDiagnostics = append(requirementDiagnostics, warning)
 	}
 	requirementDiagnostics = append(requirementDiagnostics, requiresInvalidWarnings(resolved.CatalogLoad.Catalogs)...)
+	// A Marketplace pin that failed to resolve is a fact doctor's requirement
+	// section must not reinterpret as "nothing provides this prerequisite":
+	// the pin is selected, and its resolution error already names the remedy.
+	requirementDiagnostics = pipeline.SuppressUnmetMarketplaceRequirements(
+		requirementDiagnostics, pipeline.MarketplacePendingPins(resolved.ResolveErrors))
 	slices.SortFunc(requirementDiagnostics, func(a, b error) int {
 		return strings.Compare(a.Error(), b.Error())
 	})
