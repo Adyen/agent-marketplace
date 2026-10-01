@@ -1135,18 +1135,6 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			outDir = roots.For(key.machineScope, repoRoot)
 		}
 
-		if !dryRun {
-			if err := os.MkdirAll(outDir, 0o755); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("create output directory %s: %v", outDir, err),
-				})
-				continue
-			}
-		}
-
 		tw := compileResult.byTarget[key]
 
 		var artifacts []artifact.Artifact
@@ -1170,6 +1158,52 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			report.Diags = append(report.Diags, targetDiags...)
 		}
 
+		boundaryHome, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: homeErr.Error()})
+			continue
+		}
+		destinations, destinationErr := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+		if destinationErr != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: destinationErr.Error()})
+			continue
+		}
+		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome}
+		if key.target == hcc.TargetFactory {
+			boundary.legacySkillsDir = filepath.Join(outDir, "skills")
+		}
+		var directories []string
+		for _, destination := range destinations {
+			root := destination.Root
+			if key.target == hcc.TargetWindsurf && !key.machineScope {
+				root = filepath.Join(repoRoot, windsurfDir)
+			}
+			boundary.roots = append(boundary.roots, root)
+			if key.target == hcc.TargetCodex && (!key.machineScope || destination.Prefix == ".agents" || os.Getenv("CODEX_HOME") == "") {
+				boundary.roots = append(boundary.roots, filepath.Join(outDir, destination.Prefix))
+			}
+			if len(destination.AggregateRoutes) > 0 {
+				directories = append(directories, filepath.Dir(filepath.Join(destination.Root, destination.AggregateFile)))
+			}
+		}
+		for _, plan := range materializePlans(key.target, outDir, artifacts, linkedComponents(compileResult.skillLinks[key]), key.machineScope) {
+			directories = append(directories, plan.outDir)
+		}
+		for _, group := range orderedSkillLinkGroups(compileResult.skillLinks[key]) {
+			directories = append(directories, filepath.Join(outDir, filepath.FromSlash(group.installDirRel)))
+		}
+		if err := boundary.validate(directories); err != nil {
+			slog.Error("materialize destination refused", "target", key.target, "machine_scope", key.machineScope, "error", err)
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+			continue
+		}
+		if !dryRun {
+			if err := boundary.directory(outDir, true); err != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+				continue
+			}
+		}
+
 		mode := modes.For(string(key.target), key.machineScope)
 		// Resource installation mode is distribution policy, not a compiler
 		// capability. All targets use the same file-copy or symlink path;
@@ -1182,7 +1216,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)
 			continue
 		}
-		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
+		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, boundary)
 		if binding, ok := composition.bindings[key.target]; ok {
 			report = binding.handler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, adapterDestinations, dryRun)
 		}
@@ -1192,7 +1226,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool) *Report {
+func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, boundary destinationBoundary) *Report {
 	state, stateErr := loadPortableState(repoRoot, key.machineScope)
 	if stateErr != nil {
 		slog.Error("materialize manifest load failed", "target", key.target, "machine_scope", key.machineScope, "error", stateErr)
@@ -1219,6 +1253,10 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	}
 	for _, plan := range plans {
 		regularArtifacts, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
+		if err := boundary.directory(plan.outDir, !dryRun); err != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+			continue
+		}
 		if mode == config.MaterializationModeFile {
 			planRoot := outDir
 			if plan.root != "" {
@@ -1229,30 +1267,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("unsafe portable output directory %s", plan.outDir)})
 				continue
 			}
-			validate := validatePortableOutputDir
-			if !dryRun {
-				validate = ensurePortableOutputDir
-			}
-			if _, err := validate(planRoot, rel); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("validate portable output directory %s: %v", plan.outDir, err),
-				})
-				continue
-			}
 			portableCleanupDirs[plan.outDir] = plan.reportPrefix
-		} else if !dryRun {
-			if err := os.MkdirAll(plan.outDir, 0o755); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("create output directory %s: %v", plan.outDir, err),
-				})
-				continue
-			}
 		}
 
 		cacheMachineScope, cacheOutDir := key.machineScope, outDir
@@ -1377,7 +1392,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 				installDirRel = machineSkillInstallDirRel(key.target, key.machineScope, installDirRel)
 				dir := filepath.Join(outDir, filepath.FromSlash(installDirRel))
 				if outputDirExists(dir) {
-					if _, err := validatePortableOutputDir(outDir, installDirRel); err != nil {
+					if err := boundary.directory(dir, false); err != nil {
 						report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource cleanup directory %s: %v", dir, err)})
 						continue
 					}
@@ -1440,15 +1455,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 
 	for _, group := range orderedSkillLinkGroups(skillLinks[key]) {
 		groupDir := filepath.Join(outDir, filepath.FromSlash(group.installDirRel))
+		if err := boundary.directory(groupDir, !dryRun); err != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+			continue
+		}
 		if mode == config.MaterializationModeFile {
-			validate := validatePortableOutputDir
-			if !dryRun {
-				validate = ensurePortableOutputDir
-			}
-			if _, err := validate(outDir, group.installDirRel); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource directory %s: %v", groupDir, err)})
-				continue
-			}
 			portableCleanupDirs[groupDir] = group.reportPrefix
 		}
 		symlinkLinks, copyLinks := partitionFileCopyLinks(key.target, group.links)
