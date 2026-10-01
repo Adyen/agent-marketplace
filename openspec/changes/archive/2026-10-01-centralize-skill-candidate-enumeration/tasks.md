@@ -6,5 +6,5 @@
 
 ## 2. Verification and archive
 
-- [ ] 2.1 Run native validation, spec checks, E2E/configuration compatibility, and TUI QA on the final candidate.
-- [ ] 2.2 Run `openspec archive centralize-skill-candidate-enumeration --yes --skip-specs` in the same pull request.
+- [x] 2.1 Run native validation, spec checks, E2E/configuration compatibility, and TUI QA on the final candidate.
+- [x] 2.2 Run `openspec archive centralize-skill-candidate-enumeration --yes --skip-specs` in the same pull request.
