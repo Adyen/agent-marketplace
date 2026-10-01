@@ -184,6 +184,7 @@ test.describe('Marketplace layout at 1440px', () => {
   })
 
   // spec: marketplace-browser/catalog-controls-stick-while-resource-rows-scroll
+  // spec: marketplace-browser/sticky-catalog-controls-occlude-resource-rows
   test('keeps catalog controls and filters sticky while resource rows scroll', async ({ page }) => {
     await page.goto('/')
     await page.locator('article').last().evaluate((element) => {
@@ -209,6 +210,13 @@ test.describe('Marketplace layout at 1440px', () => {
     expect(resultBefore).not.toBeNull()
     expect(controlsBefore!.y).toBeCloseTo(88, 0)
     expect(filtersBefore!.y).toBeCloseTo(88, 0)
+    const controlsOwnPoint = ({ x, y }: { x: number, y: number }) => controls.evaluate((element, point) => {
+      const hit = document.elementFromPoint(point.x, point.y)
+      return hit === element || (hit !== null && element.contains(hit))
+    }, { x, y })
+    const controlCenterX = controlsBefore!.x + controlsBefore!.width / 2
+    expect(await controlsOwnPoint({ x: controlCenterX, y: 76 })).toBe(true)
+    expect(await controlsOwnPoint({ x: controlCenterX, y: controlsBefore!.y + controlsBefore!.height / 2 })).toBe(true)
 
     await page.evaluate(() => window.scrollTo(0, 700))
     const [controlsAfter, filtersAfter, resultAfter] = await Promise.all([

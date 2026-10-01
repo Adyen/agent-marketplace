@@ -718,10 +718,19 @@ useHead({
   .catalog-results__controls {
     position: sticky;
     top: 88px;
-    z-index: 10;
+    z-index: 20;
     display: flow-root;
+    isolation: isolate;
     padding-bottom: 14px;
     background: var(--am-color-bg-surface);
+  }
+
+  .catalog-results__controls::before {
+    position: absolute;
+    z-index: -1;
+    inset: -24px 0 0;
+    background: var(--am-color-bg-surface);
+    content: "";
   }
 
   .catalog-search-content {
