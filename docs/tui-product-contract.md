@@ -99,7 +99,7 @@ The supported minimum is 50 columns by 12 rows. At or above that size, the activ
 
 Below either minimum dimension, the TUI displays only a bounded resize-required state. Normal keyboard workflow input is suspended, while `q` and Ctrl+C stay available. Returning to a supported size restores the prior workflow state.
 
-The TUI does not enable terminal mouse tracking. Drag selection stays with the terminal so rendered text can be copied natively; scrolling and navigation use the documented keyboard bindings.
+The TUI enables Bubble Tea cell-motion mouse reporting to receive wheel events. Each vertical wheel-up or wheel-down event scrolls the file preview, help, errors, or Marketplace consent by one line; over the bundle tree, it moves the tree selection by one entry; in the resource list, it moves the selection by one row. Clicks, releases, drags, and horizontal wheel events do not trigger TUI actions; Shift+vertical-wheel remains vertical. Because the terminal reports mouse events to the application, native click-and-drag text selection may require a terminal-specific modifier (often Option or Shift) while the TUI is active.
 
 Registry metadata, paths, diagnostics, config values, Markdown-derived text, and returned errors are untrusted terminal data. C0, DEL, C1, ESC, carriage return, tab, unsupported structural newlines, invalid UTF-8, Unicode line separators, and bidi formatting controls render as visible escapes. Markdown is sanitized before entity decoding can turn encoded values into terminal controls. Printable Unicode, including combining and double-width characters, stays readable.
 
