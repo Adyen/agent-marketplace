@@ -65,3 +65,43 @@ candidate when it differs; the offers SHALL be disjoint.
 
 - **WHEN** an unmanaged desired entry's value differs from the generated value
 - **THEN** repair SHALL offer it for replacement and never for adoption
+
+### Requirement: Gemini shared scopes reconcile together
+
+When the repository root and user home identify the same directory, including filesystem aliases, Agent Marketplace SHALL reconcile the shared Gemini native settings file once against the combined desired entries. It MUST preserve handwritten content and existing permissions, and identical synchronization MUST NOT rewrite the file. An entry SHALL be pruned only when it is no longer desired in either scope. Conflicting values for one MCP identity and operations that cannot isolate the requested scope MUST refuse before materialization.
+
+#### Scenario: Gemini shared settings retain both scopes
+
+- **WHEN** repository and machine selections share one Gemini settings file
+- **THEN** MCP servers and hooks from both scopes MUST remain present alongside handwritten entries
+- **AND** repeated synchronization and check-only inspection MUST report no drift without rewriting bytes or modification time
+- **AND** removing one scope's selections MUST preserve the other scope and handwritten entries
+
+#### Scenario: Gemini shared identity conflict refuses mutation
+
+- **WHEN** two scopes desire different values for the same MCP identity in one Gemini settings file
+- **THEN** materialization MUST report `materialize.destination.overlap`
+- **AND** existing settings and ownership state MUST remain unchanged
+
+#### Scenario: Gemini shared scope-restricted mutation refuses
+
+- **WHEN** a scope-restricted operation targets a Gemini root shared by repository and machine scopes
+- **THEN** it MUST report `materialize.destination.overlap` before writing or pruning
+- **AND** the existing settings MUST remain unchanged
+
+### Requirement: Shared Gemini native work does not introduce ordinary pruning
+
+When shared Gemini native settings reconciliation adds machine-scope work without independently compiled or blocked machine resources, Agent Marketplace SHALL reconcile the shared native settings without running an additional ordinary artifact or skill pruning pass. Repository commands MUST remain selected through synchronization and check-only inspection in both materialization modes, including filesystem aliases of HOME. An empty desired set SHALL retain ordinary stale-output cleanup.
+
+#### Scenario: Shared Gemini native work preserves repository commands
+
+- **WHEN** repository commands are selected at a materialization root that identifies HOME, with or without repository native settings fragments
+- **THEN** first and repeated synchronization MUST preserve the commands in both materialization modes
+- **AND** check-only inspection MUST report no drift and leave their bytes and modification times unchanged
+- **AND** stale repository commands MUST still be pruned when an active repository selection no longer desires them
+
+#### Scenario: Empty shared Gemini desired set retains cleanup
+
+- **WHEN** the last desired repository command and native settings entries are removed from a shared Gemini root in symlink materialization mode
+- **THEN** synchronization MUST remove the stale command and owned native settings entries
+- **AND** it MUST preserve handwritten settings

@@ -437,12 +437,14 @@ type skillTarget struct {
 
 // targetWork holds the compiled artifacts and diagnostics for a single output key.
 type targetWork struct {
-	artifacts []artifact.Artifact
-	diags     []diag.Diagnostic
+	artifacts  []artifact.Artifact
+	diags      []diag.Diagnostic
+	nativeOnly bool
 }
 
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
+	scopeFilter      *bool
 	allDiags         []diag.Diagnostic
 	byTarget         map[outputKey]*targetWork
 	skillLinks       map[outputKey]map[string]*skillLinkGroup
@@ -511,6 +513,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	// Phase 2: Compile each work item and collect artifacts per target.
 	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, repoRoot)
+	compileResult.scopeFilter = rc.scopeFilter
 	slog.Debug("materialize compile complete", "targets", len(compileResult.byTarget), "diagnostics", len(compileResult.allDiags))
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
@@ -1045,6 +1048,12 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		Diags:            compileResult.allDiags,
 		BlockedResources: compileResult.blockedResources,
 	}
+	coalescedGemini, err := coalesceGeminiNativeAggregates(&compileResult, repoRoot)
+	if err != nil {
+		slog.Error("shared Gemini destination refused", "code", diag.CodeMaterializeDestinationOverlap, "error", err)
+		report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeDestinationOverlap, Severity: diag.SeverityError, Target: string(hcc.TargetGemini), Message: err.Error()})
+		return report
+	}
 	coalescedCodexPartitions, preflightDiag := preflightCodexDestinations(&compileResult, repoRoot, modes)
 	if preflightDiag != nil {
 		report.Diags = append(report.Diags, *preflightDiag)
@@ -1166,7 +1175,13 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		// capability. All targets use the same file-copy or symlink path;
 		// shared aggregates retain their separate ownership reconciliation.
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
-		artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
+		if !coalescedGemini || key.target != hcc.TargetGemini || key.machineScope {
+			artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
+		}
+		if tw != nil && tw.nativeOnly {
+			slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)
+			continue
+		}
 		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
 		if binding, ok := composition.bindings[key.target]; ok {
 			report = binding.handler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, adapterDestinations, dryRun)

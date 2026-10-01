@@ -143,6 +143,16 @@ func (s *Store) putRegistryOccurrence(ctx context.Context, occ store.RegistryOcc
 	return s.advanceCatalogVersion(ctx)
 }
 
+func (s *Store) FenceRegistryPublication(ctx context.Context, req store.RegistryRevisionPublication) (bool, error) {
+	var current bool
+	err := s.withTx(ctx, func(tx *Store) error {
+		var err error
+		current, err = store.FenceRegistryPublication(ctx, tx.q, tx, req)
+		return err
+	})
+	return current, err
+}
+
 func (s *Store) SetRegistryHead(ctx context.Context, registry store.RegistryID, commit, expectedCommit string) error {
 	return s.withTx(ctx, func(tx *Store) error {
 		var current string
