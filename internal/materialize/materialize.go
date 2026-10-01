@@ -1355,7 +1355,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			}
 			mergeArtifacts = retained
 		}
-		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, wantPrune)
+		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, wantPrune, &boundary)
 		if len(mergeArtifacts) > 0 {
 			dirsCoveredByMergePlans[plan.outDir] = true
 		}
@@ -2256,7 +2256,7 @@ func splitMergeArtifacts(artifacts []artifact.Artifact) ([]artifact.Artifact, []
 	return regular, merge
 }
 
-func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dryRun bool, pruneStaleEntries bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
+func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dryRun bool, pruneStaleEntries bool, boundary ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic, error) {
 	if len(artifacts) == 0 {
 		if !pruneStaleEntries {
 			return &hcc.WriteReport{OutDir: outDir}, nil, nil
@@ -2271,32 +2271,33 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 	// symlink target only contains managed entries; we read through it first
 	// so hcc.Materialize can merge from the real content, then replace the
 	// symlink with a regular file.
-	if !dryRun {
-		for _, a := range artifacts {
-			if err := a.Validate(); err != nil {
-				return nil, nil, fmt.Errorf("invalid merge artifact path %q: %w", a.Path, err)
+	for _, a := range artifacts {
+		if err := a.Validate(); err != nil {
+			return nil, nil, fmt.Errorf("invalid merge artifact path %q: %w", a.Path, err)
+		}
+		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
+		if info, err := os.Lstat(destPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			var capturedBoundary *destinationBoundary
+			if len(boundary) > 0 {
+				capturedBoundary = boundary[0]
 			}
-			destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
-			if info, err := os.Lstat(destPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-				existing, readErr := os.ReadFile(destPath) // follows symlink
-				if readErr != nil && !os.IsNotExist(readErr) {
-					return nil, nil, fmt.Errorf("read symlink target %s: %w", destPath, readErr)
+			existing, mode, readErr := markerAliasSnapshot(outDir, destPath, capturedBoundary) // follows symlink
+			// get target file info for permissions
+			if readErr != nil {
+				return nil, nil, fmt.Errorf("read symlink target %s: %w", destPath, readErr)
+			}
+			if dryRun {
+				continue
+			}
+			if len(existing) > 0 {
+				if mode == 0 {
+					mode = 0o644
 				}
-				targetInfo, statErr := os.Stat(destPath) // get target file info for permissions
-				if readErr == nil && len(existing) > 0 {
-					mode := fs.FileMode(0o644)
-					if statErr == nil {
-						mode = targetInfo.Mode().Perm()
-					}
-					if mode == 0 {
-						mode = 0o644
-					}
-					if err := atomicWriteFile(destPath, existing, mode); err != nil {
-						return nil, nil, fmt.Errorf("replace symlink %s: %w", destPath, err)
-					}
-				} else if err := os.Remove(destPath); err != nil {
-					return nil, nil, fmt.Errorf("remove symlink %s: %w", destPath, err)
+				if err := atomicWriteFile(destPath, existing, mode); err != nil {
+					return nil, nil, fmt.Errorf("replace symlink %s: %w", destPath, err)
 				}
+			} else if err := os.Remove(destPath); err != nil {
+				return nil, nil, fmt.Errorf("remove symlink %s: %w", destPath, err)
 			}
 		}
 	}
