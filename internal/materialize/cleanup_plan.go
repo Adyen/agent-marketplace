@@ -25,6 +25,10 @@ type ownedCleanupAction struct {
 	want ownership.EntryValue
 }
 
+// PrepareOwnedMCPRemoval builds a deterministic cleanup plan for a
+// non-required MCP resource whose owned entries are no longer selected. It
+// rejects unsupported targets and stale ownership evidence without applying
+// removals; the returned plan must be committed separately.
 func PrepareOwnedMCPRemoval(ctx context.Context, repoRoot string, target resolver.ResolvedArtifact, remaining []resolver.ResolvedArtifact) (*OwnedCleanupPlan, error) {
 	if target.Kind != ir.KindMcpServer || target.Resource == nil || target.Resource.Kind() != ir.KindMcpServer || target.Required {
 		return nil, fmt.Errorf("%w: owned MCP cleanup requires a non-required typed MCP target", ErrOwnedCleanupUnsupported)

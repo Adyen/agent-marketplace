@@ -65,6 +65,9 @@ func TestConfiguredListUsesExactLockWithoutReconciliation(t *testing.T) {
 	}
 }
 
+// TestDoctorRepairUsesExactGitLockWithoutRefreshingMutableCache verifies
+// that repair previews use the locked snapshot without refreshing the mutable
+// cache or rewriting the acquisition lock after the registry branch advances.
 func TestDoctorRepairUsesExactGitLockWithoutRefreshingMutableCache(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -93,6 +96,9 @@ func TestDoctorRepairUsesExactGitLockWithoutRefreshingMutableCache(t *testing.T)
 	}
 }
 
+// TestDoctorRepairReplacesConflictFromLockedGitRevision verifies that a
+// confirmed repair installs the locked value after the branch advances and
+// preserves the acquisition lock.
 func TestDoctorRepairReplacesConflictFromLockedGitRevision(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -142,6 +148,8 @@ registries:
 	}
 }
 
+// TestDoctorRepairRejectsMissingGitLock verifies that repair refuses a
+// missing acquisition lock without creating one.
 func TestDoctorRepairRejectsMissingGitLock(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -159,6 +167,8 @@ func TestDoctorRepairRejectsMissingGitLock(t *testing.T) {
 	}
 }
 
+// TestDoctorRepairRejectsMalformedGitLock verifies that repair refuses a
+// malformed acquisition lock and preserves its bytes.
 func TestDoctorRepairRejectsMalformedGitLock(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

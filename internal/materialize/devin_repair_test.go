@@ -51,6 +51,8 @@ func repairFileFor(t *testing.T, preview *RepairPreview, rel string) *RepairFile
 	return nil
 }
 
+// TestRepairPreviewsEnumeratesEveryValidatedAdapter verifies that an empty
+// selection still produces previews for both validated adapters in stable order.
 func TestRepairPreviewsEnumeratesEveryValidatedAdapter(t *testing.T) {
 	repoRoot := t.TempDir()
 	previews, err := RepairPreviews(context.Background(), repoRoot, nil, nil)

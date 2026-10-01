@@ -299,14 +299,20 @@ func BenchmarkRunDoctor(b *testing.B) {
 	}
 }
 
+// BenchmarkRunGCDryRunEmptyCache measures GC preview with an empty cache,
+// including filesystem reads and excluding network requests.
 func BenchmarkRunGCDryRunEmptyCache(b *testing.B) {
 	benchmarkRunGCEmptyCache(b, true)
 }
 
+// BenchmarkRunGCEmptyCache measures GC with an empty cache, including
+// filesystem reads and policy revalidation but no network requests.
 func BenchmarkRunGCEmptyCache(b *testing.B) {
 	benchmarkRunGCEmptyCache(b, false)
 }
 
+// benchmarkRunGCEmptyCache isolates configuration and cache state, then
+// times repeated GC invocations with filesystem I/O included and logging discarded.
 func benchmarkRunGCEmptyCache(b *testing.B, dryRun bool) {
 	home := b.TempDir()
 	b.Setenv("HOME", home)

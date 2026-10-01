@@ -184,6 +184,8 @@ func TestDoctorRepairHoldsNoOwnershipLockWhileAwaitingConfirmation(t *testing.T)
 	}
 }
 
+// TestDoctorRepairRefusesConfigChangeDuringConfirmation verifies that a
+// config edit at the prompt aborts repair and preserves the aggregate.
 func TestDoctorRepairRefusesConfigChangeDuringConfirmation(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -293,6 +295,8 @@ type repairPolicyChangeWriter struct {
 	err     error
 }
 
+// Write changes policy once when a replacement authorization is logged,
+// exposing the interval between confirmation validation and mutation.
 func (w *repairPolicyChangeWriter) Write(p []byte) (int, error) {
 	if bytes.Contains(p, []byte("doctor repair decision")) && bytes.Contains(p, []byte("action=replace")) && bytes.Contains(p, []byte("decision=authorized")) {
 		w.once.Do(func() {
@@ -303,6 +307,8 @@ func (w *repairPolicyChangeWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// TestDoctorRepairRefusesPolicyChangeAtMutationBoundary verifies that a
+// policy edit after authorization is rejected before the aggregate changes.
 // spec: owned-entry-reconciliation/policy-changes-between-confirmation-validation-and-mutation
 func TestDoctorRepairRefusesPolicyChangeAtMutationBoundary(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -340,6 +346,8 @@ func TestDoctorRepairRefusesPolicyChangeAtMutationBoundary(t *testing.T) {
 	}
 }
 
+// TestDoctorRepairStopsAtFirstPolicyChangeAcrossTargets verifies that a
+// policy conflict stops further prompts and preserves every target aggregate.
 // spec: owned-entry-reconciliation/repair-stops-at-the-first-policy-conflict
 func TestDoctorRepairStopsAtFirstPolicyChangeAcrossTargets(t *testing.T) {
 	if isolateCommandTest(t) {

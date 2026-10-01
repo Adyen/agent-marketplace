@@ -29,6 +29,9 @@ func blockedOwnedRemovalKind(kind ir.ResourceKind) bool {
 	return kind == ir.KindMcpServer || kind == ir.KindSkill || kind == ir.KindCommand || kind == ir.KindSubagent
 }
 
+// prepareBlockedOwnedRemoval resolves a blocked cleanup target from exact
+// snapshots and verifies its identity, scope, and policy inputs. On success, the
+// caller must release the retained exact-snapshot lease through the preparation.
 func prepareBlockedOwnedRemoval(ctx context.Context, opts RemoveOptions, ec config.EffectiveConfig, original resolver.ResolvedArtifact, name, url, path, ref string, kind ir.ResourceKind) (*ownedRemovalPreparation, error) {
 	if opts.configStaging == nil || opts.CleanupDependencies == nil || !blockedOwnedRemovalKind(kind) {
 		return nil, fmt.Errorf("%w: cleanup transaction is unavailable", materialize.ErrOwnedCleanupUnsupported)
@@ -149,6 +152,10 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	return commitErr
 }
 
+// EffectivePolicyReadAssertions returns sorted assertions for the
+// configuration reads and current acquisition-lock generations, including
+// missing locks. Callers can validate them again before mutating state to
+// reject policy changes since capture.
 func EffectivePolicyReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAssertion, error) {
 	byRequested, err := configReadAssertions(ec.LayerResults(), true)
 	if err != nil {

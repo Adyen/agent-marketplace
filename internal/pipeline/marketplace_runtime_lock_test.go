@@ -11,6 +11,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
+// TestTransientMarketplaceFailureReplacesStaleOrganizationErrorWithoutDroppingOtherLayers verifies
+// that acquisition failures replace organization errors while preserving
+// independent layer errors, even when the aggregate error list is incomplete.
 // spec: deployed-acquisition-locks/independent-layer-errors-survive-organization-acquisition-failure
 func TestTransientMarketplaceFailureReplacesStaleOrganizationErrorWithoutDroppingOtherLayers(t *testing.T) {
 	required := &config.V4ValidationError{Code: "v4.marketplace-lock-required", Msg: "missing lock"}

@@ -102,6 +102,9 @@ func ReadDeployedLocks(ctx context.Context, intent config.Intent) (config.Eviden
 	return readDeployedLocks(ctx, intent, nil)
 }
 
+// readDeployedLocks reads acquisition locks for valid layers, honoring
+// overlays and recording their generations. Missing organization locks are
+// allowed; other required missing locks are reported with the collected evidence.
 func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[string][]byte) (config.Evidence, error) {
 	evidence := config.Evidence{}
 	var missing error
@@ -150,6 +153,9 @@ func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[s
 	return evidence, missing
 }
 
+// layerLockPaths resolves a layer's requested and canonical lock paths,
+// falling back to the source-specific destination when normal path resolution
+// reports a missing or invalid path.
 func layerLockPaths(layer config.LayerIntent) (config.ConfigLockPaths, error) {
 	paths, err := config.ResolveConfigLockPaths(layer.Path)
 	if err == nil {
@@ -168,6 +174,9 @@ func layerLockPaths(layer config.LayerIntent) (config.ConfigLockPaths, error) {
 	return config.ConfigLockPaths{RequestedLock: requested, CanonicalLock: canonical}, nil
 }
 
+// deployedPolicyReadAssertions captures the original configuration and
+// deployed-lock reads, including absence assertions for required locks that
+// were not present, in deterministic order.
 func deployedPolicyReadAssertions(intent config.Intent, evidence config.Evidence) ([]dependencytxn.ReadAssertion, error) {
 	layers := append(intentLayerResults(intent), config.LayerResult{Reads: evidence.Reads})
 	byRequested, err := configReadAssertions(layers, true)
@@ -391,6 +400,8 @@ func (r transientOrganizationMarketplaceResolver) ResolveWithPolicy(ctx context.
 	return artifacts, errs
 }
 
+// effectiveConfigError replaces organization errors with the acquisition
+// failure while preserving errors from independent configuration layers.
 func effectiveConfigError(ec config.EffectiveConfig, err error) config.EffectiveConfig {
 	rest := ec.Errors[min(len(ec.Organization.Errors), len(ec.Errors)):]
 	ec.Organization.Errors = []error{err}

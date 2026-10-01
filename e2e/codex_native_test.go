@@ -445,6 +445,9 @@ func TestE2ECodexRepairExactMatchAdoptionWithV4Config(t *testing.T) {
 	}
 }
 
+// TestE2ECodexDestructiveRepairRequiresConfirmationAndRedactsSecrets verifies
+// that replacement requires explicit confirmation, creates a safety backup,
+// and keeps secret values out of command output and logs.
 func TestE2ECodexDestructiveRepairRequiresConfirmationAndRedactsSecrets(t *testing.T) {
 	env := newCodexEnv(t)
 	const (
@@ -495,6 +498,9 @@ func TestE2ECodexDestructiveRepairRequiresConfirmationAndRedactsSecrets(t *testi
 	assertNoSecrets(t, readFile(t, logPath), oldSecret, newSecret, "second-secret-must-not-print")
 }
 
+// TestE2ECodexRepairCorruptionAfterIndependentAdoptionIsPartialFailure verifies
+// that an independent adoption succeeds while a corrupt aggregate causes a
+// nonzero exit, with both aggregates preserved and secrets redacted.
 func TestE2ECodexRepairCorruptionAfterIndependentAdoptionIsPartialFailure(t *testing.T) {
 	env := newCodexEnv(t)
 	registryURL := mcpRegistry(env, "repair-partial", "managed", "managed-bin")
@@ -637,6 +643,8 @@ func runDoctorRepairInTTY(t *testing.T, env *Env, answer string) ExecResult {
 	return runAMInTTY(t, env, "doctor", "--repair", "[y/N]", answer)
 }
 
+// runAMInTTY runs a command in a pseudo-terminal and sends the supplied
+// answer after its expected prompt appears.
 func runAMInTTY(t *testing.T, env *Env, command, option, prompt, answer string) ExecResult {
 	t.Helper()
 	return runAMInTTYAtPrompt(t, env, command, option, prompt, answer, nil)

@@ -120,6 +120,9 @@ resources:
 	}
 }
 
+// TestV4OrganizationDoctorWithoutLockAfterColdSync verifies that doctor
+// and repair can reacquire organization evidence in fresh caches after sync
+// without deploying a lock or modifying organization configuration.
 func TestV4OrganizationDoctorWithoutLockAfterColdSync(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Organization collection", true))
 	env := newEnv(t)
@@ -160,6 +163,8 @@ resources:
 	}
 }
 
+// TestV4OrganizationGCWithoutLock verifies that GC and its preview retain
+// synced organization resources without creating a lock or changing configuration.
 func TestV4OrganizationGCWithoutLock(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("GC collection", true))
 	env := newEnv(t)

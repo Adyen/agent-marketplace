@@ -103,6 +103,8 @@ harness lists.
 	return cmd
 }
 
+// runDoctor reports harness and configuration health and, when requested,
+// starts repair with a validator for the captured policy inputs.
 func runDoctor(opts doctorOptions) error {
 	if opts.ctx == nil {
 		opts.ctx = context.Background()

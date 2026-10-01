@@ -352,6 +352,9 @@ resources:
 	}
 }
 
+// TestDoctorAcquiresMissingV4OrganizationMarketplaceLockWithoutPublishing verifies
+// that doctor and repair acquire transient organization evidence from an empty
+// cache without publishing a lock or modifying configuration.
 func TestDoctorAcquiresMissingV4OrganizationMarketplaceLockWithoutPublishing(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -403,6 +406,9 @@ resources:
 	}
 }
 
+// TestDoctorRepairRefusesOrganizationLockDeployedDuringConfirmation verifies
+// that a lock appearing at the prompt aborts repair and preserves both the
+// aggregate and the newly deployed lock.
 func TestDoctorRepairRefusesOrganizationLockDeployedDuringConfirmation(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -464,6 +470,9 @@ resources:
 	}
 }
 
+// TestDoctorRepairRefusesIncompleteSelectionWhenTransientAcquisitionFails verifies
+// that failed organization acquisition prevents orphan repair and preserves
+// the aggregate without publishing a lock.
 func TestDoctorRepairRefusesIncompleteSelectionWhenTransientAcquisitionFails(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -515,6 +524,9 @@ resources:
 	}
 }
 
+// TestDoctorDoesNotReplacePresentV4OrganizationMarketplaceLock verifies
+// that doctor reports a mismatched deployed lock without contacting Marketplace
+// or replacing the lock.
 func TestDoctorDoesNotReplacePresentV4OrganizationMarketplaceLock(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -561,6 +573,9 @@ resources:
 	}
 }
 
+// TestDoctorReportsOrganizationAcquisitionFailureAcrossAliases verifies
+// that source aliases sharing an endpoint retain the acquisition error for an
+// unavailable resource instead of reporting a missing lock.
 func TestDoctorReportsOrganizationAcquisitionFailureAcrossAliases(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

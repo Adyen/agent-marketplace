@@ -80,6 +80,9 @@ func GarbageCollect(ctx context.Context, dryRun bool) (report GCReport, resultEr
 	return report, err
 }
 
+// garbageCollectUnderLease derives cache reachability from local intent
+// and deployed evidence while the caller holds the exact-snapshot lease. Real
+// collection preflights both caches and revalidates policy before deletion.
 func garbageCollectUnderLease(ctx context.Context, dryRun bool) (GCReport, error) {
 	var report GCReport
 	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{

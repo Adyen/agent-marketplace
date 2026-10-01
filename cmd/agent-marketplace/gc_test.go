@@ -219,6 +219,9 @@ func TestGcCommandAllowsMissingOrganizationLockWithoutCreatingIt(t *testing.T) {
 	}
 }
 
+// TestGcCommandUsesCachedOrganizationMarketplaceReachabilityWithoutNetwork verifies
+// that GC preserves active artifacts and handles orphans without network acquisition
+// or changes to organization configuration and locks.
 func TestGcCommandUsesCachedOrganizationMarketplaceReachabilityWithoutNetwork(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -299,6 +302,9 @@ func TestGcCommandUsesCachedOrganizationMarketplaceReachabilityWithoutNetwork(t 
 	}
 }
 
+// TestGcCommandCollectsWithoutOrganizationNetworkAndRejectsInvalidLocks verifies
+// that GC can collect offline but refuses malformed or mismatched deployed locks
+// without deleting cached artifacts or changing policy inputs.
 func TestGcCommandCollectsWithoutOrganizationNetworkAndRejectsInvalidLocks(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -397,6 +403,8 @@ type gcPreflightPolicyInjector struct {
 	failed   error
 }
 
+// Write changes a policy input once when Marketplace GC logs preflight
+// completion, exposing the interval before destructive collection.
 func (w *gcPreflightPolicyInjector) Write(p []byte) (int, error) {
 	if bytes.Contains(p, []byte("marketplace cache garbage collection completed")) && bytes.Contains(p, []byte("dry_run=true")) && w.mutated.CompareAndSwap(false, true) {
 		w.failed = os.WriteFile(w.path, w.contents, 0o600)
@@ -404,6 +412,8 @@ func (w *gcPreflightPolicyInjector) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// TestGcCommandRefusesOrganizationLockAppearingAfterPreflight verifies that
+// a newly deployed organization lock prevents cache deletion.
 // spec: cache-garbage-collection/organization-acquisition-lock-appears-after-preflight
 func TestGcCommandRefusesOrganizationLockAppearingAfterPreflight(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -412,6 +422,8 @@ func TestGcCommandRefusesOrganizationLockAppearingAfterPreflight(t *testing.T) {
 	testGcCommandRefusesPolicyChangeAfterPreflight(t, false)
 }
 
+// TestGcCommandRefusesConfigChangeAfterPreflight verifies that editing
+// organization configuration after preflight prevents cache deletion.
 // spec: cache-garbage-collection/configuration-changes-after-preflight
 func TestGcCommandRefusesConfigChangeAfterPreflight(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -420,6 +432,9 @@ func TestGcCommandRefusesConfigChangeAfterPreflight(t *testing.T) {
 	testGcCommandRefusesPolicyChangeAfterPreflight(t, true)
 }
 
+// testGcCommandRefusesPolicyChangeAfterPreflight injects a config edit or
+// a new lock after preflight and checks that GC refuses without network access
+// or changes to cached artifacts and policy inputs.
 func testGcCommandRefusesPolicyChangeAfterPreflight(t *testing.T, configChange bool) {
 	t.Helper()
 	home := t.TempDir()

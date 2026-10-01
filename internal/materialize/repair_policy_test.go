@@ -16,8 +16,12 @@ import (
 
 type repairPolicyCrasher func(ownership.CrashPoint) error
 
+// Crash delegates an ownership crash point to the injected callback.
 func (c repairPolicyCrasher) Crash(point ownership.CrashPoint) error { return c(point) }
 
+// TestRepairRefusesPolicyChangeAfterStaging verifies that adoption,
+// replacement, and removal reject a policy edit after staging, preserve aggregate
+// and ownership bytes, and clean temporary state before a successful retry.
 // spec: owned-entry-reconciliation/policy-changes-after-repair-staging
 func TestRepairRefusesPolicyChangeAfterStaging(t *testing.T) {
 	for _, target := range []hcc.Target{hcc.TargetDevin, hcc.TargetCodex} {

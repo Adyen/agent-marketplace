@@ -23,6 +23,8 @@ type repairConflict struct {
 	original  string
 }
 
+// newRepairConflict creates a Codex MCP conflict backed by a Git registry
+// and the requested configuration schema, without creating an acquisition lock.
 func newRepairConflict(t *testing.T, schema string) repairConflict {
 	t.Helper()
 	env := newCodexEnv(t)
@@ -48,6 +50,8 @@ func newRepairConflict(t *testing.T, schema string) repairConflict {
 	return repairConflict{env: env, registry: strings.TrimPrefix(url, "file://"), aggregate: aggregate, original: original}
 }
 
+// assertAggregateUnchanged checks that the handwritten Codex aggregate
+// still has its original bytes.
 func (c repairConflict) assertAggregateUnchanged(t *testing.T, when string) {
 	t.Helper()
 	if got := readFile(t, c.aggregate); got != c.original {
