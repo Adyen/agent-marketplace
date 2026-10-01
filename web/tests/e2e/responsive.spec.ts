@@ -96,6 +96,19 @@ test.describe('Marketplace layout at 768px', () => {
     await expectFirstResultWithinViewport(page)
   })
 
+  // spec: marketplace-browser/filter-rail-stays-visible-before-becoming-sticky
+  test('keeps the filter rail above the viewport bottom before it becomes sticky', async ({ page }) => {
+    await page.setViewportSize({ width: 768, height: 480 })
+    await page.goto('/')
+
+    const rail = page.locator('.catalog-sidebar__sticky')
+    const railBox = await rail.boundingBox()
+    expect(railBox).not.toBeNull()
+    expect(railBox!.y).toBeGreaterThan(88)
+    expect(railBox!.y + railBox!.height).toBeLessThanOrEqual(480)
+    expect(await rail.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+  })
+
   // spec: marketplace-browser/over-height-desktop-filter-rail-scrolls
   test('scrolls an over-height desktop filter rail to its final control', async ({ page }) => {
     await page.setViewportSize({ width: 768, height: 480 })
