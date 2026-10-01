@@ -18,6 +18,12 @@ aliases fail closed. Refs are `<registry>/<kind>/<name>`: directory sources
 use `local:<source name or dir>`, named Git sources use `<source name>`, and
 Marketplace resources use `marketplace:<registry slug>`.
 
+Marketplace skill loads list canonical support files and legacy asset files;
+use those relative paths with `skills.read`. Online access refreshes metadata
+for the exact revision and refuses cached fallback on failure. Offline access
+uses validated cached metadata and verified artifacts; it cannot discover
+newer Marketplace policy state.
+
 Results are bounded (deadline, output cap, host-call cap). An oversized
 result is replaced by `{"truncated": true, "bytes": <serialized size>,
 "prefix": <leading excerpt>}` and flagged `truncated`. Failures thrown into

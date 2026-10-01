@@ -9,6 +9,6 @@
 
 ## 3. Verification and publication claims
 
-- [ ] 3.1 Reconcile directly affected code-mode documentation and measure the affected load path; verify claims match tested behavior and retain before/after benchmark evidence.
+- [x] 3.1 Reconcile directly affected code-mode documentation and measure the affected load path; verify claims match tested behavior and retain before/after benchmark evidence.
 - [ ] 3.2 Run affected-package and code-mode E2E checks, full native validation, strict OpenSpec validation, and scenario tracing; retain passing evidence on the final candidate.
-- [ ] 3.3 Run `openspec archive fix-code-mode-marketplace-content --yes` in the same pull request and verify the synchronized main specification and archive.
+- [x] 3.3 Run `openspec archive fix-code-mode-marketplace-content --yes` in the same pull request and verify the synchronized main specification and archive.
