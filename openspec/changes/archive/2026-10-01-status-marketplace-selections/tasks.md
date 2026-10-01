@@ -13,4 +13,4 @@
 ## 3. Delivery
 
 - [x] 3.1 Review and commit the implementation locally without pushing.
-- [ ] 3.2 `openspec archive status-marketplace-selections --yes`
+- [x] 3.2 `openspec archive status-marketplace-selections --yes`

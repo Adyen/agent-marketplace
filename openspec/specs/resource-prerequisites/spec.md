@@ -4,9 +4,7 @@
 
 Define how catalog resources declare functional prerequisites and how commands
 report prerequisites that are not selected without changing configuration.
-
 ## Requirements
-
 ### Requirement: Resources declare prerequisites
 
 The marketplace SHALL read prerequisites from `metadata.requires` on cataloged
@@ -64,10 +62,7 @@ name are not selected.
 
 ### Requirement: Satisfaction by kind and name
 
-A prerequisite SHALL be met when any selected resource in the same resolution
-has the same kind and name, regardless of the registry, path, or configuration
-layer that supplies it. The `registry` and `path` hints SHALL NOT restrict
-satisfaction.
+A prerequisite SHALL be met when any selected resource in the same resolution has the same kind and name, regardless of the registry, path, configuration layer, or Marketplace selection that supplies it. The `registry` and `path` hints SHALL NOT restrict satisfaction.
 
 #### Scenario: Prerequisite supplied by another registry
 
@@ -78,6 +73,11 @@ satisfaction.
 
 - **WHEN** a skill requires MCP server `docs` and only a skill named `docs` is selected
 - **THEN** the marketplace MUST report the MCP prerequisite as unmet
+
+#### Scenario: Doctor treats a Marketplace selection as a satisfied prerequisite
+
+- **WHEN** a selected resource declares a prerequisite that only a Marketplace-selected resource satisfies and `doctor` runs
+- **THEN** `doctor` MUST NOT report the prerequisite as unmet
 
 ### Requirement: Unmet prerequisite warning text
 
@@ -222,3 +222,4 @@ resource selection.
 
 - **WHEN** a selected resource's prerequisites are also selected and `sync --strict` runs
 - **THEN** sync MUST NOT print an unmet-prerequisite warning or fail because of it
+
