@@ -9,6 +9,8 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// requiredCollectionFixture builds required organization and optional repository
+// catalogs with a shared collection in the source selected by provider (0 or 1).
 func requiredCollectionFixture(provider int) (*config.Config, map[string][]catalog.Entry) {
 	cfg := &config.Config{Registries: []config.RegistryEntry{
 		{URL: "git@example.invalid:mandatory.git", Ref: "main", Required: true, Source: config.Organization},
@@ -74,6 +76,8 @@ func TestTopLevelCollectionPreservesExplicitRequiredSelection(t *testing.T) {
 	}
 }
 
+// TestRequiredAutoSelectionStillReportsMissingTopLevelCollection verifies that a
+// missing collection is reported while automatically selected required skills remain.
 func TestRequiredAutoSelectionStillReportsMissingTopLevelCollection(t *testing.T) {
 	cfg, catalogs := requiredCollectionFixture(0)
 	cfg.Registries = cfg.Registries[:1]
@@ -87,6 +91,8 @@ func TestRequiredAutoSelectionStillReportsMissingTopLevelCollection(t *testing.T
 	}
 }
 
+// BenchmarkRequiredCollectionPropagation measures in-memory resolution and
+// allocations for a repository collection alongside required organization skills.
 func BenchmarkRequiredCollectionPropagation(b *testing.B) {
 	cfg, catalogs := requiredCollectionFixture(1)
 	cfg.Collections.Include = []string{"shared"}
