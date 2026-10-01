@@ -388,7 +388,7 @@ useHead({
     <footer class="marketplace-footer">
       <div>
         <a :href="DOCS_PATH">Docs</a>
-        <p><span v-if="metadata">Version {{ metadata.version }} · </span>built at Adyen</p>
+        <p><span v-if="metadata">Version {{ metadata.version }} · </span>built at <span class="marketplace-footer__adyen">Adyen</span></p>
       </div>
     </footer>
   </div>
@@ -619,7 +619,14 @@ useHead({
   margin: 0 auto;
   padding: 1.25rem 1rem;
   color: var(--am-color-text-muted);
-  font-size: 0.75rem;
+  font-family: var(--font-sans);
+  font-size: var(--am-text-body-sm);
+  font-weight: var(--am-font-medium);
+}
+
+.marketplace-footer__adyen {
+  color: var(--am-color-action-primary);
+  font-weight: var(--am-font-semibold);
 }
 
 .marketplace-footer a {
