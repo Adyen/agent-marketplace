@@ -3,9 +3,11 @@ package marketplace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/ingest"
@@ -31,6 +34,10 @@ type mirrorPublishFixture struct {
 }
 
 func newMirrorPublishFixture(t *testing.T) *mirrorPublishFixture {
+	return newMirrorPublishFixtureForKind(t, "skill")
+}
+
+func newMirrorPublishFixtureForKind(t *testing.T, kind string, overrides ...map[string]hccartifact.SupportFile) *mirrorPublishFixture {
 	t.Helper()
 
 	registryDir := t.TempDir()
@@ -50,6 +57,39 @@ func newMirrorPublishFixture(t *testing.T) *mirrorPublishFixture {
 	writeFile("SKILL.md", "---\nname: mirror-skill\ndescription: Mirror skill\nlicense: MIT\n---\nMirror body.\n", 0o644)
 	writeFile("scripts/run.sh", "#!/bin/sh\necho mirror-support\n", 0o755)
 	writeFile("docs/nested/note.md", "nested support bytes\n", 0o644)
+	if kind == "hook" {
+		hooksDir := filepath.Join(registryDir, "hooks")
+		if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range map[string]string{
+			"hooks.json": `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh"}]}]}}`,
+			"run.sh":     "#!/bin/sh\necho mirror-hook\n",
+			"helper.py":  "print('support')\n",
+		} {
+			mode := os.FileMode(0o644)
+			if name == "run.sh" {
+				mode = 0o755
+			}
+			if err := os.WriteFile(filepath.Join(hooksDir, name), []byte(body), mode); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, files := range overrides {
+			for name, file := range files {
+				mode := os.FileMode(0o644)
+				if file.Executable {
+					mode = 0o755
+				}
+				if err := os.WriteFile(filepath.Join(hooksDir, name), file.Data, mode); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(filepath.Join(hooksDir, name), mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
 
 	mpCfg := mpconfig.Config{
 		APIVersion:         "agent-marketplace.io/marketplace/v1",
@@ -85,7 +125,7 @@ func newMirrorPublishFixture(t *testing.T) *mirrorPublishFixture {
 
 	var resource *store.ResourceRevision
 	for i := range rev.Resources {
-		if rev.Resources[i].Coordinate.Kind == "skill" && rev.Resources[i].Coordinate.Name == "mirror-skill" {
+		if rev.Resources[i].Coordinate.Kind == kind {
 			resource = &rev.Resources[i]
 			break
 		}
@@ -142,6 +182,96 @@ func newMirrorPublishFixture(t *testing.T) *mirrorPublishFixture {
 	return fixture
 }
 
+// spec: marketplace-api/mirrored-hook-support-installation
+func TestMirrorHookSupportFilesInstall(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		t.Run(fmt.Sprint("machine=", machine), func(t *testing.T) {
+			isolateHarnessState(t)
+			fixture := newMirrorPublishFixtureForKind(t, "hook")
+			cfg := fixture.consumerConfig()
+			pin := &cfg.Marketplaces[0].Resources[0]
+			pin.Kind, pin.Name = "hook", "PreToolUse-command"
+			if machine {
+				cfg.Marketplaces[0].Source = config.UserPersonal
+			}
+			cache := NewCache(t.TempDir())
+			r := &Resolver{Cache: cache}
+			resolved, errs := r.Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
+			if len(errs) != 0 || len(resolved) != 1 {
+				t.Fatalf("Resolve: %v, %v", resolved, errs)
+			}
+			repo := t.TempDir()
+			report, err := materialize.Run(context.Background(), repo, resolved)
+			if err != nil || diag.HasErrors(report.Diags) {
+				t.Fatalf("materialize: %v, %v", report, err)
+			}
+			root := repo
+			if machine {
+				root = os.Getenv("HOME")
+			}
+			hooksDir := filepath.Join(root, ".factory", "hooks")
+			script := filepath.Join(hooksDir, "run.sh")
+			data, err := os.ReadFile(script)
+			if err != nil || string(data) != "#!/bin/sh\necho mirror-hook\n" {
+				t.Fatalf("script: %q, %v", data, err)
+			}
+			info, err := os.Stat(script)
+			if err != nil || info.Mode().Perm()&0o111 == 0 {
+				t.Fatalf("script executable: %v, %v", info, err)
+			}
+			if data, err := os.ReadFile(filepath.Join(hooksDir, "helper.py")); err != nil || string(data) != "print('support')\n" {
+				t.Fatalf("helper: %q, %v", data, err)
+			}
+			aggregate, err := os.ReadFile(filepath.Join(hooksDir, "hooks.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var hooks map[string][]struct {
+				Hooks []struct {
+					Command string `json:"command"`
+				} `json:"hooks"`
+			}
+			if err := json.Unmarshal(aggregate, &hooks); err != nil {
+				t.Fatal(err)
+			}
+			installedCommand := hooks["PreToolUse"][0].Hooks[0].Command
+			command := exec.Command("/bin/sh", "-c", installedCommand)
+			command.Dir = t.TempDir()
+			if !machine {
+				command.Dir = repo
+			}
+			if out, err := command.CombinedOutput(); err != nil || string(out) != "mirror-hook\n" {
+				t.Fatalf("hook execution: %q, %v", out, err)
+			}
+			before := fixture.requestCount
+			if _, errs := r.Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeCachedNoFetch); len(errs) != 0 {
+				t.Fatal(errs)
+			}
+			if fixture.requestCount != before {
+				t.Fatal("cached resolution made network requests")
+			}
+		})
+	}
+}
+
+// spec: marketplace-api/mirrored-hook-support-revision-changes
+func TestMirrorHookSupportRevisionChanges(t *testing.T) {
+	first := newMirrorPublishFixtureForKind(t, "hook")
+	repeat := newMirrorPublishFixtureForKind(t, "hook")
+	if first.contentDigest != repeat.contentDigest || first.archiveDigest != repeat.archiveDigest {
+		t.Fatal("identical hooks did not produce identical revisions and archives")
+	}
+	for _, file := range []hccartifact.SupportFile{
+		{Data: []byte("#!/bin/sh\necho changed\n"), Executable: true},
+		{Data: []byte("#!/bin/sh\necho mirror-hook\n"), Executable: false},
+	} {
+		changed := newMirrorPublishFixtureForKind(t, "hook", map[string]hccartifact.SupportFile{"run.sh": file})
+		if changed.contentDigest == first.contentDigest || changed.archiveDigest == first.archiveDigest {
+			t.Fatal("support bytes or executable mode changed without a new revision")
+		}
+	}
+}
+
 func (f *mirrorPublishFixture) consumerConfig() *config.Config {
 	return mirrorConsumerConfig(f.server.URL, f.contentDigest)
 }
@@ -178,8 +308,8 @@ func serveCanonicalMirror(t *testing.T, canonical hccartifact.CanonicalArtifact,
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
 			Registry:    store.RegistryID("src"),
-			Kind:        "skill",
-			Name:        "mirror-skill",
+			Kind:        canonical.Manifest.Kind,
+			Name:        canonical.Manifest.Name,
 		},
 		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),

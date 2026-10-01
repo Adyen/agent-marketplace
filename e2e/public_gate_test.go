@@ -25,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/worker"
 )
 
+// spec: marketplace-api/mirrored-hook-support-installation
 func TestMarketplacePublicGate(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
@@ -35,7 +36,8 @@ func TestMarketplacePublicGate(t *testing.T) {
 		[]Subagent{{Name: "agent-one", Description: "An agent", Tools: []string{"Read"}}},
 		[]MCPServer{{Name: "server-one", Command: "echo", Args: []string{"server-one"}}},
 	)
-	files["hooks/hooks.json"] = `{"hooks":{"PreToolUse":[{"type":"command","command":"echo hook","matcher":"Read"}]}}`
+	files["hooks/hooks.json"] = `{"hooks":{"PreToolUse":[{"type":"command","command":"sh ${CLAUDE_PLUGIN_ROOT}/hooks/run.sh","matcher":"Read"}]}}`
+	files["hooks/run.sh"] = "#!/bin/sh\necho hook\n"
 	files["collections/public-bundle/COLLECTION.yaml"] = `name: public-bundle
 version: "1.0"
 description: Public gate collection
@@ -79,6 +81,7 @@ resources:
 	}
 	v4Consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
 	v4Consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
+	assertPublicGateHookScript(t, v4Consumer)
 	cfg, meta, blobs := openPublicGateStores(t, cfgPath)
 	server := httptest.NewServer(mpapi.NewServer(cfg, meta, blobs).PublicHandler())
 	defer server.Close()
@@ -452,7 +455,8 @@ resources:
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
 	consumer.AssertFileContains("/workspace/.factory/commands/command-one.md", "echo command-one")
 	consumer.AssertFileExists("/workspace/.factory/droids/agent-one.md")
-	consumer.AssertFileContains("/workspace/.factory/hooks/hooks.json", "echo hook")
+	consumer.AssertFileContains("/workspace/.factory/hooks/hooks.json", "run.sh")
+	assertPublicGateHookScript(t, consumer)
 	consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
 	consumer.AssertFileAbsent("/workspace/.factory/skills/public-bundle")
 	if got := consumer.ReadFile("/workspace/.agents/config.yaml"); got != before {
@@ -470,6 +474,29 @@ resources:
 		}
 	}
 	return consumer
+}
+
+func assertPublicGateHookScript(t *testing.T, consumer *Env) {
+	t.Helper()
+	var hooks map[string][]struct {
+		Hooks []struct {
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal([]byte(consumer.ReadFile("/workspace/.factory/hooks/hooks.json")), &hooks); err != nil {
+		t.Fatal(err)
+	}
+	if len(hooks["PreToolUse"]) != 1 || len(hooks["PreToolUse"][0].Hooks) != 1 {
+		t.Fatalf("expected the published hook: %v", hooks)
+	}
+	consumer.AssertFileContains("/workspace/.factory/hooks/run.sh", "echo hook")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "/bin/sh", "-c", hooks["PreToolUse"][0].Hooks[0].Command)
+	command.Dir = consumer.workspace
+	if output, err := command.CombinedOutput(); err != nil || string(output) != "hook\n" {
+		t.Fatalf("published hook command failed: %q, %v", output, err)
+	}
 }
 
 func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDigest string) {

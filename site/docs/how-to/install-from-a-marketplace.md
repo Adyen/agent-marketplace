@@ -107,6 +107,16 @@ The Marketplace coordinate stays `review`. The generated harness output uses `te
 
 ## 5. Verify the exact pin
 
+Mirrored hooks carry their adjacent support scripts and executable modes. Targets
+with a native hook-support directory install the scripts there; aggregate-only
+targets reference the verified support cache. Neither needs a plugin-root
+environment variable.
+
+If an older mirrored hook references a script that its artifact did not package,
+resolution fails with `marketplace.hook.support-missing`. Keep the Git source until
+the operator refreshes the registry and publishes a new revision, then install
+that revision explicitly. A refresh cannot repair an already-pinned artifact.
+
 Check the installed Marketplace state:
 
 ```bash

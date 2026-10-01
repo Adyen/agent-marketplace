@@ -5,12 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	cachefs "github.com/Adyen/agent-marketplace/internal/cache"
@@ -31,6 +34,10 @@ import (
 
 var ErrArtifactIdentityMismatch = errors.New("marketplace artifact identity mismatch")
 var ErrArtifactSourcePath = errors.New("marketplace artifact source path is invalid")
+var ErrHookSupportMissing = errors.New("marketplace.hook.support-missing")
+var ErrHookSupportIntegrity = errors.New("marketplace.hook.support-integrity")
+
+var mirroredHookAssetReference = regexp.MustCompile(`\$\{(?:CLAUDE|DROID)_PLUGIN_ROOT\}/hooks/([^\s"';&|<>()$` + "`" + `]+)`)
 
 // Resolver resolves Marketplace entries into resolver.ResolvedArtifact values.
 type Resolver struct {
@@ -547,25 +554,55 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 }
 
 func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca hccartifact.CanonicalArtifact) (string, error) {
-	skill, ok := resource.(*ir.Skill)
-	if !ok {
+	declared := make(map[string]string)
+	switch r := resource.(type) {
+	case *ir.Skill:
+		for _, name := range r.SupportFiles {
+			declared[name] = ""
+		}
+	case *ir.Hook:
+		for name, expected := range r.SupportFiles {
+			declared[name] = expected
+		}
+		command := r.Command
+		for _, reference := range mirroredHookAssetReference.FindAllStringSubmatch(command, -1) {
+			if _, exists := declared[reference[1]]; !exists {
+				return "", fmt.Errorf("%w: hook %q references an unpublished plugin-root asset; keep the Git source or install a new resource revision", ErrHookSupportMissing, r.Name())
+			}
+			command = strings.ReplaceAll(command, reference[0], "")
+		}
+		if strings.Contains(command, "${CLAUDE_PLUGIN_ROOT}") || strings.Contains(command, "${DROID_PLUGIN_ROOT}") {
+			return "", fmt.Errorf("%w: hook %q has an unsupported plugin-root asset reference", ErrHookSupportMissing, r.Name())
+		}
+	default:
 		return "", nil
 	}
-	declared := make(map[string]string, len(skill.SupportFiles))
-	for _, d := range skill.SupportFiles {
-		if err := hccartifact.ValidateSupportPath(d); err != nil {
-			return "", fmt.Errorf("invalid declared support file %q: %w", d, err)
+	for name := range declared {
+		if err := hccartifact.ValidateSupportPath(name); err != nil {
+			if _, hook := resource.(*ir.Hook); hook {
+				return "", fmt.Errorf("%w: invalid declared support file %q: %w", ErrHookSupportIntegrity, name, err)
+			}
+			return "", fmt.Errorf("invalid declared support file %q: %w", name, err)
 		}
-		declared[d] = d
 	}
 	for rel := range ca.Support {
 		if _, ok := declared[rel]; !ok {
+			if _, hook := resource.(*ir.Hook); hook {
+				return "", fmt.Errorf("%w: marketplace artifact %s carries undeclared support file %q", ErrHookSupportIntegrity, digest, rel)
+			}
 			return "", fmt.Errorf("marketplace artifact %s carries undeclared support file %q", digest, rel)
 		}
 	}
-	for rel, d := range declared {
-		if _, ok := ca.Support[rel]; !ok {
-			return "", fmt.Errorf("marketplace artifact %s does not contain declared support file %q", digest, d)
+	for rel, expected := range declared {
+		file, ok := ca.Support[rel]
+		if !ok {
+			if _, hook := resource.(*ir.Hook); hook {
+				return "", fmt.Errorf("%w: marketplace artifact %s does not contain declared support file %q", ErrHookSupportMissing, digest, rel)
+			}
+			return "", fmt.Errorf("marketplace artifact %s does not contain declared support file %q", digest, rel)
+		}
+		if _, hook := resource.(*ir.Hook); hook && hccartifact.SupportFileDigest(file) != expected {
+			return "", fmt.Errorf("%w: marketplace artifact %s support file %q has mismatched bytes or executable mode", ErrHookSupportIntegrity, digest, rel)
 		}
 	}
 	if len(ca.Support) == 0 {
@@ -575,6 +612,15 @@ func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca h
 	staged, err := cachefs.WithCacheMutationLock(func() (string, error) {
 		if err := validateCacheDirectory(cache.root, dir); err != nil {
 			return "", fmt.Errorf("validate mirror resource staging path: %w", err)
+		}
+		if _, hook := resource.(*ir.Hook); hook {
+			matches, err := mirrorHookStageMatches(cache.root, dir, ca.Support)
+			if err != nil {
+				return "", err
+			}
+			if matches {
+				return dir, nil
+			}
 		}
 		if err := os.RemoveAll(dir); err != nil {
 			return "", err
@@ -606,6 +652,58 @@ func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca h
 		return "", err
 	}
 	return staged, nil
+}
+
+// Aggregate-only harnesses execute these files directly. Do not remove and
+// recreate an intact stage during ordinary sync while a hook may be running.
+func mirrorHookStageMatches(root, dir string, support map[string]hccartifact.SupportFile) (bool, error) {
+	seen := 0
+	matches := true
+	err := filepath.WalkDir(dir, func(filePath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(dir, filePath)
+		if err != nil {
+			return err
+		}
+		expected, ok := support[filepath.ToSlash(relative)]
+		if !ok {
+			matches = false
+			return nil
+		}
+		if exists, err := validateCacheRegularFile(root, filePath); err != nil {
+			return fmt.Errorf("invalid hook support cache file: %w", err)
+		} else if !exists {
+			return os.ErrNotExist
+		}
+		file, err := os.OpenFile(filePath, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = file.Close() }()
+		info, err := file.Stat()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Sys().(*syscall.Stat_t).Nlink != 1 {
+			return ErrHookSupportIntegrity
+		}
+		data, err := io.ReadAll(io.LimitReader(file, int64(len(expected.Data))+1))
+		if err != nil {
+			return err
+		}
+		seen++
+		matches = matches && bytes.Equal(data, expected.Data) && (info.Mode().Perm()&0o111 != 0) == expected.Executable
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return matches && seen == len(support), err
 }
 
 func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (artifact resolver.ResolvedArtifact, canonical hccartifact.CanonicalArtifact, retErr error) {

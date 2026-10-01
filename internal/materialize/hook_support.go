@@ -7,14 +7,57 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+// mirroredHookForTarget points plugin-root assets at the routed installation,
+// not the disposable source staging directory or a harness-specific token.
+func mirroredHookForTarget(w skillTarget, repoRoot string) (ir.Resource, error) {
+	hook, ok := w.skill.Resource.(*ir.Hook)
+	if !ok || !w.skill.IsMarketplace || len(hook.SupportFiles) == 0 {
+		return w.skill.Resource, nil
+	}
+	// Aggregate-only targets have no native support-file component. Keep the
+	// verified archive-keyed cache as the execution root rather than inventing
+	// an unowned native directory or leaving a plugin-root token unresolved.
+	if resourceInstallDirRel(w.target, ir.KindHook) == "" {
+		return hookWithSupportRoot(hook, materializationSourcePath(w.skill)), nil
+	}
+	destinations, err := harness.ResolveDestinations(w.target, w.machineScope, repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	supportPath := resourceInstallDirRel(w.target, ir.KindHook) + "/__support_path__"
+	for _, destination := range destinations {
+		relative, err := destination.RouteArtifact(supportPath)
+		if err != nil {
+			continue
+		}
+		if destination.Info.PlanStrategy == harness.PlanWindsurf && w.machineScope {
+			relative = strings.TrimPrefix(relative, windsurfDir+"/")
+		}
+		dir := filepath.Dir(filepath.Join(destination.Root, filepath.FromSlash(relative)))
+		return hookWithSupportRoot(hook, dir), nil
+	}
+	return nil, fmt.Errorf("no hook support destination for %s", w.target)
+}
+
+func hookWithSupportRoot(hook *ir.Hook, dir string) *ir.Hook {
+	clone := *hook
+	for _, token := range []string{"${CLAUDE_PLUGIN_ROOT}", "${DROID_PLUGIN_ROOT}"} {
+		clone.Command = strings.ReplaceAll(clone.Command, token+"/hooks/", filepath.ToSlash(dir)+"/")
+	}
+	return &clone
+}
 
 type hookSupportOutput struct {
 	output outputKey
@@ -45,7 +88,16 @@ func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[in
 		source := hookSupportSource{path: materializationSourcePath(w.skill), target: w.target, harness: w.skill.SourceHarness}
 		files, exists := cached[source]
 		if !exists {
-			files = collectHookSupportFiles(source.path, w.target, source.harness)
+			if hook, ok := w.skill.Resource.(*ir.Hook); ok && w.skill.IsMarketplace && len(hook.SupportFiles) > 0 {
+				names := make([]string, 0, len(hook.SupportFiles))
+				for name := range hook.SupportFiles {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+				files = hookSupportArtifacts(source.path, names, w.target)
+			} else {
+				files = collectHookSupportFiles(source.path, w.target, source.harness)
+			}
 			cached[source] = files
 		}
 		support[i] = files
@@ -77,24 +129,7 @@ func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[in
 }
 
 func hookSupportExclusions(sourcePath, sourceHarness string) map[string]bool {
-	primary := filepath.Base(sourcePath)
-	excluded := map[string]bool{primary: true}
-	info, ok := harness.TargetInfoFor(hcc.Target(sourceHarness))
-	if !ok {
-		return excluded
-	}
-	files := append(slices.Clone(info.AggregateFiles.Project), info.AggregateFiles.User...)
-	for _, source := range files {
-		if filepath.Base(source) != primary {
-			continue
-		}
-		for _, sibling := range files {
-			if filepath.Dir(source) == filepath.Dir(sibling) {
-				excluded[filepath.Base(sibling)] = true
-			}
-		}
-	}
-	return excluded
+	return catalog.HookSupportExclusions(sourcePath, sourceHarness)
 }
 
 func retainBlockedHookArtifacts(outDir string, artifacts []artifact.Artifact) ([]artifact.Artifact, error) {

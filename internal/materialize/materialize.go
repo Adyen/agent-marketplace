@@ -787,6 +787,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			w.skill.Resource = renamed
 		}
 		compileOptions := []hcc.Option{}
+		resource, err := mirroredHookForTarget(w, repoRoot)
+		if err != nil {
+			blockResource(key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+			allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.hook.support-destination", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: err.Error()})
+			continue
+		}
+		w.skill.Resource = resource
 		if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
 			compileOptions = append(compileOptions, hcc.WithPluginRoot(pluginRoot))
 		}
@@ -3582,20 +3590,20 @@ func collectHookSupportFiles(sourcePath string, target hcc.Target, sourceHarness
 		return nil
 	}
 	sourceDir := filepath.Dir(sourcePath)
-	names, err := catalog.HookSupportFiles(sourcePath)
+	names, err := catalog.HookMaterializationSupportFiles(sourcePath, sourceHarness)
 	if err != nil {
 		return nil
 	}
+	return hookSupportArtifacts(sourceDir, names, target)
+}
+
+func hookSupportArtifacts(sourceDir string, names []string, target hcc.Target) []artifact.Artifact {
 	hooksDirRel := resourceInstallDirRel(target, ir.KindHook)
 	if hooksDirRel == "" {
 		return nil
 	}
-	excluded := hookSupportExclusions(sourcePath, sourceHarness)
 	var artifacts []artifact.Artifact
 	for _, name := range names {
-		if excluded[name] || (sourceHarness == string(hcc.TargetWindsurf) && filepath.Base(sourceDir) == "hooks" && strings.HasSuffix(name, ".json")) {
-			continue
-		}
 		srcPath := filepath.Join(sourceDir, name)
 		data, err := os.ReadFile(srcPath)
 		if err != nil {

@@ -38,6 +38,19 @@ type SupportFile struct {
 	Executable bool
 }
 
+// SupportFileDigest binds both bytes and executable mode into a hook revision.
+func SupportFileDigest(file SupportFile) string {
+	mode := byte(0)
+	if file.Executable {
+		mode = 1
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte("hook-support-v1\x00"))
+	_, _ = h.Write([]byte{mode})
+	_, _ = h.Write(file.Data)
+	return ContentDigestPrefix + ":" + hex.EncodeToString(h.Sum(nil))
+}
+
 // CanonicalArtifact is the in-memory representation of a deterministic,
 // self-describing Marketplace artifact. It is encoded as a tar.gz archive.
 type CanonicalArtifact struct {

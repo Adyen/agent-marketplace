@@ -192,6 +192,18 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				continue
 			}
 
+			if hook, ok := entry.Resource.(*hccir.Hook); ok && registry.Acquisition == store.AcquisitionMirror {
+				names, err := catalog.HookMaterializationSupportFiles(entry.Path, entry.SourceHarness)
+				if err != nil {
+					return rev, fmt.Errorf("discover hook support: %w", err)
+				}
+				clone := *hook
+				clone.SupportFiles = make(map[string]string, len(names))
+				for _, name := range names {
+					clone.SupportFiles[name] = ""
+				}
+				entry.Resource = &clone
+			}
 			files, modes, err := fileSetForResource(dir, entry)
 			if err != nil {
 				return rev, fmt.Errorf("support files for %s %q: %w", kind, entry.Name, err)
@@ -199,6 +211,11 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			var archiveSupport map[string]hccartifact.SupportFile
 			if registry.Acquisition == store.AcquisitionMirror {
 				archiveSupport = archiveSupportFiles(files, modes)
+				if hook, ok := entry.Resource.(*hccir.Hook); ok {
+					for name, support := range archiveSupport {
+						hook.SupportFiles[name] = hccartifact.SupportFileDigest(support)
+					}
+				}
 			}
 			r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, files, archiveSupport, nil)
 			if err != nil {
@@ -877,6 +894,14 @@ func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, map[s
 		}
 		seen[normalized] = struct{}{}
 		filePath := filepath.Join(resRoot, filepath.FromSlash(normalized))
+		if _, hook := entry.Resource.(*hccir.Hook); hook {
+			data, executable, err := readHookSupportFile(resRoot, normalized)
+			if err != nil {
+				return nil, nil, fmt.Errorf("read hook support file %q: %w", rel, err)
+			}
+			files[normalized], modes[normalized] = data, executable
+			continue
+		}
 		if err := rejectSymlinkPath(resRoot, filePath); err != nil {
 			return nil, nil, fmt.Errorf("support file %q: %w", rel, err)
 		}
@@ -919,7 +944,12 @@ func resourceInfo(r hccir.Resource) (extra map[string]any, supportFiles []string
 	case *hccir.Rule:
 		return v.Extra, nil, nil
 	case *hccir.Hook:
-		return v.Extra, nil, nil
+		names := make([]string, 0, len(v.SupportFiles))
+		for name := range v.SupportFiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return v.Extra, names, nil
 	case *hccir.McpServer:
 		return v.Extra, nil, nil
 	case *hccir.Collection:
