@@ -297,6 +297,10 @@ func TestGeminiSharedScopeEmptyDesiredSetPrunesOutput(t *testing.T) {
 	if _, err := os.ReadFile(commandPath); err != nil {
 		t.Fatalf("valid control did not install the command: %v", err)
 	}
+	settings, err := os.ReadFile(settingsPath)
+	if err != nil || !bytes.Contains(settings, []byte("repository-mcp")) || !bytes.Contains(settings, []byte("repository-audit")) {
+		t.Fatalf("valid control did not install native entries: %v %s", err, settings)
+	}
 	report, err = Run(t.Context(), home, nil)
 	if err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("cleanup failed: %v %+v", err, report)
@@ -304,7 +308,7 @@ func TestGeminiSharedScopeEmptyDesiredSetPrunesOutput(t *testing.T) {
 	if _, err := os.Lstat(commandPath); !os.IsNotExist(err) {
 		t.Fatalf("empty desired set did not prune stale command: %v", err)
 	}
-	settings, err := os.ReadFile(settingsPath)
+	settings, err = os.ReadFile(settingsPath)
 	if err != nil || !bytes.Contains(settings, []byte("handwritten")) || bytes.Contains(settings, []byte("repository-mcp")) || bytes.Contains(settings, []byte("repository-audit")) {
 		t.Fatalf("cleanup changed the wrong settings: %v %s", err, settings)
 	}
