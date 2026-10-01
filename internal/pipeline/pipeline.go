@@ -1023,6 +1023,9 @@ func CollectCodexBackupPartitions(resolved []resolver.ResolvedArtifact) ([]backu
 	}
 	partitions, err := CodexBackupPartitions()
 	if err != nil {
+		if !selected && errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if selected {
