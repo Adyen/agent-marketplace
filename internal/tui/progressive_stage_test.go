@@ -191,6 +191,52 @@ func TestReadSnapshotStagesUsesNestedLocalWorkspace(t *testing.T) {
 	}
 }
 
+func TestReadSnapshotStagesProvisionalCatalogsUseWorkspaceLayerRoots(t *testing.T) {
+	repoRoot, homeDir := progressiveFixture(t)
+	nested := filepath.Join(repoRoot, "nested")
+	for _, fixture := range []struct{ root, directory, name string }{
+		{repoRoot, "repo-registry", "repo-only"},
+		{nested, "local-registry", "local-only"},
+	} {
+		dir := filepath.Join(fixture.root, fixture.directory, "skills", fixture.name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: "+fixture.name+"\ndescription: workspace root fixture\n---\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(swapLoadRepoConfig(func() (*config.Config, error) {
+		return &config.Config{Registries: []config.RegistryEntry{{URL: "repo-registry", Default: true, V4Kind: config.V4SourceDirectory}}}, nil
+	}))
+	t.Cleanup(swapLoadLocalConfig(func() (*config.LocalConfig, error) {
+		return &config.LocalConfig{Registries: []config.RegistryEntry{{URL: "local-registry", Default: true, V4Kind: config.V4SourceDirectory}}}, nil
+	}))
+	ws, err := pipeline.NewWorkspace(repoRoot, nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := collectSnapshotStages(readSnapshotStagesForWorkspace(context.Background(), ws, homeDir, catalogLoadCached, 17))
+	var provisional []row
+	for _, msg := range msgs {
+		if msg.provisionalCfg != nil {
+			provisional = msg.provisionalRows
+		}
+	}
+	for _, stage := range []struct {
+		name string
+		rows []row
+	}{{"provisional", provisional}, {"final", msgs[len(msgs)-1].rows}} {
+		var names []string
+		for _, row := range stage.rows {
+			names = append(names, row.Artifact.Name)
+		}
+		if !slices.Contains(names, "repo-only") || !slices.Contains(names, "local-only") {
+			t.Fatalf("%s inventory = %v, want both workspace layer sources", stage.name, names)
+		}
+	}
+}
+
 // Once the validated-config stage lands, Marketplace discovery runs while the
 // local catalog, detail capture, and dry run are still in flight.
 // spec: tui-startup/config-stage-starts-cached-first-marketplace-discovery-before-local-verification-finishes

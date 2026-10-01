@@ -308,7 +308,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
 			},
 			ProvisionalConfigReady: func(merged *config.Config, local *config.LocalConfig) {
-				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged, provisionalRows: buildProvisionalRows(withCachedCollectionLeaves(merged, marketplace.DefaultCache()), local, provisionalLocalCatalogs(merged, ws.LocalConfigDir()), provisionalHarnessDefaults())})
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged, provisionalRows: buildProvisionalRows(withCachedCollectionLeaves(merged, marketplace.DefaultCache()), local, provisionalLocalCatalogs(merged, ws), provisionalHarnessDefaults())})
 			},
 			ConfigReady: func(merged *config.Config) {
 				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
@@ -1034,7 +1034,7 @@ type provisionalLocalCatalog struct {
 	entries []catalog.Entry
 }
 
-func provisionalLocalCatalogs(cfg *config.Config, repoRoot string) map[int]provisionalLocalCatalog {
+func provisionalLocalCatalogs(cfg *config.Config, workspace pipeline.Workspace) map[int]provisionalLocalCatalog {
 	if cfg == nil {
 		return nil
 	}
@@ -1049,7 +1049,7 @@ func provisionalLocalCatalogs(cfg *config.Config, repoRoot string) map[int]provi
 	if len(indexes) == 0 {
 		return nil
 	}
-	result := catalog.LoadRegistries(localOnly, repoRoot, catalog.LoadModeCachedNoFetch, catalog.WithDiscoverFunc(discoverCatalog))
+	result := catalog.LoadRegistries(localOnly, workspace.RepoRoot(), catalog.LoadModeCachedNoFetch, catalog.WithLocalConfigDir(workspace.LocalConfigDir()), catalog.WithDiscoverFunc(discoverCatalog))
 	catalogs := make(map[int]provisionalLocalCatalog, len(indexes))
 	for pos, idx := range indexes {
 		entry := localOnly.Registries[pos]
