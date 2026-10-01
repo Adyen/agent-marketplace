@@ -1,8 +1,8 @@
 /**
- * Marketplace adapter for the native VitePress navigation.
+ * Marketplace navigation presentation.
  *
- * VitePress owns the canonical navigation component and its styles. Nuxt
- * renders this class contract with the same layout and semantic colors.
+ * The Nuxt application owns this class contract so its header can evolve
+ * independently from the documentation site's native navigation.
  */
 
 .am-skip-link {
@@ -34,7 +34,8 @@
 }
 
 .am-site-header {
-  position: relative;
+  position: sticky;
+  top: 0;
   z-index: 50;
   border-bottom: 1px solid var(--am-color-border-default);
   background: var(--am-color-bg-chrome);
@@ -69,7 +70,7 @@ button[role="switch"] {
   min-width: 0;
   color: var(--am-color-text-primary);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: var(--am-font-semibold);
   line-height: 1;
   text-decoration: none;
 }
@@ -101,8 +102,8 @@ button[role="switch"] {
 .am-site-nav__link {
   padding: 0 12px;
   color: var(--am-color-text-primary);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--am-text-body-sm);
+  font-weight: var(--am-font-medium);
   line-height: 64px;
   text-decoration: none;
   transition: color 250ms;

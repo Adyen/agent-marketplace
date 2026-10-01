@@ -7,6 +7,24 @@ async function expectFirstResultWithinViewport(page: Page) {
   expect(await page.evaluate(() => window.scrollY)).toBe(0)
 }
 
+// spec: marketplace-web-ui/header-remains-visible-while-scrolling
+test('keeps the primary header visible while scrolling', async ({ page }) => {
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+    await page.setViewportSize(viewport)
+    await page.goto('/r/team-tools/skill/secure-review')
+
+    const header = page.locator('.am-site-header')
+    await header.evaluate(element => { element.nextElementSibling?.setAttribute('style', 'min-height: 200vh') })
+    expect(await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight)).toBe(true)
+    await expect(header).toHaveCSS('position', 'sticky')
+    await expect(header).toHaveCSS('top', '0px')
+
+    await page.evaluate(() => window.scrollTo(0, 500))
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
+    expect((await header.boundingBox())?.y).toBeCloseTo(0, 0)
+  }
+})
+
 test.describe('Marketplace layout at 390px', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 
@@ -42,17 +60,25 @@ test.describe('Marketplace layout at 390px', () => {
     await page.goto('/r/team-tools/skill/secure-review')
     const heading = page.getByRole('heading', { name: 'secure-review', exact: true })
     const command = page.getByTestId('command-text')
+    const commandScroller = page.getByTestId('command-scroll')
+    const copyArea = page.getByTestId('command-copy-area')
     const copy = page.getByRole('button', { name: /Copy pinned CLI install command/ })
 
     await heading.evaluate(element => { element.textContent = 'resource-' + 'long'.repeat(50) })
     await command.evaluate(element => { element.textContent += '-' + 'argument'.repeat(80) })
 
     await expect(copy).toBeVisible()
-    const commandScroller = command.locator('..')
     expect(await commandScroller.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-    const copyBox = await copy.boundingBox()
+    const [scrollerBox, copyAreaBox, copyBox] = await Promise.all([
+      commandScroller.boundingBox(),
+      copyArea.boundingBox(),
+      copy.boundingBox(),
+    ])
+    expect(scrollerBox).not.toBeNull()
+    expect(copyAreaBox).not.toBeNull()
     expect(copyBox).not.toBeNull()
+    expect(copyAreaBox!.x).toBeGreaterThanOrEqual(scrollerBox!.x + scrollerBox!.width)
     expect(copyBox!.x + copyBox!.width).toBeLessThanOrEqual(390)
   })
 })

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
 @import "./design-tokens.css";
+@import "./navigation.css";
 
 /*
  * This instance is an index, not a storefront. Every entry is content-addressed
