@@ -115,7 +115,7 @@ func TestResolveReportsUnmetRequirement(t *testing.T) {
 			want: []warningExpectation{
 				{
 					message:     `skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`,
-					remediation: `agent-marketplace install "genai-atlassian" --kind mcp`,
+					remediation: `agent-marketplace install genai-atlassian --kind mcp`,
 				},
 			},
 		},
@@ -132,11 +132,11 @@ func TestResolveReportsUnmetRequirement(t *testing.T) {
 			want: []warningExpectation{
 				{
 					message:     `skill "incident-kb" requires mcp "genai-incident", but it is not selected`,
-					remediation: `agent-marketplace install "genai-incident" --kind mcp`,
+					remediation: `agent-marketplace install genai-incident --kind mcp`,
 				},
 				{
 					message:     `skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`,
-					remediation: `agent-marketplace install "genai-atlassian" --kind mcp`,
+					remediation: `agent-marketplace install genai-atlassian --kind mcp`,
 				},
 			},
 		},
