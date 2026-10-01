@@ -78,6 +78,11 @@ func coalesceGeminiNativeAggregates(result *compilePhaseResult, repoRoot string)
 	if work := result.byTarget[repo]; work != nil {
 		work.artifacts = kept
 	}
+	// An extra native pass must not prune the repository's ordinary output,
+	// including when existing-root discovery revives the machine key later.
+	if result.byTarget[machine] == nil && result.allOutputs[repo] && !anyBlocked(result.blocked[machine]) {
+		result.byTarget[machine] = &targetWork{nativeOnly: true}
+	}
 	if len(shared) > 0 {
 		if result.byTarget[machine] == nil {
 			result.byTarget[machine] = &targetWork{}

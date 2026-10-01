@@ -437,8 +437,9 @@ type skillTarget struct {
 
 // targetWork holds the compiled artifacts and diagnostics for a single output key.
 type targetWork struct {
-	artifacts []artifact.Artifact
-	diags     []diag.Diagnostic
+	artifacts  []artifact.Artifact
+	diags      []diag.Diagnostic
+	nativeOnly bool
 }
 
 // compilePhaseResult holds the output of the compile phase.
@@ -1176,6 +1177,10 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
 		if !coalescedGemini || key.target != hcc.TargetGemini || key.machineScope {
 			artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
+		}
+		if tw != nil && tw.nativeOnly {
+			slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)
+			continue
 		}
 		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
 		if binding, ok := composition.bindings[key.target]; ok {

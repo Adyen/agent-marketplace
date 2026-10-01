@@ -184,6 +184,132 @@ func TestGeminiSharedScopeCompatibleIdentityAndIncompleteInput(t *testing.T) {
 	}
 }
 
+// spec: owned-entry-reconciliation/shared-gemini-native-work-preserves-repository-commands
+func TestGeminiSharedScopePreservesRepositoryCommands(t *testing.T) {
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+		t.Run(string(mode), func(t *testing.T) {
+			for _, fixture := range []struct {
+				name   string
+				native bool
+				alias  bool
+			}{
+				{name: "commands"},
+				{name: "commands-and-native", native: true},
+				{name: "alias-commands", alias: true},
+				{name: "alias-commands-and-native", native: true, alias: true},
+			} {
+				t.Run(fixture.name, func(t *testing.T) {
+					home := configureSharedGeminiHome(t)
+					repo := home
+					if fixture.alias {
+						repo = filepath.Join(t.TempDir(), "home-alias")
+						if err := os.Symlink(home, repo); err != nil {
+							t.Fatal(err)
+						}
+					}
+					var desired []resolver.ResolvedArtifact
+					for _, name := range []string{"selected-command", "stale-command"} {
+						command := ir.NewCommand(name, "Command fixture", "Inert fixture text", nil, ir.SourceRef{})
+						desired = append(desired, resolver.ResolvedArtifact{
+							Entry:  catalog.Entry{Kind: command.Kind(), Name: name, Resource: command},
+							Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetGemini},
+						})
+					}
+					if fixture.native {
+						desired = append(desired, sharedGeminiResources()[:2]...)
+					}
+					modes := config.DefaultMaterializationModes()
+					modes.Project, modes.Machine = mode, mode
+					options := []RunOption{WithMaterializationModes(modes)}
+					report, err := Run(t.Context(), repo, desired, options...)
+					if err != nil || hasErrorDiagnostics(report.Diags) {
+						t.Fatalf("first sync failed: %v %+v", err, report)
+					}
+					commandPath := filepath.Join(home, ".gemini", "commands", "selected-command.toml")
+					before, err := os.ReadFile(commandPath)
+					if err != nil || !bytes.Contains(before, []byte("Inert fixture text")) {
+						t.Fatalf("selected command missing after first sync: %v %s", err, before)
+					}
+					stalePath := filepath.Join(home, ".gemini", "commands", "stale-command.toml")
+					if _, err := os.ReadFile(stalePath); err != nil {
+						t.Fatalf("cleanup control did not install the stale command: %v", err)
+					}
+					info, err := os.Stat(commandPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, dryRun := range []bool{false, true} {
+						opts := append([]RunOption(nil), options...)
+						if dryRun {
+							opts = append(opts, WithDryRun())
+						}
+						report, err := Run(t.Context(), repo, desired, opts...)
+						if err != nil || !report.InSync() {
+							t.Fatalf("repeat sync or check drifted: %v %+v", err, report)
+						}
+						after, err := os.ReadFile(commandPath)
+						if err != nil || !bytes.Equal(before, after) {
+							t.Fatalf("repeat sync or check changed command bytes: %v", err)
+						}
+						afterInfo, err := os.Stat(commandPath)
+						if err != nil || !afterInfo.ModTime().Equal(info.ModTime()) {
+							t.Fatalf("repeat sync or check rewrote command: %v", err)
+						}
+					}
+					desired = append(desired[:1:1], desired[2:]...)
+					report, err = Run(t.Context(), repo, desired, options...)
+					if err != nil || hasErrorDiagnostics(report.Diags) {
+						t.Fatalf("stale command cleanup failed: %v %+v", err, report)
+					}
+					if _, err := os.Stat(commandPath); err != nil {
+						t.Fatalf("cleanup lost selected command: %v", err)
+					}
+					if _, err := os.Lstat(stalePath); !os.IsNotExist(err) {
+						t.Fatalf("stale command was not pruned: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+// spec: owned-entry-reconciliation/empty-shared-gemini-desired-set-retains-cleanup
+func TestGeminiSharedScopeEmptyDesiredSetPrunesOutput(t *testing.T) {
+	home := configureSharedGeminiHome(t)
+	root := filepath.Join(home, ".gemini")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(root, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte("{\"theme\":\"handwritten\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := ir.NewCommand("selected-command", "Command fixture", "Inert fixture text", nil, ir.SourceRef{})
+	desired := append(sharedGeminiResources()[:2:2], resolver.ResolvedArtifact{
+		Entry:  catalog.Entry{Kind: command.Kind(), Name: command.Name(), Resource: command},
+		Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetGemini},
+	})
+	report, err := Run(t.Context(), home, desired)
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("valid control failed: %v %+v", err, report)
+	}
+	commandPath := filepath.Join(root, "commands", "selected-command.toml")
+	if _, err := os.ReadFile(commandPath); err != nil {
+		t.Fatalf("valid control did not install the command: %v", err)
+	}
+	report, err = Run(t.Context(), home, nil)
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("cleanup failed: %v %+v", err, report)
+	}
+	if _, err := os.Lstat(commandPath); !os.IsNotExist(err) {
+		t.Fatalf("empty desired set did not prune stale command: %v", err)
+	}
+	settings, err := os.ReadFile(settingsPath)
+	if err != nil || !bytes.Contains(settings, []byte("handwritten")) || bytes.Contains(settings, []byte("repository-mcp")) || bytes.Contains(settings, []byte("repository-audit")) {
+		t.Fatalf("cleanup changed the wrong settings: %v %s", err, settings)
+	}
+}
+
 func BenchmarkSharedGeminiNativeSyncDisk(b *testing.B) {
 	discardBenchLogs(b)
 	home := configureSharedGeminiHome(b)
