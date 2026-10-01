@@ -45,5 +45,5 @@ run_race ./internal/fsboundary \
     -count=20
 
 run_race ./internal/materialize \
-    -run '^TestRun(RejectsEscapingHarnessRoot|HarnessRootAliasesRemainUsable|UnsafeRootShapesPreserveState|UnsafeOutputAncestorPreservesState|RootAdmissionDryRunCreatesNoOutput)$' \
+    -run '^TestRun(RejectsEscapingHarnessRoot|HarnessRootAliasesRemainUsable|UnsafeRootShapesPreserveState|UnsafeOutputAncestorPreservesState|RootAdmissionDryRunCreatesNoOutput|CreatesMissingMachineScope|CodexRelocationCreatesOnlyConfiguredPartition)$' \
     -count=20

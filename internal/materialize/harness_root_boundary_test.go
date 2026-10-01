@@ -251,6 +251,21 @@ func TestRunUnsafeOutputAncestorPreservesState(t *testing.T) {
 	}
 }
 
+func TestRunCreatesMissingMachineScope(t *testing.T) {
+	tc := rootBoundaryCases[1]
+	repo, _, resolved := rootBoundaryFixture(t, tc, true)
+	home := filepath.Join(t.TempDir(), "fresh-home")
+	t.Setenv("HOME", home)
+	report, err := Run(context.Background(), repo, resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoErrorDiags(t, report.Diags)
+	if _, err := os.Stat(filepath.Join(home, ".factory", tc.artifact)); err != nil {
+		t.Fatalf("fresh machine scope did not receive native output: %v", err)
+	}
+}
+
 func TestRunCodexRelocationCreatesOnlyConfiguredPartition(t *testing.T) {
 	tc := rootBoundaryCases[len(rootBoundaryCases)-1]
 	repo, original, resolved := rootBoundaryFixture(t, tc, true)

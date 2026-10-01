@@ -1,7 +1,9 @@
 package materialize
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,8 +31,10 @@ func (b destinationBoundary) directory(dir string, create bool) error {
 		return err
 	}
 	canonicalScope, err := filepath.EvalSymlinks(absoluteScope)
-	if err != nil {
-		return err
+	if errors.Is(err, fs.ErrNotExist) {
+		canonicalScope = absoluteScope
+	} else if err != nil {
+		return fmt.Errorf("%w: resolve destination scope %s: %w", fsboundary.ErrUnsafePath, absoluteScope, err)
 	}
 	normalize := func(path string) string {
 		absolute, err := filepath.Abs(path)
