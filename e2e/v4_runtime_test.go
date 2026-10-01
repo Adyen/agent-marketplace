@@ -2,6 +2,9 @@ package e2e_test
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -114,6 +117,74 @@ resources:
 				env.AssertFileExists("/workspace/.factory/skills/skill-one/SKILL.md")
 			}
 		})
+	}
+}
+
+func TestV4OrganizationDoctorWithoutLockAfterColdSync(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Organization collection", true))
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	orgConfig := fmt.Sprintf(`apiVersion: agent-marketplace/v4
+allowed_marketplaces:
+  - '^%s$'
+sources:
+  hosted: {marketplace: %s}
+resources:
+  hosted: {include: [behavior-source/collection/behavior-bundle]}
+`, regexp.QuoteMeta(fixture.server.URL), fixture.server.URL)
+	env.WriteOrgConfig(orgConfig)
+	before := env.ReadFile("/etc/agent-marketplace/config.yaml")
+
+	env.AssertExitCode(env.RunAM("sync"), 0)
+	env.AssertFileExists("/root/.factory/skills/skill-one/SKILL.md")
+	lockPath := env.mustResolvePath("/etc/agent-marketplace/lock.yaml")
+	if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("sync wrote organization lock: %v", err)
+	}
+
+	freshCache := filepath.Join(env.home, "empty-cache")
+	result := env.RunAMWithEnv(map[string]string{"XDG_CACHE_HOME": freshCache}, "doctor")
+	env.AssertExitCode(result, 0)
+	env.AssertOutputNotContains(result, "v4.marketplace-lock-required")
+	env.AssertOutputNotContains(result, "CONFIGURATION ERRORS")
+	repair := env.RunAMWithEnv(map[string]string{"XDG_CACHE_HOME": freshCache + "-repair"}, "doctor", "--repair")
+	env.AssertExitCode(repair, 0)
+	env.AssertOutputContains(repair, "nothing to repair")
+	env.AssertOutputNotContains(repair, "v4.marketplace-lock-required")
+	if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("doctor wrote organization lock: %v", err)
+	}
+	if got := env.ReadFile("/etc/agent-marketplace/config.yaml"); got != before {
+		t.Fatalf("doctor changed organization config:\n%s", got)
+	}
+}
+
+func TestV4OrganizationGCWithoutLock(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("GC collection", true))
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	env.WriteOrgConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  behavior: {marketplace: %s}
+resources:
+  behavior: {include: [behavior-source/collection/behavior-bundle]}
+`, fixture.server.URL))
+	before := env.ReadFile("/etc/agent-marketplace/config.yaml")
+	env.AssertExitCode(env.RunAM("sync"), 0)
+	env.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "GC collection")
+	for _, args := range [][]string{{"gc", "--dry-run"}, {"gc"}} {
+		result := env.RunAM(args...)
+		env.AssertExitCode(result, 0)
+		env.AssertOutputContains(result, "0 marketplace artifact directories")
+		env.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "GC collection")
+		if got := env.ReadFile("/etc/agent-marketplace/config.yaml"); got != before {
+			t.Fatalf("%v changed organization config:\n%s", args, got)
+		}
+		if env.CheckFileExists("/etc/agent-marketplace/lock.yaml") {
+			t.Fatalf("%v created organization lock", args)
+		}
 	}
 }
 
