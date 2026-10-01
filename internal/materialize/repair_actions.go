@@ -176,6 +176,7 @@ func (f *RepairFile) adoptLocked(indices []int) (ownership.Result, error) {
 		Reason:                ownership.ReasonAdoption,
 		ExpectPriorGeneration: priorGen,
 		ExpectPriorDigest:     priorDigest,
+		ValidatePolicy:        f.validatePolicy,
 	})
 	if err != nil {
 		slog.Error(repairLogMessage(f.Target, "adoption failed; the aggregate was left exactly as found"),
@@ -369,6 +370,7 @@ func (f *RepairFile) removeOrphanLocked(index int, confirmed bool) (ownership.Re
 		Confirmed:             confirmed,
 		ExpectPriorGeneration: priorGen,
 		ExpectPriorDigest:     priorDigest,
+		ValidatePolicy:        f.validatePolicy,
 	})
 	if applyErr != nil {
 		slog.Error(repairLogMessage(f.Target, "orphan removal failed; the aggregate was left exactly as found"),
@@ -501,6 +503,7 @@ func (f *RepairFile) replaceConflictLocked(index int, confirmed bool) (ownership
 		Confirmed:             confirmed,
 		ExpectPriorGeneration: priorGen,
 		ExpectPriorDigest:     priorDigest,
+		ValidatePolicy:        f.validatePolicy,
 	})
 	if applyErr != nil {
 		slog.Error(repairLogMessage(f.Target, "conflict replacement failed; the aggregate was left exactly as found"),

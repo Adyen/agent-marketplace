@@ -102,6 +102,13 @@ func garbageCollectUnderLease(ctx context.Context, dryRun bool) (GCReport, error
 	if err != nil {
 		return report, err
 	}
+	var reads []dependencytxn.ReadAssertion
+	if !dryRun {
+		reads, err = deployedPolicyReadAssertions(intent, evidence)
+		if err != nil {
+			return report, fmt.Errorf("snapshot cache collection policy: %w", err)
+		}
+	}
 
 	reachability := cache.GCReachability{}
 	roots := marketplace.GCRoots{}
@@ -129,7 +136,12 @@ func garbageCollectUnderLease(ctx context.Context, dryRun bool) (GCReport, error
 			roots.LockedResources = append(roots.LockedResources, doc.Marketplaces...)
 		}
 	}
-	readReachability := func(context.Context) (cache.GCReachability, error) { return reachability, nil }
+	readReachability := func(context.Context) (cache.GCReachability, error) {
+		if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
+			return cache.GCReachability{}, err
+		}
+		return reachability, nil
+	}
 	marketplaceCache := marketplace.DefaultCache()
 	var registryErr, marketplaceErr error
 	if dryRun {
@@ -144,6 +156,9 @@ func garbageCollectUnderLease(ctx context.Context, dryRun bool) (GCReport, error
 		marketplaceErr = fmt.Errorf("marketplace cache garbage collection preflight: %w", marketplaceErr)
 	}
 	if registryErr == nil && marketplaceErr == nil {
+		if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
+			return report, fmt.Errorf("cache garbage collection policy changed after preflight: %w", err)
+		}
 		if report.Marketplace, marketplaceErr = marketplaceCache.GarbageCollect(false, roots); marketplaceErr == nil {
 			report.Registry, registryErr = cache.GarbageCollect(ctx, false, readReachability)
 		}

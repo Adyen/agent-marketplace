@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,39 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
+
+// spec: deployed-acquisition-locks/independent-layer-errors-survive-organization-acquisition-failure
+func TestTransientMarketplaceFailureReplacesStaleOrganizationErrorWithoutDroppingOtherLayers(t *testing.T) {
+	required := &config.V4ValidationError{Code: "v4.marketplace-lock-required", Msg: "missing lock"}
+	other := errors.New("unrelated user config error")
+	cause := errors.New("provisional organization inspection failed")
+	ec := config.EffectiveConfig{
+		Organization: config.LayerResult{Errors: []error{required}},
+		User:         config.LayerResult{Errors: []error{other}},
+		Errors:       []error{required, other},
+	}
+	got := effectiveConfigError(ec, cause)
+	if len(got.Organization.Errors) != 1 || !errors.Is(got.Organization.Errors[0], cause) {
+		t.Fatalf("organization errors = %v, want the provisional failure", got.Organization.Errors)
+	}
+	if len(got.Errors) != 2 || !errors.Is(got.Errors[0], cause) || !errors.Is(got.Errors[1], other) {
+		t.Fatalf("effective errors = %v, want provisional failure followed by independent error", got.Errors)
+	}
+	if got.User.Errors[0] != other {
+		t.Fatalf("user layer error changed: %v", got.User.Errors)
+	}
+	got = effectiveConfigError(config.EffectiveConfig{
+		User:   config.LayerResult{Errors: []error{other}},
+		Errors: []error{other},
+	}, cause)
+	if len(got.Organization.Errors) != 1 || !errors.Is(got.Organization.Errors[0], cause) || len(got.Errors) != 2 || !errors.Is(got.Errors[1], other) {
+		t.Fatalf("unrelated layer errors were lost when organization had no prior error: %#v", got)
+	}
+	got = effectiveConfigError(config.EffectiveConfig{Organization: config.LayerResult{Errors: []error{required, other}}}, cause)
+	if len(got.Errors) != 1 || !errors.Is(got.Errors[0], cause) {
+		t.Fatalf("organization errors missing from the effective list produced %v, want only the provisional failure", got.Errors)
+	}
+}
 
 func TestTransientMarketplaceReadAssertionsRequireLockAbsence(t *testing.T) {
 	lockPath := filepath.Join(t.TempDir(), "lock.yaml")

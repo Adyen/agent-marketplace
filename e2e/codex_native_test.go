@@ -461,6 +461,7 @@ func TestE2ECodexDestructiveRepairRequiresConfirmationAndRedactsSecrets(t *testi
 	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	preview := env.RunAM("doctor", "--repair", "--yes")
 	assertRepairResult(t, preview, 0, "replace mcp-server", "left unchanged")
@@ -514,6 +515,7 @@ func TestE2ECodexRepairCorruptionAfterIndependentAdoptionIsPartialFailure(t *tes
 	if err := os.WriteFile(codexPath, []byte(codexOriginal), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	result := env.RunAM("doctor", "--repair", "--yes")
 	if result.ExitCode == 0 {
@@ -637,6 +639,13 @@ func runDoctorRepairInTTY(t *testing.T, env *Env, answer string) ExecResult {
 
 func runAMInTTY(t *testing.T, env *Env, command, option, prompt, answer string) ExecResult {
 	t.Helper()
+	return runAMInTTYAtPrompt(t, env, command, option, prompt, answer, nil)
+}
+
+// runAMInTTYAtPrompt is runAMInTTY with atPrompt called while the command is
+// blocked at its prompt, before the answer is written.
+func runAMInTTYAtPrompt(t *testing.T, env *Env, command, option, prompt, answer string, atPrompt func()) ExecResult {
+	t.Helper()
 	scriptPath, err := exec.LookPath("script")
 	if err != nil {
 		t.Fatalf("interactive E2E requires the system 'script' utility: %v", err)
@@ -715,6 +724,9 @@ exec "$AM_E2E_BINARY" "$AM_E2E_COMMAND" >"$AM_E2E_STDOUT" 2>"$AM_E2E_STDERR"
 	}
 
 prompted:
+	if atPrompt != nil {
+		atPrompt()
+	}
 	if _, err := stdin.Write([]byte(answer)); err != nil {
 		t.Fatalf("answer %s prompt: %v", command, err)
 	}

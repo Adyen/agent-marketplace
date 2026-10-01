@@ -122,19 +122,9 @@ func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[s
 			continue
 		}
 		scope := lockfile.Scope(source.LockScope())
-		paths, err := config.ResolveConfigLockPaths(layer.Path)
+		paths, err := layerLockPaths(layer)
 		if err != nil {
-			var pathErr *lockfile.Error
-			invalidPath := errors.As(err, &pathErr) && pathErr.Code == lockfile.CodeInvalidPath
-			if !errors.Is(err, os.ErrNotExist) && !invalidPath {
-				return evidence, err
-			}
-			requested := source.LockPath(layer.Path)
-			canonical, canonicalErr := dependencytxn.CanonicalConfigDestination(requested)
-			if canonicalErr != nil {
-				return evidence, canonicalErr
-			}
-			paths = config.ConfigLockPaths{RequestedLock: requested, CanonicalLock: canonical}
+			return evidence, err
 		}
 		doc, generation, exists, overlay, err := readLayerLockWithOverlays(paths, scope, overlays)
 		if err != nil {
@@ -158,6 +148,44 @@ func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[s
 		})
 	}
 	return evidence, missing
+}
+
+func layerLockPaths(layer config.LayerIntent) (config.ConfigLockPaths, error) {
+	paths, err := config.ResolveConfigLockPaths(layer.Path)
+	if err == nil {
+		return paths, nil
+	}
+	var pathErr *lockfile.Error
+	invalidPath := errors.As(err, &pathErr) && pathErr.Code == lockfile.CodeInvalidPath
+	if !errors.Is(err, os.ErrNotExist) && !invalidPath {
+		return config.ConfigLockPaths{}, err
+	}
+	requested := layer.Source.LockPath(layer.Path)
+	canonical, err := dependencytxn.CanonicalConfigDestination(requested)
+	if err != nil {
+		return config.ConfigLockPaths{}, err
+	}
+	return config.ConfigLockPaths{RequestedLock: requested, CanonicalLock: canonical}, nil
+}
+
+func deployedPolicyReadAssertions(intent config.Intent, evidence config.Evidence) ([]dependencytxn.ReadAssertion, error) {
+	layers := append(intentLayerResults(intent), config.LayerResult{Reads: evidence.Reads})
+	byRequested, err := configReadAssertions(layers, true)
+	if err != nil {
+		return nil, err
+	}
+	for _, source := range deployedLockOrder {
+		layer := intent.Layers[source]
+		if !layer.Present() || !layer.NeedsLock() || evidence.Locks[source] != nil {
+			continue
+		}
+		paths, err := layerLockPaths(layer)
+		if err != nil {
+			return nil, err
+		}
+		byRequested[paths.RequestedLock] = dependencytxn.ReadAssertion{Path: paths.CanonicalLock, RequestedPath: paths.RequestedLock}
+	}
+	return sortedReadAssertions(byRequested), nil
 }
 
 func isMissingLockError(err error) bool {
@@ -364,7 +392,9 @@ func (r transientOrganizationMarketplaceResolver) ResolveWithPolicy(ctx context.
 }
 
 func effectiveConfigError(ec config.EffectiveConfig, err error) config.EffectiveConfig {
-	ec.Errors = []error{err}
+	rest := ec.Errors[min(len(ec.Organization.Errors), len(ec.Errors)):]
+	ec.Organization.Errors = []error{err}
+	ec.Errors = append([]error{err}, rest...)
 	return ec
 }
 
