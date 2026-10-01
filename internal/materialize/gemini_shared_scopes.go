@@ -54,8 +54,10 @@ func coalesceGeminiNativeAggregates(result *compilePhaseResult, repoRoot string)
 					return false, err
 				}
 				var servers map[string]json.RawMessage
-				if err := json.Unmarshal(fragment[container], &servers); err != nil {
-					return false, err
+				if rawServers, exists := fragment[container]; exists && len(rawServers) > 0 {
+					if err := json.Unmarshal(rawServers, &servers); err != nil {
+						return false, err
+					}
 				}
 				for name, raw := range servers {
 					canonical, err := canonicalOwnedJSON(raw)
