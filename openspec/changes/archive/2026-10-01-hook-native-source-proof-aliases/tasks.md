@@ -11,4 +11,4 @@
 ## 3. Delivery
 
 - [ ] 3.1 Run focused tests, documentation reconciliation, verification maintenance when mapped behavior changes, unslop, native/domain gates, and fresh independent reviews on the clean candidate. Verify the reviewed update to the existing pull request has green CI; merging and release remain human actions.
-- [ ] 3.2 Run `openspec archive hook-native-source-proof-aliases --yes` as the final implementation commit of the same pull request, and verify `make spec-check` passes with the synced scenarios bound to tests.
+- [x] 3.2 Run `openspec archive hook-native-source-proof-aliases --yes` as the final implementation commit of the same pull request, and verify `make spec-check` passes with the synced scenarios bound to tests.
