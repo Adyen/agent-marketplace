@@ -28,7 +28,7 @@ func TestResolveRequirementHintRetainsSelectionAndTypedWarning(t *testing.T) {
 		t.Fatalf("resolver changed prerequisite selection: %+v %v", resolved, failures)
 	}
 	var warning *UnmetRequirementWarning
-	if !errors.As(failures[0], &warning) || !IsWarning(failures[0]) {
+	if !errors.As(failures[0], &warning) || warning == nil || !IsWarning(failures[0]) {
 		t.Fatalf("resolver lost typed prerequisite warning: %v", failures)
 	}
 	const want = `agent-marketplace install 'audit$(inert-value)' --kind mcp`
