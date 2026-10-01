@@ -643,10 +643,6 @@ func openFilesystemRoot() (*os.File, error) {
 		return nil, fmt.Errorf("open filesystem root: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), "/")
-	if file == nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("wrap filesystem root descriptor")
-	}
 	return file, nil
 }
 

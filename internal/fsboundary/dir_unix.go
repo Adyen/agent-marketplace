@@ -58,10 +58,6 @@ func OpenDir(path string) (*Dir, error) {
 		return nil, fmt.Errorf("open root %s: %w", canonical, err)
 	}
 	file := os.NewFile(uintptr(fd), canonical)
-	if file == nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("wrap root descriptor %s", canonical)
-	}
 	id, err := identityOf(file)
 	if err != nil {
 		_ = file.Close()
@@ -126,10 +122,6 @@ func openComponent(parent *os.File, name string) (*os.File, error) {
 		}
 	}
 	file := os.NewFile(uintptr(fd), name)
-	if file == nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("wrap descriptor for %s", name)
-	}
 	return file, nil
 }
 
@@ -153,10 +145,6 @@ func openLeaf(parent *os.File, name string) (*os.File, Identity, error) {
 		}
 	}
 	file := os.NewFile(uintptr(fd), name)
-	if file == nil {
-		_ = unix.Close(fd)
-		return nil, Identity{}, fmt.Errorf("wrap descriptor for %s", name)
-	}
 	id, err := identityOf(file)
 	if err != nil {
 		_ = file.Close()

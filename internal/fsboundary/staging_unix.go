@@ -46,10 +46,6 @@ func (d *Dir) CreateTemp(pattern string) (*os.File, string, error) {
 			return nil, "", fmt.Errorf("create staged file below %s: %w", d.path, err)
 		}
 		file := os.NewFile(uintptr(fd), name)
-		if file == nil {
-			_ = unix.Close(fd)
-			return nil, "", fmt.Errorf("wrap staged descriptor for %s", name)
-		}
 		return file, name, nil
 	}
 	return nil, "", fmt.Errorf("create staged file below %s: name collision exhaustion", d.path)
