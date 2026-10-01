@@ -98,6 +98,47 @@ func TestMarketplaceCacheArtifactResolverKeepsUnrelatedPinErrors(t *testing.T) {
 	}
 }
 
+func TestMarketplaceCacheArtifactResolverPreservesTypedNilPinError(t *testing.T) {
+	var pinErr *marketplace.PinError
+	wrapped := errors.Join(pinErr)
+	delegate := &recordingMarketplaceResolver{errs: []error{wrapped}}
+	adapter := marketplaceCacheArtifactResolver{delegate: delegate}
+
+	_, errs := adapter.Resolve(context.Background(), &config.Config{}, nil, resolver.MarketplaceResolveModeInspect)
+	if len(errs) != 1 || errs[0] != wrapped {
+		t.Fatal("expected the unidentifiable error to pass through unchanged")
+	}
+}
+
+func TestMarketplacePendingPinsIgnoresTypedNilErrors(t *testing.T) {
+	var pinErr *marketplace.PinError
+	var statusErr *marketplace.PinStatusError
+	for name, err := range map[string]error{
+		"pin": errors.Join(pinErr), "status": errors.Join(statusErr),
+	} {
+		t.Run(name, func(t *testing.T) {
+			valid := testMarketplacePinError(errors.New("missing"))
+			pending := MarketplacePendingPins([]error{err, valid})
+			if len(pending) != 1 {
+				t.Fatal("expected only the valid pin to be pending")
+			}
+			if _, ok := pending["skill\x00review"]; !ok {
+				t.Fatal("expected the valid review pin to be pending")
+			}
+		})
+	}
+}
+
+func TestSuppressUnmetMarketplaceRequirementsPreservesTypedNilWarning(t *testing.T) {
+	var unmet *resolver.UnmetRequirementWarning
+	wrapped := errors.Join(unmet)
+	valid := &resolver.UnmetRequirementWarning{Requirement: catalog.Requirement{Kind: ir.KindSkill, Name: "review"}}
+	warnings := SuppressUnmetMarketplaceRequirements([]error{wrapped, valid}, map[string]struct{}{"skill\x00review": {}})
+	if len(warnings) != 1 || warnings[0] != wrapped {
+		t.Fatal("expected the unidentifiable warning to pass through unchanged")
+	}
+}
+
 func TestMarketplaceCacheArtifactResolverForcesCachedNoFetch(t *testing.T) {
 	delegate := &recordingMarketplaceResolver{}
 	adapter := marketplaceCacheArtifactResolver{delegate: delegate}

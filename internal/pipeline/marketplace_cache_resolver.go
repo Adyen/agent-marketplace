@@ -36,7 +36,7 @@ func (r marketplaceCacheArtifactResolver) ResolveWithPolicy(ctx context.Context,
 	unhealthy := make(map[marketplacePinCoordinate]bool, len(healthErrs))
 	for _, err := range healthErrs {
 		var statusErr *marketplace.PinStatusError
-		if errors.As(err, &statusErr) {
+		if errors.As(err, &statusErr) && statusErr != nil {
 			unhealthy[marketplacePinCoordinateOfStatus(statusErr.Pin)] = true
 		}
 	}
@@ -44,7 +44,7 @@ func (r marketplaceCacheArtifactResolver) ResolveWithPolicy(ctx context.Context,
 	for _, err := range errs {
 		var pinErr *marketplace.PinError
 		switch {
-		case !errors.As(err, &pinErr):
+		case !errors.As(err, &pinErr) || pinErr == nil:
 			// Entry-level failures have no pin identity to merge on.
 			merged = append(merged, err)
 		case unhealthy[marketplacePinCoordinateOfPin(pinErr)]:
@@ -153,11 +153,13 @@ func MarketplacePendingPins(errGroups ...[]error) map[string]struct{} {
 		for _, err := range group {
 			var pinErr *marketplace.PinError
 			if errors.As(err, &pinErr) {
-				addMarketplacePendingPin(pending, pinErr.Pin.Kind, pinErr.Pin.Name, pinErr.Pin.InstalledName)
+				if pinErr != nil {
+					addMarketplacePendingPin(pending, pinErr.Pin.Kind, pinErr.Pin.Name, pinErr.Pin.InstalledName)
+				}
 				continue
 			}
 			var statusErr *marketplace.PinStatusError
-			if errors.As(err, &statusErr) {
+			if errors.As(err, &statusErr) && statusErr != nil {
 				addMarketplacePendingPin(pending, statusErr.Pin.Kind, statusErr.Pin.Name, statusErr.Pin.InstalledName)
 			}
 		}
@@ -190,7 +192,7 @@ func SuppressUnmetMarketplaceRequirements(warnings []error, pending map[string]s
 	kept := make([]error, 0, len(warnings))
 	for _, warning := range warnings {
 		var unmet *resolver.UnmetRequirementWarning
-		if errors.As(warning, &unmet) {
+		if errors.As(warning, &unmet) && unmet != nil {
 			if _, hit := pending[marketplacePendingKey(unmet.Requirement.Kind.String(), unmet.Requirement.Name)]; hit {
 				continue
 			}
