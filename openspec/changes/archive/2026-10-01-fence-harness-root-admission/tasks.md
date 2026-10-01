@@ -7,3 +7,5 @@
 - [x] Measure before/after disk-path costs and run affected Linux/macOS, race, E2E/configuration and spec gates.
 - [x] Complete adversarial delegate review of every changed file and fix validated defects.
 - [x] Archive the change after verification.
+- [x] Preserve missing machine-scope bootstrap with a failing-first native-output witness and contextual typed refusal for other scope failures.
+- [x] Reuse captured adapter resolution without removing independent root/ancestor validation; verify CodeRabbit follow-ups with Linux/macOS, race and final combined E2E gates.
