@@ -18,11 +18,9 @@ const additionalItems = ref<ResourceListItem[]>([])
 const loadingMore = ref(false)
 const loadMoreError = ref<unknown>(null)
 const loadMoreTrigger = ref<HTMLElement | null>(null)
-const desktopFilterRail = ref<HTMLElement | null>(null)
 let syncingDraft = false
 let searchGeneration = 0
 let searchTimer: ReturnType<typeof setTimeout> | undefined
-let filterRailFrame: number | undefined
 
 watch(
   () => route.query,
@@ -84,29 +82,7 @@ watch(loadMoreTrigger, (element, _previous, onCleanup) => {
   observer.observe(element)
   onCleanup(() => observer.disconnect())
 })
-onMounted(() => {
-  updateFilterRailHeight()
-  window.addEventListener('scroll', scheduleFilterRailHeight, { passive: true })
-  window.addEventListener('resize', scheduleFilterRailHeight)
-})
-onBeforeUnmount(() => {
-  clearTimeout(searchTimer)
-  window.removeEventListener('scroll', scheduleFilterRailHeight)
-  window.removeEventListener('resize', scheduleFilterRailHeight)
-  if (filterRailFrame !== undefined) cancelAnimationFrame(filterRailFrame)
-})
-
-function scheduleFilterRailHeight() {
-  if (filterRailFrame !== undefined) return
-  filterRailFrame = requestAnimationFrame(updateFilterRailHeight)
-}
-
-function updateFilterRailHeight() {
-  filterRailFrame = undefined
-  const rail = desktopFilterRail.value
-  if (!rail) return
-  rail.style.setProperty('--catalog-filter-current-top', `${Math.max(rail.getBoundingClientRect().top, 0)}px`)
-}
+onBeforeUnmount(() => clearTimeout(searchTimer))
 
 function applyDraft() {
   if (syncingDraft) return
@@ -207,7 +183,7 @@ useHead({
         <div class="marketplace-catalog__inner">
           <div class="marketplace-catalog__layout">
             <aside class="catalog-sidebar" aria-labelledby="filters-heading">
-              <div ref="desktopFilterRail" class="catalog-sidebar__sticky">
+              <div class="catalog-sidebar__sticky">
                 <h2 id="filters-heading">Filters</h2>
                 <CatalogFilterRail
                   :kind="draft.kind"
@@ -695,8 +671,8 @@ useHead({
 
   .catalog-sidebar__sticky {
     position: sticky;
-    top: 5.5rem;
-    max-height: max(0px, calc(100vh - var(--catalog-filter-current-top, 5.5rem) - 1.5rem));
+    top: 88px;
+    max-height: calc(100vh - 112px);
     overflow-y: auto;
   }
 
