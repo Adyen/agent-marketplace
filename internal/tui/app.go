@@ -54,6 +54,14 @@ func WithWorkspace(workspace pipeline.Workspace) Option {
 	}
 }
 
+func searchInputStyles(t theme) textinput.Styles {
+	styles := textinput.DefaultStyles(t.dark)
+	styles.Focused.Prompt = styleSearchPrompt
+	styles.Focused.Text = textStyle(t)
+	styles.Cursor.Color = t.accent
+	return styles
+}
+
 func NewModel(repoRoot, homeDir string, options ...Option) Model {
 	// Snapshot the detected background once; tea.BackgroundColorMsg updates
 	// the model's own isDark/theme afterwards.
@@ -66,11 +74,7 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 
 	si := textinput.New()
 	si.Prompt = "/ "
-	searchStyles := textinput.DefaultStyles(isDark)
-	searchStyles.Focused.Prompt = styleSearchPrompt
-	searchStyles.Focused.Text = textStyle(theme)
-	searchStyles.Cursor.Color = theme.accent
-	si.SetStyles(searchStyles)
+	si.SetStyles(searchInputStyles(theme))
 
 	workspace := defaultTUIWorkspace(repoRoot)
 	if workspace.RepoRoot() != "" {
@@ -424,6 +428,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.isDark = msg.IsDark()
 		m.theme = newTheme(m.isDark)
 		m.help.Styles = helpStyles(m.theme)
+		m.searchInput.SetStyles(searchInputStyles(m.theme))
 		return m, nil
 
 	case cursor.BlinkMsg:

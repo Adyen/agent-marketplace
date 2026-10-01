@@ -2,6 +2,7 @@ package tui
 
 import (
 	"image/color"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -27,6 +28,24 @@ func TestModelBackgroundThemesAreIsolated(t *testing.T) {
 	}
 
 	dark, light := modelFor(true), modelFor(false)
+	for _, tc := range []struct {
+		name  string
+		model Model
+		color lipgloss.ANSIColor
+	}{
+		{"dark", dark, lipgloss.ANSIColor(15)},
+		{"light", light, lipgloss.ANSIColor(0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.model.searchInput
+			input.SetValue("query")
+			input.Focus()
+			want := lipgloss.NewStyle().Foreground(tc.color).Render("query")
+			if got := input.View(); !strings.Contains(got, want) {
+				t.Fatalf("search input = %q, missing readable text %q", got, want)
+			}
+		})
+	}
 	if keyHint(dark) == keyHint(light) {
 		t.Fatalf("models with different backgrounds rendered the same key style: %q", keyHint(dark))
 	}
