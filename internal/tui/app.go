@@ -80,10 +80,10 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 		tabStates:                  newTabStates(),
 		spinner:                    sp,
 		searchInput:                si,
-		detailViewport:             viewport.New(80, 24),
-		helpViewport:               viewport.New(80, 23),
-		errorsViewport:             viewport.New(80, 23),
-		marketplaceConsentViewport: viewport.New(80, 22),
+		detailViewport:             newTUIViewport(80, 24),
+		helpViewport:               newTUIViewport(80, 23),
+		errorsViewport:             newTUIViewport(80, 23),
+		marketplaceConsentViewport: newTUIViewport(80, 22),
 		keys:                       defaultKeyMap,
 		help:                       newHelpModel(),
 	}
@@ -104,6 +104,12 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 	// generation here so the resulting command and this model share identity.
 	m.beginRequest(requestSnapshot)
 	return m
+}
+
+func newTUIViewport(width, height int) viewport.Model {
+	v := viewport.New(width, height)
+	v.MouseWheelDelta = 1
+	return v
 }
 
 // testSkipInitModal is a package-private test hook that, when set, prevents
@@ -325,12 +331,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if m.belowMinimumTerminal() {
+		if m.belowMinimumTerminal() || msg.Action != tea.MouseActionPress ||
+			(msg.Button != tea.MouseButtonWheelUp && msg.Button != tea.MouseButtonWheelDown) {
 			return m, nil
+		}
+		// Bubble's viewport treats Shift+vertical-wheel as horizontal
+		// scrolling, but this TUI intentionally supports only vertical scroll.
+		msg.Shift = false
+		direction := 1
+		if msg.Button == tea.MouseButtonWheelUp {
+			direction = -1
 		}
 		var cmd tea.Cmd
 		switch m.pane {
+		case paneList:
+			m.moveCursorByRows(direction, 1)
 		case paneDetail:
+			m.detailStickyBottom = false
+			if listWidth, _ := paneWidths(m.width); m.bundle != nil && msg.X < listWidth {
+				return m.moveBundleCursor(direction)
+			}
 			m.detailViewport, cmd = m.detailViewport.Update(msg)
 		case paneHelp:
 			m.helpViewport.SetContent(renderHelp(m))
@@ -338,6 +358,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case paneErrors:
 			m.errorsViewport.SetContent(renderErrors(m))
 			m.errorsViewport, cmd = m.errorsViewport.Update(msg)
+		case paneMarketplaceConsent:
+			m.marketplaceConsentViewport, cmd = m.marketplaceConsentViewport.Update(msg)
 		}
 		return m, cmd
 
@@ -1747,7 +1769,7 @@ func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error
 }
 
 func defaultTUIProgramOptions() []tea.ProgramOption {
-	return []tea.ProgramOption{tea.WithAltScreen()}
+	return []tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion()}
 }
 
 func runTUIModel(model tea.Model, options ...tea.ProgramOption) error {
