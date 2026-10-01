@@ -24,9 +24,13 @@ func BenchmarkTUIConfigTransactionDiskIONoNetwork(b *testing.B) {
 				b.Fatal(err)
 			}
 			entry := cfg.Registries[0]
+			workspace, err := pipeline.NewWorkspace(repo, "")
+			if err != nil {
+				b.Fatal(err)
+			}
 			mutate := func(enable bool) {
 				b.Helper()
-				err := runTUIConfigMutation(context.Background(), repo, func(mapper pipeline.ConfigPathMapper) error {
+				err := runTUIConfigMutation(context.Background(), workspace, func(mapper pipeline.ConfigPathMapper) error {
 					staged, err := mapper(path)
 					if err != nil {
 						return err

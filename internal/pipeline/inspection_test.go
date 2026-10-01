@@ -42,13 +42,13 @@ func TestInspectReportsResolvedInventoryBeforeDryRun(t *testing.T) {
 	var order []string
 	opts := InspectOptions{
 		Resolve: ResolveOptions{
-			Workspace: ws,
+			Workspace:     ws,
 			SkipInventory: true,
 			Loaders: Loaders{
-				Org: func() (*config.Config, error) { return nil, nil },
+				Org:    func() (*config.Config, error) { return nil, nil },
 				Global: func() (*config.Config, error) { return nil, nil },
-				Repo: func() (*config.Config, error) { return &config.Config{}, nil },
-				Local: func() (*config.LocalConfig, error) { return nil, nil },
+				Repo:   func() (*config.Config, error) { return &config.Config{}, nil },
+				Local:  func() (*config.LocalConfig, error) { return nil, nil },
 			},
 			ConfigReady: func(*config.Config) { order = append(order, "config") },
 		},
