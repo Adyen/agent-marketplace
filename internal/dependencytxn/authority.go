@@ -152,6 +152,15 @@ func mapBoundaryErr(err error) error {
 	}
 }
 
+// danglingManagedConfigLinkError keeps the public dangling-layer condition
+// even though the descriptor boundary cannot resolve the link target.
+type danglingManagedConfigLinkError struct{ err error }
+
+func (e *danglingManagedConfigLinkError) Error() string {
+	return "resolve config path: symlink to a missing target: " + e.err.Error()
+}
+func (e *danglingManagedConfigLinkError) Unwrap() error { return e.err }
+
 // mapManagedReadError keeps the established lock reader identities while
 // retaining the boundary cause in the error chain.
 func mapManagedReadError(path string, err error) error {
@@ -174,6 +183,10 @@ func mapManagedReadError(path string, err error) error {
 
 func isManagedLockBasename(name string) bool {
 	return name == "lock.yaml" || name == "lock.local.yaml"
+}
+
+func isManagedConfigBasename(name string) bool {
+	return name == "config.yaml" || name == "config.local.yaml"
 }
 
 // boundDestination is one managed destination captured below its layer
@@ -270,6 +283,11 @@ func readManagedSnapshot(path string) ([]byte, Generation, fs.FileMode, error) {
 		return nil, Generation{}, 0, nil
 	}
 	if err != nil {
+		if isManagedConfigBasename(filepath.Base(path)) && errors.Is(err, ErrUnsafePath) {
+			if info, lstatErr := os.Lstat(path); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				return nil, Generation{}, 0, &danglingManagedConfigLinkError{err: err}
+			}
+		}
 		return nil, Generation{}, 0, mapManagedReadError(path, err)
 	}
 	defer func() { _ = bound.Close() }()
