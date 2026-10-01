@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -82,6 +84,19 @@ func matchRevisionIdentity(mo *MarketplaceOrigin, rev store.AssessedResourceRevi
 		return CodeError(ErrCodeNotFound, "revision %q: assessment does not match revision identity", mo.Revision)
 	}
 	return nil
+}
+
+func marketplaceErrorCode(err error) string {
+	var apiErr *marketplace.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusGone:
+			return ErrCodeRevoked
+		case http.StatusForbidden:
+			return ErrCodeRejected
+		}
+	}
+	return ErrCodeNotFound
 }
 
 func cleanRel(path string) (string, error) {
@@ -189,7 +204,7 @@ func (l *FileSkillLoader) verifiedArtifact(ctx context.Context, mo *MarketplaceO
 		var err error
 		rev, err = client.GetResourceRevisionForRegistry(ctx, mo.RegistryID, mo.RegistryID, mo.Kind, mo.Name, mo.Revision)
 		if err != nil {
-			return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "revision %q: %v", mo.Revision, err)
+			return hccartifact.CanonicalArtifact{}, rev, CodeError(marketplaceErrorCode(err), "revision %q: %v", mo.Revision, err)
 		}
 	} else {
 		cached, ok, err := l.Cache.ReadResourceRevision(mo.Entry.URL, mo.RegistryID, mo.Kind, mo.Name, mo.Revision)
@@ -233,7 +248,7 @@ func (l *FileSkillLoader) verifiedArtifact(ctx context.Context, mo *MarketplaceO
 		}
 		raw, err = client.GetArtifact(ctx, digest)
 		if err != nil {
-			return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "fetch artifact: %v", err)
+			return hccartifact.CanonicalArtifact{}, rev, CodeError(marketplaceErrorCode(err), "fetch artifact: %v", err)
 		}
 		if _, werr := l.Cache.WriteArtifact(digest, raw); werr != nil {
 			return hccartifact.CanonicalArtifact{}, rev, CodeError(ErrCodeNotFound, "cache artifact: %v", werr)

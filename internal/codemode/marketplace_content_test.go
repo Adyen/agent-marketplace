@@ -24,12 +24,13 @@ import (
 
 type mpStub struct {
 	*httptest.Server
-	mu        sync.Mutex
-	paths     []string
-	metaPath  string
-	meta      []byte
-	metaCode  int
-	artifacts map[string][]byte
+	mu           sync.Mutex
+	paths        []string
+	metaPath     string
+	meta         []byte
+	metaCode     int
+	artifactCode int
+	artifacts    map[string][]byte
 }
 
 func mpMetaRoute(registryID, kind, name, revision string) string {
@@ -43,6 +44,11 @@ func newMPStub(t *testing.T) *mpStub {
 		s.paths = append(s.paths, r.URL.Path)
 		s.mu.Unlock()
 		if digest, ok := strings.CutPrefix(r.URL.Path, "/api/v1/artifacts/sha256/"); ok {
+			if s.artifactCode != 0 {
+				w.WriteHeader(s.artifactCode)
+				_, _ = w.Write([]byte(`{"error":"artifact denied"}`))
+				return
+			}
 			if raw, found := s.artifacts["sha256:"+digest]; found {
 				_, _ = w.Write(raw)
 				return
@@ -527,6 +533,39 @@ func TestMarketplaceContentRefusesStaleFallback(t *testing.T) {
 		loader, res := setup(t, func(s *mpStub, r *store.AssessedResourceRevision) { s.metaCode = http.StatusInternalServerError })
 		refuse(t, loader, res, ErrCodeNotFound)
 	})
+	t.Run("metadata http forbidden", func(t *testing.T) {
+		loader, res := setup(t, func(s *mpStub, r *store.AssessedResourceRevision) { s.metaCode = http.StatusForbidden })
+		refuse(t, loader, res, ErrCodeRejected)
+	})
+	t.Run("metadata http gone", func(t *testing.T) {
+		loader, res := setup(t, func(s *mpStub, r *store.AssessedResourceRevision) { s.metaCode = http.StatusGone })
+		refuse(t, loader, res, ErrCodeRevoked)
+	})
+	for _, tc := range []struct {
+		name string
+		code int
+		want string
+	}{
+		{"artifact http forbidden", http.StatusForbidden, ErrCodeRejected},
+		{"artifact http gone", http.StatusGone, ErrCodeRevoked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newMPStub(t)
+			staleRaw, staleDigest, contentDigest := mpArtifact(t, mpSkill, "src", func(a *hccartifact.CanonicalArtifact) {
+				a.Manifest.Provenance.Generator = "stale"
+			})
+			_, freshDigest, _ := mpArtifact(t, mpSkill, "src", nil)
+			res := mpResource(stub.URL, "src", "skill", "s", contentDigest)
+			cache := marketplace.NewCache(t.TempDir())
+			seedMPCache(t, cache, stub.URL, "src", "skill", "s", contentDigest,
+				mpRevision(t, "src", "skill", "s", contentDigest, staleDigest, store.AssessmentDecisionAllow), staleRaw, true)
+			stub.metaPath = mpMetaRoute("src", "skill", "s", contentDigest)
+			stub.meta = mpRevisionBody(t, mpRevision(t, "src", "skill", "s", contentDigest, freshDigest, store.AssessmentDecisionAllow), "")
+			stub.artifactCode = tc.code
+			loader := &FileSkillLoader{Cache: cache, Online: true}
+			refuse(t, loader, res, tc.want)
+		})
+	}
 	t.Run("revocation record", func(t *testing.T) {
 		loader, res := setup(t, func(s *mpStub, r *store.AssessedResourceRevision) { r.Revocation = &staleRevoked })
 		refuse(t, loader, res, ErrCodeRevoked)
@@ -602,31 +641,43 @@ func TestMarketplaceContentRefusesStaleFallback(t *testing.T) {
 		}
 	})
 
-	t.Run("declared mcp gate refuses without pool side effects", func(t *testing.T) {
-		stub := newMPStub(t)
-		srv := ir.NewMcpServer("remote", "echo", []string{"hi"}, nil, nil, ir.SourceRef{})
-		staleRaw, staleDigest, contentDigest := mpArtifact(t, srv, "src", func(a *hccartifact.CanonicalArtifact) {
-			a.Manifest.Provenance.Generator = "stale"
-		})
-		res := mpResource(stub.URL, "src", "mcpserver", "remote", contentDigest)
-		e, pool, cache, _ := mpEnv(t, true, res)
-		seedMPCache(t, cache, stub.URL, "src", "mcpserver", "remote", contentDigest,
-			mpRevision(t, "src", "mcpserver", "remote", contentDigest, staleDigest, store.AssessmentDecisionAllow), staleRaw, true)
-		revoked := mpRevision(t, "src", "mcpserver", "remote", contentDigest, staleDigest, store.AssessmentDecisionAllow)
-		revoked.Revocation = &staleRevoked
-		stub.metaPath = mpMetaRoute("src", "mcpserver", "remote", contentDigest)
-		stub.meta = mpRevisionBody(t, revoked, "")
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{"declared mcp gate refuses without pool side effects", 0},
+		{"declared mcp gate http gone refuses without pool side effects", http.StatusGone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newMPStub(t)
+			srv := ir.NewMcpServer("remote", "echo", []string{"hi"}, nil, nil, ir.SourceRef{})
+			staleRaw, staleDigest, contentDigest := mpArtifact(t, srv, "src", func(a *hccartifact.CanonicalArtifact) {
+				a.Manifest.Provenance.Generator = "stale"
+			})
+			res := mpResource(stub.URL, "src", "mcpserver", "remote", contentDigest)
+			e, pool, cache, _ := mpEnv(t, true, res)
+			seedMPCache(t, cache, stub.URL, "src", "mcpserver", "remote", contentDigest,
+				mpRevision(t, "src", "mcpserver", "remote", contentDigest, staleDigest, store.AssessmentDecisionAllow), staleRaw, true)
+			stub.metaPath = mpMetaRoute("src", "mcpserver", "remote", contentDigest)
+			if tc.status != 0 {
+				stub.metaCode = tc.status
+			} else {
+				revoked := mpRevision(t, "src", "mcpserver", "remote", contentDigest, staleDigest, store.AssessmentDecisionAllow)
+				revoked.Revocation = &staleRevoked
+				stub.meta = mpRevisionBody(t, revoked, "")
+			}
 
-		args, _ := json.Marshal(map[string]any{
-			"servers": []string{res.Ref},
-			"code":    `async () => mcp.remote.ping()`,
+			args, _ := json.Marshal(map[string]any{
+				"servers": []string{res.Ref},
+				"code":    `async () => mcp.remote.ping()`,
+			})
+			_, _, err := e.Execute(context.Background(), args)
+			requireCodeErr(t, err, ErrCodeRevoked)
+			if len(pool.started) != 0 {
+				t.Fatalf("server started or script ran despite refused gate: %v", pool.started)
+			}
 		})
-		_, _, err := e.Execute(context.Background(), args)
-		requireCodeErr(t, err, ErrCodeRevoked)
-		if len(pool.started) != 0 {
-			t.Fatalf("server started or script ran despite refused gate: %v", pool.started)
-		}
-	})
+	}
 
 	for _, tc := range []struct {
 		name   string
