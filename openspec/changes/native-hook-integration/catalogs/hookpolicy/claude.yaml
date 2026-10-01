@@ -1,0 +1,72 @@
+# Draft seed for pkg/harness-compilation/hookpolicy/catalogs/claude.yaml.
+schema: 1
+harness: claude
+evidence:
+  checked: "2026-09-29"
+  refs:
+    - https://code.claude.com/docs/en/hooks.md
+
+# Environment variables, keyed by concept. The first name is emitted; later
+# names are accepted spellings. `events` limits a variable to some events.
+# `plugin` lists variables set only for plugin-bundled hooks: they never
+# resolve in a native settings file and are rewritten to the installed
+# support directory.
+env:
+  project_dir: [CLAUDE_PROJECT_DIR]
+  remote: [CLAUDE_CODE_REMOTE]
+  env_file: {names: [CLAUDE_ENV_FILE], events: [SessionStart]}
+plugin_env:
+  plugin_root: [CLAUDE_PLUGIN_ROOT]
+  plugin_data: [CLAUDE_PLUGIN_DATA]
+
+# How a repository-scope command reaches files inside the repository.
+repository_base: {env: project_dir}
+
+timeout: {unit: seconds}
+
+# exact-or-regex: a plain name matches exactly; anything else is an
+# unanchored regex. exact_lists: `|`/`,` lists of plain names also match
+# exactly, so output can use `Write|Edit` instead of `^(Write|Edit)$`.
+matcher: {syntax: exact-or-regex, exact_lists: true}
+
+# Other tools that load this harness's hook files by default. Used for the
+# duplicate-execution warning (see cursor.yaml / devin.yaml `loads_hooks_of`).
+loads_hooks_of: []
+
+# Keyed by native event. `canonical` links to concepts.yaml; an event without
+# `canonical` is native-only (kept for same-harness output, refused elsewhere).
+# `matcher`: tool | lifecycle | none. `types`: allowed handler types.
+events:
+  PreToolUse: {canonical: PreToolUse, matcher: tool, types: [command, http, mcp_tool, prompt, agent]}
+  PostToolUse: {canonical: PostToolUse, matcher: tool, types: [command, http, mcp_tool, prompt, agent]}
+  PostToolUseFailure: {canonical: PostToolUseFailure, matcher: tool, types: [command, http, mcp_tool, prompt, agent]}
+  PermissionRequest: {canonical: PermissionRequest, matcher: tool, types: [command, http, mcp_tool, prompt]}
+  UserPromptSubmit: {canonical: UserPromptSubmit, matcher: none, types: [command, http, mcp_tool, prompt, agent]}
+  Stop: {canonical: Stop, matcher: none, types: [command, http, mcp_tool, prompt, agent]}
+  SubagentStart: {canonical: SubagentStart, matcher: lifecycle, types: [command, http, mcp_tool]}
+  SubagentStop: {canonical: SubagentStop, matcher: lifecycle, types: [command, http, mcp_tool, prompt, agent]}
+  SessionStart: {canonical: SessionStart, matcher: lifecycle, types: [command, mcp_tool]}
+  SessionEnd: {canonical: SessionEnd, matcher: lifecycle, types: [command, http, mcp_tool]}
+  PreCompact: {canonical: PreCompact, matcher: lifecycle, types: [command, http, mcp_tool]}
+  PostCompact: {canonical: PostCompact, matcher: lifecycle, types: [command, http, mcp_tool]}
+  Notification: {canonical: Notification, matcher: lifecycle, types: [command, http, mcp_tool]}
+  Setup: {matcher: lifecycle, types: [command, mcp_tool]}
+  UserPromptExpansion: {matcher: lifecycle, types: [command, http, mcp_tool, prompt, agent]}
+  PermissionDenied: {matcher: tool, types: [command, http, mcp_tool, prompt, agent]}
+  PostToolBatch: {matcher: none, types: [command, http, mcp_tool, prompt, agent]}
+  MessageDisplay: {matcher: none, types: [command, http, mcp_tool]}
+  TaskCreated: {matcher: none, types: [command, http, mcp_tool, prompt, agent]}
+  TaskCompleted: {matcher: none, types: [command, http, mcp_tool, prompt, agent]}
+  StopFailure: {matcher: lifecycle, types: [command, http, mcp_tool]}
+  TeammateIdle: {matcher: none, types: [command, http, mcp_tool, prompt, agent]}
+  InstructionsLoaded: {matcher: lifecycle, types: [command, http, mcp_tool]}
+  ConfigChange: {matcher: lifecycle, types: [command, http, mcp_tool]}
+  CwdChanged: {matcher: none, types: [command, http, mcp_tool]}
+  DirectoryAdded: {matcher: lifecycle, types: [command, http, mcp_tool]}
+  FileChanged: {matcher: lifecycle, types: [command, http, mcp_tool]}
+  WorktreeCreate: {matcher: none, types: [command, http, mcp_tool]}
+  WorktreeRemove: {matcher: none, types: [command, http, mcp_tool]}
+  PreModelSwitch: {matcher: lifecycle, types: [command, http, mcp_tool]}
+  PostModelSwitch: {matcher: lifecycle, types: [command, http, mcp_tool]}
+  Elicitation: {matcher: lifecycle, types: [command, http, mcp_tool]}
+  ElicitationResult: {matcher: lifecycle, types: [command, http, mcp_tool]}

@@ -1,0 +1,54 @@
+# Draft seed for pkg/harness-compilation/hookpolicy/catalogs/cursor.yaml.
+schema: 1
+harness: cursor
+evidence:
+  checked: "2026-09-29"
+  refs:
+    - https://cursor.com/docs/hooks.md
+    - https://cursor.com/docs/reference/third-party-hooks.md
+  notes: >-
+    Project hooks run from the project root and only in trusted workspaces;
+    user hooks run from ~/.cursor. Canonical links follow Cursor's own Claude
+    hook-name mapping table. Cursor's subagentStart is not equated with Claude
+    SubagentStart because Cursor documents no correspondence.
+
+env:
+  project_dir: [CURSOR_PROJECT_DIR, CLAUDE_PROJECT_DIR]
+  version: [CURSOR_VERSION]
+  user_email: [CURSOR_USER_EMAIL]
+  transcript_path: [CURSOR_TRANSCRIPT_PATH]
+  remote: [CURSOR_CODE_REMOTE]
+plugin_env:
+  plugin_root: [CURSOR_PLUGIN_ROOT]
+
+repository_base: {env: project_dir}
+timeout: {unit: seconds}
+matcher: {syntax: regex}
+
+# "Include Third-Party Plugins, Skills, and Other Configs" is on by default and
+# loads .claude/settings.local.json, .claude/settings.json, and
+# ~/.claude/settings.json hooks.
+loads_hooks_of: [claude]
+
+events:
+  preToolUse: {canonical: PreToolUse, matcher: tool, types: [command, prompt]}
+  postToolUse: {canonical: PostToolUse, matcher: tool, types: [command, prompt]}
+  beforeSubmitPrompt: {canonical: UserPromptSubmit, matcher: none, types: [command, prompt]}
+  stop: {canonical: Stop, matcher: none, types: [command, prompt]}
+  subagentStop: {canonical: SubagentStop, matcher: lifecycle, types: [command, prompt]}
+  sessionStart: {canonical: SessionStart, matcher: none, types: [command, prompt]}
+  sessionEnd: {canonical: SessionEnd, matcher: none, types: [command, prompt]}
+  preCompact: {canonical: PreCompact, matcher: none, types: [command, prompt]}
+  postToolUseFailure: {matcher: tool, types: [command, prompt]}
+  subagentStart: {matcher: lifecycle, types: [command, prompt]}
+  beforeShellExecution: {matcher: command_text, types: [command, prompt]}
+  afterShellExecution: {matcher: command_text, types: [command, prompt]}
+  beforeMCPExecution: {matcher: none, types: [command, prompt]}
+  afterMCPExecution: {matcher: none, types: [command, prompt]}
+  beforeReadFile: {matcher: none, types: [command, prompt]}
+  afterFileEdit: {matcher: none, types: [command, prompt]}
+  afterAgentResponse: {matcher: none, types: [command, prompt]}
+  afterAgentThought: {matcher: none, types: [command, prompt]}
+  beforeTabFileRead: {matcher: none, types: [command, prompt]}
+  afterTabFileEdit: {matcher: none, types: [command, prompt]}
+  workspaceOpen: {matcher: none, types: [command, prompt]}
