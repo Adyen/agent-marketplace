@@ -105,7 +105,7 @@ func loadSkills(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 	if err != nil {
 		return nil, []diag.Diagnostic{loadFailure("codex layout", err)}
 	}
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		if isMissing(err) {
 			return nil, nil

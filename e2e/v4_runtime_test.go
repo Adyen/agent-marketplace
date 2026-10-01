@@ -52,6 +52,54 @@ resources:
 	env.AssertExitCode(env.RunAM("sync", "--check"), 0)
 }
 
+// spec: directory-source-discovery/git-metadata-beside-valid-and-malformed-skills
+func TestV4DirectorySourceListingIgnoresSkillsGitMetadata(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.WriteFile("/workspace/registry/skills/.git/HEAD", "ref: refs/heads/main\n")
+	env.WriteFile("/workspace/registry/skills/.git/hooks/pre-commit", "#!/bin/sh\n")
+	env.WriteFile("/workspace/registry/skills/good-skill/SKILL.md", (Skill{Name: "good-skill"}).SkillFile())
+	env.WriteFile("/workspace/registry/skills/bad-skill/SKILL.md", "---\nname: Bad_Skill\n---\nBad\n")
+	env.WriteRepoConfig(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  dir: {directory: registry}
+resources:
+  dir: {include: [skill/good-skill]}
+`)
+
+	listed := env.RunAM("list")
+	env.AssertExitCode(listed, 0)
+	env.AssertOutputContains(listed, "good-skill")
+	env.AssertOutputContains(listed, "bad-skill")
+	env.AssertOutputNotContains(listed, ".git")
+	env.AssertOutputNotContains(listed, "sub-bundles-ignored")
+}
+
+// spec: directory-source-discovery/non-claude-source-layouts-ignore-git-metadata
+func TestV4FactoryDirectorySourceListingIgnoresSkillsGitMetadata(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.WriteFile("/workspace/registry/.factory/skills/.git/HEAD", "ref: refs/heads/main\n")
+	env.WriteFile("/workspace/registry/.factory/skills/.git/hooks/pre-commit", "#!/bin/sh\n")
+	env.WriteFile("/workspace/registry/.factory/skills/good-skill/SKILL.md", (Skill{Name: "good-skill"}).SkillFile())
+	env.WriteFile("/workspace/registry/.factory/skills/bad-skill/SKILL.md", "---\nname: Bad_Skill\n---\nBad\n")
+	env.WriteRepoConfig(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  dir: {directory: registry, source_harness: factory}
+resources:
+  dir: {include: [skill/good-skill]}
+`)
+
+	listed := env.RunAM("list")
+	env.AssertExitCode(listed, 0)
+	env.AssertOutputContains(listed, "good-skill")
+	env.AssertOutputContains(listed, "bad-skill")
+	env.AssertOutputNotContains(listed, ".git")
+	env.AssertOutputNotContains(listed, "sub-bundles-ignored")
+}
+
 func TestV4UserDirectoryNamedInstallRemovePreservesSelectedResource(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
