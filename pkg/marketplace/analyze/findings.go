@@ -2,7 +2,6 @@ package analyze
 
 import (
 	"fmt"
-	"unicode/utf8"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 )
@@ -26,27 +25,15 @@ func (f Finding) WithSourceRange(sr *SourceRange) Finding {
 
 // SourceRangeAt returns a source range for a byte offset inside content.
 func SourceRangeAt(file, content string, offset int) *SourceRange {
-	if offset < 0 || offset > len(content) {
-		return &SourceRange{File: file}
-	}
-	line, column := lineColumn(content, offset)
-	return &SourceRange{File: file, Line: line, Column: column}
+	cursor := sourceRangeCursor{content: content}
+	return cursor.at(file, offset)
 }
 
 // lineColumn returns 1-based line and column (in runes) for a byte offset.
 func lineColumn(content string, offset int) (line, column int) {
-	line = 1
-	for i := 0; i < offset; {
-		r, size := utf8.DecodeRuneInString(content[i:])
-		if r == '\n' {
-			line++
-			column = 0
-		} else {
-			column++
-		}
-		i += size
-	}
-	return line, column + 1
+	cursor := sourceRangeCursor{content: content}
+	location := cursor.at("", offset)
+	return location.Line, location.Column
 }
 
 // ToCanonicalFinding converts an analyze.Finding into a
