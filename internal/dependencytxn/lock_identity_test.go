@@ -11,7 +11,7 @@ import (
 )
 
 func TestReadManagedLockPreservesReaderErrorIdentities(t *testing.T) {
-	_, agents, _ := repoLayer(t)
+	_, agents, state := repoLayer(t)
 	valid := filepath.Join(agents, "lock.yaml")
 	mustWrite(t, valid, []byte("apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries: []\n"), 0o600)
 	if data, generation, _, err := ReadSnapshot(valid); err != nil || !generation.Exists || len(data) == 0 {
@@ -37,7 +37,7 @@ func TestReadManagedLockPreservesReaderErrorIdentities(t *testing.T) {
 		t.Fatalf("oversized lock error = %v, want lockfile.ErrFileTooLarge", err)
 	}
 
-	if _, err := Commit(t.Context(), t.TempDir(), []DesiredFile{{Path: fifo, Bytes: []byte("write"), Mode: 0o600}}); !errors.Is(err, ErrUnsafePath) {
+	if _, err := Commit(t.Context(), state, []DesiredFile{{Path: fifo, Bytes: []byte("write"), Mode: 0o600}}); !errors.Is(err, ErrUnsafePath) {
 		t.Fatalf("FIFO publication error = %v, want transaction ErrUnsafePath", err)
 	}
 }

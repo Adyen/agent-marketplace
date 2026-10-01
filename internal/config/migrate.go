@@ -566,6 +566,8 @@ type stagedMigratedFile struct {
 func writeMigratedFilesAtomically(files map[string]*migrationFile, result *MigrateResult) error {
 	layerOrder := []string{"user", "repo", "local"}
 	var staged []stagedMigratedFile
+	var managed []dependencytxn.DesiredFile
+	var managedNames []string
 
 	// First pass: write every temp file.
 	for _, name := range layerOrder {
@@ -585,11 +587,12 @@ func writeMigratedFilesAtomically(files map[string]*migrationFile, result *Migra
 			// an approved link stays a link and its captured target receives
 			// the migrated document; a drifted or replaced destination fails
 			// with a stable conflict instead of being overwritten.
-			if err := dependencytxn.PublishDestination(f.path, f.generation, data, f.mode); err != nil {
-				cleanupStagedMigratedFiles(staged)
-				return fmt.Errorf("replace %s config %q: %w", name, f.path, err)
+			var expectedMode os.FileMode
+			if f.generation.Exists {
+				expectedMode = f.mode
 			}
-			markMigratedFile(result, name)
+			managed = append(managed, dependencytxn.DesiredFile{Path: f.path, Expected: f.generation, ExpectedMode: expectedMode, Bytes: data, Mode: f.mode})
+			managedNames = append(managedNames, name)
 			continue
 		}
 
@@ -624,6 +627,28 @@ func writeMigratedFilesAtomically(files map[string]*migrationFile, result *Migra
 		}
 
 		staged = append(staged, stagedMigratedFile{name: name, tmp: tmp.Name(), dst: f.path, mode: f.mode})
+	}
+
+	if len(managed) > 0 {
+		for _, file := range managed {
+			if !file.Expected.Exists {
+				if err := dependencytxn.EnsureDestinationDir(file.Path); err != nil {
+					cleanupStagedMigratedFiles(staged)
+					return err
+				}
+			}
+		}
+		state, err := dependencytxn.StateDir()
+		if err == nil {
+			_, err = dependencytxn.Commit(context.Background(), state, managed)
+		}
+		if err != nil {
+			cleanupStagedMigratedFiles(staged)
+			return fmt.Errorf("commit managed config migration: %w", err)
+		}
+		for _, name := range managedNames {
+			markMigratedFile(result, name)
+		}
 	}
 
 	// Second pass: rename all temps to their final paths.

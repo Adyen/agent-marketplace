@@ -35,6 +35,8 @@ func TestManagedPublicationRefusesExternalLinks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Setenv("HOME", filepath.Join(base, "home"))
+			state := filepath.Join(base, "state")
 			repo := filepath.Join(base, "repo")
 			agents := filepath.Join(repo, ".agents")
 			if err := os.MkdirAll(agents, 0o755); err != nil {
@@ -55,7 +57,7 @@ func TestManagedPublicationRefusesExternalLinks(t *testing.T) {
 			if !errors.Is(err, ErrUnsafePath) {
 				t.Fatalf("generation reader followed an external link: %v", err)
 			}
-			if _, err := Commit(t.Context(), t.TempDir(), []DesiredFile{{Path: destination, Expected: expected, Bytes: []byte("replacement\n"), Mode: 0o640}}); !errors.Is(err, ErrUnsafePath) {
+			if _, err := Commit(t.Context(), state, []DesiredFile{{Path: destination, Expected: expected, Bytes: []byte("replacement\n"), Mode: 0o640}}); !errors.Is(err, ErrUnsafePath) {
 				t.Fatalf("transaction followed an external link: %v", err)
 			}
 			if data, err := os.ReadFile(outside); err != nil || string(data) != string(before) {

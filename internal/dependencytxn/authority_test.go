@@ -86,8 +86,8 @@ func TestClassifyDestinationAuthority(t *testing.T) {
 	}{
 		{filepath.Join(home, ".agents", "config.yaml"), AuthorityUser},
 		{filepath.Join(home, ".agents", "lock.yaml"), AuthorityUser},
-		{filepath.Join(home, ".agents", "config.local.yaml"), AuthorityUser},
-		{filepath.Join(home, ".agents", "lock.local.yaml"), AuthorityUser},
+		{filepath.Join(home, ".agents", "config.local.yaml"), AuthorityRepository},
+		{filepath.Join(home, ".agents", "lock.local.yaml"), AuthorityRepository},
 		{filepath.Join(repo, ".agents", "config.yaml"), AuthorityRepository},
 		{filepath.Join(repo, ".agents", "lock.yaml"), AuthorityRepository},
 		{filepath.Join(repo, ".agents", "config.local.yaml"), AuthorityRepository},

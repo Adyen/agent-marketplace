@@ -2,10 +2,13 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 )
 
 // TestMigrateV2PreservesUserDotfileLink runs the legacy structural
@@ -124,4 +127,58 @@ func TestMigrateV4PreservesUserDotfileLink(t *testing.T) {
 	}
 	assertNoConfigTempResidue(t, agents)
 	assertNoConfigTempResidue(t, filepath.Dir(target))
+}
+
+func TestManagedMigrationConflictPreservesEveryLayer(t *testing.T) {
+	home, userAgents := boundaryUserLayer(t)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	_, repoAgents := boundaryLayer(t)
+	const original = "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ncollections: [shared-tools]\n"
+	user := filepath.Join(userAgents, "config.yaml")
+	repo := filepath.Join(repoAgents, "config.yaml")
+	for _, path := range []string{user, repo} {
+		if err := os.WriteFile(path, []byte(original), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := make(map[string]*migrationFile)
+	for _, item := range []struct {
+		name string
+		path string
+		kind layerKind
+	}{{"user", user, userLayer}, {"repo", repo, repoLayer}} {
+		file, err := loadMigrationFile(item.path, item.kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file.doc, err = parseConfigDocument(item.path, []byte("apiVersion: agent-marketplace/v2\nharnesses: [windsurf]\ncollections: [shared-tools]\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		file.modified = true
+		files[item.name] = file
+	}
+	if err := os.WriteFile(repo, []byte("concurrent edit\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	var result MigrateResult
+	if err := writeMigratedFilesAtomically(files, &result); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("stale migration was not refused: %v", err)
+	}
+	for path, want := range map[string]string{user: original, repo: "concurrent edit\n"} {
+		if raw, err := os.ReadFile(path); err != nil || string(raw) != want {
+			t.Fatalf("refusal partially migrated %s: %q %v", path, raw, err)
+		}
+	}
+	if result.UserMigrated || result.RepoMigrated {
+		t.Fatalf("refusal marked layers migrated: %+v", result)
+	}
+	assertNoConfigTempResidue(t, userAgents)
+	assertNoConfigTempResidue(t, repoAgents)
+	if err := os.WriteFile(repo, []byte(original), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := MigrateConfigFiles(MigratePaths{User: user, Repo: repo}, nil); err != nil || !result.UserMigrated || !result.RepoMigrated {
+		t.Fatalf("valid multi-layer migration control: %+v %v", result, err)
+	}
 }

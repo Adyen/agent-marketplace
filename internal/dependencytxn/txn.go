@@ -1240,7 +1240,7 @@ func classify(file journalFile) (string, error) {
 }
 
 func validateStaged(file journalFile) error {
-	if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
+	if err := validateStagingPath(file); err != nil {
 		return err
 	}
 	raw, info, err := readRegularFile(file.Temp, maxDependencyFileSize)
@@ -1282,8 +1282,8 @@ func validateJournal(j *journal) error {
 			if !file.Old.Exists || file.Temp != "" || file.NewMode != 0 {
 				return fmt.Errorf("%w: invalid journal deletion for %s", ErrRecoveryBlocked, file.Path)
 			}
-		} else if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
-			return fmt.Errorf("%w: %v", ErrRecoveryBlocked, err)
+		} else if err := validateStagingPath(file); err != nil {
+			return fmt.Errorf("%w: %w", ErrRecoveryBlocked, err)
 		}
 		destinations[file.Path] = struct{}{}
 		previous = file.Path

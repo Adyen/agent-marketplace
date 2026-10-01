@@ -527,17 +527,12 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 			}
 			writablePaths[participantPath] = layer.Source
 		}
-		generation, expectedMode, err := dependencytxn.ReadGenerationAndMode(participantPath)
+		raw, generation, expectedMode, err := dependencytxn.ReadSnapshot(participantPath)
 		if err != nil {
 			return nil, err
 		}
 		mode := os.FileMode(0o644)
-		var raw []byte
 		if generation.Exists {
-			raw, err = os.ReadFile(participantPath)
-			if err != nil {
-				return nil, fmt.Errorf("read configuration transaction participant %s: %w", participantPath, err)
-			}
 			mode = expectedMode
 		} else if _, staged := overlays[participantPath]; !staged {
 			return nil, fmt.Errorf("configuration layer disappeared while loading: %s", layer.Path)

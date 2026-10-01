@@ -70,7 +70,7 @@ func ClassifyDestination(path string) Authority {
 	if filepath.Base(filepath.Dir(clean)) != layerDirName {
 		return AuthorityLegacy
 	}
-	if home := canonicalHomeDir(); home != "" {
+	if home := canonicalHomeDir(); home != "" && (filepath.Base(clean) == "config.yaml" || filepath.Base(clean) == "lock.yaml") {
 		if canonical, err := canonicalizeStatePath(filepath.Dir(filepath.Dir(clean))); err == nil && canonical == home {
 			return AuthorityUser
 		}
@@ -284,8 +284,12 @@ func readManagedSnapshot(path string) ([]byte, Generation, fs.FileMode, error) {
 	}
 	if err != nil {
 		if isManagedConfigBasename(filepath.Base(path)) && errors.Is(err, ErrUnsafePath) {
-			if info, lstatErr := os.Lstat(path); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
-				return nil, Generation{}, 0, &danglingManagedConfigLinkError{err: err}
+			for _, candidate := range []string{path, filepath.Dir(path)} {
+				if info, lstatErr := os.Lstat(candidate); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+					if _, statErr := os.Stat(candidate); errors.Is(statErr, fs.ErrNotExist) {
+						return nil, Generation{}, 0, &danglingManagedConfigLinkError{err: err}
+					}
+				}
 			}
 		}
 		return nil, Generation{}, 0, mapManagedReadError(path, err)
@@ -469,6 +473,23 @@ func PublishDestination(path string, expected Generation, data []byte, mode fs.F
 		return mapBoundaryErr(err)
 	}
 	return nil
+}
+
+func validateStagingPath(file journalFile) error {
+	parent := filepath.Dir(file.Path)
+	if ClassifyDestination(file.Path) == AuthorityLegacy {
+		return ensureContained(parent, file.Temp)
+	}
+	bound, err := bindDestination(file.Path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = bound.Close() }()
+	parent = filepath.Dir(bound.dest.Path())
+	if filepath.Dir(file.Temp) != parent || filepath.Clean(file.Temp) != file.Temp {
+		return fmt.Errorf("%w: staged file is outside its captured publication parent", ErrUnsafePath)
+	}
+	return ensureContained(parent, file.Temp)
 }
 
 // publishManagedJournal replays one journaled file through a fresh capture
