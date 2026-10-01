@@ -48,11 +48,13 @@ describe('CatalogFilterRail', () => {
 
     expect(wrapper.get('input[type="checkbox"][value="eight"]').element).toHaveProperty('checked', true)
     expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(6)
+    expect(wrapper.attributes('data-expanded')).toBe('false')
 
     const showAll = wrapper.get('button')
     expect(showAll.text()).toBe('Show all (8)')
     await showAll.trigger('click')
     expect(showAll.text()).toBe('Show fewer')
+    expect(wrapper.attributes('data-expanded')).toBe('true')
     expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(8)
   })
 })

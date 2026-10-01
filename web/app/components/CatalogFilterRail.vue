@@ -51,7 +51,7 @@ function updateRegistry(value: string, checked: boolean) {
 </script>
 
 <template>
-  <div class="catalog-filter-rail">
+  <div class="catalog-filter-rail" :data-expanded="showAllRegistries">
     <fieldset class="catalog-filter-group">
       <legend class="catalog-filter-label">
         Kind

@@ -96,45 +96,60 @@ test.describe('Marketplace layout at 768px', () => {
     await expectFirstResultWithinViewport(page)
   })
 
-  // spec: marketplace-browser/filter-rail-stays-visible-before-becoming-sticky
-  test('keeps the final filter visible when only the pre-sticky rail scrolls', async ({ page }) => {
-    await page.setViewportSize({ width: 768, height: 480 })
-    await page.goto('/')
-
-    const rail = page.locator('.catalog-sidebar__sticky')
-    const finalControl = rail.getByRole('checkbox').last()
-    await rail.evaluate(element => { element.scrollTop = element.scrollHeight })
-
-    const railBox = await rail.boundingBox()
-    expect(railBox).not.toBeNull()
-    expect(railBox!.y).toBeGreaterThan(88)
-    expect(railBox!.y + railBox!.height).toBeLessThanOrEqual(480)
-    expect(await rail.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
-    expect(await page.evaluate(() => window.scrollY)).toBe(0)
-    await expect(finalControl).toBeInViewport()
-  })
-
-  // spec: marketplace-browser/over-height-desktop-filter-rail-scrolls
-  test('scrolls an over-height desktop filter rail to its final control', async ({ page }) => {
-    await page.setViewportSize({ width: 768, height: 480 })
+  // spec: marketplace-browser/collapsed-filter-rail-follows-the-resource-list
+  test('scrolls collapsed filters together with the resource list', async ({ page }) => {
     await page.goto('/')
     await page.locator('article').last().evaluate((element) => {
       element.style.minHeight = '1000px'
     })
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
 
-    const rail = page.locator('.catalog-sidebar__sticky')
-    const finalControl = rail.getByRole('checkbox').last()
-    await expect(rail).toHaveCSS('overflow-y', 'auto')
-    expect(await rail.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
-    const railBox = await rail.boundingBox()
-    expect(railBox).not.toBeNull()
-    expect(railBox!.y).toBeGreaterThanOrEqual(0)
-    expect(railBox!.y + railBox!.height).toBeLessThanOrEqual(480)
+    const sidebar = page.locator('.catalog-sidebar__sticky')
+    const filterRail = sidebar.locator('.catalog-filter-rail')
+    const search = page.locator('#marketplace-search')
+    await expect(sidebar.getByRole('button', { name: 'Show all (40)' })).toBeInViewport()
+    await expect(sidebar).toHaveCSS('overflow-y', 'visible')
+    await expect(filterRail).toHaveCSS('overflow-y', 'visible')
+    const [railBefore, searchBefore] = await Promise.all([sidebar.boundingBox(), search.boundingBox()])
 
-    await finalControl.evaluate(element => element.scrollIntoView({ block: 'end' }))
-    expect(await rail.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    await page.evaluate(() => window.scrollTo(0, 60))
+    const [railAfter, searchAfter] = await Promise.all([sidebar.boundingBox(), search.boundingBox()])
+
+    expect(railBefore).not.toBeNull()
+    expect(searchBefore).not.toBeNull()
+    expect(railAfter).not.toBeNull()
+    expect(searchAfter).not.toBeNull()
+    expect(railAfter!.y - railBefore!.y).toBeCloseTo(searchAfter!.y - searchBefore!.y, 0)
+    expect(await filterRail.evaluate(element => element.scrollTop)).toBe(0)
+
+    await page.evaluate(() => window.scrollTo(0, 500))
+    expect((await sidebar.boundingBox())!.y).toBeCloseTo(88, 0)
+    expect((await search.boundingBox())!.y).toBeLessThan(88)
+  })
+
+  // spec: marketplace-browser/expanded-filter-rail-scrolls-to-final-registry
+  test('scrolls the expanded filters to the final registry without moving resources', async ({ page }) => {
+    await page.goto('/')
+
+    const sidebar = page.locator('.catalog-sidebar__sticky')
+    const filterRail = sidebar.locator('.catalog-filter-rail')
+    await sidebar.getByRole('button', { name: 'Show all (40)' }).click()
+
+    await expect(filterRail).toHaveAttribute('data-expanded', 'true')
+    await expect(filterRail).toHaveCSS('overflow-y', 'auto')
+    await expect(filterRail.getByRole('checkbox')).toHaveCount(40)
+    expect(await filterRail.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+
+    const finalControl = filterRail.getByRole('checkbox').last()
+    await filterRail.evaluate(element => { element.scrollTop = element.scrollHeight })
+
+    expect(await filterRail.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    expect(await page.evaluate(() => window.scrollY)).toBe(0)
     await expect(finalControl).toBeInViewport()
+
+    await filterRail.getByRole('button', { name: 'Show fewer' }).click()
+    await expect(filterRail).toHaveAttribute('data-expanded', 'false')
+    await expect(filterRail).toHaveCSS('overflow-y', 'visible')
+    await expect(filterRail.getByRole('checkbox')).toHaveCount(5)
   })
 })
 

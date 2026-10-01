@@ -672,8 +672,12 @@ useHead({
   .catalog-sidebar__sticky {
     position: sticky;
     top: 88px;
-    max-height: max(0px, calc(100vh - 240px));
+  }
+
+  .catalog-sidebar :deep(.catalog-filter-rail[data-expanded="true"]) {
+    max-height: max(0px, calc(100vh - 280px));
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .catalog-sidebar h2 {
