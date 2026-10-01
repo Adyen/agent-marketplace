@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
+// spec: deployed-acquisition-locks/independent-layer-errors-survive-organization-acquisition-failure
 func TestTransientMarketplaceFailureReplacesStaleOrganizationErrorWithoutDroppingOtherLayers(t *testing.T) {
 	required := &config.V4ValidationError{Code: "v4.marketplace-lock-required", Msg: "missing lock"}
 	other := errors.New("unrelated user config error")

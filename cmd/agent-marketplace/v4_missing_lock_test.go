@@ -561,7 +561,7 @@ resources:
 	}
 }
 
-func TestDoctorReportsProvisionalOrganizationFailureInsteadOfMissingLock(t *testing.T) {
+func TestDoctorReportsOrganizationAcquisitionFailureAcrossAliases(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -584,11 +584,11 @@ resources:
 	withWorkingDir(t, t.TempDir())
 
 	output, err := executeCommand("doctor")
-	if err != nil || !strings.Contains(output, string(lockfile.CodeIdentityConflict)) || strings.Contains(output, "v4.marketplace-lock-required") {
-		t.Fatalf("doctor masked provisional organization failure: %v\n%s", err, output)
+	if err != nil || !strings.Contains(output, "acquire transient organization Marketplace lock") || !strings.Contains(output, "tools/skill/another") || strings.Contains(output, "v4.marketplace-lock-required") {
+		t.Fatalf("doctor masked organization acquisition failure across aliases: %v\n%s", err, output)
 	}
-	if got := requests.Load(); got != 0 {
-		t.Fatalf("invalid provisional lock made %d network requests", got)
+	if requests.Load() == 0 {
+		t.Fatal("doctor did not attempt acquisition for valid endpoint aliases")
 	}
 }
 

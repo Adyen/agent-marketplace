@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,6 +119,7 @@ func requireLockIsFree(t *testing.T, outDir, when string) {
 // after the first replacement has committed. The second probe is therefore also
 // the proof that a completed action RELEASES rather than leaking a depth level
 // into the next prompt.
+// spec: owned-entry-reconciliation/ownership-writers-remain-unblocked-at-confirmation-prompts
 func TestDoctorRepairHoldsNoOwnershipLockWhileAwaitingConfirmation(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -284,6 +286,61 @@ func TestDoctorRepairIsRefusedWhileAnotherProcessHoldsTheLock(t *testing.T) {
 	}
 }
 
+type repairPolicyChangeWriter struct {
+	path    string
+	once    sync.Once
+	mutated bool
+	err     error
+}
+
+func (w *repairPolicyChangeWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("doctor repair decision")) && bytes.Contains(p, []byte("action=replace")) && bytes.Contains(p, []byte("decision=authorized")) {
+		w.once.Do(func() {
+			w.err = os.WriteFile(w.path, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"), 0o644)
+			w.mutated = true
+		})
+	}
+	return len(p), nil
+}
+
+// spec: owned-entry-reconciliation/policy-changes-between-confirmation-validation-and-mutation
+func TestDoctorRepairRefusesPolicyChangeAtMutationBoundary(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, _ := devinDoctorEnv(t)
+	policyPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, policyPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries: []\n")
+	aggregate, selection := prepareTwoDevinConflicts(t, repoRoot)
+	before, err := os.ReadFile(aggregate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	injector := &repairPolicyChangeWriter{path: policyPath}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(injector, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	var out bytes.Buffer
+	err = runDoctor(doctorOptions{
+		out: &out, in: strings.NewReader("y\nn\n"), isTTY: true, repair: true,
+		probe: staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}), resolve: staticResolve(selection),
+	})
+	if !injector.mutated || injector.err != nil {
+		t.Fatalf("policy mutation did not execute at the authorized replacement boundary: %v", injector.err)
+	}
+	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("repair error = %v, want a policy generation conflict", err)
+	}
+	after, readErr := os.ReadFile(aggregate)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("repair changed the aggregate after policy validation became stale")
+	}
+}
+
+// spec: owned-entry-reconciliation/repair-stops-at-the-first-policy-conflict
 func TestDoctorRepairStopsAtFirstPolicyChangeAcrossTargets(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

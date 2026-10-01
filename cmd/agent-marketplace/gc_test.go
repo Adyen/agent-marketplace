@@ -20,6 +20,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -218,7 +219,7 @@ func TestGcCommandAllowsMissingOrganizationLockWithoutCreatingIt(t *testing.T) {
 	}
 }
 
-func TestGcCommandUsesVerifiedTransientOrganizationMarketplaceLock(t *testing.T) {
+func TestGcCommandUsesCachedOrganizationMarketplaceReachabilityWithoutNetwork(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -256,6 +257,10 @@ func TestGcCommandUsesVerifiedTransientOrganizationMarketplaceLock(t *testing.T)
 			}
 			orphanRegistry := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
 			writeFile(t, orphanRegistry, "orphan\n")
+			if output, err := executeCommand("sync"); err != nil {
+				t.Fatalf("seed reachable Marketplace artifact: %v\n%s", err, output)
+			}
+			requests.Store(0)
 			args := []string{"gc"}
 			if dryRun {
 				args = append(args, "--dry-run")
@@ -272,8 +277,8 @@ func TestGcCommandUsesVerifiedTransientOrganizationMarketplaceLock(t *testing.T)
 			if strings.Contains(output, filepath.Dir(marketplaceCache.ArtifactPath(activeDigest))) {
 				t.Fatalf("gc nominated active Marketplace archive:\n%s", output)
 			}
-			if requests.Load() != 5 {
-				t.Fatalf("gc made %d Marketplace requests, want one five-request acquisition", requests.Load())
+			if requests.Load() != 0 {
+				t.Fatalf("gc made %d Marketplace requests, want no network acquisition", requests.Load())
 			}
 			if _, err := os.Stat(marketplaceCache.ArtifactPath(activeDigest)); err != nil {
 				t.Fatalf("gc removed active Marketplace archive: %v", err)
@@ -294,7 +299,7 @@ func TestGcCommandUsesVerifiedTransientOrganizationMarketplaceLock(t *testing.T)
 	}
 }
 
-func TestGcCommandRejectsUnverifiedOrganizationMarketplaceWithoutDeleting(t *testing.T) {
+func TestGcCommandCollectsWithoutOrganizationNetworkAndRejectsInvalidLocks(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -343,13 +348,30 @@ func TestGcCommandRejectsUnverifiedOrganizationMarketplaceWithoutDeleting(t *tes
 			withWorkingDir(t, t.TempDir())
 
 			output, err := executeCommand("gc")
+			if requests.Load() != 0 {
+				t.Fatalf("%s made %d Marketplace requests", scenario, requests.Load())
+			}
+			if scenario == "unavailable" {
+				if err != nil {
+					t.Fatalf("gc depended on an unavailable organization endpoint: %v\n%s", err, output)
+				}
+				for _, path := range []string{orphanArchive, orphanRegistry} {
+					if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+						t.Fatalf("gc retained unreachable %s: %v", path, statErr)
+					}
+				}
+				if after, err := os.ReadFile(orgPath); err != nil || string(after) != orgConfig {
+					t.Fatalf("gc changed organization configuration: %v", err)
+				}
+				if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+					t.Fatalf("gc created an organization acquisition lock: %v", err)
+				}
+				return
+			}
 			if err == nil {
 				t.Fatalf("gc accepted %s organization source:\n%s", scenario, output)
 			}
-			if scenario == "unavailable" && requests.Load() == 0 || scenario != "unavailable" && requests.Load() != 0 {
-				t.Fatalf("%s made %d Marketplace requests", scenario, requests.Load())
-			}
-			if scenario == "unavailable" && !strings.Contains(err.Error(), "acquire transient organization Marketplace lock") || scenario == "malformed lock" && !strings.Contains(err.Error(), "lock.malformed") || scenario == "mismatched lock" && !strings.Contains(err.Error(), "v4.marketplace-lock-mismatch") {
+			if scenario == "malformed lock" && !strings.Contains(err.Error(), "lock.malformed") || scenario == "mismatched lock" && !strings.Contains(err.Error(), "v4.marketplace-lock-mismatch") {
 				t.Fatalf("gc returned wrong error for %s: %v", scenario, err)
 			}
 			for path, want := range map[string]string{orphanArchive: "keep-artifact", orphanRegistry: "keep-registry\n", orgPath: orgConfig} {
@@ -368,29 +390,45 @@ func TestGcCommandRejectsUnverifiedOrganizationMarketplaceWithoutDeleting(t *tes
 	}
 }
 
-type gcPreflightLockInjector struct {
-	lockPath string
+type gcPreflightPolicyInjector struct {
+	path     string
+	contents []byte
 	mutated  atomic.Bool
 	failed   error
 }
 
-func (w *gcPreflightLockInjector) Write(p []byte) (int, error) {
+func (w *gcPreflightPolicyInjector) Write(p []byte) (int, error) {
 	if bytes.Contains(p, []byte("marketplace cache garbage collection completed")) && bytes.Contains(p, []byte("dry_run=true")) && w.mutated.CompareAndSwap(false, true) {
-		w.failed = os.WriteFile(w.lockPath, []byte("not: [valid\n"), 0o600)
+		w.failed = os.WriteFile(w.path, w.contents, 0o600)
 	}
 	return len(p), nil
 }
 
+// spec: cache-garbage-collection/organization-acquisition-lock-appears-after-preflight
 func TestGcCommandRefusesOrganizationLockAppearingAfterPreflight(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
+	testGcCommandRefusesPolicyChangeAfterPreflight(t, false)
+}
+
+// spec: cache-garbage-collection/configuration-changes-after-preflight
+func TestGcCommandRefusesConfigChangeAfterPreflight(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	testGcCommandRefusesPolicyChangeAfterPreflight(t, true)
+}
+
+func testGcCommandRefusesPolicyChangeAfterPreflight(t *testing.T, configChange bool) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	var activeDigest string
-	server := newV4MarketplaceLockServerWithRevision(t, nil, func(revision *store.AssessedResourceRevision) {
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithRevision(t, func() { requests.Add(1) }, func(revision *store.AssessedResourceRevision) {
 		activeDigest = string(revision.ArchiveDigest)
 	})
 	defer server.Close()
@@ -406,8 +444,19 @@ func TestGcCommandRefusesOrganizationLockAppearingAfterPreflight(t *testing.T) {
 	orphanRegistry := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
 	writeFile(t, orphanRegistry, "preserve-registry\n")
 	withWorkingDir(t, t.TempDir())
-
-	injector := &gcPreflightLockInjector{lockPath: filepath.Join(authority, "lock.yaml")}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed reachable Marketplace artifact: %v\n%s", err, output)
+	}
+	requests.Store(0)
+	injector := &gcPreflightPolicyInjector{path: filepath.Join(authority, "lock.yaml"), contents: []byte("not: [valid\n")}
+	if configChange {
+		original, err := os.ReadFile(orgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		injector.path = orgPath
+		injector.contents = append(original, []byte("harnesses: [factory, devin]\n")...)
+	}
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(injector, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
@@ -416,8 +465,14 @@ func TestGcCommandRefusesOrganizationLockAppearingAfterPreflight(t *testing.T) {
 	if !injector.mutated.Load() || injector.failed != nil {
 		t.Fatalf("test did not deploy lock after preflight: %v", injector.failed)
 	}
-	if err == nil || !strings.Contains(err.Error(), "lock.malformed") {
-		t.Fatalf("gc accepted lock deployed after preflight: %v\n%s", err, out.String())
+	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("gc accepted changed policy after preflight: %v\n%s", err, out.String())
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("gc made %d network requests", requests.Load())
+	}
+	if changed, err := os.ReadFile(injector.path); err != nil || !bytes.Equal(changed, injector.contents) {
+		t.Fatalf("gc rewrote changed policy: %v", err)
 	}
 	for path, want := range map[string]string{orphanArchive: "preserve-artifact", orphanRegistry: "preserve-registry\n"} {
 		if got, readErr := os.ReadFile(path); readErr != nil || string(got) != want {

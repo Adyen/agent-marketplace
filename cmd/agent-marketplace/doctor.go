@@ -423,7 +423,7 @@ func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string, revalid
 		}
 		selection = resolved.Resolved
 	}
-	previews, err := materialize.RepairPreviews(ctx, repoRoot, selection)
+	previews, err := materialize.RepairPreviews(ctx, repoRoot, selection, revalidate)
 	releaseExactLease()
 	if err != nil {
 		slog.Error("doctor repair preview failed", "repo_root", repoRoot, "status", "error", "code", diag.CodeDoctorRepairFailed)

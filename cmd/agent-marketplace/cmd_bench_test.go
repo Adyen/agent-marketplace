@@ -300,6 +300,14 @@ func BenchmarkRunDoctor(b *testing.B) {
 }
 
 func BenchmarkRunGCDryRunEmptyCache(b *testing.B) {
+	benchmarkRunGCEmptyCache(b, true)
+}
+
+func BenchmarkRunGCEmptyCache(b *testing.B) {
+	benchmarkRunGCEmptyCache(b, false)
+}
+
+func benchmarkRunGCEmptyCache(b *testing.B, dryRun bool) {
 	home := b.TempDir()
 	b.Setenv("HOME", home)
 	b.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
@@ -334,7 +342,7 @@ func BenchmarkRunGCDryRunEmptyCache(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		config.ResetRepoRootCache()
-		if err := runGC(context.Background(), io.Discard, true); err != nil {
+		if err := runGC(context.Background(), io.Discard, dryRun); err != nil {
 			b.Fatal(err)
 		}
 	}

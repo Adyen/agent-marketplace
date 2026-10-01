@@ -96,6 +96,7 @@ type Mutation struct {
 	// An empty string means "the file was absent when I read it". A non-empty
 	// string must be a sha256 digest produced by [Digest].
 	ExpectPriorDigest string
+	ValidatePolicy    func() error
 }
 
 // Result reports what one applied generation did.
@@ -181,6 +182,11 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 		}
 	}
 
+	if m.ValidatePolicy != nil {
+		if err := m.ValidatePolicy(); err != nil {
+			return Result{}, err
+		}
+	}
 	current, loadErr := s.Load()
 	if loadErr != nil && !errors.Is(loadErr, ErrStateMissing) {
 		// A key collision must never be resolved by overwriting the other root's
@@ -409,6 +415,9 @@ func (s *Store) assertPrecondition(m Mutation) error {
 	if liveDigest != m.ExpectPriorDigest {
 		return fmt.Errorf("%w: expected prior digest %s, found %s",
 			ErrGenerationConflict, m.ExpectPriorDigest, liveDigest)
+	}
+	if m.ValidatePolicy != nil {
+		return m.ValidatePolicy()
 	}
 	return nil
 }

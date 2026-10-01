@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -69,6 +70,7 @@ func (c repairConflict) advance(t *testing.T, command string) {
 
 // doctor --repair builds its desired state only from an exact, valid Git lock;
 // it never falls back to the mutable registry cache.
+// spec: owned-entry-reconciliation/missing-or-invalid-git-acquisition-evidence-refuses-repair
 func TestE2EDoctorRepairRequiresValidGitLock(t *testing.T) {
 	for _, schema := range repairSchemas {
 		t.Run(schema, func(t *testing.T) {
@@ -101,6 +103,7 @@ func TestE2EDoctorRepairRequiresValidGitLock(t *testing.T) {
 
 // A confirmed replacement installs the locked revision's value even after the
 // registry branch moved, and leaves the lock as it was.
+// spec: owned-entry-reconciliation/moving-a-git-ref-does-not-change-repair-values
 func TestE2EDoctorRepairReplacesFromLockedRevision(t *testing.T) {
 	for _, schema := range repairSchemas {
 		t.Run(schema, func(t *testing.T) {
@@ -124,6 +127,8 @@ func TestE2EDoctorRepairReplacesFromLockedRevision(t *testing.T) {
 
 // Policy inputs that change while doctor --repair waits for confirmation
 // abort the repair without touching the aggregate.
+// spec: owned-entry-reconciliation/configuration-changes-during-confirmation
+// spec: owned-entry-reconciliation/organization-acquisition-lock-appears-during-confirmation
 func TestE2EDoctorRepairRefusesPolicyChangeDuringConfirmation(t *testing.T) {
 	for _, schema := range repairSchemas {
 		t.Run(schema+"/repository config edited", func(t *testing.T) {
@@ -177,11 +182,14 @@ resources:
 
 // When the organization's Marketplace cannot be reached and no organization
 // lock is deployed, doctor reports the acquisition failure, doctor --repair
-// refuses to act on an incomplete selection, and gc deletes nothing.
+// refuses to act on an incomplete selection, while gc uses local reachability.
+// spec: owned-entry-reconciliation/organization-acquisition-failure-refuses-repair
 func TestE2EOrganizationMarketplaceAcquisitionFailure(t *testing.T) {
 	for _, schema := range repairSchemas {
 		t.Run(schema, func(t *testing.T) {
+			var requests atomic.Int32
 			unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 			}))
 			t.Cleanup(unavailable.Close)
@@ -208,9 +216,11 @@ func TestE2EOrganizationMarketplaceAcquisitionFailure(t *testing.T) {
 			if repair.ExitCode == 0 || !strings.Contains(repair.Combined, "acquire transient organization Marketplace lock") {
 				t.Fatalf("doctor --repair acted without the organization's selection (exit %d):\n%s", repair.ExitCode, repair.Combined)
 			}
+			beforeGC := requests.Load()
 			gc := env.RunAM("gc")
-			if gc.ExitCode == 0 || !strings.Contains(gc.Combined, "acquire transient organization Marketplace lock") {
-				t.Fatalf("gc did not refuse for the failed organization acquisition (exit %d):\n%s", gc.ExitCode, gc.Combined)
+			env.AssertExitCode(gc, 0)
+			if requests.Load() != beforeGC {
+				t.Fatal("gc contacted the unavailable Marketplace instead of using local reachability")
 			}
 			env.AssertFileAbsent("/etc/agent-marketplace/lock.yaml")
 
@@ -219,9 +229,7 @@ func TestE2EOrganizationMarketplaceAcquisitionFailure(t *testing.T) {
 			}
 			preview := env.RunAM("gc", "--dry-run")
 			env.AssertExitCode(preview, 0)
-			if strings.Contains(preview.Combined, "Would remove 0 cache entries") {
-				t.Fatalf("the refused gc deleted the orphaned cache:\n%s", preview.Combined)
-			}
+			env.AssertOutputContains(preview, "Would remove 0 cache entries")
 		})
 	}
 }
