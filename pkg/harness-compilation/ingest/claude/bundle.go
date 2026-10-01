@@ -524,13 +524,13 @@ func isNotExist(err error) bool {
 
 // listSubdirs returns the immediate subdirectories of root within src.
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}
 	var dirs []string
 	for _, e := range entries {
-		if e.IsDir() && e.Name() != ".git" {
+		if e.IsDir() {
 			dirs = append(dirs, root+"/"+e.Name())
 		}
 	}

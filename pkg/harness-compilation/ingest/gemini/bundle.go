@@ -877,13 +877,13 @@ func validatePath(p string) error {
 }
 
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}
 	var dirs []string
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".git" {
+		if entry.IsDir() {
 			dirs = append(dirs, path.Join(root, entry.Name()))
 		}
 	}
