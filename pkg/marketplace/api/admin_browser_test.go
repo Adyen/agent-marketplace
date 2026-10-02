@@ -420,6 +420,15 @@ func TestAdminOIDCBrowserAcceptNegotiation(t *testing.T) {
 		{"application wildcard excludes json", []string{"text/html;q=0.8, application/*;q=0, */*;q=1"}, http.StatusSeeOther},
 		{"html q nan", []string{"text/html;q=NaN"}, http.StatusUnauthorized},
 		{"json q nan", []string{"text/html, application/json;q=NaN"}, http.StatusUnauthorized},
+		{"html q exponent", []string{"text/html;q=1e0"}, http.StatusUnauthorized},
+		{"html q signed plus", []string{"text/html;q=+1"}, http.StatusUnauthorized},
+		{"html q negative zero", []string{"text/html;q=-0"}, http.StatusUnauthorized},
+		{"html q four decimals", []string{"text/html;q=0.0001"}, http.StatusUnauthorized},
+		{"html q trailing zeros", []string{"text/html;q=1.0000"}, http.StatusUnauthorized},
+		{"html q bare zero point", []string{"text/html;q=0."}, http.StatusUnauthorized},
+		{"html q bare one point", []string{"text/html;q=1."}, http.StatusSeeOther},
+		{"html q three decimals", []string{"text/html;q=0.123"}, http.StatusSeeOther},
+		{"html q three zeros", []string{"text/html;q=1.000"}, http.StatusSeeOther},
 		{"multiple header values", []string{"application/json", "text/html"}, http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

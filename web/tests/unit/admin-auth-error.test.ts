@@ -78,6 +78,25 @@ describe('resolveAdminAuthError', () => {
     expect(valid.loginHref).not.toContain('callback')
   })
 
+  it('rejects control characters and byte-overlong destinations on the retry link', () => {
+    const parse = (href: string) => new URL(href, 'http://marketplace.test').searchParams.get('next')
+    for (const next of [
+      `/marketplace/admin/x${'\x00'}y`,
+      `/marketplace/admin/x${'\x07'}y`,
+      `/marketplace/admin/x${'\x1f'}y`,
+      `/marketplace/admin/x${'\x7f'}y`,
+      `/marketplace/admin/${'a'.repeat(2030)}`,
+      `/marketplace/admin/${'é'.repeat(1015)}`,
+    ]) {
+      const resolved = resolveAdminAuthError({ code: 'authentication_rejected', next })
+      expect(parse(resolved.loginHref), JSON.stringify(next.slice(0, 40))).toBe('/marketplace/admin')
+    }
+    for (const next of [`/marketplace/admin/${'a'.repeat(2029)}`, `/marketplace/admin/${'é'.repeat(1014)}x`]) {
+      const resolved = resolveAdminAuthError({ code: 'authentication_rejected', next })
+      expect(parse(resolved.loginHref)).toBe(next)
+    }
+  })
+
   it('honors a configured browser base for destinations and stays relative', () => {
     const kept = resolveAdminAuthError({ code: 'authentication_rejected', next: '/base/admin/x' }, '/base/')
     expect(kept.loginHref).toBe('/api/v1/admin/auth/login?next=%2Fbase%2Fadmin%2Fx')

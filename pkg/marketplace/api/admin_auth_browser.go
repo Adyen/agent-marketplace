@@ -4,11 +4,14 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
 const adminAuthErrorPage = "/marketplace/auth/error"
+
+var adminAcceptQualityPattern = regexp.MustCompile(`^(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)$`)
 
 var adminBrowserErrorCodes = map[string]bool{
 	"authentication_rejected":        true,
@@ -34,10 +37,10 @@ func prefersAdminHTML(r *http.Request) bool {
 			}
 			q := 1.0
 			if raw, ok := params["q"]; ok {
-				q, err = strconv.ParseFloat(raw, 64)
-				if err != nil || !(q >= 0 && q <= 1) {
+				if !adminAcceptQualityPattern.MatchString(raw) {
 					return false
 				}
+				q, _ = strconv.ParseFloat(raw, 64)
 			}
 			switch mediaType {
 			case "text/html":
