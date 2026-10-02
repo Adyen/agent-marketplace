@@ -505,7 +505,6 @@ func TestMetadataPoolWaitMetrics(t *testing.T) {
 }
 
 func TestPoolStatsRealStores(t *testing.T) {
-	ctx := context.Background()
 	poolStats := func(t *testing.T, meta store.MetadataStore) sql.DBStats {
 		pool, ok := meta.(interface{ PoolStats() sql.DBStats })
 		if !ok {
@@ -530,11 +529,8 @@ func TestPoolStatsRealStores(t *testing.T) {
 		if stats := poolStats(t, meta); stats != (sql.DBStats{}) {
 			t.Fatalf("unopened postgres pool stats = %+v, want zero", stats)
 		}
-		if err := meta.Open(ctx); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = meta.Close() })
-		if stats := poolStats(t, meta); stats.OpenConnections < 1 {
+		opened := openConditionalBackend(t, "postgres").meta
+		if stats := poolStats(t, opened); stats.OpenConnections < 1 {
 			t.Fatalf("opened postgres pool stats = %+v", stats)
 		}
 	})

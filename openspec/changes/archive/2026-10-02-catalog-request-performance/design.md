@@ -24,11 +24,11 @@ Keep existing request/duration/active series at their current mux boundary. Add 
 
 ### Authoritative conditional reads
 
-Do not return304 from catalog version alone. A conditional-capable store must read the version and any integrity-bearing page data in one existing store snapshot and retain findings and collection JSON rejection equivalent to the current scan. The reduced path may avoid wide assessment/revocation payloads, relation visibility hydration, availability decisions and DTO serialization only after those checks. A store without that capability takes the existing full-read path. The parent settles the exact conditional interface and SQL after baseline/profile evidence, before dispatching that slice. No cross-request cache or weakened corruption handling is an acceptable fallback.
+Do not return304 from catalog version alone. A conditional-capable store must read the version and any integrity-bearing page data in one existing store snapshot and retain findings and collection JSON rejection equivalent to the current scan. The reduced path may avoid wide assessment/revocation payloads, relation visibility hydration, availability decisions and DTO serialization only after those checks. A store without that capability takes the existing full-read path. No cross-request cache or weakened corruption handling is an acceptable fallback.
 
 ### Page keys before wide decoration
 
-Within one store snapshot, select eligible current occurrence/assessment candidates, preserve descending digest winner selection, apply the stateless coordinate cursor, stable ordering and limit-plus-one to narrow keys. Only then join the selected page with wide payloads and revocations and hydrate collection relations. Eligibility must still require the actual resource assessment row, not merely a current-assessment pointer. PostgreSQL and SQLite use backend-appropriate forms of the same selection semantics; query text and proof remain parent-owned. Preserve the existing lookahead behavior that does not decode the extra row.
+Within one store snapshot, select eligible current occurrence/assessment candidates, preserve descending digest winner selection, apply the stateless coordinate cursor, stable ordering and limit-plus-one to narrow keys. Only then join the selected page with wide payloads and revocations and hydrate collection relations. Eligibility must still require the actual resource assessment row, not merely a current-assessment pointer. PostgreSQL and SQLite use backend-appropriate forms of the same selection semantics. Preserve the existing lookahead behavior that does not decode the extra row.
 
 ### Profile-led allocation work
 

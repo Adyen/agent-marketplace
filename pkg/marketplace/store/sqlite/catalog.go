@@ -117,7 +117,7 @@ func (s *Store) ReadCatalogProjectionPage(ctx context.Context, req store.Catalog
 
 func (s *Store) ReadCatalogProjectionPageConditional(ctx context.Context, req store.CatalogProjectionPageRequest, unchanged func(store.CatalogVersion) bool) (store.CatalogProjectionPage, bool, error) {
 	if s.tx != nil {
-		page, err := s.readCatalogProjectionPage(ctx, req)
+		page, _, err := s.readCatalogProjectionPageConditional(ctx, req, nil)
 		return page, false, err
 	}
 	var page store.CatalogProjectionPage
@@ -130,11 +130,6 @@ func (s *Store) ReadCatalogProjectionPageConditional(ctx context.Context, req st
 		return store.CatalogProjectionPage{}, false, err
 	}
 	return page, matched, nil
-}
-
-func (s *Store) readCatalogProjectionPage(ctx context.Context, req store.CatalogProjectionPageRequest) (store.CatalogProjectionPage, error) {
-	page, _, err := s.readCatalogProjectionPageConditional(ctx, req, nil)
-	return page, err
 }
 
 func (s *Store) readCatalogProjectionPageConditional(ctx context.Context, req store.CatalogProjectionPageRequest, unchanged func(store.CatalogVersion) bool) (store.CatalogProjectionPage, bool, error) {

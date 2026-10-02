@@ -589,7 +589,7 @@ func TestCatalogConditionalInvalidation(t *testing.T) {
 				response, _ := readPage("")
 				return response.Header().Get("ETag")
 			}
-			assertStale := func(step, old string) CatalogPage {
+			assertStale := func(old string) CatalogPage {
 				t.Helper()
 				_, page := readPage(old)
 				return page
@@ -606,14 +606,14 @@ func TestCatalogConditionalInvalidation(t *testing.T) {
 			}{{anchor, anchorDigest}, {skillCoordinate, skillDigest}} {
 				mustDo(backend.meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: seeded.coordinate, ContentDigest: seeded.digest, Commit: nextCommit, ManifestDigest: manifest}))
 			}
-			assertStale("head change", etag)
+			assertStale(etag)
 			etag = etagOf()
 
 			mustDo(backend.meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{
 				Coordinate: skillCoordinate, ContentDigest: skillDigest, Commit: nextCommit, ManifestDigest: manifest,
 				SourcePath: "resources/skill.yaml",
 			}))
-			page := assertStale("provenance enrichment", etag)
+			page := assertStale(etag)
 			var enriched *CatalogResource
 			for i := range page.Resources {
 				if page.Resources[i].Kind == KindSkill {
@@ -646,14 +646,14 @@ func TestCatalogConditionalInvalidation(t *testing.T) {
 			}
 			mustDo(backend.meta.PutResourceAssessment(ctx, reassessed))
 			mustDo(backend.meta.SetCurrentResourceAssessment(ctx, reassessed))
-			assertStale("assessment change", etag)
+			assertStale(etag)
 			etag = etagOf()
 
 			mustDo(backend.meta.PutCollectionRevision(ctx, store.CollectionRevision{
 				ID: anchorDigest.String(), RegistryID: "src", ManifestDigest: anchorDigest,
 				Members: []store.ResourceCoordinate{skillCoordinate},
 			}))
-			page = assertStale("collection anchor materialized", etag)
+			page = assertStale(etag)
 			var collection *CatalogResource
 			for i := range page.Resources {
 				if page.Resources[i].Kind == KindCollection {
@@ -672,7 +672,7 @@ func TestCatalogConditionalInvalidation(t *testing.T) {
 			}
 			registry.Listed = false
 			mustDo(backend.meta.PutRegistry(ctx, registry))
-			assertStale("registry unlisted", etag)
+			assertStale(etag)
 			registry.Listed = true
 			mustDo(backend.meta.PutRegistry(ctx, registry))
 			etag = etagOf()
@@ -694,7 +694,7 @@ func TestCatalogConditionalInvalidation(t *testing.T) {
 				Assessments: []store.ResourceAssessment{anchorAssessment, newSkillAssessment},
 			}
 			mustDo(backend.meta.(store.PublicationStore).PublishRegistryPublication(ctx, publication))
-			page = assertStale("atomic publication", etag)
+			page = assertStale(etag)
 			seen := map[string]string{}
 			for _, resource := range page.Resources {
 				seen[resource.Kind+"/"+resource.Name] = resource.Revision
@@ -705,7 +705,7 @@ func TestCatalogConditionalInvalidation(t *testing.T) {
 			etag = etagOf()
 
 			mustDo(backend.meta.PutRevocation(ctx, store.Revocation{Kind: store.RevocationCoordinate, TargetID: skillCoordinate.String(), Reason: "fixture"}))
-			assertStale("store revocation", etag)
+			assertStale(etag)
 			etag = etagOf()
 
 			restricted := catalogTestConfig()
