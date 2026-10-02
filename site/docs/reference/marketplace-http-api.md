@@ -138,7 +138,7 @@ Read routes (`GET` or `HEAD`, responses use `Cache-Control: no-store`):
 - `/api/v1/admin/configuration`: the managed configuration. The `ETag` header carries the current revision.
 - `/api/v1/admin/profiles`: credential profile keys with their allowed origins, plus the accepted source harnesses.
 - `/api/v1/admin/instance`: instance name, version, management mode, and revision.
-- `/api/v1/admin/attempts`: refresh attempt history. Parameters `before`, `limit` (1 to 100), `registry_id`, and `job_id`.
+- `/api/v1/admin/attempts`: refresh attempt history. Parameters `before`, `limit` (1 to 100), `registry_id`, and `job_id`. Failed attempts carry `failure_code`, a stable machine-readable classification, and `failure_cause`, a sanitized cause that never contains raw command output or credentials; both are omitted on other outcomes.
 - `/api/v1/admin/activity`: audited changes, newest first. Parameters `before` and `limit` (1 to 100, default 50).
 - `/api/v1/admin/jobs/{id}`: status of one managed job.
 - `/api/v1/admin/previews/{id}`: state and result of one discovery preview.

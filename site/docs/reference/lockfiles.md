@@ -131,7 +131,7 @@ Each resource record has these fields:
 | `name` | always | Resource name in that registry. |
 | `revision` | always | Exact resource revision. |
 | `content_digest` | always | Digest of the resource content. |
-| `archive_digest` | resources other than collections | Digest of the compiled archive. |
+| `archive_digest` | resources other than collections | Digest of the compiled archive. Refreshed when the Marketplace repairs the archive for the same content digest. |
 | `collection_manifest_digest` | collections | Digest of the collection manifest. Equal to `content_digest`. |
 | `acquisition` | always | `mirror` when the CLI downloads the archive from the Marketplace, or `index-only` when it fetches the content from the source Git repository. Collections always use `mirror`. |
 | `registry_commit` | `index-only` | Source Git commit, in lowercase. |
@@ -140,6 +140,8 @@ Each resource record has these fields:
 | `selected_by` | resources selected through a collection | Each collection (`registry_id`, `name`, `revision`) that selected this resource. Every entry must point to a collection locked in the same file. |
 
 The CLI installs a Marketplace resource only when the requested endpoint, registry, resource, and revision match a record in the owning layer's lock.
+
+A Marketplace can repair a `mirror` archive without changing the resource's content: the revision keeps its `content_digest` but starts serving a different `archive_digest`. A writing `sync` or `update` refreshes the locked `archive_digest` to the served digest, re-acquires the artifact, and reports `marketplace.archive-evidence-refreshed`; if the refreshed artifact cannot be acquired, the last-good installation stays in place and no unverified evidence is written. `sync --locked` instead fails with `locked archive digest drifted` and names `agent-marketplace sync` or `agent-marketplace update` as the fix. Locks managed by another layer (such as a deployed organization lock) cannot be refreshed by this client and report that scope boundary instead.
 
 ## Commands that read and write locks
 
@@ -150,9 +152,9 @@ The CLI installs a Marketplace resource only when the requested endpoint, regist
 | `lock --upgrade` | Resolves the selected Git sources again at their current refs. Narrow it with resource names, `--registry`, `--ref`, `--path`, or `--kind`. |
 | `lock --scope organization` | Creates or updates the organization lock. Requires write access to `/etc/agent-marketplace`. |
 | `sync` | Installs from the locked commits and updates writable locks that no longer match the configuration. |
-| `sync --locked` | Requires every lock to be current and never writes configuration or locks. |
+| `sync --locked` | Requires every lock to be current and never writes configuration or locks, including refreshed Marketplace archive evidence. |
 | `sync --check` | Reports lock and output drift without writing, and exits `1` if anything is out of date. |
-| `update` | Advances Git locks to the current commits of their refs, then syncs. `--bump` first moves eligible refs in legacy v2/v3 `registries:` entries to newer matching tags; it does not yet rewrite v4 `sources:`. |
+| `update` | Advances Git locks to the current commits of their refs, then syncs. Also refreshes Marketplace archive evidence when the locked content digest is unchanged. `--bump` first moves eligible refs in legacy v2/v3 `registries:` entries to newer matching tags; it does not yet rewrite v4 `sources:`. |
 
 A current lock does not move when the remote branch or tag moves. Use `lock --upgrade` or `update` to pick up new commits.
 

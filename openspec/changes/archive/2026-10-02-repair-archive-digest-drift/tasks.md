@@ -69,5 +69,5 @@
   resources; verify it fails before the store change and passes after
 - [x] 4.3 Run `make validate` and `make spec-check`; fix findings until both
   pass
-- [ ] 4.4 Run `openspec archive repair-archive-digest-drift --yes` as the
+- [x] 4.4 Run `openspec archive repair-archive-digest-drift --yes` as the
   final commit of the same pull request

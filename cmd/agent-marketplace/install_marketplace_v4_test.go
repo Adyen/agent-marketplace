@@ -485,10 +485,30 @@ func TestSyncLockedRejectsDriftedArchiveEvidenceAndUpdateHeals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update after archive drift: %v\n%s", err, output)
 	}
+	if !strings.Contains(output, "marketplace.archive-evidence-refreshed") {
+		t.Fatalf("update emitted no archive-evidence-refresh diagnostic:\n%s", output)
+	}
+	if !strings.Contains(output, string(oldRecord.ArchiveDigest)) || !strings.Contains(output, newDigest) {
+		t.Fatalf("update diagnostic lacks old/new archive evidence:\n%s", output)
+	}
+	if strings.Contains(output, fmt.Sprintf("updated %q -> %q", oldRecord.ContentDigest, oldRecord.ContentDigest)) {
+		t.Fatalf("update misreported unchanged content as a revision advance:\n%s", output)
+	}
 	doc := readLockDocument(t, lockPath)
 	record := doc.Marketplaces[0].Resources[0]
 	if string(record.ArchiveDigest) != newDigest || record.ContentDigest != oldRecord.ContentDigest {
 		t.Fatalf("update did not heal lock evidence: %#v", record)
+	}
+
+	output, err = executeCommand("update")
+	if err != nil {
+		t.Fatalf("healthy update: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "marketplace.archive-evidence-refreshed") {
+		t.Fatalf("healthy update emitted archive refresh diagnostic:\n%s", output)
+	}
+	if !strings.Contains(output, "content digest unchanged") {
+		t.Fatalf("healthy update output changed:\n%s", output)
 	}
 }
 

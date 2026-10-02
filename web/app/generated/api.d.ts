@@ -650,6 +650,10 @@ export interface components {
             /** Format: int64 */
             configuration_revision: number;
             expected_publication_id?: string;
+            /** @description Sanitized failure cause; never contains raw command output or credentials. */
+            failure_cause?: string;
+            /** @description Stable machine-readable failure classification; empty on non-failure outcomes. */
+            failure_code?: string;
             job_id: string;
             marketplace_id: string;
             operation: string;
