@@ -215,9 +215,13 @@ func identityOf(file *os.File) (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
+	return FileInfoIdentity(info)
+}
+
+func FileInfoIdentity(info os.FileInfo) (Identity, error) {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return Identity{}, fmt.Errorf("unexpected stat payload for %s", file.Name())
+		return Identity{}, fmt.Errorf("unexpected stat payload for %s", info.Name())
 	}
 	return Identity{
 		Device:       uint64(st.Dev),
