@@ -1,7 +1,7 @@
 # tui-rendering Specification
 
 ## Purpose
-Defines accessible terminal rendering and lifecycle guarantees for a keyboard-only interface using the user's terminal color palette.
+Defines accessible terminal rendering and lifecycle guarantees for the keyboard and mouse interface using the user's terminal color palette.
 
 ## Requirements
 
@@ -17,11 +17,18 @@ The TUI SHALL fit its active view and modal within 50 columns by 12 rows and san
 - **THEN** the resize-required view replaces the modal without accepting workflow input, and resizing back restores the prior workflow
 
 ### Requirement: Theme and composed views
-The TUI SHALL use semantic status, accent, selection, muted and border roles mapped to the terminal's ANSI palette, retain distinguishable no-color status labels, and compose list, modal and notification views without hiding required keys or displacing selection. The TUI SHALL NOT enable mouse tracking.
+
+The TUI SHALL use semantic status, accent, selection, muted and border roles mapped to the terminal's ANSI palette, retain distinguishable no-color status labels, and compose list, modal and notification views without hiding required keys or displacing selection. The TUI SHALL use the cell-motion mouse-reporting behavior defined by `tui-mouse-navigation` without enabling all-motion tracking.
 
 #### Scenario: Colorless and narrow rendering
+
 - **WHEN** the display has no color or is at the minimum supported dimensions
 - **THEN** status remains readable and modal and quit controls remain within physical bounds
+
+#### Scenario: Mouse reporting agrees with wheel navigation
+
+- **WHEN** the normal TUI program enters the alternate screen
+- **THEN** it MUST enable cell-motion mouse reporting for wheel navigation without enabling all-motion tracking
 
 ### Requirement: Terminal restoration
 The TUI SHALL restore captured termios, disable bracketed paste, show the cursor, and leave the alternate screen on clean quit, handled signal, startup failure or returned error. Only the interrupt sentinel SHALL be treated as a clean interrupt; other errors SHALL preserve their identity and be escaped before printing.
@@ -52,3 +59,14 @@ Resource list rows SHALL display the existing status glyph, a three-cell letter 
 
 - **WHEN** configured, multi-scope, locally excluded, required, available, and malformed rows render selected and unselected at normal and minimum supported sizes, including missing registry metadata, registry subpaths, long Unicode names, search matches, and hostile registry text
 - **THEN** rows show the aligned letter scope before kind and registry-qualified name, blank scopes remain aligned, subpaths are omitted, hostile text appears as visible escapes, complete names remain readable, and highlights apply to matching name characters rather than the prefix
+
+### Requirement: Frame-paced list integration preserves TUI lifecycle outcomes
+
+The normal TUI program SHALL use resource-list wheel presentation pacing without changing other panes' wheel behavior, editor handoff, interruption handling, or terminal restoration. A failed sync-and-quit operation SHALL still return its sanitized error with the original error identity after terminal restoration.
+
+#### Scenario: Pacing retains terminal and error ownership
+
+- **WHEN** the normal TUI program exits after paced resource-list input, including a sync-and-quit failure, an interrupt, or an editor handoff followed by exit
+- **THEN** it MUST retain the existing terminal-restoration and interruption behavior
+- **AND** a sync-and-quit failure MUST remain detectable through its original error identity without exposing raw terminal controls
+- **AND** wheel input in other panes MUST keep its existing immediate rendering and routing

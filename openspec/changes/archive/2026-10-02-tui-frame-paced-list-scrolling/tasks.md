@@ -14,5 +14,5 @@
 ## 3. Published contract and delivery
 
 - [x] 3.1 Update existing TUI reference and product contract, including cell-motion reporting and frame-paced list presentation; reconcile published claims with the complete relevant source.
-- [ ] 3.2 Verify the committed candidate with scoped TUI and CLI consumer tests, native validation, spec checks and Marketplace TUI E2E checks; retain complete logs and resolve actionable review findings.
-- [ ] 3.3 Run `openspec archive tui-frame-paced-list-scrolling --yes` in the same pull request and verify the synchronized main specs and archived scenario bindings.
+- [x] 3.2 Verify the committed candidate with scoped TUI and CLI consumer tests, native validation, spec checks and Marketplace TUI E2E checks; retain complete logs and resolve actionable review findings.
+- [x] 3.3 Run `openspec archive tui-frame-paced-list-scrolling --yes` in the same pull request and verify the synchronized main specs and archived scenario bindings.
