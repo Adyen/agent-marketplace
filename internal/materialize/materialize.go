@@ -36,8 +36,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
-	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -747,7 +747,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	artifactMeta := make(map[outputKey]map[string]skillLink)
 	ownedState := make(map[outputKey]any)
 	ownedAggregates := ownedAggregateState{values: ownedState}
-	hookSupport, supportConflicts := prepareHookSupport(work)
+	hookSupport, supportConflicts, supportRefusals := prepareHookSupport(work)
 	var blockedResources []BlockedResource
 	blockResource := func(key outputKey, w skillTarget) {
 		blocked.blockResource(key, w)
@@ -771,6 +771,12 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		var aggregateHandler ownedAggregateHandler
 		if hasBinding {
 			aggregateHandler = binding.handler
+		}
+		if supportRefusals[index] != nil {
+			blockResource(key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeMaterializeHookSupportRefused, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: "Hook support source refused safe admission; affected hooks were not emitted", Hint: "Fix or remove the unsafe support source and re-run sync", Source: compilepkg.SourceOf(w.skill.Resource)})
+			continue
 		}
 		if paths := supportConflicts[index]; len(paths) > 0 {
 			blockResource(key, w)
@@ -3516,41 +3522,45 @@ func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, 
 // These artifacts are symlinked into the hooks output directory alongside the
 // merged hooks.json, and are automatically pruned by staleArtifactLinks when
 // a hook is excluded (only symlinks are pruned, never the regular hooks.json).
-func collectHookSupportFiles(sourcePath string, target hcc.Target, sourceHarness string) []artifact.Artifact {
+func collectHookSupportFiles(sourcePath string, target hcc.Target, sourceHarness string) ([]artifact.Artifact, error) {
 	if sourcePath == "" {
-		return nil
-	}
-	sourceDir := filepath.Dir(sourcePath)
-	names, err := catalog.HookSupportFiles(sourcePath)
-	if err != nil {
-		return nil
+		return nil, nil
 	}
 	hooksDirRel := resourceInstallDirRel(target, ir.KindHook)
 	if hooksDirRel == "" {
-		return nil
+		return nil, nil
 	}
+	sourceDir, err := filepath.Abs(filepath.Dir(sourcePath))
+	if err != nil {
+		return nil, err
+	}
+	root, err := fsboundary.OpenDir(sourceDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	entries, err := readSupportSourceDirectory(root, ".")
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	excluded := hookSupportExclusions(sourcePath, sourceHarness)
 	var artifacts []artifact.Artifact
-	for _, name := range names {
-		if excluded[name] || (sourceHarness == string(hcc.TargetWindsurf) && filepath.Base(sourceDir) == "hooks" && strings.HasSuffix(name, ".json")) {
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || name == "hooks.json" || excluded[name] || (sourceHarness == string(hcc.TargetWindsurf) && filepath.Base(sourceDir) == "hooks" && strings.HasSuffix(name, ".json")) {
 			continue
 		}
-		srcPath := filepath.Join(sourceDir, name)
-		data, err := os.ReadFile(srcPath)
+		data, identity, err := readSupportSourceSnapshot(root, name)
 		if err != nil {
-			continue
+			return nil, err
 		}
-		info, err := os.Stat(srcPath)
-		if err != nil {
-			continue
-		}
-		artifacts = append(artifacts, artifact.Artifact{
-			Path:  hooksDirRel + "/" + name,
-			Bytes: data,
-			Mode:  info.Mode(),
-		})
+		artifacts = append(artifacts, artifact.Artifact{Path: hooksDirRel + "/" + name, Bytes: data, Mode: identity.Mode})
 	}
-	return artifacts
+	return artifacts, nil
 }
 
 func copyFile(src, dst string) error {
