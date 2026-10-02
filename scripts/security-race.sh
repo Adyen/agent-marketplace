@@ -71,3 +71,7 @@ run_race ./internal/materialize \
 run_race ./internal/materialize \
     -run '^TestRun(PortableManifestAliasRefusalPreservesNativeOutput|ContainedPortableManifestParentAliasRetainsNativeUpdates|ReadOnlyPortableManifestParentRefusalIsNotAbsence|PortableManifestUnsafeShapesDoNotInstall)$' \
     -count=20
+
+run_race ./internal/materialize \
+    -run '^TestRunPortableManifest(RemovalPreservesReplacedGeneration|PublicationPreservesReplacedGeneration|RepeatKeepsIdentityModeAndUpdates|StagingRefusesNamespaceReplacement|MissingParentDoesNotRecreate)$' \
+    -count=20

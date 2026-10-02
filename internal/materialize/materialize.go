@@ -157,10 +157,12 @@ type portableManifestEntry struct {
 }
 
 type portableState struct {
-	path         string
-	repoRoot     string
-	machineScope bool
-	entries      map[string]portableManifestEntry
+	path            string
+	repoRoot        string
+	machineScope    bool
+	entries         map[string]portableManifestEntry
+	pin             portableManifestSnapshot
+	publicationHook func(string)
 }
 
 type portableSyncContext struct {
@@ -192,15 +194,15 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 		return nil, err
 	}
 	state := &portableState{path: path, repoRoot: repoRoot, machineScope: machineScope, entries: make(map[string]portableManifestEntry)}
-	data, err := readPortableManifestSnapshot(path)
+	state.pin, err = readPortableManifestSnapshot(path)
 	if err != nil {
 		return nil, err
 	}
-	if data == nil {
+	if state.pin.data == nil {
 		return state, nil
 	}
 	var manifest portableManifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	if err := yaml.Unmarshal(state.pin.data, &manifest); err != nil {
 		return nil, fmt.Errorf("parse materialization manifest %s: %w", path, err)
 	}
 	if manifest.Version != 0 && manifest.Version != 1 {
@@ -353,10 +355,7 @@ func (s *portableState) save(dryRun bool) error {
 		return nil
 	}
 	if len(s.entries) == 0 {
-		if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
+		return s.removeManifest()
 	}
 	entries := make([]portableManifestEntry, 0, len(s.entries))
 	for _, entry := range s.entries {
@@ -372,38 +371,18 @@ func (s *portableState) save(dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".materialization-manifest-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.path)
+	return s.publishManifest(data)
 }
 
 // RunOption configures optional behavior for Run.
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	dryRun              bool
-	scopeFilter         *bool // nil = all scopes; true = machine only; false = repo only
-	modes               config.MaterializationModes
-	linkPublicationHook func(string)
+	dryRun                  bool
+	scopeFilter             *bool // nil = all scopes; true = machine only; false = repo only
+	modes                   config.MaterializationModes
+	linkPublicationHook     func(string)
+	manifestPublicationHook func(string)
 }
 
 // WithMaterializationModes supplies the already-resolved scope policy. Keeping
@@ -446,14 +425,15 @@ type targetWork struct {
 
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
-	linkPublicationHook func(string)
-	scopeFilter         *bool
-	allDiags            []diag.Diagnostic
-	byTarget            map[outputKey]*targetWork
-	skillLinks          map[outputKey]map[string]*skillLinkGroup
-	allOutputs          map[outputKey]bool
-	blocked             blockedOutputs
-	blockedResources    []BlockedResource
+	linkPublicationHook     func(string)
+	manifestPublicationHook func(string)
+	scopeFilter             *bool
+	allDiags                []diag.Diagnostic
+	byTarget                map[outputKey]*targetWork
+	skillLinks              map[outputKey]map[string]*skillLinkGroup
+	allOutputs              map[outputKey]bool
+	blocked                 blockedOutputs
+	blockedResources        []BlockedResource
 	// artifactMeta maps (outputKey → artifact relative path → skillLink metadata)
 	// for artifacts that remain in result.Artifacts (not extracted into skillLinks).
 	// Used to generate rich collision hints in syncArtifactLinks.
@@ -521,6 +501,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
 	compileResult.linkPublicationHook = rc.linkPublicationHook
+	compileResult.manifestPublicationHook = rc.manifestPublicationHook
 	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes)
 	slog.Info("materialize end",
 		"duration_ms", time.Since(start).Milliseconds(),
@@ -1186,7 +1167,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				continue
 			}
 		}
-		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook}
+		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook, manifestPublicationHook: compileResult.manifestPublicationHook}
 		if key.target == hcc.TargetFactory {
 			boundary.legacySkillsDir = filepath.Join(outDir, "skills")
 		}
@@ -1251,6 +1232,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.manifest.error", Severity: diag.SeverityError, Target: string(key.target), Message: stateErr.Error()})
 		return report
 	}
+	state.publicationHook = boundary.manifestPublicationHook
 	fileDesired := make(map[string]bool)
 	// Track which plan output directories had merge artifacts, so we can
 	// prune managed merge entries from directories NOT covered by any plan.

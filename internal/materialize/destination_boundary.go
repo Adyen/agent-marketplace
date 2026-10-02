@@ -13,12 +13,13 @@ import (
 )
 
 type destinationBoundary struct {
-	machineScope        bool
-	repoRoot            string
-	homeDir             string
-	roots               []string
-	legacySkillsDir     string
-	linkPublicationHook func(string)
+	machineScope            bool
+	repoRoot                string
+	homeDir                 string
+	roots                   []string
+	legacySkillsDir         string
+	linkPublicationHook     func(string)
+	manifestPublicationHook func(string)
 }
 
 func (b destinationBoundary) directory(dir string, create bool) error {
