@@ -6,4 +6,4 @@
 - [x] Prove post-staging namespace refusal and cleanup through the actual consumer; cover CLI and supported platforms.
 - [x] Run scoped validation, repeated races, strict specs, combined/domain gates and disk-cost benchmarks.
 - [x] Adversarially review every changed source/test/spec entry and fix actionable findings.
-- [ ] `openspec archive bind-portable-manifest-publication --yes`.
+- [x] `openspec archive bind-portable-manifest-publication --yes`.
