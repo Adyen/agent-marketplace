@@ -2160,9 +2160,13 @@ func defaultTUIProgramOptions() []tea.ProgramOption {
 	return nil
 }
 
+func newTUIProgram(model tea.Model, options ...tea.ProgramOption) *tea.Program {
+	return tea.NewProgram(newFramePacedModel(model), options...)
+}
+
 func runTUIModel(model tea.Model, options ...tea.ProgramOption) error {
 	return runWithTerminalGuard(defaultTerminalIO(), func() (tea.Model, error) {
-		return tea.NewProgram(model, options...).Run()
+		return newTUIProgram(model, options...).Run()
 	})
 }
 
@@ -2174,6 +2178,9 @@ func finishTUIRun(finalModel tea.Model, err error) error {
 	if err != nil {
 		slog.Error("tui exited with error", "interrupted", false)
 		return sanitizeReturnedError(err)
+	}
+	if wrapped, ok := finalModel.(*framePacedModel); ok {
+		finalModel = wrapped.inner
 	}
 	if fm, ok := finalModel.(Model); ok && fm.syncQuitErr != nil {
 		slog.Error("tui sync+quit reported sync error")

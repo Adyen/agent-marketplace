@@ -85,7 +85,7 @@ The TUI needs at least 50 columns by 12 rows. In a smaller window it shows only 
 
 ## Mouse
 
-The TUI does not capture the mouse. You can select rendered text with the mouse and copy it as usual in your terminal.
+The TUI enables cell-motion mouse reporting to receive scroll-wheel input. A vertical wheel event moves the resource-list selection by one entry, the bundle-tree selection by one entry, or scrolls the file preview, help, errors, and Marketplace consent views by one line. Clicks, releases, drags, and horizontal wheel events do nothing; Shift+vertical-wheel still scrolls vertically. Resource-list rendering is paced at up to 60 frames per second during wheel bursts, so rapid scrolling always settles on the final selection without extra input. Because mouse events go to the application while the TUI runs, native click-and-drag text selection may require a terminal-specific modifier (often Option or Shift).
 
 ## Logging while the TUI runs
 
