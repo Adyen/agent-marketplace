@@ -77,12 +77,12 @@ func (w *UnmetRequirementWarning) Error() string {
 }
 
 func (w *UnmetRequirementWarning) Remediation() string {
-	command := fmt.Sprintf("agent-marketplace install %q --kind %s", w.Requirement.Name, skill.KindLabel(w.Requirement.Kind))
+	command := fmt.Sprintf("agent-marketplace install %s --kind %s", shellQuote(w.Requirement.Name), skill.KindLabel(w.Requirement.Kind))
 	if w.Requirement.Registry != "" {
-		command += fmt.Sprintf(" --from %q", redact.URL(w.Requirement.Registry))
+		command += fmt.Sprintf(" --from %s", shellQuote(redact.URL(w.Requirement.Registry)))
 	}
 	if w.Requirement.Path != "" {
-		command += fmt.Sprintf(" --path %q", redact.URL(w.Requirement.Path))
+		command += fmt.Sprintf(" --path %s", shellQuote(redact.URL(w.Requirement.Path)))
 	}
 	return command
 }
