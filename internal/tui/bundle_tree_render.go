@@ -13,7 +13,7 @@ func renderBundleTree(m Model, width, height int) string {
 		return ""
 	}
 	if m.bundle == nil {
-		return fitTerminalRows("bundle\nNo bundle tree available", width, height)
+		return lipgloss.NewStyle().Width(width).Render(fitTerminalRows("bundle\nNo bundle tree available", width, height))
 	}
 
 	// The native tree renders the same depth-first order as m.bundle.entries():

@@ -314,6 +314,7 @@ func snapshotAcceptanceError(msg snapshotLoadedMsg) error {
 }
 
 func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
+	m.previewSel = previewSelection{}
 	selection := m.captureRebuildAnchor()
 	listOffset := m.listOffset
 	selectionAfterDisable := m.selectionAfterDisable
@@ -368,6 +369,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.invalidateStaleSelection()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		oldWidth, oldHeight := m.width, m.height
@@ -385,6 +387,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		layout := screenLayoutFor(m.height, m.searchRowVisible())
 		listWidth, detailWidth := paneWidths(m.width)
 		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
+		m.previewSel = previewSelection{}
 		if !m.belowMinimumTerminal() && m.pane == paneDetail && previewWidthFor(msg.Width) != m.detailRenderWidth {
 			if rerender := m.rerenderDetailAtWidth(msg.Width); rerender != nil {
 				m.detailStickyBottom = detailAtBottom
@@ -394,7 +397,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		return m.handleKey(msg)
+		prevOffset := -1
+		if m.previewSel.active && m.pane == paneDetail {
+			prevOffset = m.detailViewport.YOffset()
+		}
+		next, cmd := m.handleKey(msg)
+		if prevOffset >= 0 {
+			if nm, ok := next.(Model); ok && nm.detailViewport.YOffset() != prevOffset {
+				nm.previewSel = previewSelection{}
+				return nm, cmd
+			}
+		}
+		return next, cmd
+	case previewSelectionMouseMsg:
+		return m.handlePreviewSelection(msg)
 
 	case tea.PasteMsg:
 		return m.handlePaste(msg)
@@ -426,6 +442,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			(msg.Button != tea.MouseWheelUp && msg.Button != tea.MouseWheelDown) {
 			return m, nil
 		}
+		m.previewSel = previewSelection{}
 		// Bubble's viewport treats Shift+vertical-wheel as horizontal
 		// scrolling, but this TUI intentionally supports only vertical scroll.
 		msg.Mod &^= tea.ModShift
@@ -857,6 +874,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pane != paneDetail || (msg.path != "" && msg.path != m.detailSelectedPath) || !m.acceptsRequest(requestDetail, msg.generation) {
 			return m, nil
 		}
+		m.previewSel = previewSelection{}
 		if msg.path == "" {
 			m.detailLegacyRender = true
 		}
@@ -970,6 +988,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// changes — it is a hard exit that restores the terminal cleanly.
 	if msg.Code == 'c' && msg.Mod.Contains(tea.ModCtrl) {
 		return m, tea.Quit
+	}
+	if m.previewSel.active && msg.Code == tea.KeyEscape {
+		m.previewSel = previewSelection{}
+		return m, nil
 	}
 	if m.belowMinimumTerminal() {
 		if key.Matches(msg, m.keys.Quit) {
@@ -1830,7 +1852,7 @@ func (m Model) viewContent() string {
 		if compactTerminalLayout(m) {
 			footer = "esc/q back · Ctrl+C quit"
 		}
-		return fitTerminalWithFooter(joined, footer, m.width, m.height)
+		return m.applyPreviewSelection(fitTerminalWithFooter(joined, footer, m.width, m.height))
 	}
 
 	base := m.renderBaseScreen()
@@ -1859,9 +1881,9 @@ func (m Model) viewContent() string {
 		modal = renderEditConfigModal(m)
 	}
 	if modal == "" {
-		return compositeToasts(base, m.layeredToasts(), m.width, m.height)
+		return m.applyPreviewSelection(compositeToasts(base, m.layeredToasts(), m.width, m.height))
 	}
-	return fitTerminal(compositeToasts(compositeModal(base, modal, m.width, m.height), m.layeredToasts(), m.width, m.height), m.width, m.height)
+	return m.applyPreviewSelection(fitTerminal(compositeToasts(compositeModal(base, modal, m.width, m.height), m.layeredToasts(), m.width, m.height), m.width, m.height))
 }
 
 // renderBaseScreen renders the standard header + two-pane layout + footer

@@ -18,6 +18,8 @@ type framePacedModel struct {
 
 	framePending    bool
 	frameGeneration uint64
+
+	selection previewSelectionView
 }
 
 type framePacedTickMsg struct {
@@ -40,6 +42,11 @@ func (m *framePacedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.framePending = false
 		m.refresh(m.clock())
 		return m, nil
+	}
+
+	switch msg.(type) {
+	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		msg = previewSelectionMouseMsg{msg: msg, snap: m.selection}
 	}
 
 	before := m.inner
@@ -82,6 +89,17 @@ func (m *framePacedModel) View() tea.View {
 
 func (m *framePacedModel) refresh(now time.Time) {
 	m.view = m.inner.View()
+	if inner, ok := m.inner.(Model); ok {
+		m.selection = inner.previewSelectionSnapshot(m.view.Content)
+		if inner.previewSel.active && !inner.previewSel.snap.equivalent(m.selection) {
+			inner.previewSel = previewSelection{}
+			m.inner = inner
+			m.view = m.inner.View()
+			m.selection = inner.previewSelectionSnapshot(m.view.Content)
+		}
+	} else {
+		m.selection = previewSelectionView{}
+	}
 	m.hasView = true
 	m.lastFrame = now
 }

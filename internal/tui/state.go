@@ -384,6 +384,8 @@ type Model struct {
 	detailSelectedPath string
 	detailLegacyRender bool
 
+	previewSel previewSelection
+
 	// toast/toastExp mirror the newest visible toast for the single-line
 	// footer segment; toastQueue holds the whole visible stack (newest
 	// last, bounded by toastStackMax) rendered as a top-right layer.
