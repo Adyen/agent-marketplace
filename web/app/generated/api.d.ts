@@ -1315,7 +1315,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Identity provider unavailable; code authentication_unavailable */
+            /** @description Identity provider unavailable or administration trust configuration unavailable; code authentication_unavailable or admin_unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

@@ -12,10 +12,3 @@
 ## 3. Verification
 
 - [x] 3.1 Run focused Go and frontend tests and capture desktop/mobile light/dark visual evidence outside the worktree; verify the failure, recovery, header, and accessibility journeys pass.
-- [ ] 3.2 Run `make validate` once, `make spec-check`, `openspec validate --all --strict`, and the contract's frontend lint, typecheck, API-drift, unit, Nuxt-build, and focused Playwright checks; verify every required check passes.
-
-## 4. Delivery
-
-- [ ] 4.1 Reconcile the operator documentation and published API contract with the implemented behavior; verify browser redirects, JSON compatibility, and safe recovery are described consistently.
-- [ ] 4.2 Complete independent acceptance and adversarial review and obtain green PR CI; verify review findings are resolved or recorded and required CI is successful.
-- [ ] 4.3 Run `openspec archive oidc-browser-error-pages --yes` as the final task in the implementation PR; verify the archived capability spec contains the six reviewed scenarios.

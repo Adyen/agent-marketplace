@@ -114,7 +114,7 @@ paths:
                   code: { type: string }
                   message: { type: string }
         '503':
-          description: Identity provider unavailable; code authentication_unavailable
+          description: Identity provider unavailable or administration trust configuration unavailable; code authentication_unavailable or admin_unavailable
           content:
             application/json:
               schema:

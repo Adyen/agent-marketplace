@@ -143,7 +143,7 @@ A verified identity is authorized when one of its groups matches `admin_groups` 
 
 In OIDC mode the reverse proxy only routes `/api/v1/admin/`, `/marketplace/admin`, and the `/marketplace/auth/error` sign-in error page to the application and must not inject identity headers. Public Marketplace routes stay anonymous and keep working when the identity provider is down or the OIDC configuration is invalid.
 
-Sign-in failures use these stable codes. When a browser navigates to the login or callback endpoint (an `Accept` header that prefers `text/html` over JSON), failures redirect to the fixed same-origin `/marketplace/auth/error` page, which explains the allowlisted code, offers a fresh sign-in where retry can help, and links back to the Marketplace. API clients, missing `Accept`, wildcard-only, and tied preferences keep the JSON error bodies and statuses below. The error page never reflects provider error descriptions, state, or codes, and an unknown or malformed code shows a generic message.
+Sign-in failures use these stable codes. When a browser navigates to the login or callback endpoint (an `Accept` header that prefers `text/html` over JSON), failures redirect to the fixed same-origin `/marketplace/auth/error` page, which explains the allowlisted code, offers a fresh sign-in where retry can help, and links back to the Marketplace. API clients, missing `Accept`, wildcard-only, and tied preferences keep the JSON error bodies and statuses below. The error page never reflects provider error descriptions, state, authorization codes, tokens, or identity claims, and an unknown or malformed code shows a generic message.
 
 Manual recovery: denied or rejected sign-ins can retry from the page; `forbidden`, `admin_unavailable`, and `origin_rejected` require operator action (authorization, configuration, or the configured origin) rather than a retry.
 
@@ -155,6 +155,7 @@ Manual recovery: denied or rejected sign-ins can retry from the page; `forbidden
 | `503 admin_unavailable` | The administration configuration is unsafe or invalid. |
 | `401 unauthenticated` | The session is missing or expired. |
 | `403 forbidden` | The identity is verified but not authorized. |
+| `403 origin_rejected` | The request Origin header does not match the configured administration origin. |
 
 ## 2. Configure the reverse proxy
 
