@@ -2,9 +2,13 @@ package materialize
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -12,6 +16,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"golang.org/x/sys/unix"
 )
 
 // spec: materialization/portable-manifest-alias-refusal-preserves-native-output
@@ -148,8 +153,22 @@ func TestRunReadOnlyPortableManifestParentRefusalIsNotAbsence(t *testing.T) {
 
 func TestRunPortableManifestUnsafeShapesDoNotInstall(t *testing.T) {
 	for _, machine := range []bool{false, true} {
-		for _, shape := range []string{"hard-link", "directory", "escaping-parent"} {
+		for _, shape := range []string{"hard-link", "directory", "escaping-parent", "fifo"} {
 			t.Run(map[bool]string{false: "repository", true: "machine"}[machine]+"/"+shape, func(t *testing.T) {
+				if shape == "fifo" && os.Getenv("AM_PORTABLE_MANIFEST_FIFO_TEST") != t.Name() {
+					ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+					defer cancel()
+					cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.timeout=8s", "-test.v")
+					cmd.Env = append(os.Environ(), "AM_PORTABLE_MANIFEST_FIFO_TEST="+t.Name(), "TMPDIR="+t.TempDir())
+					output, err := cmd.CombinedOutput()
+					if err != nil {
+						t.Fatalf("FIFO materialization consumer failed or blocked: %v\n%s", err, output)
+					}
+					if !bytes.Contains(output, []byte("--- PASS: "+t.Name()+" ")) {
+						t.Fatalf("FIFO consumer witness did not run: %s", output)
+					}
+					return
+				}
 				home, repo, foreign := t.TempDir(), t.TempDir(), t.TempDir()
 				t.Setenv("HOME", home)
 				t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
@@ -177,15 +196,25 @@ func TestRunPortableManifestUnsafeShapesDoNotInstall(t *testing.T) {
 						t.Fatal(err)
 					}
 					manifest := filepath.Join(parent, "materialization-manifest.yaml")
-					if shape == "directory" {
-						if err := os.Mkdir(manifest, 0o755); err != nil {
-							t.Fatal(err)
-						}
-					} else {
-						if err := os.Link(payload, manifest); err != nil {
-							t.Fatal(err)
-						}
+					switch shape {
+					case "directory":
+						err = os.Mkdir(manifest, 0o755)
+					case "fifo":
+						err = unix.Mkfifo(manifest, 0o600)
+					default:
+						err = os.Link(payload, manifest)
 					}
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				poisoned := parent
+				if shape != "escaping-parent" {
+					poisoned = filepath.Join(parent, "materialization-manifest.yaml")
+				}
+				poisonedInfo, err := os.Lstat(poisoned)
+				if err != nil {
+					t.Fatal(err)
 				}
 				resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "portable-probe", Resource: ir.NewSkill("portable-probe", "portable", "inert native control", nil, nil, ir.SourceRef{})}, Source: source, Harnesses: []hcc.Target{hcc.TargetFactory}}}
 				report, err := Run(t.Context(), repo, resolved, WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}))
@@ -200,6 +229,12 @@ func TestRunPortableManifestUnsafeShapesDoNotInstall(t *testing.T) {
 				}
 				if after, err := os.Stat(payload); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
 					t.Fatalf("foreign manifest metadata changed: %v", err)
+				}
+				if after, err := os.Lstat(poisoned); err != nil || !os.SameFile(poisonedInfo, after) || poisonedInfo.Mode() != after.Mode() || !poisonedInfo.ModTime().Equal(after.ModTime()) {
+					t.Fatalf("manifest refusal changed poisoned object: %v", err)
+				}
+				if entries, err := os.ReadDir(parent); err != nil || len(entries) != 1 || entries[0].Name() != "materialization-manifest.yaml" {
+					t.Fatalf("manifest refusal left staging residue: %v %v", entries, err)
 				}
 			})
 		}
