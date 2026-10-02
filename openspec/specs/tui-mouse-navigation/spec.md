@@ -37,7 +37,7 @@ The terminal UI SHALL enable cell-motion mouse reporting while active. A vertica
 
 #### Scenario: Unrelated mouse events are ignored
 
-- **WHEN** the TUI receives a click, release, drag, or horizontal-wheel event
+- **WHEN** the TUI receives a click without a drag, a release without an active selection, a drag beginning outside a selectable right-hand pane, or a horizontal-wheel event
 - **THEN** it MUST NOT perform a TUI action
 - **AND** Shift-modified vertical wheel events MUST still scroll vertically
 
@@ -48,7 +48,7 @@ The terminal UI SHALL enable cell-motion mouse reporting while active. A vertica
 
 ### Requirement: Wheel navigation preserves detail state and terminal ownership
 
-Scrolling the detail preview with the wheel SHALL clear its sticky-bottom state so that an asynchronous detail refresh preserves the user's new scroll position. The terminal UI SHALL disable mouse reporting and restore the terminal on clean quit and handled failure paths. Because mouse events are reported to the TUI while active, native drag selection MAY require a terminal-specific modifier.
+Scrolling the detail preview with the wheel SHALL clear its sticky-bottom state so that an asynchronous detail refresh preserves the user's new scroll position. The terminal UI SHALL disable mouse reporting and restore the terminal on clean quit and handled failure paths. The TUI SHALL provide unmodified drag selection in its selectable right-hand details and file-preview panes; native drag selection elsewhere MAY require a terminal-specific modifier.
 
 #### Scenario: Detail refresh retains a wheel scroll
 
@@ -99,3 +99,33 @@ Resource-list presentation pacing SHALL preserve the complete input outcome thro
 - **WHEN** the active resource list receives a bounded burst of encoded vertical wheel input followed by a direction reversal
 - **THEN** the terminal MUST show the independently expected selected resource and its details
 - **AND** the completed burst MUST preserve the accepted event count and order
+
+### Requirement: Right-hand text selection coexists with mouse scrolling
+
+The TUI SHALL highlight unmodified left-button drags within the right-hand details or file-preview pane and copy the selected displayed text on release through the terminal clipboard protocol. It SHALL preserve complete Unicode characters and exclude styling, terminal control sequences, neighboring panes, and layout padding from copied text. A click without a drag SHALL NOT copy. Selection SHALL NOT begin in the resource list, bundle tree, footer, or an overlay. Existing wheel routing and frame pacing SHALL remain unchanged. Scrolling, resize, resource or file changes, and replacement preview content SHALL clear stale selection. Out-of-pane drags that began inside a selectable pane SHALL be clipped to that pane. Escape SHALL clear selection before its normal action; Ctrl+C SHALL retain hard-exit behavior.
+
+#### Scenario: Forward and backward drags copy displayed Unicode text
+
+- **WHEN** the user drags forward or backward across one or multiple displayed lines in the right-hand details or file-preview pane
+- **THEN** the selected text MUST be visibly highlighted and copied on release with complete Unicode characters, without styling or terminal controls
+
+#### Scenario: Gestures outside selectable text do not copy
+
+- **WHEN** a drag starts in the resource list, bundle tree, footer, or an overlay, or the user clicks without dragging
+- **THEN** the TUI MUST NOT select text or write to the clipboard
+
+#### Scenario: Scrolling clears selection without changing navigation
+
+- **WHEN** a vertical wheel event arrives while right-hand text is selected
+- **THEN** selection MUST clear and the existing pointer-targeted one-entry or one-line navigation MUST occur with resource-list frame pacing unchanged
+
+#### Scenario: Selection remains safe across view changes and exits
+
+- **WHEN** selection is active and the terminal resizes, the selected resource or file changes, preview content is replaced, the drag leaves its pane, Escape is pressed, or Ctrl+C is pressed
+- **THEN** resize and content changes MUST clear stale selection, out-of-pane dragging MUST stay clipped to the selectable pane, Escape MUST clear selection before its normal action, and Ctrl+C MUST retain hard-exit behavior
+
+#### Scenario: Terminal gestures deliver only the selected text
+
+- **WHEN** the running TUI receives wheel navigation followed by an encoded right-pane drag and release
+- **THEN** its terminal output MUST show the selected text highlight and emit a clipboard write containing exactly the selected displayed text
+- **AND** ignored gestures MUST emit no clipboard write

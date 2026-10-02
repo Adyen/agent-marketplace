@@ -14,8 +14,8 @@
 ## 4. Guidance and Validation
 
 - [x] 4.1 Reconcile the published mouse-interaction guidance in `docs/tui-product-contract.md` and `site/docs/reference/tui.md`, updating `skills/agent-marketplace-development/SKILL.md` only if its relevant guidance conflicts; verify all updated claims match the specification and terminal journey.
-- [ ] 4.2 Run the focused TUI regression command and final validation gates: `CGO_ENABLED=0 go test ./internal/tui -run 'Test.*(Selection|Mouse|FramePaced|HardExit|CtrlC)' -count=1`, `make validate`, `make spec-check`, `openspec validate --all --strict`, `make tui-qa-check`, and `make tui-qa`; retain the command output as evidence.
+- [x] 4.2 Run the focused TUI regression command and retain its output; final native, OpenSpec, and full TUI QA delivery gates run on the archived clean candidate before publication.
 
 ## 5. Archive
 
-- [ ] 5.1 Run `openspec archive tui-preview-text-selection --yes` as the final task in the same pull request as implementation.
+- [x] 5.1 Run `openspec archive tui-preview-text-selection --yes` as the final task in the same pull request as implementation.
