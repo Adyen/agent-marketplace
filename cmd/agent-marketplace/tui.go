@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -36,10 +37,10 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 		return err
 	}
 	return tui.Run(ctx, workspace.RepoRoot(), homeDir, tui.WithWorkspace(workspace), tui.WithDependencyLifecycle(tui.DependencyLifecycle{
-		Sync: func(ctx context.Context, workspace pipeline.Workspace) error {
+		Sync: func(ctx context.Context, workspace pipeline.Workspace) ([]error, error) {
 			return runTUIDependencyLifecycle(ctx, workspace, false)
 		},
-		Update: func(ctx context.Context, workspace pipeline.Workspace) error {
+		Update: func(ctx context.Context, workspace pipeline.Workspace) ([]error, error) {
 			return runTUIDependencyLifecycle(ctx, workspace, true)
 		},
 		Mutate: runTUIConfigMutation,
@@ -62,25 +63,32 @@ func runTUIConfigMutation(ctx context.Context, workspace pipeline.Workspace, mut
 	return pipeline.MutateConfigWithDependencies(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mutation, reconcileCommandDependencies)
 }
 
-func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) error {
+func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) ([]error, error) {
 	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	ws, err := pipeline.NewWorkspace(workspace.RepoRoot(), workspace.LocalConfigDir())
 	if err != nil {
-		return err
+		return nil, err
 	}
-	mode := lockMode{upgrade: upgrade}
+	var lockWarnings []error
+	mode := lockMode{upgrade: upgrade, warningSink: &lockWarnings}
 	if upgrade {
 		selected, _, err := parseLockSelection("all", false)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		mode.selects = selected
 	}
 	exactLease, err := prepareTUILocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease}
 	result := runTUIExactSync(ctx, options)
-	return errors.Join(result.Errors...)
+	errs := result.Errors
+	if len(errs) == 0 {
+		if _, refreshErr := refreshDriftedMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), result.MergedCfg, result.Warnings); refreshErr != nil {
+			errs = append(errs, fmt.Errorf("refresh Marketplace lock evidence: %w", refreshErr))
+		}
+	}
+	return append(lockWarnings, result.Warnings...), errors.Join(errs...)
 }

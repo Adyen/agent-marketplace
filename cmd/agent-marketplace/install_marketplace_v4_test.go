@@ -700,3 +700,59 @@ func TestSyncDriftedLockRefreshFailsWhenLockModeChanged(t *testing.T) {
 		t.Fatalf("failed evidence refresh changed the lock mode: %v", info.Mode())
 	}
 }
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestSyncCheckRejectsDriftedLockArchiveEvidence(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift, _ := newDriftableV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nmaterialization: {mode: file}\n")
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	installedPath := filepath.Join(home, ".factory", "skills", "review", "SKILL.md")
+	installedInfo, err := os.Lstat(installedPath)
+	if err != nil || installedInfo.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("file-mode install did not materialize a regular file: %v", err)
+	}
+	installedBefore, err := os.ReadFile(installedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, err = executeCommand("sync", "--check")
+	if err != nil {
+		t.Fatalf("healthy sync --check: %v\n%s", err, output)
+	}
+
+	drift()
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err = executeCommand("sync", "--check")
+	if err == nil {
+		t.Fatalf("sync --check accepted drifted lock archive evidence:\n%s", output)
+	}
+	if !strings.Contains(output, "locked archive digest drifted") || !strings.Contains(output, "sync") || !strings.Contains(output, "update") {
+		t.Fatalf("sync --check error not actionable: %v\n%s", err, output)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBefore) {
+		t.Fatalf("sync --check rewrote the lock: %v", err)
+	}
+	installedAfter, err := os.ReadFile(installedPath)
+	if err != nil || string(installedAfter) != string(installedBefore) {
+		t.Fatalf("sync --check touched installed output: %v", err)
+	}
+}

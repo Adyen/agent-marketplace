@@ -458,7 +458,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	resolveOpts := pipeline.ResolveOptions{
 		Workspace: ws, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
-		ConfigLoadMode: configLoadMode,
+		ConfigLoadMode: configLoadMode, MarketplaceLockEvidenceStrict: true,
 	}
 	resolveOpts.RequireTargetSet = true
 	// Use materialize in dry-run mode to check for drift; the Workspace derives

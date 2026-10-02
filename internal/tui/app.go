@@ -26,7 +26,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) error
+type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) ([]error, error)
 type DependencyMutationFunc func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error
 
 type DependencyLifecycle struct {
@@ -609,6 +609,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.driftReport = materialize.DriftReport{}
 			m.toast = "Sync complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
+			if len(msg.warnings) > 0 {
+				m.recordOperationWarnings(operationSync, diagnosticSync, msg.warnings...)
+				m.toast = fmt.Sprintf("Sync complete with %d warning(s)", len(msg.warnings))
+			}
 		}
 		// If the user confirmed "sync+quit", quit now that the sync has
 		// actually completed. This avoids the race where tea.Quit in a
@@ -661,6 +665,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recordOperationSuccess(operationUpdate)
 			m.toast = "Update complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
+			if len(msg.warnings) > 0 {
+				m.toast = fmt.Sprintf("Update complete with %d warning(s)", len(msg.warnings))
+			}
 		}
 		if msg.snapshot.generation != 0 {
 			installCmd = m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshot))

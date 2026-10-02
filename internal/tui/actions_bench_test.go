@@ -469,3 +469,28 @@ func BenchmarkRecordActionSpan(b *testing.B) {
 		recordActionSpan(ctx, "tui.action.sync", map[string]string{"resource.kind": "skill"})
 	}
 }
+
+func benchSyncDone(b *testing.B, msg syncDoneMsg) {
+	b.Helper()
+	defer benchDiscardLogs()()
+	model := NewModel("/repo", "/home")
+	model.loading = false
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		model.syncing = true
+		updated, _ := model.Update(msg)
+		model = updated.(Model)
+	}
+}
+
+func BenchmarkSyncDoneClean(b *testing.B) {
+	benchSyncDone(b, syncDoneMsg{})
+}
+
+func BenchmarkSyncDoneWarnings(b *testing.B) {
+	benchSyncDone(b, syncDoneMsg{warnings: []error{
+		fmt.Errorf("marketplace.archive-evidence-refreshed: src/skill/review locked archive digest sha256:a refreshed to sha256:b for the unchanged content digest"),
+		fmt.Errorf("marketplace.archive-evidence-refreshed: src/skill/audit locked archive digest sha256:c refreshed to sha256:d for the unchanged content digest"),
+	}})
+}
