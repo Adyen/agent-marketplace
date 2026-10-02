@@ -59,3 +59,7 @@ run_race ./internal/materialize \
 run_race ./internal/materialize \
     -run '^TestRun(MarkerMergeRefusesExternalAlias|ContainedMarkerAliasesPreserveNativeContent|ReadOnlyMarkerMergeRefusesExternalAlias|McpServerReplacesExistingSymlinkWithMergedFile)$' \
     -count=20
+
+run_race ./internal/materialize \
+    -run '^TestRun(SupportCopyRefusesEscapingSourceLink|SupportCopyKeepsContainedAliasAndMode|SupportSourceRefusalPreservesInstalledGeneration)$' \
+    -count=20

@@ -1,0 +1,142 @@
+package materialize
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+)
+
+func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix string, missingOK bool, write func(string, []byte, os.FileMode) error) error {
+	absolute, err := filepath.Abs(srcDir)
+	if err != nil {
+		return err
+	}
+	root, err := fsboundary.OpenDir(absolute)
+	if missingOK && errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	var walk func(string) error
+	walk = func(rel string) error {
+		entries, err := readSupportSourceDirectory(root, rel)
+		if err != nil {
+			return err
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		for _, entry := range entries {
+			child := filepath.Join(rel, entry.Name())
+			artifactRel := filepath.ToSlash(filepath.Join(prefix, child))
+			if artifactRel == "SKILL.md" || compiled[artifactRel] {
+				continue
+			}
+			// A root skill's source dir is a whole registry checkout, so
+			// VCS internals must never become harness-visible support
+			// files. Git cannot track a .git directory, so regular skills
+			// are unaffected.
+			if entry.Name() == ".git" {
+				continue
+			}
+			destinationPath := filepath.Join(dstDir, child)
+			if entry.IsDir() {
+				// A root skill's source dir is a whole registry checkout, so
+				// VCS internals must never become harness-visible support
+				// files. Git cannot track a .git directory, so regular skills
+				// are unaffected.
+				if entry.Name() == ".git" {
+					continue
+				}
+				if err := os.MkdirAll(destinationPath, 0o755); err != nil {
+					return err
+				}
+				if err := walk(child); err != nil {
+					return err
+				}
+				continue
+			}
+			source, err := fsboundary.CaptureDestination(root, child, fsboundary.LinkPolicyRepository)
+			if err != nil {
+				return err
+			}
+			data, identity, readErr := source.ReadTarget(source.Identity().Size)
+			closeErr := source.Close()
+			if readErr != nil {
+				return readErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			if err := write(destinationPath, data, identity.Mode); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk(".")
+}
+
+func readSupportSourceDirectory(root *fsboundary.Dir, rel string) ([]os.DirEntry, error) {
+	directory, err := root.OpenPath(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = directory.Close() }()
+	native, err := directory.NativeRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = native.Close() }()
+	file, err := native.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	entries, err := file.ReadDir(-1)
+	return entries, errors.Join(err, file.Close())
+}
+
+func writeSupportStage(path string, data []byte, mode os.FileMode) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := file.Chmod(mode); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	_, err = file.Write(data)
+	return errors.Join(err, file.Close())
+}
+
+func writeSupportSnapshot(path string, data []byte, mode os.FileMode) error {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: support destination is a link", fsboundary.ErrUnsafePath)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%w: support destination is not regular", fsboundary.ErrUnsafeFile)
+		}
+		root, err := fsboundary.OpenDir(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		defer func() { _ = root.Close() }()
+		existing, identity, err := root.ReadFile(filepath.Base(path), int64(len(data)))
+		if err == nil && bytes.Equal(existing, data) && identity.Mode == mode {
+			return nil
+		}
+		if err != nil && !errors.Is(err, fsboundary.ErrTooLarge) {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return atomicWriteFile(path, data, mode)
+}
