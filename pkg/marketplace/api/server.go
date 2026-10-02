@@ -85,7 +85,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 		option(s)
 	}
 
-	s.metrics = newServerMetrics()
+	s.metrics = newServerMetrics(meta)
 
 	publicMux := http.NewServeMux()
 	s.registerAdmin(publicMux)
@@ -117,7 +117,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	// Each mux is instrumented as a whole, not per route, so responses the
 	// mux itself generates are counted too; see serverMetrics.handler.
 	s.public = &http.Server{
-		Handler:      s.authorityHandler(s.availabilityHandler(s.metrics.handler(publicListener, publicMux))),
+		Handler:      s.metrics.publicStack(publicMux, s.authorityHandler(s.availabilityHandler(s.metrics.handler(publicListener, publicMux)))),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -263,46 +263,74 @@ func (s *Server) handleCatalogProjection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	page, err := s.meta.ReadCatalogProjectionPage(r.Context(), store.CatalogProjectionPageRequest{
-		Marketplace: s.mpID,
-		After:       after,
-		Limit:       limit,
-	})
-	if err != nil {
-		slog.Error("catalog projection read failed", "continuation", continuation, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
-		return
-	}
+	validator := r.Header.Get("If-None-Match")
 	view := availabilityFromContext(r.Context())
 	if s.cfg.Management.Mode == "database" && view == nil {
 		writeError(w, http.StatusServiceUnavailable, "availability unavailable")
 		return
 	}
-	for i := range page.Resources {
-		availability := s.fileResourceAvailability(page.Resources[i].AssessedResourceRevision)
-		if s.cfg.Management.Mode == "database" {
-			availability = s.evaluateAvailability(view, page.Resources[i].AssessedResourceRevision).Availability
-		}
-		switch availability {
-		case AvailabilityRevoked:
-			page.Resources[i].Availability = store.CatalogAvailabilityRevoked
-		case AvailabilityAvailable:
-			page.Resources[i].Availability = store.CatalogAvailabilityAvailable
-		case AvailabilityOperatorExposed:
-			page.Resources[i].Availability = store.CatalogAvailabilityOperatorExposed
-		default:
-			page.Resources[i].Availability = store.CatalogAvailabilityBlocked
-		}
+
+	request := store.CatalogProjectionPageRequest{
+		Marketplace: s.mpID,
+		After:       after,
+		Limit:       limit,
 	}
+	unchanged := func(version store.CatalogVersion) bool {
+		matches, err := ifNoneMatchMatches(validator, s.availabilityETag(r.Context(), version))
+		return err == nil && matches
+	}
+
+	readStarted := time.Now()
+	var page store.CatalogProjectionPage
+	matched := false
+	var readErr error
+	conditional, conditionalOK := s.meta.(store.ConditionalCatalogProjectionStore)
+	if conditionalOK && conditional.OwnsCatalogProjectionStore(s.meta) &&
+		!continuation && validator != "" {
+		page, matched, readErr = conditional.ReadCatalogProjectionPageConditional(r.Context(), request, unchanged)
+	} else {
+		page, readErr = s.meta.ReadCatalogProjectionPage(r.Context(), request)
+	}
+	s.metrics.observePhase(phaseCatalogRead, readStarted)
+	if readErr != nil {
+		slog.Error("catalog projection read failed", "continuation", continuation, "error", readErr)
+		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
+		return
+	}
+
+	if !matched {
+		availabilityStarted := time.Now()
+		for i := range page.Resources {
+			var availability Availability
+			if s.cfg.Management.Mode == "database" {
+				availability = s.evaluateAvailability(view, page.Resources[i].AssessedResourceRevision).Availability
+			} else {
+				availability = s.fileResourceAvailability(page.Resources[i].AssessedResourceRevision)
+			}
+			switch availability {
+			case AvailabilityRevoked:
+				page.Resources[i].Availability = store.CatalogAvailabilityRevoked
+			case AvailabilityAvailable:
+				page.Resources[i].Availability = store.CatalogAvailabilityAvailable
+			case AvailabilityOperatorExposed:
+				page.Resources[i].Availability = store.CatalogAvailabilityOperatorExposed
+			default:
+				page.Resources[i].Availability = store.CatalogAvailabilityBlocked
+			}
+		}
+		s.metrics.observePhase(phaseCatalogAvailability, availabilityStarted)
+	}
+	responseStarted := time.Now()
+	defer s.metrics.observePhase(phaseCatalogResponse, responseStarted)
 	etag := s.availabilityETag(r.Context(), page.CatalogVersion)
 	setCatalogHeaders(w, etag)
 	if !continuation {
-		matches, err := ifNoneMatchMatches(r.Header.Get("If-None-Match"), etag)
+		matches, err := ifNoneMatchMatches(validator, etag)
 		if err != nil {
 			s.writeCatalogError(w, err.Error(), started, continuation)
 			return
 		}
-		if matches {
+		if matched || matches {
 			slog.Debug("catalog projection not modified", "catalog_version", page.CatalogVersion, "duration", time.Since(started))
 			w.WriteHeader(http.StatusNotModified)
 			return

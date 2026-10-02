@@ -34,80 +34,145 @@ func (s *Store) advanceCatalogVersion(ctx context.Context) error {
 	return nil
 }
 
+const catalogPageKeys = `WITH ranked AS MATERIALIZED (
+    SELECT rr.marketplace_id, rr.registry_id, rr.kind, rr.name, rr.content_digest,
+           ca.assessment_digest, ro.revision_commit, ro.manifest_digest,
+           ro.source_path, ro.source_origin, r.slug AS registry_slug,
+           ROW_NUMBER() OVER (
+               PARTITION BY rr.marketplace_id, rr.registry_id, rr.kind, rr.name
+               ORDER BY rr.content_digest DESC
+           ) AS rank
+    FROM resource_revisions rr
+    JOIN registries r ON r.id=rr.registry_id AND r.listed=1
+    JOIN current_resource_occurrences ro
+      ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
+     AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest
+    JOIN current_resource_assessments ca
+      ON ca.marketplace_id=rr.marketplace_id AND ca.registry_id=rr.registry_id
+     AND ca.kind=rr.kind AND ca.name=rr.name AND ca.content_digest=rr.content_digest
+    JOIN resource_assessments eligible
+      ON eligible.marketplace_id=ca.marketplace_id AND eligible.registry_id=ca.registry_id
+     AND eligible.kind=ca.kind AND eligible.name=ca.name AND eligible.content_digest=ca.content_digest
+     AND eligible.assessment_digest=ca.assessment_digest
+    WHERE rr.marketplace_id=?
+      AND rr.kind IN ('skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection')
+      {{AFTER}}
+), page_keys AS MATERIALIZED (
+    SELECT marketplace_id, registry_id, kind, name, content_digest,
+           assessment_digest, revision_commit, manifest_digest, source_path, source_origin, registry_slug
+    FROM ranked WHERE rank=1
+    ORDER BY registry_id, kind, name
+    LIMIT ?
+)`
+
+const catalogPageSelect = `
+SELECT p.marketplace_id, p.registry_id, p.kind, p.name, p.content_digest, rr.archive_digest, rr.license, rr.description,
+       ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision, ra.findings, ra.inspection_manifest_digest, ra.assessed_at,
+       p.revision_commit, p.manifest_digest, p.source_path, p.registry_slug,
+       rv.kind, rv.target_id, rv.reason, rv.applied_at,
+       rc.kind, rc.target_id, rc.reason, rc.applied_at,
+       rg.kind, rg.target_id, rg.reason, rg.applied_at,
+       p.source_origin
+FROM page_keys p
+JOIN resource_revisions rr
+  ON rr.marketplace_id=p.marketplace_id AND rr.registry_id=p.registry_id
+ AND rr.kind=p.kind AND rr.name=p.name AND rr.content_digest=p.content_digest
+JOIN resource_assessments ra
+  ON ra.marketplace_id=p.marketplace_id AND ra.registry_id=p.registry_id
+ AND ra.kind=p.kind AND ra.name=p.name AND ra.content_digest=p.content_digest
+ AND ra.assessment_digest=p.assessment_digest
+LEFT JOIN revocations rv ON rv.kind='revision' AND rv.target_id=(p.marketplace_id || '/' || p.registry_id || '/' || p.kind || '/' || p.name || '@' || p.content_digest)
+LEFT JOIN revocations rc ON rc.kind='coordinate' AND rc.target_id=(p.marketplace_id || '/' || p.registry_id || '/' || p.kind || '/' || p.name)
+LEFT JOIN revocations rg ON rg.kind='registry' AND rg.target_id=p.registry_id
+ORDER BY p.registry_id, p.kind, p.name`
+
+const catalogIntegritySelect = `
+SELECT ra.findings, ra.assessed_at, rv.applied_at, rc.applied_at, rg.applied_at,
+       c.id, c.registry_id, c.manifest_digest, c.members, c.includes,
+       p.registry_id, p.content_digest
+FROM page_keys p
+JOIN resource_assessments ra
+  ON ra.marketplace_id=p.marketplace_id AND ra.registry_id=p.registry_id
+ AND ra.kind=p.kind AND ra.name=p.name AND ra.content_digest=p.content_digest
+ AND ra.assessment_digest=p.assessment_digest
+LEFT JOIN revocations rv ON rv.kind='revision' AND rv.target_id=(p.marketplace_id || '/' || p.registry_id || '/' || p.kind || '/' || p.name || '@' || p.content_digest)
+LEFT JOIN revocations rc ON rc.kind='coordinate' AND rc.target_id=(p.marketplace_id || '/' || p.registry_id || '/' || p.kind || '/' || p.name)
+LEFT JOIN revocations rg ON rg.kind='registry' AND rg.target_id=p.registry_id
+LEFT JOIN collection_revisions c ON p.kind='collection' AND c.id=p.content_digest
+ORDER BY p.registry_id, p.kind, p.name`
+
+func catalogProjectionQuery(selectSuffix, after, limit string) string {
+	return strings.NewReplacer("{{AFTER}}", after, "{{LIMIT}}", limit).Replace(catalogPageKeys + selectSuffix)
+}
+
+func (s *Store) OwnsCatalogProjectionStore(meta store.MetadataStore) bool {
+	other, ok := meta.(*Store)
+	return ok && other == s && s.tx == nil
+}
+
 func (s *Store) ReadCatalogProjectionPage(ctx context.Context, req store.CatalogProjectionPageRequest) (store.CatalogProjectionPage, error) {
-	if req.Marketplace == "" {
-		return store.CatalogProjectionPage{}, fmt.Errorf("catalog projection requires a marketplace")
-	}
-	if req.Limit <= 0 {
-		return store.CatalogProjectionPage{}, fmt.Errorf("catalog projection limit must be positive")
+	page, _, err := s.ReadCatalogProjectionPageConditional(ctx, req, nil)
+	return page, err
+}
+
+func (s *Store) ReadCatalogProjectionPageConditional(ctx context.Context, req store.CatalogProjectionPageRequest, unchanged func(store.CatalogVersion) bool) (store.CatalogProjectionPage, bool, error) {
+	if s.tx != nil {
+		page, err := s.readCatalogProjectionPage(ctx, req)
+		return page, false, err
 	}
 	var page store.CatalogProjectionPage
+	matched := false
 	if err := s.withTx(ctx, func(tx *Store) error {
 		var err error
-		page, err = tx.readCatalogProjectionPage(ctx, req)
+		page, matched, err = tx.readCatalogProjectionPageConditional(ctx, req, unchanged)
 		return err
 	}); err != nil {
-		return store.CatalogProjectionPage{}, err
+		return store.CatalogProjectionPage{}, false, err
 	}
-	return page, nil
+	return page, matched, nil
 }
 
 func (s *Store) readCatalogProjectionPage(ctx context.Context, req store.CatalogProjectionPageRequest) (store.CatalogProjectionPage, error) {
+	page, _, err := s.readCatalogProjectionPageConditional(ctx, req, nil)
+	return page, err
+}
+
+func (s *Store) readCatalogProjectionPageConditional(ctx context.Context, req store.CatalogProjectionPageRequest, unchanged func(store.CatalogVersion) bool) (store.CatalogProjectionPage, bool, error) {
+	if req.Marketplace == "" {
+		return store.CatalogProjectionPage{}, false, fmt.Errorf("catalog projection requires a marketplace")
+	}
+	if req.Limit <= 0 {
+		return store.CatalogProjectionPage{}, false, fmt.Errorf("catalog projection limit must be positive")
+	}
 	version, err := s.currentCatalogVersion(ctx)
 	if err != nil {
-		return store.CatalogProjectionPage{}, err
+		return store.CatalogProjectionPage{}, false, err
+	}
+
+	if req.After == nil && unchanged != nil && unchanged(version) {
+		rows, err := s.q.QueryContext(ctx, catalogProjectionQuery(catalogIntegritySelect, "", "?"), req.Marketplace, req.Limit)
+		if err != nil {
+			return store.CatalogProjectionPage{}, false, fmt.Errorf("read catalog projection integrity: %w", err)
+		}
+		if err := store.ReadCatalogProjectionIntegrity(rows, false); err != nil {
+			return store.CatalogProjectionPage{}, false, err
+		}
+		return store.CatalogProjectionPage{CatalogVersion: version}, true, nil
 	}
 
 	args := []any{req.Marketplace}
 	after := ""
 	if req.After != nil {
 		if req.After.Coordinate.Marketplace != req.Marketplace {
-			return store.CatalogProjectionPage{}, fmt.Errorf("catalog cursor marketplace does not match request")
+			return store.CatalogProjectionPage{}, false, fmt.Errorf("catalog cursor marketplace does not match request")
 		}
 		after = ` AND (rr.registry_id, rr.kind, rr.name) > (?, ?, ?)`
 		args = append(args, req.After.Coordinate.Registry, req.After.Coordinate.Kind, req.After.Coordinate.Name)
 	}
 	args = append(args, req.Limit+1)
-	rows, err := s.q.QueryContext(ctx, `
-		SELECT marketplace_id, registry_id, kind, name, content_digest, archive_digest, license, description,
-		       assessment_digest, analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at,
-		       revision_commit, manifest_digest, source_path, registry_slug,
-		       revision_revocation_kind, revision_revocation_target, revision_revocation_reason, revision_revocation_at,
-		       coordinate_revocation_kind, coordinate_revocation_target, coordinate_revocation_reason, coordinate_revocation_at,
-		       registry_revocation_kind, registry_revocation_target, registry_revocation_reason, registry_revocation_at,
-		       source_origin
-		FROM (
-			SELECT rr.marketplace_id, rr.registry_id, rr.kind, rr.name, rr.content_digest, rr.archive_digest, rr.license, rr.description,
-			       ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision, ra.findings, ra.inspection_manifest_digest, ra.assessed_at,
-			       ro.revision_commit, ro.manifest_digest, ro.source_path, r.slug AS registry_slug,
-			       rv.kind AS revision_revocation_kind, rv.target_id AS revision_revocation_target, rv.reason AS revision_revocation_reason, rv.applied_at AS revision_revocation_at,
-			       rc.kind AS coordinate_revocation_kind, rc.target_id AS coordinate_revocation_target, rc.reason AS coordinate_revocation_reason, rc.applied_at AS coordinate_revocation_at,
-			       rg.kind AS registry_revocation_kind, rg.target_id AS registry_revocation_target, rg.reason AS registry_revocation_reason, rg.applied_at AS registry_revocation_at,
-			       ro.source_origin,
-			       ROW_NUMBER() OVER (
-			         PARTITION BY rr.marketplace_id, rr.registry_id, rr.kind, rr.name
-			         ORDER BY rr.content_digest DESC
-			       ) AS rank
-			FROM resource_revisions rr
-			JOIN registries r ON r.id=rr.registry_id AND r.listed=1
-			JOIN current_resource_occurrences ro ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
-			  AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest
-			JOIN current_resource_assessments ca ON ca.marketplace_id=rr.marketplace_id AND ca.registry_id=rr.registry_id
-			  AND ca.kind=rr.kind AND ca.name=rr.name AND ca.content_digest=rr.content_digest
-			JOIN resource_assessments ra ON ra.marketplace_id=ca.marketplace_id AND ra.registry_id=ca.registry_id
-			  AND ra.kind=ca.kind AND ra.name=ca.name AND ra.content_digest=ca.content_digest AND ra.assessment_digest=ca.assessment_digest
-			LEFT JOIN revocations rv ON rv.kind='revision' AND rv.target_id=(rr.marketplace_id || '/' || rr.registry_id || '/' || rr.kind || '/' || rr.name || '@' || rr.content_digest)
-			LEFT JOIN revocations rc ON rc.kind='coordinate' AND rc.target_id=(rr.marketplace_id || '/' || rr.registry_id || '/' || rr.kind || '/' || rr.name)
-			LEFT JOIN revocations rg ON rg.kind='registry' AND rg.target_id=rr.registry_id
-			WHERE rr.marketplace_id=?
-			  AND rr.kind IN ('skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection')
-			  `+after+`
-		)
-		WHERE rank=1
-		ORDER BY registry_id, kind, name
-		LIMIT ?`, args...)
+	rows, err := s.q.QueryContext(ctx, catalogProjectionQuery(catalogPageSelect, after, "?"), args...)
 	if err != nil {
-		return store.CatalogProjectionPage{}, fmt.Errorf("read catalog projection: %w", err)
+		return store.CatalogProjectionPage{}, false, fmt.Errorf("read catalog projection: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	page := store.CatalogProjectionPage{CatalogVersion: version, Resources: make([]store.CatalogProjectionResource, 0, req.Limit)}
@@ -119,21 +184,21 @@ func (s *Store) readCatalogProjectionPage(ctx context.Context, req store.Catalog
 		}
 		resource, err := scanCatalogResource(rows)
 		if err != nil {
-			return store.CatalogProjectionPage{}, err
+			return store.CatalogProjectionPage{}, false, err
 		}
 		page.Resources = append(page.Resources, resource)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return store.CatalogProjectionPage{}, err
+		return store.CatalogProjectionPage{}, false, err
 	}
 	if err := rows.Close(); err != nil {
-		return store.CatalogProjectionPage{}, err
+		return store.CatalogProjectionPage{}, false, err
 	}
 	if err := s.loadCatalogCollections(ctx, page.Resources); err != nil {
-		return store.CatalogProjectionPage{}, err
+		return store.CatalogProjectionPage{}, false, err
 	}
-	return page, nil
+	return page, false, nil
 }
 
 func scanCatalogResource(sc rowScanner) (store.CatalogProjectionResource, error) {

@@ -561,12 +561,24 @@ func TestReadyzFailsWhenBlobProbeFails(t *testing.T) {
 
 type countingBlobStore struct {
 	store.BlobStore
-	gets int
+	gets    int
+	puts    int
+	deletes int
 }
 
 func (s *countingBlobStore) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
 	s.gets++
 	return s.BlobStore.Get(ctx, digest)
+}
+
+func (s *countingBlobStore) Put(ctx context.Context, digest store.ArchiveDigest, data []byte) error {
+	s.puts++
+	return s.BlobStore.Put(ctx, digest, data)
+}
+
+func (s *countingBlobStore) Delete(ctx context.Context, digest store.ArchiveDigest) error {
+	s.deletes++
+	return s.BlobStore.Delete(ctx, digest)
 }
 
 func TestPublicManifestRejectsArchiveBlob(t *testing.T) {
