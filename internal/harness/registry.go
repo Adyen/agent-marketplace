@@ -232,6 +232,9 @@ func resolveSingleRootAdapterDestinations(adapter InstallationAdapter, machineSc
 			}
 		}
 	}
+	if err := ValidateDestinationRoot(machineScope, repoRoot, homeDir, canonical); err != nil {
+		return nil, fmt.Errorf("harness adapter destination root: %w", err)
+	}
 	return nativeAggregateDestinations(adapter.target, machineScope, repoRoot, homeDir,
 		Destination{ID: "default", Root: canonical, InstallationEvidence: true, Info: adapter.info})
 }
