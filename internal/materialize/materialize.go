@@ -193,11 +193,11 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 	}
 	state := &portableState{path: path, repoRoot: repoRoot, machineScope: machineScope, entries: make(map[string]portableManifestEntry)}
 	data, err := readPortableManifestSnapshot(path)
-	if errors.Is(err, os.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
-		return state, nil
-	}
 	if err != nil {
 		return nil, err
+	}
+	if data == nil {
+		return state, nil
 	}
 	var manifest portableManifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
