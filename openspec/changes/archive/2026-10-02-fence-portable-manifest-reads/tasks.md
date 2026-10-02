@@ -5,4 +5,4 @@
 - [x] Preserve absent manifests, contained scope/parent aliases and native updates; cover refusals/read-only behavior.
 - [x] Verify CLI, Linux/macOS, races, specs, domain gates and measured cost.
 - [x] Adversarially review every changed source/test/spec entry.
-- [ ] `openspec archive fence-portable-manifest-reads --yes`.
+- [x] `openspec archive fence-portable-manifest-reads --yes`.
