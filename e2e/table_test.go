@@ -2545,7 +2545,7 @@ registries:
 				MustPass: true,
 				OutContains: []string{
 					`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`,
-					`agent-marketplace install "genai-atlassian" --kind mcp`,
+					`agent-marketplace install genai-atlassian --kind mcp`,
 				},
 				FilesExist: []string{"/root/.factory/skills/smoke-test-kb/SKILL.md"},
 				FileNotContains: map[string]string{
@@ -2586,7 +2586,7 @@ registries:
 				MustPass: true,
 				OutContains: []string{
 					`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`,
-					`agent-marketplace install "genai-atlassian" --kind mcp`,
+					`agent-marketplace install genai-atlassian --kind mcp`,
 				},
 				FilesExist: []string{"/root/.factory/skills/smoke-test-kb/SKILL.md"},
 				FileContains: map[string]string{
@@ -2628,34 +2628,34 @@ registries:
 			{
 				Args:        []string{"sync"},
 				MustPass:    true,
-				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
 				FilesExist:  []string{"/root/.factory/skills/smoke-test-kb/SKILL.md"},
 				FilesAbsent: []string{"/root/.factory/mcp.json"},
 			},
 			{
 				Args:        []string{"status"},
 				MustPass:    true,
-				OutContains: []string{"UNMET REQUIREMENTS", "skill:smoke-test-kb", "mcp:genai-atlassian", `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains: []string{"UNMET REQUIREMENTS", "skill:smoke-test-kb", "mcp:genai-atlassian", `agent-marketplace install genai-atlassian --kind mcp`},
 			},
 			{
 				Args:        []string{"sync", "--check"},
 				MustPass:    true,
-				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
 			},
 			{
 				Args:           []string{"sync", "--strict"},
 				AssertExitCode: intPtr(1),
-				OutContains:    []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains:    []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
 			},
 			{
 				Args:           []string{"sync", "--strict", "--check"},
 				AssertExitCode: intPtr(1),
-				OutContains:    []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains:    []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
 			},
 			{
 				Args:        []string{"doctor"},
 				MustPass:    true,
-				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
 			},
 		},
 	},

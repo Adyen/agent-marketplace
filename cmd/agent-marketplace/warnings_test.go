@@ -269,8 +269,16 @@ func TestWriteGroupedWarningsIncludesRequirementRemediation(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	if !strings.Contains(got, `agent-marketplace install "genai-atlassian" --kind mcp --from "git@example.com:agents/registry.git" --path "integrations"`) {
+	if !strings.Contains(got, `agent-marketplace install genai-atlassian --kind mcp --from git@example.com:agents/registry.git --path integrations`) {
 		t.Fatalf("requirement remediation missing:\n%s", got)
+	}
+	warning.Requirement.Name = "audit$(inert-value)"
+	out.Reset()
+	if err := writeGroupedWarnings(&out, []error{warning}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `agent-marketplace install 'audit$(inert-value)' --kind mcp`) {
+		t.Fatalf("human-readable prerequisite sink lost literal quoting: %s", out.String())
 	}
 }
 
