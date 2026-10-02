@@ -22,6 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -678,15 +679,19 @@ func buildHarnessTargetRows(repoRoot string, harnesses []string) ([]harnessTarge
 }
 
 func harnessRootSummaries(target hcc.Target, repoRoot string) (string, string, error) {
-	repo, err := harness.ResolveDestinations(target, false, repoRoot)
-	if err != nil {
-		return "", "", err
+	summaries := make([]string, 0, 2)
+	for _, machine := range []bool{false, true} {
+		destinations, err := harness.ResolveDestinations(target, machine, repoRoot)
+		if err != nil {
+			if !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) {
+				return "", "", err
+			}
+			summaries = append(summaries, fmt.Sprintf("unresolvable: %v", err))
+		} else {
+			summaries = append(summaries, destinationSummary(destinations))
+		}
 	}
-	machine, err := harness.ResolveDestinations(target, true, repoRoot)
-	if err != nil {
-		return "", "", err
-	}
-	return destinationSummary(repo), destinationSummary(machine), nil
+	return summaries[0], summaries[1], nil
 }
 
 func destinationSummary(destinations []harness.Destination) string {

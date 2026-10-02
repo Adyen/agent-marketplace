@@ -35,6 +35,9 @@ func resolveCodexDestinations(machineScope bool, repoRoot, homeDir string) ([]De
 				root = configured
 			}
 		}
+		if err := ValidateDestinationRoot(machineScope, repoRoot, homeDir, root); err != nil {
+			return nil, fmt.Errorf("codex destination root: %w", err)
+		}
 		root, err := canonicalCodexRoot(root)
 		if err != nil {
 			return nil, err
