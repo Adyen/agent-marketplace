@@ -3,6 +3,7 @@ package materialize
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -15,6 +16,9 @@ func readPortableManifestSnapshot(path string) (data []byte, err error) {
 	}
 	scope, err := fsboundary.OpenDir(anchor)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			err = nil
+		}
 		return nil, err
 	}
 	defer func() {
@@ -24,6 +28,9 @@ func readPortableManifestSnapshot(path string) (data []byte, err error) {
 	}()
 	parent, err := scope.OpenRoot(filepath.Base(filepath.Dir(path)))
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			err = nil
+		}
 		return nil, err
 	}
 	defer func() {
@@ -33,6 +40,9 @@ func readPortableManifestSnapshot(path string) (data []byte, err error) {
 	}()
 	file, admitted, err := parent.OpenFile(filepath.Base(path))
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			err = nil
+		}
 		return nil, err
 	}
 	defer func() {
