@@ -3408,6 +3408,28 @@ func prepareSkillLinkCache(link skillLink) error {
 	if cacheDir == "" {
 		cacheDir = link.target
 	}
+	compiled := make(map[string]bool, len(link.artifacts))
+	for _, a := range link.artifacts {
+		compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
+	}
+	supportStage := ""
+	if link.sourceDir != "" {
+		if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
+			return err
+		}
+		var err error
+		supportStage, err = os.MkdirTemp(filepath.Dir(cacheDir), ".support-staging-")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.RemoveAll(supportStage) }()
+		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage); err != nil {
+			return err
+		}
+		if err := verifyDeclaredSupportFiles(supportStage, link.declaredSupport); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return err
 	}
@@ -3424,33 +3446,12 @@ func prepareSkillLinkCache(link skillLink) error {
 	// (not just the compiled SKILL.md). Prune the old support tree first:
 	// overwrite materialization intentionally does not prune because compiled
 	// artifacts and source support files share the same cache directory.
-	if link.sourceDir != "" {
-		compiled := make(map[string]bool, len(link.artifacts))
-		for _, a := range link.artifacts {
-			compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
-		}
-		if len(link.declaredSupport) > 0 {
-			staging, err := os.MkdirTemp(filepath.Dir(cacheDir), ".support-staging-")
-			if err != nil {
-				return err
-			}
-			defer func() { _ = os.RemoveAll(staging) }()
-			if err := copySupportFilesExcluding(link.sourceDir, staging, compiled, "", false); err != nil {
-				return err
-			}
-			if err := verifyDeclaredSupportFiles(staging, link.declaredSupport); err != nil {
-				return err
-			}
-			if err := pruneSkillCacheSupportFiles(cacheDir, compiled); err != nil {
-				return err
-			}
-			return copySupportFilesExcluding(staging, cacheDir, compiled, "", false)
-		}
+	if supportStage != "" {
 		if err := pruneSkillCacheSupportFiles(cacheDir, compiled); err != nil {
 			return err
 		}
-		if copyErr := copySupportFilesExcluding(link.sourceDir, cacheDir, compiled, "", true); copyErr != nil {
-			return copyErr
+		if err := copySupportFilesExcluding(supportStage, cacheDir, compiled, "", false); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -3507,50 +3508,7 @@ func copySupportFiles(srcDir, dstDir string) error {
 }
 
 func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, rel string, missingOK bool) error {
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		if os.IsNotExist(err) && missingOK {
-			return nil
-		}
-		return fmt.Errorf("read source skill dir %s: %w", srcDir, err)
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		childRel := filepath.ToSlash(filepath.Join(rel, name))
-		if childRel == "SKILL.md" || compiled[childRel] {
-			continue
-		}
-		// A root skill's source dir is a whole registry checkout, so
-		// VCS internals must never become harness-visible support
-		// files. Git cannot track a .git directory, so regular skills
-		// are unaffected.
-		if name == ".git" {
-			continue
-		}
-		srcPath := filepath.Join(srcDir, name)
-		dstPath := filepath.Join(dstDir, name)
-
-		if entry.IsDir() {
-			// A root skill's source dir is a whole registry checkout, so
-			// VCS internals must never become harness-visible support
-			// files. Git cannot track a .git directory, so regular skills
-			// are unaffected.
-			if name == ".git" {
-				continue
-			}
-			if err := os.MkdirAll(dstPath, 0o755); err != nil {
-				return fmt.Errorf("create support dir %s: %w", childRel, err)
-			}
-			if err := copySupportFilesExcluding(srcPath, dstPath, compiled, childRel, missingOK); err != nil {
-				return fmt.Errorf("copy support dir %s: %w", childRel, err)
-			}
-			continue
-		}
-		if err := copyFile(srcPath, dstPath); err != nil {
-			return fmt.Errorf("copy support file %s: %w", childRel, err)
-		}
-	}
-	return nil
+	return copyScopedSupport(srcDir, dstDir, compiled, rel, missingOK, writeSupportSnapshot)
 }
 
 // collectHookSupportFiles scans the directory containing the source hooks.json
