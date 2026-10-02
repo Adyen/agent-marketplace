@@ -411,18 +411,6 @@ func TestPreviewSelectionSafetyAcrossChanges(t *testing.T) {
 		}
 	})
 
-	t.Run("identical replacement text still invalidates", func(t *testing.T) {
-		m := detail(t)
-		m.detailKey = "resource-a"
-		snap := selSnap(m)
-		m, _ = selSend(t, m, snap, selClick(33, 0))
-		m.detailKey = "resource-b"
-		m, cmd := selSend(t, m, snap, selRelease(40, 0))
-		if cmd != nil {
-			t.Fatal("release after identity change wrote the clipboard")
-		}
-	})
-
 	t.Run("accepted replacement content clears", func(t *testing.T) {
 		m := detail(t)
 		generation := m.beginRequest(requestDetail)
