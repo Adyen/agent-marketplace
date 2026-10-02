@@ -23,6 +23,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
 	"github.com/Adyen/agent-marketplace/internal/collection"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -61,6 +62,7 @@ type Requirement struct {
 
 // Catalog holds the result of loading a registry via HCC.
 type Catalog struct {
+	sourceRefusal error
 	Entries       []Entry
 	Diagnostics   []diag.Diagnostic
 	SourceHarness string // harness name used for ingestion (autodetected or explicit)
@@ -296,16 +298,25 @@ func Load(dir string, sourceHarness string) (*Catalog, error) {
 	return LoadWithOptions(dir, sourceHarness, IngestOptions{})
 }
 
-func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (cat *Catalog, err error) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve load root %q: %w", dir, err)
 	}
-	srcFS := os.DirFS(root)
-	cat, err := LoadFSWithOptions(srcFS, sourceHarness, opts)
+	srcFS, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		return nil, fmt.Errorf("capture load root %q: %w", dir, err)
+	}
+	defer func() {
+		if closeErr := srcFS.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	cat, err = LoadFSWithOptions(srcFS, sourceHarness, opts)
 	if err != nil {
 		return nil, err
 	}
+	cat.sourceRefusal = srcFS.Refusal()
 	for i := range cat.Entries {
 		if cat.Entries[i].Path != "" && !filepath.IsAbs(cat.Entries[i].Path) {
 			cat.Entries[i].Path = filepath.Join(root, cat.Entries[i].Path)

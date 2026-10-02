@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -189,6 +190,9 @@ func (cat *Catalog) Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 }
 
 func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOptions) (LoadedCatalog, error) {
+	if cat.sourceRefusal != nil {
+		return LoadedCatalog{}, fmt.Errorf("catalog source refused: %w", cat.sourceRefusal)
+	}
 	// Vacant-lot condition: zero entries and no warning/error diagnostics.
 	// HCC scanned the directory, found nothing, and had nothing to complain
 	// about. This can happen when the directory is a meta-directory containing
@@ -485,7 +489,7 @@ func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle, options
 			} else {
 				slog.Debug("ignoring empty bundle candidate", "path", subDir)
 			}
-		} else if hasRootSkill(os.DirFS(subDir)) {
+		} else if hasDiskRootSkill(subDir) {
 			continue
 		}
 		scanSubBundlesWalk(subDir, sourceHarness, bundles, options...)
@@ -537,6 +541,15 @@ var bundleLayoutDirs = map[string]struct{}{
 	"hooks":            {},
 }
 
+func hasDiskRootSkill(dir string) bool {
+	source, err := fsboundary.OpenSourceFS(dir)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = source.Close() }()
+	return hasRootSkill(source)
+}
+
 func hasRootSkill(src fs.FS) bool {
 	info, err := fs.Stat(src, "SKILL.md")
 	return err == nil && !info.IsDir()
@@ -551,7 +564,11 @@ func hasRootSkill(src fs.FS) bool {
 // case (dir/*/SKILL.md) so container directories with multiple skills are
 // still recognized.
 func hasBundleRoot(dir string) bool {
-	srcFS := os.DirFS(dir)
+	srcFS, err := fsboundary.OpenSourceFS(dir)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = srcFS.Close() }()
 	_, strictMatch := ingest.AutodetectStrict(srcFS)
 
 	// A root-level SKILL.md identifies a skill directory. Preserve an explicit

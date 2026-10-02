@@ -79,3 +79,7 @@ run_race ./internal/materialize \
 run_race ./internal/materialize \
     -run '^TestRunPortableSourceHash.*$' \
     -count=20
+
+run_race ./internal/catalog ./internal/fsboundary \
+    -run '^Test(LoadPrimarySource.*|SourceFSKeepsCapturedRootAndDirectoryInfo)$' \
+    -count=20
