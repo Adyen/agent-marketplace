@@ -17,17 +17,29 @@ func readPortableManifestSnapshot(path string) (data []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, scope.Close()) }()
+	defer func() {
+		if closeErr := scope.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	parent, err := scope.OpenRoot(filepath.Base(filepath.Dir(path)))
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, parent.Close()) }()
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	file, admitted, err := parent.OpenFile(filepath.Base(path))
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, file.Close()) }()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	data, snapshot, err := fsboundary.ReadFile(file, admitted.Size)
 	if err != nil {
 		return nil, err
