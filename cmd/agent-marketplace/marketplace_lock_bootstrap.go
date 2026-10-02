@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -105,4 +106,132 @@ func encodeWithGitRegistries(doc lockfile.Document, registries []lockfile.GitReg
 		return nil, err
 	}
 	return lockfile.Encode(normalized)
+}
+
+func refreshDriftedMarketplaceLocks(ctx context.Context, repoRoot, localDir string, mergedCfg *config.Config, warnings []error) (int, error) {
+	if mergedCfg == nil {
+		return 0, nil
+	}
+	type pinKey struct{ endpoint, instance, registryID, kind, name string }
+	refreshed := make(map[pinKey]bool)
+	for _, w := range warnings {
+		var refresh *resolver.ArchiveEvidenceRefreshedWarning
+		if errors.As(w, &refresh) {
+			refreshed[pinKey{refresh.MarketplaceURL, refresh.InstanceID, refresh.RegistryID, refresh.Kind, refresh.Name}] = true
+		}
+	}
+	if len(refreshed) == 0 {
+		return 0, nil
+	}
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir})
+	cache := marketplace.DefaultCache()
+	type pendingMerge struct {
+		entry config.MarketplaceEntry
+		pins  []config.MarketplaceResourcePin
+	}
+	type layerWork struct {
+		path         string
+		v4           *config.V4Config
+		current      *lockfile.Document
+		expected     dependencytxn.Generation
+		expectedMode os.FileMode
+		merges       []pendingMerge
+	}
+	var order []config.Source
+	layers := make(map[config.Source]*layerWork)
+	for _, entry := range mergedCfg.Marketplaces {
+		var pins []config.MarketplaceResourcePin
+		for _, pin := range entry.Resources {
+			if refreshed[pinKey{entry.URL, entry.InstanceID, pin.RegistryID, pin.Kind, pin.Name}] {
+				pins = append(pins, pin)
+			}
+		}
+		if len(pins) == 0 || !entry.Source.IsWritable() {
+			continue
+		}
+		work, ok := layers[entry.Source]
+		if !ok {
+			layer := intent.Layers[entry.Source]
+			if !layer.Present() {
+				continue
+			}
+			if err := layer.Err(); err != nil {
+				return 0, err
+			}
+			v4Cfg, err := config.LoadV4ConfigIfPresent(layer.Path, entry.Source)
+			if err != nil {
+				return 0, err
+			}
+			if v4Cfg == nil {
+				continue
+			}
+			paths, err := config.ResolveConfigLockPaths(layer.Path)
+			if err != nil {
+				return 0, err
+			}
+			lockPath, err := rejectGeneratedLockSymlink(paths.CanonicalLock)
+			if err != nil {
+				return 0, err
+			}
+			current, expected, exists, err := pipeline.ReadLayerLock(lockPath, lockfile.Scope(entry.Source.LockScope()))
+			if err != nil {
+				return 0, err
+			}
+			if !exists || current == nil || len(current.Marketplaces) == 0 {
+				continue
+			}
+			_, expectedMode, err := dependencytxn.ReadGenerationAndMode(lockPath)
+			if err != nil {
+				return 0, err
+			}
+			work = &layerWork{path: lockPath, v4: v4Cfg, current: current, expected: expected, expectedMode: expectedMode}
+			layers[entry.Source] = work
+			order = append(order, entry.Source)
+		}
+		work.merges = append(work.merges, pendingMerge{entry: entry, pins: pins})
+	}
+	var desired []dependencytxn.DesiredFile
+	for _, source := range order {
+		work := layers[source]
+		doc := *work.current
+		for _, merge := range work.merges {
+			merged, err := marketplacelock.MergePinsToV4(work.v4, doc, merge.entry, merge.pins, cache)
+			if err != nil {
+				return 0, fmt.Errorf("refresh Marketplace lock %q evidence: %w", work.path, err)
+			}
+			doc = merged
+		}
+		data, err := lockfile.Encode(doc)
+		if err != nil {
+			return 0, err
+		}
+		normalizedCurrent, err := lockfile.Normalize(*work.current)
+		if err != nil {
+			return 0, err
+		}
+		currentData, err := lockfile.Encode(normalizedCurrent)
+		if err != nil {
+			return 0, err
+		}
+		if string(data) == string(currentData) {
+			continue
+		}
+		desired = append(desired, dependencytxn.DesiredFile{Path: work.path, Expected: work.expected, ExpectedMode: work.expectedMode, Bytes: data, Mode: work.expectedMode})
+	}
+	if len(desired) == 0 {
+		return 0, nil
+	}
+	reads, err := pipeline.IntentReadAssertions(intent)
+	if err != nil {
+		return 0, err
+	}
+	stateDir, err := dependencyStateDir()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := commitDependencyTransaction(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads)); err != nil {
+		return 0, fmt.Errorf("commit refreshed Marketplace lock evidence: %w", err)
+	}
+	slog.Info("marketplace lock evidence refreshed", "count", len(desired))
+	return len(desired), nil
 }

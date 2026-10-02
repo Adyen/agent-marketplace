@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -318,5 +322,361 @@ func TestUpdateMarketplaceV4ReplacesLockNotConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "updated") {
 		t.Fatalf("materialized output not refreshed:\n%s", body)
+	}
+}
+
+func newDriftableV4MarketplaceServer(t *testing.T, instanceID, resourceName string) (*httptest.Server, func() string, func(string)) {
+	t.Helper()
+	canonical, err := hccartifact.FromIR(ir.NewSkill(resourceName, "Review", "Review carefully.", nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.RegistrySlug = "tools"
+	var version atomic.Int64
+	var state atomic.Pointer[struct {
+		raw      []byte
+		revision store.AssessedResourceRevision
+	}]
+	set := func() string {
+		raw, archiveDigest, err := hccartifact.Encode(canonical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(instanceID), Registry: "src", Kind: "skill", Name: resourceName},
+			ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
+			ArchiveDigest: store.ArchiveDigest(archiveDigest),
+		})
+		state.Store(&struct {
+			raw      []byte
+			revision store.AssessedResourceRevision
+		}{raw: raw, revision: revision})
+		return archiveDigest
+	}
+	set()
+	var broken sync.Map
+	registry := mpapi.PublicRegistry{ID: "src", Slug: "tools", Origins: []string{"https://example.com/tools.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := state.Load()
+		switch {
+		case r.URL.Path == "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
+		case r.URL.Path == "/api/v1/registries/tools" || r.URL.Path == "/api/v1/registries/src":
+			_ = json.NewEncoder(w).Encode(registry)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/"+resourceName) || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"+resourceName):
+			_ = json.NewEncoder(w).Encode(current.revision)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/"):
+			digest := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/")
+			if _, bad := broken.Load(strings.Replace(digest, "/", ":", 1)); bad {
+				http.Error(w, "artifact unavailable", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+			_, _ = w.Write(current.raw)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return server, func() string {
+			n := version.Add(1)
+			if canonical.Assets == nil {
+				canonical.Assets = map[string][]byte{}
+			}
+			canonical.Assets[fmt.Sprintf("drift-%d.txt", n)] = []byte(fmt.Sprintf("drift %d", n))
+			return set()
+		}, func(digest string) {
+			broken.Store(digest, true)
+		}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestSyncRefreshesDriftedLockArchiveEvidence(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift, _ := newDriftableV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	oldDoc := readLockDocument(t, lockPath)
+	if len(oldDoc.Marketplaces) != 1 || len(oldDoc.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("installed lock = %#v", oldDoc.Marketplaces)
+	}
+	oldRecord := oldDoc.Marketplaces[0].Resources[0]
+	if oldRecord.ArchiveDigest == "" || string(oldRecord.ContentDigest) == "" {
+		t.Fatalf("installed record lacks evidence: %#v", oldRecord)
+	}
+
+	newDigest := drift()
+	output, err = executeCommand("sync")
+	if err != nil {
+		t.Fatalf("sync after archive drift: %v\n%s", err, output)
+	}
+	doc := readLockDocument(t, lockPath)
+	record := doc.Marketplaces[0].Resources[0]
+	if string(record.ArchiveDigest) != newDigest {
+		t.Fatalf("lock archive digest = %q, want refreshed %q", record.ArchiveDigest, newDigest)
+	}
+	if record.ContentDigest != oldRecord.ContentDigest || record.Revision != oldRecord.Revision {
+		t.Fatalf("refresh changed revision identity: %#v", record)
+	}
+	if doc.APIVersion != oldDoc.APIVersion || doc.Scope != oldDoc.Scope {
+		t.Fatalf("lock byte format changed: %#v", doc)
+	}
+	body, err := os.ReadFile(filepath.Join(home, ".factory", "skills", "review", "SKILL.md"))
+	if err != nil || !strings.Contains(string(body), "Review carefully") {
+		t.Fatalf("materialized output broken: %v", err)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestSyncLockedRejectsDriftedArchiveEvidenceAndUpdateHeals(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift, _ := newDriftableV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	oldDoc := readLockDocument(t, lockPath)
+	oldRecord := oldDoc.Marketplaces[0].Resources[0]
+
+	newDigest := drift()
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err = executeCommand("sync", "--locked")
+	if err == nil {
+		t.Fatalf("sync --locked accepted drifted evidence:\n%s", output)
+	}
+	if !strings.Contains(output, "locked archive digest drifted") || !strings.Contains(output, "sync") || !strings.Contains(output, "update") {
+		t.Fatalf("locked error not actionable: %v\n%s", err, output)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBefore) {
+		t.Fatalf("sync --locked rewrote the lock: %v", err)
+	}
+
+	output, err = executeCommand("update")
+	if err != nil {
+		t.Fatalf("update after archive drift: %v\n%s", err, output)
+	}
+	doc := readLockDocument(t, lockPath)
+	record := doc.Marketplaces[0].Resources[0]
+	if string(record.ArchiveDigest) != newDigest || record.ContentDigest != oldRecord.ContentDigest {
+		t.Fatalf("update did not heal lock evidence: %#v", record)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestSyncRefreshesDriftedArchiveEvidenceAcrossEndpoints(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	serverA, driftA, _ := newDriftableV4MarketplaceServer(t, "mp-a", "review")
+	defer serverA.Close()
+	serverB, driftB, _ := newDriftableV4MarketplaceServer(t, "mp-b", "audit")
+	defer serverB.Close()
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	for _, tc := range []struct {
+		server *httptest.Server
+		name   string
+	}{{serverA, "review"}, {serverB, "audit"}} {
+		if output, err := executeCommand("install", tc.server.URL+"/r/tools/skill/"+tc.name, "--scope", "user", "--yes"); err != nil {
+			t.Fatalf("install from %s: %v\n%s", tc.server.URL, err, output)
+		}
+	}
+	newA, newB := driftA(), driftB()
+	output, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("sync after dual-endpoint drift: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "marketplace.archive-evidence-refreshed") {
+		t.Fatalf("sync emitted no evidence-refresh diagnostic:\n%s", output)
+	}
+	doc := readLockDocument(t, lockPath)
+	if len(doc.Marketplaces) != 2 {
+		t.Fatalf("lock marketplaces = %#v", doc.Marketplaces)
+	}
+	got := map[string]string{}
+	for _, mp := range doc.Marketplaces {
+		if len(mp.Resources) != 1 {
+			t.Fatalf("lock resources for %s = %#v", mp.URL, mp.Resources)
+		}
+		got[mp.URL] = string(mp.Resources[0].ArchiveDigest)
+	}
+	if got[serverA.URL] != newA || got[serverB.URL] != newB {
+		t.Fatalf("refreshed digests = %#v, want %q for %s and %q for %s", got, newA, serverA.URL, newB, serverB.URL)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestSyncFailedArchiveReacquisitionPreservesLastGood(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift, failArtifact := newDriftableV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	oldDoc := readLockDocument(t, lockPath)
+	oldRecord := oldDoc.Marketplaces[0].Resources[0]
+	installedPath := filepath.Join(home, ".factory", "skills", "review", "SKILL.md")
+	installedBefore, err := os.ReadFile(installedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failArtifact(drift())
+
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err = executeCommand("sync")
+	if err == nil {
+		t.Fatalf("sync with unreachable advertised artifact succeeded:\n%s", output)
+	}
+	if !strings.Contains(output, "fetch artifact") {
+		t.Fatalf("sync did not surface the reacquisition failure:\n%s", output)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBefore) {
+		t.Fatalf("failed reacquisition rewrote the lock: %v", err)
+	}
+	installedAfter, err := os.ReadFile(installedPath)
+	if err != nil || string(installedAfter) != string(installedBefore) {
+		t.Fatalf("failed reacquisition touched installed output: %v", err)
+	}
+	doc := readLockDocument(t, lockPath)
+	record := doc.Marketplaces[0].Resources[0]
+	if record.ArchiveDigest != oldRecord.ArchiveDigest || record.ContentDigest != oldRecord.ContentDigest {
+		t.Fatalf("failed reacquisition changed evidence: %#v", record)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestSyncDriftedLockRefreshFailsWhenLockModeChanged(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift, _ := newDriftableV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newDigest := drift()
+	resp, err := http.Get(server.URL + "/api/v1/resources/tools/skill/review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var advertised struct {
+		ArchiveDigest string `json:"archive_digest"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&advertised); err != nil {
+		_ = resp.Body.Close()
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if advertised.ArchiveDigest != newDigest {
+		t.Fatalf("server advertises archive digest %q, want refreshed %q", advertised.ArchiveDigest, newDigest)
+	}
+	artifactResp, err := http.Get(server.URL + "/api/v1/artifacts/" + strings.Replace(newDigest, ":", "/", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = artifactResp.Body.Close()
+	if artifactResp.StatusCode != http.StatusOK {
+		t.Fatalf("advertised artifact %s not fetchable: %d", newDigest, artifactResp.StatusCode)
+	}
+
+	commit := commitDependencyTransaction
+	var mutated bool
+	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+		for _, file := range desired {
+			if file.Path == lockPath && !file.Delete {
+				if err := os.Chmod(lockPath, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				mutated = true
+			}
+		}
+		return commit(ctx, stateDir, desired, opts...)
+	}
+	t.Cleanup(func() { commitDependencyTransaction = commit })
+
+	output, err = executeCommand("sync")
+	if err == nil {
+		t.Fatalf("sync committed refreshed evidence onto a lock whose mode drifted:\n%s", output)
+	}
+	if !mutated {
+		t.Fatal("sync never committed the refreshed Marketplace lock")
+	}
+	if !strings.Contains(output, "refresh Marketplace lock evidence") {
+		t.Fatalf("sync failure does not identify the evidence refresh: %v\n%s", err, output)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBefore) {
+		t.Fatalf("failed evidence refresh rewrote the lock: %v", err)
+	}
+	info, err := os.Stat(lockPath)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("failed evidence refresh changed the lock mode: %v", info.Mode())
 	}
 }

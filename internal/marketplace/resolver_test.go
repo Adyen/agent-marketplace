@@ -1097,3 +1097,97 @@ func TestPrepareLocatorPrefetchesMirrorArtifact(t *testing.T) {
 		t.Fatalf("prepared artifact manifest = %#v", plan.Artifact.Manifest)
 	}
 }
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestResolverArchiveEvidenceDriftWarnsAndStrictRejects(t *testing.T) {
+	ctx := context.Background()
+	cache := NewCache(t.TempDir())
+
+	skill := ir.NewSkill("review", "Review code", "Review the code carefully.", []string{"user"}, nil, ir.SourceRef{})
+	artifact, err := hccartifact.FromIR(skill)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	contentDigest := artifact.Manifest.ContentDigest
+	artifact.Manifest.RegistryID = "src"
+	artifact.Manifest.Revision = contentDigest
+	raw, archiveDigest, err := hccartifact.Encode(artifact)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	rev := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(rev)
+	})
+	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+		_, _ = w.Write(raw)
+	})
+	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, r *http.Request) {
+		writeTestWellKnown(w, "mp")
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	drifted := "sha256:" + strings.Repeat("d", 64)
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: server.URL, InstanceID: "mp", Source: config.UserPersonal,
+		Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "src", Kind: "skill", Name: "review",
+			Revision: contentDigest, Digest: contentDigest,
+			LockArchiveDigest: drifted,
+		}},
+	}}}
+
+	r := &Resolver{Cache: cache}
+	resolved, errs := r.Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeRefresh)
+	if len(resolved) != 1 {
+		t.Fatalf("drifted evidence blocked resolution: %v", errs)
+	}
+	var warning *resolver.ArchiveEvidenceRefreshedWarning
+	found := false
+	for _, err := range errs {
+		if errors.As(err, &warning) {
+			found = true
+		}
+	}
+	if !found || warning.OldArchiveDigest != drifted || warning.NewArchiveDigest != archiveDigest {
+		t.Fatalf("expected archive-evidence-refreshed warning, got %v (warning %+v)", errs, warning)
+	}
+	if warning.MarketplaceURL != server.URL || warning.InstanceID != "mp" {
+		t.Fatalf("warning missing endpoint identity: %+v", warning)
+	}
+
+	strict := &Resolver{Cache: cache, LockEvidenceStrict: true}
+	resolved, errs = strict.Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeRefresh)
+	if len(resolved) != 0 || len(errs) != 1 {
+		t.Fatalf("strict resolve artifacts=%d errors=%v", len(resolved), errs)
+	}
+	if !strings.Contains(errs[0].Error(), "locked archive digest drifted") || !strings.Contains(errs[0].Error(), "sync") || !strings.Contains(errs[0].Error(), "update") {
+		t.Fatalf("strict error not actionable: %v", errs[0])
+	}
+
+	orgCfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: server.URL, InstanceID: "mp", Source: config.Organization,
+		Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "src", Kind: "skill", Name: "review",
+			Revision: contentDigest, Digest: contentDigest,
+			LockArchiveDigest: drifted,
+		}},
+	}}}
+	resolved, errs = r.Resolve(ctx, orgCfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeRefresh)
+	if len(resolved) != 0 || len(errs) != 1 {
+		t.Fatalf("organization resolve artifacts=%d errors=%v", len(resolved), errs)
+	}
+	if !strings.Contains(errs[0].Error(), "managed externally") || !strings.Contains(errs[0].Error(), "organization") {
+		t.Fatalf("organization drift error not fail-closed: %v", errs[0])
+	}
+}

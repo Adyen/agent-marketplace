@@ -357,6 +357,18 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				continue
 			}
 			if string(latest.ContentDigest) == pin.Digest && !marketplace.IndexOnlyOccurrenceChanged(pin, latest) {
+				verified, refreshed, err := refreshDriftedArchiveEvidence(ctx, resolverMP, entry, pin, latest)
+				if err != nil {
+					return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
+				}
+				if refreshed {
+					item.Skipped = false
+					item.NewPin = pin
+					item.ArchiveDigest = verified
+					item.Reason = fmt.Sprintf("archive evidence refreshed %s -> %s", pin.LockArchiveDigest, verified)
+					plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
+					continue
+				}
 				item.Reason = "content digest unchanged"
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
@@ -382,6 +394,20 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 		}
 	}
 	return plans, nil
+}
+
+func refreshDriftedArchiveEvidence(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, latest store.AssessedResourceRevision) (string, bool, error) {
+	if pin.LockArchiveDigest == "" || latest.ArchiveDigest == "" || string(latest.ArchiveDigest) == pin.LockArchiveDigest {
+		return "", false, nil
+	}
+	verified, err := resolverMP.RefreshArchiveEvidence(ctx, entry, pin)
+	if err != nil {
+		return "", false, err
+	}
+	if verified == "" || verified == pin.LockArchiveDigest {
+		return "", false, nil
+	}
+	return verified, true, nil
 }
 
 func marketplaceUpdateKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {

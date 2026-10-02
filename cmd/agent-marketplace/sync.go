@@ -133,7 +133,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
+	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors
@@ -141,6 +141,12 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	mergedCfg := syncResult.MergedCfg
 	resolvedCount := len(syncResult.Resolved)
 	report := syncResult.Report
+
+	if !locked && !offline && len(errs) == 0 {
+		if _, refreshErr := refreshDriftedMarketplaceLocks(ctx, repoRoot, localDir, mergedCfg, syncResult.Warnings); refreshErr != nil {
+			errs = append(errs, fmt.Errorf("refresh Marketplace lock evidence: %w", refreshErr))
+		}
+	}
 
 	// Collect stale selections before strict mode reclassifies them.
 	// Only collect direct selections (not collection-sourced) for pruning.

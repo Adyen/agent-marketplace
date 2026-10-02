@@ -69,9 +69,10 @@ type ResolveOptions struct {
 	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
 	// MarketplaceMode overrides the mode derived from CatalogMode when set,
 	// except that Offline always forces CachedNoFetch.
-	MarketplaceMode          *resolver.MarketplaceResolveMode
-	marketplaceInstall       *marketplace.PreparedInstall
-	marketplaceInstallSource config.Source
+	MarketplaceMode               *resolver.MarketplaceResolveMode
+	marketplaceInstall            *marketplace.PreparedInstall
+	marketplaceInstallSource      config.Source
+	MarketplaceLockEvidenceStrict bool
 	// ConfigLoadMode selects organization-lock loading semantics; the default
 	// is online. Offline and cached-only catalog operations always force strict
 	// loading, preserving their existing requirement for on-disk evidence.
@@ -578,6 +579,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		mpMode = resolver.MarketplaceResolveModeCachedNoFetch
 	}
 	marketplaceResolver := marketplace.NewResolver()
+	marketplaceResolver.LockEvidenceStrict = opts.MarketplaceLockEvidenceStrict
 	// Keep the effective registry origin policy on the Marketplace resolver as
 	// well as on the loaded config. PrepareLocator uses the resolver directly,
 	// while normal sync passes the loaded config through the generic resolver.
