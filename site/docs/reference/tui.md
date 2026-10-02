@@ -37,6 +37,8 @@ The TUI shows at most 50 results per endpoint and query, with no pagination. Nar
 
 If a config layer has no lock, the TUI can browse its source's current content and shows a warning. It does not create the lock. An invalid lock that exists blocks that fallback.
 
+A Marketplace can republish a resource's archive without changing its content (an archive-evidence repair). When your lock still pins the old archive digest, `s` and `u` refresh the lock to the digest the Marketplace now serves and re-download the verified artifact. The run stays successful: the toast shows `Sync complete with N warning(s)` (or `Update complete with N warning(s)`) and `e` lists the `marketplace.archive-evidence-refreshed` warning. A sync or update with nothing to repair stays quiet and does not rewrite the lock. If the new artifact cannot be fetched, or the lock belongs to a read-only scope such as a deployed organization lock, the operation fails and leaves your installed files and lock unchanged. See [lockfiles](./lockfiles.md) for the lock fields this refreshes and the `sync --locked`/`sync --check` behavior.
+
 A configuration load error blocks selection changes until you fix the file with `E`. Catalog, resolution, and materialization failures keep the loaded rows visible. Rows that can normally be toggled still open the scope dialog, including selections shown as unavailable, and drift stays marked as failed.
 
 ## Keys

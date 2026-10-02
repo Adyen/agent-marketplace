@@ -167,6 +167,7 @@ func TestInitDoesNotInvokeDependencyLifecycle(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
 func TestDependencyLifecycleWarningsSurfaceWithoutFailure(t *testing.T) {
 	warning := errors.New("marketplace.archive-evidence-refreshed: src/skill/review locked archive digest sha256:aaaa refreshed to sha256:bbbb for the unchanged content digest")
 	second := errors.New("marketplace.archive-evidence-refreshed: src/skill/audit locked archive digest sha256:cccc refreshed to sha256:dddd for the unchanged content digest")

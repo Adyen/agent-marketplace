@@ -6,6 +6,7 @@ import { expect, test } from "@microsoft/tui-test";
 
 import { defineFixture, step, waitForExit } from "./helpers.js";
 
+// spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
 const journey = defineFixture("marketplace-archive-refresh", ["tui"], 80, 24, { userMarketplaceDrift: true });
 test.use(journey.options);
 test.beforeAll(journey.setup);

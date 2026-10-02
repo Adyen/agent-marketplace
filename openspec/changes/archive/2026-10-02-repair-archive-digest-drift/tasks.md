@@ -40,6 +40,16 @@
   writing, with a message directing the user to plain `sync` or `update`;
   verify with a locked-mode test asserting the actionable error and unchanged
   lock bytes
+- [x] 2.5 Cover the production TUI lifecycle (human-confirmed scope): TUI
+  sync and update persist refreshed archive evidence through the same
+  writable reconciliation, surface `marketplace.archive-evidence-refreshed`
+  as a non-fatal warning in the diagnostics overlay, stay quiet on a healthy
+  no-op, and fail closed on failed re-acquisition, failed lock publication,
+  or a read-only/externally managed lock; verify with the TUI lifecycle
+  tests in `cmd/agent-marketplace/tui_lifecycle_test.go`, the warning
+  carrier test in `internal/tui/dependency_lifecycle_test.go`, and the
+  `marketplace-archive-refresh` tui-qa journey, annotated
+  `// spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally`
 
 ## 3. Failed attempt cause recording
 

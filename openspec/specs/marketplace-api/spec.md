@@ -199,6 +199,21 @@ last-good installation is preserved when re-acquisition fails.
 - **AND** the client MUST report the refresh rather than fail resolution
 - **AND** the lock's content digest for the resource MUST remain unchanged
 
+#### Scenario: TUI sync and update report the refresh non-fatally
+
+- **WHEN** the interactive TUI runs a sync or update and a locked
+  Marketplace record pins an archive digest that the fetched revision
+  metadata for the identical content digest no longer carries
+- **THEN** the TUI MUST persist the refreshed archive evidence to the
+  writable lock and report the refresh as a non-fatal
+  `marketplace.archive-evidence-refreshed` warning visible in the
+  diagnostics view
+- **AND** a healthy sync or update without drift MUST complete without a
+  refresh warning or lock write
+- **AND** a failed re-acquisition or a lock managed by a read-only scope
+  MUST fail closed, preserving the last-good installation and the
+  unchanged lock
+
 ### Requirement: Collection manifest format
 
 A collection manifest SHALL be a standalone, deterministic JSON manifest for

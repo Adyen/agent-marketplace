@@ -13,6 +13,7 @@ import (
 )
 
 // spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+// spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
 func TestTUIDependencyLifecycleRefreshesDriftedLockArchiveEvidence(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -89,6 +90,7 @@ func TestTUIDependencyLifecycleRefreshesDriftedLockArchiveEvidence(t *testing.T)
 }
 
 // spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+// spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
 func TestTUIDependencyLifecycleFailedReacquisitionPreservesLastGood(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -138,6 +140,7 @@ func TestTUIDependencyLifecycleFailedReacquisitionPreservesLastGood(t *testing.T
 }
 
 // spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+// spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
 func TestTUIDependencyLifecycleRefreshedLockPublicationFailurePreservesLastGood(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
