@@ -2860,13 +2860,10 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		ensureParents(path)
 		nodes[path] = portableVirtualNode{mode: portableArtifactMode(a.Mode), content: a.Bytes}
 	}
-	var addSupport func(string, string) error
-	addSupport = func(root, rel string) error {
-		entries, err := os.ReadDir(root)
+	var addSupport func(*fsboundary.Dir, string) error
+	addSupport = func(root *fsboundary.Dir, rel string) error {
+		entries, err := readSupportSourceDirectory(root, rel)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
 			return err
 		}
 		for _, entry := range entries {
@@ -2880,12 +2877,14 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 			if entry.Name() == ".git" {
 				continue
 			}
-			childPath := filepath.Join(root, entry.Name())
-			info, err := os.Stat(childPath) // copyFile/copyDir follows source links.
-			if err != nil {
-				return err
-			}
-			if info.IsDir() {
+			if entry.IsDir() { // copyFile/copyDir follows source links.
+				directory, err := root.OpenPath(filepath.FromSlash(childRel))
+				if err != nil {
+					return err
+				}
+				if err := directory.Close(); err != nil {
+					return err
+				}
 				// Mirror copySupportFilesExcluding: VCS internals are never
 				// part of the support tree, so the dry-run digest must
 				// exclude them exactly like the real cache copy does.
@@ -2896,19 +2895,19 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 				// copyDir does not chmod an already-created directory, so an
 				// artifact-created parent keeps its existing 0755 mode.
 				if _, exists := nodes[childRel]; !exists {
-					nodes[childRel] = portableVirtualNode{dir: true, mode: info.Mode().Perm()}
+					nodes[childRel] = portableVirtualNode{dir: true, mode: 0o755}
 				}
-				if err := addSupport(childPath, childRel); err != nil {
+				if err := addSupport(root, childRel); err != nil {
 					return err
 				}
 				continue
 			}
-			data, err := os.ReadFile(childPath)
+			data, identity, err := readSupportSourceSnapshot(root, filepath.FromSlash(childRel))
 			if err != nil {
 				return err
 			}
 			ensureParents(childRel)
-			nodes[childRel] = portableVirtualNode{mode: info.Mode().Perm(), content: data}
+			nodes[childRel] = portableVirtualNode{mode: identity.Mode.Perm(), content: data}
 		}
 		return nil
 	}
@@ -2918,8 +2917,21 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 				return "", err
 			}
 		}
-		if err := addSupport(link.sourceDir, ""); err != nil {
+		absolute, err := filepath.Abs(link.sourceDir)
+		if err != nil {
 			return "", err
+		}
+		root, err := fsboundary.OpenDir(absolute)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				return "", err
+			}
+		} else {
+			err = addSupport(root, ".")
+			closeErr := root.Close()
+			if err != nil || closeErr != nil {
+				return "", errors.Join(err, closeErr)
+			}
 		}
 	}
 	paths := make([]string, 0, len(nodes))
