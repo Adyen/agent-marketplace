@@ -1,13 +1,13 @@
 # TUI Product Contract
 
-This document defines the `agent-marketplace tui` behavior covered by GitHub issue #41. It does not redefine configuration schema, migration, target precedence, or materialization policy; `AGENTS.md` and their owning packages govern those. The TUI consumes those contracts and must report their outcomes truthfully.
+This document records the `agent-marketplace tui` behavior covered by GitHub issue #41. It is a reference lead for maintainers, not a normative contract: `openspec/specs/` is the normative description of user-observable behavior, including the `tui-navigation`, `tui-rendering`, `tui-interactions`, and `tui-feedback` capabilities. It does not redefine configuration schema, migration, target precedence, or materialization policy; `AGENTS.md`, `openspec/specs/`, and their owning packages govern those. The TUI consumes those contracts and must report their outcomes truthfully.
 
 ## Authority and enforcement
 
 Contract sources apply in this order:
 
 1. Repository security and configuration rules.
-2. Current normative product documentation, including this contract.
+2. Normative `openspec/specs/` specifications, including the `tui-*` capabilities.
 3. Behavioral tests through public TUI, pipeline, and materialization paths.
 4. Direct real-terminal QA reports. These are evidence and never define intended behavior by themselves.
 
@@ -28,13 +28,15 @@ Replaceable detail rendering and snapshot-producing load, reload, refresh, and u
 
 Rejected stale completions do not change the active pane, input focus, selected resource, detail content, rows, cached configuration, drift state, or success and error state. An update may already have changed disk before its state delivery becomes stale, so a stale update result schedules a new authoritative snapshot instead of applying either stale outcome.
 
-Accepted snapshot rebuilds restore stable row or section selection and keep the identity of an open detail resource when rows are inserted or reordered. After a resource is disabled, the mutation-triggered rebuild instead selects the next resource that was below it, so the cursor does not follow the disabled resource to its new section.
+Accepted snapshot rebuilds restore stable row or section selection and retain the identity of an open detail resource when rows are inserted or reordered; the restored selection keeps its line within the list viewport, so rows inserted above it do not shift it on screen. After disabling a resource, the mutation-triggered rebuild instead selects the next resource that was below it, so the cursor does not follow the disabled resource to its new section.
+
+The startup snapshot is delivered progressively under one request generation. Once the merged configuration validates, the actual locally configured selection set renders immediately as verification-pending rows: explicit selections plus local-directory `all:true` and tag selections expanded through a read-only local catalog ingest (never network fetch or lock access), with configured V4 and personal-local excludes already applied. They show a green check and scope badge for selections enabled in validated config, with an explicit verification-pending status and footer indicator; neither check nor badge claims installation or in-sync state, and they cannot open toggles, installs, or sync until verified inventory replaces them. So that verification does not reshuffle the list, pending rows take the positions and badges verified inventory will give them: optional organization Marketplace resources excluded by the user render unchecked with their Global badge, selected collections render unchecked without a badge (verified inventory lists their members as enabled and the collection itself as available), Marketplace collection pins render no row, registry selections carry their harness-override badge, and an optional collection member yields to another enabled selection of the same resource. A Marketplace collection whose members are not yet pinned — such as an organization collection awaiting transient acquisition — expands from its locally verified cached manifest (the exact configured revision when cached, otherwise the most recently cached one). That read never fetches, its members are pending display only, and a missing or unverifiable cache entry leaves the members to arrive with verified inventory. When an organization Marketplace has no deployed lock, these provisional rows come from the validated pre-acquisition configuration — never from the pin-stripped browse-safe configuration — so configured selections render while transient acquisition is still blocked. Verified inventory then replaces pending rows without duplicates or fabricated badges; a provisional failure leaves recoverable diagnostics and never authorizes mutation. A config stage then publishes it and starts cached-first Marketplace discovery, so cached browsing and search results can render before local catalog verification, detail capture, and the materialization dry run finish. Once exact-lock and catalog resolution complete, an inventory stage publishes the verified rows: they are navigable, searchable, and otherwise-eligible config-only toggles may begin, while drift remains explicitly pending and is never presented as `in sync` or assessed. A final assessed stage then replaces the pending inventory with authoritative rows, drift, and diagnostics. Stages share the snapshot generation, so a superseded or failed stream cannot overwrite newer rows, selection, pane, filters, operation outcome, or drift, and an intermediate stage can never complete a pending mutation reload. An invalid configuration still delivers only one fail-closed final stage. When an organization Marketplace has no deployed lock and must be transiently acquired, the config stage additionally publishes a browse-safe configuration carrying only the well-known-verified endpoint identity — never provisional instance IDs or unverified resource pins — so cached browsing and search render while acquisition is still blocked; acquisition and exact validation remain mandatory before the authoritative inventory, toggles, and pins. Post-write reloads stay single authoritative deliveries. Cached Marketplace pages are read on the discovery command's goroutine, never inside Bubble Tea's `Update`.
 
 ### Marketplace discovery
 
 Marketplace discovery is replaceable and non-authoritative.
 
-- The TUI renders the authoritative local snapshot first. Each configured Marketplace may then add a first page of at most 50 results to the existing Available group.
+- The TUI renders pending local selections first and replaces them with verified inventory as resolution completes. Each configured Marketplace may add a first page of at most 50 results to the existing Available group.
 - Search filters loaded rows immediately and starts a remote search after approximately 250 milliseconds without input. A new request cancels and supersedes the prior generation.
 - Clearing search restores the empty-query browse results.
 - Discovery has no pagination and does not change the command-line `search` interface.
@@ -70,7 +72,7 @@ A successful resource-toggle write stays active until an authoritative post-writ
 
 Snapshot diagnostics and operation diagnostics have separate lifecycles. An accepted snapshot atomically replaces earlier snapshot diagnostics without erasing an operation failure. An operation failure stays visible until a successful operation of the same kind supersedes it. Stable diagnostic identity deduplicates repeated values within one outcome.
 
-Hard snapshot errors make drift unavailable or failed, never `in sync`. A configuration parse or load failure may produce no structured rows at all. In that case the E editor remains the recovery path, because row intent cannot be inferred safely.
+Hard snapshot errors make drift unavailable or failed, never `in sync`. Before the assessed stage lands, drift is explicitly pending and shown as unavailable rather than `in sync` or assessed. A configuration parse or load failure may produce no structured rows at all. In that case the E editor remains the recovery path, because row intent cannot be inferred safely.
 
 Hard catalog, resolution, dry-run, or materialization errors keep their diagnostics and failed drift but retain the partial inventory:
 
@@ -124,4 +126,4 @@ The full resource view is a split bundle browser. The left pane is an expandable
 
 ## Performance evidence
 
-Changed user-visible render and state paths keep their benchmarks. Base and head comparisons use identical selections where a base equivalent exists; genuinely new paths record a repeated HEAD baseline with allocation data.
+Changed user-visible render and state paths keep their benchmarks. Progressive startup reports milestones separately, with allocation data on identical fixtures: config validation as a prerequisite (`config_ready_prerequisite`), the real startup path from staged config read through the config stage and the cached-first discovery it launches until the first cached Marketplace row is rendered (`first_visible`), first toggle-ready verified inventory (`toggle_ready`), and the fully assessed snapshot (`fully_assessed`). Base and head comparisons use identical selections where a base equivalent exists; genuinely new paths record a repeated HEAD baseline with allocation data.

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -14,7 +14,7 @@ func TestKeyMapNavigationBindingsMatch(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		msg     tea.KeyMsg
+		msg     tea.KeyPressMsg
 		binding key.Binding
 		want    bool
 	}{
@@ -22,23 +22,18 @@ func TestKeyMapNavigationBindingsMatch(t *testing.T) {
 		{"up matches Up", keyNamed("up"), k.Up, true},
 		{"j matches Down", keyPress('j'), k.Down, true},
 		{"down matches Down", keyNamed("down"), k.Down, true},
-		{"ctrl+d matches HalfPageDown", tea.KeyMsg{Type: tea.KeyCtrlD}, k.HalfPageDown, true},
-		{"ctrl+u matches HalfPageUp", tea.KeyMsg{Type: tea.KeyCtrlU}, k.HalfPageUp, true},
+		{"ctrl+d matches HalfPageDown", tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}, k.HalfPageDown, true},
+		{"ctrl+u matches HalfPageUp", tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl}, k.HalfPageUp, true},
 		{"f matches PageDown", keyPress('f'), k.PageDown, true},
-		{"ctrl+f matches PageDown", tea.KeyMsg{Type: tea.KeyCtrlF}, k.PageDown, true},
-		{"pgdown matches PageDown", tea.KeyMsg{Type: tea.KeyPgDown}, k.PageDown, true},
+		{"ctrl+f matches PageDown", tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl}, k.PageDown, true},
+		{"pgdown matches PageDown", tea.KeyPressMsg{Code: tea.KeyPgDown}, k.PageDown, true},
 		{"b matches PageUp", keyPress('b'), k.PageUp, true},
-		{"ctrl+b matches PageUp", tea.KeyMsg{Type: tea.KeyCtrlB}, k.PageUp, true},
-		{"pgup matches PageUp", tea.KeyMsg{Type: tea.KeyPgUp}, k.PageUp, true},
+		{"ctrl+b matches PageUp", tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl}, k.PageUp, true},
+		{"pgup matches PageUp", tea.KeyPressMsg{Code: tea.KeyPgUp}, k.PageUp, true},
 		{"g matches Top", keyPress('g'), k.Top, true},
-		{"home matches Top", tea.KeyMsg{Type: tea.KeyHome}, k.Top, true},
+		{"home matches Top", tea.KeyPressMsg{Code: tea.KeyHome}, k.Top, true},
 		{"G matches Bottom", keyPress('G'), k.Bottom, true},
-		{"end matches Bottom", tea.KeyMsg{Type: tea.KeyEnd}, k.Bottom, true},
-		{"tab matches NextTab", keyNamed("tab"), k.NextTab, true},
-		{"shift+tab matches PrevTab", keyNamed("shift+tab"), k.PrevTab, true},
-		{"1 matches Tab1", keyPress('1'), k.Tab1, true},
-		{"2 matches Tab2", keyPress('2'), k.Tab2, true},
-		{"3 matches Tab3", keyPress('3'), k.Tab3, true},
+		{"end matches Bottom", tea.KeyPressMsg{Code: tea.KeyEnd}, k.Bottom, true},
 		{"x does not match Up", keyPress('x'), k.Up, false},
 	}
 	for _, tt := range tests {
@@ -56,7 +51,7 @@ func TestKeyMapActionBindingsMatch(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		msg     tea.KeyMsg
+		msg     tea.KeyPressMsg
 		binding key.Binding
 		want    bool
 	}{
@@ -87,7 +82,7 @@ func TestKeyMapFoldBindingsMatch(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		msg     tea.KeyMsg
+		msg     tea.KeyPressMsg
 		binding key.Binding
 		want    bool
 	}{
@@ -111,7 +106,7 @@ func TestKeyMapOverlayBindingsMatch(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		msg     tea.KeyMsg
+		msg     tea.KeyPressMsg
 		binding key.Binding
 		want    bool
 	}{
@@ -134,7 +129,7 @@ func TestKeyMapToggleModalBindingsMatch(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		msg     tea.KeyMsg
+		msg     tea.KeyPressMsg
 		binding key.Binding
 		want    bool
 	}{
@@ -159,7 +154,7 @@ func TestKeyMapDetailBindingsMatch(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		msg     tea.KeyMsg
+		msg     tea.KeyPressMsg
 		binding key.Binding
 		want    bool
 	}{
@@ -181,7 +176,7 @@ func TestKeyMapSearchBindingsMatch(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		msg     tea.KeyMsg
+		msg     tea.KeyPressMsg
 		binding key.Binding
 		want    bool
 	}{
@@ -203,7 +198,7 @@ func TestKeyMapConfirmBindingsMatch(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		msg     tea.KeyMsg
+		msg     tea.KeyPressMsg
 		binding key.Binding
 		want    bool
 	}{
@@ -253,8 +248,8 @@ func TestKeyMapFullHelpReturnsGroups(t *testing.T) {
 func TestHelpKeepsLongNavigationAliasesTogether(t *testing.T) {
 	output := ansi.Strip(renderHelp(NewModel("/repo", "/home")))
 	for _, want := range []string{
-		"f/ctrl+f/pgdn  page down",
-		"b/ctrl+b/pgup  page up",
+		"f/ctrl+f/pgdn page down",
+		"b/ctrl+b/pgup page up",
 	} {
 		found := false
 		for _, line := range strings.Split(output, "\n") {
@@ -273,8 +268,7 @@ func TestKeyMapHelpTextConsistency(t *testing.T) {
 	// Every binding should have non-empty help text.
 	k := defaultKeyMap
 	allBindings := []key.Binding{
-		k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom, k.NextTab, k.PrevTab,
-		k.Tab1, k.Tab2, k.Tab3,
+		k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom,
 		k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand,
 		k.Reload, k.Sync, k.Update, k.Harness, k.EditConfig,
 		k.FoldPrefix, k.FoldToggle, k.FoldAll, k.ExpandAll,
@@ -300,8 +294,7 @@ func TestKeyMapHelpTextConsistency(t *testing.T) {
 func TestKeyMapAllBindingsEnabled(t *testing.T) {
 	k := defaultKeyMap
 	allBindings := []key.Binding{
-		k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom, k.NextTab, k.PrevTab,
-		k.Tab1, k.Tab2, k.Tab3,
+		k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom,
 		k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand,
 		k.Reload, k.Sync, k.Update, k.Harness, k.EditConfig,
 		k.FoldPrefix, k.FoldToggle, k.FoldAll, k.ExpandAll,

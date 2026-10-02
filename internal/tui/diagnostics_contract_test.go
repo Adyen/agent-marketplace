@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -16,7 +17,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -166,10 +166,8 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 
 	updated, _ = m.Update(syncDoneMsg{err: syncFailure})
 	m = updated.(Model)
-	if len(m.errs) != 1 || !errors.Is(m.errs[0], syncFailure) {
-		t.Fatalf("sync failure not retained: %v", m.errs)
-	}
-
+	// The failed sync ends when the authoritative reload it scheduled is
+	// accepted; only then is its own error recorded as the verdict.
 	generation := m.requests.active(requestSnapshot)
 	updated, _ = m.Update(snapshotLoadedMsg{
 		generation:      generation,
@@ -178,13 +176,20 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 	})
 	m = updated.(Model)
 	if len(m.errs) != 1 || !errors.Is(m.errs[0], syncFailure) {
-		t.Fatalf("snapshot erased operation failure: %v", m.errs)
+		t.Fatalf("sync failure not retained: %v", m.errs)
 	}
 	if len(m.warnings) != 0 {
 		t.Fatalf("replacement snapshot retained stale warning: %v", m.warnings)
 	}
 
 	updated, _ = m.Update(syncDoneMsg{})
+	m = updated.(Model)
+	generation = m.requests.active(requestSnapshot)
+	updated, _ = m.Update(snapshotLoadedMsg{
+		generation:      generation,
+		driftAssessment: driftReady,
+		mergedCfg:       &config.Config{},
+	})
 	m = updated.(Model)
 	if len(m.errs) != 0 {
 		t.Fatalf("successful sync did not recover its failure: %v", m.errs)
@@ -224,7 +229,7 @@ func TestBrokenSnapshotRowsCanOpenMutationModal(t *testing.T) {
 	m := modelWithSelectedRow(t, r)
 	m.pane = paneList
 
-	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneToggleModal {
 		t.Fatalf("rows under hard snapshot errors did not open the toggle modal: pane %v", m.pane)
@@ -342,7 +347,7 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	if missing.DetailSource != nil {
 		t.Fatal("missing row captured a detail source")
 	}
-	detail := renderDetailFullContent(*missing, 80)
+	detail := renderDetailFullContent(newTheme(true), *missing, 80)
 	if !strings.Contains(detail, "No verified content is available") {
 		t.Fatalf("missing row detail = %q", detail)
 	}
@@ -538,7 +543,7 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 			break
 		}
 	}
-	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneToggleModal {
 		t.Fatalf("unavailable row did not open the scope modal: pane %v", m.pane)
@@ -646,7 +651,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		t.Fatal("no section header available under invalid config")
 	}
 	wasFolded := m.currentFoldState()[sectionPath]
-	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneList {
 		t.Fatalf("Space on a section header moved the pane under invalid config: pane %v", m.pane)
@@ -657,7 +662,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 	if m.currentFoldState()[sectionPath] == wasFolded {
 		t.Fatal("Space on a section header did not toggle the fold under invalid config")
 	}
-	updated, cmd = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, cmd = m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if cmd != nil {
 		t.Fatal("unfolding the section header returned a command under invalid config")
@@ -672,7 +677,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		t.Fatal("artifact selection was not restored under invalid config")
 	}
 
-	updated, cmd = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, cmd = m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneList {
 		t.Fatalf("Space opened a structured mutation modal under invalid config: pane %v", m.pane)
@@ -684,7 +689,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		t.Fatalf("Space guidance = %#v, want an edit-config toast", cmd())
 	}
 
-	updated, cmd = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	updated, cmd = m.handleKey(tea.KeyPressMsg{Code: 'H', Text: string('H')})
 	m = updated.(Model)
 	if m.pane != paneList {
 		t.Fatalf("Harness opened a structured mutation modal under invalid config: pane %v", m.pane)
@@ -696,7 +701,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		t.Fatalf("Harness guidance = %#v, want an edit-config toast", cmd())
 	}
 
-	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: 'E', Text: string('E')})
 	m = updated.(Model)
 	if m.pane != paneEditConfigModal {
 		t.Fatalf("invalid config did not keep the editor reachable: pane %v", m.pane)
@@ -722,7 +727,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 			break
 		}
 	}
-	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneToggleModal {
 		t.Fatalf("catalog-error snapshot blocked the scope modal: pane %v", m.pane)

@@ -12,7 +12,7 @@ This package uses `@microsoft/tui-test` to launch the real `agent-marketplace` b
 
 Each interaction contract has its own file. The `*.spec.ts` files are PTY journeys run by `tui-test`; the `*.test.ts` files run under `node --test`.
 
-1. `tests/launch-browse-inspect.spec.ts` launches with no arguments, browses all tabs, opens details, returns, and quits.
+1. `tests/launch-browse-inspect.spec.ts` launches with no arguments, browses the single status view, opens details, returns, and quits.
 2. `tests/search-and-select.spec.ts` searches, checks that the match stays and a distractor disappears, and selects the match.
 3. `tests/local-toggle-and-sync.spec.ts` toggles an available skill locally, observes pending drift, syncs, and verifies the config and the files written to the harness folders.
 4. `tests/help-and-return.spec.ts` opens help and returns to the same selection.
@@ -23,11 +23,12 @@ Each interaction contract has its own file. The `*.spec.ts` files are PTY journe
 9. `tests/org-marketplace-lock-failure.spec.ts` starts cold with an organization v4 Marketplace declaration whose lock is missing. It verifies that TUI startup, a warm selection edit, sync, and update all reuse the exact resource in memory without writing organization policy. It enforces time budgets for navigation, write acknowledgement, and settled state while the stub delays acquisition. It then shows that CLI sync, and a full wipe of user-side state followed by re-initialization, recover the same way.
 10. `tests/org-marketplace-lock-recovery.spec.ts` runs the same exact organization Marketplace resource with its lock published, and verifies the settled TUI baseline, the status groups, and a passing drift check.
 11. `tests/reinstall-recovery.test.ts` deletes every personal and generated layer, re-initializes, syncs back to a healthy workspace, and verifies that plain sync recreates a missing repository lock.
-12. `tests/status-disable-scroll.spec.ts` disables an enabled resource in an overflowing Status list and verifies that the adjacent row and its section header stay visible.
+12. `tests/status-disable-scroll.spec.ts` disables an enabled resource in an overflowing status list and verifies that the adjacent row and its section header stay visible.
 13. `tests/accept-user-migration.spec.ts` accepts the startup migration prompt. It verifies that only the legacy user root converts (with a byte-exact backup) and that the committed legacy repository root is untouched. It then selects a repository-declared Git resource globally into the migrated user root, syncs, and passes a drift check.
 14. `tests/v4-directory-global-toggle.spec.ts` starts on a v4 user config with a local directory source, enables a skill globally, syncs it into the Factory, Gemini, and Devin user roots, disables it, syncs again, and passes `sync --check` without creating any lockfile.
 15. `tests/v4-directory-error-visibility.spec.ts` starts on the same v4 directory setup, makes the user config invalid while the toggle modal is open, and verifies that the failed toggle keeps its error visible, the footer keeps its recovery actions at 50x12, and the full diagnostic opens without the config being rewritten.
 16. `tests/marketplace-archive-refresh.spec.ts` starts on a v4 user root declaring a Marketplace source whose lock pins the stub's original archive digest. The endpoint then serves a repaired archive digest for the same content digest, and the journey verifies that an update refreshes the user lock, reports a visible `marketplace.archive-evidence-refreshed` warning in the diagnostics overlay, leaves the materialized skill unchanged, and that a healthy repeat update emits no warning or lock write.
+17. `tests/layout-quality.spec.ts` checks that the footer keeps the command palette, help and quit hints, that the toggle and edit-config modals render as one complete frame that keeps file names visible, and that the footer and palette still fit at 50x12.
 
 `tests/target-pid.test.ts` is a helper test. It checks that the PID lookup used by the SIGTERM journey waits for the launcher to publish the PID.
 

@@ -11,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -21,17 +23,28 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-	tea "github.com/charmbracelet/bubbletea"
+)
+
+type snapshotStage uint8
+
+const (
+	snapshotStageFinal snapshotStage = iota
+	snapshotStageConfig
+	snapshotStageInventory
 )
 
 type snapshotLoadedMsg struct {
 	generation           requestGeneration
+	stage                snapshotStage
+	stages               <-chan snapshotLoadedMsg
 	rows                 []row
 	driftReport          materialize.DriftReport
 	driftAssessment      driftAssessment
 	catalogs             map[string][]catalog.Entry
 	resolved             []resolver.ResolvedArtifact
 	mergedCfg            *config.Config
+	provisionalCfg       *config.Config
+	provisionalRows      []row
 	configuredRegistries []config.RegistryEntry
 	inventoryResult      *pipeline.ResolveResult
 	materializationModes config.MaterializationModes
@@ -65,6 +78,90 @@ func toastExpiryCmd(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg {
 		return toastExpiredMsg{}
 	})
+}
+
+// toastStackMax bounds the visible toast stack so transient notices can
+// never grow unbounded or bury required controls.
+const toastStackMax = 3
+
+type queuedToast struct {
+	text string
+	exp  time.Time
+}
+
+// pushToast adds a toast to the visible stack, keeping the newest
+// toastStackMax entries, and mirrors the newest one for the footer segment.
+func (m *Model) pushToast(text string, duration time.Duration) {
+	exp := time.Now().Add(duration)
+	m.toast = text
+	m.toastExp = exp
+	m.toastQueue = append(m.toastQueue, queuedToast{text: text, exp: exp})
+	if len(m.toastQueue) > toastStackMax {
+		m.toastQueue = append([]queuedToast(nil), m.toastQueue[len(m.toastQueue)-toastStackMax:]...)
+	}
+}
+
+// enqueueToast pushes text onto the visible toast stack and schedules its
+// expiry tick.
+func (m *Model) enqueueToast(text string, duration time.Duration) tea.Cmd {
+	m.pushToast(text, duration)
+	return toastExpiryCmd(duration)
+}
+
+// visibleToasts returns the live toast stack, oldest first. A footer toast
+// set outside pushToast (legacy direct write) still renders as a
+// single-entry stack.
+func (m Model) visibleToasts() []queuedToast {
+	now := time.Now()
+	var out []queuedToast
+	for _, t := range m.toastQueue {
+		if now.Before(t.exp) {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 && m.toast != "" && now.Before(m.toastExp) {
+		out = append(out, queuedToast{text: m.toast, exp: m.toastExp})
+	}
+	return out
+}
+
+// layeredToasts returns the toasts rendered in the top-right layer. The
+// footer already mirrors the newest toast, so the layer carries only the
+// remaining stack and each notification appears exactly once. The error
+// footer renders no toast, so there the whole stack goes to the layer.
+func (m Model) layeredToasts() []queuedToast {
+	toasts := m.visibleToasts()
+	if len(m.errs) > 0 {
+		return toasts
+	}
+	if len(toasts) <= 1 {
+		return nil
+	}
+	return toasts[:len(toasts)-1]
+}
+
+// expireToast drops every toast whose timer elapsed, mirrors the newest
+// survivor for the footer, and re-arms a tick for the next expiry.
+func (m *Model) expireToast() tea.Cmd {
+	now := time.Now()
+	kept := m.toastQueue[:0]
+	for _, t := range m.toastQueue {
+		if now.Before(t.exp) {
+			kept = append(kept, t)
+		}
+	}
+	m.toastQueue = kept
+	if !m.toastExp.IsZero() && !now.Before(m.toastExp) {
+		m.toast = ""
+		m.toastExp = time.Time{}
+	}
+	if len(m.toastQueue) == 0 {
+		return nil
+	}
+	newest := m.toastQueue[len(m.toastQueue)-1]
+	m.toast = newest.text
+	m.toastExp = newest.exp
+	return toastExpiryCmd(time.Until(m.toastQueue[0].exp))
 }
 
 func invalidConfigToastCmd() tea.Cmd {
@@ -131,11 +228,33 @@ var (
 	readSnapshotForUpdate = readSnapshotForWorkspace
 )
 
+type snapshotStreamClosedMsg struct{}
+
 func loadSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
 		snapshot := readSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadCached)
 		snapshot.generation = generation
 		return snapshot
+	}
+}
+
+// loadSnapshotProgressive schedules the staged startup snapshot: a validated
+// config stage (which starts cached Marketplace discovery), a verified
+// inventory stage, and the final assessed snapshot, all under one generation.
+func loadSnapshotProgressive(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
+	return waitSnapshotStages(readSnapshotStagesForWorkspace(ctx, workspace, homeDir, catalogLoadCached, generation))
+}
+
+func waitSnapshotStages(stages <-chan snapshotLoadedMsg) tea.Cmd {
+	if stages == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg, ok := <-stages
+		if !ok {
+			return snapshotStreamClosedMsg{}
+		}
+		return msg
 	}
 }
 
@@ -145,6 +264,30 @@ func refreshSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir 
 		snapshot.generation = generation
 		return refreshLoadedMsg{snapshotLoadedMsg: snapshot}
 	}
+}
+
+// readSnapshotStages runs one snapshot read and delivers its progressive
+// stages on the returned channel: validated config, verified inventory, and
+// the assessed result. Every delivery shares the caller's generation so stale
+// streams are rejected by the normal request acceptance path. The channel is
+// buffered past the maximum number of stages, so a reader that stops
+// consuming after a superseded generation cannot block the writer.
+func readSnapshotStagesForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode, generation requestGeneration) <-chan snapshotLoadedMsg {
+	stages := make(chan snapshotLoadedMsg, 5)
+	go func() {
+		defer close(stages)
+		emit := func(msg snapshotLoadedMsg) {
+			msg.generation = generation
+			msg.stages = stages
+			stages <- msg
+		}
+		readSnapshotStaged(ctx, ws, homeDir, mode, emit)
+	}()
+	return stages
+}
+
+func readSnapshotStages(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode, generation requestGeneration) <-chan snapshotLoadedMsg {
+	return readSnapshotStagesForWorkspace(ctx, defaultTUIWorkspace(repoRoot), homeDir, mode, generation)
 }
 
 func loadLocalConfigAt(localDir string) (*config.LocalConfig, error) {
@@ -176,11 +319,52 @@ func invalidWorkspaceSnapshot(err error) snapshotLoadedMsg {
 }
 
 func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+	var snapshot snapshotLoadedMsg
+	readSnapshotStaged(ctx, ws, homeDir, mode, func(msg snapshotLoadedMsg) { snapshot = msg })
+	return snapshot
+}
+
+func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode, emit func(snapshotLoadedMsg)) {
 	ws, err := validatedTUIWorkspace(ws)
 	if err != nil {
-		return invalidWorkspaceSnapshot(err)
+		emit(invalidWorkspaceSnapshot(err))
+		return
 	}
 	repoRoot := ws.RepoRoot()
+	makeBase := func(inspection pipeline.InspectionResult) snapshotLoadedMsg {
+		resolvedResult := inspection.ResolveResult
+		base := snapshotLoadedMsg{
+			catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
+			resolved:             resolvedResult.Resolved,
+			mergedCfg:            resolvedResult.LoadedCfg,
+			inventoryResult:      &resolvedResult,
+			materializationModes: resolvedResult.MaterializationModes,
+			localExcludes:        localExcludes(resolvedResult.LocalCfg),
+			globalHarnesses:      configHarnesses(resolvedResult.GlobalCfg),
+			projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
+			targetHarnesses:      resolvedResult.TargetHarnesses,
+			targetHarnessSource:  resolvedResult.TargetHarnessSource,
+			pendingMigration:     pendingMigrationFor(repoRoot, ws.LocalConfigDir(), homeDir),
+			driftAssessment:      driftFailed,
+			refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
+		}
+		if resolvedResult.MergedCfg != nil {
+			base.configuredRegistries = append([]config.RegistryEntry(nil), resolvedResult.MergedCfg.Registries...)
+		}
+		for _, issue := range inspection.Issues {
+			severity := diagnosticWarning
+			if issue.Severity == pipeline.IssueError {
+				severity = diagnosticError
+			}
+			base.diagnostics = appendSnapshotDiagnostics(base.diagnostics, severity, diagnosticCategoryFor(issue.Category), issue.Err)
+		}
+		base.diagnostics = deduplicateDiagnostics(base.diagnostics)
+		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
+		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
+		return base
+	}
+	var inventoryRows []row
+	var unavailable bool
 	inspection, releaseExactLease := pipeline.Inspect(ctx, pipeline.InspectOptions{
 		Resolve: pipeline.ResolveOptions{
 			Workspace:     ws,
@@ -206,45 +390,51 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 			},
 			ReadOnlyExactLocks:        true,
 			AllowMissingReadOnlyLocks: true,
+			BrowsingConfigReady: func(merged *config.Config) {
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
+			},
+			ProvisionalConfigReady: func(merged *config.Config, local *config.LocalConfig) {
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged, provisionalRows: buildProvisionalRows(withCachedCollectionLeaves(merged, marketplace.DefaultCache()), local, provisionalLocalCatalogs(merged, ws), provisionalHarnessDefaults())})
+			},
+			ConfigReady: func(merged *config.Config) {
+				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
+			},
+		},
+		Resolved: func(result pipeline.InspectionResult) {
+			resolved := result.ResolveResult
+			recoveryCfg := resolved.LoadedCfg
+			for _, err := range resolved.CatalogErrors {
+				if catalog.IsOverlapWarning(err) {
+					continue
+				}
+				if resolved.MergedCfg != nil {
+					recoveryCfg = resolved.MergedCfg
+				}
+				break
+			}
+			// The verified inventory is published before detail capture and the
+			// materialization dry run: rows are navigable and config-only toggles are
+			// eligible while drift stays explicitly pending.
+			inventoryRows = buildRows(resolved.LoadedCfg, resolved.CatalogLoad.Catalogs, resolved.Resolved, resolved.LocalCfg, materialize.DriftReport{}, harnessDefaultsBySource(resolved.GlobalCfg, resolved.RepoCfg))
+			inventoryRows = appendUnavailableSelectionRows(inventoryRows, recoveryCfg, resolved.LocalCfg, resolved.ResolveErrors, resolved.CatalogLoad.Catalogs)
+			unavailable = rowsHaveUnavailable(inventoryRows)
+			inventory := makeBase(result)
+			inventory.stage = snapshotStageInventory
+			inventory.rows = inventoryRows
+			inventory.driftAssessment = driftUnknown
+			inventory.inventoryResult = nil // the assessed stage owns inventory telemetry
+			emit(inventory)
 		},
 		DryRun: runMaterialize,
 	})
 	defer releaseExactLease()
 	resolvedResult := inspection.ResolveResult
 
-	base := snapshotLoadedMsg{
-		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
-		resolved:             resolvedResult.Resolved,
-		mergedCfg:            resolvedResult.LoadedCfg,
-		inventoryResult:      &resolvedResult,
-		materializationModes: resolvedResult.MaterializationModes,
-		localExcludes:        localExcludes(resolvedResult.LocalCfg),
-		globalHarnesses:      configHarnesses(resolvedResult.GlobalCfg),
-		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
-		targetHarnesses:      resolvedResult.TargetHarnesses,
-		targetHarnessSource:  resolvedResult.TargetHarnessSource,
-		pendingMigration:     pendingMigrationFor(repoRoot, ws.LocalConfigDir(), homeDir),
-		driftAssessment:      driftFailed,
-		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
-	}
-	if resolvedResult.MergedCfg != nil {
-		base.configuredRegistries = append([]config.RegistryEntry(nil), resolvedResult.MergedCfg.Registries...)
-	}
-
-	var diagnostics []tuiDiagnostic
-	for _, issue := range inspection.Issues {
-		severity := diagnosticWarning
-		if issue.Severity == pipeline.IssueError {
-			severity = diagnosticError
-		}
-		diagnostics = appendSnapshotDiagnostics(diagnostics, severity, diagnosticCategoryFor(issue.Category), issue.Err)
-	}
+	base := makeBase(inspection)
 
 	if len(resolvedResult.ConfigErrors) > 0 {
-		base.diagnostics = deduplicateDiagnostics(diagnostics)
-		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
-		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
-		return base
+		emit(base)
+		return
 	}
 
 	var hardCatalogFailure bool
@@ -260,10 +450,8 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 	// here, before detail capture or dry-run materialization can act on an
 	// invalid root and mask the original error.
 	if len(resolvedResult.Errors) > 0 && len(resolvedResult.CatalogErrors) == 0 && len(resolvedResult.ResolveErrors) == 0 {
-		base.diagnostics = deduplicateDiagnostics(diagnostics)
-		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
-		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
-		return base
+		emit(base)
+		return
 	}
 
 	var resolvedNames []string
@@ -276,28 +464,41 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 	dryRunReport := inspection.Report
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
 	driftState := driftReady
-	if hardCatalogFailure || dryRunReport == nil || !inspection.Healthy() {
+	if hardCatalogFailure || unavailable || dryRunReport == nil || !inspection.Healthy() {
 		driftState = driftFailed
 	}
-
-	rowCfg := resolvedResult.LoadedCfg
-	recoveryCfg := rowCfg
-	if hardCatalogFailure && resolvedResult.MergedCfg != nil {
-		recoveryCfg = resolvedResult.MergedCfg
-	}
-	base.rows = buildRows(rowCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
-	base.rows = appendUnavailableSelectionRows(base.rows, recoveryCfg, resolvedResult.LocalCfg, resolvedResult.ResolveErrors, resolvedResult.CatalogLoad.Catalogs)
-	if rowsHaveUnavailable(base.rows) {
-		driftState = driftFailed
-	}
+	base.rows = applyDriftItems(inventoryRows, driftReport)
 	attachDetailSources(base.rows, detailSources)
 	base.driftReport = driftReport
 	base.driftAssessment = driftState
-	base.diagnostics = deduplicateDiagnostics(diagnostics)
-	base.errs = diagnosticValues(base.diagnostics, diagnosticError)
-	base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
-	base.refreshAfterLoad = resolvedResult.CatalogLoad.RefreshAfterLoad
-	return base
+	emit(base)
+}
+
+func applyDriftItems(rows []row, driftReport materialize.DriftReport) []row {
+	out := slices.Clone(rows)
+	if len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned) == 0 {
+		return out
+	}
+	driftByName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
+	for _, item := range driftReport.Missing {
+		driftByName[item.Name] = item
+	}
+	for _, item := range driftReport.Broken {
+		driftByName[item.Name] = item
+	}
+	for _, item := range driftReport.Orphaned {
+		driftByName[item.Name] = item
+	}
+	for i := range out {
+		if out[i].IsAvailable || out[i].DriftItem != nil {
+			continue
+		}
+		item, hasDrift := driftByName[skill.ResourceKey(out[i].Artifact.Kind, out[i].Artifact.Name)]
+		if hasDrift {
+			out[i].DriftItem = &item
+		}
+	}
+	return out
 }
 
 func captureSnapshotDetailSources(resolved []resolver.ResolvedArtifact, catalogs map[string]catalogInfo) map[string]*detailSourceSnapshot {
@@ -354,6 +555,15 @@ func configHarnesses(cfg *config.Config) []string {
 		return nil
 	}
 	return append([]string(nil), cfg.Harnesses...)
+}
+
+// provisionalHarnessDefaults reads the layer harness defaults verified
+// inventory uses, so pending rows render the same harness badges. A layer that
+// fails to load contributes nothing; verification reports the failure.
+func provisionalHarnessDefaults() map[config.Source][]string {
+	globalCfg, _ := loadGlobalConfig()
+	repoCfg, _ := loadRepoConfig()
+	return harnessDefaultsBySource(globalCfg, repoCfg)
 }
 
 func harnessDefaultsBySource(globalCfg, repoCfg *config.Config) map[config.Source][]string {
@@ -567,12 +777,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	harnessSourceBySeenKey := make(map[string]string, totalCatalogEntries)
 	harnessSourceByKeyURL := make(map[string]string, totalCatalogEntries)
 
-	layerHarnesses := layerHarnessDefaults(cfg)
-	for _, defaults := range harnessDefaults {
-		for source, harnesses := range defaults {
-			layerHarnesses[source] = append([]string(nil), harnesses...)
-		}
-	}
+	layerHarnesses := layerHarnessDefaults(cfg, harnessDefaults...)
 
 	if cfg != nil {
 		for i := range cfg.Registries {
@@ -754,44 +959,16 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		})
 	}
 
-	if cfg != nil && len(cfg.MarketplaceExclusions) > 0 {
-		for _, entry := range cfg.Marketplaces {
-			if entry.Source != config.Organization || entry.Required {
-				continue
-			}
-			for _, pin := range entry.Resources {
-				kind, ok := mpapi.ToIR(pin.Kind)
-				if !ok || kind == ir.KindCollection {
-					continue
-				}
-				name := marketplaceInstalledName(pin)
-				key := skill.ResourceKey(kind, name)
-				catalogKey := marketplaceCatalogKey(entry, pin)
-				seenKey := key + "\x01" + catalogKey
-				if !slices.ContainsFunc(cfg.MarketplaceExclusions, func(exclusion config.MarketplaceExclusion) bool {
-					return exclusion.Source == config.UserPersonal && exclusion.Matches(entry, pin)
-				}) {
-					continue
-				}
-				if _, exists := seen[seenKey]; exists {
-					continue
-				}
-				seen[seenKey] = struct{}{}
-				selections := marketplaceSelectionsByArtifact[marketplaceSelectionKey(catalogKey, pin.Kind, name)]
-				rows = append(rows, row{
-					Artifact: resolver.ResolvedArtifact{
-						Entry: catalog.Entry{Kind: kind, Name: name}, RegistryURL: entry.URL,
-						RegistryPath: pin.RegistryID, Ref: pin.Revision, Source: entry.Source,
-						CatalogKey: catalogKey, IsMarketplace: true, MarketplaceURL: entry.URL,
-						MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name,
-					},
-					IsAvailable: true, IsExcluded: true, ExcludedByUser: true, EnabledGlobal: true,
-					RegistryURL: entry.URL, RegistryName: registryDisplayName(entry.URL),
-					MarketplaceSelections: selections, MarketplaceCollectionOnly: marketplaceCollectionOnly(selections),
-				})
-			}
+	forEachUserExcludedOrganizationPin(cfg, func(pin config.MarketplaceResourcePin, excluded row) {
+		seenKey := skill.ResourceKey(excluded.Artifact.Kind, excluded.Artifact.Name) + "\x01" + excluded.Artifact.CatalogKey
+		if _, exists := seen[seenKey]; exists {
+			return
 		}
-	}
+		seen[seenKey] = struct{}{}
+		excluded.MarketplaceSelections = marketplaceSelectionsByArtifact[marketplaceSelectionKey(excluded.Artifact.CatalogKey, pin.Kind, excluded.Artifact.Name)]
+		excluded.MarketplaceCollectionOnly = marketplaceCollectionOnly(excluded.MarketplaceSelections)
+		rows = append(rows, excluded)
+	})
 
 	// Add available skills not in resolved, using the resolver's collision
 	// winners so the catalog view matches materialization selection.
@@ -852,6 +1029,267 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	}
 
 	return rows
+}
+
+// forEachUserExcludedOrganizationPin visits optional organization Marketplace
+// leaves suppressed by a user exclusion. Both startup stages render them as
+// unchecked Global rows so verification does not insert them mid-list.
+func forEachUserExcludedOrganizationPin(cfg *config.Config, visit func(config.MarketplaceResourcePin, row)) {
+	if cfg == nil || len(cfg.MarketplaceExclusions) == 0 {
+		return
+	}
+	for _, entry := range cfg.Marketplaces {
+		if entry.Source != config.Organization || entry.Required {
+			continue
+		}
+		for _, pin := range entry.Resources {
+			kind, ok := mpapi.ToIR(pin.Kind)
+			if !ok || kind == ir.KindCollection || !slices.ContainsFunc(cfg.MarketplaceExclusions, func(exclusion config.MarketplaceExclusion) bool {
+				return exclusion.Source == config.UserPersonal && exclusion.Matches(entry, pin)
+			}) {
+				continue
+			}
+			name := marketplaceInstalledName(pin)
+			visit(pin, row{
+				Artifact: resolver.ResolvedArtifact{
+					Entry: catalog.Entry{Kind: kind, Name: name}, RegistryURL: entry.URL,
+					RegistryPath: pin.RegistryID, Ref: pin.Revision, Source: entry.Source,
+					CatalogKey: marketplaceCatalogKey(entry, pin), IsMarketplace: true, MarketplaceURL: entry.URL,
+					MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name,
+				},
+				IsAvailable: true, IsExcluded: true, ExcludedByUser: true, EnabledGlobal: true,
+				RegistryURL: entry.URL, RegistryName: registryDisplayName(entry.URL),
+			})
+		}
+	}
+}
+
+// withCachedCollectionLeaves returns cfg with each Marketplace collection pin
+// whose leaves are not pinned yet expanded from its locally verified cached
+// manifest, so pending rows take the positions verified inventory will give
+// them before acquisition. It never fetches, and the copy only feeds
+// provisional rows.
+func withCachedCollectionLeaves(cfg *config.Config, cache *marketplace.Cache) *config.Config {
+	if cfg == nil {
+		return nil
+	}
+	out := cfg
+	for i, entry := range cfg.Marketplaces {
+		pinned := make(map[string]struct{})
+		for _, pin := range entry.Resources {
+			for _, selection := range pin.SelectedBy.List() {
+				pinned[selection.RegistryID+"\x00"+selection.Name] = struct{}{}
+			}
+		}
+		var leaves []config.MarketplaceResourcePin
+		for _, pin := range entry.Resources {
+			if _, ok := pinned[pin.RegistryID+"\x00"+pin.Name]; ok || pin.Kind != mpapi.KindCollection {
+				continue
+			}
+			members, ok := cache.CachedCollectionLeaves(entry.URL, pin.RegistryID, pin.Name, pin.Revision)
+			if !ok {
+				continue
+			}
+			selectedBy := config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: pin.RegistryID, Name: pin.Name, Revision: pin.Revision}})
+			for _, member := range members {
+				slug := member.RegistryID
+				if member.RegistryID == pin.RegistryID && pin.RegistrySlug != "" {
+					slug = pin.RegistrySlug
+				}
+				leaves = append(leaves, config.MarketplaceResourcePin{
+					RegistryID: member.RegistryID, RegistrySlug: slug, Kind: member.Kind, Name: member.Name,
+					Revision: member.Revision, Digest: member.Revision, Acquisition: config.MarketplaceAcquisitionMirror, SelectedBy: selectedBy,
+				})
+			}
+		}
+		if len(leaves) == 0 {
+			continue
+		}
+		if out == cfg {
+			clone := *cfg
+			clone.Marketplaces = slices.Clone(cfg.Marketplaces)
+			out = &clone
+		}
+		out.Marketplaces[i].Resources = append(slices.Clone(entry.Resources), leaves...)
+	}
+	return out
+}
+
+type provisionalLocalCatalog struct {
+	entry   config.RegistryEntry
+	entries []catalog.Entry
+}
+
+func provisionalLocalCatalogs(cfg *config.Config, workspace pipeline.Workspace) map[int]provisionalLocalCatalog {
+	if cfg == nil {
+		return nil
+	}
+	var indexes []int
+	localOnly := &config.Config{}
+	for i := range cfg.Registries {
+		if cfg.Registries[i].IsLocal() {
+			indexes = append(indexes, i)
+			localOnly.Registries = append(localOnly.Registries, cfg.Registries[i])
+		}
+	}
+	if len(indexes) == 0 {
+		return nil
+	}
+	result := catalog.LoadRegistries(localOnly, workspace.RepoRoot(), catalog.LoadModeCachedNoFetch, catalog.WithLocalConfigDir(workspace.LocalConfigDir()), catalog.WithDiscoverFunc(discoverCatalog))
+	catalogs := make(map[int]provisionalLocalCatalog, len(indexes))
+	for pos, idx := range indexes {
+		entry := localOnly.Registries[pos]
+		catalogs[idx] = provisionalLocalCatalog{entry: entry, entries: result.Catalogs[entry.CatalogKey].Entries}
+	}
+	return catalogs
+}
+
+func provisionalLocallyExcluded(localCfg *config.LocalConfig, kind ir.ResourceKind, name string, entry config.RegistryEntry) bool {
+	if localCfg == nil || entry.Required || entry.Source.IsMachineScope() {
+		return false
+	}
+	selector := localCfg.SelectorForKind(kind)
+	if selector.ExcludeAll {
+		return true
+	}
+	trimmed := strings.TrimSpace(name)
+	if slices.Contains(selector.Exclude, trimmed) {
+		return true
+	}
+	entryIdentity := registryIdentityKey(entry.URL, entry.Ref, entry.Path)
+	for i := range localCfg.Registries {
+		re := &localCfg.Registries[i]
+		scoped := re.SelectorForKind(kind)
+		if !scoped.ExcludeAll && !slices.Contains(scoped.Exclude, trimmed) {
+			continue
+		}
+		identity := registryIdentityKey(re.URL, re.Ref, re.Path)
+		if identity == entryIdentity {
+			return true
+		}
+	}
+	return false
+}
+
+func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, locals map[int]provisionalLocalCatalog, harnessDefaults ...map[config.Source][]string) []row {
+	if cfg == nil {
+		return nil
+	}
+	layerHarnesses := layerHarnessDefaults(cfg, harnessDefaults...)
+	seen := make(map[string]int)
+	var rows []row
+	add := func(key string, r row) {
+		i, dup := seen[key]
+		if !dup {
+			i = len(rows)
+			seen[key] = i
+			rows = append(rows, r)
+		}
+		if r.IsAvailable {
+			return
+		}
+		switch r.Artifact.Source {
+		case config.Organization, config.UserPersonal:
+			rows[i].EnabledGlobal = true
+		case config.RepoCommitted:
+			rows[i].EnabledProject = true
+		case config.RepoPersonal:
+			rows[i].EnabledLocal = true
+		}
+	}
+	for i := range cfg.Registries {
+		entry := cfg.Registries[i]
+		var catalogEntries []catalog.Entry
+		if entry.IsLocal() {
+			if loaded, ok := locals[i]; ok {
+				entry = loaded.entry
+				catalogEntries = loaded.entries
+			}
+		}
+		for _, selected := range resolver.ResourcesSelected(entry, catalogEntries) {
+			if provisionalLocallyExcluded(localCfg, selected.Kind, selected.Name, entry) {
+				continue
+			}
+			add(selected.Kind.String()+"\x00"+selected.Name+"\x00"+entry.CatalogKey, row{
+				Artifact: resolver.ResolvedArtifact{
+					Entry:        catalog.Entry{Kind: selected.Kind, Name: selected.Name, SourceHarness: entry.SourceHarness},
+					RegistryURL:  entry.URL,
+					RegistryPath: entry.Path,
+					Ref:          entry.Ref,
+					V4Kind:       entry.V4Kind,
+					Source:       entry.Source,
+					Required:     entry.Required,
+					CatalogKey:   entry.CatalogKey,
+				},
+				// Verified inventory expands collections into members and
+				// lists the collection itself as available.
+				IsAvailable:         selected.Kind == ir.KindCollection,
+				PendingVerification: true,
+				RegistryURL:         entry.URL,
+				RegistryName:        registryDisplayName(entry.URL),
+				RegistryPath:        entry.Path,
+				RegistryRef:         entry.Ref,
+				Harnesses:           slices.Clone(entry.Harnesses),
+				HarnessSource:       harnessSourceLabel(entry, layerHarnesses[entry.Source]),
+			})
+		}
+	}
+	for i := range cfg.Marketplaces {
+		entry := &cfg.Marketplaces[i]
+		for _, pin := range entry.Resources {
+			if cfg.MarketplacePinExcluded(*entry, pin) {
+				continue
+			}
+			kind, ok := mpapi.ToIR(pin.Kind)
+			if !ok || kind == ir.KindCollection {
+				continue
+			}
+			name := marketplaceInstalledName(pin)
+			catalogKey := marketplaceCatalogKey(*entry, pin)
+			add(marketplaceSelectionKey(catalogKey, pin.Kind, name), row{
+				Artifact: resolver.ResolvedArtifact{
+					Entry:                   catalog.Entry{Kind: kind, Name: name},
+					RegistryURL:             entry.URL,
+					RegistryPath:            pin.RegistryID,
+					Ref:                     pin.Revision,
+					Source:                  entry.Source,
+					Required:                entry.Required,
+					CatalogKey:              catalogKey,
+					IsMarketplace:           true,
+					MarketplaceURL:          entry.URL,
+					MarketplaceInstanceID:   entry.InstanceID,
+					MarketplaceAlias:        entry.Alias,
+					MarketplaceRegistryID:   pin.RegistryID,
+					MarketplaceResourceName: pin.Name,
+				},
+				PendingVerification:       true,
+				MarketplaceCollectionOnly: !pin.Direct && pin.SelectedBy != "",
+				RegistryURL:               entry.URL,
+				RegistryName:              registryDisplayName(entry.URL),
+			})
+		}
+	}
+	forEachUserExcludedOrganizationPin(cfg, func(pin config.MarketplaceResourcePin, excluded row) {
+		excluded.PendingVerification = true
+		add(marketplaceSelectionKey(excluded.Artifact.CatalogKey, pin.Kind, excluded.Artifact.Name), excluded)
+	})
+	return withoutShadowedCollectionMembers(rows)
+}
+
+// withoutShadowedCollectionMembers drops enabled, optional collection-only
+// members whose resource name another enabled selection already provides;
+// verified inventory resolves that collision to the configured selection.
+func withoutShadowedCollectionMembers(rows []row) []row {
+	configured := make(map[string]struct{}, len(rows))
+	for _, r := range rows {
+		if !r.IsAvailable && !r.MarketplaceCollectionOnly {
+			configured[skill.ResourceKey(r.Artifact.Kind, r.Artifact.Name)] = struct{}{}
+		}
+	}
+	return slices.DeleteFunc(rows, func(r row) bool {
+		_, shadowed := configured[skill.ResourceKey(r.Artifact.Kind, r.Artifact.Name)]
+		return shadowed && !r.IsAvailable && !r.Artifact.Required && r.MarketplaceCollectionOnly
+	})
 }
 
 const unavailableCatalogReason = "selection is unavailable because its catalog failed to load"
@@ -1062,16 +1500,22 @@ func targetsToHarnesses(targets []hcc.Target) []string {
 	return harnesses
 }
 
-func layerHarnessDefaults(cfg *config.Config) map[config.Source][]string {
+// layerHarnessDefaults returns each layer's default harness list, taken from
+// its first registry entry unless an explicit layer default overrides it.
+func layerHarnessDefaults(cfg *config.Config, overrides ...map[config.Source][]string) map[config.Source][]string {
 	defaults := make(map[config.Source][]string)
-	if cfg == nil {
-		return defaults
-	}
-	for _, entry := range cfg.Registries {
-		if _, ok := defaults[entry.Source]; ok {
-			continue
+	if cfg != nil {
+		for _, entry := range cfg.Registries {
+			if _, ok := defaults[entry.Source]; ok {
+				continue
+			}
+			defaults[entry.Source] = append([]string(nil), entry.Harnesses...)
 		}
-		defaults[entry.Source] = append([]string(nil), entry.Harnesses...)
+	}
+	for _, override := range overrides {
+		for source, harnesses := range override {
+			defaults[source] = append([]string(nil), harnesses...)
+		}
 	}
 	return defaults
 }
@@ -1121,11 +1565,11 @@ func ReadSkillMarkdown(path string) (string, error) {
 // loadDetailContent reads and glamour-renders a skill's SKILL.md in a
 // background goroutine so the TUI can transition to the detail pane
 // immediately without blocking on file I/O or markdown rendering.
-func loadDetailContent(r row, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
+func loadDetailContent(t theme, r row, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
 	return func() tea.Msg {
 		return detailContentMsg{
 			generation: generation,
-			content:    renderDetailFullContent(r, width),
+			content:    renderDetailFullContent(t, r, width),
 			width:      width,
 			keepScroll: keepScroll,
 		}
@@ -1182,6 +1626,7 @@ func runDependencyUpdateCmd(ctx context.Context, workspace pipeline.Workspace, h
 			return updateDoneMsg{generation: generation, stage: updateStageRefresh, err: err}
 		}
 		warnings, lifecycleErr := update(ctx, ws)
+		pipeline.ObservePhase(ctx, pipeline.PhaseReload)
 		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		for _, warning := range warnings {
@@ -1202,17 +1647,19 @@ func runDependencyUpdateCmd(ctx context.Context, workspace pipeline.Workspace, h
 }
 
 func (m Model) dependencySyncCmd() tea.Cmd {
+	ctx := m.observedContext(ctxOrBackground(m.ctx))
 	if m.dependencyLifecycle.Sync != nil {
-		return runDependencySyncCmd(ctxOrBackground(m.ctx), m.workspace, m.dependencyLifecycle.Sync)
+		return runDependencySyncCmd(ctx, m.workspace, m.dependencyLifecycle.Sync)
 	}
-	return runSyncCmd(ctxOrBackground(m.ctx), m.workspace)
+	return runSyncCmd(ctx, m.workspace)
 }
 
 func (m Model) dependencyUpdateCmd(generation requestGeneration) tea.Cmd {
+	ctx := m.observedContext(ctxOrBackground(m.ctx))
 	if m.dependencyLifecycle.Update != nil {
-		return runDependencyUpdateCmd(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation, m.dependencyLifecycle.Update)
+		return runDependencyUpdateCmd(ctx, m.workspace, m.homeDir, generation, m.dependencyLifecycle.Update)
 	}
-	return runUpdateCmdForWorkspace(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
+	return runUpdateCmdForWorkspace(ctx, m.workspace, m.homeDir, generation)
 }
 
 func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
@@ -1222,6 +1669,7 @@ func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace,
 			return updateDoneMsg{generation: generation, stage: updateStageMaterialization, err: err}
 		}
 		syncResult := runPipelineSync(ctx, tuiPipelineOptionsForWorkspace(ws))
+		pipeline.ObservePhase(ctx, pipeline.PhaseReload)
 		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		for _, warning := range syncResult.Warnings {
