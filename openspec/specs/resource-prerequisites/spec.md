@@ -86,8 +86,10 @@ A prerequisite SHALL be met when any selected resource in the same resolution ha
 Each unmet prerequisite SHALL produce the message
 `<kind> "<resource>" requires <kind> "<prerequisite>", but it is not selected`
 and the remediation
-`agent-marketplace install "<prerequisite>" --kind <kind>`, followed by
-`--from "<registry>"` and `--path "<path>"` when those hints are present.
+`agent-marketplace install` with the POSIX-literal-formatted `<prerequisite>`
+and `--kind <kind>`, followed by `--from` and `--path` with the corresponding
+POSIX-literal-formatted hint values when those hints are present. Argument
+formatting SHALL follow the prerequisite shell-literal requirement below.
 Kinds SHALL be printed as `skill`, `command`, `subagent`, `hook`, or `mcp`.
 
 #### Scenario: Remediation with hints
