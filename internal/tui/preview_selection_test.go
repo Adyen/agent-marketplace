@@ -279,6 +279,22 @@ func TestPreviewSelectionIgnoresOutsideGestures(t *testing.T) {
 	})
 }
 
+// spec: tui-mouse-navigation/gestures-outside-selectable-text-do-not-copy
+func TestPreviewSelectionOutsidePressCancelsPendingGesture(t *testing.T) {
+	m := selectionDetailModel(t, "alpha beta")
+	s := selSnap(m)
+	m, _ = selSend(t, m, s, selClick(33, 0))
+	m, _ = selSend(t, m, s, selClick(4, 0))
+	m, _ = selSend(t, m, s, selMotion(5, 0))
+	got, cmd := selSend(t, m, s, selRelease(5, 0))
+	if cmd != nil {
+		t.Fatalf("new list-side drag copied %q after earlier release was missed; want no clipboard write", clipboardText(t, cmd))
+	}
+	if got.previewSel.active {
+		t.Fatal("ignored new gesture retained an unfinished preview anchor")
+	}
+}
+
 // spec: tui-mouse-navigation/scrolling-clears-selection-without-changing-navigation
 func TestPreviewSelectionClearsOnScroll(t *testing.T) {
 	lines := make([]string, 30)

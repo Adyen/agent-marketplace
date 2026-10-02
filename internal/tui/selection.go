@@ -248,7 +248,13 @@ func (m Model) handlePreviewSelection(msg previewSelectionMouseMsg) (tea.Model, 
 	}
 	switch ev := msg.msg.(type) {
 	case tea.MouseClickMsg:
-		if ev.Button != tea.MouseLeft || ev.Mod != 0 || !snap.contains(ev.X, ev.Y) || snap.masked(ev.X, ev.Y) {
+		if ev.Button != tea.MouseLeft || ev.Mod != 0 {
+			return m, nil
+		}
+		if !m.previewSel.copied {
+			m.previewSel = previewSelection{}
+		}
+		if !snap.contains(ev.X, ev.Y) || snap.masked(ev.X, ev.Y) {
 			return m, nil
 		}
 		m.previewSel = previewSelection{snap: snap, anchor: selectionCell{ev.X, ev.Y}, end: selectionCell{ev.X, ev.Y}, active: true}
