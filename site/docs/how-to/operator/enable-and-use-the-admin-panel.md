@@ -141,9 +141,11 @@ The session lasts 12 hours by default; set `session_ttl` to change it, up to 24 
 
 A verified identity is authorized when one of its groups matches `admin_groups` or its immutable `sub` claim matches `admin_users`. Authorization is checked again on every admin request. A session that no longer matches receives `403 forbidden`. A missing or expired session receives `401 unauthenticated` and is never refreshed automatically.
 
-In OIDC mode the reverse proxy only routes `/api/v1/admin/` and `/marketplace/admin` to the application and must not inject identity headers. Public Marketplace routes stay anonymous and keep working when the identity provider is down or the OIDC configuration is invalid.
+In OIDC mode the reverse proxy only routes `/api/v1/admin/`, `/marketplace/admin`, and the `/marketplace/auth/error` sign-in error page to the application and must not inject identity headers. Public Marketplace routes stay anonymous and keep working when the identity provider is down or the OIDC configuration is invalid.
 
-Sign-in failures use these stable codes:
+Sign-in failures use these stable codes. When a browser navigates to the login or callback endpoint (an `Accept` header that prefers `text/html` over JSON), failures redirect to the fixed same-origin `/marketplace/auth/error` page, which explains the allowlisted code, offers a fresh sign-in where retry can help, and links back to the Marketplace. API clients, missing `Accept`, wildcard-only, and tied preferences keep the JSON error bodies and statuses below. The error page never reflects provider error descriptions, state, or codes, and an unknown or malformed code shows a generic message.
+
+Manual recovery: denied or rejected sign-ins can retry from the page; `forbidden`, `admin_unavailable`, and `origin_rejected` require operator action (authorization, configuration, or the configured origin) rather than a retry.
 
 | Status and code | Meaning |
 |---|---|

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -85,6 +86,75 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Registry", "RegistryOccurrence", "ExactRegistryOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceAssessment", "AssessmentFinding", "ResourceOccurrence", "Revocation", "ResourceCoordinate", "InspectionManifest", "InspectionFile", "CatalogKeysetCursor", "CatalogETag", "CatalogIfNoneMatch", "CatalogPage", "CatalogResource", "CatalogSource", "CatalogCollection", "CatalogCollectionResourceReference", "CatalogCollectionIncludeReference", "CatalogUnresolvedReference"} {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
+		}
+	}
+}
+
+// spec: marketplace-admin-auth/published-contract-matches-browser-and-json-behavior
+func TestOpenAPIAdminAuthDocumentsBrowserAndJSONErrors(t *testing.T) {
+	paths := readOpenAPIDocument(t)["paths"].(map[string]any)
+	wantErrors := map[string]map[string][]string{
+		"/api/v1/admin/auth/login": {
+			"400": {"authentication_request_invalid"},
+			"403": {"origin_rejected"},
+			"503": {"authentication_unavailable", "admin_unavailable"},
+		},
+		"/api/v1/admin/auth/callback": {
+			"400": {"authentication_request_invalid"},
+			"401": {"authentication_rejected"},
+			"403": {"forbidden", "origin_rejected"},
+			"503": {"authentication_unavailable"},
+		},
+	}
+	for path, statuses := range wantErrors {
+		operation := paths[path].(map[string]any)["get"].(map[string]any)
+		responses := operation["responses"].(map[string]any)
+		redirect := responses["303"].(map[string]any)["description"].(string)
+		if !strings.Contains(redirect, "/marketplace/auth/error") {
+			t.Errorf("%s 303 description omits the browser error page: %q", path, redirect)
+		}
+		var acceptFound bool
+		for _, parameter := range operation["parameters"].([]any) {
+			p := parameter.(map[string]any)
+			if p["name"] == "Accept" && p["in"] == "header" {
+				acceptFound = true
+			}
+		}
+		if !acceptFound {
+			t.Errorf("%s does not document the Accept negotiation header", path)
+		}
+		for status, codes := range statuses {
+			response, ok := responses[status].(map[string]any)
+			if !ok {
+				t.Errorf("%s %s error response missing", path, status)
+				continue
+			}
+			description, _ := response["description"].(string)
+			for _, code := range codes {
+				if !strings.Contains(description, code) {
+					t.Errorf("%s %s description omits code %q: %q", path, status, code, description)
+				}
+			}
+			media, ok := response["content"].(map[string]any)["application/json"]
+			if !ok {
+				t.Errorf("%s %s lacks an application/json error body", path, status)
+				continue
+			}
+			schema, ok := media.(map[string]any)["schema"].(map[string]any)
+			if !ok || schema["type"] != "object" {
+				t.Errorf("%s %s error schema is not an object: %v", path, status, media)
+				continue
+			}
+			properties, _ := schema["properties"].(map[string]any)
+			for _, field := range []string{"code", "message"} {
+				if _, ok := properties[field].(map[string]any); !ok {
+					t.Errorf("%s %s error schema omits property %q", path, status, field)
+				}
+				required, _ := schema["required"].([]any)
+				if !slices.ContainsFunc(required, func(item any) bool { return item == field }) {
+					t.Errorf("%s %s error schema does not require %q", path, status, field)
+				}
+			}
 		}
 	}
 }
