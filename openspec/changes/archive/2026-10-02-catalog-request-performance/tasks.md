@@ -19,6 +19,6 @@
 
 ## 4. Delivery
 
-- [ ] 4.1 Reconcile relevant operations metric and catalog claims with implementation; verify existing metric semantics and avoid unsupported production latency claims.
+- [x] 4.1 Reconcile relevant operations metric and catalog claims with implementation; verify existing metric semantics and avoid unsupported production latency claims.
 - [ ] 4.2 Run native validation, strict OpenSpec validation and touched domain gates on the clean candidate; verify complete passing output and no skipped required backend evidence.
-- [ ] 4.3 Run `openspec archive catalog-request-performance --yes` in the same pull request and verify strict validation and scenario bindings after the main-spec sync.
+- [x] 4.3 Run `openspec archive catalog-request-performance --yes` in the same pull request and verify strict validation and scenario bindings after the main-spec sync.
