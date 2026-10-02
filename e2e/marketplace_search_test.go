@@ -191,3 +191,34 @@ func TestMarketplaceSearchPartialAndTotalFailure(t *testing.T) {
 		t.Fatalf("all-failing federated search result = exit %d:\n%s", result.ExitCode, result.Combined)
 	}
 }
+
+// Users search through the Marketplace the deployed organization config
+// declares under an alias: v4, a collection selected, no organization lock.
+// Their user config is the v4 one init creates.
+func TestMarketplaceSearchThroughDeployedOrganizationSource(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Behavior body", true))
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.MustRunAM("init", "--harnesses", "factory")
+	consumer.WriteOrgConfigWithMode(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  org:
+    marketplace: %s
+allowed_marketplaces:
+  - '^http://127\.0\.0\.1:[0-9]+$'
+resources:
+  org:
+    include:
+      - behavior-source/collection/behavior-bundle
+`, fixture.server.URL), 0o644)
+
+	result := consumer.RunAM("search", "skill-one", "--output", "json")
+	if result.ExitCode != 0 || !strings.Contains(result.Stdout, `"name": "skill-one"`) {
+		t.Fatalf("search through the organization source failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	result = consumer.RunAM("search", "--marketplace", "org", "--kind", "command", "--output", "json")
+	if result.ExitCode != 0 || !strings.Contains(result.Stdout, `"name": "command-one"`) || strings.Contains(result.Stdout, `"name": "skill-one"`) {
+		t.Fatalf("search --marketplace org --kind command returned the wrong resources (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertFileAbsent("/etc/agent-marketplace/lock.yaml")
+}

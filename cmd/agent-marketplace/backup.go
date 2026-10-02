@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/backup"
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -53,8 +52,11 @@ func newBackupCreateCmd() *cobra.Command {
 }
 
 func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error {
-	repoRoot := config.FindRepoRoot()
-	resolved := pipeline.Resolve(ctx, pipeline.ResolveOptions{RepoRoot: repoRoot})
+	ws, err := pipeline.DiscoverWorkspace()
+	if err != nil {
+		return err
+	}
+	resolved := pipeline.Resolve(ctx, pipeline.ResolveOptions{Workspace: ws})
 	if len(resolved.Errors) > 0 {
 		for _, e := range resolved.Errors {
 			if _, err := fmt.Fprintf(errOut, "error: %v\n", e); err != nil {

@@ -1,6 +1,6 @@
 # How to troubleshoot sync drift
 
-Diagnose and fix the most common causes of `agent-marketplace sync --check` failures.
+Find out why `agent-marketplace sync --check` fails and fix the most common causes. [Drift](../glossary.md#drift) means the files in your harness folders, or your lock, no longer match what the configuration asks for.
 
 ## Prerequisites
 
@@ -17,23 +17,24 @@ agent-marketplace status
 
 Check these sections:
 
-- **TARGET HARNESS SET** confirms the active harnesses.
-- **EXACT REGISTRY LOCKS** shows the resolved commits.
-- **SYNCED RESOURCES** lists the resources the CLI expects to materialize.
-- **DRIFT** reports `In sync` or a summary of the difference.
-- **ERRORS** lists fatal failures such as unreachable registries or malformed resources.
+- `TARGET HARNESS SET` shows the harnesses that sync writes to, and the configuration layer that chose them.
+- `EXACT REGISTRY LOCKS` shows the commit each Git registry is locked to.
+- `SYNCED RESOURCES` lists the resources sync expects to write, with their harness, layer, and registry.
+- `ORPHANED FILES`, `NAME COLLISIONS`, and `UNMET REQUIREMENTS` appear only when there is something to report.
+- `DRIFT` shows `In sync`, a count of files to write and remove, or `Unknown (exact registry view incomplete)` when an error stopped the check.
+- `ERRORS` lists failures such as unreachable registries, invalid configuration, or broken resources.
 
-## 2. Decide whether to reconcile or inspect
+## 2. Inspect or fix
 
-If drift exists, choose one path:
-
-- To see the planned changes without writing:
+To see what sync would change without writing anything:
 
 ```bash
 agent-marketplace sync --check
 ```
 
-- To apply the changes and refresh the lock:
+When there is drift, it prints a line such as `sync: 1 out of sync (1 missing)`, then each affected folder with `+` for a file it would write and `-` for a file it would remove, and exits `1`.
+
+To apply the changes, and update a lock that no longer matches the configuration:
 
 ```bash
 agent-marketplace sync
@@ -43,25 +44,25 @@ agent-marketplace sync
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `missing` resources | A selected resource was removed from the registry | Remove it from configuration or pick a different ref |
-| `orphaned` output | A previously generated file no longer matches configuration | Run `agent-marketplace sync` to prune stale output |
-| `name collision` warning | Two registries select the same resource name | Use `remove` with `--from` and `--path`, or add an explicit `exclude` on the lower-priority source |
-| `unmet requirements` | A selected resource lists a missing prerequisite | Install the prerequisite explicitly |
-| `Malformed` resources | A resource file failed ingestion | Open the resource source and fix the harness layout |
-| `lock.stale` or `lock.missing` | The committed lock no longer matches the configuration (a registry, ref, or path was added, removed, or edited) or the lock was never generated | Run a writing `agent-marketplace sync` or `agent-marketplace lock` to reconcile, then commit the lock |
-| Lock unchanged although the remote branch moved | Expected. A healthy lock keeps its exact commit until you advance it | Run `agent-marketplace update` or `lock --upgrade` when you want the new commit, then commit the lock |
+| `missing` in `sync --check` | Sync would write files that are absent or out of date, for example after you added a resource or deleted a generated folder | Run `agent-marketplace sync` |
+| `orphaned` in `sync --check`, or an `ORPHANED FILES` section | Generated files remain for resources that are no longer selected | Run `agent-marketplace sync` to remove them |
+| A `resources are provided by multiple registries` warning, or a `NAME COLLISIONS` section | Two registries provide a resource with the same name, and only one of them is written | Use `remove` with `--from` and `--path`, or add an `exclude` to the source you do not want |
+| An `UNMET REQUIREMENTS` section, or a `requires … but it is not selected` warning | A selected resource needs another resource that is not selected | Install the required resource; the `FIX` column or the warning's `→` line shows the suggested command. See the [resource prerequisites reference](../reference/resource-prerequisites.md) |
+| `Malformed` above `0` in the sync summary | A resource file failed validation and was left out | Run `agent-marketplace sync --verbose` to see the file and error, then fix the resource in its registry |
+| `lock.stale` or `lock.missing` | The committed lock no longer matches the configuration (a Git registry, `ref`, or `path` was added, removed, or changed), or no lock was ever generated | Run a writing `agent-marketplace sync` or `agent-marketplace lock`, then commit the lock |
+| The lock does not change although the remote branch moved | This is expected. A healthy lock keeps its exact commit until you advance it | Run `agent-marketplace update` or `agent-marketplace lock --upgrade` when you want the new commit, then commit the lock |
 
-Do not set `required: true` to silence a collision. `required` is for policy enforcement, not name disambiguation.
+Do not set `required: true` to settle a collision. `required` exists to enforce policy, and a required resource also ignores every exclusion.
 
 ## 4. Recover from a failed sync
 
-If a `sync` failed partway, run a writing `sync` again:
+If a `sync` stopped partway, run a writing `sync` again:
 
 ```bash
 agent-marketplace sync
 ```
 
-Pending transactions block `sync --check`, `sync --locked`, and `lock --check`. A writing run reconciles any unfinished transaction state.
+An unfinished change blocks `sync --check`, `sync --locked`, `sync --offline`, and `lock --check` with `dependency.recovery-required`. A writing `sync` or `lock` recovers the unfinished change first.
 
 ## Related documentation
 

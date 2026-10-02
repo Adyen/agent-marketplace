@@ -2,13 +2,17 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 BINARY := agent-marketplace
 RELEASE_BINARY := $(BINARY)-$(VERSION)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+RELEASE_LDFLAGS := -s -w -X main.version=$(VERSION)
 GO := go
 CMD := ./cmd/agent-marketplace
-TEST_PACKAGES ?= ./...
+TEST_PACKAGES ?=
 TEST_FLAGS ?=
+TEST_SHORT ?= -short
+TEST_LOCAL_BASE ?= origin/main
 VALIDATE_JOBS ?= 2
+OPENSPEC_VERSION ?= 1.12.0
 
-.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e
+.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e spec-check
 
 # Public container defaults. Override these generic variables in the environment
 # when builds must use a registry mirror.
@@ -27,7 +31,7 @@ export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_N
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common tidy version release clean e2e marketplace-gate upgrade-gate released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
+.PHONY: build test test-full lint ci-lint lint-common tidy version release clean e2e marketplace-gate upgrade-gate released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -52,22 +56,31 @@ test:
 	@set -e; \
 	unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
 		GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_COMMON_DIR GIT_CONFIG_PARAMETERS; \
+	pkgs="$(TEST_PACKAGES)"; \
+	if [ -z "$$pkgs" ]; then \
+		pkgs=$$(TEST_LOCAL_BASE="$(TEST_LOCAL_BASE)" CGO_ENABLED=0 $(GO) run ./tools/test-local); \
+	fi; \
+	if [ -z "$$pkgs" ]; then \
+		echo "make test: no changed Go packages; nothing to run."; \
+		exit 0; \
+	fi; \
 	GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=1 \
-		GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=0 CGO_ENABLED=0 $(GO) test $(TEST_FLAGS) $(TEST_PACKAGES)
+		GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=0 CGO_ENABLED=0 $(GO) test $(TEST_SHORT) $(TEST_FLAGS) $$pkgs
 
-test-fast:
-	+$(MAKE) test TEST_FLAGS="$(TEST_FLAGS) -short"
+test-fast: test
+
+test-full:
+	+$(MAKE) --no-print-directory test TEST_SHORT= TEST_PACKAGES="$(or $(TEST_PACKAGES),./...)"
 
 # Full root tests plus proof that every CLI behavior witness ran and passed.
 # witness-check fails on any failed package, so no shell pipefail is needed.
 test-witnessed:
-	+$(MAKE) --no-print-directory test TEST_PACKAGES=./... TEST_FLAGS="$(TEST_FLAGS) -json" | CGO_ENABLED=0 $(GO) run ./tools/witness-check
+	+$(MAKE) --no-print-directory test-full TEST_PACKAGES=./... TEST_FLAGS="$(TEST_FLAGS) -json" | CGO_ENABLED=0 $(GO) run ./tools/witness-check
 
 validate:
 	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build
 
-validate-fast:
-	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test ci-lint build TEST_FLAGS="$(TEST_FLAGS) -short"
+validate-fast: validate
 
 validate-full:
 	+CGO_ENABLED=0 $(MAKE) -j$(VALIDATE_JOBS) test-witnessed ci-lint build validate-e2e tui-qa TEST_PACKAGES=./... TEST_FLAGS=-count=1
@@ -109,6 +122,13 @@ tidy:
 
 version:
 	@echo $(VERSION)
+
+# Strict OpenSpec validation with the pinned CLI, then scenario-to-test
+# traceability and the archive-before-merge rule (openspec/specs/spec-governance).
+spec-check:
+	npx --yes @fission-ai/openspec@$(OPENSPEC_VERSION) validate --all --strict --no-interactive
+	CGO_ENABLED=0 $(GO) run ./tools/specaudit trace
+	CGO_ENABLED=0 $(GO) run ./tools/specaudit archived
 
 container: container-marketplace container-web container-site
 
@@ -224,19 +244,19 @@ released-client-gate:
 # Cross-compilation targets
 darwin-arm64:
 	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-arm64 $(CMD)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-arm64 $(CMD)
 
 darwin-amd64:
 	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-amd64 $(CMD)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-amd64 $(CMD)
 
 linux-amd64:
 	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-amd64 $(CMD)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-amd64 $(CMD)
 
 linux-arm64:
 	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-arm64 $(CMD)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-arm64 $(CMD)
 
 release: $(PLATFORMS)
 
@@ -246,12 +266,12 @@ release: $(PLATFORMS)
 # leaving them empty produces a build with the same defaults as `make build`.
 RELEASE_TELEMETRY_ENDPOINT ?= $(AGENT_MARKETPLACE_RELEASE_TELEMETRY_ENDPOINT)
 RELEASE_TELEMETRY_RETENTION_URL ?= $(AGENT_MARKETPLACE_RELEASE_TELEMETRY_RETENTION_URL)
-RELEASE_EXTRA_LDFLAGS := -X main.version=$(VERSION) \
+RELEASE_EXTRA_LDFLAGS := $(RELEASE_LDFLAGS) \
 	-X github.com/Adyen/agent-marketplace/internal/telemetry.DefaultProjectEndpoint=$(RELEASE_TELEMETRY_ENDPOINT) \
 	-X github.com/Adyen/agent-marketplace/internal/telemetry.DefaultProjectRetentionURL=$(RELEASE_TELEMETRY_RETENTION_URL)
 
 build-release:
-	CGO_ENABLED=0 $(GO) build -ldflags "$(RELEASE_EXTRA_LDFLAGS)" -o $(BINARY) $(CMD)
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(RELEASE_EXTRA_LDFLAGS)" -o $(BINARY) $(CMD)
 
 clean:
 	rm -rf $(DIST_DIR) $(BINARY)

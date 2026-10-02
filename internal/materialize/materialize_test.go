@@ -2558,6 +2558,52 @@ func TestRunHookArtifactsAreNotPrunedOnSecondSync(t *testing.T) {
 	}
 }
 
+// spec: materialization/machine-scope-hook-command-uses-the-absolute-machine-root
+// spec: materialization/repository-scope-hook-command-stays-repository-relative
+func TestFactoryHookCommandRootIsStableAcrossWorkingDirectories(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	machineHook := ir.NewHook("user-check", "PreToolUse", "${DROID_PLUGIN_ROOT}/hooks/check.sh", "command", nil, ir.SourceRef{})
+	user := []resolver.ResolvedArtifact{{
+		Entry: catalog.Entry{Name: "user-check", Resource: machineHook}, Source: config.UserPersonal,
+		Harnesses: []hcc.Target{hcc.TargetFactory},
+	}}
+	machineFile := filepath.Join(home, ".factory", "hooks", "hooks.json")
+	var first []byte
+	for _, root := range []string{home, repo} {
+		if _, err := Run(context.Background(), root, user); err != nil {
+			t.Fatalf("materialize machine hook from %s: %v", root, err)
+		}
+		content, err := os.ReadFile(machineFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), filepath.Join(home, ".factory", "hooks", "check.sh")) {
+			t.Fatalf("machine hook must use absolute root, got %s", content)
+		}
+		if first != nil && !bytes.Equal(first, content) {
+			t.Fatalf("machine hook bytes changed across roots:\n%s\n%s", first, content)
+		}
+		first = content
+	}
+
+	repoHook := ir.NewHook("repo-check", "PreToolUse", "${DROID_PLUGIN_ROOT}/hooks/repo-check.sh", "command", nil, ir.SourceRef{})
+	if _, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{{
+		Entry: catalog.Entry{Name: "repo-check", Resource: repoHook}, Source: config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetFactory},
+	}}); err != nil {
+		t.Fatalf("materialize repository hook: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(repo, ".factory", "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), ".factory/hooks/repo-check.sh") || strings.Contains(string(content), repo+"/.factory") {
+		t.Fatalf("repository hook must use relative root, got %s", content)
+	}
+}
+
 // TestRunMultipleHooksSameEventBothSurvive verifies that two hooks for the
 // same event (e.g. PostToolUse) are both present in the materialized
 // hooks.json and survive idempotent re-syncs without duplication.
@@ -4418,6 +4464,152 @@ func TestPrepareSkillLinkCachePrunesRemovedSupportFiles(t *testing.T) {
 	compiled, err := os.ReadFile(filepath.Join(cacheDir, "SKILL.md"))
 	if err != nil || string(compiled) != "compiled skill" {
 		t.Fatalf("compiled artifact was not retained as authoritative: %q, %v", compiled, err)
+	}
+}
+
+// TestPrepareSkillLinkCacheExcludesVCSInternals covers the root-skill cache
+// shape: when the skill directory is a whole registry checkout, its VCS
+// internals must never reach the materialized cache that harness symlinks
+// (and file-mode copies) expose to every workspace.
+func TestPrepareSkillLinkCacheExcludesVCSInternals(t *testing.T) {
+	sourceDir := t.TempDir()
+	cacheDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("source skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "README.md"), []byte("readme"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(sourceDir, "tools"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "tools", "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// VCS internals at the checkout root and nested inside a support directory.
+	for _, gitRel := range []string{
+		filepath.Join(".git", "HEAD"),
+		filepath.Join(".git", "objects", "pack-0.pack"),
+		filepath.Join("tools", ".git", "config"),
+	} {
+		if err := os.MkdirAll(filepath.Join(sourceDir, filepath.Dir(gitRel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sourceDir, gitRel), []byte("git internal"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := skillLink{sourceDir: sourceDir, cacheDir: cacheDir, artifacts: []artifact.Artifact{{Path: "SKILL.md", Bytes: []byte("compiled skill")}}}
+	if err := prepareSkillLinkCache(link); err != nil {
+		t.Fatalf("cache preparation: %v", err)
+	}
+	assertNoVCSInternals := func(label string) {
+		t.Helper()
+		err := filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, relErr := filepath.Rel(cacheDir, path)
+			if relErr != nil {
+				return relErr
+			}
+			for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+				if part == ".git" {
+					return fmt.Errorf("%s leaked VCS internals into cache at %s", label, path)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertNoVCSInternals("fresh copy")
+	for name, want := range map[string]string{"README.md": "readme", filepath.Join("tools", "run.sh"): "#!/bin/sh\n"} {
+		data, err := os.ReadFile(filepath.Join(cacheDir, name))
+		if err != nil || string(data) != want {
+			t.Fatalf("expected support file %s with %q, got %q (err=%v)", name, want, string(data), err)
+		}
+	}
+	// A stale .git planted by an earlier run must be pruned on reconcile, not
+	// merely left behind while fresh copies stop adding it.
+	if err := os.MkdirAll(filepath.Join(cacheDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, ".git", "HEAD"), []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSkillLinkCache(link); err != nil {
+		t.Fatalf("reconcile cache preparation: %v", err)
+	}
+	assertNoVCSInternals("reconcile")
+	// --check builds a virtual digest that must agree with the real cache.
+	virtualDigest, err := portableSkillVirtualDigest(link)
+	if err != nil {
+		t.Fatalf("dry-run virtual digest: %v", err)
+	}
+	realDigest, err := portablePathDigest(cacheDir)
+	if err != nil || virtualDigest != realDigest {
+		t.Fatalf("real and dry-run support trees diverged: real=%q virtual=%q err=%v", realDigest, virtualDigest, err)
+	}
+	compiled, err := os.ReadFile(filepath.Join(cacheDir, "SKILL.md"))
+	if err != nil || string(compiled) != "compiled skill" {
+		t.Fatalf("compiled artifact was not retained as authoritative: %q, %v", compiled, err)
+	}
+}
+
+func TestSkillCacheAndVirtualDigestExcludeGitPointers(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		add  func(string) error
+	}{
+		{name: "file", add: func(path string) error {
+			return os.WriteFile(path, []byte("gitdir: ../worktrees/checkout"), 0o644)
+		}},
+		{name: "dangling symlink", add: func(path string) error {
+			return os.Symlink("missing-gitdir", path)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sourceDir := t.TempDir()
+			cacheDir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(sourceDir, "tools"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, data := range map[string]string{"SKILL.md": "source skill", "tools/run.sh": "retained support"} {
+				if err := os.WriteFile(filepath.Join(sourceDir, name), []byte(data), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, parent := range []string{sourceDir, filepath.Join(sourceDir, "tools")} {
+				if err := tc.add(filepath.Join(parent, ".git")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			link := skillLink{sourceDir: sourceDir, cacheDir: cacheDir, artifacts: []artifact.Artifact{{Path: "SKILL.md", Bytes: []byte("compiled skill")}}}
+			digest, err := portableSkillVirtualDigest(link)
+			if err != nil {
+				t.Fatalf("virtual digest: %v", err)
+			}
+			if err := prepareSkillLinkCache(link); err != nil {
+				t.Fatalf("cache preparation: %v", err)
+			}
+			for _, rel := range []string{".git", "tools/.git"} {
+				if _, err := os.Lstat(filepath.Join(cacheDir, rel)); !os.IsNotExist(err) {
+					t.Fatalf("cache entry %s must be absent, got %v", rel, err)
+				}
+			}
+			for name, want := range map[string]string{"SKILL.md": "compiled skill", "tools/run.sh": "retained support"} {
+				got, err := os.ReadFile(filepath.Join(cacheDir, name))
+				if err != nil || string(got) != want {
+					t.Fatalf("cache file %s = %q, %v; want %q", name, got, err, want)
+				}
+			}
+			actual, err := portablePathDigest(cacheDir)
+			if err != nil || digest != actual {
+				t.Fatalf("virtual digest %q differs from cache digest %q: %v", digest, actual, err)
+			}
+		})
 	}
 }
 

@@ -180,6 +180,18 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:       "install/missing_repo_config_is_v4",
+		Desc:       "Given a v4 user registry and no repo config, When installing a skill to repo scope, Then the newly created repo root uses v4 and selects the skill",
+		Registries: []RegistryDef{{Name: "new-repo-config", Skills: []Skill{{Name: "new-skill"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {shared: {git: '{{REG:new-repo-config}}', ref: main}}\n",
+		Steps: []Step{
+			{Args: []string{"install", "new-skill", "--scope", "repo"}, MustPass: true,
+				FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/workspace/.factory/skills/new-skill/SKILL.md": "name: new-skill"},
+				FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "skill/new-skill"}},
+		},
+	},
+	{
 		Name:      "migration/startup_preserves_legacy_repo_layers",
 		Desc:      "Given a v4 user config and legacy repo/local configs, When listing and explicitly migrating the repo, Then startup preserves both legacy layers and only explicit migration upgrades the repo",
 		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
@@ -617,6 +629,78 @@ registries:
 	},
 
 	// ===== collision =====
+	// spec: resource-selection/repository-winner-does-not-displace-a-user-scope-selection
+	{
+		Name:       "collision/cross_scope_sync_keeps_both_skills",
+		Desc:       "Given user and repository sources selecting different skills with the same installed name, When syncing in the repository, Then both scopes retain their own skill and sync --check succeeds",
+		Registries: []RegistryDef{{Name: "user-skill", Skills: []Skill{{Name: "shared", Description: "User selection"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:user-skill}}', ref: main}}\nresources: {user: {include: [skill/shared]}}\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				Symlinks: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{
+					"/root/.factory/skills/shared/SKILL.md":      "User selection",
+					"/workspace/.factory/skills/shared/SKILL.md": "Repository selection",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: resource-selection/required-user-scope-selection-suppresses-a-repository-selection
+	{
+		Name:       "collision/required_machine_prevents_repo_shadow",
+		Desc:       "Given a required user skill and another repository skill with the same installed name, When syncing in the repository, Then the required machine skill remains and the repository cannot shadow it",
+		Registries: []RegistryDef{{Name: "required-user", Skills: []Skill{{Name: "shared", Description: "Mandatory user selection"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:required-user}}\n    ref: main\n    required: true\n    skills: [shared]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Unreviewed repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"multiple registries"},
+				Symlinks: []string{"/root/.factory/skills/shared"},
+				FilesAbsent: []string{"/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Mandatory user selection"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}, FilesAbsent: []string{"/workspace/.factory/skills/shared"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}},
+		},
+	},
+	// spec: resource-selection/collection-member-is-not-displaced-by-a-selection-in-the-other-scope
+	{
+		Name: "collision/cross_scope_collection_member_keeps_both_skills",
+		Desc: "Given a user collection member and a repository skill with the same installed name, When syncing in the repository, Then both scopes retain their own skill without a collision warning and sync --check succeeds",
+		Registries: []RegistryDef{{Name: "user-bundle", Skills: []Skill{{Name: "shared", Description: "User collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nversion: \"1.0\"\nresources:\n  - name: shared\n"}}},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:user-bundle}}', ref: main}}\nresources: {user: {include: [collection/bundle]}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				Symlinks: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{
+					"/root/.factory/skills/shared/SKILL.md":      "User collection member",
+					"/workspace/.factory/skills/shared/SKILL.md": "Repository selection",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true, OutNotContains: []string{"multiple registries"}, PathsUnchanged: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"}},
+		},
+	},
+	// spec: resource-selection/required-selection-through-a-collection-suppresses-a-repository-selection
+	{
+		Name: "collision/required_collection_member_prevents_repo_shadow",
+		Desc: "Given a required organization collection member and a repository skill with the same installed name, When syncing in the repository, Then the required member remains in the machine harness, the repository skill is not installed, and the collision is reported",
+		Registries: []RegistryDef{{Name: "org-bundle", Skills: []Skill{{Name: "shared", Description: "Mandatory collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nversion: \"1.0\"\nresources:\n  - name: shared\n"}}},
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nsources: {org: {git: '{{REG:org-bundle}}', ref: main}}\nresources: {org: {include: [collection/bundle], required: true}}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Unreviewed repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"multiple registries"},
+				Symlinks:     []string{"/root/.factory/skills/shared"},
+				FilesAbsent:  []string{"/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Mandatory collection member"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}, FilesAbsent: []string{"/workspace/.factory/skills/shared"}},
+		},
+	},
 	{
 		Name: "install/collision_warning_scoped",
 		Desc: "Given two selected registries with skill and command collisions, When installing one skill, Then its collision is reported without unrelated warnings and the existing winner is installed",
@@ -1601,6 +1685,94 @@ registries:
 		},
 	},
 	{
+		Name: "install/v4_reinstall_clears_only_provider_local_exclude",
+		Desc: "Given a v4 default-selected repo skill removed into a local source exclusion, When configured install reinstalls it, Then only that provider's exclusion is cleared and sibling exclusions remain",
+		Registries: []RegistryDef{
+			{Name: "v4-reinstall-main", Skills: []Skill{{Name: "foo"}, {Name: "keep"}}},
+			{Name: "v4-reinstall-other", Skills: []Skill{{Name: "other"}}},
+		},
+		RepoCfg: `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  main: {git: "{{REG:v4-reinstall-main}}", ref: main}
+resources:
+  main: {all: true}
+`,
+		LocalCfg: `
+apiVersion: agent-marketplace/v4
+sources:
+  other: {git: "{{REG:v4-reinstall-other}}", ref: main}
+resources:
+  other: {exclude: [skill/foo]}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"}},
+			{Args: []string{"remove", "foo"}, MustPass: true,
+				FilesAbsent:  []string{"/workspace/.factory/skills/foo"},
+				FilesExist:   []string{"/workspace/.factory/skills/keep/SKILL.md"},
+				FileContains: map[string]string{"/workspace/.agents/config.local.yaml": "skill/foo"}},
+			{Args: []string{"install", "foo"}, MustPass: true,
+				FilesExist:   []string{"/workspace/.factory/skills/foo/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"},
+				FileContains: map[string]string{"/workspace/.agents/config.local.yaml": "skill/foo"}},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist:     []string{"/workspace/.factory/skills/foo/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"},
+				PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+		},
+	},
+	{
+		Name:       "install/from_named_reinstall_clears_legacy_local_exclude",
+		Desc:       "Given a default-selected skill disabled by a legacy local exclude, When named ad-hoc install reinstalls it, Then it materializes and only that exclude is cleared",
+		Registries: []RegistryDef{{Name: "adhoc-reinstall-named", Skills: []Skill{{Name: "foo"}, {Name: "keep"}}}},
+		RepoCfg: `
+apiVersion: agent-marketplace/v2
+harnesses: [factory]
+registries:
+  - url: {{REG:adhoc-reinstall-named}}
+    ref: main
+    default: true
+`,
+		LocalCfg: "apiVersion: agent-marketplace/v2\nskills: {exclude: [foo, keep]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/foo", "/workspace/.factory/skills/keep"}},
+			{Args: []string{"install", "foo", "--from", "{{REG:adhoc-reinstall-named}}", "--ref", "main"}, MustPass: true,
+				FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/keep"},
+				FileNotContains: map[string]string{"/workspace/.agents/config.local.yaml": "foo"}, FileContains: map[string]string{"/workspace/.agents/config.local.yaml": "keep"}},
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+		},
+	},
+	{
+		Name: "install/from_inferred_reinstall_clears_provider_local_exclude",
+		Desc: "Given a v4 default-selected nested skill removed into a provider-scoped local exclude, When inferred-name ad-hoc install reinstalls it, Then only its provider exclusion is cleared",
+		Registries: []RegistryDef{
+			{Name: "adhoc-reinstall-inferred", Skills: []Skill{{Name: "foo"}}},
+			{Name: "adhoc-reinstall-other", Skills: []Skill{{Name: "other"}}},
+		},
+		RepoCfg: `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  main: {git: "{{REG:adhoc-reinstall-inferred}}", ref: main, path: skills/foo}
+resources:
+  main: {all: true}
+`,
+		LocalCfg: `
+apiVersion: agent-marketplace/v4
+sources:
+  other: {git: "{{REG:adhoc-reinstall-other}}", ref: main}
+resources:
+  other: {exclude: [skill/foo]}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md"}},
+			{Args: []string{"remove", "foo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/foo"}},
+			{Args: []string{"install", "--from", "{{REG:adhoc-reinstall-inferred}}", "--ref", "main", "--path", "skills/foo"}, MustPass: true,
+				FilesExist:   []string{"/workspace/.factory/skills/foo/SKILL.md"},
+				FileContains: map[string]string{"/workspace/.agents/config.local.yaml": "skill/foo"}},
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/foo/SKILL.md"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+		},
+	},
+	{
 		Name: "install/reinstall_preserves_default_auto_select",
 		Desc: "Given a default:true registry with one skill excluded, When that skill is re-installed, Then the exclude is dropped WITHOUT adding an explicit include so default auto-select keeps every other skill enabled",
 		Registries: []RegistryDef{
@@ -2340,6 +2512,8 @@ registries:
 				FilesAbsent: []string{"/root/.factory/skills/not-this-skill"}},
 		},
 	},
+	// spec: resource-prerequisites/install-finds-an-unmet-prerequisite
+	// spec: resource-prerequisites/commands-succeed-with-unmet-prerequisites
 	{
 		Name: "mcp/install_skill_prerequisite",
 		Desc: "Given a skill that requires an unselected MCP server, When the skill is installed, Then installation warns without selecting or materializing the MCP prerequisite",
@@ -2371,7 +2545,7 @@ registries:
 				MustPass: true,
 				OutContains: []string{
 					`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`,
-					`agent-marketplace install "genai-atlassian" --kind mcp`,
+					`agent-marketplace install genai-atlassian --kind mcp`,
 				},
 				FilesExist: []string{"/root/.factory/skills/smoke-test-kb/SKILL.md"},
 				FileNotContains: map[string]string{
@@ -2381,6 +2555,7 @@ registries:
 			},
 		},
 	},
+	// spec: resource-prerequisites/prerequisite-is-explicitly-excluded
 	{
 		Name: "mcp/install_skill_preserves_excluded_prerequisite",
 		Desc: "Given an explicitly excluded MCP prerequisite, When the requiring skill is installed, Then installation warns and preserves the explicit exclusion",
@@ -2411,7 +2586,7 @@ registries:
 				MustPass: true,
 				OutContains: []string{
 					`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`,
-					`agent-marketplace install "genai-atlassian" --kind mcp`,
+					`agent-marketplace install genai-atlassian --kind mcp`,
 				},
 				FilesExist: []string{"/root/.factory/skills/smoke-test-kb/SKILL.md"},
 				FileContains: map[string]string{
@@ -2421,6 +2596,10 @@ registries:
 			},
 		},
 	},
+	// spec: resource-prerequisites/sync-reports-without-mutation
+	// spec: resource-prerequisites/status-and-doctor-diagnostics
+	// spec: resource-prerequisites/commands-succeed-with-unmet-prerequisites
+	// spec: resource-prerequisites/strict-sync-rejects-unmet-prerequisites
 	{
 		Name: "mcp/sync_reports_unmet_prerequisite",
 		Desc: "Given a selected skill with an unselected MCP prerequisite, When sync runs, Then the skill is materialized and a remediable warning is emitted",
@@ -2449,24 +2628,147 @@ registries:
 			{
 				Args:        []string{"sync"},
 				MustPass:    true,
-				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
 				FilesExist:  []string{"/root/.factory/skills/smoke-test-kb/SKILL.md"},
 				FilesAbsent: []string{"/root/.factory/mcp.json"},
 			},
 			{
 				Args:        []string{"status"},
 				MustPass:    true,
-				OutContains: []string{"UNMET REQUIREMENTS", "skill:smoke-test-kb", "mcp:genai-atlassian", `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains: []string{"UNMET REQUIREMENTS", "skill:smoke-test-kb", "mcp:genai-atlassian", `agent-marketplace install genai-atlassian --kind mcp`},
 			},
 			{
 				Args:        []string{"sync", "--check"},
 				MustPass:    true,
-				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
+			},
+			{
+				Args:           []string{"sync", "--strict"},
+				AssertExitCode: intPtr(1),
+				OutContains:    []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
+			},
+			{
+				Args:           []string{"sync", "--strict", "--check"},
+				AssertExitCode: intPtr(1),
+				OutContains:    []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
 			},
 			{
 				Args:        []string{"doctor"},
 				MustPass:    true,
-				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install "genai-atlassian" --kind mcp`},
+				OutContains: []string{`warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected`, `agent-marketplace install genai-atlassian --kind mcp`},
+			},
+		},
+	},
+	// spec: resource-prerequisites/strict-sync-succeeds-when-satisfied
+	{
+		Name: "mcp/sync_strict_succeeds_when_prerequisite_selected",
+		Desc: "Given a selected skill whose MCP prerequisite is also selected, When sync --strict runs, Then it emits no unmet-prerequisite warning and passes",
+		Registries: []RegistryDef{
+			{
+				Name: "mcp-prerequisite-satisfied",
+				Skills: []Skill{
+					{Name: "smoke-test-kb", Requires: []string{"mcp:genai-atlassian"}},
+				},
+				MCPServers: []MCPServer{
+					{Name: "genai-atlassian", Command: "npx", Args: []string{"-y", "@example/atlassian"}},
+				},
+			},
+		},
+		GlobalCfg: `
+harnesses:
+  - factory
+registries:
+  - url: {{REG:mcp-prerequisite-satisfied}}
+    ref: main
+    skills:
+      include:
+        - smoke-test-kb
+    mcp:
+      include:
+        - genai-atlassian
+`,
+		Steps: []Step{
+			{
+				Args:           []string{"sync", "--strict"},
+				MustPass:       true,
+				OutNotContains: []string{"but it is not selected"},
+				FilesExist:     []string{"/root/.factory/skills/smoke-test-kb/SKILL.md", "/root/.factory/mcp.json"},
+			},
+		},
+	},
+	// spec: resource-prerequisites/invalid-item-among-valid-items
+	// spec: resource-prerequisites/non-list-requires-value
+	{
+		Name: "mcp/invalid_prerequisite_items_warn_in_inspection",
+		Desc: "Given a loadable registry skill mixing a valid prerequisite with malformed items and another with a non-list requires, When list --from and doctor run, Then catalog.requires.invalid warnings name the resources and sources while the valid item still parses",
+		Registries: []RegistryDef{
+			{
+				Name: "mcp-prerequisite-invalid",
+				Files: map[string]string{
+					"skills/broken-prereq/SKILL.md": "---\nname: broken-prereq\ndescription: Mixed prerequisites\nmetadata:\n  requires:\n    - mcp:docs-server\n    - kind: all\n      name: everything\n    - kind: 42\n      name: secret-user:secret-token@example.com\n---\nbody\n",
+					"skills/scalar-prereq/SKILL.md": "---\nname: scalar-prereq\ndescription: Non-list prerequisites\nmetadata:\n  requires: secret-user:secret-token@example.com\n---\nbody\n",
+				},
+				Skills: []Skill{{Name: "sibling"}},
+			},
+		},
+		GlobalCfg: `
+harnesses:
+  - factory
+registries:
+  - url: {{REG:mcp-prerequisite-invalid}}
+    ref: main
+    skills:
+      include:
+        - sibling
+`,
+		Steps: []Step{
+			{
+				Args:           []string{"list", "--from", "{{REG:mcp-prerequisite-invalid}}", "--ref", "main"},
+				MustPass:       true,
+				OutContains:    []string{"catalog.requires.invalid", "broken-prereq", "scalar-prereq", "SKILL.md", "sibling"},
+				OutNotContains: []string{"secret-token", "secret-user"},
+			},
+			{
+				Args:       []string{"sync"},
+				MustPass:   true,
+				FilesExist: []string{"/root/.factory/skills/sibling/SKILL.md"},
+			},
+			{
+				Args:           []string{"doctor"},
+				MustPass:       true,
+				OutContains:    []string{"catalog.requires.invalid", "broken-prereq", "scalar-prereq", "SKILL.md"},
+				OutNotContains: []string{"secret-token", "secret-user"},
+			},
+		},
+	},
+	// spec: resource-prerequisites/malformed-item-stays-silent
+	{
+		Name: "mcp/sync_malformed_prerequisite_stays_silent",
+		Desc: "Given a selected skill whose only prerequisites are malformed, When sync runs, Then the skill is materialized and no prerequisite warning is printed",
+		Registries: []RegistryDef{
+			{
+				Name: "mcp-prerequisite-malformed",
+				Skills: []Skill{
+					{Name: "smoke-test-kb", Requires: []string{"weird:thing", `"mcp: "`, "collection:team-bundle"}},
+				},
+			},
+		},
+		GlobalCfg: `
+harnesses:
+  - factory
+registries:
+  - url: {{REG:mcp-prerequisite-malformed}}
+    ref: main
+    skills:
+      include:
+        - smoke-test-kb
+`,
+		Steps: []Step{
+			{
+				Args:           []string{"sync"},
+				MustPass:       true,
+				OutNotContains: []string{"but it is not selected"},
+				FilesExist:     []string{"/root/.factory/skills/smoke-test-kb/SKILL.md"},
 			},
 		},
 	},
@@ -3589,6 +3891,33 @@ registries:
 	},
 
 	// ===== collections =====
+	// spec: resource-selection/top-level-collection-keeps-required-auto-selection
+	{
+		Name: "collection/required_org_survives_top_level_include",
+		Desc: "Given automatic required organization skills, When repository configuration selects a top-level collection, Then machine outputs survive and the repository collection expands",
+		Registries: []RegistryDef{
+			{Name: "mandatory-collection", Skills: []Skill{{Name: "mandatory-alpha"}, {Name: "mandatory-beta"}}},
+			{Name: "optional-collection", Skills: []Skill{{Name: "optional-member"}}, Files: map[string]string{
+				"collections/shared/COLLECTION.yaml": "name: shared\nversion: '1.0.0'\nresources:\n  - name: optional-member\n",
+			}},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nregistries: []\n",
+		OrgCfg:    "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nregistries:\n  - url: {{REG:mandatory-collection}}\n    ref: main\n    required: true\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nregistries:\n  - url: {{REG:optional-collection}}\n    ref: main\ncollections:\n  include: [shared]\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{
+				"/root/.factory/skills/mandatory-alpha/SKILL.md",
+				"/root/.factory/skills/mandatory-beta/SKILL.md",
+				"/workspace/.factory/skills/optional-member/SKILL.md",
+			}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{
+				"/root/.factory/skills/mandatory-alpha",
+				"/root/.factory/skills/mandatory-beta",
+				"/workspace/.factory/skills/optional-member",
+			}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
 	{
 		Name: "collection/multi_kind_resources_materialize",
 		Desc: "Given a registry with a collection referencing skills, commands, and subagents, When sync is run, Then all resource kinds materialize correctly",
@@ -4597,6 +4926,152 @@ harnesses:
 			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/mcp.json": "native"}, FileNotContains: map[string]string{"/workspace/.factory/mcp.json": "foreign"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
 			{Args: []string{"status"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "gemini-extension.json", "For Claude plugins, rename"}},
+		},
+	},
+	{
+		Name:       "v4_user/inspect_lock_and_backup",
+		Desc:       "Given a v4 user config that selects a Git skill, When status, doctor, lock, and backup run, Then each succeeds against the v4 layer, backup restore recovers a changed user-owned skill file, and the workspace stays in sync",
+		Registries: []RegistryDef{{Name: "v4-user-ops", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools: {git: '{{REG:v4-user-ops}}', ref: main}\nresources:\n  tools: {include: [skill/review]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/root/.factory/skills/review/SKILL.md", "/root/.agents/lock.yaml"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"SYNCED RESOURCES", "review", "USER"}},
+			{Args: []string{"doctor"}, MustPass: true, OutContains: []string{"agent-marketplace doctor"}},
+			{Args: []string{"lock", "--scope", "user"}, MustPass: true, OutContains: []string{"Locks: 0 changed"}},
+			{Args: []string{"lock", "--check"}, MustPass: true},
+			{Action: ActionWriteFile, Path: "/root/.factory/skills/handwritten/SKILL.md", Body: "backed up\n", Args: []string{"backup", "create"}, MustPass: true, OutContains: []string{"Backup created for: factory"}},
+			{Args: []string{"backup", "list"}, MustPass: true, OutContains: []string{"factory (1)"}},
+			{Action: ActionWriteFile, Path: "/root/.factory/skills/handwritten/SKILL.md", Body: "changed after backup\n", Args: []string{"backup", "restore", "--target", "factory"}, MustPass: true, FileContains: map[string]string{"/root/.factory/skills/handwritten/SKILL.md": "backed up"}, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	{
+		Name:       "v4_user/gc_and_deinit",
+		Desc:       "Given a v4 user config that selects a Git skill, When deinit runs, the source is dropped, and gc runs, Then deinit keeps the config, gc removes only the orphaned cache, and deinit --purge-config removes the v4 config and its lock",
+		Registries: []RegistryDef{{Name: "v4-user-gc", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools: {git: '{{REG:v4-user-gc}}', ref: main}\nresources:\n  tools: {include: [skill/review]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"gc", "--dry-run"}, MustPass: true, OutContains: []string{"Would remove 0 cache entries"}},
+			{Args: []string{"deinit", "--dry-run"}, MustPass: true, OutContains: []string{"Would remove 1 managed artifact(s)"}, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"deinit"}, MustPass: true, OutContains: []string{"Removed 1 managed artifact(s)"}, FilesAbsent: []string{"/root/.factory/skills/review"}, FilesExist: []string{"/root/.agents/config.yaml"}},
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n", Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/root/.factory/skills/review"}},
+			{Args: []string{"gc", "--dry-run"}, MustPass: true, OutNotContains: []string{"Would remove 0 cache entries"}},
+			{Args: []string{"gc"}, MustPass: true, OutNotContains: []string{"Removed 0 cache entries"}},
+			{Args: []string{"gc", "--dry-run"}, MustPass: true, OutContains: []string{"Would remove 0 cache entries"}, FilesExist: []string{"/root/.agents/config.yaml", "/root/.agents/lock.yaml"}},
+			{Args: []string{"deinit", "--purge-config"}, MustPass: true, FilesAbsent: []string{"/root/.agents/config.yaml", "/root/.agents/lock.yaml"}},
+		},
+	},
+	{
+		Name:      "cli/help_and_completion",
+		Desc:      "Given any configuration, When help and every completion script are requested, Then each prints its generated text",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		Steps: []Step{
+			{Args: []string{"help"}, MustPass: true, OutContains: []string{"Usage:", "Available Commands:"}},
+			{Args: []string{"completion"}, MustPass: true, OutContains: []string{"Usage:", "bash"}},
+			{Args: []string{"completion", "bash"}, MustPass: true, OutContains: []string{"bash completion"}},
+			{Args: []string{"completion", "zsh"}, MustPass: true, OutContains: []string{"#compdef agent-marketplace"}},
+			{Args: []string{"completion", "fish"}, MustPass: true, OutContains: []string{"complete -c agent-marketplace"}},
+			{Args: []string{"completion", "powershell"}, MustPass: true, OutContains: []string{"Register-ArgumentCompleter"}},
+		},
+	},
+	{
+		Name:      "v4_user/telemetry_preferences",
+		Desc:      "Given a v4 user config, When telemetry is inspected, enabled with an endpoint, previewed, reset, purged, and disabled, Then each succeeds and the user config stays v4",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		Steps: []Step{
+			{Args: []string{"telemetry"}, MustPass: true, OutContains: []string{"Usage:"}},
+			{Args: []string{"telemetry", "status"}, MustPass: true, OutContains: []string{"Effective level"}},
+			{Args: []string{"telemetry", "enable", "--level", "basic", "--endpoint", "http://127.0.0.1:9"}, MustPass: true, FileContains: map[string]string{"/root/.agents/config.yaml": "endpoint: http://127.0.0.1:9"}},
+			{Args: []string{"telemetry", "status"}, MustPass: true, OutContains: []string{"basic"}},
+			{Args: []string{"telemetry", "preview", "--level", "basic"}, MustPass: true},
+			{Args: []string{"telemetry", "reset-id"}, MustPass: true},
+			{Args: []string{"telemetry", "purge"}, MustPass: true},
+			{Args: []string{"telemetry", "disable"}, MustPass: true, FileContains: map[string]string{"/root/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, FileNotContains: map[string]string{"/root/.agents/config.yaml": "level: basic"}},
+			{Args: []string{"backup"}, MustPass: true, OutContains: []string{"Usage:"}},
+			{Args: []string{"init", "--harnesses", "factory"}, MustPass: true, OutContains: []string{"already initialized"}, PathsUnchanged: []string{"/root/.agents/config.yaml"}},
+		},
+	},
+	{
+		Name:       "v2_user/telemetry_preferences_and_backup",
+		Desc:       "Given a legacy v2 user config that selects a Git skill, When telemetry is managed and a backup is created, listed, and restored, Then each succeeds, the config stays v2, and restore recovers a changed user-owned skill file",
+		Registries: []RegistryDef{{Name: "v2-user-backup", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:v2-user-backup}}\n    ref: main\n    skills:\n      include: [review]\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"telemetry"}, MustPass: true, OutContains: []string{"Usage:"}},
+			{Args: []string{"telemetry", "status"}, MustPass: true, OutContains: []string{"Effective level"}},
+			{Args: []string{"telemetry", "enable", "--level", "basic", "--endpoint", "http://127.0.0.1:9"}, MustPass: true, FileContains: map[string]string{"/root/.agents/config.yaml": "endpoint: http://127.0.0.1:9"}},
+			{Args: []string{"telemetry", "preview", "--level", "basic"}, MustPass: true},
+			{Args: []string{"telemetry", "reset-id"}, MustPass: true},
+			{Args: []string{"telemetry", "purge"}, MustPass: true},
+			{Args: []string{"telemetry", "disable"}, MustPass: true, FileContains: map[string]string{"/root/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}, FileNotContains: map[string]string{"/root/.agents/config.yaml": "level: basic"}},
+			{Args: []string{"backup"}, MustPass: true, OutContains: []string{"Usage:"}},
+			{Action: ActionWriteFile, Path: "/root/.factory/skills/handwritten/SKILL.md", Body: "backed up\n", Args: []string{"backup", "create"}, MustPass: true, OutContains: []string{"Backup created for: factory"}},
+			{Args: []string{"backup", "list"}, MustPass: true, OutContains: []string{"factory (1)"}},
+			{Action: ActionWriteFile, Path: "/root/.factory/skills/handwritten/SKILL.md", Body: "changed after backup\n", Args: []string{"backup", "restore", "--target", "factory"}, MustPass: true, FileContains: map[string]string{"/root/.factory/skills/handwritten/SKILL.md": "backed up"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	{
+		Name:       "v4_repo/install_selectors_list_and_maintenance_flags",
+		Desc:       "Given a v4 user config and a v4 repository config that declares a Git source with nothing selected, When listing the registry ad hoc and installing by tag, by kind with --all and --registry, and by name with --kind and --verbose, Then every selection lands in the v4 repository config, and the sync, migrate, and deinit flags succeed against it",
+		Registries: []RegistryDef{{Name: "v4-selectors", Skills: []Skill{{Name: "review", Description: "Review changes", Tags: []string{"k8s"}}, {Name: "deploy", Description: "Deploy"}}, Commands: []Command{{Name: "cmd-one", Description: "Command one", Command: "echo one"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:v4-selectors}}', ref: main}\n",
+		Steps: []Step{
+			{Args: []string{"list", "--from", "{{REG:v4-selectors}}", "--ref", "main", "--path", "skills", "--kind", "skill"}, MustPass: true, OutContains: []string{"review", "deploy"}, OutNotContains: []string{"cmd-one"}},
+			{Args: []string{"install", "--tag", "k8s"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "k8s"}},
+			{Args: []string{"install", "--all", "--kind", "command", "--registry", "{{REG:v4-selectors}}"}, MustPass: true, FilesExist: []string{"/workspace/.factory/commands/cmd-one.md"}},
+			{Args: []string{"install", "deploy", "--kind", "skill", "--verbose"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/deploy/SKILL.md"}},
+			{Args: []string{"list", "--kind", "command"}, MustPass: true, OutContains: []string{"cmd-one"}, OutNotContains: []string{"deploy"}},
+			{Args: []string{"sync", "--verbose", "--no-backup"}, MustPass: true},
+			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "registries:"}},
+			{Args: []string{"migrate", "--dry-run", "--to", "v4", "--scope", "user"}, MustPass: true, PathsUnchanged: []string{"/root/.agents/config.yaml"}},
+			{Args: []string{"migrate", "--harnesses", "factory", "--scope", "user"}, MustPass: true, PathsUnchanged: []string{"/root/.agents/config.yaml"}},
+			{Args: []string{"deinit", "--scope", "repo", "--dry-run"}, MustPass: true, OutContains: []string{"Would remove"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"deinit", "--scope", "repo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/review"}, FilesExist: []string{"/workspace/.agents/config.yaml"}},
+		},
+	},
+	{
+		Name: "v2_repo/adhoc_path_and_registry_flags",
+		Desc: "Given a legacy v2 user and repository config, When installing everything from one configured registry and installing, listing, and removing a resource from an ad hoc registry path, Then each step succeeds and the repository config stays v2",
+		Registries: []RegistryDef{
+			{Name: "v2-flags", Skills: []Skill{{Name: "review", Description: "Review changes"}, {Name: "deploy", Description: "Deploy"}}},
+			{Name: "v2-adhoc", Skills: []Skill{{Name: "adhoc-skill", Description: "Ad hoc skill"}}},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:v2-flags}}\n    ref: main\n",
+		Steps: []Step{
+			{Args: []string{"install", "--all", "--registry", "{{REG:v2-flags}}"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md", "/workspace/.factory/skills/deploy/SKILL.md"}},
+			{Args: []string{"list", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, OutContains: []string{"adhoc-skill"}},
+			{Args: []string{"install", "adhoc-skill", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/adhoc-skill/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "path: skills"}},
+			{Args: []string{"remove", "adhoc-skill", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}},
+			{Args: []string{"sync", "--verbose"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}},
+		},
+	},
+	{
+		Name:       "v2_repo/prune_stale_strict",
+		Desc:       "Given a legacy v2 repository config that selects a skill the registry no longer has, When syncing with --prune-stale --strict --verbose, Then the stale selection is pruned from the config and the remaining skill materializes",
+		Registries: []RegistryDef{{Name: "v2-prune", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:v2-prune}}\n    ref: main\n    skills: [review, deleted-skill]\n",
+		Steps: []Step{
+			{Args: []string{"sync", "--prune-stale", "--strict", "--verbose"}, MustPass: true, OutContains: []string{`pruned stale skill "deleted-skill"`}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "review"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "deleted-skill"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	{
+		Name:       "v4_repo/prune_stale_strict",
+		Desc:       "Given a v4 repository config that selects a skill the registry no longer has, When syncing with --prune-stale --strict --verbose, Then the stale selection is pruned from the config and the remaining skill materializes",
+		Registries: []RegistryDef{{Name: "v4-prune", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:v4-prune}}', ref: main}\nresources:\n  tools: {include: [skill/review, skill/deleted-skill]}\n",
+		Steps: []Step{
+			{Args: []string{"sync", "--prune-stale", "--strict", "--verbose"}, MustPass: true, OutContains: []string{`pruned stale skill "deleted-skill"`}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "skill/review"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "deleted-skill"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
 }

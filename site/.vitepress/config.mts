@@ -49,9 +49,11 @@ export default defineConfig({
     sidebar: {
       [DOCS_PATH]: [
         { text: 'Overview', link: DOCS_PATH },
+        { text: 'Terminal basics', link: `${DOCS_PATH}terminal-basics` },
         { text: 'Install', link: `${DOCS_PATH}install` },
         { text: 'Quick start', link: `${DOCS_PATH}quick-start` },
         { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
+        { text: 'Glossary', link: `${DOCS_PATH}glossary` },
         {
           text: 'Tutorials',
           items: [
@@ -71,7 +73,8 @@ export default defineConfig({
             {
               text: 'Marketplace operators',
               items: [
-                { text: 'Run a local Marketplace', link: `${DOCS_PATH}tutorials/run-a-local-marketplace` }
+                { text: 'Run a local Marketplace', link: `${DOCS_PATH}tutorials/run-a-local-marketplace` },
+                { text: 'Add your first registry', link: `${DOCS_PATH}tutorials/add-your-first-marketplace-registry` }
               ]
             }
           ]
@@ -108,7 +111,8 @@ export default defineConfig({
               items: [
                 { text: 'Add a resource to a registry', link: `${DOCS_PATH}how-to/author/add-a-resource-to-a-registry` },
                 { text: 'Publish resource collections', link: `${DOCS_PATH}how-to/author/publish-resource-collections` },
-                { text: 'Declare tags and prerequisites', link: `${DOCS_PATH}how-to/author/declare-tags-and-prerequisites` },
+                { text: 'Declare tags and a license', link: `${DOCS_PATH}how-to/author/declare-tags-and-licenses` },
+                { text: 'Declare resource prerequisites', link: `${DOCS_PATH}how-to/author/declare-resource-prerequisites` },
                 { text: 'Validate a registry in CI', link: `${DOCS_PATH}how-to/author/validate-a-registry-in-ci` },
                 { text: 'Version and release a registry', link: `${DOCS_PATH}how-to/author/version-and-release-a-registry` }
               ]
@@ -118,6 +122,7 @@ export default defineConfig({
               items: [
                 { text: 'Deploy a production Marketplace', link: `${DOCS_PATH}how-to/operator/deploy-a-production-marketplace` },
                 { text: 'Enable and use the admin panel', link: `${DOCS_PATH}how-to/operator/enable-and-use-the-admin-panel` },
+                { text: 'Test locally with Compose', link: `${DOCS_PATH}how-to/operator/test-locally-with-compose` },
                 { text: 'Configure a reverse proxy', link: `${DOCS_PATH}how-to/operator/configure-a-reverse-proxy` },
                 { text: 'Connect a private registry', link: `${DOCS_PATH}how-to/operator/connect-a-private-registry` },
                 { text: 'Back up and restore a Marketplace', link: `${DOCS_PATH}how-to/operator/back-up-and-restore` },
@@ -148,6 +153,7 @@ export default defineConfig({
             { text: 'Marketplace resource locators', link: `${DOCS_PATH}reference/marketplace-resource-locators` },
             { text: 'Registry layout', link: `${DOCS_PATH}reference/registry-layout` },
             { text: 'Resource metadata', link: `${DOCS_PATH}reference/resource-metadata` },
+            { text: 'Resource prerequisites', link: `${DOCS_PATH}reference/resource-prerequisites` },
             { text: 'Collections', link: `${DOCS_PATH}reference/collections` }
           ]
         },
@@ -155,6 +161,7 @@ export default defineConfig({
           text: 'Explanation',
           items: [
             { text: 'How agent-marketplace works', link: `${DOCS_PATH}explanation/how-agent-marketplace-works` },
+            { text: 'Sources and resources', link: `${DOCS_PATH}explanation/sources-and-resources` },
             { text: 'Scopes, selection, and precedence', link: `${DOCS_PATH}explanation/scopes-selection-and-precedence` },
             { text: 'Native harness materialization', link: `${DOCS_PATH}explanation/native-harness-materialization` },
             { text: 'Reproducibility and lockfiles', link: `${DOCS_PATH}explanation/reproducibility-and-lockfiles` },

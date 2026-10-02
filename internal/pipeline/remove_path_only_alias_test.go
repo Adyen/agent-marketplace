@@ -50,7 +50,7 @@ func TestRemovePathOnlyLocalCollectionAliasPreservesUnrelatedSelection(t *testin
 		t.Fatalf("unrelated alias = %#v, want untouched", cfg.Registries[1])
 	}
 
-	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
 	if len(resolved.Errors) != 0 || len(resolved.Resolved) != 1 || resolved.Resolved[0].Name != "unrelated-skill" || resolved.Resolved[0].RegistryURL != localB {
 		t.Fatalf("resolved = %#v, errors = %v; want only unrelated local selection", resolved.Resolved, resolved.Errors)
 	}

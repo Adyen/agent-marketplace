@@ -705,45 +705,50 @@ func TestIgnoredSubBundlesMessageIsDeterministicAndBounded(t *testing.T) {
 
 // TestDiscover_SubBundlesIgnoredSuppressedWhenCatalogCoversThem verifies that
 // the sub-bundles-ignored warning is NOT emitted when the loaded catalog
-// already contains entries from the sub-bundle directories. This happens
-// when a recognized harness workspace (e.g. .factory/skills/) has
-// organizational groupings (e.g. go/, python/) that contain skill
-// subdirectories — HCC discovers all skills within the workspace, so the
-// "sub-bundles" don't represent missed resources.
+// already contains entries from the sub-bundle directories. A root bundle
+// can discover a skill in a plugin-marked subdirectory, which then holds no
+// missed resources. Invalid metadata.requires on that skill is unrelated to
+// sub-bundle discovery.
+// spec: resource-prerequisites/covered-sub-bundle-with-malformed-prerequisite
 func TestDiscover_SubBundlesIgnoredSuppressedWhenCatalogCoversThem(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create a bare skills directory container with skills organized in
-	// sub-directories (like awesome-ai's .factory/skills/ layout).
-	// The "go" and "python" directories contain multiple skills each,
-	// which makes hasMultiSkillSubdirs detect them as sub-bundles.
-	if err := os.MkdirAll(filepath.Join(dir, "go", "go-conventions"), 0o755); err != nil {
+	// Create a root multi-skill bundle with a plain skill and a plugin-marked
+	// team directory. The root catalog discovers both skills directly, so
+	// the team directory also looks like a sub-bundle without containing
+	// missed resources.
+	if err := os.MkdirAll(filepath.Join(dir, "plain"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(dir, "go", "go-conventions", "SKILL.md"), "---\nname: go-conventions\ndescription: Go conventions\nmetadata:\n  tags: []\n---\n\n# Go Conventions\n")
+	writeFile(t, filepath.Join(dir, "plain", "SKILL.md"), "---\nname: plain\ndescription: Plain skill\nmetadata:\n  tags: []\n---\n\n# Plain\n")
 
-	if err := os.MkdirAll(filepath.Join(dir, "go", "go-idioms"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "team", ".claude-plugin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(dir, "go", "go-idioms", "SKILL.md"), "---\nname: go-idioms\ndescription: Go idioms\nmetadata:\n  tags: []\n---\n\n# Go Idioms\n")
-
-	if err := os.MkdirAll(filepath.Join(dir, "python", "python-testing"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(dir, "python", "python-testing", "SKILL.md"), "---\nname: python-testing\ndescription: Python testing\nmetadata:\n  tags: []\n---\n\n# Python Testing\n")
+	writeFile(t, filepath.Join(dir, "team", ".claude-plugin", "plugin.json"), `{"name":"team"}`)
+	writeFile(t, filepath.Join(dir, "team", "SKILL.md"), "---\nname: team\ndescription: Team skill\nmetadata:\n  tags: []\n  requires:\n    - helper-skill\n    - kind: weird\n      name: leaked-value\n---\n\n# Team\n")
 
 	result, err := Discover(dir, "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
 
-	// All skills should be discovered.
-	if len(result.Entries) < 3 {
-		t.Fatalf("expected at least 3 entries, got %d: %#v", len(result.Entries), result.Entries)
+	if len(result.Entries) != 2 {
+		t.Fatalf("expected 2 entries (plain and team), got %d: %#v", len(result.Entries), result.Entries)
 	}
 
-	// The sub-bundles-ignored warning should NOT be emitted because the
-	// loaded catalog already covers the "go" and "python" sub-directories.
+	requiresWarning := false
+	for _, d := range result.Diagnostics {
+		if d.Code == CodeRequiresInvalid && d.Resource == "team" {
+			requiresWarning = true
+		}
+	}
+	if !requiresWarning {
+		t.Errorf("expected a %s warning for team, got diagnostics: %#v", CodeRequiresInvalid, result.Diagnostics)
+	}
+
+	// The sub-bundles-ignored warning must NOT be emitted because the
+	// loaded catalog already covers the "team" sub-bundle directory.
 	for _, m := range result.Malformed {
 		if m.DirName == "catalog.discover.sub-bundles-ignored" {
 			t.Fatalf("unexpected sub-bundles-ignored warning (catalog covers the sub-bundles): %v", m.Error)

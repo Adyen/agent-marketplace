@@ -52,7 +52,15 @@ func TestV4DirectoryPreservesMachineAndFragmentBases(t *testing.T) {
 	for _, kind := range []layerKind{userLayer, organizationLayer} {
 		file := filepath.Join(home, ".agents", "config.yaml")
 		writeV2Config(t, file, "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: ./resources/skills}}\nresources: {registry: {all: true}}\n")
-		cfg, err := loadConfigTree(file, kind)
+		data, err := readConfigFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		li, err := readLayerIntent(file, "", data, kind, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := li.bind(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +86,11 @@ func TestV4DirectoryOverlayUsesRepositoryRoot(t *testing.T) {
 	file := filepath.Join(repo, ".agents", "config.yaml")
 	writeV2Config(t, file, "apiVersion: agent-marketplace/v4\n")
 	data := []byte("apiVersion: agent-marketplace/v4\nsources: {registry: {directory: ./resources/skills}}\nresources: {registry: {all: true}}\n")
-	cfg, _, err := loadConfigTreeWithReads(file, file, data, repoLayer, map[string][]byte{file: data})
+	li, err := readLayerIntent(file, file, data, repoLayer, map[string][]byte{file: data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := li.bind(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

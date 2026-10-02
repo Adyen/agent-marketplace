@@ -40,7 +40,7 @@ registries:
 
 	// The global config should have been created by EnsureGlobalConfig.
 	env.AssertFileExists("/root/.agents/config.yaml")
-	env.AssertFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v2")
+	env.AssertFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v4")
 	env.AssertFileContains("/root/.agents/config.yaml", "harnesses:")
 	// Logging is intentionally omitted from the skeleton; the runtime uses
 	// code defaults unless the user opts in with an explicit logging block.
@@ -106,4 +106,30 @@ func TestSyncPreservesExternalGitignore(t *testing.T) {
 			t.Fatalf("gitignore = %q, want %q", got, want)
 		}
 	})
+}
+
+// sync creates a missing user config as v4, the way init does, so a v4
+// repository stays a pure v4 setup. An existing v4 user config is left alone
+// without the skeleton warning sync used to log on every run.
+func TestSyncCreatesAMissingUserConfigAsV4(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	registry := env.CreateBareRepo("sync-v4-user", RegistryFiles([]Skill{{Name: "review", Description: "Review"}}, nil, nil))
+	env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools: {git: '%s', ref: main}\nresources:\n  tools: {include: [skill/review]}\n", registry))
+
+	env.AssertExitCode(env.RunAM("sync"), 0)
+	user := env.ReadFile("/root/.agents/config.yaml")
+	if !strings.Contains(user, "apiVersion: agent-marketplace/v4") || !strings.Contains(user, "factory") || strings.Contains(user, "registries") {
+		t.Fatalf("sync did not create a v4 user config with the default harnesses:\n%s", user)
+	}
+	env.AssertFileExists("/workspace/.factory/skills/review/SKILL.md")
+
+	again := env.RunAM("sync", "--debug")
+	if again.ExitCode != 0 || strings.Contains(again.Combined, "failed to create global config skeleton") {
+		t.Fatalf("second sync failed or warned about the existing v4 user config (exit %d):\n%s", again.ExitCode, again.Combined)
+	}
+	if got := env.ReadFile("/root/.agents/config.yaml"); got != user {
+		t.Fatalf("second sync rewrote the user config:\n%s", got)
+	}
+	env.AssertExitCode(env.RunAM("sync", "--check"), 0)
 }

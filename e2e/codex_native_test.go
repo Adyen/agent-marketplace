@@ -412,6 +412,39 @@ func TestE2ECodexRepairPreviewAndExactMatchAdoption(t *testing.T) {
 	}
 }
 
+// The same exact-match adoption works when the user and repository
+// configs are v4.
+func TestE2ECodexRepairExactMatchAdoptionWithV4Config(t *testing.T) {
+	env := newCodexEnv(t)
+	registryURL := mcpRegistry(env, "repair-adoption-v4", "managed", "managed-bin")
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
+	env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '%s', ref: main, source_harness: claude}\nresources:\n  tools: {include: [mcp/managed]}\n", registryURL))
+	configPath := filepath.Join(env.workspace, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const original = "# handwritten formatting stays\n[mcp_servers.managed]\ncommand = 'managed-bin'\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.MustRunAM("lock")
+
+	preview := env.RunAM("doctor", "--repair")
+	if preview.ExitCode != 0 || !strings.Contains(preview.Combined, `adopt mcp-server "managed"`) || !strings.Contains(preview.Combined, "preview only") {
+		t.Fatalf("repair preview mismatch (exit=%d):\n%s", preview.ExitCode, preview.Combined)
+	}
+	adopt := env.RunAM("doctor", "--repair", "--yes")
+	if adopt.ExitCode != 0 || !strings.Contains(adopt.Combined, "adopted 1 entr(y/ies) in config.toml") {
+		t.Fatalf("exact adoption failed (exit=%d):\n%s", adopt.ExitCode, adopt.Combined)
+	}
+	if got := readFile(t, configPath); got != original {
+		t.Fatalf("adoption changed config.toml bytes:\n%s", got)
+	}
+	if check := env.RunAM("sync", "--check"); check.ExitCode != 0 {
+		t.Fatalf("adopted state does not describe the live file (exit=%d):\n%s", check.ExitCode, check.Combined)
+	}
+}
+
 func TestE2ECodexDestructiveRepairRequiresConfirmationAndRedactsSecrets(t *testing.T) {
 	env := newCodexEnv(t)
 	const (
@@ -428,6 +461,7 @@ func TestE2ECodexDestructiveRepairRequiresConfirmationAndRedactsSecrets(t *testi
 	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	preview := env.RunAM("doctor", "--repair", "--yes")
 	assertRepairResult(t, preview, 0, "replace mcp-server", "left unchanged")
@@ -481,6 +515,7 @@ func TestE2ECodexRepairCorruptionAfterIndependentAdoptionIsPartialFailure(t *tes
 	if err := os.WriteFile(codexPath, []byte(codexOriginal), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	result := env.RunAM("doctor", "--repair", "--yes")
 	if result.ExitCode == 0 {
@@ -604,6 +639,13 @@ func runDoctorRepairInTTY(t *testing.T, env *Env, answer string) ExecResult {
 
 func runAMInTTY(t *testing.T, env *Env, command, option, prompt, answer string) ExecResult {
 	t.Helper()
+	return runAMInTTYAtPrompt(t, env, command, option, prompt, answer, nil)
+}
+
+// runAMInTTYAtPrompt is runAMInTTY with atPrompt called while the command is
+// blocked at its prompt, before the answer is written.
+func runAMInTTYAtPrompt(t *testing.T, env *Env, command, option, prompt, answer string, atPrompt func()) ExecResult {
+	t.Helper()
 	scriptPath, err := exec.LookPath("script")
 	if err != nil {
 		t.Fatalf("interactive E2E requires the system 'script' utility: %v", err)
@@ -682,6 +724,9 @@ exec "$AM_E2E_BINARY" "$AM_E2E_COMMAND" >"$AM_E2E_STDOUT" 2>"$AM_E2E_STDERR"
 	}
 
 prompted:
+	if atPrompt != nil {
+		atPrompt()
+	}
 	if _, err := stdin.Write([]byte(answer)); err != nil {
 		t.Fatalf("answer %s prompt: %v", command, err)
 	}

@@ -25,6 +25,10 @@ func ks(v ...string) config.KindSelector {
 	return config.KindSelector{Include: v}
 }
 
+func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+	return readSnapshotForWorkspace(ctx, defaultTUIWorkspace(repoRoot), homeDir, mode)
+}
+
 func TestLoadCatalogsForTUIUsesExistingCacheWithoutRefresh(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -672,7 +676,7 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 		t.Fatalf("resolved skill Resource is nil; TUI sync would prune without writing")
 	}
 
-	msg := runSyncCmd(context.Background(), repoRoot)()
+	msg := runSyncCmd(context.Background(), defaultTUIWorkspace(repoRoot))()
 	done, ok := msg.(syncDoneMsg)
 	if !ok {
 		t.Fatalf("runSyncCmd returned %T, want syncDoneMsg", msg)
@@ -831,7 +835,7 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	msg := runUpdateCmd(context.Background(), repoRoot, homeDir, 1)()
+	msg := runUpdateCmdForWorkspace(context.Background(), defaultTUIWorkspace(repoRoot), homeDir, 1)()
 	done, ok := msg.(updateDoneMsg)
 	if !ok {
 		t.Fatalf("runUpdateCmd returned %T, want updateDoneMsg", msg)

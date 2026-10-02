@@ -22,14 +22,14 @@ func TestNewContextCarriesRootSpan(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

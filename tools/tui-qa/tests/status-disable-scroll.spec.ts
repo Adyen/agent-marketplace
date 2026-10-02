@@ -36,7 +36,9 @@ test("disabling an overflowing Status row keeps its section visible and selects 
     await expect(terminal.getByText(/Name:\s+skill-01/g)).toBeVisible();
     await expect(terminal.getByText(/Enabled\s+\(30\)/g)).toBeVisible();
   });
-  assert.doesNotMatch(fs.readFileSync(path.join(fixture.repo, ".agents", "config.yaml"), "utf8"), /        - skill-00\n/);
+  const config = fs.readFileSync(path.join(fixture.repo, ".agents", "config.yaml"), "utf8");
+  assert.doesNotMatch(config.split("      exclude:")[0], /        - skill-00\n/);
+  assert.match(config, /      exclude:\n        - skill-00\n/);
   await step("offer sync before quitting with pending drift", () => terminal.write("q"), async () => {
     await expect(terminal.getByText("pending changes not synced", { strict: false })).toBeVisible();
   });

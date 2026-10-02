@@ -39,7 +39,7 @@ registries:
 `)
 
 	result := Resolve(context.Background(), ResolveOptions{
-		RepoRoot:    dir,
+		Workspace:   mustWorkspace(t, dir),
 		CatalogMode: catalog.LoadModeInspect,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
@@ -77,10 +77,9 @@ registries:
     ref: main
     required: true
 `)
-	writeFile(t, filepath.Join(dir, "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: organization\n")
 
 	result := Resolve(context.Background(), ResolveOptions{
-		RepoRoot:    dir,
+		Workspace:   mustWorkspace(t, dir),
 		CatalogMode: catalog.LoadModeInspect,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
@@ -123,8 +122,8 @@ registries: []
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: dir,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, dir),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
@@ -156,8 +155,8 @@ registries: []
 	concurrent := errors.New("exact lock changed concurrently")
 	called := false
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: dir,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, dir),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
@@ -174,6 +173,35 @@ registries: []
 	}
 	if !errors.Is(errors.Join(result.Errors...), concurrent) {
 		t.Fatalf("sync errors = %v, want concurrent exact-lock error", result.Errors)
+	}
+}
+
+// A conflicting EffectiveOpts root override must fail before Sync touches
+// either exact-lock path: the same pre-mutation ordering the zero-Workspace
+// check enforces, because the lease path can write reconciled lockfiles.
+func TestSyncRejectsConflictingEffectiveOptsRootsBeforeLease(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	leaseCalled := false
+	result := Sync(context.Background(), ResolveOptions{
+		Workspace: mustWorkspace(t, dir),
+		NoBackup:  true,
+		EffectiveOpts: config.LoadEffectiveOptions{
+			RepoRoot: t.TempDir(),
+		},
+		ExactLockLease: func(context.Context) (func(), error) {
+			leaseCalled = true
+			return func() {}, nil
+		},
+	})
+	if leaseCalled {
+		t.Fatal("exact lock lease ran before the EffectiveOpts root-conflict rejection")
+	}
+	if !errors.Is(errors.Join(result.Errors...), ErrInvalidWorkspace) {
+		t.Fatalf("sync errors = %v, want ErrInvalidWorkspace", result.Errors)
+	}
+	if !errors.Is(errors.Join(result.CatalogTrustErrors...), ErrInvalidWorkspace) {
+		t.Fatalf("sync catalog trust errors = %v, want ErrInvalidWorkspace", result.CatalogTrustErrors)
 	}
 }
 
@@ -202,8 +230,8 @@ registries:
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: filepath.Join(t.TempDir(), "missing-org.yaml"),
 			GlobalPath:       globalPath,
@@ -256,8 +284,8 @@ registries:
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),
@@ -311,8 +339,8 @@ registries:
 
 		repoRoot := t.TempDir()
 		result := Sync(context.Background(), ResolveOptions{
-			RepoRoot: repoRoot,
-			NoBackup: true,
+			Workspace: mustWorkspace(t, repoRoot),
+			NoBackup:  true,
 			EffectiveOpts: config.LoadEffectiveOptions{
 				OrganizationPath: orgPath,
 				GlobalPath:       userPath,
@@ -343,8 +371,8 @@ registries:
 `)
 
 		result := Sync(context.Background(), ResolveOptions{
-			RepoRoot: repoRoot,
-			NoBackup: true,
+			Workspace: mustWorkspace(t, repoRoot),
+			NoBackup:  true,
 			EffectiveOpts: config.LoadEffectiveOptions{
 				OrganizationPath: orgPath,
 				GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),

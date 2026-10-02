@@ -1,21 +1,24 @@
 # Documentation
 
-`agent-marketplace` syncs shared AI agent resources (skills, commands, subagents, hooks, MCP servers) from Git registries or a hosted Marketplace into the native layout of every coding harness you use: Claude Code, Codex, Cursor, Devin, Factory Droid, Gemini CLI, and Windsurf.
+`agent-marketplace` is a command-line tool that installs shared AI agent resources into the coding tools you use. A resource is a skill, command, subagent, hook, or MCP server. The tool downloads them from Git registries or a hosted Marketplace and writes each one into the folders that your coding tool reads. These docs call each coding tool a [harness](./glossary.md#harness). Seven are supported: Claude Code, Codex, Cursor, Devin, Factory Droid, Gemini CLI, and Windsurf.
 
 ## Start here
 
-New to the tool? Do these two in order, about ten minutes total:
+If you are new to the tool, follow these steps in order:
 
-1. [Install](./install.md) the binary.
-2. Follow the [quick start](./quick-start.md) to select a skill from a public registry and inspect it in the terminal UI. You'll also commit the config so teammates can reproduce the setup.
+1. If you rarely use a terminal, read [Terminal basics](./terminal-basics.md) first. It covers opening a terminal, running commands, and what to do when one fails.
+2. [Install](./install.md) the binary.
+3. Follow the [quick start](./quick-start.md). In about ten minutes you select a skill from a public registry, look at it in the terminal UI, and commit the configuration so teammates can reproduce the setup.
 
-Then pick the section below that matches what you are trying to do.
+When you meet a word you don't know, look it up in the [glossary](./glossary.md).
+
+Then pick the section below that matches what you want to do.
 
 ## I use agent resources in my projects
 
-You want skills and other resources in your editor, kept consistent across a team.
+You want skills and other resources in your editor, and you want them to stay the same for everyone on the team.
 
-The [user-journey map](./explanation/user-journeys.md) follows a resource from discovery and inspection through installation and team sharing. It also covers updates, removal, and recovery, with steps for the browser, CLI, and TUI.
+The [user-journey map](./explanation/user-journeys.md) follows a resource from finding and inspecting it, through installing and sharing it, to updating, removing, and recovering it. It gives steps for the browser, the CLI, and the TUI.
 
 | Goal | Read |
 |---|---|
@@ -28,9 +31,9 @@ The [user-journey map](./explanation/user-journeys.md) follows a resource from d
 | Target more than one harness | [Configure multiple harnesses](./how-to/configure-multiple-harnesses.md) |
 | Remove a resource, or keep one out of a team default | [Remove or override resources](./how-to/remove-or-override-resources.md) · [Personal repository overrides](./how-to/use-personal-repository-overrides.md) |
 | Install from a curated Marketplace instead of a raw Git URL | [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md) |
-| Understand what the tool is doing | [How agent-marketplace works](./explanation/how-agent-marketplace-works.md) |
+| Understand what the tool does | [How agent-marketplace works](./explanation/how-agent-marketplace-works.md) |
 
-More consumer guides: [install bundles](./how-to/install-resource-bundles.md), [regular files instead of symlinks](./how-to/write-regular-files-instead-of-symlinks.md), [local registries](./how-to/use-a-local-registry.md), [private Git registries](./how-to/configure-private-git-registries.md), [migrate configuration](./how-to/migrate-configuration.md), [convert a harness layout](./how-to/convert-a-harness-layout.md), [repair owned shared configuration](./how-to/repair-owned-shared-configuration.md), [back up machine resources](./how-to/back-up-and-restore-machine-resources.md), [clean the cache](./how-to/clean-the-cache-safely.md), [remove agent-marketplace](./how-to/remove-agent-marketplace-safely.md), [telemetry](./how-to/configure-telemetry.md).
+Other guides for people who use resources: [install bundles](./how-to/install-resource-bundles.md), [regular files instead of symlinks](./how-to/write-regular-files-instead-of-symlinks.md), [local registries](./how-to/use-a-local-registry.md), [private Git registries](./how-to/configure-private-git-registries.md), [migrate configuration](./how-to/migrate-configuration.md), [convert a harness layout](./how-to/convert-a-harness-layout.md), [repair owned shared configuration](./how-to/repair-owned-shared-configuration.md), [back up machine resources](./how-to/back-up-and-restore-machine-resources.md), [clean the cache](./how-to/clean-the-cache-safely.md), [remove agent-marketplace](./how-to/remove-agent-marketplace-safely.md), [telemetry](./how-to/configure-telemetry.md).
 
 ## I publish resources for others
 
@@ -40,7 +43,8 @@ You maintain a Git repository of skills that other people install.
 |---|---|
 | Create a registry from nothing and install from it | [Tutorial: create your first registry](./tutorials/create-your-first-registry.md) |
 | Add a skill or command | [Add a resource to a registry](./how-to/author/add-a-resource-to-a-registry.md) |
-| Make resources discoverable by tag and declare what they need | [Declare tags and prerequisites](./how-to/author/declare-tags-and-prerequisites.md) |
+| Make resources discoverable by tag and licensed | [Declare tags and a license](./how-to/author/declare-tags-and-licenses.md) |
+| Declare what a resource needs to be installed | [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) |
 | Ship a bundle consumers can install in one step | [Publish resource collections](./how-to/author/publish-resource-collections.md) |
 | Catch broken resources before consumers do | [Validate a registry in CI](./how-to/author/validate-a-registry-in-ci.md) |
 | Cut a release consumers can pin | [Version and release a registry](./how-to/author/version-and-release-a-registry.md) |
@@ -48,11 +52,12 @@ You maintain a Git repository of skills that other people install.
 
 ## I operate a Marketplace
 
-You run the hosted service that curates registries for an organization.
+You run the hosted service that indexes and curates registries for an organization.
 
 | Goal | Read |
 |---|---|
 | See the whole thing working on your laptop | [Tutorial: run a local Marketplace](./tutorials/run-a-local-marketplace.md) |
+| Add a registry from the admin panel for the first time | [Tutorial: add your first registry](./tutorials/add-your-first-marketplace-registry.md) |
 | Deploy it for real | [Deploy a production Marketplace](./how-to/operator/deploy-a-production-marketplace.md) · [Configure a reverse proxy](./how-to/operator/configure-a-reverse-proxy.md) |
 | Index a registry that needs credentials | [Connect a private registry](./how-to/operator/connect-a-private-registry.md) |
 | Decide what is allowed in | [Manage ingestion policy](./how-to/operator/manage-ingestion-policy.md) |
@@ -74,6 +79,7 @@ Exact descriptions of commands, files, and fields.
 Why it is designed this way.
 
 - [How agent-marketplace works](./explanation/how-agent-marketplace-works.md)
+- [Sources and resources](./explanation/sources-and-resources.md)
 - [Scopes, selection, and precedence](./explanation/scopes-selection-and-precedence.md)
 - [Native harness materialization](./explanation/native-harness-materialization.md)
 - [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md)

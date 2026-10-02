@@ -22,6 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -110,12 +111,31 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	}
 	repoRoot := config.FindRepoRoot()
 
-	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		RepoRoot:           repoRoot,
-		CatalogMode:        catalog.LoadModeInspect,
-		ReadOnlyExactLocks: true,
+	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return err
+	}
+	// Use the resolved scope policy for dry-run drift detection. status exists
+	// to explain misconfiguration, so an invalid mode or a failed drift probe
+	// is reported as an error row rather than suppressing every other
+	// diagnostic. File mode returns manifest and containment problems here as
+	// hard errors.
+	inspection, releaseExactLease := pipeline.Inspect(ctx, pipeline.InspectOptions{
+		Resolve: pipeline.ResolveOptions{
+			Workspace:          ws,
+			CatalogMode:        catalog.LoadModeInspect,
+			ReadOnlyExactLocks: true,
+			// Marketplace selections resolve into artifacts from the verified
+			// local cache, so the desired set matches sync --check without
+			// downloading artifacts or writing files.
+			MarketplaceArtifactsFromCache: true,
+		},
+		DryRun:                         runStatusMaterialize,
+		SkipMaterializeOnResolveErrors: true,
 	})
 	defer releaseExactLease()
+	result := inspection.ResolveResult
+	dryRunReport := inspection.Report
 
 	catalogEntries := make(map[string][]catalog.Entry, len(result.CatalogLoad.Catalogs))
 	for k, v := range result.CatalogLoad.Catalogs {
@@ -133,24 +153,8 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			}
 		}
 	}
-	// Use the resolved scope policy for dry-run drift detection. status exists
-	// to explain misconfiguration, so an invalid mode or a failed drift probe
-	// is reported as an error row rather than suppressing every other
-	// diagnostic. File mode returns manifest and containment problems here as
-	// hard errors.
-	var materializeErrs []error
-	modes, err := config.ResolveMaterializationModes(result.GlobalCfg, result.RepoCfg, result.LocalCfg)
-	if err != nil {
-		materializeErrs = append(materializeErrs, err)
-	}
-	var dryRunReport *materialize.Report
-	if len(result.Errors) == 0 && err == nil {
-		var dryRunErr error
-		dryRunReport, dryRunErr = runStatusMaterialize(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
-		if dryRunErr != nil {
-			slog.Warn("status drift check failed", "error", dryRunErr)
-			materializeErrs = append(materializeErrs, dryRunErr)
-		}
+	if inspection.MaterializeErr != nil {
+		slog.Warn("status drift check failed", "error", inspection.MaterializeErr)
 	}
 
 	// Build orphaned rows from files that would be removed.
@@ -183,12 +187,20 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 				resolver.WithMalformed(catalog.MalformedByKey(result.CatalogLoad.Catalogs)),
 				resolver.WithTargetHarnesses(result.TargetHarnesses),
 			}
-			if result.MarketplaceInspection != nil {
+			// The second resolve keeps the Marketplace view consistent with the
+			// primary one: when the pipeline resolved Marketplace artifacts
+			// from cache, the excluded diff must see the same artifacts. The
+			// metadata-only inspection remains the fallback for callers that
+			// did not opt in.
+			if result.MarketplaceArtifactResolver != nil {
+				secondResolveOpts = append(secondResolveOpts, resolver.WithMarketplaceResolver(result.MarketplaceArtifactResolver))
+			} else if result.MarketplaceInspection != nil {
 				secondResolveOpts = append(secondResolveOpts, resolver.WithMarketplaceResolver(*result.MarketplaceInspection))
 			}
 			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(result.LoadedCfg, catalogEntries, localNoExclude, secondResolveOpts...)
 			for _, e := range secondResolveErrs {
-				if !resolver.IsWarning(e) && !resolver.IsSoftSelectedNotFound(e) && !resolver.IsSoftSelectedMalformed(e) {
+				if !resolver.IsWarning(e) && !resolver.IsSoftSelectedNotFound(e) && !resolver.IsSoftSelectedMalformed(e) &&
+					!pipeline.IsMarketplaceCacheMetadataMissingWarning(e) {
 					secondResolveRealErrs = append(secondResolveRealErrs, e)
 				}
 			}
@@ -218,7 +230,12 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 
 	statusRows := buildStatusRows(repoRoot, result.Resolved, cacheFreshness, dryRunReport)
 	applyExactLockFreshness(statusRows, result.LockMetadata)
-	requirementRows, resolveErrs := splitRequirementWarnings(result.ResolveErrors)
+	// A Marketplace pin that failed to resolve is already reported as a hard
+	// error naming the pin. Its dependents must not also be told to select a
+	// resource that is selected; the resolution failure is the actionable fact.
+	pendingMarketplacePins := pipeline.MarketplacePendingPins(result.ResolveErrors)
+	requirementRows, resolveErrs := splitRequirementWarnings(
+		pipeline.SuppressUnmetMarketplaceRequirements(result.ResolveErrors, pendingMarketplacePins))
 	collisionRows := splitResolveErrors(resolveErrs)
 
 	// Convert overlap warnings to collision rows so they appear in the
@@ -234,7 +251,17 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		}
 	}
 
-	errorRows := buildErrorRows(materializeErrs, result.Errors, malformedSkillErrors(result.CatalogLoad.Malformed), secondResolveRealErrs)
+	inspectionErrors := make([]error, 0, len(inspection.Issues))
+	for _, issue := range inspection.Issues {
+		if issue.Severity != pipeline.IssueError {
+			continue
+		}
+		if issue.Category == pipeline.IssueMaterialization && pipeline.IsPromotedDiagnostic(issue.Err) {
+			continue
+		}
+		inspectionErrors = append(inspectionErrors, issue.Err)
+	}
+	errorRows := buildErrorRows(inspectionErrors, secondResolveRealErrs)
 
 	targetHarnesses := make([]string, len(result.TargetHarnesses))
 	for i, t := range result.TargetHarnesses {
@@ -246,9 +273,16 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		return fmt.Errorf("resolve harness target roots: %w", err)
 	}
 
+	var statusWarnings []error
+	for _, issue := range inspection.Issues {
+		if issue.Severity == pipeline.IssueWarning {
+			statusWarnings = append(statusWarnings, issue.Err)
+		}
+	}
+
 	if err := writeStatusSections(out, statusView{
 		diag:                result.Diagnostics,
-		warnings:            result.Warnings,
+		warnings:            statusWarnings,
 		statusRows:          statusRows,
 		locallyExcluded:     locallyExcluded,
 		localRegistries:     localRegistries,
@@ -266,11 +300,13 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		return err
 	}
 
-	if len(result.Errors) > 0 {
-		return errors.Join(result.Errors...)
+	var failureErrs []error
+	for _, issue := range inspection.Issues {
+		if issue.Severity == pipeline.IssueError {
+			failureErrs = append(failureErrs, issue.Err)
+		}
 	}
-
-	return nil
+	return errors.Join(failureErrs...)
 }
 
 func splitRequirementWarnings(errs []error) ([]requirementRow, []error) {
@@ -317,14 +353,6 @@ func describeCacheFreshness(catalogKey string, now time.Time) string {
 
 const staleCacheThreshold = 24 * time.Hour
 
-func malformedSkillErrors(skills []skill.MalformedSkill) []error {
-	errs := make([]error, 0, len(skills))
-	for _, malformed := range skills {
-		errs = append(errs, fmt.Errorf("malformed skill %q (%s/SKILL.md): %w", malformed.DirName, malformed.Path, malformed.Error))
-	}
-	return errs
-}
-
 func applyExactLockFreshness(rows []statusRow, metadata []pipeline.LockMetadata) {
 	for i := range rows {
 		rowURL, rowErr := canonicalRegistryURL(rows[i].Registry)
@@ -339,33 +367,68 @@ func applyExactLockFreshness(rows []statusRow, metadata []pipeline.LockMetadata)
 }
 
 func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cacheFreshness map[string]string, report *materialize.Report) []statusRow {
-	// Collect skills that would be written (i.e. missing from disk).
-	missingSet := make(map[string]bool)
+	blocked := make(map[materialize.BlockedResource]bool)
 	if report != nil {
-		for _, tr := range report.TargetReports() {
-			for _, w := range tr.Written {
-				// Written paths are relative to the target dir; use as-is.
-				_ = w
-			}
+		for _, resource := range report.BlockedResources {
+			blocked[resource] = true
 		}
-		// Check for error diagnostics indicating compile or write errors.
+	}
+	// A diagnostic without a blocked identity may arise later, during writing
+	// or aggregate reconciliation. Attribute it only when exactly one resolved
+	// row matches its name and (if provided) harness target. Ambiguous errors
+	// remain visible in ERRORS, without accusing unrelated rows.
+	fallback := make(map[int]bool)
+	if report != nil {
 		for _, d := range report.Diags {
-			if d.IsError() && d.Resource != "" {
-				missingSet[d.Resource] = true
+			if !d.IsError() || d.Resource == "" {
+				continue
+			}
+			known := false
+			for _, identity := range report.BlockedResources {
+				if identity.Name == d.Resource && (d.Target == "" || string(identity.Target) == d.Target) {
+					known = true
+					break
+				}
+			}
+			if known {
+				continue
+			}
+			candidate := -1
+			for i, artifact := range resolved {
+				if artifact.Name != d.Resource && artifact.InstalledName != d.Resource {
+					continue
+				}
+				if d.Target != "" && !slices.Contains(statusHarnesses(artifact), hcc.Target(d.Target)) {
+					continue
+				}
+				if candidate >= 0 {
+					candidate = -1
+					break
+				}
+				candidate = i
+			}
+			if candidate >= 0 {
+				fallback[candidate] = true
 			}
 		}
 	}
 
 	rows := make([]statusRow, 0, len(resolved))
 
-	for _, resolvedArtifact := range resolved {
+	for i, resolvedArtifact := range resolved {
 		cacheKey := resolvedArtifact.CatalogKey
 		if cacheKey == "" {
 			cacheKey = cache.RegistryCachePath(resolvedArtifact.RegistryURL, resolvedArtifact.Ref)
 		}
 
 		target := resolvedArtifact.Path
-		if missingSet[resolvedArtifact.Name] {
+		name := resolvedArtifact.Name
+		if resolvedArtifact.IsMarketplace && resolvedArtifact.InstalledName != "" {
+			name = resolvedArtifact.InstalledName
+		}
+		if fallback[i] || slices.ContainsFunc(statusHarnesses(resolvedArtifact), func(target hcc.Target) bool {
+			return blocked[materialize.BlockedResource{Kind: resolvedArtifact.Kind, Name: name, Target: target, MachineScope: resolvedArtifact.Source.IsMachineScope()}]
+		}) {
 			target = "error: not materialized"
 		}
 
@@ -396,6 +459,13 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 	})
 
 	return rows
+}
+
+func statusHarnesses(artifact resolver.ResolvedArtifact) []hcc.Target {
+	if artifact.Harnesses == nil {
+		return []hcc.Target{hcc.TargetClaude}
+	}
+	return artifact.Harnesses
 }
 
 func buildOrphanedRows(report *materialize.Report) []orphanedSymlinkRow {
@@ -609,15 +679,19 @@ func buildHarnessTargetRows(repoRoot string, harnesses []string) ([]harnessTarge
 }
 
 func harnessRootSummaries(target hcc.Target, repoRoot string) (string, string, error) {
-	repo, err := harness.ResolveDestinations(target, false, repoRoot)
-	if err != nil {
-		return "", "", err
+	summaries := make([]string, 0, 2)
+	for _, machine := range []bool{false, true} {
+		destinations, err := harness.ResolveDestinations(target, machine, repoRoot)
+		if err != nil {
+			if !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) {
+				return "", "", err
+			}
+			summaries = append(summaries, fmt.Sprintf("unresolvable: %v", err))
+		} else {
+			summaries = append(summaries, destinationSummary(destinations))
+		}
 	}
-	machine, err := harness.ResolveDestinations(target, true, repoRoot)
-	if err != nil {
-		return "", "", err
-	}
-	return destinationSummary(repo), destinationSummary(machine), nil
+	return summaries[0], summaries[1], nil
 }
 
 func destinationSummary(destinations []harness.Destination) string {

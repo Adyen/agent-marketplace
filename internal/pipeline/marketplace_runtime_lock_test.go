@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,93 +11,95 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
+// spec: deployed-acquisition-locks/independent-layer-errors-survive-organization-acquisition-failure
+func TestTransientMarketplaceFailureReplacesStaleOrganizationErrorWithoutDroppingOtherLayers(t *testing.T) {
+	required := &config.V4ValidationError{Code: "v4.marketplace-lock-required", Msg: "missing lock"}
+	other := errors.New("unrelated user config error")
+	cause := errors.New("provisional organization inspection failed")
+	ec := config.EffectiveConfig{
+		Organization: config.LayerResult{Errors: []error{required}},
+		User:         config.LayerResult{Errors: []error{other}},
+		Errors:       []error{required, other},
+	}
+	got := effectiveConfigError(ec, cause)
+	if len(got.Organization.Errors) != 1 || !errors.Is(got.Organization.Errors[0], cause) {
+		t.Fatalf("organization errors = %v, want the provisional failure", got.Organization.Errors)
+	}
+	if len(got.Errors) != 2 || !errors.Is(got.Errors[0], cause) || !errors.Is(got.Errors[1], other) {
+		t.Fatalf("effective errors = %v, want provisional failure followed by independent error", got.Errors)
+	}
+	if got.User.Errors[0] != other {
+		t.Fatalf("user layer error changed: %v", got.User.Errors)
+	}
+	got = effectiveConfigError(config.EffectiveConfig{
+		User:   config.LayerResult{Errors: []error{other}},
+		Errors: []error{other},
+	}, cause)
+	if len(got.Organization.Errors) != 1 || !errors.Is(got.Organization.Errors[0], cause) || len(got.Errors) != 2 || !errors.Is(got.Errors[1], other) {
+		t.Fatalf("unrelated layer errors were lost when organization had no prior error: %#v", got)
+	}
+	got = effectiveConfigError(config.EffectiveConfig{Organization: config.LayerResult{Errors: []error{required, other}}}, cause)
+	if len(got.Errors) != 1 || !errors.Is(got.Errors[0], cause) {
+		t.Fatalf("organization errors missing from the effective list produced %v, want only the provisional failure", got.Errors)
+	}
+}
+
 func TestTransientMarketplaceReadAssertionsRequireLockAbsence(t *testing.T) {
 	lockPath := filepath.Join(t.TempDir(), "lock.yaml")
 	if err := os.WriteFile(lockPath, []byte("deployed"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := transientMarketplaceReadAssertions(config.EffectiveConfig{}, lockPath)
+	_, err := transientMarketplaceReadAssertions(config.Intent{}, lockPath)
 	if err == nil || !strings.Contains(err.Error(), "must remain absent") {
 		t.Fatalf("error = %v, want deployed-lock absence failure", err)
 	}
 }
 
-func TestTransientOrganizationMarketplaceInputsDistinguishEachAcquisitionInput(t *testing.T) {
-	base := config.EffectiveConfig{
-		TargetHarnesses:     []string{"factory"},
-		Allowed:             []string{"^https://git\\.example\\.com/"},
-		AllowedMarketplaces: []string{"^https://mp\\.example\\.com$"},
-	}
-	variants := map[string]func(*config.EffectiveConfig){
-		"target harnesses":            func(ec *config.EffectiveConfig) { ec.TargetHarnesses = []string{"factory", "claude"} },
-		"registry allowlist":          func(ec *config.EffectiveConfig) { ec.Allowed = []string{"^https://other\\.example\\.com/"} },
-		"registry allowlist empty":    func(ec *config.EffectiveConfig) { ec.Allowed = []string{} },
-		"registry allowlist nil":      func(ec *config.EffectiveConfig) { ec.Allowed = nil },
-		"marketplace allowlist":       func(ec *config.EffectiveConfig) { ec.AllowedMarketplaces = []string{"^https://other\\.example\\.com$"} },
-		"marketplace allowlist empty": func(ec *config.EffectiveConfig) { ec.AllowedMarketplaces = []string{} },
-		"marketplace allowlist nil":   func(ec *config.EffectiveConfig) { ec.AllowedMarketplaces = nil },
-	}
-	want := transientOrganizationMarketplaceInputs(base)
-	seen := map[string]string{want: "base"}
-	for name, mutate := range variants {
-		ec := base
-		mutate(&ec)
-		got := transientOrganizationMarketplaceInputs(ec)
-		if previous, duplicate := seen[got]; duplicate {
-			t.Errorf("%s fingerprint %q collides with %s", name, got, previous)
-		}
-		seen[got] = name
-	}
-	nilAllowed, emptyAllowed := base, base
-	nilAllowed.Allowed, emptyAllowed.Allowed = nil, []string{}
-	nilAllowed.AllowedMarketplaces, emptyAllowed.AllowedMarketplaces = nil, []string{}
-	if transientOrganizationMarketplaceInputs(nilAllowed) == transientOrganizationMarketplaceInputs(emptyAllowed) {
-		t.Error("nil allowlists (allow all) and empty allowlists (deny all) share a fingerprint")
-	}
-}
+func TestLoadEffectiveOnlineReadsIntentOnce(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	fixture := newMarketplaceUpdateFixture(t, false)
 
-func TestTransientMarketplaceReadAssertionsCoverOnlyOrganizationLayer(t *testing.T) {
-	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	userPath := filepath.Join(t.TempDir(), "user.yaml")
-	repoPath := filepath.Join(t.TempDir(), "repo.yaml")
-	lockPath := filepath.Join(t.TempDir(), "lock.yaml")
-	ec := config.EffectiveConfig{
-		Organization: config.LayerResult{Reads: []config.ConfigRead{{
-			Path:          orgPath,
-			RequestedPath: orgPath,
-			Digest:        "org-digest",
-		}}},
-		User: config.LayerResult{Reads: []config.ConfigRead{{
-			Path:          userPath,
-			RequestedPath: userPath,
-			Digest:        "user-digest",
-		}}},
-		Repo: config.LayerResult{Reads: []config.ConfigRead{{
-			Path:          repoPath,
-			RequestedPath: repoPath,
-			Digest:        "repo-digest",
-		}}},
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: "+fixture.server.URL+"}\nresources:\n  hosted: {include: [renamed-source/skill/review]}\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
 
-	reads, err := transientMarketplaceReadAssertions(ec, lockPath)
-	if err != nil {
-		t.Fatalf("transientMarketplaceReadAssertions: %v", err)
+	calls := 0
+	delegate := readIntent
+	readIntent = func(ctx context.Context, opts config.LoadEffectiveOptions) config.Intent {
+		calls++
+		return delegate(ctx, opts)
 	}
-	asserted := make(map[string]bool, len(reads))
-	for _, read := range reads {
-		asserted[read.RequestedPath] = true
+	t.Cleanup(func() { readIntent = delegate })
+
+	ec := LoadEffective(context.Background(), ConfigLoadOnline, config.LoadEffectiveOptions{
+		RepoRoot:         root,
+		LocalConfigDir:   root,
+		OrganizationPath: orgPath,
+		GlobalPath:       userPath,
+		RepoPath:         filepath.Join(root, ".agents", "config.yaml"),
+		LocalPath:        filepath.Join(root, ".agents", "config.local.yaml"),
+	}, nil)
+	if len(ec.Errors) > 0 {
+		t.Fatalf("online load errors = %v", ec.Errors)
 	}
-	if !asserted[orgPath] {
-		t.Errorf("assertions do not contain organization read %q", orgPath)
+	if calls != 1 {
+		t.Fatalf("ReadIntent calls = %d, want exactly one per online load", calls)
 	}
-	if !asserted[lockPath] {
-		t.Errorf("assertions do not contain lock absence %q", lockPath)
-	}
-	if asserted[userPath] {
-		t.Errorf("assertions unexpectedly contain user read %q", userPath)
-	}
-	if asserted[repoPath] {
-		t.Errorf("assertions unexpectedly contain repo read %q", repoPath)
+	if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("organization lock was created: %v", err)
 	}
 }

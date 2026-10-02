@@ -144,6 +144,7 @@ resources:
 	}
 }
 
+// spec: config-layering/v4-root-rejects-legacy-installation-keys
 func TestV4RejectsStrictInvalidInputs(t *testing.T) {
 	cases := map[string]string{
 		"missing version": `sources: {s: {git: https://example.test/a.git, ref: main}}`,
@@ -448,6 +449,7 @@ func TestV4AliasUsesSafeFilenameRulesAndCollectionsRejectExplicitAs(t *testing.T
 	}
 }
 
+// spec: config-layering/v4-root-rejects-unsafe-marketplace-source-urls
 func TestV4MarketplaceURLUsesCanonicalEndpointSafety(t *testing.T) {
 	for _, value := range []string{
 		"https://market.example/%2fprivate",
@@ -614,6 +616,7 @@ func TestV4TelemetryAuxiliaryValuesValidateAtParseTime(t *testing.T) {
 	}
 }
 
+// spec: config-layering/allowed-marketplace-patterns-follow-include-authority-in-a-v4-root
 func TestV4IncludeMergesAuxiliaryPolicyByField(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root.yaml")

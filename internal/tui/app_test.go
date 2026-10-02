@@ -3,6 +3,8 @@ package tui
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -11,11 +13,13 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	ansi "github.com/charmbracelet/x/ansi"
 )
 
-func TestDefaultTUIProgramOptionsLeaveMouseSelectionToTerminal(t *testing.T) {
+// spec: tui-mouse-navigation/wheel-reporting-is-enabled
+func TestDefaultTUIProgramOptionsEnableMouseWheelReporting(t *testing.T) {
 	var output bytes.Buffer
 	options := append(defaultTUIProgramOptions(), tea.WithInput(nil), tea.WithOutput(&output))
 	if _, err := tea.NewProgram(guardProbeModel{}, options...).Run(); err != nil {
@@ -26,10 +30,288 @@ func TestDefaultTUIProgramOptionsLeaveMouseSelectionToTerminal(t *testing.T) {
 	if !strings.Contains(got, "\x1b[?1049h") {
 		t.Fatalf("TUI did not enter the alternate screen: %q", got)
 	}
-	for _, sequence := range []string{"\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h"} {
-		if strings.Contains(got, sequence) {
-			t.Fatalf("TUI enabled mouse tracking with %q, preventing native text selection", sequence)
+	for _, sequence := range []string{"\x1b[?1002h", "\x1b[?1006h"} {
+		if !strings.Contains(got, sequence) {
+			t.Fatalf("TUI did not enable mouse wheel reporting with %q: %q", sequence, got)
 		}
+	}
+	for _, sequence := range []string{"\x1b[?1000h", "\x1b[?1003h"} {
+		if strings.Contains(got, sequence) {
+			t.Fatalf("TUI enabled an unexpected mouse tracking mode with %q", sequence)
+		}
+	}
+}
+
+// spec: tui-mouse-navigation/unrelated-mouse-events-are-ignored
+func TestMouseInputOnlyScrollsOnVerticalWheelPress(t *testing.T) {
+	tests := []struct {
+		name    string
+		event   tea.MouseMsg
+		delta   int
+		startAt func(*viewport.Model)
+	}{
+		{
+			name:  "wheel down",
+			event: tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown},
+			delta: 1,
+		},
+		{
+			name:  "shift wheel down stays vertical",
+			event: tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, Shift: true},
+			delta: 1,
+		},
+		{
+			name:  "wheel up",
+			event: tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp},
+			delta: -1,
+			startAt: func(v *viewport.Model) {
+				v.GotoBottom()
+			},
+		},
+		{name: "left click", event: tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}},
+		{name: "left release", event: tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft}},
+		{name: "drag motion", event: tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft}},
+		{name: "horizontal wheel", event: tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelRight}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.width, m.height = 80, 24
+			m.pane = paneDetail
+			m.detailViewport = newTUIViewport(80, 3)
+			m.detailViewport.SetContent("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight")
+			if tt.startAt != nil {
+				tt.startAt(&m.detailViewport)
+			}
+			before := m.detailViewport.YOffset
+
+			updated, _ := m.Update(tt.event)
+			got := updated.(Model).detailViewport.YOffset
+			if want := before + tt.delta; got != want {
+				t.Fatalf("viewport offset = %d after event, want %d (started at %d)", got, want, before)
+			}
+		})
+	}
+}
+
+// spec: tui-mouse-navigation/scrollable-overlays-move-by-one-line
+func TestMouseWheelScrollsHelpOverlay(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 80, 24
+	m.pane = paneHelp
+	m.helpViewport.Width = m.width
+	m.helpViewport.Height = m.height - 1
+	m.helpViewport.SetContent(renderHelp(m))
+	if lines := strings.Count(renderHelp(m), "\n") + 1; lines <= m.helpViewport.Height {
+		t.Fatalf("help fixture has %d lines, want more than viewport height %d", lines, m.helpViewport.Height)
+	}
+
+	updated, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	got := updated.(Model).helpViewport.YOffset
+	if got != 1 {
+		t.Fatalf("wheel down moved help viewport to line %d, want exactly one line", got)
+	}
+}
+
+// spec: tui-mouse-navigation/scrollable-overlays-move-by-one-line
+func TestMouseWheelScrollsErrorsOverlay(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 80, 12
+	m.pane = paneErrors
+	m.errorsViewport.Height = m.height - 1
+	for i := 0; i < 20; i++ {
+		m.errs = append(m.errs, fmt.Errorf("diagnostic %d", i))
+	}
+	m.errorsViewport.SetContent(renderErrors(m))
+	if m.errorsViewport.AtBottom() {
+		t.Fatal("errors fixture does not overflow the viewport")
+	}
+
+	updated, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	if got := updated.(Model).errorsViewport.YOffset; got != 1 {
+		t.Fatalf("errors viewport offset = %d, want one line", got)
+	}
+}
+
+// spec: tui-mouse-navigation/bundle-tree-and-preview-receive-their-own-wheel-input
+func TestMouseWheelTargetsDetailBundleTree(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a.md", "b.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tt := range []struct {
+		name        string
+		x           int
+		wantPath    string
+		wantPreview int
+		wantLoad    bool
+	}{
+		{name: "over tree", x: 1, wantPath: "b.md", wantLoad: true},
+		{name: "over preview", x: 33, wantPath: "a.md", wantPreview: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.width, m.height = 80, 12
+			m.pane = paneDetail
+			r := mkRow("bundle", withGlobal)
+			r.Artifact.Path = root
+			m.rows = []row{r}
+			m.detailKey = rowKey(r)
+			m.bundle = newBundleTree(root, "")
+			m.detailSelectedPath = m.bundle.selectedPath()
+			if m.detailSelectedPath != "a.md" {
+				t.Fatalf("initial bundle selection = %q, want a.md", m.detailSelectedPath)
+			}
+			m.detailViewport = newTUIViewport(47, 3)
+			m.detailViewport.SetContent(strings.Repeat("preview line\n", 20))
+
+			updated, cmd := m.Update(tea.MouseMsg{
+				Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: tt.x, Y: 1,
+			})
+			got := updated.(Model)
+			if got.detailSelectedPath != tt.wantPath || got.bundle.selectedPath() != tt.wantPath {
+				t.Fatalf("selected path = %q (tree %q), want %q",
+					got.detailSelectedPath, got.bundle.selectedPath(), tt.wantPath)
+			}
+			if got.detailViewport.YOffset != tt.wantPreview {
+				t.Fatalf("preview offset = %d, want %d", got.detailViewport.YOffset, tt.wantPreview)
+			}
+			if (cmd != nil) != tt.wantLoad {
+				t.Fatalf("preview load scheduled = %t, want %t", cmd != nil, tt.wantLoad)
+			}
+		})
+	}
+}
+
+// spec: tui-mouse-navigation/scrollable-overlays-move-by-one-line
+func TestMouseWheelScrollsMarketplaceConsent(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 80, 12
+	m.pane = paneMarketplaceConsent
+	m.setMarketplaceConsentPreview(strings.Repeat("verified resource\n", 30))
+	if m.marketplaceConsentViewport.AtBottom() {
+		t.Fatal("consent preview does not overflow the viewport")
+	}
+
+	updated, _ := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 1, Y: 3,
+	})
+	if got := updated.(Model).marketplaceConsentViewport.YOffset; got != 1 {
+		t.Fatalf("consent preview offset = %d, want one line", got)
+	}
+}
+
+// spec: tui-mouse-navigation/list-selection-moves-by-one-entry
+func TestMouseWheelMovesSelectionInResourceList(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 80, 24
+	m.loading = false
+	for i := 0; i < 12; i++ {
+		m.flatItems = append(m.flatItems, flatItem{
+			Kind: flatArtifact,
+			Row:  mkRow(fmt.Sprintf("resource-%02d", i), withGlobal),
+		})
+	}
+	m.cursor = 4
+
+	down, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	if got := down.(Model).cursor; got != m.cursor+1 {
+		t.Fatalf("wheel down moved list selection from %d to %d, want one row", m.cursor, got)
+	}
+
+	up, _ := down.(Model).Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	if got := up.(Model).cursor; got != m.cursor {
+		t.Fatalf("wheel up did not return selection to its starting row: got %d, want %d", got, m.cursor)
+	}
+}
+
+// spec: tui-mouse-navigation/reversing-at-the-list-boundary-is-immediate
+func TestWheelDirectionReversalAtListBoundaryIsImmediate(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 80, 24
+	m.loading = false
+	for i := 0; i < 12; i++ {
+		m.flatItems = append(m.flatItems, flatItem{
+			Kind: flatArtifact,
+			Row:  mkRow(fmt.Sprintf("resource-%02d", i), withGlobal),
+		})
+	}
+
+	up, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	if got := up.(Model).cursor; got != 0 {
+		t.Fatalf("wheel up at first item moved selection to %d, want 0", got)
+	}
+	down, _ := up.(Model).Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	if got := down.(Model).cursor; got != 1 {
+		t.Fatalf("wheel down immediately after boundary input moved selection to %d, want 1", got)
+	}
+}
+
+// spec: tui-mouse-navigation/wheel-input-below-the-minimum-terminal-size-is-ignored
+func TestMouseWheelIgnoredBelowMinimumTerminalSize(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 49, 12
+	m.flatItems = []flatItem{
+		{Kind: flatArtifact, Row: mkRow("first", withGlobal)},
+		{Kind: flatArtifact, Row: mkRow("second", withGlobal)},
+	}
+
+	updated, cmd := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	if got := updated.(Model).cursor; got != 0 || cmd != nil {
+		t.Fatalf("wheel below minimum size moved list cursor to %d or scheduled command %v", got, cmd)
+	}
+}
+
+// spec: tui-mouse-navigation/detail-refresh-retains-a-wheel-scroll
+func TestDetailMouseWheelClearsStickyBottom(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 80, 12
+	m.pane = paneDetail
+	m.detailViewport = newTUIViewport(80, 11)
+	content := strings.Repeat("detail line\n", 20)
+	m.detailViewport.SetContent(content)
+	m.detailViewport.GotoBottom()
+	m.detailStickyBottom = true
+	generation := m.beginRequest(requestDetail)
+
+	scrolled, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	m = scrolled.(Model)
+	offset := m.detailViewport.YOffset
+	if m.detailStickyBottom {
+		t.Fatal("wheel-up left sticky-bottom enabled")
+	}
+
+	updated, _ := m.Update(detailContentMsg{
+		generation: generation,
+		content:    content,
+		width:      m.previewWidth(),
+		keepScroll: true,
+	})
+	got := updated.(Model).detailViewport.YOffset
+	if got != offset {
+		t.Fatalf("detail refresh reset wheel scroll offset from %d to %d", offset, got)
+	}
+}
+
+func TestTUIViewportsUseOneLineMouseWheelDelta(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	for _, tt := range []struct {
+		name string
+		v    viewport.Model
+	}{
+		{name: "detail", v: m.detailViewport},
+		{name: "help", v: m.helpViewport},
+		{name: "errors", v: m.errorsViewport},
+		{name: "marketplace consent", v: m.marketplaceConsentViewport},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.v.MouseWheelDelta != 1 {
+				t.Fatalf("mouse wheel delta = %d, want one line", tt.v.MouseWheelDelta)
+			}
+		})
 	}
 }
 

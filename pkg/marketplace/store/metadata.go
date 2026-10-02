@@ -164,6 +164,7 @@ type MetadataStore interface {
 	// Registry occurrences.
 	GetRegistryOccurrence(ctx context.Context, registry RegistryID, commit string) (RegistryOccurrence, error)
 	PutRegistryOccurrence(ctx context.Context, occ RegistryOccurrence) error
+	FenceRegistryPublication(ctx context.Context, req RegistryRevisionPublication) (bool, error)
 	SetRegistryHead(ctx context.Context, registry RegistryID, commit, expectedCommit string) error
 	LatestRegistryOccurrence(ctx context.Context, registry RegistryID) (RegistryOccurrence, error)
 

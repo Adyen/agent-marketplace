@@ -60,7 +60,7 @@ func newSyncCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			locked = locked || checkOnly || offline
 			if checkOnly {
-				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), offline, locked)
+				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), strict, offline, locked)
 			}
 			return runSyncWithLocks(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, lockRunOptions{locked: locked, marketplacePolicy: policy})
 		},
@@ -68,7 +68,7 @@ func newSyncCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "Check drift without reconciling; exits 1 if out of sync")
 	cmd.Flags().BoolVar(&noBackup, "no-backup", false, "Skip pre-sync backup of machine-scope harness directories")
-	cmd.Flags().BoolVar(&strict, "strict", false, "Treat all unresolved-selection warnings — 'selected but not found' and 'found but failed to load' — as hard errors (exit 1)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on unresolved selections ('selected but not found', 'found but failed to load') and on unmet prerequisites (exit 1)")
 	cmd.Flags().BoolVar(&pruneStale, "prune-stale", false, "Auto-remove stale skill selections from config after successful sync")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print per-file detail for each target and list malformed resources")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use only trusted local registry and Marketplace caches; never fetch or contact remote endpoints")
@@ -83,20 +83,37 @@ type lockRunOptions struct {
 	marketplacePolicy resolver.MarketplaceRevocationPolicy
 }
 
+var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as warnings; select the prerequisite resources or run without --strict")
+
+// discoverSyncWorkspace is the single Workspace discovery point for sync and
+// sync-check. It runs before lock preparation so one validated value carries
+// the repository, local-config, and materialization roots through locks,
+// effective config, stale-selection inspection, dry-run materialization, and
+// real materialization. It is a package var so tests can observe ordering and
+// reuse.
+var discoverSyncWorkspace = pipeline.DiscoverWorkspace
+var ensureGlobalConfigForSync = config.EnsureGlobalConfig
+
+var runSyncCheckMaterialize = materialize.Run
+
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
 	if len(lockOpts) > 0 {
 		marketplacePolicy = lockOpts[0].marketplacePolicy
 	}
+	ws, err := discoverSyncWorkspace()
+	if err != nil {
+		return err
+	}
 	if !offline && !locked {
-		if err := config.EnsureGlobalConfig(); err != nil {
+		if err := ensureGlobalConfigForSync(); err != nil {
 			slog.Warn("failed to create global config skeleton", "error", err)
 		}
 	}
 
-	repoRoot := config.FindRepoRoot()
-	localDir := config.FindLocalConfigDir()
+	repoRoot := ws.RepoRoot()
+	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
 	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: locked || offline, offline: offline, warningSink: &lockWarnings, marketplacePolicy: marketplacePolicy})
 	if err != nil {
@@ -116,12 +133,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
-
-	if localDir != "" && localDir != repoRoot {
-		resolveOpts.MaterializeRoot = localDir
-		resolveOpts.LocalConfigDir = localDir
-	}
+	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors
@@ -153,10 +165,14 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	// In strict mode, re-elevate soft SelectedNotFound warnings to hard errors.
 	// Present-but-malformed selections elevate too: they are equally unresolved,
 	// and a strict caller (CI) wants the run to fail either way.
+	unmetRequirements := false
 	if strict {
 		strictErrors := make([]error, 0, len(syncResult.Warnings))
 		strictWarnings := make([]error, 0, len(syncResult.Warnings))
 		for _, w := range syncResult.Warnings {
+			if resolver.IsUnmetRequirement(w) {
+				unmetRequirements = true
+			}
 			if resolver.IsSoftSelectedNotFound(w) || resolver.IsSoftSelectedMalformed(w) {
 				strictErrors = append(strictErrors, w)
 			} else {
@@ -175,6 +191,9 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	// the same message from different resources remains a distinct counted issue.
 	// Presentation grouping happens later and never changes this count.
 	errs = dedupIssues(errs)
+	if unmetRequirements {
+		errs = append(errs, errStrictUnmetPrerequisites)
+	}
 
 	totalWritten := 0
 	totalRemoved := 0
@@ -259,7 +278,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	// stale-selection warnings) still drives the exit code below: pruning
 	// proceeding does not make the run successful.
 	if pruneStale && len(staleSelections) > 0 {
-		pruned, err := prunePhase(out, repoRoot, &syncResult, staleSelections)
+		pruned, err := prunePhase(ctx, out, repoRoot, &syncResult, staleSelections)
 		if err != nil {
 			slog.Error("sync stale-prune failed", "repo_root", repoRoot, "strict", strict, "error", err)
 			allErrs := append([]error{}, errs...)
@@ -321,23 +340,17 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 }
 
 func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
-	effective := pipeline.LoadEffective(ctx, pipeline.ConfigLoadCached, config.LoadEffectiveOptions{
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
-	}, nil)
+	})
 	seen := make(map[string]struct{})
-	for _, layer := range effective.PresentLayers() {
-		var entries []config.RegistryEntry
-		if layer.Config != nil {
-			entries = layer.Config.Registries
-		} else if layer.Local != nil {
-			entries = layer.Local.Registries
+	for _, source := range []config.Source{config.Organization, config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {
+		layer := intent.Layers[source]
+		if !layer.Present() || layer.Err() != nil {
+			continue
 		}
-		for _, entry := range entries {
-			for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindCollection} {
-				for _, name := range entry.SelectorForKind(kind).Include {
-					seen[fmt.Sprintf("%s %q", skill.KindLabel(kind), name)] = struct{}{}
-				}
-			}
+		for _, selection := range layer.ExplicitSelections() {
+			seen[fmt.Sprintf("%s %q", skill.KindLabel(selection.Kind), selection.Name)] = struct{}{}
 		}
 	}
 	labels := make([]string, 0, len(seen))
@@ -405,12 +418,24 @@ func printRemediations(out io.Writer, issues []error) error {
 	return nil
 }
 
-func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
-	repoRoot := config.FindRepoRoot()
+func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bool) error {
 	isOffline := len(offline) > 0 && offline[0]
-	localDir := config.FindLocalConfigDir()
+	ws, err := discoverSyncWorkspace()
+	if err != nil {
+		return err
+	}
+	repoRoot := ws.RepoRoot()
+	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true, offline: isOffline, check: true, warningSink: &lockWarnings})
+	configLoadMode := pipeline.ConfigLoadStrict
+	if !isOffline {
+		configLoadMode = pipeline.ConfigLoadCached
+	}
+	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{
+		locked: true, offline: isOffline, check: true,
+		allowTransientOrganization: !isOffline,
+		warningSink:                &lockWarnings,
+	})
 	if err != nil {
 		return err
 	}
@@ -425,26 +450,21 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	ctx = cache.ContextWithExactGitNamespaceLease(ctx)
 
 	resolveOpts := pipeline.ResolveOptions{
-		RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
+		Workspace: ws, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
-		ConfigLoadMode: pipeline.ConfigLoadStrict,
+		ConfigLoadMode: configLoadMode,
 	}
 	resolveOpts.RequireTargetSet = true
-	if localDir != "" && localDir != repoRoot {
-		resolveOpts.MaterializeRoot = localDir
-		resolveOpts.LocalConfigDir = localDir
-	}
-	resolvedResult := pipeline.Resolve(ctx, resolveOpts)
-
-	// Use materialize in dry-run mode to check for drift.
-	matRoot := localDir
-	if matRoot == "" {
-		matRoot = repoRoot
-	}
-	report, matErr := materialize.Run(ctx, matRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
-	if matErr != nil {
-		return matErr
-	}
+	// Use materialize in dry-run mode to check for drift; the Workspace derives
+	// the same materialization root the real sync would write beneath.
+	inspection, inspectRelease := pipeline.Inspect(ctx, pipeline.InspectOptions{
+		Resolve: resolveOpts,
+		DryRun:  runSyncCheckMaterialize,
+	})
+	defer inspectRelease()
+	resolvedResult := inspection.ResolveResult
+	report := inspection.Report
+	matErr := inspection.MaterializeErr
 
 	// Surface every warning the run produced, not just the ineffective-subdir
 	// ones. --check used to recompute AncestorMaterializedExcludeWarnings and
@@ -456,9 +476,15 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	// one diagnostic affecting several harness targets prints once.
 	//
 	// Warnings do not affect drift detection or the --check exit code.
-	// Concat, not append: appending to resolvedResult.Warnings could write into
-	// its spare capacity and mutate the caller's slice.
-	allWarnings := slices.Concat(lockWarnings, resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult))
+	// Concat keeps the separately collected lock and inspection warnings
+	// independent before deduplication.
+	var inspectionWarnings []error
+	for _, issue := range inspection.Issues {
+		if issue.Severity == pipeline.IssueWarning {
+			inspectionWarnings = append(inspectionWarnings, issue.Err)
+		}
+	}
+	allWarnings := slices.Concat(lockWarnings, inspectionWarnings)
 	for _, warning := range dedupIssues(allWarnings) {
 		if _, err := fmt.Fprintf(out, "warning: %v\n", warning); err != nil {
 			return err
@@ -477,9 +503,17 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	if err := writeGroupedWarnings(out, requirementWarnings, false); err != nil {
 		return err
 	}
-	errorRows := buildErrorRows(resolvedResult.Errors)
+	checkErrs := slices.Clone(resolvedResult.Errors)
+	if matErr != nil {
+		checkErrs = append(checkErrs, matErr)
+	}
+	errorRows := buildErrorRows(checkErrs)
 
-	return writeSyncCheckSummary(out, report, errorRows, resolvedResult.Errors)
+	summaryErr := writeSyncCheckSummary(out, report, errorRows, checkErrs)
+	if strict && len(requirementWarnings) > 0 {
+		return errors.Join(summaryErr, errStrictUnmetPrerequisites)
+	}
+	return summaryErr
 }
 
 // writeSyncCheckSummary renders the `sync --check` verdict and returns the
@@ -501,16 +535,19 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 // harness set configured", which is both the most common cause and the one with
 // an actionable remedy.
 func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows []errorRow, configErrs []error) error {
-	if report.InSync() && len(errorRows) == 0 {
+	inSync := report != nil && report.InSync()
+	if inSync && len(errorRows) == 0 {
 		return nil
 	}
 
-	pendingCount := report.TotalWritten() + report.TotalRemoved()
-
+	pendingCount := 0
 	var errorDiags []diag.Diagnostic
-	for _, d := range report.Diags {
-		if d.IsError() {
-			errorDiags = append(errorDiags, d)
+	if report != nil {
+		pendingCount = report.TotalWritten() + report.TotalRemoved()
+		for _, d := range report.Diags {
+			if d.IsError() {
+				errorDiags = append(errorDiags, d)
+			}
 		}
 	}
 
@@ -756,7 +793,7 @@ func dedupStaleSelections(stale []*resolver.SelectedNotFoundError) []*resolver.S
 // The "Pruned N ...; re-syncing..." line is deliberately NOT printed here: the
 // caller has to name this pass's errors between the per-selection lines and
 // the re-sync announcement, so it owns that line.
-func prunePhase(out io.Writer, repoRoot string, syncResult *pipeline.SyncResult, stale []*resolver.SelectedNotFoundError) (int, error) {
+func prunePhase(ctx context.Context, out io.Writer, repoRoot string, syncResult *pipeline.SyncResult, stale []*resolver.SelectedNotFoundError) (int, error) {
 	if !syncResult.CatalogTrusted() {
 		slog.Warn("prune-stale skipped: catalog not trustworthy",
 			"stale_selections", len(stale),
@@ -767,7 +804,7 @@ func prunePhase(out io.Writer, repoRoot string, syncResult *pipeline.SyncResult,
 	slog.Info("pruning stale selections",
 		"stale_selections", len(stale),
 		"materialize_errors", len(syncResult.MaterializeErrors))
-	pruned, pruneErrs := pruneStaleSelections(repoRoot, stale)
+	pruned, pruneErrs, fatal := pruneStaleSelections(ctx, repoRoot, stale)
 	for _, p := range pruned {
 		if _, err := fmt.Fprintf(out, "pruned stale %s %q from config\n", skill.KindLabel(p.Kind), p.Name); err != nil {
 			return 0, err
@@ -778,7 +815,7 @@ func prunePhase(out io.Writer, repoRoot string, syncResult *pipeline.SyncResult,
 			return 0, err
 		}
 	}
-	return len(pruned), nil
+	return len(pruned), fatal
 }
 
 // printSupersededErrors names the errors THIS pass counted, on the one path
@@ -835,64 +872,104 @@ func printPruneSkipped(out io.Writer, stale []*resolver.SelectedNotFoundError, t
 //
 // Only direct selections (Via == "") are pruned. Collection-sourced stale
 // skills are left as warnings with enriched remediation hints.
-func pruneStaleSelections(repoRoot string, stale []*resolver.SelectedNotFoundError) ([]prunedStale, []error) {
+func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolver.SelectedNotFoundError) ([]prunedStale, []error, error) {
 	configPath := config.ProjectConfigPath(repoRoot)
 
 	var pruned []prunedStale
 	var errs []error
 
-	for _, snf := range dedupStaleSelections(stale) {
-		// A direct selection (Via == "") can be written in either of two
-		// places: a registry entry's include list, or the TOP-LEVEL per-kind
-		// include list. DisableResourceWithShadowFallback only knows the
-		// first; handed a top-level selection it finds the name in no entry's
-		// include and falls through to ADDING AN EXCLUDE — so the selection
-		// stayed in the file while the CLI printed "pruned stale ... from
-		// config", and the resource became permanently suppressed if it ever
-		// came back upstream. Clear the top-level list ourselves and treat
-		// that as the whole prune. Pinned by
-		// TestSyncPruneStaleRemovesTopLevelSelection.
-		topLevel, inEntry, err := selectionSites(configPath, snf)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("prune %s %q: %w", skill.KindLabel(snf.Kind), snf.Name, err))
-			continue
-		}
-		if topLevel {
-			if err := config.RemoveResourceFromConfig(configPath, snf.Kind, snf.Name); err != nil {
-				errs = append(errs, fmt.Errorf("prune %s %q: %w", skill.KindLabel(snf.Kind), snf.Name, err))
+	fatal := pipeline.MutateLayer(ctx, pipeline.LayerMutationTarget{
+		RepoRoot:       repoRoot,
+		LocalConfigDir: config.FindLocalConfigDir(),
+		ConfigPath:     configPath,
+		Source:         config.RepoCommitted,
+		Reconcile:      reconcileCommandDependencies,
+	}, func(m *pipeline.LayerMutation) error {
+		for _, snf := range dedupStaleSelections(stale) {
+			label := skill.KindLabel(snf.Kind)
+			locator := config.ResourceLocator{Kind: snf.Kind, Name: snf.Name}
+			topLevel, entry, inEntry, siteErr := selectionSites(configPath, snf)
+			if siteErr != nil {
+				errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, siteErr))
 				continue
 			}
-		}
-		// Skip the registry-scoped editor only when the top-level list was the
-		// SOLE home of this selection: with nothing left to remove from an
-		// include list it would write an exclude instead, which suppresses the
-		// resource for good rather than merely dropping a dangling selection.
-		if !topLevel || inEntry {
-			if err := config.DisableResourceWithShadowFallback(configPath, snf.URL, snf.Path, snf.Ref, snf.Kind, snf.Name); err != nil {
-				errs = append(errs, fmt.Errorf("prune %s %q: %w", skill.KindLabel(snf.Kind), snf.Name, err))
+			inherited, inhErr := m.UnboundIncludeInherited(locator)
+			if inhErr != nil {
+				errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, inhErr))
 				continue
 			}
+			if inherited {
+				errs = append(errs, fmt.Errorf("prune %s %q: config.edit.include-owned: selection is declared in an included fragment", label, snf.Name))
+				continue
+			}
+			removed := false
+			if inEntry {
+				binding, found, bindErr := m.LookupRegistry(entry)
+				if bindErr != nil {
+					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, bindErr))
+					continue
+				}
+				if found {
+					if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionRemoveInclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+						errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
+						continue
+					}
+					removed = true
+				}
+			} else if strings.TrimSpace(snf.URL) != "" {
+				// The root file does not select this resource under a registry
+				// entry, so there is nothing here to remove: selectionSites
+				// would have reported inEntry. The edit is still attempted so
+				// that a selection owned by an included fragment is refused by
+				// name instead of being reported as undeclared.
+				binding, found, bindErr := m.LookupRegistry(config.RegistryEntry{URL: snf.URL, Ref: snf.Ref, Path: snf.Path})
+				if bindErr != nil {
+					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, bindErr))
+					continue
+				}
+				if found {
+					if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionRemoveInclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+						errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
+						continue
+					}
+				}
+			}
+			if topLevel {
+				if err := m.RemoveUnboundInclude(locator); err != nil {
+					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
+					continue
+				}
+				removed = true
+			}
+			if !removed {
+				errs = append(errs, fmt.Errorf("prune %s %q: selection is not declared in %s", label, snf.Name, configPath))
+				continue
+			}
+			pruned = append(pruned, prunedStale{Kind: snf.Kind, Name: snf.Name})
 		}
-		pruned = append(pruned, prunedStale{Kind: snf.Kind, Name: snf.Name})
+		return nil
+	})
+	if fatal != nil {
+		return nil, nil, fatal
 	}
-	return pruned, errs
+	return pruned, errs, nil
 }
 
 // selectionSites reports where a direct selection is actually written in the
-// repo config: in the TOP-LEVEL per-kind include list, in the include list of
-// the registry entry the resolver blamed, or both. The registry-scoped editors
-// can only see the second, so the prune has to ask before deciding which edit
-// to make.
-func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (topLevel bool, inEntry bool, err error) {
-	cfg, err := config.LoadConfigFromPath(configPath)
+// repo config ROOT file: in the TOP-LEVEL per-kind include list, in the
+// include list of a registry entry matching the blamed URL, or both. The
+// registry-scoped editors can only see the second, so the prune has to ask
+// before deciding which edit to make.
+func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (topLevel bool, entry config.RegistryEntry, inEntry bool, err error) {
+	cfg, err := config.LoadRootConfigFromPath(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return false, false, nil
+			return false, config.RegistryEntry{}, false, nil
 		}
-		return false, false, err
+		return false, config.RegistryEntry{}, false, err
 	}
 	if cfg == nil {
-		return false, false, nil
+		return false, config.RegistryEntry{}, false, nil
 	}
 	for _, candidate := range cfg.SelectorForKind(snf.Kind).Include {
 		if strings.TrimSpace(candidate) == snf.Name {
@@ -901,16 +978,21 @@ func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (top
 		}
 	}
 	wantURL := config.NormalizeGitURL(strings.TrimSpace(snf.URL))
-	for _, entry := range cfg.Registries {
-		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != wantURL {
+	for _, candidate := range cfg.Registries {
+		if config.NormalizeGitURL(strings.TrimSpace(candidate.URL)) != wantURL {
 			continue
 		}
-		for _, candidate := range entry.SelectorForKind(snf.Kind).Include {
-			if strings.TrimSpace(candidate) == snf.Name {
-				inEntry = true
-				break
+		if p := strings.TrimSpace(snf.Path); p != "" && config.NormalizeRegistryPath(candidate.Path) != config.NormalizeRegistryPath(p) {
+			continue
+		}
+		if r := strings.TrimSpace(snf.Ref); r != "" && strings.TrimSpace(candidate.Ref) != r {
+			continue
+		}
+		for _, selected := range candidate.SelectorForKind(snf.Kind).Include {
+			if strings.TrimSpace(selected) == snf.Name {
+				return topLevel, candidate, true, nil
 			}
 		}
 	}
-	return topLevel, inEntry, nil
+	return topLevel, config.RegistryEntry{}, false, nil
 }

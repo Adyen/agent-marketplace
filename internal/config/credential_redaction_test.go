@@ -20,7 +20,7 @@ func TestBlockedRegistryCredentialRedaction(t *testing.T) {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "absent-org.yaml"), GlobalPath: user,
 		RepoPath: filepath.Join(dir, "absent-repo.yaml"), LocalPath: filepath.Join(dir, "absent-local.yaml"),
 	})

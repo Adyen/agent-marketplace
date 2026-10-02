@@ -37,6 +37,23 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 		if err := s.Close(); err != nil {
 			t.Fatalf("Close %d: %v", i, err)
 		}
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = db.Close() }()
+		var tbl, def string
+		// spec: digest-owner-lookup/sqlite-store-keeps-digest-owner-index
+		err = db.QueryRow("SELECT tbl_name, sql FROM sqlite_master WHERE type='index' AND name='idx_current_assessments_content'").Scan(&tbl, &def)
+		if err != nil || tbl != "current_resource_assessments" || !strings.Contains(def, "(marketplace_id, content_digest)") {
+			t.Fatalf("idx_current_assessments_content tbl=%s sql=%q err=%v", tbl, def, err)
+		}
+		var n int
+		// spec: digest-owner-lookup/pre-existing-sqlite-revision-index-is-preserved
+		err = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND tbl_name='resource_revisions' AND sql LIKE '%content_digest%'").Scan(&n)
+		if err != nil || n != 1 {
+			t.Fatalf("resource_revisions content_digest indexes = %d err %v, want 1 (existing preserved)", n, err)
+		}
 	}
 }
 

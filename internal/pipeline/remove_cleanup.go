@@ -41,7 +41,7 @@ func prepareBlockedOwnedRemoval(ctx context.Context, opts RemoveOptions, ec conf
 			return nil, fmt.Errorf("%w: live local registries are not supported", materialize.ErrOwnedCleanupUnsupported)
 		}
 	}
-	reads, err := cleanupReadAssertions(ec)
+	reads, err := EffectivePolicyReadAssertions(ec)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,12 @@ func prepareBlockedOwnedRemoval(ctx context.Context, opts RemoveOptions, ec conf
 			return nil, fmt.Errorf("blocked resource cleanup requires exact registry input: %w", err)
 		}
 	}
-	result := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, CatalogMode: catalog.LoadModeInspect, Offline: true, IgnoreBlockedRegistries: true, SkipInventory: true, CatalogOption: []catalog.LoadOption{view.catalogOption}})
+	ws, err := removeWorkspace(opts)
+	if err != nil {
+		view.release()
+		return nil, err
+	}
+	result := Resolve(ctx, ResolveOptions{Workspace: ws, CatalogMode: catalog.LoadModeInspect, Offline: true, IgnoreBlockedRegistries: true, SkipInventory: true, CatalogOption: []catalog.LoadOption{view.catalogOption}})
 	if len(result.Errors) > 0 {
 		view.release()
 		return nil, errors.Join(result.Errors...)
@@ -107,7 +112,11 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	if err != nil {
 		return err
 	}
-	after := Resolve(p.ctx, ResolveOptions{RepoRoot: opts.RepoRoot, CatalogMode: catalog.LoadModeInspect, Offline: true, IgnoreBlockedRegistries: true, SkipInventory: true, CatalogOption: []catalog.LoadOption{p.option}, EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, FileOverlays: overlays}})
+	ws, err := removeWorkspace(opts)
+	if err != nil {
+		return err
+	}
+	after := Resolve(p.ctx, ResolveOptions{Workspace: ws, CatalogMode: catalog.LoadModeInspect, Offline: true, IgnoreBlockedRegistries: true, SkipInventory: true, CatalogOption: []catalog.LoadOption{p.option}, EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, FileOverlays: overlays}})
 	if len(after.Errors) > 0 {
 		return errors.Join(after.Errors...)
 	}
@@ -116,9 +125,9 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	}
 	var plan ownedCleanupCommitPlan
 	if p.target.Kind == ir.KindMcpServer {
-		plan, err = materialize.PrepareOwnedMCPRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved))
+		plan, err = materialize.PrepareOwnedMCPRemoval(p.ctx, ws.MaterializeRoot(), p.target, resolver.MaterializationWinners(after.Resolved))
 	} else {
-		plan, err = materialize.PrepareManagedLinkRemoval(p.ctx, opts.RepoRoot, p.target, resolver.MaterializationWinners(after.Resolved), after.MaterializationModes)
+		plan, err = materialize.PrepareManagedLinkRemoval(p.ctx, ws.MaterializeRoot(), p.target, resolver.MaterializationWinners(after.Resolved), after.MaterializationModes)
 	}
 	if err != nil {
 		return err
@@ -140,14 +149,14 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	return commitErr
 }
 
-func cleanupReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAssertion, error) {
-	byRequested, err := configReadAssertions(ec, true)
+func EffectivePolicyReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAssertion, error) {
+	byRequested, err := configReadAssertions(ec.LayerResults(), true)
 	if err != nil {
 		return nil, err
 	}
 	layers := []config.LayerResult{ec.Organization, ec.User, ec.Repo, ec.LocalLayer}
 	for _, layer := range layers {
-		if len(readOnlyRemoteEntries(layer)) == 0 || layer.Path == "" {
+		if layer.Path == "" || len(readOnlyRemoteEntries(layer)) == 0 && (layer.Config == nil || len(layer.Config.Marketplaces) == 0) {
 			continue
 		}
 		lockPath, err := lockfile.PathForConfig(layer.Path)
@@ -176,13 +185,12 @@ func cleanupReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAsser
 	return reads, nil
 }
 
-func configReadAssertions(ec config.EffectiveConfig, includeAcquisitionLocks bool) (map[string]dependencytxn.ReadAssertion, error) {
-	layers := []config.LayerResult{ec.Organization, ec.User, ec.Repo, ec.LocalLayer}
+func configReadAssertions(layers []config.LayerResult, includeAcquisitionLocks bool) (map[string]dependencytxn.ReadAssertion, error) {
 	byRequested := map[string]dependencytxn.ReadAssertion{}
 	represented := map[string]bool{}
 	for _, layer := range layers {
 		for _, read := range layer.Reads {
-			if read.RuntimeLock || (read.AcquisitionLock && !includeAcquisitionLocks) {
+			if read.AcquisitionLock && !includeAcquisitionLocks {
 				continue
 			}
 			assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath, Expected: dependencytxn.Generation{Exists: true, Digest: read.Digest}}

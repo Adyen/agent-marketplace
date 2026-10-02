@@ -28,9 +28,6 @@ func acquireCacheFileLockWithContext(ctx context.Context, operation int) (func()
 }
 
 func acquireCachePathLockWithContext(ctx context.Context, lockPath string, operation int) (func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

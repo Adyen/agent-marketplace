@@ -20,6 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // BenchmarkBuildRows measures the hot-path cost of buildRows under two
@@ -96,6 +97,37 @@ func BenchmarkBuildRows(b *testing.B) {
 			buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{})
 		}
 	})
+}
+
+func BenchmarkAppendUnavailableSelectionRows(b *testing.B) {
+	const registryCount = 20
+	cfg := &config.Config{}
+	catalogs := make(map[string]catalogInfo, registryCount/2)
+	resolveErrs := make([]error, 0, registryCount/2)
+	for i := range registryCount {
+		catalogKey := fmt.Sprintf("catalog-%02d", i)
+		url := fmt.Sprintf("git@example.com:org/registry-%02d.git", i)
+		name := fmt.Sprintf("missing-%02d", i)
+		cfg.Registries = append(cfg.Registries, config.RegistryEntry{
+			URL: url, Ref: "main", Path: "resources", Source: config.RepoCommitted, CatalogKey: catalogKey,
+			Skills: config.KindSelector{Include: []string{name}},
+		})
+		if i%2 == 0 {
+			catalogs[catalogKey] = catalogInfo{}
+			resolveErrs = append(resolveErrs, &resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: name, URL: url, Ref: "main", Path: "resources"})
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	var rows []row
+	for range b.N {
+		rows = appendUnavailableSelectionRows(nil, cfg, nil, resolveErrs, catalogs)
+	}
+	b.StopTimer()
+	if len(rows) != registryCount {
+		b.Fatalf("rows = %d, want %d", len(rows), registryCount)
+	}
 }
 
 // BenchmarkBuildRowsLargeMixed covers hundreds to thousands of resources
@@ -309,6 +341,22 @@ func BenchmarkMoveCursorByPage(b *testing.B) {
 	}
 }
 
+func BenchmarkMouseWheelListUpdate(b *testing.B) {
+	m := benchmarkClampModel()
+	m.loading = false
+	msg := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown}
+	listWidth, _ := paneWidths(m.width)
+	m.listHeightOffsets(listWidth)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.cursor = 0
+		m.listOffset = 0
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+}
+
 func BenchmarkRenderBaseScreen(b *testing.B) {
 	r := mkRow("selected-resource-with-a-long-name", withProject, withRegistry("https://example.com/a/very/long/registry/location.git", "registry-with-a-long-name"))
 	r.Artifact.Path = "/a/very/long/cache/location/that/must-wrap/SKILL.md"
@@ -393,14 +441,14 @@ func BenchmarkRecordActionSpan(b *testing.B) {
 	b.Setenv("XDG_STATE_HOME", dir)
 
 	srv := benchTuiServer()
-	user := &config.Config{
+	user := config.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := telemetry.ResolveTelemetryConfig(nil, user, "", "")
+	state, err := telemetry.ResolveTelemetryConfig(config.Settings{}, user, "", "")
 	if err != nil {
 		b.Fatal(err)
 	}

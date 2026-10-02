@@ -1,20 +1,5 @@
 <script setup lang="ts">
-import { targets } from '../data/harnesses'
-
-const displayNames: Record<string, string> = {
-  factory: 'Factory',
-  claude: 'Claude Code',
-  cursor: 'Cursor',
-  windsurf: 'Windsurf',
-  gemini: 'Gemini',
-  devin: 'Devin',
-  codex: 'Codex',
-}
-
-const harnesses = targets.map((target) => ({
-  id: target.id,
-  label: displayNames[target.id] ?? target.label,
-}))
+import { targets as harnesses } from '../data/harnesses'
 </script>
 
 <template>
@@ -53,8 +38,8 @@ const harnesses = targets.map((target) => ({
   align-items: center;
   gap: 10px;
   color: var(--vp-c-text-2);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--am-text-supporting);
+  font-weight: var(--am-font-semibold);
   letter-spacing: 0.03em;
   white-space: nowrap;
 }
@@ -80,8 +65,8 @@ ul {
 
 li {
   color: var(--vp-c-text-2);
-  font-size: 14px;
-  font-weight: 620;
+  font-size: var(--am-text-body-sm);
+  font-weight: var(--am-font-semibold);
   letter-spacing: -0.01em;
   white-space: nowrap;
 }

@@ -1,16 +1,18 @@
 <script setup lang="ts">
+import { withBase } from 'vitepress'
 import { computed, ref } from 'vue'
+import { DOCS_PATH } from '../../../shared/site'
 import { DEMO_RESOURCE_NAMES } from '../data/demo'
 import {
   kinds,
   outputRows,
-  statusesUsed,
   targets,
   type Status
 } from '../data/harnesses'
 import SectionShell from '../components/SectionShell.vue'
 
 const KINDS = kinds.map((kind) => kind.id)
+const ownershipPath = withBase(`${DOCS_PATH}explanation/shared-configuration-ownership`)
 
 const EXAMPLE_NAMES = {
   skill: 'tdd',
@@ -23,8 +25,8 @@ const EXAMPLE_NAMES = {
 
 const STATUS_META: Record<Status, { badge: string; note: string }> = {
   native: { badge: '', note: '' },
-  shared: { badge: 'shared file', note: 'an entry inside a file the harness owns' },
-  'as-skill': { badge: 'as skill', note: 'no command primitive, so it ships as a skill' },
+  shared: { badge: 'shared file', note: 'An entry inside a file the harness owns.' },
+  'as-skill': { badge: 'as skill', note: 'No command primitive, so it ships as a skill.' },
   none: { badge: '', note: '' }
 }
 
@@ -37,19 +39,12 @@ const rows = computed(() => outputRows(active.value, KINDS, EXAMPLE_NAMES))
 const supportingArtifacts = computed(() =>
   [...new Set(rows.value.flatMap((row) => row.extra))],
 )
-
-/** Explain only the output forms reached by the full matrix. */
-const legend = computed(() => {
-  const used = new Set(statusesUsed(KINDS))
-  return (Object.keys(STATUS_META) as Status[])
-    .filter((status) => used.has(status) && STATUS_META[status].note)
-    .map((status) => ({ status, ...STATUS_META[status] }))
-})
 </script>
 
 <template>
   <SectionShell
     id="harnesses"
+    density="compact"
     eyebrow="Native output"
     title="Same resources. Different native layouts"
   >
@@ -88,21 +83,34 @@ const legend = computed(() => {
         <code>
           {{ row.lead ?? `no ${row.kindLabel.toLowerCase()} primitive` }}
         </code>
-        <span v-if="metaFor(row.status).badge" class="status-tag">
+        <button
+          v-if="metaFor(row.status).badge"
+          type="button"
+          class="status-tag"
+          :aria-label="metaFor(row.status).badge"
+          :aria-describedby="`output-note-${row.kindId}`"
+        >
           {{ metaFor(row.status).badge }}
-        </span>
+          <span :id="`output-note-${row.kindId}`" class="status-tooltip" role="tooltip">
+            {{ metaFor(row.status).note }}
+          </span>
+        </button>
+      </div>
+
+      <div v-if="supportingArtifacts.length" class="pane-footer">
+        <span>Also writes:</span>
+        <code v-for="path in supportingArtifacts" :key="path">{{ path }}</code>
       </div>
     </div>
 
-    <p v-if="supportingArtifacts.length" class="supporting-artifacts">
-      <span>Also writes:</span>
-      <code v-for="path in supportingArtifacts" :key="path">+ {{ path }}</code>
-    </p>
-
-    <p v-if="legend.length" class="foot">
-      <template v-for="(item, i) in legend" :key="item.status">
-        <template v-if="i"> · </template><span class="note-tag">{{ item.badge }}</span> — {{ item.note }}
-      </template>
+    <p class="configuration-note">
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M12 3 20 6v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6z" />
+      </svg>
+      <span>
+        Only entries managed by agent-marketplace are updated. Your other settings stay intact.
+        <a :href="ownershipPath">Learn more →</a>
+      </span>
     </p>
   </SectionShell>
 </template>
@@ -112,7 +120,7 @@ const legend = computed(() => {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .tab {
@@ -121,13 +129,8 @@ const legend = computed(() => {
   border: 1px solid var(--am-border);
   background-color: var(--am-surface);
   color: var(--vp-c-text-2);
-  font-size: 14px;
+  font-size: var(--am-text-body-sm);
   cursor: pointer;
-  transition:
-    color 0.14s,
-    border-color 0.14s,
-    background-color 0.14s,
-    transform 0.14s;
 }
 
 .tab:hover {
@@ -140,72 +143,66 @@ const legend = computed(() => {
   background-color: var(--vp-c-brand-1);
   border-color: var(--vp-c-brand-1);
   color: var(--am-on-accent);
-  font-weight: 650;
-  transform: translateY(-1px);
+  font-weight: var(--am-font-semibold);
 }
 
 .pane {
   overflow-x: auto;
-  padding: 16px 22px 20px;
+  padding: 10px 18px 14px;
   border: 1px solid var(--am-code-border);
   border-radius: var(--am-radius-lg);
   background: var(--am-code-bg);
-  box-shadow:
-    0 24px 50px -34px var(--am-code-shadow),
-    inset 0 1px var(--am-color-code-highlight);
   color: var(--am-code-text);
-  font-family: var(--vp-font-family-mono);
+  font-family: var(--vp-font-family-mono), monospace;
 }
 
 .row {
   display: flex;
   align-items: center;
   gap: 12px;
-  height: 48px;
+  height: 43px;
   border-bottom: 1px solid var(--am-code-border);
-  font-size: 14px;
+  font-size: var(--am-text-body-sm);
 }
 
 .kind {
   width: 88px;
   flex: none;
-  font-family: var(--vp-font-family-mono);
-  font-size: 13px;
-  font-weight: 600;
+  font-weight: var(--am-font-semibold);
   line-height: 1;
   text-transform: uppercase;
-  color: var(--am-code-muted);
   letter-spacing: 0.06em;
 }
 
-.arrow {
-  flex: none;
+.kind,
+.arrow,
+.pane-footer {
   color: var(--am-code-muted);
-  font-size: 14px;
+}
+
+.kind,
+.pane-footer {
+  font-size: var(--am-text-supporting);
 }
 
 .status-mark {
-  width: 14px;
-  flex: none;
+  flex: 0 0 14px;
   color: var(--vp-c-brand-1);
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--am-text-body-sm);
+  font-weight: var(--am-font-bold);
   text-align: center;
 }
 
 .status-mark.is-none {
   color: var(--vp-c-text-3);
-  font-weight: 400;
+  font-weight: normal;
 }
 
 .row code {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--am-code-text);
-  font-family: var(--vp-font-family-mono);
-  font-size: 13.5px;
-  line-height: 1.7;
+  font-size: var(--am-text-supporting);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -215,47 +212,106 @@ const legend = computed(() => {
   font-style: italic;
 }
 
-.note-tag,
 .status-tag {
-  padding: 2px 6px;
+  position: relative;
+  flex: none;
+  padding: 3px 6px;
   border: 1px solid var(--am-code-border);
   border-radius: 4px;
   background: var(--am-code-bg-raised);
   color: var(--am-code-muted);
-  font-family: var(--vp-font-family-mono);
-  font-size: 12px;
+  font-family: inherit;
+  font-size: var(--am-text-supporting);
   line-height: 1.2;
+  cursor: help;
 }
 
-.note-tag {
-  display: inline-block;
+.status-tag:is(:hover, :focus) {
+  border-color: var(--am-border-strong);
+  color: var(--am-code-text);
 }
 
-.status-tag {
-  flex: none;
-  padding-block: 3px;
+.status-tag:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
 }
 
-.foot {
-  margin: 16px 0 0;
-  font-size: 13.5px;
-  color: var(--vp-c-text-2);
+.status-tooltip {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: none;
+  width: max-content;
+  max-width: min(240px, 70vw);
+  padding: 8px 10px;
+  border: 1px solid var(--am-terminal-border);
+  border-radius: var(--am-radius-sm);
+  background: var(--am-terminal-bg-raised);
+  color: var(--am-terminal-text);
+  font-family: var(--vp-font-family-base), sans-serif;
+  font-size: var(--am-text-supporting);
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
 }
 
-.supporting-artifacts {
+.status-tag:is(:hover, :focus) .status-tooltip {
+  display: block;
+}
+
+.pane-footer {
   display: flex;
-  align-items: baseline;
+  min-height: 38px;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 14px 0 0;
-  color: var(--vp-c-text-2);
-  font-size: 13.5px;
+  gap: 6px 9px;
+  padding-top: 8px;
 }
 
-.supporting-artifacts code {
-  color: var(--vp-c-text-1);
-  font-family: var(--vp-font-family-mono);
-  font-size: 13px;
+.pane-footer code {
+  color: var(--am-code-text);
+}
+
+.configuration-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 18px 0 0;
+  color: var(--vp-c-text-2);
+  font-size: var(--am-text-supporting);
+  line-height: 1.55;
+}
+
+.configuration-note svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  fill: none;
+  stroke: var(--vp-c-brand-1);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.configuration-note a {
+  color: var(--vp-c-brand-1);
+  font-weight: var(--am-font-semibold);
+  text-decoration: none;
+}
+
+.configuration-note a:hover {
+  color: var(--vp-c-brand-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.configuration-note a:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 3px;
 }
 
 .product-name {
@@ -265,9 +321,24 @@ const legend = computed(() => {
   border-radius: var(--am-radius-sm);
   background: var(--am-accent-soft);
   color: var(--vp-c-text-1);
-  font-family: var(--vp-font-family-mono);
+  font-family: var(--vp-font-family-mono), monospace;
   font-size: 0.9em;
   line-height: 1.2;
+}
+
+@media (max-width: 680px) {
+  .tab {
+    padding-inline: 10px;
+    font-size: var(--am-text-supporting);
+  }
+
+  .row {
+    gap: 8px;
+  }
+
+  .kind {
+    width: 74px;
+  }
 }
 
 </style>

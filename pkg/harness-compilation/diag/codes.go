@@ -42,13 +42,19 @@ const (
 
 // Warning codes.
 const (
-	CodeIngestClaudeUnconsumedConfig        = "ingest.claude.unconsumed-config"
-	CodeIngestFactoryUnconsumedConfig       = "ingest.factory.unconsumed-config"
-	CodeIngestCursorUnconsumedConfig        = "ingest.cursor.unconsumed-config"
-	CodeIngestGeminiUnconsumedConfig        = "ingest.gemini.unconsumed-config"
-	CodeIngestWindsurfUnconsumedConfig      = "ingest.windsurf.unconsumed-config"
-	CodeIngestDevinUnconsumedConfig         = "ingest.devin.unconsumed-config"
-	CodeIngestCodexUnconsumedConfig         = "ingest.codex.unconsumed-config"
+	CodeIngestClaudeUnconsumedConfig   = "ingest.claude.unconsumed-config"
+	CodeIngestFactoryUnconsumedConfig  = "ingest.factory.unconsumed-config"
+	CodeIngestCursorUnconsumedConfig   = "ingest.cursor.unconsumed-config"
+	CodeIngestGeminiUnconsumedConfig   = "ingest.gemini.unconsumed-config"
+	CodeIngestWindsurfUnconsumedConfig = "ingest.windsurf.unconsumed-config"
+	CodeIngestDevinUnconsumedConfig    = "ingest.devin.unconsumed-config"
+	CodeIngestCodexUnconsumedConfig    = "ingest.codex.unconsumed-config"
+	// CodeIngestClaudeDuplicateRootSkill reports a plugin-form bundle whose
+	// root SKILL.md declares the same frontmatter name as a skill already
+	// loaded from skills/. The skills/ entry wins deterministically (it loads
+	// first, in sorted order) and the root duplicate is dropped rather than
+	// published twice; the warning records the loss instead of hiding it.
+	CodeIngestClaudeDuplicateRootSkill      = "ingest.claude.duplicate-root-skill"       // Root SKILL.md duplicated a skills/ entry; the skills/ entry is kept
 	CodeSubagentWindsurfNoPrimitive         = "subagent.windsurf.no-primitive"           // Windsurf has no subagent primitive
 	CodeHookClaudeUnsupportedType           = "hook.claude.unsupported-type"             // Claude hook with unsupported type (http/prompt/agent)
 	CodeHookFactoryNonCommandTypeDropped    = "hook.factory.non-command-type-dropped"    // Factory dropped non-command hook type
@@ -320,6 +326,7 @@ const (
 	CodeIngestCodexSubagentSecurityUnsupported   = "ingest.codex.subagent-security-unsupported" // Authority-bearing native subagent fields cannot be represented
 	CodeMaterializeCodexDuplicateIdentity        = "materialize.codex.duplicate-identity"       // Duplicate desired Codex aggregate identity suppressed
 	CodeMaterializeHookSupportConflict           = "materialize.hook.support-conflict"
+	CodeMaterializeHookSupportRefused            = "materialize.hook.support-refused"
 	CodeSubagentFactoryDisallowedToolsDropped    = "subagent.factory.disallowed-tools-dropped" // Factory cannot represent disallowedTools
 	CodeSubagentFactoryIsolationDropped          = "subagent.factory.isolation-dropped"        // Factory cannot represent isolation
 	CodeSubagentGeminiToolUnknown                = "subagent.gemini.tool-unknown"              // Gemini tool not in mapping table; artifact suppressed
@@ -558,6 +565,7 @@ var codeCatalog = []CodeDoc{
 	{CodeDoctorDevinVersionUnsupported, SeverityWarning, "The installed Devin CLI is older than the 3000.3 compatibility floor", "Sync does not require a Devin binary and is not blocked; upgrade the Devin CLI to 3000.3 or newer before relying on the generated output"},
 	{CodeDoctorDevinVersionUnknown, SeverityWarning, "A Devin CLI is installed but its version could not be established", "The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed"},
 	{CodeDoctorRepairConflictReplaceable, SeverityWarning, "An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan", "Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it"},
+	{CodeIngestClaudeDuplicateRootSkill, SeverityWarning, "A plugin-form bundle's root SKILL.md declared a name already loaded from skills/; the skills/ entry is kept", "Rename the root skill or remove the duplicate; skills/ entries load first and win deterministically"},
 
 	// Error
 	{CodeSubagentFactoryToolUnknown, SeverityError, "Factory cannot map an explicit subagent tool; subagent artifact suppressed", "Use a supported tool mapping or remove the restriction explicitly"},
@@ -625,6 +633,7 @@ var codeCatalog = []CodeDoc{
 	{CodeOwnershipLockTimeout, SeverityError, "This target root's ownership lock could not be acquired before the timeout, so its aggregates were left exactly as found", "Another agent-marketplace process is still holding it; wait for that run to finish, or raise AGENT_MARKETPLACE_OWNERSHIP_LOCK_TIMEOUT"},
 	{CodeOwnershipGenerationConflict, SeverityError, "The aggregate file or ownership generation changed underneath this mutation; the aggregate was left as found", "Another writer or an external tool changed the file or the ownership record after this run read it; re-run sync"},
 	{CodeMaterializeHookSupportConflict, SeverityError, "Conflicting desired support files block affected hooks rather than selecting a winner", "Rename the conflicting support files or exclude one hook provider"},
+	{CodeMaterializeHookSupportRefused, SeverityError, "Unsafe or unreadable support sources block affected hooks while installed content is retained", "Fix or remove the unsafe support source and re-run sync"},
 	{CodeMaterializeDevinAggregateMalformed, SeverityError, "The destination Devin aggregate JSON could not be parsed, so that file was left exactly as found", "Fix the reported parse location by hand; a safety backup of the raw bytes is retained under the Agent Marketplace state root"},
 	{CodeMaterializeDevinAggregateShape, SeverityError, "The destination Devin aggregate has a shape this target cannot patch, so that file was left exactly as found", "The aggregate root and its hooks/mcpServers members must be JSON objects; move the conflicting value out of the way by hand"},
 	{CodeMaterializeDevinAggregateWrite, SeverityError, "The journaled Devin aggregate mutation failed, so that file was left exactly as found", "Nothing was partially written; check the reported cause and re-run sync"},

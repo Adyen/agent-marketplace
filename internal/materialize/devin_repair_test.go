@@ -53,7 +53,7 @@ func repairFileFor(t *testing.T, preview *RepairPreview, rel string) *RepairFile
 
 func TestRepairPreviewsEnumeratesEveryValidatedAdapter(t *testing.T) {
 	repoRoot := t.TempDir()
-	previews, err := RepairPreviews(context.Background(), repoRoot, nil)
+	previews, err := RepairPreviews(context.Background(), repoRoot, nil, nil)
 	if err != nil {
 		t.Fatalf("repair previews: %v", err)
 	}
@@ -123,6 +123,7 @@ func TestDevinRepairPreviewIsReadOnlyAndNominatesExactMatchesOnly(t *testing.T) 
 // TestDevinRepairAdoptionRecordsOwnershipWithoutChangingBytes pins "`doctor
 // --repair --yes` adopts exact current desired matches": adoption is a statement
 // about the RECORD, so the user's file must come out byte-for-byte identical.
+// spec: owned-entry-reconciliation/identical-values-are-offered-for-adoption
 func TestDevinRepairAdoptionRecordsOwnershipWithoutChangingBytes(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)

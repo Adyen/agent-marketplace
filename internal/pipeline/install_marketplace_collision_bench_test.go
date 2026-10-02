@@ -40,7 +40,7 @@ func BenchmarkMarketplaceCollisionSync(b *testing.B) {
 			if err := os.WriteFile(config.ProjectConfigPath(repo), []byte(cfg), 0644); err != nil {
 				b.Fatal(err)
 			}
-			opts := ResolveOptions{RepoRoot: repo, CatalogMode: catalog.LoadModeCached, NoBackup: true, marketplaceInstall: &marketplace.PreparedInstall{Pin: config.MarketplaceResourcePin{Name: "marketplace-only", Kind: "skill"}, Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "marketplace-only", Kind: ir.KindSkill}}}}
+			opts := ResolveOptions{Workspace: mustWorkspace(b, repo), CatalogMode: catalog.LoadModeCached, NoBackup: true, marketplaceInstall: &marketplace.PreparedInstall{Pin: config.MarketplaceResourcePin{Name: "marketplace-only", Kind: "skill"}, Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "marketplace-only", Kind: ir.KindSkill}}}}
 			first := Sync(context.Background(), opts)
 			if len(first.Errors) != 0 || len(first.Resolved) != count || first.Report == nil {
 				b.Fatalf("invalid sync fixture: resolved=%d errors=%v", len(first.Resolved), first.Errors)

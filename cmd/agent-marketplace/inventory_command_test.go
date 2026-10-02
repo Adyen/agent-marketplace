@@ -84,7 +84,7 @@ func inventoryNumberPoints(metric *metricpb.Metric) []*metricpb.NumberDataPoint 
 func (e *inventoryCommandExporter) context(t *testing.T, command string) (context.Context, *telemetry.Telemetry) {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	state, err := telemetry.ResolveTelemetryConfig(nil, &config.Config{Telemetry: &tmcfg.TelemetryConfig{
+	state, err := telemetry.ResolveTelemetryConfig(config.Settings{}, config.Settings{Telemetry: &tmcfg.TelemetryConfig{
 		Level: tmcfg.LevelDetailed, Endpoint: e.server.URL,
 	}}, "", "")
 	if err != nil {

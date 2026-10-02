@@ -6,7 +6,7 @@ import CompatibilityStrip from './components/CompatibilityStrip.vue'
 import WorkflowSection from './sections/WorkflowSection.vue'
 import NativeOutputSection from './sections/NativeOutputSection.vue'
 import ScopesPolicySection from './sections/ScopesPolicySection.vue'
-import SafeSyncSection from './sections/SafeSyncSection.vue'
+import ForOrganizationsSection from './sections/ForOrganizationsSection.vue'
 import GetStartedSection from './sections/GetStartedSection.vue'
 </script>
 
@@ -17,7 +17,7 @@ import GetStartedSection from './sections/GetStartedSection.vue'
     <WorkflowSection />
     <NativeOutputSection />
     <ScopesPolicySection />
-    <SafeSyncSection />
+    <ForOrganizationsSection />
     <GetStartedSection />
   </div>
 </template>

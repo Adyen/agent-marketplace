@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
@@ -66,10 +67,6 @@ func ProjectConfigPath(repoRoot string) string {
 	return filepath.Join(repoRoot, ".agents", "config.yaml")
 }
 
-func entryResourcesForKind(entry RegistryEntry, kind ir.ResourceKind) []string {
-	return entry.SelectorForKind(kind).Include
-}
-
 // readOrInitConfig reads and parses the YAML at configPath. If the file does
 // not exist, returns a document pre-populated with apiVersion. When the path
 // is the global config (~/.agents/config.yaml), the skeleton includes
@@ -82,38 +79,31 @@ func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 }
 
 func readOrInitConfigWithV4(configPath string, allowV4 bool) (*yaml.Node, os.FileMode, error) {
+	if dependencytxn.ClassifyDestination(configPath) != dependencytxn.AuthorityLegacy {
+		// Managed layer destinations read through the descriptor boundary:
+		// approved links resolve to their captured target, escapes and
+		// unsafe objects refuse, and the mode comes from the same inspected
+		// state as the bytes.
+		data, generation, mode, err := dependencytxn.ReadSnapshot(configPath)
+		if err != nil {
+			return nil, 0, fmt.Errorf("read config %q: %w", configPath, err)
+		}
+		if !generation.Exists {
+			return initialConfigDocument(configPath)
+		}
+		if PeekAPIVersion(data) == APIVersionV4 && !allowV4 {
+			return nil, 0, v4err("v4.writer-opt-in", configPath, 0, "legacy config writers do not edit v4 files; use an explicit v4-aware operation")
+		}
+		doc, err := parseConfigDocument(configPath, data)
+		if err != nil {
+			return nil, 0, err
+		}
+		return doc, mode, nil
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			var content []*yaml.Node
-			// Local config files use the LocalConfig schema which does not
-			// have apiVersion or harnesses. Only write apiVersion for
-			// Config-type files (global, repo, org).
-			if !isLocalConfigPath(configPath) {
-				content = append(content,
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV2},
-				)
-			}
-			// Include harnesses only for the global config path, where
-			// the default target set is useful. Project/local configs omit harnesses
-			// until the user explicitly selects project targets.
-			if isGlobalConfigPath(configPath) {
-				harnesses := DefaultHarnesses()
-				seqContent := make([]*yaml.Node, 0, len(harnesses))
-				for _, h := range harnesses {
-					seqContent = append(seqContent, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: h})
-				}
-				content = append(content,
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "harnesses"},
-					&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: seqContent},
-				)
-			}
-			doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
-				Kind: yaml.MappingNode, Tag: "!!map",
-				Content: content,
-			}}}
-			return doc, defaultConfigMode, nil
+			return initialConfigDocument(configPath)
 		}
 		return nil, 0, fmt.Errorf("read config %q: %w", configPath, err)
 	}
@@ -132,6 +122,38 @@ func readOrInitConfigWithV4(configPath string, allowV4 bool) (*yaml.Node, os.Fil
 	}
 
 	return doc, info.Mode().Perm(), nil
+}
+
+// initialConfigDocument returns the skeleton document for a config that
+// does not exist yet. Local config files use the LocalConfig schema which
+// does not have apiVersion or harnesses. Only write apiVersion for
+// Config-type files (global, repo, org). The skeleton includes
+// harnesses: [factory, windsurf] only for the global config path; project
+// and local configs omit harnesses until explicitly configured.
+func initialConfigDocument(configPath string) (*yaml.Node, os.FileMode, error) {
+	var content []*yaml.Node
+	if !isLocalConfigPath(configPath) {
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV2},
+		)
+	}
+	if isGlobalConfigPath(configPath) {
+		harnesses := DefaultHarnesses()
+		seqContent := make([]*yaml.Node, 0, len(harnesses))
+		for _, h := range harnesses {
+			seqContent = append(seqContent, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: h})
+		}
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "harnesses"},
+			&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: seqContent},
+		)
+	}
+	doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
+		Kind: yaml.MappingNode, Tag: "!!map",
+		Content: content,
+	}}}
+	return doc, defaultConfigMode, nil
 }
 
 // isGlobalConfigPath reports whether configPath refers to the global
@@ -156,55 +178,28 @@ func isLocalConfigPath(configPath string) bool {
 	return strings.HasSuffix(filepath.Clean(configPath), "config.local.yaml")
 }
 
-// EnsureGlobalConfig creates the user-level config skeleton at
-// ~/.agents/config.yaml if it does not already exist. The skeleton carries
-// only the required global fields (apiVersion, harnesses); logging is left
-// out so the file stays clean, and the logging runtime falls back to its
-// code defaults unless the user opts in with an explicit logging block. See
-// docs/logging.md for the override keys.
+// EnsureGlobalConfig creates the user-level config at ~/.agents/config.yaml
+// when it does not exist, the same way init does: a v4 root with the default
+// harnesses and nothing else. Logging is left out so the file stays clean, and
+// the logging runtime falls back to its code defaults unless the user opts in
+// with an explicit logging block (see docs/logging.md for the override keys).
+// An existing file, even a dangling symlink, is never read or rewritten.
 func EnsureGlobalConfig() error {
 	configPath, err := GlobalConfigPath()
 	if err != nil {
 		return err
 	}
-	doc, mode, err := readOrInitConfig(configPath)
-	if err != nil {
+	_, err = os.Lstat(configPath)
+	switch {
+	case err == nil:
+		return nil
+	case !errors.Is(err, os.ErrNotExist):
 		return err
 	}
-
-	var data []byte
-	if !isEmptyConfigDocument(doc) {
-		var encoded bytes.Buffer
-		encoder := yaml.NewEncoder(&encoded)
-		encoder.SetIndent(2)
-		if err := encoder.Encode(doc); err != nil {
-			return fmt.Errorf("encode config %q: %w", configPath, err)
-		}
-		if err := encoder.Close(); err != nil {
-			return fmt.Errorf("close yaml encoder for %q: %w", configPath, err)
-		}
-		data = encoded.Bytes()
-	}
-
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return fmt.Errorf("create config directory for %q: %w", configPath, err)
-	}
-
-	// Exclusively create the file so concurrent runs cannot clobber a config
-	// another process is writing. If it already exists, this is a no-op.
-	f, err := os.OpenFile(configPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil
-		}
-		return fmt.Errorf("create config %q: %w", configPath, err)
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write config %q: %w", configPath, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close config %q: %w", configPath, err)
+	// InitializeUserPersonalAtPath creates the file exclusively, so a
+	// concurrent run that creates it first is not an error.
+	if _, err := InitializeUserPersonalAtPath(configPath, DefaultHarnesses()); err != nil && !errors.Is(err, ErrAlreadyInitialized) {
+		return err
 	}
 	return nil
 }
@@ -597,10 +592,6 @@ func normalizedUniqueValues(values []string) []string {
 	return normalized
 }
 
-func appendUniqueValues(existing, additions []string) []string {
-	return append(normalizedUniqueValues(existing), normalizedUniqueValues(additions)...)
-}
-
 // encodeConfigDocument renders doc to the exact bytes writeConfigDocumentData
 // writes, so callers can validate the candidate document before any byte
 // lands on disk.
@@ -656,16 +647,31 @@ func validateConfigDocumentData(configPath string, data []byte) error {
 }
 
 func writeConfigDocument(configPath string, mode os.FileMode, doc *yaml.Node) error {
+	return writeConfigDocumentWithOptions(configPath, mode, doc)
+}
+
+func writeConfigDocumentWithOptions(configPath string, mode os.FileMode, doc *yaml.Node, txnOpts ...dependencytxn.Option) error {
 	data, err := encodeConfigDocument(configPath, doc)
 	if err != nil {
 		return err
 	}
-	return writeConfigDocumentData(configPath, mode, data)
+	return writeConfigDocumentDataWithOptions(configPath, mode, data, txnOpts...)
 }
 
 // writeConfigDocumentData atomically replaces the config file at configPath
 // with data, preserving the existing file's mode.
 func writeConfigDocumentData(configPath string, mode os.FileMode, data []byte) error {
+	return writeConfigDocumentDataWithOptions(configPath, mode, data)
+}
+
+func writeConfigDocumentDataWithOptions(configPath string, mode os.FileMode, data []byte, txnOpts ...dependencytxn.Option) error {
+	if dependencytxn.ClassifyDestination(configPath) != dependencytxn.AuthorityLegacy {
+		// Managed layer destinations write through the descriptor boundary.
+		// An approved link is preserved as a link and its captured target
+		// receives the edit; escapes, unsafe leaves, and parent or leaf
+		// replacements fail before the destination changes.
+		return dependencytxn.PublishDestination(configPath, dependencytxn.Generation{}, data, mode, txnOpts...)
+	}
 	// Edit through a symlink, not over it. The atomic rename below replaces
 	// whatever `configPath` names, so on the common dotfile setup where
 	// .agents/config.yaml is a symlink into a shared/checked-out file, the
@@ -810,38 +816,4 @@ func yamlEntryPath(entryNode *yaml.Node) string {
 		return strings.TrimSpace(pathNode.Value)
 	}
 	return ""
-}
-
-// registryEntryMatchesExactURLPathRef matches one URL/path/ref YAML entry.
-func registryEntryMatchesExactURLPathRef(entryNode *yaml.Node, registryURL, registryPath, registryRef string) bool {
-	if entryNode == nil || entryNode.Kind != yaml.MappingNode {
-		return false
-	}
-	urlNode := findRegistryURLNode(entryNode)
-	if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(strings.TrimSpace(registryURL)) {
-		return false
-	}
-	refNode := findMappingValue(entryNode, "ref")
-	if refNode == nil || strings.TrimSpace(refNode.Value) != strings.TrimSpace(registryRef) {
-		return false
-	}
-	return NormalizeRegistryPath(yamlEntryPath(entryNode)) == NormalizeRegistryPath(registryPath)
-}
-
-// pathLabel returns a human-readable label for a registry path value,
-// using "(root)" for the empty-string root path.
-func pathLabel(p string) string {
-	if p == "" {
-		return "(root)"
-	}
-	return p
-}
-
-// registryPathMatches reports whether a requested --path identifies the
-// configured registry entry. Ad-hoc editor operations deliberately require
-// identity equality: a requested descendant must not silently mutate its
-// configured parent. Callers that remove a named resource can separately use
-// the resolver's subtree lookup against the selected (raw) entry path.
-func registryPathMatches(entryPath, requestedPath string) bool {
-	return NormalizeRegistryPath(entryPath) == NormalizeRegistryPath(requestedPath)
 }

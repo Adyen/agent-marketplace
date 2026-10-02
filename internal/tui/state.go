@@ -55,13 +55,14 @@ type marketplaceDiscovery struct {
 }
 
 type row struct {
-	Artifact     resolver.ResolvedArtifact
-	DetailSource *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
-	IsAvailable  bool                  // not in resolved (available but not enabled)
-	IsExcluded   bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
-	IsMalformed  bool
-	MalformedMsg string
-	DriftItem    *materialize.DriftItem // nil if in sync or available-only
+	Artifact          resolver.ResolvedArtifact
+	DetailSource      *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
+	IsAvailable       bool                  // not in resolved (available but not enabled)
+	IsExcluded        bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
+	IsMalformed       bool
+	MalformedMsg      string
+	UnavailableReason string
+	DriftItem         *materialize.DriftItem // nil if in sync or available-only
 
 	// Per-scope enablement: which config file(s) enable this skill.
 	// A skill may be enabled in multiple scopes simultaneously.
@@ -147,6 +148,9 @@ func (r row) Glyph() string {
 	if r.IsMalformed {
 		return "[!]"
 	}
+	if r.UnavailableReason != "" {
+		return "[!]"
+	}
 	if r.IsAvailable {
 		return "[ ]"
 	}
@@ -169,6 +173,9 @@ func (r row) Glyph() string {
 func (r row) StatusText() string {
 	if r.IsMalformed {
 		return "malformed: " + r.MalformedMsg
+	}
+	if r.UnavailableReason != "" {
+		return "unavailable: " + r.UnavailableReason
 	}
 	if r.IsAvailable {
 		if r.IsExcluded {
@@ -207,6 +214,7 @@ func (r row) StatusText() string {
 
 type Model struct {
 	repoRoot            string
+	workspace           pipeline.Workspace
 	homeDir             string
 	rows                []row
 	authoritativeRows   []row
@@ -234,6 +242,7 @@ type Model struct {
 	syncing             bool
 	refreshing          bool
 	requests            requestState
+	configInvalid       bool
 	rowsStale           bool
 	dependencyLifecycle DependencyLifecycle
 

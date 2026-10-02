@@ -1,7 +1,6 @@
 package lockfile
 
 import (
-	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
@@ -123,6 +122,8 @@ marketplaces:
             revision: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 `
 
+// spec: acquisition-lock-codec/v2-marketplace-lock-emits-stable-golden-bytes
+// spec: acquisition-lock-codec/emitted-bytes-decode-to-the-normalized-document
 func TestV2MarketplaceGolden(t *testing.T) {
 	got, err := Encode(v2GoldenDocument())
 	if err != nil {
@@ -196,8 +197,6 @@ func TestMarketplaceInvalidDocuments(t *testing.T) {
 			doc.APIVersion = APIVersionV1
 			return doc
 		}(),
-		"v2 without marketplaces": {APIVersion: APIVersionV2, Scope: ScopeRepo},
-		"v2 empty marketplaces":   {APIVersion: APIVersionV2, Scope: ScopeRepo, Marketplaces: []MarketplaceLock{}},
 		"unsafe endpoint": mutate(func(d *Document) {
 			d.Marketplaces[0].URL = "https://user@market.example"
 		}),
@@ -354,35 +353,8 @@ func TestMarketplaceInvalidDocuments(t *testing.T) {
 	}
 }
 
-func TestMarketplacePermutationAndDedupStable(t *testing.T) {
-	want, err := Encode(v2GoldenDocument())
-	if err != nil {
-		t.Fatal(err)
-	}
-	random := rand.New(rand.NewSource(11))
-	for i := 0; i < 50; i++ {
-		doc := v2GoldenDocument()
-		mp := &doc.Marketplaces[0]
-		random.Shuffle(len(mp.RegistryBindings), func(a, b int) {
-			mp.RegistryBindings[a], mp.RegistryBindings[b] = mp.RegistryBindings[b], mp.RegistryBindings[a]
-		})
-		random.Shuffle(len(mp.Resources), func(a, b int) {
-			mp.Resources[a], mp.Resources[b] = mp.Resources[b], mp.Resources[a]
-		})
-		if i%3 == 0 {
-			mp.RegistryBindings = append(mp.RegistryBindings, mp.RegistryBindings[0])
-			mp.Resources = append(mp.Resources, mp.Resources[0])
-		}
-		got, err := Encode(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(want) {
-			t.Fatalf("permutation %d changed bytes", i)
-		}
-	}
-}
-
+// spec: acquisition-lock-codec/marketplace-records-are-ordered-and-exact-duplicates-collapse
+// spec: acquisition-lock-codec/selection-edges-are-ordered-and-deduplicated
 func TestMarketplaceEndpointAndSelectionOrderingDedup(t *testing.T) {
 	edgeOnboarding := MarketplaceSelectionLock{RegistryID: "collections-id", Name: "onboarding", Revision: Digest(sha256c)}
 	edgeStarters := MarketplaceSelectionLock{RegistryID: "collections-id", Name: "starters", Revision: Digest(sha256e)}
@@ -449,6 +421,28 @@ func TestMarketplaceEndpointAndSelectionOrderingDedup(t *testing.T) {
 	if !reflect.DeepEqual(resources[2].SelectedBy, wantEdges) {
 		t.Fatalf("selection edges = %#v, want %#v", resources[2].SelectedBy, wantEdges)
 	}
+	encoded, err := Encode(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(encoded)
+	for _, url := range []string{"url: https://market.example", "url: https://zeta.example"} {
+		if strings.Count(output, url) != 1 {
+			t.Fatalf("endpoint %q occurrences in emitted bytes = %d, want 1", url, strings.Count(output, url))
+		}
+	}
+	if strings.Index(output, "url: https://market.example") > strings.Index(output, "url: https://zeta.example") {
+		t.Fatalf("endpoint order in emitted bytes:\n%s", output)
+	}
+	onboarding := strings.Index(output, "\n        name: onboarding\n")
+	starters := strings.Index(output, "\n        name: starters\n")
+	review := strings.Index(output, "\n        name: review\n")
+	if onboarding < 0 || starters < 0 || review < 0 || onboarding >= starters || starters >= review {
+		t.Fatalf("resource order in emitted bytes:\n%s", output)
+	}
+	if strings.Count(output, "\n            name: starters\n") != 1 {
+		t.Fatalf("selection edge dedupe failed in emitted bytes:\n%s", output)
+	}
 }
 
 func TestMarketplaceRecordsSurviveGitPlan(t *testing.T) {
@@ -477,17 +471,52 @@ func TestMarketplaceRecordsSurviveGitPlan(t *testing.T) {
 	}
 }
 
-func TestV1GitOnlyPlanStaysV1(t *testing.T) {
+func TestV2AllowsGitOnlyAndEmptyMarketplaceState(t *testing.T) {
+	gitRegistries := []GitRegistry{{
+		URL: "https://git.example.com/team/tools", Ref: "main", Commit: mustOID(t, sha1a),
+		Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a), Resources: []GitResource{
+			{Kind: "skill", Name: "review", ContentDigest: Digest(sha256a), ArchiveDigest: Digest(sha256b), SupportFiles: map[string]Digest{}},
+		}}},
+	}}
+	for _, tc := range []struct {
+		name           string
+		doc            Document
+		wantRegistries []GitRegistry
+	}{
+		{name: "empty", doc: Document{APIVersion: APIVersionV2, Scope: ScopeRepo}},
+		{name: "git-only", doc: Document{APIVersion: APIVersionV2, Scope: ScopeUser, Registries: gitRegistries}, wantRegistries: gitRegistries},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := Encode(tc.doc)
+			if err != nil {
+				t.Fatalf("Encode rejected %s v2 lock: %v", tc.name, err)
+			}
+			decoded, err := Decode(data)
+			if err != nil {
+				t.Fatalf("Decode rejected %s v2 lock: %v", tc.name, err)
+			}
+			if decoded.APIVersion != APIVersionV2 || decoded.Scope != tc.doc.Scope || len(decoded.Marketplaces) != 0 {
+				t.Fatalf("%s v2 lock decoded to %#v", tc.name, decoded)
+			}
+			if !reflect.DeepEqual(decoded.Registries, tc.wantRegistries) {
+				t.Fatalf("%s v2 lock registries = %#v, want %#v", tc.name, decoded.Registries, tc.wantRegistries)
+			}
+		})
+	}
+}
+
+func TestV1GitOnlyPlanUpgradesToV2(t *testing.T) {
 	current := Document{APIVersion: APIVersionV1, Scope: ScopeRepo}
 	plan, err := Plan(Requirements{Scope: ScopeRepo}, &current, OperationSync)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Desired.APIVersion != APIVersionV1 || len(plan.Desired.Marketplaces) != 0 {
-		t.Fatalf("v1 plan promoted to v2: %#v", plan.Desired)
+	if plan.Desired.APIVersion != APIVersionV2 || len(plan.Desired.Marketplaces) != 0 {
+		t.Fatalf("v1 plan did not upgrade to v2: %#v", plan.Desired)
 	}
 }
 
+// spec: acquisition-lock-codec/non-canonical-marketplace-endpoint-spellings-normalize-on-read
 func TestV2NormalizesNonCanonicalEndpointOnDecode(t *testing.T) {
 	data := []byte(strings.Replace(v2GoldenBytes, "url: https://market.example", "url: https://MARKET.example/", 1))
 	doc, err := Decode(data)

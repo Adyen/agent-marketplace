@@ -36,8 +36,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
-	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -77,16 +77,17 @@ type materializePlan struct {
 }
 
 type skillLink struct {
-	name         string
-	target       string
-	cacheDir     string
-	artifacts    []artifact.Artifact
-	sourceDir    string          // absolute path to the original skill directory on disk
-	kind         ir.ResourceKind // kind of the resource (skill, subagent, command, …)
-	resourceName string          // canonical resource name without file extension
-	machineScope bool            // true when installed to machine-wide (user) scope
-	registryURL  string          // URL of the source registry
-	registryPath string          // sub-directory path within the registry (may be empty)
+	name            string
+	target          string
+	cacheDir        string
+	artifacts       []artifact.Artifact
+	sourceDir       string // absolute path to the original skill directory on disk
+	declaredSupport []string
+	kind            ir.ResourceKind // kind of the resource (skill, subagent, command, …)
+	resourceName    string          // canonical resource name without file extension
+	machineScope    bool            // true when installed to machine-wide (user) scope
+	registryURL     string          // URL of the source registry
+	registryPath    string          // sub-directory path within the registry (may be empty)
 }
 
 type skillLinkGroup struct {
@@ -109,9 +110,19 @@ type outputKey struct {
 
 // Report holds the aggregate outcome of a materialization run.
 type Report struct {
-	PerTarget map[hcc.Target]TargetReport
-	PerRoot   []TargetReport
-	Diags     []diag.Diagnostic
+	PerTarget        map[hcc.Target]TargetReport
+	PerRoot          []TargetReport
+	Diags            []diag.Diagnostic
+	BlockedResources []BlockedResource
+}
+
+// BlockedResource identifies a resource omitted during compilation for one
+// harness target and install scope.
+type BlockedResource struct {
+	Kind         ir.ResourceKind
+	Name         string
+	Target       hcc.Target
+	MachineScope bool
 }
 
 // TargetReport describes what happened for a single harness target.
@@ -153,6 +164,7 @@ type portableState struct {
 }
 
 type portableSyncContext struct {
+	boundary     *destinationBoundary
 	state        *portableState
 	target       hcc.Target
 	reportPrefix string
@@ -388,9 +400,10 @@ func (s *portableState) save(dryRun bool) error {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	dryRun      bool
-	scopeFilter *bool // nil = all scopes; true = machine only; false = repo only
-	modes       config.MaterializationModes
+	dryRun              bool
+	scopeFilter         *bool // nil = all scopes; true = machine only; false = repo only
+	modes               config.MaterializationModes
+	linkPublicationHook func(string)
 }
 
 // WithMaterializationModes supplies the already-resolved scope policy. Keeping
@@ -426,17 +439,21 @@ type skillTarget struct {
 
 // targetWork holds the compiled artifacts and diagnostics for a single output key.
 type targetWork struct {
-	artifacts []artifact.Artifact
-	diags     []diag.Diagnostic
+	artifacts  []artifact.Artifact
+	diags      []diag.Diagnostic
+	nativeOnly bool
 }
 
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
-	allDiags   []diag.Diagnostic
-	byTarget   map[outputKey]*targetWork
-	skillLinks map[outputKey]map[string]*skillLinkGroup
-	allOutputs map[outputKey]bool
-	blocked    blockedOutputs
+	linkPublicationHook func(string)
+	scopeFilter         *bool
+	allDiags            []diag.Diagnostic
+	byTarget            map[outputKey]*targetWork
+	skillLinks          map[outputKey]map[string]*skillLinkGroup
+	allOutputs          map[outputKey]bool
+	blocked             blockedOutputs
+	blockedResources    []BlockedResource
 	// artifactMeta maps (outputKey → artifact relative path → skillLink metadata)
 	// for artifacts that remain in result.Artifacts (not extracted into skillLinks).
 	// Used to generate rich collision hints in syncArtifactLinks.
@@ -499,9 +516,11 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	// Phase 2: Compile each work item and collect artifacts per target.
 	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, repoRoot)
+	compileResult.scopeFilter = rc.scopeFilter
 	slog.Debug("materialize compile complete", "targets", len(compileResult.byTarget), "diagnostics", len(compileResult.allDiags))
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
+	compileResult.linkPublicationHook = rc.linkPublicationHook
 	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes)
 	slog.Info("materialize end",
 		"duration_ms", time.Since(start).Milliseconds(),
@@ -728,13 +747,24 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	artifactMeta := make(map[outputKey]map[string]skillLink)
 	ownedState := make(map[outputKey]any)
 	ownedAggregates := ownedAggregateState{values: ownedState}
-	hookSupport, supportConflicts := prepareHookSupport(work)
+	hookSupport, supportConflicts, supportRefusals := prepareHookSupport(work)
+	var blockedResources []BlockedResource
+	blockResource := func(key outputKey, w skillTarget) {
+		blocked.blockResource(key, w)
+		name := w.skill.Name
+		if w.skill.IsMarketplace && w.skill.InstalledName != "" {
+			name = w.skill.InstalledName
+		}
+		blockedResources = append(blockedResources, BlockedResource{
+			Kind: w.skill.Kind, Name: name, Target: key.target, MachineScope: key.machineScope,
+		})
+	}
 
 	for index, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
 		binding, hasBinding, bindingErr := materializeAdapterFor(w.target)
 		if bindingErr != nil {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.adapter.error", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: bindingErr.Error()})
 			continue
 		}
@@ -742,8 +772,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if hasBinding {
 			aggregateHandler = binding.handler
 		}
+		if supportRefusals[index] != nil {
+			blockResource(key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeMaterializeHookSupportRefused, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: "Hook support source refused safe admission; affected hooks were not emitted", Hint: "Fix or remove the unsafe support source and re-run sync", Source: compilepkg.SourceOf(w.skill.Resource)})
+			continue
+		}
 		if paths := supportConflicts[index]; len(paths) > 0 {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeMaterializeHookSupportConflict, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: fmt.Sprintf("hook support paths conflict across selected sources: %s; affected hooks were not emitted", strings.Join(paths, ", ")), Hint: "Rename the conflicting support files or exclude one hook provider", Source: compilepkg.SourceOf(w.skill.Resource)})
 			continue
@@ -751,7 +787,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if w.skill.IsMarketplace && w.skill.InstalledName != "" {
 			renamed, err := marketplaceResourceForInstallName(w.skill.Resource, w.skill.InstalledName)
 			if err != nil {
-				blocked.blockResource(key, w)
+				blockResource(key, w)
 				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 				allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.marketplace.alias-invalid", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Resource.Name(), Message: "Marketplace installed name cannot be materialized safely"})
 				continue
@@ -785,7 +821,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		}
 		result, err := hcc.Compile(w.skill.Resource, w.target, compileOptions...)
 		if err != nil {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			allDiags = append(allDiags, diag.Diagnostic{
 				Code:     "materialize.compile.error",
@@ -798,14 +834,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		}
 
 		if result == nil {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			continue
 		}
 
 		result.Artifacts = append([]artifact.Artifact(nil), result.Artifacts...)
 		if diag.HasErrors(result.Diagnostics) {
-			blocked.blockResource(key, w)
+			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			tw := byTarget[key]
 			if tw == nil {
@@ -822,7 +858,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if aggregateHandler != nil {
 			rest, aggregateErr := aggregateHandler.extract(ownedAggregates, key, result.Artifacts, w.skill.Name)
 			if aggregateErr != nil {
-				blocked.blockResource(key, w)
+				blockResource(key, w)
 				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 				allDiags = append(allDiags, aggregateHandler.malformedDiagnostic(key, w.skill.Name, aggregateErr))
 				continue
@@ -830,22 +866,20 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			result.Artifacts = rest
 		}
 
-		// For hooks, expand ${DROID_PLUGIN_ROOT} to a relative path.
+		// For hooks, expand ${DROID_PLUGIN_ROOT} to an installed root.
 		// Factory Droid only sets DROID_PLUGIN_ROOT for plugin-scoped hooks,
-		// not workspace-level hooks (.factory/hooks/). By expanding to a
-		// relative path at materialization time, the hook command works
-		// without the env var. Factory Droid runs hooks from the repo root,
-		// so ".factory/hooks/script.sh" resolves correctly.
+		// not workspace-level hooks (.factory/hooks/). Repository hooks run
+		// from the repo root, so their paths can be relative. Machine hooks
+		// run from any repo and must always use the absolute machine root.
 		if resourceKind == ir.KindHook && !harness.IsInstallationAdapterTarget(w.target) {
 			if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
 				pluginRoot := roots.For(w.machineScope, repoRoot)
 				if pluginRoot != "" {
-					// Use a relative path when the plugin root is inside the
-					// repo (repo-scope). For machine-scope (outside the repo),
-					// fall back to the absolute path.
-					relPath, err := filepath.Rel(repoRoot, pluginRoot)
-					if err == nil && !strings.HasPrefix(relPath, "..") {
-						pluginRoot = relPath
+					if !w.machineScope {
+						relPath, err := filepath.Rel(repoRoot, pluginRoot)
+						if err == nil && !strings.HasPrefix(relPath, "..") {
+							pluginRoot = relPath
+						}
 					}
 					for i := range result.Artifacts {
 						result.Artifacts[i].Bytes = bytes.ReplaceAll(
@@ -869,11 +903,30 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				if info, err := os.Stat(sourceDir); err == nil && !info.IsDir() {
 					sourceDir = filepath.Dir(sourceDir)
 				}
+				var declaredSupport []string
+				if w.skill.IsMarketplace {
+					if s, ok := w.skill.Resource.(*ir.Skill); ok {
+						declaredSupport = s.SupportFiles
+					}
+				}
+				if len(declaredSupport) > 0 && sourceDir == "" {
+					blockResource(key, w)
+					markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+					allDiags = append(allDiags, diag.Diagnostic{
+						Code:     "materialize.support-source.missing",
+						Severity: diag.SeverityError,
+						Target:   string(w.target),
+						Resource: w.skill.Name,
+						Message:  fmt.Sprintf("marketplace resource %q declares support files but its staged source %q is unavailable; keeping the previous installation", w.skill.Name, w.skill.Path),
+					})
+					continue
+				}
 				addSkillLink(skillLinks, key, installDirRel, skillLink{
-					name:      w.skill.Name,
-					target:    cachedSkillDir(w.target, w.skill, compiledSkillArtifacts),
-					artifacts: compiledSkillArtifacts,
-					sourceDir: sourceDir,
+					name:            w.skill.Name,
+					target:          cachedSkillDir(w.target, w.skill, compiledSkillArtifacts),
+					artifacts:       compiledSkillArtifacts,
+					sourceDir:       sourceDir,
+					declaredSupport: declaredSupport,
 					// The link records the real resource kind, so a `remove`
 					// hint for a colliding Devin command says --kind command
 					// even though the output shape is a skill directory.
@@ -946,13 +999,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	}
 
 	return compilePhaseResult{
-		allDiags:     allDiags,
-		byTarget:     byTarget,
-		skillLinks:   skillLinks,
-		allOutputs:   allOutputs,
-		blocked:      blocked,
-		artifactMeta: artifactMeta,
-		ownedState:   ownedState,
+		allDiags:         allDiags,
+		byTarget:         byTarget,
+		skillLinks:       skillLinks,
+		allOutputs:       allOutputs,
+		blocked:          blocked,
+		blockedResources: blockedResources,
+		artifactMeta:     artifactMeta,
+		ownedState:       ownedState,
 	}
 }
 
@@ -1000,8 +1054,15 @@ func markOwnedAggregateIncomplete(handler ownedAggregateHandler, state ownedAggr
 // critical sections must abandon a contended wait when the run is cancelled.
 func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResult, dryRun bool, repoRoot string, modes config.MaterializationModes) *Report {
 	report := &Report{
-		PerTarget: make(map[hcc.Target]TargetReport),
-		Diags:     compileResult.allDiags,
+		PerTarget:        make(map[hcc.Target]TargetReport),
+		Diags:            compileResult.allDiags,
+		BlockedResources: compileResult.blockedResources,
+	}
+	coalescedGemini, err := coalesceGeminiNativeAggregates(&compileResult, repoRoot)
+	if err != nil {
+		slog.Error("shared Gemini destination refused", "code", diag.CodeMaterializeDestinationOverlap, "error", err)
+		report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeDestinationOverlap, Severity: diag.SeverityError, Target: string(hcc.TargetGemini), Message: err.Error()})
+		return report
 	}
 	coalescedCodexPartitions, preflightDiag := preflightCodexDestinations(&compileResult, repoRoot, modes)
 	if preflightDiag != nil {
@@ -1084,18 +1145,6 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			outDir = roots.For(key.machineScope, repoRoot)
 		}
 
-		if !dryRun {
-			if err := os.MkdirAll(outDir, 0o755); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("create output directory %s: %v", outDir, err),
-				})
-				continue
-			}
-		}
-
 		tw := compileResult.byTarget[key]
 
 		var artifacts []artifact.Artifact
@@ -1119,13 +1168,73 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			report.Diags = append(report.Diags, targetDiags...)
 		}
 
+		boundaryHome := home
+		if boundaryHome == "" {
+			var homeErr error
+			boundaryHome, homeErr = os.UserHomeDir()
+			if homeErr != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: homeErr.Error()})
+				continue
+			}
+		}
+		destinations := adapterDestinations
+		if len(destinations) == 0 {
+			var destinationErr error
+			destinations, destinationErr = harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+			if destinationErr != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: destinationErr.Error()})
+				continue
+			}
+		}
+		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook}
+		if key.target == hcc.TargetFactory {
+			boundary.legacySkillsDir = filepath.Join(outDir, "skills")
+		}
+		var directories []string
+		for _, destination := range destinations {
+			root := destination.Root
+			if key.target == hcc.TargetWindsurf && !key.machineScope {
+				root = filepath.Join(repoRoot, windsurfDir)
+			}
+			boundary.roots = append(boundary.roots, root)
+			if key.target == hcc.TargetCodex && (!key.machineScope || destination.Prefix == ".agents" || os.Getenv("CODEX_HOME") == "") {
+				boundary.roots = append(boundary.roots, filepath.Join(outDir, destination.Prefix))
+			}
+			if len(destination.AggregateRoutes) > 0 {
+				directories = append(directories, filepath.Dir(filepath.Join(destination.Root, destination.AggregateFile)))
+			}
+		}
+		for _, plan := range materializePlans(key.target, outDir, artifacts, linkedComponents(compileResult.skillLinks[key]), key.machineScope) {
+			directories = append(directories, plan.outDir)
+		}
+		for _, group := range orderedSkillLinkGroups(compileResult.skillLinks[key]) {
+			directories = append(directories, filepath.Join(outDir, filepath.FromSlash(group.installDirRel)))
+		}
+		if err := boundary.validate(directories); err != nil {
+			slog.Error("materialize destination refused", "target", key.target, "machine_scope", key.machineScope, "error", err)
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+			continue
+		}
+		if !dryRun {
+			if err := boundary.directory(outDir, true); err != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+				continue
+			}
+		}
+
 		mode := modes.For(string(key.target), key.machineScope)
 		// Resource installation mode is distribution policy, not a compiler
 		// capability. All targets use the same file-copy or symlink path;
 		// shared aggregates retain their separate ownership reconciliation.
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
-		artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
-		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
+		if !coalescedGemini || key.target != hcc.TargetGemini || key.machineScope {
+			artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
+		}
+		if tw != nil && tw.nativeOnly {
+			slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)
+			continue
+		}
+		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, boundary)
 		if binding, ok := composition.bindings[key.target]; ok {
 			report = binding.handler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, adapterDestinations, dryRun)
 		}
@@ -1135,7 +1244,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool) *Report {
+func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, boundary destinationBoundary) *Report {
 	state, stateErr := loadPortableState(repoRoot, key.machineScope)
 	if stateErr != nil {
 		slog.Error("materialize manifest load failed", "target", key.target, "machine_scope", key.machineScope, "error", stateErr)
@@ -1162,6 +1271,10 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	}
 	for _, plan := range plans {
 		regularArtifacts, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
+		if err := boundary.directory(plan.outDir, !dryRun); err != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+			continue
+		}
 		if mode == config.MaterializationModeFile {
 			planRoot := outDir
 			if plan.root != "" {
@@ -1172,30 +1285,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("unsafe portable output directory %s", plan.outDir)})
 				continue
 			}
-			validate := validatePortableOutputDir
-			if !dryRun {
-				validate = ensurePortableOutputDir
-			}
-			if _, err := validate(planRoot, rel); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("validate portable output directory %s: %v", plan.outDir, err),
-				})
-				continue
-			}
 			portableCleanupDirs[plan.outDir] = plan.reportPrefix
-		} else if !dryRun {
-			if err := os.MkdirAll(plan.outDir, 0o755); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("create output directory %s: %v", plan.outDir, err),
-				})
-				continue
-			}
 		}
 
 		cacheMachineScope, cacheOutDir := key.machineScope, outDir
@@ -1246,7 +1336,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		if mode == config.MaterializationModeFile {
 			writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired)
 		} else {
-			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired})
+			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired, boundary: &boundary})
 		}
 		if matErr != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{
@@ -1271,7 +1361,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			}
 			mergeArtifacts = retained
 		}
-		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, wantPrune)
+		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, wantPrune, &boundary)
 		if len(mergeArtifacts) > 0 {
 			dirsCoveredByMergePlans[plan.outDir] = true
 		}
@@ -1320,7 +1410,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 				installDirRel = machineSkillInstallDirRel(key.target, key.machineScope, installDirRel)
 				dir := filepath.Join(outDir, filepath.FromSlash(installDirRel))
 				if outputDirExists(dir) {
-					if _, err := validatePortableOutputDir(outDir, installDirRel); err != nil {
+					if err := boundary.directory(dir, false); err != nil {
 						report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource cleanup directory %s: %v", dir, err)})
 						continue
 					}
@@ -1383,15 +1473,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 
 	for _, group := range orderedSkillLinkGroups(skillLinks[key]) {
 		groupDir := filepath.Join(outDir, filepath.FromSlash(group.installDirRel))
+		if err := boundary.directory(groupDir, !dryRun); err != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+			continue
+		}
 		if mode == config.MaterializationModeFile {
-			validate := validatePortableOutputDir
-			if !dryRun {
-				validate = ensurePortableOutputDir
-			}
-			if _, err := validate(outDir, group.installDirRel); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource directory %s: %v", groupDir, err)})
-				continue
-			}
 			portableCleanupDirs[groupDir] = group.reportPrefix
 		}
 		symlinkLinks, copyLinks := partitionFileCopyLinks(key.target, group.links)
@@ -1411,7 +1497,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			if mode == config.MaterializationModeFile {
 				tr, err = syncPortableSkillTrees(groupDir, symlinkLinks, dryRun, state, key.target, group.reportPrefix, fileDesired)
 			} else {
-				tr, err = syncSkillLinks(groupDir, symlinkLinks, dryRun, !componentBlocked(blocked, group.installDirRel), portableSyncContext{state: state, target: key.target, reportPrefix: group.reportPrefix, desired: fileDesired})
+				tr, err = syncSkillLinks(groupDir, symlinkLinks, dryRun, !componentBlocked(blocked, group.installDirRel), portableSyncContext{state: state, target: key.target, reportPrefix: group.reportPrefix, desired: fileDesired, boundary: &boundary})
 			}
 			report = appendGroupReport(report, key, outDir, group.reportPrefix, tr, err, "materialize target %s to %s")
 			if err != nil {
@@ -2059,9 +2145,36 @@ func linkedComponents(groups map[string]*skillLinkGroup) map[string]bool {
 	return components
 }
 
+func verifyDeclaredSupportFiles(sourceDir string, declared []string) error {
+	for _, rel := range declared {
+		path := filepath.Join(sourceDir, filepath.FromSlash(rel))
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("declared support file %q is unavailable under %s: %w", rel, sourceDir, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("declared support file %q under %s is a directory", rel, sourceDir)
+		}
+	}
+	return nil
+}
+
 func materializationSourcePath(resolved resolver.ResolvedArtifact) string {
 	if resolved.IsMarketplace {
-		return resolved.Path
+		if resolved.Path == "" {
+			return ""
+		}
+		info, err := os.Stat(resolved.Path)
+		if err != nil {
+			return ""
+		}
+		if info.IsDir() {
+			return resolved.Path
+		}
+		if filepath.Base(resolved.Path) == "artifact.tar.gz" {
+			return ""
+		}
+		return filepath.Dir(resolved.Path)
 	}
 	var source string
 	switch resource := resolved.Resource.(type) {
@@ -2149,7 +2262,7 @@ func splitMergeArtifacts(artifacts []artifact.Artifact) ([]artifact.Artifact, []
 	return regular, merge
 }
 
-func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dryRun bool, pruneStaleEntries bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
+func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dryRun bool, pruneStaleEntries bool, boundary ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic, error) {
 	if len(artifacts) == 0 {
 		if !pruneStaleEntries {
 			return &hcc.WriteReport{OutDir: outDir}, nil, nil
@@ -2164,32 +2277,33 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 	// symlink target only contains managed entries; we read through it first
 	// so hcc.Materialize can merge from the real content, then replace the
 	// symlink with a regular file.
-	if !dryRun {
-		for _, a := range artifacts {
-			if err := a.Validate(); err != nil {
-				return nil, nil, fmt.Errorf("invalid merge artifact path %q: %w", a.Path, err)
+	for _, a := range artifacts {
+		if err := a.Validate(); err != nil {
+			return nil, nil, fmt.Errorf("invalid merge artifact path %q: %w", a.Path, err)
+		}
+		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
+		if info, err := os.Lstat(destPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			var capturedBoundary *destinationBoundary
+			if len(boundary) > 0 {
+				capturedBoundary = boundary[0]
 			}
-			destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
-			if info, err := os.Lstat(destPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-				existing, readErr := os.ReadFile(destPath) // follows symlink
-				if readErr != nil && !os.IsNotExist(readErr) {
-					return nil, nil, fmt.Errorf("read symlink target %s: %w", destPath, readErr)
+			existing, mode, readErr := markerAliasSnapshot(outDir, destPath, capturedBoundary) // follows symlink
+			// get target file info for permissions
+			if readErr != nil {
+				return nil, nil, fmt.Errorf("read symlink target %s: %w", destPath, readErr)
+			}
+			if dryRun {
+				continue
+			}
+			if len(existing) > 0 {
+				if mode == 0 {
+					mode = 0o644
 				}
-				targetInfo, statErr := os.Stat(destPath) // get target file info for permissions
-				if readErr == nil && len(existing) > 0 {
-					mode := fs.FileMode(0o644)
-					if statErr == nil {
-						mode = targetInfo.Mode().Perm()
-					}
-					if mode == 0 {
-						mode = 0o644
-					}
-					if err := atomicWriteFile(destPath, existing, mode); err != nil {
-						return nil, nil, fmt.Errorf("replace symlink %s: %w", destPath, err)
-					}
-				} else if err := os.Remove(destPath); err != nil {
-					return nil, nil, fmt.Errorf("remove symlink %s: %w", destPath, err)
+				if err := atomicWriteFile(destPath, existing, mode); err != nil {
+					return nil, nil, fmt.Errorf("replace symlink %s: %w", destPath, err)
 				}
+			} else if err := os.Remove(destPath); err != nil {
+				return nil, nil, fmt.Errorf("remove symlink %s: %w", destPath, err)
 			}
 		}
 	}
@@ -2571,7 +2685,7 @@ func ensureSymlinkPath(linkPath, target string, dryRun bool) ensureSymlinkResult
 	return ensureSymlinkPathWithOwnership(linkPath, target, dryRun, false)
 }
 
-func ensureSymlinkPathWithOwnership(linkPath, target string, dryRun bool, manifestOwned bool) ensureSymlinkResult {
+func ensureSymlinkPathWithOwnership(linkPath, target string, dryRun bool, manifestOwned bool, boundary ...*destinationBoundary) ensureSymlinkResult {
 	info, err := os.Lstat(linkPath)
 	switch {
 	case err == nil:
@@ -2605,34 +2719,11 @@ func ensureSymlinkPathWithOwnership(linkPath, target string, dryRun bool, manife
 		return ensureSymlinkResult{}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
-		return ensureSymlinkResult{err: err}
+	var capturedBoundary *destinationBoundary
+	if len(boundary) > 0 {
+		capturedBoundary = boundary[0]
 	}
-	if info != nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
-		if err := os.RemoveAll(linkPath); err != nil && !os.IsNotExist(err) {
-			return ensureSymlinkResult{err: err}
-		}
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(linkPath), ".agent-marketplace-link-*")
-	if err != nil {
-		return ensureSymlinkResult{err: err}
-	}
-	tmpPath := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return ensureSymlinkResult{err: err}
-	}
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
-		return ensureSymlinkResult{err: err}
-	}
-	if err := os.Symlink(target, tmpPath); err != nil {
-		return ensureSymlinkResult{err: err}
-	}
-	if err := os.Rename(tmpPath, linkPath); err != nil {
-		return ensureSymlinkResult{err: err}
-	}
-	return ensureSymlinkResult{}
+	return ensureSymlinkResult{err: publishCacheLink(linkPath, target, info, capturedBoundary)}
 }
 
 // portableOwnership is the verdict for a manifest-claimed output that is no
@@ -2801,12 +2892,24 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 			if childRel == "SKILL.md" {
 				continue
 			}
+			// Mirror copySupportFilesExcluding: VCS internals are never
+			// part of the support tree, so the dry-run digest must
+			// exclude them exactly like the real cache copy does.
+			if entry.Name() == ".git" {
+				continue
+			}
 			childPath := filepath.Join(root, entry.Name())
 			info, err := os.Stat(childPath) // copyFile/copyDir follows source links.
 			if err != nil {
 				return err
 			}
 			if info.IsDir() {
+				// Mirror copySupportFilesExcluding: VCS internals are never
+				// part of the support tree, so the dry-run digest must
+				// exclude them exactly like the real cache copy does.
+				if entry.Name() == ".git" {
+					continue
+				}
 				ensureParents(childRel)
 				// copyDir does not chmod an already-created directory, so an
 				// artifact-created parent keeps its existing 0755 mode.
@@ -2828,6 +2931,11 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		return nil
 	}
 	if link.sourceDir != "" {
+		if len(link.declaredSupport) > 0 {
+			if err := verifyDeclaredSupportFiles(link.sourceDir, link.declaredSupport); err != nil {
+				return "", err
+			}
+		}
 		if err := addSupport(link.sourceDir, ""); err != nil {
 			return "", err
 		}
@@ -3127,7 +3235,11 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 				migrationAllowed = true
 			}
 		}
-		result := ensureSymlinkPathWithOwnership(linkPath, cacheTarget, dryRun, migrationAllowed)
+		var boundary *destinationBoundary
+		if len(portable) > 0 {
+			boundary = portable[0].boundary
+		}
+		result := ensureSymlinkPathWithOwnership(linkPath, cacheTarget, dryRun, migrationAllowed, boundary)
 		if result.err != nil {
 			return report, diags, result.err
 		}
@@ -3302,6 +3414,28 @@ func prepareSkillLinkCache(link skillLink) error {
 	if cacheDir == "" {
 		cacheDir = link.target
 	}
+	compiled := make(map[string]bool, len(link.artifacts))
+	for _, a := range link.artifacts {
+		compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
+	}
+	supportStage := ""
+	if link.sourceDir != "" {
+		if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
+			return err
+		}
+		var err error
+		supportStage, err = os.MkdirTemp(filepath.Dir(cacheDir), ".support-staging-")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.RemoveAll(supportStage) }()
+		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage); err != nil {
+			return err
+		}
+		if err := verifyDeclaredSupportFiles(supportStage, link.declaredSupport); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return err
 	}
@@ -3318,16 +3452,12 @@ func prepareSkillLinkCache(link skillLink) error {
 	// (not just the compiled SKILL.md). Prune the old support tree first:
 	// overwrite materialization intentionally does not prune because compiled
 	// artifacts and source support files share the same cache directory.
-	if link.sourceDir != "" {
-		compiled := make(map[string]bool, len(link.artifacts))
-		for _, a := range link.artifacts {
-			compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
-		}
+	if supportStage != "" {
 		if err := pruneSkillCacheSupportFiles(cacheDir, compiled); err != nil {
 			return err
 		}
-		if copyErr := copySupportFilesExcluding(link.sourceDir, cacheDir, compiled, ""); copyErr != nil {
-			return copyErr
+		if err := copySupportFilesExcluding(supportStage, cacheDir, compiled, "", false); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -3380,40 +3510,11 @@ func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) erro
 // SKILL.md artifact. It remains a small convenience wrapper for callers that
 // do not need to protect additional compiled artifact paths.
 func copySupportFiles(srcDir, dstDir string) error {
-	return copySupportFilesExcluding(srcDir, dstDir, nil, "")
+	return copySupportFilesExcluding(srcDir, dstDir, nil, "", true)
 }
 
-func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, rel string) error {
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read source skill dir %s: %w", srcDir, err)
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		childRel := filepath.ToSlash(filepath.Join(rel, name))
-		if childRel == "SKILL.md" || compiled[childRel] {
-			continue
-		}
-		srcPath := filepath.Join(srcDir, name)
-		dstPath := filepath.Join(dstDir, name)
-
-		if entry.IsDir() {
-			if err := os.MkdirAll(dstPath, 0o755); err != nil {
-				return fmt.Errorf("create support dir %s: %w", childRel, err)
-			}
-			if err := copySupportFilesExcluding(srcPath, dstPath, compiled, childRel); err != nil {
-				return fmt.Errorf("copy support dir %s: %w", childRel, err)
-			}
-			continue
-		}
-		if err := copyFile(srcPath, dstPath); err != nil {
-			return fmt.Errorf("copy support file %s: %w", childRel, err)
-		}
-	}
-	return nil
+func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, rel string, missingOK bool) error {
+	return copyScopedSupport(srcDir, dstDir, compiled, rel, missingOK, writeSupportSnapshot)
 }
 
 // collectHookSupportFiles scans the directory containing the source hooks.json
@@ -3421,41 +3522,45 @@ func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, 
 // These artifacts are symlinked into the hooks output directory alongside the
 // merged hooks.json, and are automatically pruned by staleArtifactLinks when
 // a hook is excluded (only symlinks are pruned, never the regular hooks.json).
-func collectHookSupportFiles(sourcePath string, target hcc.Target, sourceHarness string) []artifact.Artifact {
+func collectHookSupportFiles(sourcePath string, target hcc.Target, sourceHarness string) ([]artifact.Artifact, error) {
 	if sourcePath == "" {
-		return nil
-	}
-	sourceDir := filepath.Dir(sourcePath)
-	names, err := catalog.HookSupportFiles(sourcePath)
-	if err != nil {
-		return nil
+		return nil, nil
 	}
 	hooksDirRel := resourceInstallDirRel(target, ir.KindHook)
 	if hooksDirRel == "" {
-		return nil
+		return nil, nil
 	}
+	sourceDir, err := filepath.Abs(filepath.Dir(sourcePath))
+	if err != nil {
+		return nil, err
+	}
+	root, err := fsboundary.OpenDir(sourceDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	entries, err := readSupportSourceDirectory(root, ".")
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	excluded := hookSupportExclusions(sourcePath, sourceHarness)
 	var artifacts []artifact.Artifact
-	for _, name := range names {
-		if excluded[name] || (sourceHarness == string(hcc.TargetWindsurf) && filepath.Base(sourceDir) == "hooks" && strings.HasSuffix(name, ".json")) {
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || name == "hooks.json" || excluded[name] || (sourceHarness == string(hcc.TargetWindsurf) && filepath.Base(sourceDir) == "hooks" && strings.HasSuffix(name, ".json")) {
 			continue
 		}
-		srcPath := filepath.Join(sourceDir, name)
-		data, err := os.ReadFile(srcPath)
+		data, identity, err := readSupportSourceSnapshot(root, name)
 		if err != nil {
-			continue
+			return nil, err
 		}
-		info, err := os.Stat(srcPath)
-		if err != nil {
-			continue
-		}
-		artifacts = append(artifacts, artifact.Artifact{
-			Path:  hooksDirRel + "/" + name,
-			Bytes: data,
-			Mode:  info.Mode(),
-		})
+		artifacts = append(artifacts, artifact.Artifact{Path: hooksDirRel + "/" + name, Bytes: data, Mode: identity.Mode})
 	}
-	return artifacts
+	return artifacts, nil
 }
 
 func copyFile(src, dst string) error {
@@ -3719,7 +3824,11 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				migrationAllowed = true
 			}
 		}
-		result := ensureSymlinkPathWithOwnership(linkPath, targetPath, dryRun, migrationAllowed)
+		var boundary *destinationBoundary
+		if len(portable) > 0 {
+			boundary = portable[0].boundary
+		}
+		result := ensureSymlinkPathWithOwnership(linkPath, targetPath, dryRun, migrationAllowed, boundary)
 		if result.err != nil {
 			return report, result.err
 		}

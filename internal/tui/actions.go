@@ -67,6 +67,12 @@ func toastExpiryCmd(d time.Duration) tea.Cmd {
 	})
 }
 
+func invalidConfigToastCmd() tea.Cmd {
+	return func() tea.Msg {
+		return toastMsg{text: "configuration is invalid; press E to edit config", duration: 3 * time.Second}
+	}
+}
+
 type configWrittenMsg struct {
 	operation  operationID
 	followUp   bool
@@ -115,55 +121,94 @@ var (
 	loadOrgConfig         = config.LoadOrganizationConfig
 	loadGlobalConfig      = config.LoadGlobalConfig
 	loadRepoConfig        = config.LoadRepoConfig
-	loadLocalConfig       = config.LoadLocalConfig
+	loadLocalConfig       = loadLocalConfigAt
 	cloneOrPull           = cache.CloneOrPull
 	discoverCatalog       = catalog.Discover
 	runMaterialize        = materialize.Run
 	runPipelineSync       = pipeline.Sync
-	readSnapshotForUpdate = readSnapshot
+	readSnapshotForUpdate = readSnapshotForWorkspace
 )
 
-func loadSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
+func loadSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		snapshot := readSnapshot(ctx, repoRoot, homeDir, catalogLoadCached)
+		snapshot := readSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadCached)
 		snapshot.generation = generation
 		return snapshot
 	}
 }
 
-func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
+func refreshSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		snapshot := readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh)
+		snapshot := readSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadRefresh)
 		snapshot.generation = generation
 		return refreshLoadedMsg{snapshotLoadedMsg: snapshot}
 	}
 }
 
-func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
-	resolvedResult, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		RepoRoot:      repoRoot,
-		CatalogMode:   tuiCatalogLoadMode(mode),
-		SkipInventory: true,
-		EffectiveOpts: config.LoadEffectiveOptions{
-			OrganizationPath: config.OrganizationConfigPath(),
-			GlobalPath:       filepath.Join(homeDir, ".agents", "config.yaml"),
-			RepoPath:         config.ProjectConfigPath(repoRoot),
-			LocalPath:        config.LocalConfigPath(repoRoot),
+func loadLocalConfigAt(localDir string) (*config.LocalConfig, error) {
+	if config.IsHomeDir(localDir) {
+		return nil, nil
+	}
+	return config.LoadLocalConfigFromPath(config.LocalConfigPath(localDir))
+}
+
+func validatedTUIWorkspace(ws pipeline.Workspace) (pipeline.Workspace, error) {
+	return pipeline.NewWorkspace(ws.RepoRoot(), ws.LocalConfigDir())
+}
+
+func defaultTUIWorkspace(repoRoot string) pipeline.Workspace {
+	ws, err := pipeline.NewWorkspace(repoRoot, "")
+	if err != nil {
+		return pipeline.Workspace{}
+	}
+	return ws
+}
+
+func invalidWorkspaceSnapshot(err error) snapshotLoadedMsg {
+	diagnostics := appendSnapshotDiagnostics(nil, diagnosticError, diagnosticResolution, err)
+	return snapshotLoadedMsg{
+		driftAssessment: driftFailed,
+		diagnostics:     diagnostics,
+		errs:            diagnosticValues(diagnostics, diagnosticError),
+	}
+}
+
+func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+	ws, err := validatedTUIWorkspace(ws)
+	if err != nil {
+		return invalidWorkspaceSnapshot(err)
+	}
+	repoRoot := ws.RepoRoot()
+	inspection, releaseExactLease := pipeline.Inspect(ctx, pipeline.InspectOptions{
+		Resolve: pipeline.ResolveOptions{
+			Workspace:     ws,
+			CatalogMode:   tuiCatalogLoadMode(mode),
+			SkipInventory: true,
+			EffectiveOpts: config.LoadEffectiveOptions{
+				OrganizationPath: config.OrganizationConfigPath(),
+				GlobalPath:       filepath.Join(homeDir, ".agents", "config.yaml"),
+				RepoPath:         config.ProjectConfigPath(repoRoot),
+				LocalPath:        config.LocalConfigPath(ws.LocalConfigDir()),
+			},
+			Loaders: pipeline.Loaders{
+				Org:    loadOrgConfig,
+				Global: loadGlobalConfig,
+				Repo:   loadRepoConfig,
+				Local: func() (*config.LocalConfig, error) {
+					return loadLocalConfig(ws.LocalConfigDir())
+				},
+			},
+			CatalogOption: []catalog.LoadOption{
+				catalog.WithCloneOrPull(cloneOrPull),
+				catalog.WithDiscoverFunc(discoverCatalog),
+			},
+			ReadOnlyExactLocks:        true,
+			AllowMissingReadOnlyLocks: true,
 		},
-		Loaders: pipeline.Loaders{
-			Org:    loadOrgConfig,
-			Global: loadGlobalConfig,
-			Repo:   loadRepoConfig,
-			Local:  loadLocalConfig,
-		},
-		CatalogOption: []catalog.LoadOption{
-			catalog.WithCloneOrPull(cloneOrPull),
-			catalog.WithDiscoverFunc(discoverCatalog),
-		},
-		ReadOnlyExactLocks:        true,
-		AllowMissingReadOnlyLocks: true,
+		DryRun: runMaterialize,
 	})
 	defer releaseExactLease()
+	resolvedResult := inspection.ResolveResult
 
 	base := snapshotLoadedMsg{
 		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
@@ -176,7 +221,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
 		targetHarnesses:      resolvedResult.TargetHarnesses,
 		targetHarnessSource:  resolvedResult.TargetHarnessSource,
-		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
+		pendingMigration:     pendingMigrationFor(repoRoot, ws.LocalConfigDir(), homeDir),
 		driftAssessment:      driftFailed,
 		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
 	}
@@ -185,33 +230,38 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 
 	var diagnostics []tuiDiagnostic
-	diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticConfig, resolvedResult.Warnings...)
+	for _, issue := range inspection.Issues {
+		severity := diagnosticWarning
+		if issue.Severity == pipeline.IssueError {
+			severity = diagnosticError
+		}
+		diagnostics = appendSnapshotDiagnostics(diagnostics, severity, diagnosticCategoryFor(issue.Category), issue.Err)
+	}
+
 	if len(resolvedResult.ConfigErrors) > 0 {
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticConfig, resolvedResult.ConfigErrors...)
 		base.diagnostics = deduplicateDiagnostics(diagnostics)
 		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
 		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
 		return base
 	}
 
-	var catalogOverlapWarnings []error
-	if len(resolvedResult.CatalogErrors) > 0 {
-		var hardErrs []error
-		for _, err := range resolvedResult.CatalogErrors {
-			if catalog.IsOverlapWarning(err) {
-				catalogOverlapWarnings = append(catalogOverlapWarnings, err)
-			} else {
-				hardErrs = append(hardErrs, err)
-			}
+	var hardCatalogFailure bool
+	for _, err := range resolvedResult.CatalogErrors {
+		if !catalog.IsOverlapWarning(err) {
+			hardCatalogFailure = true
+			break
 		}
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, catalogOverlapWarnings...)
-		if len(hardErrs) > 0 {
-			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticCatalog, hardErrs...)
-			base.diagnostics = deduplicateDiagnostics(diagnostics)
-			base.errs = diagnosticValues(base.diagnostics, diagnosticError)
-			base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
-			return base
-		}
+	}
+
+	// Any generic resolve failure — a zero Workspace, context cancellation,
+	// an exact-lock acquisition error — must surface diagnostics and return
+	// here, before detail capture or dry-run materialization can act on an
+	// invalid root and mask the original error.
+	if len(resolvedResult.Errors) > 0 && len(resolvedResult.CatalogErrors) == 0 && len(resolvedResult.ResolveErrors) == 0 {
+		base.diagnostics = deduplicateDiagnostics(diagnostics)
+		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
+		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
+		return base
 	}
 
 	var resolvedNames []string
@@ -221,39 +271,23 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	for _, resolved := range resolvedResult.Resolved {
 		resolvedNames = append(resolvedNames, skill.ResourceKey(resolved.Kind, resolved.Name))
 	}
-	dryRunReport, dryRunErr := runMaterialize(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
+	dryRunReport := inspection.Report
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
 	driftState := driftReady
-	if dryRunReport == nil || dryRunErr != nil {
+	if hardCatalogFailure || dryRunReport == nil || !inspection.Healthy() {
 		driftState = driftFailed
 	}
 
-	for _, malformed := range resolvedResult.CatalogLoad.Malformed {
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, fmt.Errorf("malformed skill %q (%s): %w", malformed.DirName, malformed.Path, malformed.Error))
+	rowCfg := resolvedResult.LoadedCfg
+	recoveryCfg := rowCfg
+	if hardCatalogFailure && resolvedResult.MergedCfg != nil {
+		recoveryCfg = resolvedResult.MergedCfg
 	}
-	for _, err := range resolvedResult.ResolveErrors {
-		if isSoftResolutionIssue(err) {
-			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticResolution, err)
-		} else {
-			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticResolution, err)
-			driftState = driftFailed
-		}
+	base.rows = buildRows(rowCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
+	base.rows = appendUnavailableSelectionRows(base.rows, recoveryCfg, resolvedResult.LocalCfg, resolvedResult.ResolveErrors, resolvedResult.CatalogLoad.Catalogs)
+	if rowsHaveUnavailable(base.rows) {
+		driftState = driftFailed
 	}
-	if dryRunReport != nil {
-		for _, diagnostic := range dryRunReport.Diags {
-			severity := diagnosticWarning
-			if diagnostic.IsError() {
-				severity = diagnosticError
-				driftState = driftFailed
-			}
-			diagnostics = appendSnapshotDiagnostics(diagnostics, severity, diagnosticMaterialization, pipeline.PromoteDiagnostic(diagnostic))
-		}
-	}
-	if dryRunErr != nil {
-		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticMaterialization, dryRunErr)
-	}
-
-	base.rows = buildRows(resolvedResult.LoadedCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
 	attachDetailSources(base.rows, detailSources)
 	base.driftReport = driftReport
 	base.driftAssessment = driftState
@@ -313,10 +347,6 @@ func captureSnapshotDetailSources(resolved []resolver.ResolvedArtifact, catalogs
 	return detailSources
 }
 
-func isSoftResolutionIssue(err error) bool {
-	return resolver.IsSoftSelectedNotFound(err) || resolver.IsSoftSelectedMalformed(err) || resolver.IsNameCollision(err) || resolver.IsWarning(err)
-}
-
 func configHarnesses(cfg *config.Config) []string {
 	if cfg == nil {
 		return nil
@@ -374,7 +404,7 @@ func addLocalKindSelections(dst map[string]struct{}, kind ir.ResourceKind, names
 // (normalized URL + ref + path) so entries that share a URL/path but differ by
 // ref are not collapsed onto the same catalog key.
 func registryIdentityKey(url, ref, path string) string {
-	return config.NormalizeGitURL(strings.TrimSpace(url)) + "\x01" + strings.TrimSpace(ref) + "\x01" + strings.TrimSpace(path)
+	return config.NormalizeGitURL(strings.TrimSpace(url)) + "\x01" + strings.TrimSpace(ref) + "\x01" + config.NormalizeRegistryPath(path)
 }
 
 // addScopedLocalSelection records a single registry-scoped local selection,
@@ -822,6 +852,153 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	return rows
 }
 
+const unavailableCatalogReason = "selection is unavailable because its catalog failed to load"
+
+func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *config.LocalConfig, resolveErrs []error, catalogs map[string]catalogInfo) []row {
+	seen := make(map[string]struct{}, len(rows)+len(resolveErrs))
+	available := make(map[string]struct{}, len(rows))
+	for i := range rows {
+		key := skill.ResourceKey(rows[i].Artifact.Kind, rows[i].Artifact.Name)
+		seen[key+"\x01"+registryIdentityKey(rows[i].RegistryURL, rows[i].RegistryRef, rows[i].RegistryPath)] = struct{}{}
+		if rows[i].IsAvailable {
+			available[key] = struct{}{}
+		}
+	}
+	layerHarnesses := layerHarnessDefaults(cfg)
+	appendCandidate := func(kind ir.ResourceKind, name, url, ref, path string, required bool, reason string) {
+		key := skill.ResourceKey(kind, name)
+		identity := registryIdentityKey(url, ref, path)
+		seenKey := key + "\x01" + identity
+		if _, dup := seen[seenKey]; dup {
+			return
+		}
+		var first, firstSelecting *config.RegistryEntry
+		var enabledGlobal, enabledProject, enabledLocal bool
+		direct := false
+		if cfg != nil {
+			for i := range cfg.Registries {
+				entry := &cfg.Registries[i]
+				if registryIdentityKey(entry.URL, entry.Ref, entry.Path) != identity {
+					continue
+				}
+				if first == nil {
+					first = entry
+				}
+				entrySelected, localSelected := resolver.EffectiveDirectSelectionSources(*entry, cfg.Registries, localCfg, kind, name)
+				if entrySelected {
+					if firstSelecting == nil {
+						firstSelecting = entry
+					}
+					direct = true
+					required = required || entry.Required
+					switch {
+					case entry.Source.IsMachineScope():
+						enabledGlobal = true
+					case entry.Source == config.RepoCommitted:
+						enabledProject = true
+					case entry.Source == config.RepoPersonal:
+						enabledLocal = true
+					}
+				}
+				if localSelected {
+					direct = true
+					enabledLocal = true
+				}
+			}
+		}
+		excludedLocally := false
+		if localCfg != nil {
+			if slices.Contains(localCfg.SelectorForKind(kind).Exclude, name) {
+				excludedLocally = true
+			}
+			for i := range localCfg.Registries {
+				re := &localCfg.Registries[i]
+				if registryIdentityKey(re.URL, re.Ref, re.Path) != identity {
+					continue
+				}
+				if slices.Contains(re.SelectorForKind(kind).Exclude, name) {
+					excludedLocally = true
+				}
+			}
+		}
+		meta := firstSelecting
+		if meta == nil {
+			meta = first
+		}
+		if !direct {
+			return
+		}
+		seen[seenKey] = struct{}{}
+		harnesses := meta.Harnesses
+		if len(harnesses) == 0 {
+			harnesses = layerHarnesses[meta.Source]
+		}
+		rows = append(rows, row{
+			Artifact: resolver.ResolvedArtifact{
+				Entry:          catalog.Entry{Kind: kind, Name: name, SourceHarness: meta.SourceHarness},
+				RegistryURL:    meta.URL,
+				RegistryPath:   meta.Path,
+				Ref:            meta.Ref,
+				V4Kind:         meta.V4Kind,
+				Source:         meta.Source,
+				FilePrecedence: meta.FilePrecedence,
+				Required:       required,
+				CatalogKey:     meta.CatalogKey,
+			},
+			UnavailableReason: reason,
+			DriftItem:         &materialize.DriftItem{Name: key, Reason: materialize.DriftBroken},
+			IsExcluded:        excludedLocally,
+			ExcludedLocally:   excludedLocally,
+			EnabledGlobal:     enabledGlobal,
+			EnabledProject:    enabledProject,
+			EnabledLocal:      enabledLocal,
+			RegistryURL:       meta.URL,
+			RegistryName:      registryDisplayName(meta.URL),
+			RegistryPath:      meta.Path,
+			RegistryRef:       meta.Ref,
+			Harnesses:         append([]string(nil), harnesses...),
+			HarnessSource:     harnessSourceLabel(*meta, layerHarnesses[meta.Source]),
+		})
+	}
+	for _, err := range resolveErrs {
+		var snf *resolver.SelectedNotFoundError
+		if !errors.As(err, &snf) || snf.Via != "" {
+			continue
+		}
+		appendCandidate(snf.Kind, snf.Name, snf.URL, snf.Ref, snf.Path, snf.Required, snf.Error())
+	}
+	if cfg != nil {
+		failedIdentities := make(map[string]struct{})
+		var failedRepresentative *config.RegistryEntry
+		for i := range cfg.Registries {
+			entry := &cfg.Registries[i]
+			if _, loaded := catalogs[entry.CatalogKey]; loaded {
+				continue
+			}
+			for _, selected := range resolver.ResourcesSelected(*entry, nil) {
+				appendCandidate(selected.Kind, selected.Name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
+			}
+			identity := registryIdentityKey(entry.URL, entry.Ref, entry.Path)
+			if _, dup := failedIdentities[identity]; !dup {
+				failedIdentities[identity] = struct{}{}
+				failedRepresentative = entry
+			}
+		}
+		if localCfg != nil && len(failedIdentities) == 1 {
+			entry := failedRepresentative
+			for _, kind := range config.AllKinds {
+				for _, name := range localCfg.SelectorForKind(kind).Include {
+					if _, covered := available[skill.ResourceKey(kind, name)]; covered {
+						continue
+					}
+					appendCandidate(kind, name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
+				}
+			}
+		}
+	}
+	return rows
+}
+
 // registryDisplayName derives a short label from a registry URL.
 // Strips trailing ".git" and returns the last path segment.
 // Returns "" for empty input (e.g., malformed skills with no source).
@@ -953,14 +1130,16 @@ func loadDetailContent(r row, generation requestGeneration, width int, keepScrol
 	}
 }
 
-func tuiPipelineOptions(repoRoot string) pipeline.ResolveOptions {
+func tuiPipelineOptionsForWorkspace(ws pipeline.Workspace) pipeline.ResolveOptions {
 	return pipeline.ResolveOptions{
-		RepoRoot: repoRoot,
+		Workspace: ws,
 		Loaders: pipeline.Loaders{
 			Org:    loadOrgConfig,
 			Global: loadGlobalConfig,
 			Repo:   loadRepoConfig,
-			Local:  loadLocalConfig,
+			Local: func() (*config.LocalConfig, error) {
+				return loadLocalConfig(ws.LocalConfigDir())
+			},
 		},
 		CatalogOption: []catalog.LoadOption{
 			catalog.WithCloneOrPull(cloneOrPull),
@@ -972,21 +1151,35 @@ func tuiPipelineOptions(repoRoot string) pipeline.ResolveOptions {
 // runSyncCmd runs the authoritative sync pipeline as a tea.Cmd.
 // It is a package-level var so tests can override it with a no-op to
 // avoid real I/O when inspecting command composition in assertions.
-var runSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
+var runSyncCmd = func(ctx context.Context, workspace pipeline.Workspace) tea.Cmd {
 	return func() tea.Msg {
-		result := runPipelineSync(ctx, tuiPipelineOptions(repoRoot))
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
+			return syncDoneMsg{err: err}
+		}
+		result := runPipelineSync(ctx, tuiPipelineOptionsForWorkspace(ws))
 		return syncDoneMsg{err: errors.Join(result.Errors...)}
 	}
 }
 
-func runDependencySyncCmd(ctx context.Context, repoRoot string, sync DependencyLifecycleFunc) tea.Cmd {
-	return func() tea.Msg { return syncDoneMsg{err: sync(ctx, repoRoot)} }
+func runDependencySyncCmd(ctx context.Context, workspace pipeline.Workspace, sync DependencyLifecycleFunc) tea.Cmd {
+	return func() tea.Msg {
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
+			return syncDoneMsg{err: err}
+		}
+		return syncDoneMsg{err: sync(ctx, ws)}
+	}
 }
 
-func runDependencyUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration, update DependencyLifecycleFunc) tea.Cmd {
+func runDependencyUpdateCmd(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration, update DependencyLifecycleFunc) tea.Cmd {
 	return func() tea.Msg {
-		lifecycleErr := update(ctx, repoRoot)
-		current := readSnapshotForUpdate(ctx, repoRoot, homeDir, catalogLoadCached)
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
+			return updateDoneMsg{generation: generation, stage: updateStageRefresh, err: err}
+		}
+		lifecycleErr := update(ctx, ws)
+		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh}
 		if lifecycleErr != nil {
@@ -1001,22 +1194,26 @@ func runDependencyUpdateCmd(ctx context.Context, repoRoot, homeDir string, gener
 
 func (m Model) dependencySyncCmd() tea.Cmd {
 	if m.dependencyLifecycle.Sync != nil {
-		return runDependencySyncCmd(ctxOrBackground(m.ctx), m.repoRoot, m.dependencyLifecycle.Sync)
+		return runDependencySyncCmd(ctxOrBackground(m.ctx), m.workspace, m.dependencyLifecycle.Sync)
 	}
-	return runSyncCmd(ctxOrBackground(m.ctx), m.repoRoot)
+	return runSyncCmd(ctxOrBackground(m.ctx), m.workspace)
 }
 
 func (m Model) dependencyUpdateCmd(generation requestGeneration) tea.Cmd {
 	if m.dependencyLifecycle.Update != nil {
-		return runDependencyUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation, m.dependencyLifecycle.Update)
+		return runDependencyUpdateCmd(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation, m.dependencyLifecycle.Update)
 	}
-	return runUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+	return runUpdateCmdForWorkspace(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 }
 
-func runUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
+func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		syncResult := runPipelineSync(ctx, tuiPipelineOptions(repoRoot))
-		current := readSnapshotForUpdate(ctx, repoRoot, homeDir, catalogLoadCached)
+		ws, err := validatedTUIWorkspace(workspace)
+		if err != nil {
+			return updateDoneMsg{generation: generation, stage: updateStageMaterialization, err: err}
+		}
+		syncResult := runPipelineSync(ctx, tuiPipelineOptionsForWorkspace(ws))
+		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		for _, warning := range syncResult.Warnings {
 			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)

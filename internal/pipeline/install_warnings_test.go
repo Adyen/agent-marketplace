@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: resource-prerequisites/unrelated-unmet-prerequisite-is-omitted
 func TestFilterInstallWarnings(t *testing.T) {
 	t.Parallel()
 
@@ -49,6 +50,7 @@ func TestFilterInstallWarnings(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/collection-member-prerequisite-is-reported
 func TestExpandInstalledCollectionResourcesKeepsMemberWarnings(t *testing.T) {
 	t.Parallel()
 
@@ -166,5 +168,29 @@ func TestFilterInstallCollisionWarnings(t *testing.T) {
 				t.Fatal("filter mutated warning input")
 			}
 		})
+	}
+}
+
+func TestPartitionInstalledNamesReportsUnselectedResources(t *testing.T) {
+	resources := []resourceIdentity{
+		{kind: ir.KindSkill, name: "review"},
+		{kind: ir.KindSkill, name: "deploy"},
+		{kind: ir.KindCommand, name: "cmd-one"},
+		{kind: ir.KindCommand, name: "shared"},
+		{kind: ir.KindSkill, name: "shared"},
+	}
+	resolved := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "deploy"}},
+		{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "cmd-one"}},
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}},
+		{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "review"}},
+	}
+	installed, notSelected := partitionInstalledNames([]string{"cmd-one", "deploy", "review", "shared", "unknown"}, resources, resolved)
+	if want := []string{"cmd-one", "deploy", "shared", "unknown"}; !reflect.DeepEqual(installed, want) {
+		t.Fatalf("installed = %v, want %v", installed, want)
+	}
+	// A same-named resource of another kind does not count as the skill.
+	if want := []string{"review"}; !reflect.DeepEqual(notSelected, want) {
+		t.Fatalf("not selected = %v, want %v", notSelected, want)
 	}
 }

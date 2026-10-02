@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,11 +22,11 @@ import (
 func TestDependencyLifecycleCallbacksAreInvoked(t *testing.T) {
 	var syncCalls, updateCalls atomic.Int64
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync: func(context.Context, string) error {
+		Sync: func(context.Context, pipeline.Workspace) error {
 			syncCalls.Add(1)
 			return nil
 		},
-		Update: func(context.Context, string) error {
+		Update: func(context.Context, pipeline.Workspace) error {
 			updateCalls.Add(1)
 			return nil
 		},
@@ -35,7 +36,7 @@ func TestDependencyLifecycleCallbacksAreInvoked(t *testing.T) {
 		t.Fatalf("sync callback failed: %v", msg.(syncDoneMsg).err)
 	}
 	previousSnapshot := readSnapshotForUpdate
-	readSnapshotForUpdate = func(context.Context, string, string, catalogLoadMode) snapshotLoadedMsg {
+	readSnapshotForUpdate = func(context.Context, pipeline.Workspace, string, catalogLoadMode) snapshotLoadedMsg {
 		return snapshotLoadedMsg{driftAssessment: driftReady}
 	}
 	t.Cleanup(func() { readSnapshotForUpdate = previousSnapshot })
@@ -47,10 +48,36 @@ func TestDependencyLifecycleCallbacksAreInvoked(t *testing.T) {
 	}
 }
 
+func TestDependencyLifecycleReceivesModelWorkspace(t *testing.T) {
+	repo := t.TempDir()
+	nested := filepath.Join(repo, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := pipeline.NewWorkspace(repo, nested)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	var gotRepo, gotLocal string
+	model := NewModel(repo, t.TempDir(), WithWorkspace(workspace), WithDependencyLifecycle(DependencyLifecycle{
+		Sync: func(_ context.Context, ws pipeline.Workspace) error {
+			gotRepo, gotLocal = ws.RepoRoot(), ws.LocalConfigDir()
+			return nil
+		},
+	}))
+
+	if msg := model.dependencySyncCmd()(); msg.(syncDoneMsg).err != nil {
+		t.Fatalf("sync callback failed: %v", msg.(syncDoneMsg).err)
+	}
+	if gotRepo != workspace.RepoRoot() || gotLocal != workspace.LocalConfigDir() {
+		t.Fatalf("callback workspace = (%q, %q); want (%q, %q)", gotRepo, gotLocal, workspace.RepoRoot(), workspace.LocalConfigDir())
+	}
+}
+
 func TestConfigMutationInvalidatesCleanDriftBeforeReload(t *testing.T) {
 	var syncCalls atomic.Int64
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync: func(context.Context, string) error {
+		Sync: func(context.Context, pipeline.Workspace) error {
 			syncCalls.Add(1)
 			return nil
 		},
@@ -101,8 +128,8 @@ func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 	t.Cleanup(func() { runPipelineSync = previousSync })
 
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync:   func(context.Context, string) error { return failure },
-		Update: func(context.Context, string) error { return failure },
+		Sync:   func(context.Context, pipeline.Workspace) error { return failure },
+		Update: func(context.Context, pipeline.Workspace) error { return failure },
 	}))
 	model.syncing = true
 	updated, _ := model.Update(model.dependencySyncCmd()())
@@ -112,7 +139,7 @@ func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 	}
 
 	previousSnapshot := readSnapshotForUpdate
-	readSnapshotForUpdate = func(context.Context, string, string, catalogLoadMode) snapshotLoadedMsg {
+	readSnapshotForUpdate = func(context.Context, pipeline.Workspace, string, catalogLoadMode) snapshotLoadedMsg {
 		return snapshotLoadedMsg{driftAssessment: driftReady}
 	}
 	t.Cleanup(func() { readSnapshotForUpdate = previousSnapshot })
@@ -127,7 +154,7 @@ func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 
 func TestInitDoesNotInvokeDependencyLifecycle(t *testing.T) {
 	var calls atomic.Int64
-	callback := func(context.Context, string) error {
+	callback := func(context.Context, pipeline.Workspace) error {
 		calls.Add(1)
 		return nil
 	}
@@ -137,6 +164,39 @@ func TestInitDoesNotInvokeDependencyLifecycle(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("startup invoked mutable dependency lifecycle %d times", calls.Load())
+	}
+}
+
+func TestDependencyScopedToggleUsesWorkspaceLocalRoot(t *testing.T) {
+	repo := t.TempDir()
+	nested := filepath.Join(repo, "nested")
+	if err := os.MkdirAll(filepath.Join(nested, ".agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := pipeline.NewWorkspace(repo, nested)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	var gotLocal string
+	mutate := func(_ context.Context, ws pipeline.Workspace, mutation func(pipeline.ConfigPathMapper) error) error {
+		gotLocal = ws.LocalConfigDir()
+		return mutation(func(path string) (string, error) { return path, nil })
+	}
+	act := toggleAction{skillName: "review", kind: ir.KindSkill, scope: scopeLocal, enable: true, registryURL: "https://example.com/one.git", registryRef: "main"}
+
+	written := runDependencyScopedToggle(context.Background(), workspace, act, mutate)().(configWrittenMsg)
+	if written.err != nil {
+		t.Fatalf("local toggle failed: %v", written.err)
+	}
+	if gotLocal != workspace.LocalConfigDir() {
+		t.Fatalf("mutation workspace local root = %q; want %q", gotLocal, workspace.LocalConfigDir())
+	}
+	localCfg, err := config.LoadLocalConfigFromPath(config.LocalConfigPath(nested))
+	if err != nil || len(localCfg.Registries) != 1 || !slices.Contains(localCfg.Registries[0].Skills.Include, "review") {
+		t.Fatalf("nested local config = %#v, %v; want review include", localCfg, err)
+	}
+	if _, err := os.Stat(config.LocalConfigPath(repo)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repository local config was written or stat failed: %v", err)
 	}
 }
 
@@ -175,14 +235,14 @@ func TestProjectToggleReloadDoesNotExposeStaleLock(t *testing.T) {
 		return config.LoadConfigFromPath(filepath.Join(home, ".agents", "config.yaml"))
 	}
 	loadRepoConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(config.ProjectConfigPath(repo)) }
-	loadLocalConfig = func() (*config.LocalConfig, error) { return nil, nil }
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 	t.Cleanup(func() {
 		loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
 	})
 
 	updatedDoc := doc
 	updatedDoc.Registries = append(updatedDoc.Registries, lockfile.GitRegistry{URL: "https://example.com/two.git", Ref: "main", Commit: commit, Roots: []lockfile.GitRoot{{Path: ".", SourceHarness: "factory", RevisionSchema: "v1", RevisionDigest: lockfile.Digest("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")}}})
-	mutate := func(_ context.Context, _ string, mutation func(pipeline.ConfigPathMapper) error) error {
+	mutate := func(_ context.Context, _ pipeline.Workspace, mutation func(pipeline.ConfigPathMapper) error) error {
 		if err := mutation(func(path string) (string, error) { return path, nil }); err != nil {
 			return err
 		}
@@ -193,7 +253,7 @@ func TestProjectToggleReloadDoesNotExposeStaleLock(t *testing.T) {
 		return os.WriteFile(filepath.Join(repo, ".agents", "lock.yaml"), updated, 0o644)
 	}
 	act := toggleAction{skillName: "review", kind: ir.KindSkill, scope: scopeProject, enable: true, registryURL: "https://example.com/two.git", registryRef: "main"}
-	written := runDependencyScopedToggle(context.Background(), repo, act, mutate)().(configWrittenMsg)
+	written := runDependencyScopedToggle(context.Background(), defaultTUIWorkspace(repo), act, mutate)().(configWrittenMsg)
 	if written.err != nil {
 		t.Fatalf("toggle mutation failed: %v", written.err)
 	}

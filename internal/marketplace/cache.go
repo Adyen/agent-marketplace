@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -67,34 +70,30 @@ type GCResult struct {
 	Removed []string
 }
 
-// GarbageCollect removes unreferenced Marketplace artifact directories. A pin is
-// considered referenced only after its cached ResourceRevision metadata has
-// been found and validated, including its archive digest. If the effective
-// configuration or metadata needed to establish reachability is unavailable or
-// malformed, this method fails closed and performs no deletion.
-func (c *Cache) GarbageCollect(dryRun bool, cfg *config.Config) (GCResult, error) {
+// GCRoots is what keeps Marketplace artifacts reachable: legacy configuration
+// pins, mirror resources recorded in deployed locks, and canonical Marketplace
+// URLs whose lock is intentionally absent (cached metadata proves reachability).
+type GCRoots struct {
+	ExactPins         []config.MarketplaceEntry
+	LockedResources   []lockfile.MarketplaceLock
+	UnlockedEndpoints []string
+}
+
+// GarbageCollect removes unreferenced Marketplace artifact directories. A pin
+// is referenced only after its cached ResourceRevision metadata and archive
+// digest validate; missing or malformed reachability metadata fails closed.
+func (c *Cache) GarbageCollect(dryRun bool, roots GCRoots) (GCResult, error) {
 	return cache.WithCacheMutationLock(func() (GCResult, error) {
-		return c.garbageCollect(dryRun, cfg)
+		return c.garbageCollect(dryRun, roots)
 	})
 }
 
-func (c *Cache) garbageCollect(dryRun bool, cfg *config.Config) (GCResult, error) {
+func (c *Cache) garbageCollect(dryRun bool, roots GCRoots) (GCResult, error) {
 	result := GCResult{}
 	defer slices.Sort(result.Removed)
 	slog.Info("marketplace cache garbage collection started", "root", c.root, "dry_run", dryRun)
 
-	if cfg == nil {
-		err := errors.New("marketplace cache garbage collection requires effective configuration")
-		slog.Warn("marketplace cache garbage collection failed closed", "reason", err)
-		return result, err
-	}
-	if errs := config.ValidateMarketplaceEntries(cfg.Marketplaces); len(errs) > 0 {
-		err := errors.Join(errs...)
-		slog.Warn("marketplace cache garbage collection failed closed", "reason", err)
-		return result, fmt.Errorf("validate marketplace configuration: %w", err)
-	}
-
-	referenced, err := c.referencedArchiveDigests(cfg)
+	referenced, err := c.referencedArchiveDigests(roots)
 	if err != nil {
 		slog.Warn("marketplace cache garbage collection failed closed", "reason", err)
 		return result, err
@@ -179,9 +178,9 @@ func (c *Cache) garbageCollect(dryRun bool, cfg *config.Config) (GCResult, error
 	return result, nil
 }
 
-func (c *Cache) referencedArchiveDigests(cfg *config.Config) (map[string]struct{}, error) {
+func (c *Cache) referencedArchiveDigests(roots GCRoots) (map[string]struct{}, error) {
 	referenced := make(map[string]struct{})
-	for entryIndex, configuredEntry := range cfg.Marketplaces {
+	for entryIndex, configuredEntry := range roots.ExactPins {
 		entry, err := canonicalMarketplaceEntry(configuredEntry)
 		if err != nil {
 			return nil, fmt.Errorf("canonicalize marketplace %d: %w", entryIndex, err)
@@ -217,7 +216,117 @@ func (c *Cache) referencedArchiveDigests(cfg *config.Config) (map[string]struct{
 			referenced[safeDigest(string(rev.ArchiveDigest))] = struct{}{}
 		}
 	}
+	for entryIndex, locked := range roots.LockedResources {
+		for resourceIndex, resource := range locked.Resources {
+			acquisition := resource.Acquisition
+			if (acquisition != "" && acquisition != lockfile.MarketplaceAcquisitionMirror) || resource.Kind == "collection" {
+				continue
+			}
+			if err := validateSHA256Digest(string(resource.ArchiveDigest)); err != nil {
+				return nil, fmt.Errorf("resource %d of marketplace lock %d has invalid archive digest: %w", resourceIndex, entryIndex, err)
+			}
+			referenced[safeDigest(string(resource.ArchiveDigest))] = struct{}{}
+		}
+	}
+	for _, endpoint := range roots.UnlockedEndpoints {
+		digests, err := c.endpointArchiveDigests(endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("walk metadata for unlocked endpoint %q: %w", endpoint, err)
+		}
+		maps.Copy(referenced, digests)
+	}
 	return referenced, nil
+}
+
+// endpointArchiveDigests collects every cached revision's archive digest from
+// an unlocked endpoint's fixed-depth metadata/<endpoint>/<registry>/<kind>/
+// <name>/<revision>.json tree. Missing endpoint dir is an empty root;
+// malformed metadata fails closed.
+func (c *Cache) endpointArchiveDigests(endpoint string) (map[string]struct{}, error) {
+	digests := make(map[string]struct{})
+	endpointRoot := filepath.Join(c.root, "metadata", cache.HashURL(endpoint))
+	if err := requireRegularDirectory(endpointRoot); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return digests, nil
+		}
+		return nil, err
+	}
+	if err := cache.ValidateDirectoryAncestry(c.root, endpointRoot); err != nil {
+		return nil, err
+	}
+	dirs := []string{endpointRoot}
+	for depth := 0; ; depth++ {
+		var next []string
+		for _, dir := range dirs {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return nil, err
+			}
+			for _, entry := range entries {
+				p := filepath.Join(dir, entry.Name())
+				if entry.Type().IsRegular() && strings.HasPrefix(entry.Name(), ".tmp-") {
+					continue
+				}
+				if depth < 3 {
+					if !entry.IsDir() {
+						return nil, fmt.Errorf("unexpected file %q in endpoint metadata tree", p)
+					}
+					if err := requireRegularDirectory(p); err != nil {
+						return nil, err
+					}
+					next = append(next, p)
+					continue
+				}
+				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+					return nil, fmt.Errorf("unexpected entry %q in endpoint metadata tree", p)
+				}
+				if exists, err := validateCacheRegularFile(c.root, p); err != nil {
+					return nil, err
+				} else if !exists {
+					return nil, fmt.Errorf("endpoint metadata file %q is not a regular file", p)
+				}
+				raw, err := readBoundedEndpointMetadata(p)
+				if err != nil {
+					return nil, err
+				}
+				var rev store.AssessedResourceRevision
+				if err := json.Unmarshal(raw, &rev); err != nil {
+					return nil, fmt.Errorf("decode endpoint metadata %q: %w", p, err)
+				}
+				if filepath.Base(filepath.Dir(dir)) == "collection" {
+					continue
+				}
+				if err := validateSHA256Digest(string(rev.ArchiveDigest)); err != nil {
+					return nil, fmt.Errorf("endpoint metadata %q has invalid archive digest: %w", p, err)
+				}
+				digests[safeDigest(string(rev.ArchiveDigest))] = struct{}{}
+			}
+		}
+		if depth == 3 {
+			return digests, nil
+		}
+		dirs = next
+	}
+}
+
+const maxEndpointMetadataSize = maxDiscoveryCacheSize
+
+func readBoundedEndpointMetadata(path string) ([]byte, error) {
+	// #nosec G304 -- path was already validated as a regular file inside the
+	// cache root by validateCacheRegularFile.
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(f, maxEndpointMetadataSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxEndpointMetadataSize {
+		return nil, fmt.Errorf("endpoint metadata %q exceeds size limit", path)
+	}
+	return raw, nil
 }
 
 func validArchiveDigestKey(name string) bool {
@@ -339,6 +448,10 @@ func removeArtifactDirectory(root, path string) error {
 // ArtifactPath returns the path for an artifact archive given its digest.
 func (c *Cache) ArtifactPath(digest string) string {
 	return filepath.Join(c.root, "artifacts", safeDigest(digest), "artifact.tar.gz")
+}
+
+func (c *Cache) MirrorResourceDir(digest string) string {
+	return filepath.Join(c.root, "compiled", "marketplace-artifacts", safeDigest(digest))
 }
 
 // IndexOnlyArtifactPath returns the cache path for an artifact reconstructed

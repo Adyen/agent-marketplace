@@ -7,8 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 func writeIncludeConfig(t *testing.T, path, data string) {
@@ -67,7 +65,11 @@ func TestLoadConfigTreeFromRootDataUsesSuppliedBytes(t *testing.T) {
 	if err := os.Remove(root); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadConfigTreeFromRootData(canonical, data, repoLayer)
+	li, err := readLayerIntent(canonical, canonical, data, repoLayer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := li.bind(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +242,7 @@ func TestConfigIncludesAcrossAllLayers(t *testing.T) {
 	writeIncludeConfig(t, user, "apiVersion: agent-marketplace/v2\ninclude: user-fragment.yaml\n")
 	writeIncludeConfig(t, repo, "apiVersion: agent-marketplace/v2\ninclude: repo-fragment.yaml\n")
 	writeIncludeConfig(t, local, "include: local-fragment.yaml\n")
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{OrganizationPath: org, GlobalPath: user, RepoPath: repo, LocalPath: local, RepoRoot: dir, LocalConfigDir: dir})
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{OrganizationPath: org, GlobalPath: user, RepoPath: repo, LocalPath: local, RepoRoot: dir, LocalConfigDir: dir})
 	if len(ec.Errors) != 0 {
 		t.Fatalf("errors = %v", ec.Errors)
 	}
@@ -313,6 +315,26 @@ func TestUserLoggingLoaderResolvesIncludes(t *testing.T) {
 	}
 }
 
+// spec: configuration-settings/settings-with-an-unreadable-acquisition-lock
+func TestLoadUserLoggingConfigIgnoresUnreadableLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIncludeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+logging: {level: debug}
+sources: {hosted: {marketplace: https://marketplace.invalid}}
+`)
+	if err := os.MkdirAll(filepath.Join(home, ".agents", "lock.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logging, err := LoadUserLoggingConfig()
+	if err != nil {
+		t.Fatalf("LoadUserLoggingConfig: %v", err)
+	}
+	if logging == nil || logging.Level == nil || *logging.Level != "debug" {
+		t.Fatalf("logging = %#v", logging)
+	}
+}
+
 func TestLoadRootConfigFromPathDoesNotExposeIncludedEntries(t *testing.T) {
 	dir := t.TempDir()
 	writeIncludeConfig(t, filepath.Join(dir, "child.yaml"), "registries:\n  - path: /child\n")
@@ -324,88 +346,5 @@ func TestLoadRootConfigFromPathDoesNotExposeIncludedEntries(t *testing.T) {
 	}
 	if got, want := registryURLs(cfg), []string{"/root"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root registries = %v, want %v", got, want)
-	}
-}
-
-func TestDisableResourceWithShadowFallbackDoesNotEditIncludedRegistry(t *testing.T) {
-	dir := t.TempDir()
-	child := filepath.Join(dir, "child.yaml")
-	root := filepath.Join(dir, "config.yaml")
-	childData := "registries:\n  - url: git@example.com:team.git\n    ref: main\n    skills: {include: [owned-by-child]}\n"
-	writeIncludeConfig(t, child, childData)
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\n")
-
-	if err := DisableResourceWithShadowFallback(root, "git@example.com:team.git", "", "main", ir.KindSkill, "owned-by-child"); err != nil {
-		t.Fatal(err)
-	}
-	gotChild, err := os.ReadFile(child)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(gotChild) != childData {
-		t.Fatalf("included file changed:\n%s", gotChild)
-	}
-	rootCfg, err := LoadRootConfigFromPath(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rootCfg.Registries) != 1 || !stringSliceContains(rootCfg.Registries[0].Skills.Exclude, "owned-by-child") {
-		t.Fatalf("root shadow entry = %#v", rootCfg.Registries)
-	}
-	gotRoot, err := os.ReadFile(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(gotRoot), "include: child.yaml") {
-		t.Fatalf("root include was not preserved:\n%s", gotRoot)
-	}
-}
-
-func TestDisableDuplicateRootAndIncludedResourceRetainsExclusion(t *testing.T) {
-	dir := t.TempDir()
-	includedPath := filepath.Join(dir, "child.yaml")
-	root := filepath.Join(dir, "config.yaml")
-	includedData := "registries:\n  - path: /registry\n    skills: [shared]\n"
-	writeIncludeConfig(t, includedPath, includedData)
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\nregistries:\n  - path: /registry\n    skills: [shared]\n")
-	if err := DisableResourceWithShadowFallback(root, "/registry", "", "", ir.KindSkill, "shared"); err != nil {
-		t.Fatal(err)
-	}
-	rootCfg, err := LoadRootConfigFromPath(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rootCfg.Registries) != 1 || !stringSliceContains(rootCfg.Registries[0].Skills.Exclude, "shared") || stringSliceContains(rootCfg.Registries[0].Skills.Include, "shared") {
-		t.Fatalf("root registry = %#v, want exclusion without selection", rootCfg.Registries)
-	}
-	gotIncluded, err := os.ReadFile(includedPath)
-	if err != nil || string(gotIncluded) != includedData {
-		t.Fatalf("included config changed: %v\n%s", err, gotIncluded)
-	}
-}
-
-func TestEditorPreservesIncludeAndMutatesOnlyRoot(t *testing.T) {
-	dir := t.TempDir()
-	child := filepath.Join(dir, "child.yaml")
-	root := filepath.Join(dir, "config.yaml")
-	childData := "registries:\n  - path: /child\n    skills: {include: [old]}\n"
-	writeIncludeConfig(t, child, childData)
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\nregistries:\n  - path: /root\n")
-	if err := AddSkillsToRegistryInConfig(root, "/root", "", []string{"new"}); err != nil {
-		t.Fatal(err)
-	}
-	gotChild, err := os.ReadFile(child)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(gotChild) != childData {
-		t.Fatalf("included file changed:\n%s", gotChild)
-	}
-	gotRoot, err := os.ReadFile(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(gotRoot), "include: child.yaml") || !strings.Contains(string(gotRoot), "new") {
-		t.Fatalf("root edit did not preserve include/target root:\n%s", gotRoot)
 	}
 }

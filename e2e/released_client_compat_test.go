@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,9 +19,9 @@ var releasedClientArch = map[string]string{
 	"51829f84d90da1035b983f24cf7f02a9c93c9d3aae32e2846ae4fcd10768370b": "arm64",
 }
 
-// A teammate on the candidate must not break teammates or CI that still run
-// the latest release against the same committed repository. Each actor has
-// its own HOME; only the repository is shared.
+// A teammate on the candidate upgrades a committed Git-only lock to v2.
+// The latest release can read v1, but must refuse v2 without altering the
+// repository. Each actor has its own HOME; only the repository is shared.
 func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
 	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {
@@ -66,6 +67,19 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 		}
 		return lock
 	}
+	releasedRejects := func(after string) {
+		t.Helper()
+		lock := readLock()
+		for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
+			output, err := run(released, args...)
+			if err == nil || !strings.Contains(output, "lock.invalid-document") || !strings.Contains(output, `apiVersion "agent-marketplace-lock/v2"`) {
+				t.Fatalf("%s %v after candidate %s did not reject Git-only v2: %v\n%s", releasedClientVersion, args, after, err, output)
+			}
+			if got := readLock(); !bytes.Equal(got, lock) {
+				t.Fatalf("%s %v changed the unsupported lock after %s:\nbefore:\n%s\nafter:\n%s", releasedClientVersion, args, after, lock, got)
+			}
+		}
+	}
 
 	must(released, "init", "--harnesses", "factory")
 	must(candidate, "init", "--harnesses", "factory")
@@ -75,24 +89,24 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 	}
 	must(released, "sync")
 	committed := readLock()
+	releasedReads("initial v1 sync")
 
 	must(candidate, "sync")
-	if got := readLock(); !bytes.Equal(got, committed) {
-		t.Fatalf("candidate plain sync rewrote the healthy committed lock:\nbefore:\n%s\nafter:\n%s", committed, got)
-	}
-	releasedReads("sync")
+	expectV2GitLockUpgrade(t, committed, readLock())
+	releasedRejects("sync")
 
 	must(candidate, "install", "second", "--scope", "repo")
-	releasedReads("install")
-	must(released, "sync")
 	if _, err := os.Stat(filepath.Join(workspace, ".factory", "skills", "second", "SKILL.md")); err != nil {
-		t.Fatalf("%s did not materialize the candidate's committed selection: %v", releasedClientVersion, err)
+		t.Fatalf("candidate did not materialize its committed selection: %v", err)
 	}
+	releasedRejects("install")
 
 	registry.publish("review", "Review body, revised")
 	must(candidate, "update", "--scope", "repo")
-	releasedReads("update")
+	releasedRejects("update")
 
 	must(candidate, "remove", "second", "--scope", "repo")
-	releasedReads("remove")
+	releasedRejects("remove")
+	must(candidate, "sync", "--locked")
+	must(candidate, "sync", "--check")
 }

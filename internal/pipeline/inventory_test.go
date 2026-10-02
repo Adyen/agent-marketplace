@@ -30,7 +30,8 @@ func TestResolveEmitsInventoryAtSharedBoundary(t *testing.T) {
 		URL: registryRoot, SourceHarness: "claude", Skills: config.KindSelector{Include: []string{"shared-inventory"}},
 	}}}
 	result := Resolve(ctx, ResolveOptions{
-		RepoRoot: t.TempDir(), CatalogMode: catalog.LoadModeInspect,
+		Workspace:   mustWorkspace(t, t.TempDir()),
+		CatalogMode: catalog.LoadModeInspect,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return nil, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"factory"}}, nil },
@@ -84,7 +85,7 @@ func TestSilentSyncReportsPostMutationInventory(t *testing.T) {
 	repoRoot := t.TempDir()
 	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - path: %s\n    source_harness: claude\n    skills: [post-mutation]\n", registryRoot))
 
-	if err := silentSync(ctx, repoRoot); err != nil {
+	if err := silentSync(ctx, mustWorkspace(t, repoRoot)); err != nil {
 		t.Fatalf("silentSync: %v", err)
 	}
 	if err := tel.Shutdown(context.Background()); err != nil {

@@ -2,11 +2,8 @@ package marketplacelock
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"reflect"
-	"sort"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -22,138 +19,19 @@ import (
 const minimumMarketplaceResourceLockBytes = 300
 const maxMarketplaceLockResources = int(lockfile.MaxFileSize) / minimumMarketplaceResourceLockBytes
 
-// Layer describes one v4 configuration layer whose Marketplace acquisition
-// lock is being resolved.
-type Layer struct {
-	Source   config.Source
-	LockPath string
-	V4       *config.V4Config
-}
-
-// HasRequiredError reports whether errs contain a v4 Marketplace lock
-// requirement.
-func HasRequiredError(errs []error) bool {
-	for _, err := range errs {
-		var validation *config.V4ValidationError
-		if errors.As(err, &validation) && validation.Code == "v4.marketplace-lock-required" {
-			return true
-		}
-	}
-	return false
-}
-
-// MissingOrganizationLayer returns the trusted organization v4 layer only
-// when it declares Marketplace sources and its deployed lock is absent.
-// Existing locks, including malformed ones, are never replaced by a transient
-// acquisition.
-func MissingOrganizationLayer(configPath string) (Layer, bool, error) {
-	if err := config.ValidateOrganizationConfigAuthority(configPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Layer{}, false, nil
-		}
-		return Layer{}, false, err
-	}
-	v4, err := config.LoadV4ConfigIfPresent(configPath, config.Organization)
-	if err != nil {
-		return Layer{}, false, err
-	}
-	if v4 == nil || !HasMarketplaceSource(v4) {
-		return Layer{}, false, nil
-	}
-	paths, err := config.ResolveConfigLockPaths(configPath)
-	if err != nil {
-		return Layer{}, false, err
-	}
-	if _, err := os.Lstat(paths.CanonicalLock); err == nil {
-		return Layer{}, false, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return Layer{}, false, err
-	}
-	return Layer{Source: config.Organization, LockPath: paths.CanonicalLock, V4: v4}, true, nil
-}
-
-// OrganizationProvisional returns the missing organization layer and its
-// encoded placeholder lock for policy-only loading.
-func OrganizationProvisional(configPath string) (Layer, []byte, bool, error) {
-	layer, missing, err := MissingOrganizationLayer(configPath)
-	if err != nil || !missing {
-		return Layer{}, nil, missing, err
-	}
-	doc, err := Provisional(layer.V4, lockfile.ScopeOrganization)
-	if err != nil {
-		return Layer{}, nil, false, err
-	}
-	data, err := lockfile.Encode(doc)
-	if err != nil {
-		return Layer{}, nil, false, err
-	}
-	return layer, data, true, nil
-}
-
-// HasMarketplaceSource reports whether a v4 tree needs Marketplace lock
-// hydration.
-func HasMarketplaceSource(v4 *config.V4Config) bool {
-	return len(sortedMarketplaceSources(v4)) > 0
-}
-
-// Provisional returns a structurally valid placeholder lock. It is used only
-// to load and validate the complete effective policy before any acquisition.
-func Provisional(v4 *config.V4Config, scope lockfile.Scope) (lockfile.Document, error) {
-	const digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: scope}
-	for _, group := range marketplaceSourceRequests(v4) {
-		sourceName := group.name
-		source := v4.Sources[sourceName]
-		entry := lockfile.MarketplaceLock{URL: source.CanonicalURL, InstanceID: "bootstrap"}
-		requests := group.requests
-		bindings := make(map[string]string, len(requests))
-		entry.Resources = make([]lockfile.MarketplaceResourceLock, 0, len(requests))
-		for _, request := range requests {
-			bindings[request.Registry] = request.Registry
-			revision := request.Options.Revision
-			if revision == "" {
-				revision = digest
-			}
-			resource := lockfile.MarketplaceResourceLock{
-				RegistryName:  request.Registry,
-				RegistryID:    request.Registry,
-				Kind:          request.MarketplaceKind(),
-				Name:          request.Name,
-				Revision:      revision,
-				ContentDigest: lockfile.Digest(revision),
-				Acquisition:   lockfile.MarketplaceAcquisitionMirror,
-			}
-			if request.Kind == "collection" {
-				resource.CollectionManifestDigest = lockfile.Digest(revision)
-			} else {
-				resource.ArchiveDigest = lockfile.Digest(digest)
-			}
-			entry.Resources = append(entry.Resources, resource)
-		}
-		for name, id := range bindings {
-			entry.RegistryBindings = append(entry.RegistryBindings, lockfile.MarketplaceRegistryBinding{Name: name, RegistryID: id})
-		}
-		doc.Marketplaces = append(doc.Marketplaces, entry)
-	}
-	return lockfile.Normalize(doc)
-}
-
 // Resolve acquires and verifies every requested Marketplace resource and
 // returns the exact lock evidence for the layer.
-func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, layer Layer, harnesses []string, policy resolver.MarketplaceRevocationPolicy) (lockfile.Document, error) {
+func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, layer config.LayerIntent, harnesses []string, policy resolver.MarketplaceRevocationPolicy) (lockfile.Document, error) {
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.Scope(layer.Source.LockScope())}
 	targets := lockTargets(harnesses)
 	resourceCount := 0
 	processedPins := 0
 	preparationWork := 0
-	for _, group := range marketplaceSourceRequests(layer.V4) {
-		sourceName := group.name
-		source := layer.V4.Sources[sourceName]
-		entry := config.MarketplaceEntry{URL: source.CanonicalURL, Alias: sourceName, Source: layer.Source}
-		requests := group.requests
-		resources := make(map[string]lockfile.MarketplaceResourceLock, len(requests))
-		bindings := make(map[string]string, len(requests))
-		for _, request := range requests {
+	for _, source := range layer.MarketplaceSources() {
+		entry := config.MarketplaceEntry{URL: source.URL, Alias: source.Name, Source: layer.Source}
+		resources := make(map[string]lockfile.MarketplaceResourceLock, len(source.Requests))
+		bindings := make(map[string]string, len(source.Requests))
+		for _, request := range source.Requests {
 			remainingResources := min(maxMarketplaceLockResources-resourceCount, maxMarketplaceLockResources-processedPins, maxMarketplaceLockResources-preparationWork)
 			if remainingResources < 1 {
 				return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
@@ -221,46 +99,6 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 		doc.Marketplaces = append(doc.Marketplaces, locked)
 	}
 	return lockfile.Normalize(doc)
-}
-
-func sortedMarketplaceSources(v4 *config.V4Config) []string {
-	names := make([]string, 0, len(v4.Sources))
-	for name := range v4.Sources {
-		if v4.AcquiresMarketplace(name) {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return names
-}
-
-type marketplaceSourceRequestGroup struct {
-	name     string
-	requests []*config.V4ResourceRequest
-}
-
-func marketplaceSourceRequests(v4 *config.V4Config) []marketplaceSourceRequestGroup {
-	names := sortedMarketplaceSources(v4)
-	requests := make([]*config.V4ResourceRequest, len(v4.Requests))
-	for i := range v4.Requests {
-		requests[i] = &v4.Requests[i]
-	}
-	sort.SliceStable(requests, func(i, j int) bool {
-		return requests[i].SourceName < requests[j].SourceName
-	})
-	groups := make([]marketplaceSourceRequestGroup, 0, len(names))
-	requestIndex := 0
-	for _, name := range names {
-		for requestIndex < len(requests) && requests[requestIndex].SourceName < name {
-			requestIndex++
-		}
-		start := requestIndex
-		for requestIndex < len(requests) && requests[requestIndex].SourceName == name {
-			requestIndex++
-		}
-		groups = append(groups, marketplaceSourceRequestGroup{name: name, requests: requests[start:requestIndex]})
-	}
-	return groups
 }
 
 func lockTargets(names []string) []hcc.Target {

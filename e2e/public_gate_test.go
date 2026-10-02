@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -271,8 +272,12 @@ func assertPublicGateProcess(t *testing.T, env *Env, cfgPath, publicAddr, operat
 	waitFor("http://"+publicAddr+"/readyz", http.StatusNotFound)
 	waitFor("http://"+operationsAddr+"/healthz", http.StatusNotFound)
 	verify("http://" + publicAddr)
-	cancel()
-	_ = wait()
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := wait(); err != nil {
+		t.Fatalf("serve --role api did not stop cleanly on SIGTERM: %v\n%s", err, output.String())
+	}
 }
 
 func publicGateResourceDigest(t *testing.T, base, kind, name string) string {

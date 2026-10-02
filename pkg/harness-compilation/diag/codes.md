@@ -56,6 +56,7 @@ comparison in non-test code.
 | Code | Summary | Hint |
 |------|---------|------|
 | `ingest.claude.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Claude layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
+| `ingest.claude.duplicate-root-skill` | A plugin-form bundle's root SKILL.md declared a name already loaded from skills/; the skills/ entry is kept | Rename the root skill or remove the duplicate; skills/ entries load first and win deterministically |
 | `ingest.factory.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Factory layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
 | `ingest.cursor.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Cursor layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
 | `ingest.gemini.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Gemini layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
@@ -557,6 +558,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `hook.windsurf.native-fields-unsupported` | Windsurf cannot preserve conflicting native hook fields; hook suppressed | Remove the conflicting native fields explicitly or use a target that represents them |
 | `hook.windsurf.timeout-unsupported` | Windsurf cannot represent an explicit hook timeout; hook artifact suppressed | Remove the timeout explicitly or use a target that supports it |
 | `materialize.hook.support-conflict` | Conflicting desired support files block affected hooks rather than selecting a winner | Rename the conflicting support files or exclude one hook provider |
+| `materialize.hook.support-refused` | Unsafe or unreadable support sources block affected hooks while installed content is retained | Fix or remove the unsafe support source and re-run sync |
 | `mcp.security-restriction-unsupported` | Target cannot preserve native MCP authority or literal semantics; server suppressed | Keep the server in its native format or remove the unsupported security field explicitly |
 | `mcp.codex.security-unsupported` | Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed | Use documented Codex MCP fields or remove the unsupported setting explicitly |
 | `ingest.codex.load-resource-failed` | One malformed Codex resource or aggregate was skipped | Fix the reported native file; independent valid resources were retained |

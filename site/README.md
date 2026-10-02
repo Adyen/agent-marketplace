@@ -1,14 +1,14 @@
 # Website
 
 This directory contains the VitePress website for `agent-marketplace`. The
-landing page is available at `/` and the public documentation at `/docs/`; the
+landing page is served at `/` and the public documentation at `/docs/`. The
 separate Nuxt application in `web/` is served at `/marketplace/` by the
 combined Docker proxy.
 
 ## Prerequisites
 
 - Node.js
-- pnpm 10.26.0
+- pnpm 10.26.0 (pinned by `packageManager` in `package.json`)
 
 ## Run locally
 
@@ -37,7 +37,8 @@ Create a production build:
 make site-build
 ```
 
-The generated files are written to `site/.vitepress/dist/`.
+This target installs dependencies with `--frozen-lockfile` and writes the
+generated files to `site/.vitepress/dist/`. The build fails on dead links.
 
 To build for a project-path deployment, set `SITE_BASE`:
 
@@ -59,9 +60,15 @@ site/
 ├── index.md                         # Route shell for /
 ├── docs/                            # Public documentation, rendered at /docs/
 │   ├── index.md                     # Documentation overview
+│   ├── terminal-basics.md           # Terminal basics for new users
+│   ├── install.md
+│   ├── quick-start.md
+│   ├── glossary.md                  # One heading per term
 │   ├── tutorials/
-│   ├── how-to/
-│   └── reference/
+│   ├── how-to/                      # Consumer guides, plus author/ and operator/
+│   ├── reference/
+│   ├── explanation/
+│   └── images/                      # Screenshots used by pages
 ├── .vitepress/
 │   ├── config.mts                   # VitePress, navigation, and docs sidebar
 │   └── theme/
@@ -86,26 +93,33 @@ Move code to `src/shared` only after more than one route uses it.
 ## Documentation
 
 Public documentation lives in `docs/` and follows the
-[Diátaxis](https://diataxis.fr/) split into tutorials, how-to guides, and
-reference. Pages render through the VitePress default theme, so they inherit
-the shared design tokens without extra styling. Internal design notes stay in
-the repository's top-level `docs/` directory and are not published.
+[Diátaxis](https://diataxis.fr/) split into tutorials, how-to guides,
+reference, and explanation. A few entry pages (overview, terminal basics,
+install, quick start, and glossary) sit directly in `docs/`. Pages render
+through the VitePress default theme, so they inherit the shared design tokens
+without extra styling. Internal design notes stay in the repository's top-level
+`docs/` directory and are not published.
 
 When adding a page:
 
-1. Create the markdown file under the matching `docs/<quadrant>/` directory.
-2. Add one entry for it to the `sidebar` in `.vitepress/config.mts`.
-3. Link other repository files by their GitHub URL; relative links outside
-   `site/` do not resolve on the website, and the build fails on dead links.
+1. Create the markdown file under the matching `docs/<quadrant>/` directory
+   (`tutorials`, `how-to`, `reference`, or `explanation`). Registry-author and
+   operator how-to guides go in `docs/how-to/author/` and
+   `docs/how-to/operator/`.
+2. Add one entry for it to the `sidebar` in `.vitepress/config.mts`. The
+   sidebar is ordered by hand and does not pick up new pages automatically.
+3. Link other site pages with relative `.md` paths. Link repository files
+   outside `site/` by their full GitHub URL, because relative links outside
+   `site/` do not resolve on the website and the build fails on dead links.
 
 ## Maintainer notes
 
-- `site/src/pages/landing/data/harnesses.json` is currently a checked-in fixture. Keep
-  it aligned with `pkg/harness-compilation/target` until generation and drift
-  checking are added.
+- `site/src/pages/landing/data/harnesses.json` is a checked-in fixture with no
+  generator. Keep it aligned with `pkg/harness-compilation/target` by hand.
 - If a `pnpm-workspace.yaml` exists in a parent directory (for example your
   home directory), pass `--ignore-workspace` to `pnpm` so the site resolves its
   own lockfile.
-- Keep links to the Nuxt UI rooted at `/marketplace/`; the shared reverse proxy
-  owns that path in local and production-like deployments. Do not pass those
-  links through VitePress `withBase`, which would nest them below `SITE_BASE`.
+- Keep links to the Nuxt UI rooted at `/marketplace/`, because the shared
+  reverse proxy owns that path in local and production-like deployments. Do not
+  pass those links through VitePress `withBase`, which would nest them below
+  `SITE_BASE`.

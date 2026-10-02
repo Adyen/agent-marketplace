@@ -9,8 +9,10 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 const v2Header = `apiVersion: agent-marketplace/v2
@@ -230,9 +232,7 @@ skills:
 	}
 
 	// Toggle: add "deploy" to the local config.
-	if err := config.AddSkillToLocalConfig(repoRoot, "deploy"); err != nil {
-		t.Fatalf("AddSkillToLocalConfig: %v", err)
-	}
+	mustWriteFile(t, config.LocalConfigPath(repoRoot), []byte("skills:\n  include:\n    - deploy\n"))
 
 	// Load snapshot AFTER toggle.
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
@@ -369,9 +369,7 @@ func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	}
 
 	// Toggle: add "deploy" to the project config's registry entry skills.
-	if err := config.AddSkillToRegistryInConfig(config.ProjectConfigPath(repoRoot), "./local-skills", "", "deploy"); err != nil {
-		t.Fatalf("AddSkillToRegistryInConfig: %v", err)
-	}
+	editRegistrySelection(t, config.RepoCommitted, config.ProjectConfigPath(repoRoot), config.RegistryEntry{URL: "./local-skills"}, config.SelectionInclude, "deploy")
 
 	// After toggle: deploy should be project-enabled.
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
@@ -422,7 +420,7 @@ func swapLoadRepoConfig(fn func() (*config.Config, error)) func() {
 
 func swapLoadLocalConfig(fn func() (*config.LocalConfig, error)) func() {
 	prev := loadLocalConfig
-	loadLocalConfig = fn
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return fn() }
 	return func() {
 		loadLocalConfig = prev
 	}
@@ -514,9 +512,7 @@ skills:
 
 	// Toggle: add "deploy" to the per-registry skills list (not top-level).
 	registryURL := "./local-skills"
-	if err := config.AddSkillToRegistryInConfig(config.ProjectConfigPath(repoRoot), registryURL, "", "deploy"); err != nil {
-		t.Fatalf("AddSkillToRegistryInConfig: %v", err)
-	}
+	editRegistrySelection(t, config.RepoCommitted, config.ProjectConfigPath(repoRoot), config.RegistryEntry{URL: registryURL}, config.SelectionInclude, "deploy")
 
 	// After toggle: deploy should now be project-enabled because the
 	// skill was added to the specific registry entry's skills list.
@@ -1036,9 +1032,7 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	if err := config.EnsureRegistryWithPathsInConfig(projectPath, globalTool.RegistryURL, globalTool.RegistryRef, globalTool.RegistryPath); err != nil {
 		t.Fatalf("EnsureRegistryWithPathsInConfig: %v", err)
 	}
-	if err := config.AddSkillToRegistryInConfig(projectPath, globalTool.RegistryURL, "", "global-tool"); err != nil {
-		t.Fatalf("AddSkillToRegistryInConfig: %v", err)
-	}
+	editRegistrySelection(t, config.RepoCommitted, projectPath, config.RegistryEntry{URL: globalTool.RegistryURL, Ref: globalTool.RegistryRef, Path: globalTool.RegistryPath}, config.SelectionInclude, "global-tool")
 
 	// Reload snapshot and verify project enablement.
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadRefresh)
@@ -1137,9 +1131,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 
 	// Step 1: Disable smith at global scope — adds to exclude.
 	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	if err := config.DisableSkillInRegistryInConfig(globalPath, globalSkillsDir, "", "smith"); err != nil {
-		t.Fatalf("disable smith: %v", err)
-	}
+	editRegistrySelection(t, config.UserPersonal, globalPath, config.RegistryEntry{URL: globalSkillsDir, Path: "skills"}, config.SelectionExclude, "smith")
 
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap2.errs) > 0 {
@@ -1160,9 +1152,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	}
 
 	// Step 2: Re-enable smith at global scope — adds to include, must clean up exclude.
-	if err := config.AddSkillToRegistryInConfig(globalPath, globalSkillsDir, "", "smith"); err != nil {
-		t.Fatalf("re-enable smith: %v", err)
-	}
+	editRegistrySelection(t, config.UserPersonal, globalPath, config.RegistryEntry{URL: globalSkillsDir, Path: "skills"}, config.SelectionInclude, "smith")
 
 	snap3 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap3.errs) > 0 {
@@ -1198,42 +1188,6 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	}
 }
 
-// TestToggleFlowEnableAfterLocalExcludeCleansUp verifies that enabling
-// a skill locally after excluding it locally cleans up the exclude list.
-// This exercises the FIX-002 local-scope enable-cleans-exclude logic.
-func TestToggleFlowEnableAfterLocalExcludeCleansUp(t *testing.T) {
-	repoRoot := t.TempDir()
-
-	// Step 1: Exclude smith locally.
-	if err := config.AddToLocalExclude(repoRoot, "smith"); err != nil {
-		t.Fatalf("add local exclude: %v", err)
-	}
-
-	cfg1, err := config.LoadLocalConfigFromPath(config.LocalConfigPath(repoRoot))
-	if err != nil {
-		t.Fatalf("load local config after exclude: %v", err)
-	}
-	if !containsString(cfg1.Skills.Exclude, "smith") {
-		t.Fatalf("expected smith in Skills.Exclude, got %v", cfg1.Skills.Exclude)
-	}
-
-	// Step 2: Enable smith locally — must clean up the exclude.
-	if err := config.AddSkillToLocalConfig(repoRoot, "smith"); err != nil {
-		t.Fatalf("add local include: %v", err)
-	}
-
-	cfg2, err := config.LoadLocalConfigFromPath(config.LocalConfigPath(repoRoot))
-	if err != nil {
-		t.Fatalf("load local config after enable: %v", err)
-	}
-	if !containsString(cfg2.Skills.Include, "smith") {
-		t.Fatalf("expected smith in Skills.Include, got %v", cfg2.Skills.Include)
-	}
-	if containsString(cfg2.Skills.Exclude, "smith") {
-		t.Fatalf("expected smith NOT in Skills.Exclude after enable, got %v", cfg2.Skills.Exclude)
-	}
-}
-
 // TestToggleFlowSinglePressDisableWithDefault verifies that disabling a
 // skill in a default:true registry removes from include AND adds to exclude
 // in a single call. This exercises the FIX-003 logic.
@@ -1252,9 +1206,7 @@ registries:
         - smith
 `))
 
-	if err := config.DisableSkillInRegistryInConfig(configPath, "git@example.com:infra.git", "", "smith"); err != nil {
-		t.Fatalf("DisableSkillInRegistryInConfig: %v", err)
-	}
+	editRegistrySelection(t, config.RepoCommitted, configPath, config.RegistryEntry{URL: "git@example.com:infra.git", Ref: "main"}, config.SelectionExclude, "smith")
 
 	cfg, err := config.LoadConfigFromPath(configPath)
 	if err != nil {
@@ -1267,6 +1219,20 @@ registries:
 	}
 	if !containsString(entry.Skills.Exclude, "smith") {
 		t.Fatalf("expected smith in exclude (single-press disable with default:true), got %v", entry.Skills.Exclude)
+	}
+}
+
+func editRegistrySelection(t *testing.T, source config.Source, path string, entry config.RegistryEntry, op config.SelectionOperation, name string) {
+	t.Helper()
+	err := pipeline.EditLayerAtPath(config.LayerTarget{Source: source, StagedPath: path, DeclaringPath: path}, func(m *pipeline.LayerMutation) error {
+		binding, err := m.EnsureRegistry(entry)
+		if err != nil {
+			return err
+		}
+		return m.Apply(binding, config.SelectionChange{Operation: op, Locators: []config.ResourceLocator{{Kind: ir.KindSkill, Name: name}}})
+	})
+	if err != nil {
+		t.Fatalf("edit %q: %v", path, err)
 	}
 }
 

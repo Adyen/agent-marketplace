@@ -78,9 +78,10 @@ type RepairFile struct {
 	ExistingEntries int
 	DesiredEntries  int
 
-	store   *ownership.Store
-	adapter repairFileAdapter
-	desired []repairDesiredEntry
+	store          *ownership.Store
+	adapter        repairFileAdapter
+	desired        []repairDesiredEntry
+	validatePolicy func() error
 }
 
 func (f *RepairFile) AbsFile() string { return filepath.Join(f.OutDir, f.Rel) }
@@ -182,7 +183,7 @@ type TargetRepairPreview struct {
 }
 
 // RepairPreviews enumerates the materialization adapters in stable target order.
-func RepairPreviews(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact) ([]TargetRepairPreview, error) {
+func RepairPreviews(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, revalidate func() error) ([]TargetRepairPreview, error) {
 	composition, err := newMaterializeAdapterComposition()
 	if err != nil {
 		return nil, err
@@ -198,6 +199,9 @@ func RepairPreviews(ctx context.Context, repoRoot string, resolved []resolver.Re
 		preview, err := binding.repair(ctx, repoRoot, resolved)
 		if err != nil {
 			return nil, err
+		}
+		for _, file := range preview.Files {
+			file.validatePolicy = revalidate
 		}
 		out = append(out, TargetRepairPreview{Target: target, Preview: preview})
 	}
