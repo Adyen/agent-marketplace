@@ -2,6 +2,8 @@ package materialize
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -152,5 +154,24 @@ func TestRunSupportSourceRefusalPreservesInstalledGeneration(t *testing.T) {
 	stages, err := filepath.Glob(filepath.Join(filepath.Dir(cacheDir), ".support-staging-*"))
 	if err != nil || len(stages) != 0 {
 		t.Fatalf("source refusal left attempt staging: %v %v", stages, err)
+	}
+}
+
+func TestEmptySupportSourceDoesNotCaptureWorkingDirectory(t *testing.T) {
+	for _, missingOK := range []bool{true, false} {
+		t.Run(map[bool]string{true: "optional", false: "required"}[missingOK], func(t *testing.T) {
+			cwd, destination := t.TempDir(), t.TempDir()
+			t.Chdir(cwd)
+			if err := os.WriteFile(filepath.Join(cwd, "inert.txt"), []byte("not a support source"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err := copySupportFilesExcluding("", destination, nil, "", missingOK)
+			if missingOK && err != nil || !missingOK && !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("empty source changed missing contract: %v", err)
+			}
+			if entries, err := os.ReadDir(destination); err != nil || len(entries) != 0 {
+				t.Fatalf("empty source imported cwd: %v %v", entries, err)
+			}
+		})
 	}
 }
