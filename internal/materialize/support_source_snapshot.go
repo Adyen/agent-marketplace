@@ -13,6 +13,12 @@ import (
 )
 
 func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix string, missingOK bool, write func(string, []byte, os.FileMode) error) error {
+	if srcDir == "" {
+		if missingOK {
+			return nil
+		}
+		return fmt.Errorf("%w: empty support source", fs.ErrNotExist)
+	}
 	absolute, err := filepath.Abs(srcDir)
 	if err != nil {
 		return err
@@ -51,9 +57,6 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 				// VCS internals must never become harness-visible support
 				// files. Git cannot track a .git directory, so regular skills
 				// are unaffected.
-				if entry.Name() == ".git" {
-					continue
-				}
 				if err := os.MkdirAll(destinationPath, 0o755); err != nil {
 					return err
 				}
@@ -107,7 +110,7 @@ func writeSupportStage(path string, data []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if err := file.Chmod(mode); err != nil {
+	if err := file.Chmod(mode.Perm()); err != nil {
 		return errors.Join(err, file.Close())
 	}
 	_, err = file.Write(data)
@@ -123,17 +126,19 @@ func writeSupportSnapshot(path string, data []byte, mode os.FileMode) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("%w: support destination is not regular", fsboundary.ErrUnsafeFile)
 		}
-		root, err := fsboundary.OpenDir(filepath.Dir(path))
-		if err != nil {
-			return err
-		}
-		defer func() { _ = root.Close() }()
-		existing, identity, err := root.ReadFile(filepath.Base(path), int64(len(data)))
-		if err == nil && bytes.Equal(existing, data) && identity.Mode == mode {
-			return nil
-		}
-		if err != nil && !errors.Is(err, fsboundary.ErrTooLarge) {
-			return err
+		if info.Size() == int64(len(data)) {
+			root, err := fsboundary.OpenDir(filepath.Dir(path))
+			if err != nil {
+				return err
+			}
+			defer func() { _ = root.Close() }()
+			existing, identity, err := root.ReadFile(filepath.Base(path), int64(len(data)))
+			if err == nil && bytes.Equal(existing, data) && identity.Mode.Perm() == mode.Perm() {
+				return nil
+			}
+			if err != nil && !errors.Is(err, fsboundary.ErrTooLarge) {
+				return err
+			}
 		}
 	} else if !os.IsNotExist(err) {
 		return err
