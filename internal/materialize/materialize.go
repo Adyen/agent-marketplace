@@ -192,8 +192,8 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 		return nil, err
 	}
 	state := &portableState{path: path, repoRoot: repoRoot, machineScope: machineScope, entries: make(map[string]portableManifestEntry)}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+	data, err := readPortableManifestSnapshot(path)
+	if errors.Is(err, os.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
 		return state, nil
 	}
 	if err != nil {
