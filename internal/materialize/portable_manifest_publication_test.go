@@ -359,3 +359,49 @@ func TestRunPortableManifestMissingParentDoesNotRecreate(t *testing.T) {
 		t.Fatalf("refusal changed captured manifest: %q %v", after, err)
 	}
 }
+
+func TestRunPortableManifestEmptySaveRefusesAppearedLeaf(t *testing.T) {
+	repo, root, resolved := rootBoundaryFixture(t, rootBoundaryCases[1], false)
+	parent := filepath.Join(repo, ".agents")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(parent, "materialization-manifest.yaml")
+	appeared := []byte("version: 1\nentries: []\n")
+	var before os.FileInfo
+	hit := false
+	report, err := Run(t.Context(), repo, resolved, func(cfg *runConfig) {
+		cfg.linkPublicationHook = func(path string) {
+			if path != filepath.Join(root, "skills", "root-probe") {
+				return
+			}
+			hit = true
+			if err := os.WriteFile(manifest, appeared, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			before, err = os.Stat(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hit {
+		t.Fatal("native update did not reach staged publication")
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "skills", "root-probe", "SKILL.md")); err != nil || !bytes.Contains(data, []byte("inert body")) {
+		t.Fatalf("native publication positive control missing: %q %v", data, err)
+	}
+	if !hasDiagCode(report.Diags, "materialize.manifest.error") {
+		t.Fatalf("appeared manifest was silently accepted: %+v", report.Diags)
+	}
+	if data, err := os.ReadFile(manifest); err != nil || !bytes.Equal(data, appeared) {
+		t.Fatalf("empty save changed appeared manifest: %q %v", data, err)
+	}
+	if after, err := os.Stat(manifest); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("empty save changed appeared manifest metadata: %v", err)
+	}
+}

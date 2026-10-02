@@ -23,7 +23,9 @@ func (s *portableState) captureManifestParent(create bool) (parent *fsboundary.D
 		if closeErr := scope.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 			if parent != nil {
-				err = errors.Join(err, parent.Close())
+				if parentCloseErr := parent.Close(); parentCloseErr != nil {
+					err = errors.Join(err, parentCloseErr)
+				}
 				parent = nil
 			}
 		}
@@ -76,7 +78,7 @@ func (s *portableState) captureManifestDestination(parent *fsboundary.Dir) (*fsb
 }
 
 func (s *portableState) removeManifest() (err error) {
-	if s.pin.data == nil {
+	if s.pin.data == nil && s.pin.parent == (fsboundary.Identity{}) {
 		return nil
 	}
 	parent, err := s.captureManifestParent(false)
@@ -99,6 +101,9 @@ func (s *portableState) removeManifest() (err error) {
 	}()
 	if err := s.verifyManifestParent(parent); err != nil {
 		return err
+	}
+	if s.pin.data == nil {
+		return nil
 	}
 	return dest.RemoveLeaf()
 }

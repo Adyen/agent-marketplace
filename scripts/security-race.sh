@@ -73,5 +73,5 @@ run_race ./internal/materialize \
     -count=20
 
 run_race ./internal/materialize \
-    -run '^TestRunPortableManifest(RemovalPreservesReplacedGeneration|PublicationPreservesReplacedGeneration|RepeatKeepsIdentityModeAndUpdates|StagingRefusesNamespaceReplacement|MissingParentDoesNotRecreate)$' \
+    -run '^TestRunPortableManifest(RemovalPreservesReplacedGeneration|PublicationPreservesReplacedGeneration|RepeatKeepsIdentityModeAndUpdates|StagingRefusesNamespaceReplacement|MissingParentDoesNotRecreate|EmptySaveRefusesAppearedLeaf)$' \
     -count=20
