@@ -408,11 +408,29 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 				// hook file.
 				return fail(diag.CodeHookEnvUnrepresentable, "A plugin-only variable has no native equivalent on the target; hook suppressed", "Replace the reference with a documented variable")
 			}
-			ref, refusal, ok := supportReference(dstCat, scope, supportBase)
+			context := shellQuoteContext(command[:m[0]])
+			matched := command[m[0]:m[1]]
+			leading := strings.HasPrefix(matched, `"`)
+			trailing := strings.HasSuffix(matched, `"`)
+			plain := context == 0 && leading == trailing && shellLiteralPath(supportBase)
+			ref, refusal, ok := supportReference(dstCat, scope, supportBase, !plain)
 			if !ok {
 				return fail(refusal.Code, refusal.Message, refusal.Hint)
 			}
+			if plain {
+				out.WriteString(ref)
+				continue
+			}
+			if context == '\'' {
+				return fail(diag.CodeHookSupportPathUnrepresentable, "A literal plugin-root reference cannot be safely rewritten; hook suppressed", "Use an unquoted or double-quoted plugin-root reference")
+			}
+			if context != '"' {
+				out.WriteByte('"')
+			}
 			out.WriteString(ref)
+			if context == '"' && trailing || context != '"' && (!leading || trailing) {
+				out.WriteByte('"')
+			}
 			continue
 		}
 		if sameHarness {
@@ -534,7 +552,7 @@ func nameReplacement(command string, m []int, name string) string {
 
 // supportReference renders the installed support-directory reference for a
 // plugin-root token.
-func supportReference(c catalog, scope Scope, supportBase string) (string, diag.Diagnostic, bool) {
+func supportReference(c catalog, scope Scope, supportBase string, quoted bool) (string, diag.Diagnostic, bool) {
 	refuse := func() (string, diag.Diagnostic, bool) {
 		return "", diag.Diagnostic{Code: diag.CodeHookSupportPathUnrepresentable, Message: "The plugin-root reference has no representable support path on the target; hook suppressed", Hint: "Remove the plugin-root reference"}, false
 	}
@@ -542,7 +560,7 @@ func supportReference(c catalog, scope Scope, supportBase string) (string, diag.
 		return refuse()
 	}
 	if scope == ScopeMachine {
-		return supportBase, diag.Diagnostic{}, true
+		return escapeDoubleQuoted(supportBase), diag.Diagnostic{}, true
 	}
 	rb := c.RepositoryBase
 	if rb == nil {
@@ -553,15 +571,54 @@ func supportReference(c catalog, scope Scope, supportBase string) (string, diag.
 	rel := strings.Trim(supportBase, "/")
 	switch {
 	case rb.Cwd != "":
-		return rel, diag.Diagnostic{}, true
+		return escapeDoubleQuoted(rel), diag.Diagnostic{}, true
 	case rb.Shell != "":
-		return rb.Shell + "/" + rel, diag.Diagnostic{}, true
+		if !quoted {
+			return rb.Shell + "/" + rel, diag.Diagnostic{}, true
+		}
+		return strings.Trim(rb.Shell, `"`) + "/" + escapeDoubleQuoted(rel), diag.Diagnostic{}, true
 	case rb.Env != "":
 		v, exists := c.Env[rb.Env]
 		if !exists || len(v.Names) == 0 {
 			return refuse()
 		}
-		return `"$` + v.Names[0] + `"/` + rel, diag.Diagnostic{}, true
+		if !quoted {
+			return `"$` + v.Names[0] + `"/` + rel, diag.Diagnostic{}, true
+		}
+		return `$` + v.Names[0] + `/` + escapeDoubleQuoted(rel), diag.Diagnostic{}, true
 	}
 	return refuse()
+}
+
+func shellLiteralPath(value string) bool {
+	return !strings.ContainsFunc(value, func(r rune) bool {
+		allowed := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._-", r)
+		return !allowed
+	})
+}
+
+func escapeDoubleQuoted(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`, "`", "\\`").Replace(value)
+}
+
+func shellQuoteContext(prefix string) byte {
+	var quote byte
+	escaped := false
+	for i := 0; i < len(prefix); i++ {
+		c := prefix[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if c == quote {
+			quote = 0
+		} else if quote == 0 && (c == '"' || c == '\'') {
+			quote = c
+		}
+	}
+	return quote
 }

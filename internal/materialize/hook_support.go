@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,50 +14,154 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
-// mirroredHookForTarget points plugin-root assets at the routed installation,
-// not the disposable source staging directory or a harness-specific token.
-func mirroredHookForTarget(w skillTarget, repoRoot string) (ir.Resource, error) {
-	hook, ok := w.skill.Resource.(*ir.Hook)
-	if !ok || !w.skill.IsMarketplace || len(hook.SupportFiles) == 0 {
-		return w.skill.Resource, nil
+func readMirroredHookSupport(skill resolver.ResolvedArtifact) ([]artifact.Artifact, error) {
+	hook, ok := skill.Resource.(*ir.Hook)
+	if !ok || !skill.IsMarketplace || len(hook.SupportFiles) == 0 {
+		return nil, nil
 	}
-	// Aggregate-only targets have no native support-file component. Keep the
-	// verified archive-keyed cache as the execution root rather than inventing
-	// an unowned native directory or leaving a plugin-root token unresolved.
-	if resourceInstallDirRel(w.target, ir.KindHook) == "" {
-		return hookWithSupportRoot(hook, materializationSourcePath(w.skill)), nil
+	if skill.MarketplaceAcquisition != config.MarketplaceAcquisitionMirror {
+		return nil, fmt.Errorf("hook support declarations require mirror acquisition")
+	}
+	root := materializationSourcePath(skill)
+	if root == "" {
+		return nil, fmt.Errorf("hook support source is unavailable")
+	}
+	excluded := catalog.HookSupportExclusions(hook.Source.File, skill.SourceHarness)
+	excluded["hooks.json"] = true
+	names := make([]string, 0, len(hook.SupportFiles))
+	for name := range hook.SupportFiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var files []artifact.Artifact
+	for _, name := range names {
+		expected := hook.SupportFiles[name]
+		if excluded[name] {
+			return nil, fmt.Errorf("hook support declaration names a native definition")
+		}
+		data, executable, err := catalog.ReadHookSupportFile(root, name)
+		if err != nil {
+			return nil, err
+		}
+		if artifact.SupportFileDigest(artifact.SupportFile{Data: data, Executable: executable}) != expected {
+			return nil, fmt.Errorf("hook support integrity mismatch")
+		}
+		mode := os.FileMode(0o644)
+		if executable {
+			mode = 0o755
+		}
+		files = append(files, artifact.Artifact{Path: name, Bytes: data, Mode: mode})
+	}
+	return files, nil
+}
+
+func mirroredHookSupportPlan(w skillTarget, repoRoot string, files []artifact.Artifact) (string, []artifact.Artifact, error) {
+	layout, ok := targetmeta.LookupNativeLayout(w.target)
+	if !ok {
+		return "", nil, fmt.Errorf("hook support layout is unavailable")
+	}
+	source := sha256.Sum256([]byte(w.skill.MarketplaceInstanceID + "\x00" + w.skill.RegistryURL + "\x00" + w.skill.RegistryPath))
+	var supportDir string
+	for _, partition := range layout.Partitions {
+		for _, aggregate := range partition.Aggregates {
+			if aggregate.Kind == ir.KindHook {
+				supportDir = filepath.ToSlash(filepath.Join(partition.Prefix, aggregate.SupportDir, fmt.Sprintf("%x", source), w.skill.Resource.Name()))
+			}
+		}
+	}
+	if supportDir == "" {
+		return "", nil, fmt.Errorf("hook support layout is unavailable")
+	}
+	info, _ := harness.TargetInfoFor(w.target)
+	if info.ArtifactRootPrefix != "" && !strings.HasPrefix(supportDir, info.ArtifactRootPrefix+"/") {
+		supportDir = info.ArtifactRootPrefix + "/" + supportDir
+	}
+	if info.PlanStrategy == harness.PlanWindsurf {
+		supportDir = windsurfDir + "/" + supportDir
 	}
 	destinations, err := harness.ResolveDestinations(w.target, w.machineScope, repoRoot)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	supportPath := resourceInstallDirRel(w.target, ir.KindHook) + "/__support_path__"
 	for _, destination := range destinations {
-		relative, err := destination.RouteArtifact(supportPath)
+		relative, err := destination.RouteArtifact(supportDir + "/placeholder")
 		if err != nil {
 			continue
 		}
 		if destination.Info.PlanStrategy == harness.PlanWindsurf && w.machineScope {
 			relative = strings.TrimPrefix(relative, windsurfDir+"/")
 		}
+		relative = strings.TrimPrefix(relative, info.ArtifactRootPrefix+"/")
 		dir := filepath.Dir(filepath.Join(destination.Root, filepath.FromSlash(relative)))
-		return hookWithSupportRoot(hook, dir), nil
+		base := dir
+		if !w.machineScope {
+			base, err = filepath.Rel(repoRoot, dir)
+			if err == nil && (base == ".." || strings.HasPrefix(base, "../")) {
+				canonicalRepo, canonicalErr := filepath.EvalSymlinks(repoRoot)
+				if canonicalErr != nil {
+					return "", nil, fmt.Errorf("hook support root is unavailable")
+				}
+				base, err = filepath.Rel(canonicalRepo, dir)
+			}
+			if err != nil || base == ".." || strings.HasPrefix(base, "../") {
+				return "", nil, fmt.Errorf("hook support is outside repository")
+			}
+		}
+		state, err := loadPortableState(repoRoot, w.machineScope)
+		if err != nil {
+			return "", nil, err
+		}
+		for _, file := range files {
+			rel := filepath.ToSlash(filepath.Join(filepath.Dir(relative), "hooks", file.Path))
+			dst, err := portableOutputPath(destination.Root, rel)
+			if err != nil {
+				return "", nil, err
+			}
+			existing, err := os.Lstat(dst)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil || !existing.Mode().IsRegular() {
+				return "", nil, fmt.Errorf("hook support destination is unsafe")
+			}
+			entryPath := filepath.ToSlash(filepath.Join(destination.Prefix, rel))
+			entry, owned := state.entry(w.target, entryPath)
+			data, _, err := catalog.ReadHookSupportFile(destination.Root, rel)
+			current := portableArtifactDigest(artifact.Artifact{Bytes: data, Mode: existing.Mode()})
+			if err != nil || !owned || portableOwnershipDecision(entry, current, portableArtifactDigest(file)) == portableOwnershipCollision {
+				return "", nil, fmt.Errorf("hook support destination is not owned")
+			}
+		}
+		for i := range files {
+			files[i].Path = supportDir + "/hooks/" + files[i].Path
+		}
+		return filepath.ToSlash(base), files, nil
 	}
-	return nil, fmt.Errorf("no hook support destination for %s", w.target)
+	return "", nil, fmt.Errorf("hook support destination is unavailable")
 }
 
-func hookWithSupportRoot(hook *ir.Hook, dir string) *ir.Hook {
-	clone := *hook
-	for _, token := range []string{"${CLAUDE_PLUGIN_ROOT}", "${DROID_PLUGIN_ROOT}"} {
-		clone.Command = strings.ReplaceAll(clone.Command, token+"/hooks/", filepath.ToSlash(dir)+"/")
+func isHookSupportComponent(target hcc.Target, prefix string) bool {
+	layout, ok := targetmeta.LookupNativeLayout(target)
+	if !ok {
+		return false
 	}
-	return &clone
+	for _, partition := range layout.Partitions {
+		for _, aggregate := range partition.Aggregates {
+			if aggregate.Kind == ir.KindHook && componentName(prefix) == aggregate.SupportDir {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type hookSupportOutput struct {
@@ -85,19 +190,16 @@ func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[in
 		if w.skill.Resource == nil || w.skill.Resource.Kind() != ir.KindHook {
 			continue
 		}
+		if w.skill.IsMarketplace && w.skill.MarketplaceAcquisition != config.MarketplaceAcquisitionIndexOnly {
+			continue
+		}
 		source := hookSupportSource{path: materializationSourcePath(w.skill), target: w.target, harness: w.skill.SourceHarness}
 		files, exists := cached[source]
 		if !exists {
 			if hook, ok := w.skill.Resource.(*ir.Hook); ok && w.skill.IsMarketplace && len(hook.SupportFiles) > 0 {
-				names := make([]string, 0, len(hook.SupportFiles))
-				for name := range hook.SupportFiles {
-					names = append(names, name)
-				}
-				sort.Strings(names)
-				files = hookSupportArtifacts(source.path, names, w.target)
-			} else {
-				files = collectHookSupportFiles(source.path, w.target, source.harness)
+				continue
 			}
+			files = collectHookSupportFiles(source.path, w.target, source.harness)
 			cached[source] = files
 		}
 		support[i] = files

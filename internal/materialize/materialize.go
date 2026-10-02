@@ -770,6 +770,13 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if hasBinding {
 			aggregateHandler = binding.handler
 		}
+		mirrorFiles, supportErr := readMirroredHookSupport(w.skill)
+		if supportErr != nil {
+			blockResource(key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+			allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.support-source.missing", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: "Hook support could not be verified; keeping the previous installation"})
+			continue
+		}
 		if paths := supportConflicts[index]; len(paths) > 0 {
 			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
@@ -787,15 +794,22 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			w.skill.Resource = renamed
 		}
 		compileOptions := []hcc.Option{}
-		resource, err := mirroredHookForTarget(w, repoRoot)
-		if err != nil {
-			blockResource(key, w)
-			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
-			allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.hook.support-destination", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: err.Error()})
-			continue
-		}
-		w.skill.Resource = resource
-		if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
+		if w.skill.Resource.Kind() == ir.KindHook && w.skill.IsMarketplace {
+			if len(mirrorFiles) > 0 {
+				base, files, err := mirroredHookSupportPlan(w, repoRoot, mirrorFiles)
+				if err != nil {
+					blockResource(key, w)
+					markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+					allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeHookSupportPathUnrepresentable, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: "Hook support destination is unavailable; keeping the previous installation"})
+					continue
+				}
+				compileOptions = append(compileOptions, hcc.WithPluginRoot(base))
+				hookSupport[index] = files
+			}
+			if w.machineScope {
+				compileOptions = append(compileOptions, hcc.WithScope(hcc.ScopeUser))
+			}
+		} else if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
 			compileOptions = append(compileOptions, hcc.WithPluginRoot(pluginRoot))
 		}
 		// Resources that emit merge-with-existing JSON fragments must carry the
@@ -871,7 +885,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		// not workspace-level hooks (.factory/hooks/). Repository hooks run
 		// from the repo root, so their paths can be relative. Machine hooks
 		// run from any repo and must always use the absolute machine root.
-		if resourceKind == ir.KindHook && !harness.IsInstallationAdapterTarget(w.target) {
+		if resourceKind == ir.KindHook && !w.skill.IsMarketplace && !harness.IsInstallationAdapterTarget(w.target) {
 			if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
 				pluginRoot := roots.For(w.machineScope, repoRoot)
 				if pluginRoot != "" {
@@ -1251,7 +1265,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	}
 	for _, plan := range plans {
 		regularArtifacts, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
-		if mode == config.MaterializationModeFile {
+		if mode == config.MaterializationModeFile || isHookSupportComponent(key.target, plan.reportPrefix) {
 			planRoot := outDir
 			if plan.root != "" {
 				planRoot = plan.root
@@ -1332,7 +1346,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		var writeReport *hcc.WriteReport
 		var writeDiags []diag.Diagnostic
 		var matErr error
-		if mode == config.MaterializationModeFile {
+		if mode == config.MaterializationModeFile || isHookSupportComponent(key.target, plan.reportPrefix) {
 			writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired)
 		} else {
 			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired})

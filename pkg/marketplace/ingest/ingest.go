@@ -202,6 +202,11 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				for _, name := range names {
 					clone.SupportFiles[name] = ""
 				}
+				missing, unsupported := catalog.HookSupportReferenceStatus(hook.Command, clone.SupportFiles)
+				if missing || unsupported {
+					rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: "marketplace.ingest.hook-support-unavailable", Message: "Hook assets cannot be packaged by the adjacent-file policy; keep the Git source"})
+					slog.Warn("hook assets unavailable for mirrored publication", "code", "marketplace.ingest.hook-support-unavailable", "resource", key)
+				}
 				entry.Resource = &clone
 			}
 			files, modes, err := fileSetForResource(dir, entry)
@@ -895,7 +900,7 @@ func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, map[s
 		seen[normalized] = struct{}{}
 		filePath := filepath.Join(resRoot, filepath.FromSlash(normalized))
 		if _, hook := entry.Resource.(*hccir.Hook); hook {
-			data, executable, err := readHookSupportFile(resRoot, normalized)
+			data, executable, err := readHookSupportFile(dir, filepath.ToSlash(filepath.Join(relRoot, normalized)))
 			if err != nil {
 				return nil, nil, fmt.Errorf("read hook support file %q: %w", rel, err)
 			}

@@ -3,6 +3,8 @@ package catalog
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -34,18 +36,40 @@ func HookSupportExclusions(sourcePath, sourceHarness string) map[string]bool {
 	if !ok {
 		return excluded
 	}
-	files := append(append([]string(nil), info.AggregateFiles.Project...), info.AggregateFiles.User...)
-	for _, source := range files {
-		if filepath.Base(source) != primary {
-			continue
-		}
-		for _, sibling := range files {
-			if filepath.Dir(source) == filepath.Dir(sibling) {
-				excluded[filepath.Base(sibling)] = true
+	groups := [...][]string{info.AggregateFiles.Project, info.AggregateFiles.User}
+	for _, group := range groups {
+		for _, source := range group {
+			if filepath.Base(source) != primary {
+				continue
+			}
+			for _, siblings := range groups {
+				for _, sibling := range siblings {
+					if filepath.Dir(source) == filepath.Dir(sibling) {
+						excluded[filepath.Base(sibling)] = true
+					}
+				}
 			}
 		}
 	}
 	return excluded
+}
+
+var hookAssetReference = regexp.MustCompile(`\$(?:\{(?:CLAUDE|DROID)_PLUGIN_ROOT\}|(?:CLAUDE|DROID)_PLUGIN_ROOT)/hooks/([^\s"';&|<>()$` + "`" + `]+)`)
+var hookPluginReference = regexp.MustCompile(`\$(?:\{(?:CLAUDE|DROID)_PLUGIN_ROOT\}|(?:CLAUDE|DROID)_PLUGIN_ROOT\b)`)
+
+// HookSupportReferenceStatus distinguishes missing adjacent assets from
+// plugin-root expressions outside the adjacent-file distribution policy.
+func HookSupportReferenceStatus(command string, declared map[string]string) (missing, unsupported bool) {
+	for _, reference := range hookAssetReference.FindAllStringSubmatch(command, -1) {
+		if strings.Contains(reference[1], "/") {
+			unsupported = true
+		} else if _, exists := declared[reference[1]]; !exists {
+			missing = true
+		}
+		command = strings.ReplaceAll(command, reference[0], "")
+	}
+	unsupported = unsupported || hookPluginReference.MatchString(command)
+	return missing, unsupported
 }
 
 // HookMaterializationSupportFiles is shared by publication and installation.

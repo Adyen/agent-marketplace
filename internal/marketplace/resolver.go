@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -37,7 +36,7 @@ var ErrArtifactSourcePath = errors.New("marketplace artifact source path is inva
 var ErrHookSupportMissing = errors.New("marketplace.hook.support-missing")
 var ErrHookSupportIntegrity = errors.New("marketplace.hook.support-integrity")
 
-var mirroredHookAssetReference = regexp.MustCompile(`\$\{(?:CLAUDE|DROID)_PLUGIN_ROOT\}/hooks/([^\s"';&|<>()$` + "`" + `]+)`)
+var ErrHookSupportUnsupported = errors.New("marketplace.hook.support-unsupported")
 
 // Resolver resolves Marketplace entries into resolver.ResolvedArtifact values.
 type Resolver struct {
@@ -535,7 +534,13 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	}
 	stagedDir, err := stageMirrorResource(cache, archiveDigest, resource, ca)
 	if err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		if !errors.Is(err, ErrHookSupportMissing) && !errors.Is(err, ErrHookSupportUnsupported) {
+			cache.InvalidateArtifactVerified(archiveDigest)
+		} else if !verified {
+			if markErr := cache.MarkArtifactVerified(archiveDigest); markErr != nil {
+				return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, markErr
+			}
+		}
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	artifact.Resource = resource
@@ -561,18 +566,20 @@ func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca h
 			declared[name] = ""
 		}
 	case *ir.Hook:
+		excluded := catalog.HookSupportExclusions(r.Source.File, r.HookSource)
+		excluded["hooks.json"] = true
 		for name, expected := range r.SupportFiles {
+			if excluded[name] {
+				return "", fmt.Errorf("%w: declared support names a native definition", ErrHookSupportIntegrity)
+			}
 			declared[name] = expected
 		}
-		command := r.Command
-		for _, reference := range mirroredHookAssetReference.FindAllStringSubmatch(command, -1) {
-			if _, exists := declared[reference[1]]; !exists {
-				return "", fmt.Errorf("%w: hook %q references an unpublished plugin-root asset; keep the Git source or install a new resource revision", ErrHookSupportMissing, r.Name())
-			}
-			command = strings.ReplaceAll(command, reference[0], "")
+		missing, unsupported := catalog.HookSupportReferenceStatus(r.Command, declared)
+		if unsupported {
+			return "", fmt.Errorf("%w: hook assets fall outside the adjacent-file publication policy; keep the Git source", ErrHookSupportUnsupported)
 		}
-		if strings.Contains(command, "${CLAUDE_PLUGIN_ROOT}") || strings.Contains(command, "${DROID_PLUGIN_ROOT}") {
-			return "", fmt.Errorf("%w: hook %q has an unsupported plugin-root asset reference", ErrHookSupportMissing, r.Name())
+		if missing {
+			return "", fmt.Errorf("%w: hook references an unpublished adjacent asset; keep the Git source or publish a revision containing the file", ErrHookSupportMissing)
 		}
 	default:
 		return "", nil
@@ -654,8 +661,7 @@ func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca h
 	return staged, nil
 }
 
-// Aggregate-only harnesses execute these files directly. Do not remove and
-// recreate an intact stage during ordinary sync while a hook may be running.
+// An intact stage stays byte- and inode-identical across repeated resolution.
 func mirrorHookStageMatches(root, dir string, support map[string]hccartifact.SupportFile) (bool, error) {
 	seen := 0
 	matches := true
@@ -878,6 +884,9 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	var supportFiles []string
+	if hook, ok := resource.(*ir.Hook); ok && len(hook.SupportFiles) > 0 {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("%w: index-only hooks cannot declare mirrored support files", ErrHookSupportIntegrity)
+	}
 	if skill, ok := resource.(*ir.Skill); ok {
 		supportFiles = skill.SupportFiles
 	}

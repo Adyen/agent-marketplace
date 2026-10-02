@@ -489,11 +489,18 @@ func assertPublicGateHookScript(t *testing.T, consumer *Env) {
 	if len(hooks["PreToolUse"]) != 1 || len(hooks["PreToolUse"][0].Hooks) != 1 {
 		t.Fatalf("expected the published hook: %v", hooks)
 	}
-	consumer.AssertFileContains("/workspace/.factory/hooks/run.sh", "echo hook")
+	scripts, err := filepath.Glob(filepath.Join(consumer.workspace, ".factory", "hook-support", "*", "PreToolUse-command", "hooks", "run.sh"))
+	if err != nil || len(scripts) != 1 {
+		t.Fatalf("installed hook script: %v, %v", scripts, err)
+	}
+	if data, err := os.ReadFile(scripts[0]); err != nil || !strings.Contains(string(data), "echo hook") {
+		t.Fatalf("published script: %q, %v", data, err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "/bin/sh", "-c", hooks["PreToolUse"][0].Hooks[0].Command)
 	command.Dir = consumer.workspace
+	command.Env = append(os.Environ(), "FACTORY_PROJECT_DIR="+consumer.workspace)
 	if output, err := command.CombinedOutput(); err != nil || string(output) != "hook\n" {
 		t.Fatalf("published hook command failed: %q, %v", output, err)
 	}

@@ -210,7 +210,11 @@ func TestMirrorHookSupportFilesInstall(t *testing.T) {
 				root = os.Getenv("HOME")
 			}
 			hooksDir := filepath.Join(root, ".factory", "hooks")
-			script := filepath.Join(hooksDir, "run.sh")
+			scripts, err := filepath.Glob(filepath.Join(root, ".factory", "hook-support", "*", "PreToolUse-command", "hooks", "run.sh"))
+			if err != nil || len(scripts) != 1 {
+				t.Fatalf("installed support paths: %v, %v", scripts, err)
+			}
+			script := scripts[0]
 			data, err := os.ReadFile(script)
 			if err != nil || string(data) != "#!/bin/sh\necho mirror-hook\n" {
 				t.Fatalf("script: %q, %v", data, err)
@@ -219,7 +223,7 @@ func TestMirrorHookSupportFilesInstall(t *testing.T) {
 			if err != nil || info.Mode().Perm()&0o111 == 0 {
 				t.Fatalf("script executable: %v, %v", info, err)
 			}
-			if data, err := os.ReadFile(filepath.Join(hooksDir, "helper.py")); err != nil || string(data) != "print('support')\n" {
+			if data, err := os.ReadFile(filepath.Join(filepath.Dir(script), "helper.py")); err != nil || string(data) != "print('support')\n" {
 				t.Fatalf("helper: %q, %v", data, err)
 			}
 			aggregate, err := os.ReadFile(filepath.Join(hooksDir, "hooks.json"))
@@ -236,6 +240,7 @@ func TestMirrorHookSupportFilesInstall(t *testing.T) {
 			}
 			installedCommand := hooks["PreToolUse"][0].Hooks[0].Command
 			command := exec.Command("/bin/sh", "-c", installedCommand)
+			command.Env = append(os.Environ(), "FACTORY_PROJECT_DIR="+repo)
 			command.Dir = t.TempDir()
 			if !machine {
 				command.Dir = repo
