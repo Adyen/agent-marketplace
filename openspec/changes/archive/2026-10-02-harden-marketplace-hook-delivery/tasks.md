@@ -9,4 +9,4 @@
 ## 2. Verification
 - [x] 2.1 Run affected packages, benchmarks, validation, spec checks, and E2E
 - [x] 2.2 Adversarial review the stacked diff and document inherited failures
-- [ ] 2.3 Archive this change after validation
+- [x] 2.3 Archive this change after validation
