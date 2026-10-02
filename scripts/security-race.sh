@@ -67,3 +67,7 @@ run_race ./internal/materialize \
 run_race ./internal/materialize \
     -run '^TestRun(HookSupportSourceRefusalPreservesNativeContent|ContainedHookSupportAliasKeepsNativeContentAndMode|HookSourceRefusalKeepsIndependentNativeWork|GeminiWithoutHookSupportLaneDoesNotReadSources)$' \
     -count=20
+
+run_race ./internal/materialize \
+    -run '^TestRun(PortableManifestAliasRefusalPreservesNativeOutput|ContainedPortableManifestParentAliasRetainsNativeUpdates|ReadOnlyPortableManifestParentRefusalIsNotAbsence|PortableManifestUnsafeShapesDoNotInstall)$' \
+    -count=20
