@@ -65,17 +65,9 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 				}
 				continue
 			}
-			source, err := fsboundary.CaptureDestination(root, child, fsboundary.LinkPolicyRepository)
+			data, identity, err := readSupportSourceSnapshot(root, child)
 			if err != nil {
 				return err
-			}
-			data, identity, readErr := source.ReadTarget(source.Identity().Size)
-			closeErr := source.Close()
-			if readErr != nil {
-				return readErr
-			}
-			if closeErr != nil {
-				return closeErr
 			}
 			if err := write(destinationPath, data, identity.Mode); err != nil {
 				return err
@@ -84,6 +76,15 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 		return nil
 	}
 	return walk(".")
+}
+
+func readSupportSourceSnapshot(root *fsboundary.Dir, rel string) ([]byte, fsboundary.Identity, error) {
+	source, err := fsboundary.CaptureDestination(root, rel, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return nil, fsboundary.Identity{}, err
+	}
+	data, identity, err := source.ReadTarget(source.Identity().Size)
+	return data, identity, errors.Join(err, source.Close())
 }
 
 func readSupportSourceDirectory(root *fsboundary.Dir, rel string) ([]os.DirEntry, error) {
