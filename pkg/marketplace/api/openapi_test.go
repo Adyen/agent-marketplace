@@ -147,8 +147,9 @@ func TestOpenAPIAdminAuthDocumentsBrowserAndJSONErrors(t *testing.T) {
 			}
 			properties, _ := schema["properties"].(map[string]any)
 			for _, field := range []string{"code", "message"} {
-				if _, ok := properties[field].(map[string]any); !ok {
-					t.Errorf("%s %s error schema omits property %q", path, status, field)
+				property, ok := properties[field].(map[string]any)
+				if !ok || property["type"] != "string" {
+					t.Errorf("%s %s error schema property %q is not a string schema: %v", path, status, field, properties[field])
 				}
 				required, _ := schema["required"].([]any)
 				if !slices.ContainsFunc(required, func(item any) bool { return item == field }) {
