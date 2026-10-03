@@ -18,7 +18,10 @@ func publishPortableFile(src, dst string, observed os.FileInfo, boundary *destin
 	}
 	file, err := source.Open(filepath.Base(src))
 	if err != nil {
-		return errors.Join(err, source.Close())
+		if closeErr := source.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return err
 	}
 	info, statErr := file.Stat()
 	data, readErr := io.ReadAll(file)
@@ -117,10 +120,16 @@ func publishPortableBytes(dst string, data []byte, mode os.FileMode, observed os
 		}
 	}()
 	if err := stagedFile.Chmod(mode.Perm()); err != nil {
-		return errors.Join(err, stagedFile.Close())
+		if closeErr := stagedFile.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return err
 	}
 	if _, err := stagedFile.Write(data); err != nil {
-		return errors.Join(err, stagedFile.Close())
+		if closeErr := stagedFile.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return err
 	}
 	stagedInfo, statErr := stagedFile.Stat()
 	if closeErr := stagedFile.Close(); statErr != nil || closeErr != nil {

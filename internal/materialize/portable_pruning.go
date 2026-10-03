@@ -14,7 +14,62 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
-func removePortableOutput(dst string, observed os.FileInfo, wantDigest string, boundary *destinationBoundary) (err error) {
+type managedLinkSnapshot struct {
+	observed os.FileInfo
+	text     string
+}
+
+func observeManagedLink(path string) (managedLinkSnapshot, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return managedLinkSnapshot{}, err
+	}
+	snapshot := managedLinkSnapshot{observed: info}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return snapshot, nil
+	}
+	snapshot.text, err = os.Readlink(path)
+	if err != nil {
+		return managedLinkSnapshot{}, err
+	}
+	fresh, err := os.Lstat(path)
+	if err != nil {
+		return managedLinkSnapshot{}, err
+	}
+	before, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return managedLinkSnapshot{}, err
+	}
+	after, err := fsboundary.FileInfoIdentity(fresh)
+	if err != nil {
+		return managedLinkSnapshot{}, err
+	}
+	if !before.SameState(after) {
+		return managedLinkSnapshot{}, fsboundary.ErrGenerationConflict
+	}
+	return snapshot, nil
+}
+
+func missingPruneEntry(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrGenerationConflict) &&
+		!errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile)
+}
+
+func pruneManagedLink(dst string, snapshot managedLinkSnapshot, boundary *destinationBoundary, dryRun bool) error {
+	if snapshot.observed == nil || snapshot.observed.Mode()&os.ModeSymlink == 0 || snapshot.text == "" {
+		return fsboundary.ErrGenerationConflict
+	}
+	if boundary != nil && boundary.pruneClassificationHook != nil {
+		boundary.pruneClassificationHook(dst)
+	}
+	return prunePortableOutput(dst, snapshot.observed, "", snapshot.text, boundary, dryRun)
+}
+
+func removePortableOutput(dst string, observed os.FileInfo, wantDigest string, boundary *destinationBoundary) error {
+	return prunePortableOutput(dst, observed, wantDigest, "", boundary, false)
+}
+
+func prunePortableOutput(dst string, observed os.FileInfo, wantDigest, wantLinkText string, boundary *destinationBoundary, dryRun bool) (err error) {
 	parent, err := capturePortableParent(dst, boundary, false)
 	if err != nil {
 		if observed == nil && errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) {
@@ -61,6 +116,9 @@ func removePortableOutput(dst string, observed os.FileInfo, wantDigest string, b
 			}
 			return fmt.Errorf("%w: portable prune destination appeared", fsboundary.ErrGenerationConflict)
 		}
+		if missingPruneEntry(err) && wantLinkText != "" {
+			return err
+		}
 		if err != nil {
 			return fmt.Errorf("%w: portable prune destination unavailable: %w", fsboundary.ErrGenerationConflict, err)
 		}
@@ -79,7 +137,7 @@ func removePortableOutput(dst string, observed os.FileInfo, wantDigest string, b
 			if err != nil {
 				return err
 			}
-			if !strings.HasPrefix(text, cache.CacheDir()+string(os.PathSeparator)) {
+			if (wantLinkText != "" && text != wantLinkText) || !strings.HasPrefix(text, cache.CacheDir()+string(os.PathSeparator)) {
 				return fsboundary.ErrGenerationConflict
 			}
 		}
@@ -116,22 +174,30 @@ func removePortableOutput(dst string, observed os.FileInfo, wantDigest string, b
 	if err := verify(); err != nil {
 		return err
 	}
-	if observed == nil {
+	if observed == nil || dryRun {
 		return nil
 	}
 	return native.RemoveAll(name)
 }
 
 func removeEmptyPortableDirectory(rootPath, directoryPath string, boundary *destinationBoundary) (err error) {
+	if rootPath == "" || directoryPath == "" {
+		return fmt.Errorf("%w: empty portable cleanup path", fsboundary.ErrUnsafePath)
+	}
+	// Keep the lexical root: root.Path() may have a different alias topology.
+	rootPath, err = filepath.Abs(rootPath)
+	if err != nil {
+		return err
+	}
+	directoryPath, err = filepath.Abs(directoryPath)
+	if err != nil {
+		return err
+	}
 	var root *fsboundary.Dir
 	if boundary != nil {
 		root, err = boundary.captureDirectory(rootPath, false)
 	} else {
-		var absolute string
-		absolute, err = filepath.Abs(rootPath)
-		if err == nil {
-			root, err = fsboundary.OpenDir(absolute)
-		}
+		root, err = fsboundary.OpenDir(rootPath)
 	}
 	if err != nil {
 		return err

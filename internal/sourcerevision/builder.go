@@ -100,6 +100,10 @@ func Build(input Input) (result Result, err error) {
 		return Result{}, fmt.Errorf("capture revision source: %w", err)
 	}
 	defer func() {
+		if refusal := source.Refusal(); refusal != nil {
+			result = Result{}
+			err = fmt.Errorf("%w: source refused: %w", ErrCatalog, errors.Join(err, refusal))
+		}
 		if closeErr := source.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
@@ -107,6 +111,9 @@ func Build(input Input) (result Result, err error) {
 	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks, LegacyBareMCP: !contract.BareBundleMCP}
 	cat, err := catalog.LoadWithOptions(root, input.SourceHarness, options)
 	loaded := cat
+	if fsboundary.IsSourceRefusal(err) {
+		return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, err)
+	}
 	if cat != nil && cat.SourceRefusal() != nil {
 		return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, cat.SourceRefusal())
 	}
@@ -114,6 +121,11 @@ func Build(input Input) (result Result, err error) {
 		discovered, discoverErr := catalog.DiscoverWithOptions(root, input.SourceHarness, options)
 		if discoverErr != nil {
 			return Result{}, fmt.Errorf("%w: load root %q: %w", ErrCatalog, input.RootPath, errors.Join(err, discoverErr))
+		}
+		for _, discoveryErr := range discovered.Errors {
+			if fsboundary.IsSourceRefusal(discoveryErr) {
+				return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, discoveryErr)
+			}
 		}
 		if err != nil || len(discovered.Entries) > 0 {
 			sourceHarness := input.SourceHarness
@@ -167,7 +179,7 @@ func Build(input Input) (result Result, err error) {
 
 		resource, err := buildResource(root, source, entry, contract)
 		if err != nil {
-			if errors.Is(err, ErrPathEscape) || errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) {
+			if errors.Is(err, ErrPathEscape) || fsboundary.IsSourceRefusal(err) {
 				return Result{}, fmt.Errorf("%w: build %s: %w", ErrCatalog, key, err)
 			}
 			warnings = append(warnings, ResourceWarning{Kind: kind, Name: entry.Name, Reason: "resource could not be built: " + err.Error()})
@@ -331,7 +343,24 @@ func buildResource(root string, source *fsboundary.SourceFS, entry catalog.Entry
 	return revisionResource{Kind: entry.Kind.String(), Name: entry.Name, ContentDigest: digest, ArchiveDigest: contentDigest(archiveInput), SupportFiles: support}, nil
 }
 
-func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog.Entry) ([]byte, error) {
+func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog.Entry) (data []byte, err error) {
+	defer func() {
+		if entry.PrimarySourcePath != "" && entry.PrimarySourcePath == entry.Path && errors.Is(err, fs.ErrNotExist) && !fsboundary.IsSourceRefusal(err) {
+			err = fmt.Errorf("%w: admitted primary %q disappeared: %w", fsboundary.ErrGenerationConflict, entry.Path, err)
+		}
+	}()
+	if entry.Kind != ir.KindCollection && entry.PrimarySourcePath != "" && entry.PrimarySourcePath != entry.Path {
+		rel, err := lexicallyContained(root, entry.PrimarySourcePath)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := source.ReadFile(filepath.ToSlash(rel)); err != nil {
+			if errors.Is(err, fs.ErrNotExist) && !fsboundary.IsSourceRefusal(err) {
+				err = fmt.Errorf("%w: admitted primary %q disappeared: %w", fsboundary.ErrGenerationConflict, entry.PrimarySourcePath, err)
+			}
+			return nil, err
+		}
+	}
 	// Collections digest over their canonical IR serialization, never the raw
 	// collection definition file: entry.Path is populated for collections so
 	// consumers can locate the definition file, but hashing that file would
@@ -352,7 +381,7 @@ func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog
 		if err == nil {
 			return data, nil
 		}
-		if !errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) {
+		if entry.PrimarySourcePath == entry.Path || !errors.Is(err, fs.ErrNotExist) || fsboundary.IsSourceRefusal(err) {
 			return nil, err
 		}
 	}
@@ -366,7 +395,7 @@ func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog
 		copy.Source = ir.SourceRef{}
 		resource = &copy
 	}
-	data, err := json.Marshal(resource)
+	data, err = json.Marshal(resource)
 	if err != nil {
 		return nil, fmt.Errorf("encode canonical resource: %w", err)
 	}

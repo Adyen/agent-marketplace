@@ -140,12 +140,8 @@ func publishPortableTree(src, dst string, observed os.FileInfo, ownershipDigest 
 		return err
 	}
 	defer func() {
-		current, inspectErr := native.Lstat(stagedName)
-		if inspectErr == nil {
-			identity, identityErr := fsboundary.FileInfoIdentity(current)
-			if identityErr == nil && identity.SameObject(createdID) {
-				_ = native.RemoveAll(stagedName)
-			}
+		if cleanupErr := cleanupPortableTreeStage(native, stagedName, createdID); cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
 		}
 	}()
 	staged, err := native.OpenRoot(stagedName)
@@ -209,6 +205,30 @@ func publishPortableTree(src, dst string, observed os.FileInfo, ownershipDigest 
 		}
 	}
 	return native.Rename(stagedName, name)
+}
+
+func cleanupPortableTreeStage(native interface {
+	Lstat(string) (os.FileInfo, error)
+	RemoveAll(string) error
+}, stagedName string, createdID fsboundary.Identity) error {
+	current, err := native.Lstat(stagedName)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect portable staged tree %s: %w", stagedName, err)
+	}
+	identity, err := fsboundary.FileInfoIdentity(current)
+	if err != nil {
+		return fmt.Errorf("identify portable staged tree %s: %w", stagedName, err)
+	}
+	if !identity.SameObject(createdID) {
+		return nil
+	}
+	if err := native.RemoveAll(stagedName); err != nil {
+		return fmt.Errorf("remove portable staged tree %s: %w", stagedName, err)
+	}
+	return nil
 }
 
 func copyPortableTreeContents(source fs.FS, destination *os.Root, dir string) error {
