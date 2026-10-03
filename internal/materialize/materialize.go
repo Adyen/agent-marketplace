@@ -3304,13 +3304,25 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 			return report, diags, err
 		}
 		diags = append(diags, staleDiags...)
-		report.Removed = stale
+		if dryRun {
+			report.Removed = stale
+		}
 		if !dryRun {
 			for _, path := range stale {
-				if err := os.RemoveAll(filepath.Join(outDir, filepath.FromSlash(path))); err != nil && !os.IsNotExist(err) {
+				leaf := filepath.Join(outDir, filepath.FromSlash(path))
+				observed, err := os.Lstat(leaf)
+				if err != nil {
 					return report, diags, err
 				}
-				cleanEmptyArtifactDirs(outDir, filepath.Dir(filepath.FromSlash(path)))
+				var boundary *destinationBoundary
+				if len(portable) > 0 {
+					boundary = portable[0].boundary
+				}
+				if err := removePortableOutput(leaf, observed, "", boundary); err != nil {
+					return report, diags, err
+				}
+				report.Removed = append(report.Removed, path)
+				cleanEmptyPortableArtifactDirs(outDir, filepath.Dir(filepath.FromSlash(path)), boundary)
 			}
 		}
 	}
@@ -3929,13 +3941,22 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			}
 			continue
 		}
-		report.Removed = append(report.Removed, name)
 		if dryRun {
+			report.Removed = append(report.Removed, name)
 			continue
 		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		observed, err := os.Lstat(path)
+		if err != nil {
 			return report, err
 		}
+		var boundary *destinationBoundary
+		if len(portable) > 0 {
+			boundary = portable[0].boundary
+		}
+		if err := removePortableOutput(path, observed, "", boundary); err != nil {
+			return report, err
+		}
+		report.Removed = append(report.Removed, name)
 	}
 
 	return report, nil
