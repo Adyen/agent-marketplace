@@ -1515,7 +1515,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	var portableDiags []diag.Diagnostic
 	var portableErr error
 	if !anyBlocked(blocked) {
-		portableReports, portableDiags, portableErr = prunePortableEntries(state, key, outDir, repoRoot, fileDesired, dryRun)
+		portableReports, portableDiags, portableErr = prunePortableEntries(state, key, outDir, repoRoot, fileDesired, dryRun, &boundary)
 	}
 	if portableErr != nil {
 		slog.Error("materialize manifest prune failed", "target", key.target, "machine_scope", key.machineScope, "error", portableErr)
@@ -3048,7 +3048,7 @@ func portableSkillCollision(dst string, link skillLink) diag.Diagnostic {
 	return diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityWarning, Resource: link.resourceName, Message: collisionRemoveHint(dst, link.name, link)}
 }
 
-func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot string, desired map[string]bool, dryRun bool) ([]TargetReport, []diag.Diagnostic, error) {
+func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot string, desired map[string]bool, dryRun bool, boundaries ...*destinationBoundary) ([]TargetReport, []diag.Diagnostic, error) {
 	reports := make(map[string]*TargetReport)
 	var diags []diag.Diagnostic
 	keys := make([]string, 0, len(state.entries))
@@ -3075,7 +3075,7 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 		if err != nil {
 			return nil, diags, err
 		}
-		_, err = os.Lstat(path)
+		observed, err := os.Lstat(path)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, diags, err
 		}
@@ -3094,7 +3094,17 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 			}
 		}
 		if !dryRun {
-			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			boundary := &destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, roots: []string{root}}
+			if key.machineScope {
+				boundary.homeDir, err = os.UserHomeDir()
+				if err != nil {
+					return nil, diags, err
+				}
+			}
+			if len(boundaries) > 0 && boundaries[0] != nil {
+				boundary = boundaries[0]
+			}
+			if err := removeOwnedPortablePath(path, observed, entry.Digest, boundary); err != nil {
 				return nil, diags, err
 			}
 			cleanEmptyPortableArtifactDirs(root, filepath.Dir(filepath.FromSlash(rel)))
