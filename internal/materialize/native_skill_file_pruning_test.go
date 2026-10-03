@@ -6,15 +6,23 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 // spec: materialization/native-command-pruning-preserves-replacement
-func TestNativeSkillMarkedFilePruning(t *testing.T) {
-	for _, mutation := range []string{"replacement", "disappearance", "healthy", "dry-run"} {
-		t.Run(mutation, func(t *testing.T) {
+func TestNativeSkillMarkedFilePruning(t *testing.T) { testNativeMarkedFilePruning(t, false) }
+
+// spec: materialization/native-command-pruning-preserves-replacement
+func TestNativeCommandFilePruneMissingParity(t *testing.T) { testNativeMarkedFilePruning(t, true) }
+
+func testNativeMarkedFilePruning(t *testing.T, commandLane bool) {
+	for _, testCase := range []string{"replacement", "disappearance", "healthy", "dry-healthy", "dry-replacement", "dry-disappearance", "unsafe-parent", "dry-unsafe-parent"} {
+		t.Run(testCase, func(t *testing.T) {
+			mutation := strings.TrimPrefix(testCase, "dry-")
+			dryRun := strings.HasPrefix(testCase, "dry-")
 			root := t.TempDir()
 			out := filepath.Join(root, "skills")
 			if err := os.Mkdir(out, 0o755); err != nil {
@@ -26,6 +34,10 @@ func TestNativeSkillMarkedFilePruning(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(out, n), original, 0o640); err != nil {
 					t.Fatal(err)
 				}
+			}
+			originalInfo, err := os.Lstat(leaf)
+			if err != nil {
+				t.Fatal(err)
 			}
 			unmarked := filepath.Join(out, "handwritten.md")
 			if err := os.WriteFile(unmarked, []byte("handwritten file\n"), 0o600); err != nil {
@@ -57,15 +69,35 @@ func TestNativeSkillMarkedFilePruning(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+				case "unsafe-parent":
+					if err := os.Rename(out, filepath.Join(root, "retained-skills")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(t.TempDir(), out); err != nil {
+						t.Fatal(err)
+					}
 				case "disappearance":
 					if err := os.Remove(leaf); err != nil {
 						t.Fatal(err)
 					}
 				}
 			}
-			report, err := syncSkillLinks(out, nil, mutation == "dry-run", true, portableSyncContext{boundary: boundary})
+			var report TargetReport
+			if commandLane {
+				report, err = syncCommandFiles(out, nil, dryRun, true, boundary)
+			} else {
+				report, err = syncSkillLinks(out, nil, dryRun, true, portableSyncContext{boundary: boundary})
+			}
 			if !hit {
 				t.Fatal("regular-file classification seam not reached")
+			}
+			if mutation == "unsafe-parent" {
+				if !errors.Is(err, fsboundary.ErrUnsafePath) || len(report.Removed) != 0 {
+					t.Fatalf("unsafe parent treated as missing: %+v %v", report, err)
+				}
+				assertNativePruneFileSnapshot(t, filepath.Join(root, "retained-skills", "a-marked.md"), original, originalInfo)
+				assertNativePruneFileSnapshot(t, filepath.Join(root, "retained-skills", "handwritten.md"), []byte("handwritten file\n"), unmarkedInfo)
+				return
 			}
 			if mutation == "replacement" {
 				if !errors.Is(err, fsboundary.ErrGenerationConflict) || slices.Contains(report.Removed, "a-marked.md") {
@@ -88,7 +120,7 @@ func TestNativeSkillMarkedFilePruning(t *testing.T) {
 				}
 				for _, n := range want {
 					path := filepath.Join(out, n)
-					if mutation == "dry-run" {
+					if dryRun {
 						if data, err := os.ReadFile(path); err != nil || !bytes.Equal(data, original) {
 							t.Fatalf("dry-run changed marked file: %q %v", data, err)
 						}

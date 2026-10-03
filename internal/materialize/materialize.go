@@ -3935,12 +3935,12 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				boundary.pruneClassificationHook(path)
 			}
 			if dryRun {
-				report.Removed = append(report.Removed, name)
-				continue
+				_, err = readNativeCommandFile(path, observed, boundary)
+			} else {
+				err = removeNativeCommandFile(path, observed, boundary)
 			}
-			if err := removeNativeCommandFile(path, observed, boundary); err != nil {
-				if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrGenerationConflict) &&
-					!errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) {
+			if err != nil {
+				if missingNativeCommandPruneEntry(err) {
 					continue
 				}
 				return report, err
@@ -4126,16 +4126,24 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 				continue
 			}
 		}
-		if dryRun {
-			report.Removed = append(report.Removed, name)
-			continue
-		}
 		var boundary *destinationBoundary
 		if len(boundaries) > 0 {
 			boundary = boundaries[0]
 		}
-		if err := removeNativeCommandFile(path, info, boundary); err != nil {
-			return err
+		if boundary != nil && boundary.pruneClassificationHook != nil {
+			boundary.pruneClassificationHook(path)
+		}
+		var cleanupErr error
+		if dryRun && info.Mode().IsRegular() {
+			_, cleanupErr = readNativeCommandFile(path, info, boundary)
+		} else if !dryRun {
+			cleanupErr = removeNativeCommandFile(path, info, boundary)
+		}
+		if cleanupErr != nil {
+			if missingNativeCommandPruneEntry(cleanupErr) {
+				continue
+			}
+			return cleanupErr
 		}
 		report.Removed = append(report.Removed, name)
 	}
