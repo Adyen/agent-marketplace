@@ -2928,9 +2928,11 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 			}
 		} else {
 			err = addSupport(root, ".")
-			closeErr := root.Close()
-			if err != nil || closeErr != nil {
+			if closeErr := root.Close(); closeErr != nil {
 				return "", errors.Join(err, closeErr)
+			}
+			if err != nil {
+				return "", err
 			}
 		}
 	}
