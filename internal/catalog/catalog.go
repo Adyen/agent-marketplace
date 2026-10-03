@@ -288,6 +288,8 @@ type IngestOptions struct {
 	LegacyBareMCP       bool
 }
 
+func (c *Catalog) SourceRefusal() error { return c.sourceRefusal }
+
 // Load discovers resources from a directory on disk using HCC IngestBundle,
 // filtered to KindSkill. The sourceHarness parameter controls the ingest
 // format; empty string triggers autodetection via ingest.Autodetect.

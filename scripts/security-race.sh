@@ -83,3 +83,7 @@ run_race ./internal/materialize \
 run_race ./internal/catalog ./internal/fsboundary \
     -run '^Test(LoadPrimarySource.*|SourceFSKeepsCapturedRootAndDirectoryInfo)$' \
     -count=20
+
+run_race ./internal/sourcerevision \
+    -run '^TestBuildSourceHash.*$' \
+    -count=20

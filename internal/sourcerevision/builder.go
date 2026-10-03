@@ -17,6 +17,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -32,6 +33,7 @@ type Input struct {
 	RootPath       string
 	SourceHarness  string
 	RevisionSchema string
+	beforeHash     func(string)
 }
 
 type Result struct {
@@ -80,7 +82,7 @@ func (r Result) Projection() Projection {
 	return Projection{SourceHarness: r.SourceHarness, RevisionSchema: r.Manifest.SchemaVersion, RevisionDigest: r.Manifest.RevisionDigest, Resources: resources}
 }
 
-func Build(input Input) (Result, error) {
+func Build(input Input) (result Result, err error) {
 	if input.RevisionSchema == "" {
 		input.RevisionSchema = lockfile.CurrentRevisionSchema
 	}
@@ -93,9 +95,21 @@ func Build(input Input) (Result, error) {
 		return Result{}, err
 	}
 
+	source, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		return Result{}, fmt.Errorf("capture revision source: %w", err)
+	}
+	defer func() {
+		if closeErr := source.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks, LegacyBareMCP: !contract.BareBundleMCP}
 	cat, err := catalog.LoadWithOptions(root, input.SourceHarness, options)
 	loaded := cat
+	if cat != nil && cat.SourceRefusal() != nil {
+		return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, cat.SourceRefusal())
+	}
 	if err != nil || len(cat.Entries) == 0 {
 		discovered, discoverErr := catalog.DiscoverWithOptions(root, input.SourceHarness, options)
 		if discoverErr != nil {
@@ -139,6 +153,9 @@ func Build(input Input) (Result, error) {
 		}
 		seen[key] = struct{}{}
 	}
+	if input.beforeHash != nil {
+		input.beforeHash(root)
+	}
 	for _, entry := range entries {
 		kind := entry.Kind.String()
 		key := kind + "/" + entry.Name
@@ -148,9 +165,9 @@ func Build(input Input) (Result, error) {
 			continue
 		}
 
-		resource, err := buildResource(root, entry, contract)
+		resource, err := buildResource(root, source, entry, contract)
 		if err != nil {
-			if errors.Is(err, ErrPathEscape) {
+			if errors.Is(err, ErrPathEscape) || errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) {
 				return Result{}, fmt.Errorf("%w: build %s: %w", ErrCatalog, key, err)
 			}
 			warnings = append(warnings, ResourceWarning{Kind: kind, Name: entry.Name, Reason: "resource could not be built: " + err.Error()})
@@ -283,11 +300,11 @@ func cloneDigests(in map[string]string) map[string]string {
 	return out
 }
 
-func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRevisionContract) (revisionResource, error) {
+func buildResource(root string, source *fsboundary.SourceFS, entry catalog.Entry, contract lockfile.SourceRevisionContract) (revisionResource, error) {
 	if entry.Resource == nil {
 		return revisionResource{}, errors.New("resource is nil")
 	}
-	payload, err := resourceSourceBytes(root, entry)
+	payload, err := resourceSourceBytes(root, source, entry)
 	if err != nil {
 		return revisionResource{}, err
 	}
@@ -295,7 +312,7 @@ func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRev
 	if entry.Kind == ir.KindCollection {
 		return revisionResource{Kind: "collection", Name: entry.Name, ContentDigest: digest}, nil
 	}
-	support, err := intrinsicSupportFileDigests(root, entry, contract)
+	support, err := intrinsicSupportFileDigests(root, source, entry, contract)
 	if err != nil {
 		return revisionResource{}, err
 	}
@@ -314,7 +331,7 @@ func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRev
 	return revisionResource{Kind: entry.Kind.String(), Name: entry.Name, ContentDigest: digest, ArchiveDigest: contentDigest(archiveInput), SupportFiles: support}, nil
 }
 
-func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
+func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog.Entry) ([]byte, error) {
 	// Collections digest over their canonical IR serialization, never the raw
 	// collection definition file: entry.Path is populated for collections so
 	// consumers can locate the definition file, but hashing that file would
@@ -327,9 +344,16 @@ func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
 		if err := rejectSymlinkComponents(root, name); err != nil {
 			return nil, err
 		}
-		data, err := os.ReadFile(name)
+		rel, err := lexicallyContained(root, name)
+		if err != nil {
+			return nil, err
+		}
+		data, err := source.ReadFile(filepath.ToSlash(rel))
 		if err == nil {
 			return data, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) {
+			return nil, err
 		}
 	}
 	resource := entry.Resource
@@ -354,7 +378,7 @@ func contentDigest(data []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func intrinsicSupportFileDigests(root string, entry catalog.Entry, contract lockfile.SourceRevisionContract) (map[string]string, error) {
+func intrinsicSupportFileDigests(root string, source *fsboundary.SourceFS, entry catalog.Entry, contract lockfile.SourceRevisionContract) (map[string]string, error) {
 	var supportFiles []string
 	if skill, ok := entry.Resource.(*ir.Skill); ok {
 		supportFiles = skill.SupportFiles
@@ -392,7 +416,11 @@ func intrinsicSupportFileDigests(root string, entry catalog.Entry, contract lock
 		if err := rejectSymlinkComponents(resourceRoot, fileName); err != nil {
 			return nil, err
 		}
-		data, err := os.ReadFile(fileName)
+		rel, err := lexicallyContained(root, fileName)
+		if err != nil {
+			return nil, err
+		}
+		data, err := source.ReadFile(filepath.ToSlash(rel))
 		if err != nil {
 			return nil, fmt.Errorf("read support file %q: %w", normalized, err)
 		}
