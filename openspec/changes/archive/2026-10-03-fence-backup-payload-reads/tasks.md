@@ -4,4 +4,4 @@
 - [x] Route extraction and Codex payload preflight through captured streaming snapshots.
 - [x] Verify Linux/macOS full backup/races, measure reader costs and run validate/spec gates.
 - [x] Review every changed entry including tests/benchmark/script/spec exclusions.
-- [ ] `openspec archive fence-backup-payload-reads --yes`.
+- [x] `openspec archive fence-backup-payload-reads --yes`.
