@@ -360,6 +360,22 @@ func existingPaths(root string, relPaths []string) ([]string, error) {
 }
 
 func createArchive(root string, relPaths []string, archivePath string, mapped ...map[string]string) (err error) {
+	var source *fsboundary.Dir
+	if len(relPaths) > 0 {
+		absolute, resolveErr := filepath.Abs(root)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		source, err = fsboundary.OpenDir(absolute)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := source.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+	}
 	f, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -387,11 +403,11 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 		}
 
 		if info.IsDir() {
-			if err := archiveDir(tw, root, fullPath); err != nil {
+			if err := archiveDir(tw, source, root, fullPath); err != nil {
 				return err
 			}
 		} else {
-			if err := archiveFile(tw, root, rel, fullPath, info); err != nil {
+			if err := writeTarEntry(tw, source, rel, fullPath, rel, info); err != nil {
 				return err
 			}
 		}
@@ -411,8 +427,13 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 			if !info.Mode().IsRegular() {
 				return fmt.Errorf("backup: mapped file is not regular")
 			}
-			if err := writeTarEntry(tw, files[key], key, info); err != nil {
+			parent, err := fsboundary.OpenDir(filepath.Dir(files[key]))
+			if err != nil {
 				return err
+			}
+			writeErr := writeTarEntry(tw, parent, filepath.Base(files[key]), files[key], key, info)
+			if closeErr := parent.Close(); writeErr != nil || closeErr != nil {
+				return errors.Join(writeErr, closeErr)
 			}
 		}
 	}
@@ -466,7 +487,7 @@ func backupArchiveKey(path string) (string, int) {
 	return prefix, seq
 }
 
-func archiveDir(tw *tar.Writer, root, fullPath string) error {
+func archiveDir(tw *tar.Writer, source *fsboundary.Dir, root, fullPath string) error {
 	return filepath.WalkDir(fullPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -482,15 +503,11 @@ func archiveDir(tw *tar.Writer, root, fullPath string) error {
 		if entryRel == "." {
 			return nil
 		}
-		return writeTarEntry(tw, path, entryRel, info)
+		return writeTarEntry(tw, source, entryRel, path, entryRel, info)
 	})
 }
 
-func archiveFile(tw *tar.Writer, root, rel, fullPath string, info fs.FileInfo) error {
-	return writeTarEntry(tw, fullPath, rel, info)
-}
-
-func writeTarEntry(tw *tar.Writer, fullPath, rel string, info fs.FileInfo) error {
+func writeTarEntry(tw *tar.Writer, source *fsboundary.Dir, sourceRel, fullPath, rel string, info fs.FileInfo) error {
 	var link string
 	isSymlink := info.Mode()&fs.ModeSymlink != 0
 	if isSymlink {
@@ -515,16 +532,7 @@ func writeTarEntry(tw *tar.Writer, fullPath, rel string, info fs.FileInfo) error
 		return nil
 	}
 
-	src, err := os.Open(fullPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = src.Close() }()
-
-	if _, err := io.Copy(tw, src); err != nil {
-		return err
-	}
-	return nil
+	return writeCapturedBackupSource(tw, source, sourceRel, info)
 }
 
 func extractArchive(archivePath, dstDir string, mapped ...map[string]string) error {
