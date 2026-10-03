@@ -94,7 +94,11 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 			return fmt.Errorf("unknown or unsupported source harness %q; must be one of: %v", from, conversionHarnesses)
 		}
 	}
-	srcFS, err := fsboundary.OpenSourceFS(srcPath)
+	canonicalSource, err := canonicalConversionPath(srcPath)
+	if err != nil {
+		return fmt.Errorf("resolve conversion source path %q: %w", srcPath, err)
+	}
+	srcFS, err := fsboundary.OpenSourceFS(canonicalSource)
 	if err != nil {
 		return fmt.Errorf("capture conversion source: %w", err)
 	}
@@ -120,16 +124,12 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	if outDir == "" {
 		outDir = srcPath + "-" + to
 	}
-	if err := rejectConversionSourceOutputOverlap(srcPath, outDir); err != nil {
-		return err
-	}
-	canonicalSource, err := canonicalConversionPath(srcPath)
-	if err != nil {
-		return fmt.Errorf("resolve conversion source path %q: %w", srcPath, err)
-	}
 	canonicalOutput, err := canonicalConversionPath(outDir)
 	if err != nil {
 		return fmt.Errorf("resolve conversion output path %q: %w", outDir, err)
+	}
+	if err := rejectConversionSourceOutputOverlap(canonicalSource, canonicalOutput); err != nil {
+		return err
 	}
 	sourceRoot, err := snapshotConversionRoot(canonicalSource, true)
 	if err != nil {
@@ -148,7 +148,7 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 		}
 		return nil
 	}
-	result, err := hcc.Convert(srcFS, srcHarness, hcc.Harness(to), hcc.WithPluginRoot(canonicalSource))
+	result, err := convertCapturedSource(srcFS, sourceRoot, srcHarness, hcc.Harness(to))
 	if refusal := srcFS.Refusal(); refusal != nil {
 		return fmt.Errorf("conversion source refused: %w", errors.Join(err, refusal))
 	}
@@ -205,19 +205,22 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	return nil
 }
 
+func convertCapturedSource(source *fsboundary.SourceFS, root conversionRootSnapshot, from, to hcc.Harness) (*hcc.Result, error) {
+	info, err := source.Stat(".")
+	if err != nil {
+		return nil, fmt.Errorf("inspect captured conversion source: %w", err)
+	}
+	if !root.exists || !os.SameFile(info, root.info) {
+		return nil, fmt.Errorf("conversion source authority differs from guarded root %q: %w", root.path, fsboundary.ErrGenerationConflict)
+	}
+	return hcc.Convert(source, from, to, hcc.WithPluginRoot(root.path))
+}
+
 // rejectConversionSourceOutputOverlap compares canonical filesystem paths
 // before compilation or publication. The output may not equal, contain, or be
 // an ancestor of the source: all three relationships can cause a conversion
 // to read its own generated files or overwrite its input.
-func rejectConversionSourceOutputOverlap(source, output string) error {
-	canonicalSource, err := canonicalConversionPath(source)
-	if err != nil {
-		return fmt.Errorf("resolve conversion source path %q: %w", source, err)
-	}
-	canonicalOutput, err := canonicalConversionPath(output)
-	if err != nil {
-		return fmt.Errorf("resolve conversion output path %q: %w", output, err)
-	}
+func rejectConversionSourceOutputOverlap(canonicalSource, canonicalOutput string) error {
 	if conversionPathsOverlap(canonicalSource, canonicalOutput) {
 		return fmt.Errorf("conversion source and output paths overlap: source %q, output %q; choose a separate destination", canonicalSource, canonicalOutput)
 	}

@@ -195,6 +195,29 @@ Agent Marketplace MUST retain the existing admitted manifest permissions when pu
 - **WHEN** native repository or machine file-mode output repeats unchanged, updates content and later removes its owned selection
 - **THEN** the manifest repeat MUST preserve identity/mode/mtime, the real ownership update MUST publish changed bytes with existing permissions, and empty-state removal MUST remove its unchanged manifest
 
+### Requirement: Skill support directory aliases remain scope-contained
+
+Agent Marketplace MUST accept skill support directory aliases and alias chains whose resolution stays within the captured source root. Native installation and read-only portable checking MUST expand the same logical support tree, preserve regular singly-linked payload bytes and executable permissions, and exclude VCS internals at every level. Read-only checking MUST preserve output and source state, and unchanged file-mode output MUST remain a no-op. Escaping, dangling, cyclic, or unsafe-payload aliases MUST refuse with materialize.write.error without replacing an installed generation or importing external bytes. An alias that leaves the source root before returning to it MUST remain refused.
+
+#### Scenario: Contained support directory aliases retain native install and check
+
+- **WHEN** a skill with contained directory aliases, an alias chain, executable file aliases, and nested VCS internals is installed in either materialization mode and checked read-only
+- **THEN** its native support files MUST be regular executable snapshots at each logical alias path, VCS internals MUST be absent, checking MUST report in sync without writes, and unchanged file-mode repetition MUST preserve native identity and modification time
+
+#### Scenario: Unsafe support directory aliases preserve the installed generation
+
+- **WHEN** an installed contained support directory alias becomes escaping, dangling, cyclic, leaves and returns to the root, or exposes multiply-linked payloads
+- **THEN** read-only checking and native installation MUST report materialize.write.error while preserving installed and external bytes, identity, permissions, and modification time
+
+### Requirement: Skill support directory aliases respect Git exclusions
+
+Agent Marketplace MUST exclude support directory aliases whose contained resolved directory target is `.git` or a descendant of `.git`, even when the logical alias has another name. Real support copying and read-only portable checking MUST omit the same logical subtree while retaining ordinary contained directory aliases and executable file snapshots.
+
+#### Scenario: Support directory aliases cannot expose VCS internals
+
+- **WHEN** a skill has ordinary contained support aliases and aliases targeting `.git` and a nested `.git` subdirectory under different logical names
+- **THEN** native installation in either materialization mode MUST retain ordinary executable support snapshots but omit both excluded alias subtrees, and read-only checking MUST report in sync without writes
+
 ### Requirement: Portable virtual source hashes retain captured payload authority
 
 Agent Marketplace MUST authorize skill support payloads used by read-only portable source hashing against one captured source root. Enumeration and regular singly-linked payload reads MUST be descriptor-relative, preserve one unchanged opened generation and apply captured-size streaming/growth checks without introducing a new absolute size/work budget. Contained relative file aliases and executable permissions MUST remain usable, while foreign/unsafe aliases and payload shapes MUST refuse with materialize.write.error before their bytes contribute to an ownership digest. Read-only checking MUST create no output/cache/manifest state and MUST preserve source/external bytes, identity, permissions and modification time.

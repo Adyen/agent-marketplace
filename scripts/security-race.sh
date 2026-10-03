@@ -105,7 +105,7 @@ run_race ./internal/tui \
     -count=20
 
 run_race ./internal/materialize \
-    -run '^Test(RunPortableOutputDigest.*|RunPortableFilePublication.*|RunPortableTreePublication.*|RunPortablePrune.*|RunNativeManagedLinkPrune.*|RunNativeOwnershipMarker.*|PortableRegularDigest.*|PortableTreeDigest.*)$' \
+    -run '^Test(RunPortableOutputDigest.*|RunPortableFilePublication.*|RunPortableTreePublication.*|RunPortablePrune.*|RunNativeManagedLinkPrune.*|RunNativeOwnershipMarker.*|NativePruneClassificationSnapshot|PortableRegularDigest.*|PortableTreeDigest.*)$' \
     -count=20
 
 run_race ./internal/fsboundary \
