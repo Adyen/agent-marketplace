@@ -396,25 +396,19 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 			}
 		}()
 	}
-	f, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
+	return withArchiveOutput(archivePath, func(file *os.File) error { return writeArchivePayload(file, source, relPaths, mapped...) })
+}
 
-	gw := gzip.NewWriter(f)
-
+func writeArchivePayload(writer io.Writer, source *fsboundary.Dir, relPaths []string, mapped ...map[string]string) (err error) {
+	gw := gzip.NewWriter(writer)
 	tw := tar.NewWriter(gw)
 	defer func() {
-		for _, closeFn := range []func() error{tw.Close, gw.Close, f.Close} {
-			if closeErr := closeFn(); err == nil && closeErr != nil {
-				err = closeErr
+		for _, closeFn := range []func() error{tw.Close, gw.Close} {
+			if closeErr := closeFn(); closeErr != nil {
+				err = errors.Join(err, closeErr)
 			}
 		}
-		if err != nil {
-			_ = os.Remove(archivePath)
-		}
 	}()
-
 	for _, rel := range relPaths {
 		info, link, err := readBackupSourceMetadata(source, rel)
 		if err != nil {
