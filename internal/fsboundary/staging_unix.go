@@ -130,7 +130,7 @@ func (d *Destination) StagingDir() (*Dir, error) {
 // bounded-read contract, so the returned bytes and identity describe one
 // unchanged object. An absent destination reports fs.ErrNotExist.
 func (d *Destination) ReadTarget(limit int64) ([]byte, Identity, error) {
-	return d.readTarget(limit, nil)
+	return d.readTarget(limit, nil, nil)
 }
 
 func (d *Destination) ReadTargetWith(read func(io.Reader) error) (err error) {
@@ -182,12 +182,20 @@ func (d *Destination) ReadTargetWith(read func(io.Reader) error) (err error) {
 	return err
 }
 
-func (d *Destination) readTarget(limit int64, beforeOpen func()) ([]byte, Identity, error) {
+// The barriers make replacement and close-failure regressions deterministic.
+func (d *Destination) readTarget(limit int64, beforeOpen func(), beforeClose func(parent, leaf *os.File)) (data []byte, id Identity, err error) {
 	parent, err := d.verifyTarget()
 	if err != nil {
 		return nil, Identity{}, err
 	}
-	defer func() { _ = parent.Close() }()
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close read target parent: %w", closeErr))
+		}
+		if err != nil {
+			data, id = nil, Identity{}
+		}
+	}()
 	if err := d.verifyLeaf(parent); err != nil {
 		return nil, Identity{}, err
 	}
@@ -201,8 +209,15 @@ func (d *Destination) readTarget(limit int64, beforeOpen func()) ([]byte, Identi
 	if err != nil {
 		return nil, Identity{}, err
 	}
-	defer func() { _ = file.Close() }()
-	data, id, err := ReadFile(file, limit)
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close read target leaf: %w", closeErr))
+		}
+	}()
+	if beforeClose != nil {
+		defer func() { beforeClose(parent, file) }()
+	}
+	data, id, err = ReadFile(file, limit)
 	if err != nil {
 		return nil, Identity{}, err
 	}
