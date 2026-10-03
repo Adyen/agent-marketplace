@@ -13,22 +13,26 @@ import (
 )
 
 func (d *Dir) OpenRoot(rel string) (*Dir, error) {
-	return d.openPath(rel, false, true, 0)
+	return d.openPath(rel, false, true, false, 0)
+}
+
+func (d *Dir) OpenContainedRoot(rel string) (*Dir, error) {
+	return d.openPath(rel, false, true, true, 0)
 }
 
 func (d *Dir) OpenPath(rel string) (*Dir, error) {
-	return d.openPath(rel, false, false, 0)
+	return d.openPath(rel, false, false, false, 0)
 }
 
 func (d *Dir) EnsureRoot(rel string) (*Dir, error) {
-	return d.openPath(rel, true, true, 0)
+	return d.openPath(rel, true, true, false, 0)
 }
 
 func (d *Dir) EnsurePath(rel string) (*Dir, error) {
-	return d.openPath(rel, true, false, 0)
+	return d.openPath(rel, true, false, false, 0)
 }
 
-func (d *Dir) openPath(rel string, create, rootLink bool, hops int) (*Dir, error) {
+func (d *Dir) openPath(rel string, create, rootLink, strictScope bool, hops int) (*Dir, error) {
 	if hops > maxLinkHops {
 		return nil, fmt.Errorf("%w: directory link chain exceeds %d hops", ErrUnsafePath, maxLinkHops)
 	}
@@ -81,6 +85,9 @@ func (d *Dir) openPath(rel string, create, rootLink bool, hops int) (*Dir, error
 			candidate = filepath.Clean(candidate)
 			targetRel, err := filepath.Rel(d.path, candidate)
 			if err != nil || targetRel == ".." || strings.HasPrefix(targetRel, ".."+string(filepath.Separator)) || filepath.IsAbs(targetRel) {
+				if strictScope {
+					return nil, fmt.Errorf("%w: directory link escapes its captured scope", ErrUnsafePath)
+				}
 				canonical, resolveErr := filepath.EvalSymlinks(candidate)
 				if resolveErr != nil {
 					return nil, fmt.Errorf("%w: resolve directory link: %w", ErrUnsafePath, resolveErr)
@@ -90,7 +97,7 @@ func (d *Dir) openPath(rel string, create, rootLink bool, hops int) (*Dir, error
 					return nil, fmt.Errorf("%w: directory link escapes its captured scope", ErrUnsafePath)
 				}
 			}
-			target, err := d.openPath(targetRel, false, true, hops+1)
+			target, err := d.openPath(targetRel, false, true, strictScope, hops+1)
 			if err != nil {
 				return nil, fmt.Errorf("%w: directory link target: %w", ErrUnsafePath, err)
 			}
