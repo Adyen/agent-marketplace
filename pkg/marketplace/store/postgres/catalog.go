@@ -124,10 +124,10 @@ func (s *Store) ReadCatalogProjectionPageConditional(ctx context.Context, req st
 	if err != nil {
 		return store.CatalogProjectionPage{}, false, fmt.Errorf("begin catalog projection snapshot: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
 	txStore := &Store{q: tx, tx: tx}
 	page, matched, err := txStore.readCatalogProjectionPageConditional(ctx, req, unchanged)
 	if err != nil {
-		_ = tx.Rollback()
 		return store.CatalogProjectionPage{}, false, err
 	}
 	if err := tx.Commit(); err != nil {

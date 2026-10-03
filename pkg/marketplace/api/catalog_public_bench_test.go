@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/postgres"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
+	"github.com/jackc/pgx/v5"
 )
 
 func BenchmarkCatalogPublicHandler(b *testing.B) {
@@ -25,19 +26,36 @@ func BenchmarkCatalogPublicHandler(b *testing.B) {
 		b.Run(backend, func(b *testing.B) {
 			ctx := context.Background()
 			var meta store.MetadataStore
+			dsn, schema := os.Getenv("POSTGRES_DSN"), ""
 			if backend == "postgres" {
-				dsn := os.Getenv("POSTGRES_DSN")
 				if dsn == "" {
 					b.Skip("POSTGRES_DSN is required for PostgreSQL measurements")
 				}
-				meta = postgres.NewWithSchema(dsn, fmt.Sprintf("catalog_bench_%d", time.Now().UnixNano()))
+				schema = fmt.Sprintf("catalog_bench_%d", time.Now().UnixNano())
+				meta = postgres.NewWithSchema(dsn, schema)
 			} else {
 				meta = sqlite.New(filepath.Join(b.TempDir(), "catalog.db"))
 			}
 			if err := meta.Open(ctx); err != nil {
 				b.Fatal(err)
 			}
-			b.Cleanup(func() { _ = meta.Close() })
+			b.Cleanup(func() {
+				_ = meta.Close()
+				if schema == "" {
+					return
+				}
+				db, err := sql.Open("pgx", dsn)
+				if err != nil {
+					b.Error(err)
+					return
+				}
+				defer func() { _ = db.Close() }()
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if _, err := db.ExecContext(cleanupCtx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE"); err != nil {
+					b.Error(err)
+				}
+			})
 			cfg := seedCatalogBenchmark(b, ctx, meta)
 			if _, err := (admin.Service{Metadata: meta, Deployment: admin.Deployment{AllowedOrigins: []string{"https://git.example"}}}).Adopt(ctx, cfg, admin.AdoptionRequest{
 				Actor: store.ManagedActor{Issuer: "benchmark", Subject: "catalog"}, Reason: "isolated benchmark",
