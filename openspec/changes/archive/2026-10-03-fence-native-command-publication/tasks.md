@@ -4,4 +4,4 @@
 - [x] Share captured bytes publication and command snapshots; preserve modes and admitted link migration.
 - [x] Verify native/portable/mode/no-op/refusal controls on Linux/macOS with races.
 - [x] Measure final-head update disk cost, validate/spec gates and review every changed file adversarially.
-- [ ] `openspec archive fence-native-command-publication --yes`.
+- [x] `openspec archive fence-native-command-publication --yes`.
