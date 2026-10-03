@@ -1,7 +1,10 @@
 package sourcerevision
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +13,116 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+// spec: registry-symlink-containment/source-directory-alias-reads-retain-captured-root-authority
+func TestBuildUsesCapturedRootForIngestionAndDiscovery(t *testing.T) {
+	for _, version := range []string{"v1", "v2", "v3", "v4"} {
+		for _, layout := range []string{"direct", "unrecognized", "vacant", "collections"} {
+			for _, restore := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/restore_%v", version, layout, restore), func(t *testing.T) {
+					parent := t.TempDir()
+					root, replacement, retained := filepath.Join(parent, "selected"), filepath.Join(parent, "replacement"), filepath.Join(parent, "retained")
+					primary := filepath.Join("commands", "shared.md")
+					if layout == "unrecognized" || layout == "vacant" {
+						primary = filepath.Join("team", "plugin", primary)
+					}
+					oldData := "---\nname: old-probe\ndescription: captured control\n---\nOld captured body\n"
+					newData := "---\nname: new-probe\ndescription: replacement control\n---\nNew replacement body\n"
+					writeFixture(t, filepath.Join(root, primary), oldData)
+					writeFixture(t, filepath.Join(replacement, primary), newData)
+					if layout == "vacant" {
+						for _, dir := range []string{root, replacement} {
+							writeFixture(t, filepath.Join(dir, ".claude-plugin", "plugin.json"), `{"name":"container"}`)
+						}
+					}
+					if layout == "collections" {
+						writeFixture(t, filepath.Join(root, "collections", "pack", "COLLECTION.yaml"), "name: old-pack\nresources:\n  - kind: command\n    name: old-probe\n")
+						writeFixture(t, filepath.Join(replacement, "collections", "pack", "COLLECTION.yaml"), "name: new-pack\nresources:\n  - kind: command\n    name: new-probe\n")
+					}
+					input := Input{SnapshotRoot: root, SourceHarness: "claude", RevisionSchema: version}
+					control, err := Build(input)
+					wantCount := 1
+					if layout == "collections" {
+						wantCount = 2
+					}
+					if err != nil || len(control.Manifest.Resources) != wantCount || len(control.Warnings) != 0 {
+						t.Fatalf("captured root positive control failed: %+v %v", control.Manifest, err)
+					}
+					oldDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(oldData)))
+					last := control.Manifest.Resources[len(control.Manifest.Resources)-1]
+					if last.Name != "old-probe" || last.ContentDigest != oldDigest {
+						t.Fatalf("old identity/raw-byte control failed: %+v", last)
+					}
+					captured := false
+					input.beforeIngest = func(string) {
+						captured = true
+						if err := os.Rename(root, retained); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Rename(replacement, root); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if restore {
+						input.beforeHash = func(string) {
+							if err := os.Rename(root, replacement); err != nil {
+								t.Fatal(err)
+							}
+							if err := os.Rename(retained, root); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					built, err := Build(input)
+					if !captured {
+						t.Fatal("Build did not reach captured-root ingestion seam")
+					}
+					if err != nil {
+						if !errors.Is(err, ErrCatalog) || !fsboundary.IsSourceRefusal(err) || len(built.Payload) != 0 || len(built.Manifest.Resources) != 0 || built.Catalog != nil {
+							t.Fatalf("root replacement did not conservatively refuse: %+v %v", built.Manifest, err)
+						}
+					} else if !bytes.Equal(built.Payload, control.Payload) || len(built.Warnings) != 0 {
+						t.Fatalf("Build mixed replacement identities with captured bytes: got %s, want %s", built.Payload, control.Payload)
+					}
+					oldRoot, newRoot := retained, root
+					if restore {
+						oldRoot, newRoot = root, replacement
+					}
+					for dir, want := range map[string]string{oldRoot: oldData, newRoot: newData} {
+						data, err := os.ReadFile(filepath.Join(dir, primary))
+						if err != nil || string(data) != want {
+							t.Fatalf("revision changed source bytes: %q %v", data, err)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestBuildWindsurfRulesAreOmittedBeforeHashing(t *testing.T) {
+	for _, version := range []string{"v1", "v2", "v3", "v4"} {
+		t.Run(version, func(t *testing.T) {
+			root := t.TempDir()
+			rule := filepath.Join(root, ".windsurf", "rules", "policy.mdc")
+			writeFixture(t, rule, "---\ndescription: policy control\nalwaysApply: true\n---\nInert policy\n")
+			cat, err := catalog.Load(root, "windsurf")
+			if err != nil || len(cat.Entries) != 1 || cat.Entries[0].Kind != ir.KindRule || cat.Entries[0].Resource == nil {
+				t.Fatalf("Windsurf rule native ingestion control failed: %+v %v", cat, err)
+			}
+			hit := false
+			built, err := Build(Input{SnapshotRoot: root, SourceHarness: "windsurf", RevisionSchema: version, beforeHash: func(string) {
+				hit = true
+				if err := os.Remove(rule); err != nil {
+					t.Fatal(err)
+				}
+			}})
+			if !hit || err != nil || len(built.Manifest.Resources) != 0 || len(built.Warnings) != 1 || built.Warnings[0].Kind != "rule" || built.Warnings[0].Name != "policy" || built.Warnings[0].Reason != "unsupported resource kind" {
+				t.Fatalf("unsupported Windsurf rule reached hashing: %+v %v", built.Manifest, err)
+			}
+		})
+	}
+}
 
 // spec: registry-symlink-containment/source-revision-hashing-refuses-post-ingest-unsafe-payloads
 func TestBuildSourceHashRefusesPostIngestHardLink(t *testing.T) {
