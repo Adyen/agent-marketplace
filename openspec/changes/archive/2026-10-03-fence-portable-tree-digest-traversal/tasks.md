@@ -4,4 +4,4 @@
 - [x] Capture directory traversal and preserve regular-leaf validation/legacy digest encoding.
 - [x] Verify native/ordering/structural-link controls on Linux/macOS with races.
 - [x] Measure tree digest disk cost, run validate/spec gates and complete all-entry adversarial review.
-- [ ] `openspec archive fence-portable-tree-digest-traversal --yes`.
+- [x] `openspec archive fence-portable-tree-digest-traversal --yes`.
