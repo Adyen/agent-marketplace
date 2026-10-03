@@ -175,13 +175,13 @@ func publishPortableBytes(dst string, data []byte, mode os.FileMode, observed os
 func cleanupPortableFileStage(parent *fsboundary.Dir, native *os.Root, stagedName string, created os.FileInfo) error {
 	current, err := native.Lstat(stagedName)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil // The stage disappears after successful publication.
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("inspect portable staged file %s: %w", stagedName, err)
 	}
 	if !os.SameFile(created, current) {
-		return nil // Cleanup has no authority over a replacement object.
+		return nil
 	}
 	if err := parent.Unlink(stagedName); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove portable staged file %s: %w", stagedName, err)
