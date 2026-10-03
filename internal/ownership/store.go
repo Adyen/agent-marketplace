@@ -72,9 +72,10 @@ func (c *onceCrasher) Crash(point CrashPoint) error {
 
 // Store is the durable ownership store for one canonical target root.
 type Store struct {
-	stateRoot     string
-	canonicalRoot string
-	rootKey       string
+	stateRoot          string
+	canonicalStateRoot string
+	canonicalRoot      string
+	rootKey            string
 
 	crasher Crasher
 	now     func() time.Time
@@ -169,6 +170,10 @@ func Open(targetRoot string, opts ...Option) (*Store, error) {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	s.canonicalStateRoot, err = CanonicalRoot(s.stateRoot)
+	if err != nil {
+		return nil, err
 	}
 	// Env var > in-process configuration > code default, per AGENTS.md. The
 	// resolution happens AFTER the options so the env var genuinely wins; see

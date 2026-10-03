@@ -300,12 +300,12 @@ func (s *Store) missingStateError() error {
 // record that went away. That is a reporting distinction only: the code, the
 // severity, and the nil record are identical either way.
 func (s *Store) Load() (*Record, error) {
-	data, err := os.ReadFile(s.StateFile())
+	data, exists, err := s.readMetadata(stateFileName)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
-		}
-		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %v", ErrStateCorrupt, err))
+		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %w", ErrStateCorrupt, err))
+	}
+	if !exists {
+		return nil, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
 	}
 	var rec Record
 	if err := json.Unmarshal(data, &rec); err != nil {

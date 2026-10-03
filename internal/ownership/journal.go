@@ -632,12 +632,12 @@ func (s *Store) clearJournal() error {
 
 // ReadJournal returns the in-flight journal, or nil when there is none.
 func (s *Store) ReadJournal() (*Journal, error) {
-	data, err := os.ReadFile(s.JournalFile())
+	data, exists, err := s.readMetadata(journalFileName)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("ownership: read journal: %w", err)
+	}
+	if !exists {
+		return nil, nil
 	}
 	var j Journal
 	if err := json.Unmarshal(data, &j); err != nil {
