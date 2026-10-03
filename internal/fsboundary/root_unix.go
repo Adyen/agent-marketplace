@@ -62,7 +62,7 @@ func (d *Dir) openPath(rel string, create, rootLink, strictScope bool, hops int)
 			}
 			next, err = openComponent(current, name)
 		}
-		if err != nil && rootLink && i == len(parts)-1 && errors.Is(err, ErrUnsafePath) {
+		if err != nil && rootLink && (strictScope || i == len(parts)-1) && errors.Is(err, ErrUnsafePath) {
 			var stat unix.Stat_t
 			if statErr := unix.Fstatat(int(current.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); statErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFLNK {
 				return nil, err
@@ -100,6 +100,21 @@ func (d *Dir) openPath(rel string, create, rootLink, strictScope bool, hops int)
 			target, err := d.openPath(targetRel, false, true, strictScope, hops+1)
 			if err != nil {
 				return nil, fmt.Errorf("%w: directory link target: %w", ErrUnsafePath, err)
+			}
+			if i < len(parts)-1 {
+				resolvedRel, err := filepath.Rel(d.path, target.path)
+				if err != nil {
+					return nil, errors.Join(err, target.Close())
+				}
+				remaining := filepath.Join(append([]string{resolvedRel}, parts[i+1:]...)...)
+				directory, err := d.openPath(remaining, false, true, strictScope, hops+1)
+				if closeErr := target.Close(); closeErr != nil {
+					if directory != nil {
+						_ = directory.Close()
+					}
+					return nil, errors.Join(err, closeErr)
+				}
+				return directory, err
 			}
 			return target, nil
 		}
