@@ -12,6 +12,7 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
@@ -74,7 +75,7 @@ func newConvertCmd() *cobra.Command {
 	return cmd
 }
 
-func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syncMode, dryRun bool) error {
+func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syncMode, dryRun bool) (err error) {
 	from = strings.TrimSpace(from)
 	to = strings.TrimSpace(to)
 	if to == "" {
@@ -85,16 +86,32 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	}
 
 	srcHarness := hcc.Harness(from)
+	if !autodetect {
+		if from == "" {
+			return fmt.Errorf("--from is required")
+		}
+		if !targetmeta.IsConversionTarget(from) {
+			return fmt.Errorf("unknown or unsupported source harness %q; must be one of: %v", from, conversionHarnesses)
+		}
+	}
+	srcFS, err := fsboundary.OpenSourceFS(srcPath)
+	if err != nil {
+		return fmt.Errorf("capture conversion source: %w", err)
+	}
+	defer func() {
+		if closeErr := srcFS.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	if autodetect {
-		detected, ok := hcc.Autodetect(os.DirFS(srcPath))
+		detected, ok := hcc.Autodetect(srcFS)
+		if refusal := srcFS.Refusal(); refusal != nil {
+			return fmt.Errorf("conversion source refused: %w", refusal)
+		}
 		if !ok {
 			return fmt.Errorf("autodetect: could not identify source harness")
 		}
 		srcHarness = detected
-	} else if from == "" {
-		return fmt.Errorf("--from is required")
-	} else if !targetmeta.IsConversionTarget(from) {
-		return fmt.Errorf("unknown or unsupported source harness %q; must be one of: %v", from, conversionHarnesses)
 	}
 	if !targetmeta.IsConversionTarget(string(srcHarness)) {
 		return fmt.Errorf("unknown or unsupported source harness %q; must be one of: %v", srcHarness, conversionHarnesses)
@@ -131,9 +148,10 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 		}
 		return nil
 	}
-	srcFS := os.DirFS(canonicalSource)
-
 	result, err := hcc.Convert(srcFS, srcHarness, hcc.Harness(to), hcc.WithPluginRoot(canonicalSource))
+	if refusal := srcFS.Refusal(); refusal != nil {
+		return fmt.Errorf("conversion source refused: %w", errors.Join(err, refusal))
+	}
 	if err != nil {
 		return fmt.Errorf("convert: %w", err)
 	}

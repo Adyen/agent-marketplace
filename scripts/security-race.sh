@@ -91,3 +91,7 @@ run_race ./internal/sourcerevision \
 run_race ./internal/collection \
     -run '^TestDiscoverCollectionSource.*$' \
     -count=20
+
+run_race ./cmd/agent-marketplace \
+    -run '^TestConvertSource.*$' \
+    -count=20
