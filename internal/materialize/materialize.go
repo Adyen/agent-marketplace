@@ -3157,7 +3157,7 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 				desiredInDir[rel] = ""
 			}
 		}
-		stale, diags, err := staleArtifactLinks(dir, desiredInDir)
+		stale, diags, err := staleArtifactLinks(dir, desiredInDir, boundaries...)
 		if err != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("prune stale portable symlinks in %s: %v", dir, err)})
 			continue
@@ -3299,7 +3299,11 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	}
 
 	if pruneStaleEntries {
-		stale, staleDiags, err := staleArtifactLinks(outDir, desired)
+		var readBoundary *destinationBoundary
+		if len(portable) > 0 {
+			readBoundary = portable[0].boundary
+		}
+		stale, staleDiags, err := staleArtifactLinks(outDir, desired, readBoundary)
 		if err != nil {
 			return report, diags, err
 		}
@@ -3333,10 +3337,34 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	return report, diags, nil
 }
 
-func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []diag.Diagnostic, error) {
-	var stale []string
-	var diags []diag.Diagnostic
-	err := filepath.WalkDir(outDir, func(path string, d fs.DirEntry, err error) error {
+func staleArtifactLinks(outDir string, desired map[string]string, boundaries ...*destinationBoundary) (stale []string, diags []diag.Diagnostic, err error) {
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
+	root, err := capturePruneDirectory(outDir, boundary)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	err = fs.WalkDir(native.FS(), ".", func(relPath string, d fs.DirEntry, err error) error {
+		path := filepath.Join(outDir, filepath.FromSlash(relPath))
 		if err != nil {
 			return err
 		}
@@ -3357,7 +3385,11 @@ func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []d
 		}
 		// Only mark managed symlinks as stale. User symlinks
 		// (pointing outside the cache dir) are preserved.
-		if !isManagedSymlink(path) {
+		text, err := native.Readlink(relPath)
+		if err != nil {
+			return err
+		}
+		if !strings.HasPrefix(text, cache.CacheDir()+string(os.PathSeparator)) {
 			diags = append(diags, diag.Diagnostic{
 				Code:     "materialize.collision.user-owned",
 				Severity: diag.SeverityInfo,
@@ -3369,9 +3401,6 @@ func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []d
 		return nil
 	})
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, diags, nil
-		}
 		return nil, diags, err
 	}
 	sort.Strings(stale)
@@ -3876,9 +3905,13 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		}
 	}
 
-	entries, err := os.ReadDir(skillsDir)
+	var readBoundary *destinationBoundary
+	if len(portable) > 0 {
+		readBoundary = portable[0].boundary
+	}
+	entries, err := readPruneDirectory(skillsDir, readBoundary)
 	if err != nil {
-		if os.IsNotExist(err) || dryRun {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return report, nil
 		}
 		return report, err
@@ -3916,7 +3949,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			if err != nil {
 				return report, err
 			}
-			if !isManagedCommandFile(path) {
+			if !isManagedCommandFile(path, readBoundary) {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -4038,7 +4071,7 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 			continue
 		default:
 			// Regular file — only overwrite if it carries our marker.
-			if !isManagedCommandFile(filePath) {
+			if !isManagedCommandFile(filePath, boundary) {
 				report.Skipped = append(report.Skipped, name)
 				report.Diags = append(report.Diags, userOwnedCommandDiag(filePath, name, linkMeta[name]))
 				continue
@@ -4082,9 +4115,13 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 // pruneStaleCommandFiles removes managed command files and stale managed
 // symlinks in dir that are no longer desired. User-owned entries are preserved.
 func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport, boundaries ...*destinationBoundary) error {
-	entries, err := os.ReadDir(dir)
+	var readBoundary *destinationBoundary
+	if len(boundaries) > 0 {
+		readBoundary = boundaries[0]
+	}
+	entries, err := readPruneDirectory(dir, readBoundary)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return nil
 		}
 		return err
@@ -4112,7 +4149,7 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 		case info.IsDir():
 			continue
 		default:
-			if !isManagedCommandFile(path) {
+			if !isManagedCommandFile(path, readBoundary) {
 				continue
 			}
 		}
@@ -4172,8 +4209,12 @@ func injectManagedByFrontmatter(content []byte) []byte {
 // isManagedCommandFile reports whether the file at path is a command markdown
 // file carrying the `_managed_by: agent-marketplace` ownership marker in its
 // leading frontmatter block.
-func isManagedCommandFile(path string) bool {
-	data, err := readNativeCommandFile(path, nil, nil)
+func isManagedCommandFile(path string, boundaries ...*destinationBoundary) bool {
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
+	data, err := readNativeCommandFile(path, nil, boundary)
 	return err == nil && isManagedCommandContent(data)
 }
 
