@@ -131,8 +131,6 @@ func publishPortableTree(src, dst string, observed os.FileInfo, ownershipDigest 
 	if err := parent.Mkdir(stagedName, info.Mode().Perm()); err != nil {
 		return err
 	}
-	// Mkdir does not return an object identity. Until one is captured, a failed
-	// inspection cannot authorize deleting this name: it may now be a replacement.
 	created, err := native.Lstat(stagedName)
 	if err != nil {
 		return err
@@ -215,7 +213,7 @@ func cleanupPortableTreeStage(native interface {
 }, stagedName string, createdID fsboundary.Identity) error {
 	current, err := native.Lstat(stagedName)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil // Successful publication has renamed the stage away.
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("inspect portable staged tree %s: %w", stagedName, err)
@@ -225,7 +223,7 @@ func cleanupPortableTreeStage(native interface {
 		return fmt.Errorf("identify portable staged tree %s: %w", stagedName, err)
 	}
 	if !identity.SameObject(createdID) {
-		return nil // Never remove a replacement, even in the captured parent.
+		return nil
 	}
 	if err := native.RemoveAll(stagedName); err != nil {
 		return fmt.Errorf("remove portable staged tree %s: %w", stagedName, err)
