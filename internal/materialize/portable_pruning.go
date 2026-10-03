@@ -123,15 +123,23 @@ func removePortableOutput(dst string, observed os.FileInfo, wantDigest string, b
 }
 
 func removeEmptyPortableDirectory(rootPath, directoryPath string, boundary *destinationBoundary) (err error) {
+	if rootPath == "" || directoryPath == "" {
+		return fmt.Errorf("%w: empty portable cleanup path", fsboundary.ErrUnsafePath)
+	}
+	// Keep the lexical root: root.Path() may have a different alias topology.
+	rootPath, err = filepath.Abs(rootPath)
+	if err != nil {
+		return err
+	}
+	directoryPath, err = filepath.Abs(directoryPath)
+	if err != nil {
+		return err
+	}
 	var root *fsboundary.Dir
 	if boundary != nil {
 		root, err = boundary.captureDirectory(rootPath, false)
 	} else {
-		var absolute string
-		absolute, err = filepath.Abs(rootPath)
-		if err == nil {
-			root, err = fsboundary.OpenDir(absolute)
-		}
+		root, err = fsboundary.OpenDir(rootPath)
 	}
 	if err != nil {
 		return err
