@@ -611,7 +611,7 @@ func (s *Store) writeJournal(j *Journal) error {
 	if err != nil {
 		return fmt.Errorf("ownership: marshal journal: %w", err)
 	}
-	if err := atomicWrite(s.JournalFile(), append(data, '\n'), 0o600); err != nil {
+	if err := s.writeMetadata(journalFileName, append(data, '\n')); err != nil {
 		return err
 	}
 	slog.Debug("ownership journal written",

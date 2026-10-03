@@ -337,10 +337,7 @@ func (s *Store) commitRecord(rec *Record) error {
 		return fmt.Errorf("ownership: marshal record: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
-		return fmt.Errorf("ownership: create state directory: %w", err)
-	}
-	return atomicWrite(s.StateFile(), data, 0o600)
+	return s.writeMetadata(stateFileName, data)
 }
 
 // nextRecord builds the record that a mutation will commit, from the currently
