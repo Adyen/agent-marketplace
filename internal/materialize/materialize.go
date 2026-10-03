@@ -3627,50 +3627,8 @@ func portablePathDigest(path string) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func writePortableDigestPath(h io.Writer, path, rel string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	mode := info.Mode()
-	writeHeader := func(kind string) {
-		_, _ = fmt.Fprintf(h, "%s\x00%s\x00%#o\x00", kind, filepath.ToSlash(rel), mode.Perm())
-	}
-	switch {
-	case mode.IsRegular():
-		return writePortableRegularDigest(h, path, rel, info)
-	case mode.IsDir():
-		writeHeader("dir")
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if err := writePortableDigestPath(h, filepath.Join(path, entry.Name()), filepath.Join(rel, entry.Name())); err != nil {
-				return err
-			}
-		}
-		return nil
-	case mode&os.ModeSymlink != 0:
-		writeHeader("symlink")
-		target, err := os.Readlink(path)
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(h, "%d\x00%s", len(target), target)
-		return nil
-	default:
-		writeHeader("other")
-		return nil
-	}
-}
-
-func writePortableRegularDigest(h io.Writer, path, rel string, info os.FileInfo) (err error) {
+func writePortableDigestPath(h io.Writer, path, rel string) (err error) {
 	path, err = filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	before, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
 		return err
 	}
@@ -3683,7 +3641,32 @@ func writePortableRegularDigest(h io.Writer, path, rel string, info os.FileInfo)
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	file, err := fsboundary.CaptureDestination(root, filepath.Base(path), fsboundary.LinkPolicyRepository)
+	return writePortableDigestEntry(h, root, filepath.Base(path), rel)
+}
+
+func writePortableRegularDigest(h io.Writer, path, rel string, info os.FileInfo) (err error) {
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	root, err := fsboundary.OpenDir(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	return writePortableRegularDigestAt(h, root, filepath.Base(path), rel, info)
+}
+
+func writePortableRegularDigestAt(h io.Writer, root *fsboundary.Dir, name, rel string, info os.FileInfo) (err error) {
+	before, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return err
+	}
+	file, err := fsboundary.CaptureDestination(root, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return err
 	}
