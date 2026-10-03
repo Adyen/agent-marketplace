@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -169,7 +171,14 @@ func (s *Store) Apply(m Mutation) (Result, error) {
 // The write ordering below is the plan's, and every gap between two steps is a
 // crash point with a defined recovery. The invariant that makes each gap safe is
 // stated at the step that establishes it.
-func (s *Store) applyLocked(m Mutation) (Result, error) {
+func (s *Store) applyLocked(m Mutation) (result Result, err error) {
+	defer func() {
+		if errors.Is(err, fsboundary.ErrGenerationConflict) {
+			err = coded(diag.CodeOwnershipGenerationConflict, m.Rel, errors.Join(ErrGenerationConflict, err))
+		} else if errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrUnsafePath) {
+			err = errors.Join(ErrUnsafeAggregateFile, err)
+		}
+	}()
 	if err := validateMutation(m); err != nil {
 		return Result{}, err
 	}
@@ -201,6 +210,27 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	next, err := s.nextRecord(current, m.Rel, nextDigest, m.Entries)
 	if err != nil {
 		return Result{}, coded(diag.CodeOwnershipStateUnsafeValue, m.Rel, err)
+	}
+	parent, err := s.captureAggregateParent(m.AbsFile)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	destination, err := fsboundary.CaptureDestination(parent, filepath.Base(m.AbsFile), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() {
+		if closeErr := destination.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if destination.Link() != nil {
+		return Result{}, ErrUnsafeAggregateFile
 	}
 
 	// CRASH POINT 1 (before-backup): nothing has been written. Recovery has
@@ -266,10 +296,11 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// Invariant established: the patched bytes are durable, so the rename in step
 	// 4 cannot produce a truncated aggregate.
 	mode := os.FileMode(0o600)
-	if fi, statErr := os.Stat(m.AbsFile); statErr == nil {
-		mode = fi.Mode().Perm()
+	if destination.Exists() {
+		mode = destination.Identity().Mode.Perm()
 	}
-	if err := writeStaged(journal.StagedPath, m.NextBytes, mode); err != nil {
+	var stagedIdentity fsboundary.Identity
+	if err := writeStaged(journal.StagedPath, m.NextBytes, mode, parent, &stagedIdentity); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			// O_EXCL proves this attempt did not create the collided path. First
 			// durably disarm recovery, then clear only this attempt's journal and
@@ -284,6 +315,39 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 		}
 		return Result{}, err
 	}
+
+	staged, err := fsboundary.CaptureDestination(parent, filepath.Base(journal.StagedPath), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() {
+		if closeErr := staged.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if staged.Link() != nil || !staged.Identity().SameState(stagedIdentity) {
+		return Result{}, fsboundary.ErrGenerationConflict
+	}
+	defer func() {
+		if err == nil || errors.Is(err, ErrInjectedCrash) {
+			return
+		}
+		native, openErr := parent.NativeRoot()
+		if openErr != nil {
+			err = errors.Join(err, openErr)
+			return
+		}
+		info, statErr := native.Lstat(filepath.Base(journal.StagedPath))
+		if statErr == nil {
+			identity, idErr := fsboundary.FileInfoIdentity(info)
+			if idErr == nil && identity.SameObject(staged.Identity()) {
+				err = errors.Join(err, parent.Unlink(filepath.Base(journal.StagedPath)))
+			}
+		}
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// CRASH POINT 4 (after-staged-write): journal says prepared and a complete
 	// staged file exists, but the aggregate is untouched. Recovery sees the live
@@ -310,11 +374,11 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 
 	// STEP 4: atomically rename the patched aggregate. Invariant established:
 	// readers see either the whole old file or the whole new file, never a mix.
-	if err := os.Rename(journal.StagedPath, m.AbsFile); err != nil {
-		return Result{}, fmt.Errorf("ownership: publish %s: %w", m.AbsFile, err)
-	}
-	if err := fsyncDir(filepath.Dir(m.AbsFile)); err != nil {
+	if err := staged.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
 		return Result{}, err
+	}
+	if err := destination.Publish(parent, filepath.Base(journal.StagedPath)); err != nil {
+		return Result{}, fmt.Errorf("ownership: publish %s: %w", m.AbsFile, err)
 	}
 
 	// Prune retained backups now that publication succeeded. Retention is not
@@ -501,8 +565,17 @@ func stagedPathFor(absFile string, generation uint64) string {
 // writeStaged writes and fsyncs the replacement content. It is not atomicWrite:
 // the staging file IS the temp file, and it must survive a crash under a name the
 // journal recorded so recovery can find and delete it.
-func writeStaged(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+func writeStaged(path string, data []byte, mode os.FileMode, parent *fsboundary.Dir, identity *fsboundary.Identity) (err error) {
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	f, err := native.OpenFile(filepath.Base(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("ownership: create staged file %s: %w", path, err)
 	}
@@ -519,10 +592,18 @@ func writeStaged(path string, data []byte, mode os.FileMode) error {
 		_ = f.Close()
 		return fmt.Errorf("ownership: fsync staged file %s: %w", path, err)
 	}
+	info, statErr := f.Stat()
+	if statErr != nil {
+		return errors.Join(statErr, f.Close())
+	}
+	*identity, err = fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return errors.Join(err, f.Close())
+	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("ownership: close staged file %s: %w", path, err)
 	}
-	return fsyncDir(filepath.Dir(path))
+	return parent.Sync()
 }
 
 func (s *Store) writeJournal(j *Journal) error {
