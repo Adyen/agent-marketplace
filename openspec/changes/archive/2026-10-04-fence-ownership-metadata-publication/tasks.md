@@ -5,4 +5,4 @@
 - [x] Preserve healthy actual metadata commit/private modes/prepared-directory/crash controls.
 - [x] Verify Linux/macOS full ownership/count20 crash-publication races/validate.
 - [x] Record benchmark/strict specs/complete review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
