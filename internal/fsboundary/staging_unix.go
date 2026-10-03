@@ -182,7 +182,6 @@ func (d *Destination) ReadTargetWith(read func(io.Reader) error) (err error) {
 	return err
 }
 
-// The barriers make replacement and close-failure regressions deterministic.
 func (d *Destination) readTarget(limit int64, beforeOpen func(), beforeClose func(parent, leaf *os.File)) (data []byte, id Identity, err error) {
 	parent, err := d.verifyTarget()
 	if err != nil {
