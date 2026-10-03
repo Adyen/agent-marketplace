@@ -168,6 +168,9 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 
 func DiscoverWithOptions(dir, sourceHarness string, opts IngestOptions) (LoadedCatalog, error) {
 	cat, err := LoadWithOptions(dir, sourceHarness, opts)
+	if fsboundary.IsSourceRefusal(err) {
+		return LoadedCatalog{}, fmt.Errorf("catalog source refused: %w", err)
+	}
 	if err != nil {
 		// Load failed — likely no recognizable layout at this directory.
 		// Before falling back to DiscoverSkills, check for sub-bundles.
@@ -450,7 +453,7 @@ func loadSubBundle(path, sourceHarness string, options ...IngestOptions) subBund
 }
 
 func (b subBundle) coveredBy(entries []Entry, dir string) bool {
-	if b.err != nil || hasDiscoveryBoundaryDiagnostics(b.catalog.Diagnostics) {
+	if b.err != nil || b.catalog.SourceRefusal() != nil || hasDiscoveryBoundaryDiagnostics(b.catalog.Diagnostics) {
 		return false
 	}
 	paths := make([]string, 0, len(b.catalog.Entries))
@@ -479,7 +482,7 @@ func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle, options
 		subDir := filepath.Join(dir, name)
 		if hasBundleRoot(subDir) {
 			candidate := loadSubBundle(subDir, sourceHarness, options...)
-			if candidate.err != nil || len(candidate.catalog.Entries) > 0 || hasDiscoveryBoundaryDiagnostics(candidate.catalog.Diagnostics) {
+			if candidate.err != nil || candidate.catalog.SourceRefusal() != nil || len(candidate.catalog.Entries) > 0 || hasDiscoveryBoundaryDiagnostics(candidate.catalog.Diagnostics) {
 				*bundles = append(*bundles, candidate)
 				continue
 			}
@@ -719,6 +722,9 @@ func discoverSubBundles(subBundles []subBundle) (LoadedCatalog, error) {
 
 	for _, candidate := range subBundles {
 		subDir, subCat, subErr := candidate.path, candidate.catalog, candidate.err
+		if subCat != nil {
+			subErr = errors.Join(subErr, subCat.SourceRefusal())
+		}
 		if subErr != nil {
 			errs = append(errs, fmt.Errorf("sub-bundle %q: %w", subDir, subErr))
 			continue
