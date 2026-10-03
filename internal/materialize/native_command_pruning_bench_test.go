@@ -38,3 +38,23 @@ func BenchmarkNativeCommandRemovalDisk(b *testing.B) {
 		})
 	}
 }
+
+// Includes disk marker reads, generation validation and reporting, but no writes.
+func BenchmarkNativeSkillMarkedFileDryRunDisk(b *testing.B) {
+	root := b.TempDir()
+	out := filepath.Join(root, "skills")
+	if err := os.Mkdir(out, 0o755); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "marked.md"), []byte("---\n_managed_by: agent-marketplace\n---\n\ninert marked body\n"), 0o640); err != nil {
+		b.Fatal(err)
+	}
+	boundary := &destinationBoundary{repoRoot: root, roots: []string{out}}
+	b.ReportAllocs()
+	for b.Loop() {
+		report, err := syncSkillLinks(out, nil, true, true, portableSyncContext{boundary: boundary})
+		if err != nil || len(report.Removed) != 1 || report.Removed[0] != "marked.md" {
+			b.Fatalf("dry-run control: %+v %v", report, err)
+		}
+	}
+}

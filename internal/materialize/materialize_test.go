@@ -3234,7 +3234,7 @@ func TestStaleArtifactLinksPreservesUserSymlinks(t *testing.T) {
 	userFilePath := filepath.Join(outDir, "user-file.txt")
 	_ = os.WriteFile(userFilePath, []byte("data"), 0o644)
 
-	stale, diags, err := staleArtifactLinks(outDir, desired)
+	stale, diags, err := staleArtifactLinks(outDir, desired, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

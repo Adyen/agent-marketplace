@@ -105,6 +105,7 @@ func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) (r
 	}
 	defer func() {
 		if closeErr := source.Close(); closeErr != nil {
+			results = nil
 			err = errors.Join(err, closeErr)
 		}
 	}()
