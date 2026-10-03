@@ -11,7 +11,25 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
-func publishPortableFile(src, dst string, observed os.FileInfo, boundary *destinationBoundary) (err error) {
+func publishPortableFile(src, dst string, observed os.FileInfo, boundary *destinationBoundary) error {
+	source, err := fsboundary.OpenSourceFS(filepath.Dir(src))
+	if err != nil {
+		return err
+	}
+	file, err := source.Open(filepath.Base(src))
+	if err != nil {
+		return errors.Join(err, source.Close())
+	}
+	info, statErr := file.Stat()
+	data, readErr := io.ReadAll(file)
+	closeErr := errors.Join(file.Close(), source.Close())
+	if statErr != nil || readErr != nil || closeErr != nil {
+		return errors.Join(statErr, readErr, closeErr)
+	}
+	return publishPortableBytes(dst, data, info.Mode().Perm(), observed, boundary)
+}
+
+func publishPortableBytes(dst string, data []byte, mode os.FileMode, observed os.FileInfo, boundary *destinationBoundary) (err error) {
 	capture := func(create bool) (*fsboundary.Dir, error) { return capturePortableParent(dst, boundary, create) }
 	parent, err := capture(true)
 	if err != nil {
@@ -85,32 +103,31 @@ func publishPortableFile(src, dst string, observed os.FileInfo, boundary *destin
 			return err
 		}
 	}
-	source, err := fsboundary.OpenSourceFS(filepath.Dir(src))
-	if err != nil {
-		return err
-	}
-	file, err := source.Open(filepath.Base(src))
-	if err != nil {
-		return errors.Join(err, source.Close())
-	}
-	info, statErr := file.Stat()
-	data, readErr := io.ReadAll(file)
-	closeErr := errors.Join(file.Close(), source.Close())
-	if statErr != nil || readErr != nil || closeErr != nil {
-		return errors.Join(statErr, readErr, closeErr)
-	}
 	stagedFile, stagedName, err := parent.CreateTemp(".agent-marketplace-portable-*")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = parent.Unlink(stagedName) }()
-	if err := stagedFile.Chmod(info.Mode().Perm()); err != nil {
+	created, err := stagedFile.Stat()
+	if err != nil {
+		return errors.Join(err, stagedFile.Close())
+	}
+	defer func() {
+		if current, statErr := native.Lstat(stagedName); statErr == nil && os.SameFile(created, current) {
+			_ = parent.Unlink(stagedName)
+		}
+	}()
+	if err := stagedFile.Chmod(mode.Perm()); err != nil {
 		return errors.Join(err, stagedFile.Close())
 	}
 	if _, err := stagedFile.Write(data); err != nil {
 		return errors.Join(err, stagedFile.Close())
 	}
-	if err := stagedFile.Close(); err != nil {
+	stagedInfo, statErr := stagedFile.Stat()
+	if closeErr := stagedFile.Close(); statErr != nil || closeErr != nil {
+		return errors.Join(statErr, closeErr)
+	}
+	stagedID, err := fsboundary.FileInfoIdentity(stagedInfo)
+	if err != nil {
 		return err
 	}
 	if boundary != nil && boundary.linkPublicationHook != nil {
@@ -131,6 +148,17 @@ func publishPortableFile(src, dst string, observed os.FileInfo, boundary *destin
 	}
 	if err := verify(); err != nil {
 		return err
+	}
+	stagedInfo, err = native.Lstat(stagedName)
+	if err != nil {
+		return err
+	}
+	currentStage, err := fsboundary.FileInfoIdentity(stagedInfo)
+	if err != nil {
+		return err
+	}
+	if !currentStage.SameState(stagedID) {
+		return fmt.Errorf("%w: staged portable file changed", fsboundary.ErrGenerationConflict)
 	}
 	return native.Rename(stagedName, name)
 }

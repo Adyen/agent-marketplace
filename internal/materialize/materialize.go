@@ -1489,7 +1489,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 
 		if len(copyLinks) > 0 {
 			copyDirsCovered[groupDir] = true
-			tr, err := syncCommandFiles(groupDir, copyLinks, dryRun, !componentBlocked(blocked, group.installDirRel))
+			tr, err := syncCommandFiles(groupDir, copyLinks, dryRun, !componentBlocked(blocked, group.installDirRel), &boundary)
 			report = appendGroupReport(report, key, outDir, group.reportPrefix, tr, err, "copy command files for target %s to %s")
 		}
 	}
@@ -3979,7 +3979,11 @@ func ensureDirectoryReplacingSymlink(path string) error {
 // TEMPORARY WORKAROUND: this path exists only because Factory's droid CLI does
 // not follow symlinked command files. Remove it (and TargetInfo.FileCopyKinds)
 // once Factory resolves symlink loading for commands.
-func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries bool) (TargetReport, error) {
+func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries bool, boundaries ...*destinationBoundary) (TargetReport, error) {
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
 	report := TargetReport{OutDir: dir}
 	desired := make(map[string][]byte, len(links))
 	linkMeta := make(map[string]skillLink, len(links))
@@ -4030,24 +4034,28 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 				report.Diags = append(report.Diags, userOwnedCommandDiag(filePath, name, linkMeta[name]))
 				continue
 			}
-			if existing, readErr := os.ReadFile(filePath); readErr == nil && bytes.Equal(existing, content) {
+			existing, readErr := readNativeCommandFile(filePath, info, boundary)
+			if readErr != nil {
+				return report, readErr
+			}
+			if bytes.Equal(existing, content) {
 				report.Skipped = append(report.Skipped, name)
 				continue
 			}
 		}
 
-		report.Written = append(report.Written, name)
 		if dryRun {
+			report.Written = append(report.Written, name)
 			continue
 		}
-		if info != nil && info.Mode()&os.ModeSymlink != 0 {
-			if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-				return report, err
-			}
+		mode := os.FileMode(0o644)
+		if info != nil && info.Mode().IsRegular() {
+			mode = info.Mode().Perm()
 		}
-		if err := atomicWriteFile(filePath, content, 0o644); err != nil {
+		if err := publishPortableBytes(filePath, content, mode, info, boundary); err != nil {
 			return report, err
 		}
+		report.Written = append(report.Written, name)
 	}
 
 	if pruneStaleEntries {
@@ -4150,37 +4158,9 @@ func injectManagedByFrontmatter(content []byte) []byte {
 // isManagedCommandFile reports whether the file at path is a command markdown
 // file carrying the `_managed_by: agent-marketplace` ownership marker in its
 // leading frontmatter block.
-func isManagedCommandFile(path string) (managed bool) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	root, err := fsboundary.OpenDir(filepath.Dir(absolute))
-	if err != nil {
-		return false
-	}
-	defer func() {
-		if root.Close() != nil {
-			managed = false
-		}
-	}()
-	file, err := fsboundary.CaptureDestination(root, filepath.Base(absolute), fsboundary.LinkPolicyRepository)
-	if err != nil {
-		return false
-	}
-	defer func() {
-		if file.Close() != nil {
-			managed = false
-		}
-	}()
-	if file.Link() != nil {
-		return false
-	}
-	data, _, err := file.ReadTarget(file.Identity().Size)
-	if err != nil {
-		return false
-	}
-	return isManagedCommandContent(data)
+func isManagedCommandFile(path string) bool {
+	data, err := readNativeCommandFile(path, nil, nil)
+	return err == nil && isManagedCommandContent(data)
 }
 
 func isManagedCommandContent(data []byte) bool {
