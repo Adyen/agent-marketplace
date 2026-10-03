@@ -30,10 +30,30 @@ func (s *Store) captureMetadataParent() (parent *fsboundary.Dir, err error) {
 	return anchor.OpenPath(rel)
 }
 
-func (s *Store) writeMetadata(name string, data []byte) (err error) {
-	parent, err := s.captureMetadataParent()
+func (s *Store) verifyMetadataParent(parent *fsboundary.Dir) error {
+	fresh, err := s.captureMetadataParent()
 	if err != nil {
 		return err
+	}
+	unchanged := fresh.Identity().SameObject(parent.Identity())
+	if err := fresh.Close(); err != nil {
+		return err
+	}
+	if !unchanged {
+		return fsboundary.ErrGenerationConflict
+	}
+	return nil
+}
+
+func (s *Store) writeMetadata(name string, data []byte) error {
+	_, err := s.writeObservedMetadata(name, data)
+	return err
+}
+
+func (s *Store) writeObservedMetadata(name string, data []byte) (pin metadataPin, err error) {
+	parent, err := s.captureMetadataParent()
+	if err != nil {
+		return pin, err
 	}
 	defer func() {
 		if closeErr := parent.Close(); closeErr != nil {
@@ -42,7 +62,7 @@ func (s *Store) writeMetadata(name string, data []byte) (err error) {
 	}()
 	destination, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
-		return err
+		return pin, err
 	}
 	defer func() {
 		if closeErr := destination.Close(); closeErr != nil {
@@ -50,11 +70,11 @@ func (s *Store) writeMetadata(name string, data []byte) (err error) {
 		}
 	}()
 	if destination.Link() != nil {
-		return fsboundary.ErrUnsafeFile
+		return pin, fsboundary.ErrUnsafeFile
 	}
 	native, err := parent.NativeRoot()
 	if err != nil {
-		return err
+		return pin, err
 	}
 	defer func() {
 		if closeErr := native.Close(); closeErr != nil {
@@ -63,15 +83,15 @@ func (s *Store) writeMetadata(name string, data []byte) (err error) {
 	}()
 	staged, stagedName, err := parent.CreateTemp(".tmp-" + name + "-*")
 	if err != nil {
-		return err
+		return pin, err
 	}
 	info, err := staged.Stat()
 	if err != nil {
-		return errors.Join(err, staged.Close())
+		return pin, errors.Join(err, staged.Close())
 	}
 	created, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return errors.Join(err, staged.Close())
+		return pin, errors.Join(err, staged.Close())
 	}
 	defer func() {
 		if staged != nil {
@@ -99,38 +119,30 @@ func (s *Store) writeMetadata(name string, data []byte) (err error) {
 		}
 	}()
 	if _, err := staged.Write(data); err != nil {
-		return err
+		return pin, err
 	}
 	if err := staged.Chmod(0o600); err != nil {
-		return err
+		return pin, err
 	}
 	info, err = staged.Stat()
 	if err != nil {
-		return err
+		return pin, err
 	}
 	produced, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return err
+		return pin, err
 	}
 	closeErr := staged.Close()
 	staged = nil
 	if closeErr != nil {
-		return closeErr
+		return pin, closeErr
 	}
-	fresh, err := s.captureMetadataParent()
-	if err != nil {
-		return err
-	}
-	unchanged := fresh.Identity().SameObject(parent.Identity())
-	if err := fresh.Close(); err != nil {
-		return err
-	}
-	if !unchanged {
-		return fsboundary.ErrGenerationConflict
+	if err := s.verifyMetadataParent(parent); err != nil {
+		return pin, err
 	}
 	output, err := fsboundary.CaptureDestination(parent, stagedName, fsboundary.LinkPolicyRepository)
 	if err != nil {
-		return err
+		return pin, err
 	}
 	defer func() {
 		if closeErr := output.Close(); closeErr != nil {
@@ -138,10 +150,25 @@ func (s *Store) writeMetadata(name string, data []byte) (err error) {
 		}
 	}()
 	if output.Link() != nil || !output.Identity().SameState(produced) {
-		return fsboundary.ErrGenerationConflict
+		return pin, fsboundary.ErrGenerationConflict
 	}
 	if err := output.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
-		return err
+		return pin, err
 	}
-	return destination.Publish(parent, stagedName)
+	if err := destination.Publish(parent, stagedName); err != nil {
+		return pin, err
+	}
+	info, err = native.Lstat(name)
+	if err != nil {
+		return pin, err
+	}
+	pin.file, err = fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return pin, err
+	}
+	if !pin.file.SameObject(produced) || !pin.file.Mode.IsRegular() || pin.file.Links != 1 {
+		return pin, fsboundary.ErrGenerationConflict
+	}
+	pin.parent = parent.Identity()
+	return pin, nil
 }

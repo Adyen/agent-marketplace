@@ -113,7 +113,7 @@ run_race ./internal/fsboundary \
     -count=20
 
 run_race ./internal/ownership \
-    -run '^Test(StoreReadAggregate.*|ApplyRetargetedParentDoesNotStageOutsideRoot|ApplyRefuses.*Generation|ApplyCapturedPublicationPreservesSharedMode|ProofRefusesAliasedOwnershipState|RecoverRefusesAliasedJournal|OwnershipMetadata.*|ApplyMetadataPublication.*)$' \
+    -run '^Test(StoreReadAggregate.*|ApplyRetargetedParentDoesNotStageOutsideRoot|ApplyRefuses.*Generation|ApplyCapturedPublicationPreservesSharedMode|ProofRefusesAliasedOwnershipState|RecoverRefusesAliasedJournal|OwnershipMetadata.*|ApplyMetadataPublication.*|ApplyJournalCleanupPreservesReplacementGeneration)$' \
     -count=20
 
 run_race ./internal/backup \

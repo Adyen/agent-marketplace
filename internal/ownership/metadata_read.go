@@ -3,43 +3,36 @@ package ownership
 import (
 	"errors"
 	"io/fs"
-	"path/filepath"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
-func (s *Store) readMetadata(name string) (data []byte, exists bool, err error) {
-	anchor, err := fsboundary.OpenDir(string(filepath.Separator))
-	if err != nil {
-		return nil, false, err
-	}
-	defer func() {
-		if closeErr := anchor.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-	rel, err := filepath.Rel(anchor.Path(), s.canonicalStateRoot)
-	if err != nil {
-		return nil, false, err
-	}
-	root, err := anchor.OpenPath(rel)
+type metadataPin struct {
+	parent fsboundary.Identity
+	file   fsboundary.Identity
+}
+
+func (s *Store) readMetadata(name string) ([]byte, bool, error) {
+	data, exists, _, err := s.readObservedMetadata(name)
+	return data, exists, err
+}
+
+func (s *Store) readObservedMetadata(name string) (data []byte, exists bool, pin metadataPin, err error) {
+	parent, err := s.captureMetadataParent()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
-			return nil, false, nil
+			return nil, false, pin, nil
 		}
-		return nil, false, err
+		return nil, false, pin, err
 	}
 	defer func() {
-		if closeErr := root.Close(); closeErr != nil {
+		if closeErr := parent.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	file, err := fsboundary.CaptureDestination(root, filepath.Join(ownershipDirName, s.rootKey, name), fsboundary.LinkPolicyRepository)
+	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
-			return nil, false, nil
-		}
-		return nil, false, err
+		return nil, false, pin, err
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
@@ -47,11 +40,18 @@ func (s *Store) readMetadata(name string) (data []byte, exists bool, err error) 
 		}
 	}()
 	if file.Link() != nil {
-		return nil, false, fsboundary.ErrUnsafeFile
+		return nil, false, pin, fsboundary.ErrUnsafeFile
 	}
 	if !file.Exists() {
-		return nil, false, nil
+		return nil, false, pin, nil
 	}
-	data, _, err = file.ReadTarget(file.Identity().Size)
-	return data, true, err
+	data, pin.file, err = file.ReadTarget(file.Identity().Size)
+	if err != nil {
+		return nil, false, pin, err
+	}
+	if err := s.verifyMetadataParent(parent); err != nil {
+		return nil, false, pin, err
+	}
+	pin.parent = parent.Identity()
+	return data, true, pin, nil
 }

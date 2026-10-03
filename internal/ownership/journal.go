@@ -64,6 +64,7 @@ type Journal struct {
 	// to have happened.
 	NextRecord *Record `json:"next_record"`
 	UpdatedAt  string  `json:"updated_at"`
+	observed   metadataPin
 }
 
 // Mutation is one aggregate write plus the ownership it claims.
@@ -427,7 +428,7 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 	}
 
 	// STEP 7: clear the journal.
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(journal); err != nil {
 		return Result{}, err
 	}
 
@@ -493,7 +494,7 @@ func (s *Store) cleanupAfterCASFailure(journal *Journal, backupPath string) {
 		slog.Warn("could not remove the staged file after a CAS failure",
 			"root_key", s.rootKey, "staged_path", journal.StagedPath, "err", err)
 	}
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(journal); err != nil {
 		slog.Warn("could not clear the journal after a CAS failure",
 			"root_key", s.rootKey, "journal", s.JournalFile(), "err", err)
 	}
@@ -611,28 +612,53 @@ func (s *Store) writeJournal(j *Journal) error {
 	if err != nil {
 		return fmt.Errorf("ownership: marshal journal: %w", err)
 	}
-	if err := s.writeMetadata(journalFileName, append(data, '\n')); err != nil {
+	pin, err := s.writeObservedMetadata(journalFileName, append(data, '\n'))
+	if err != nil {
 		return err
 	}
+	j.observed = pin
 	slog.Debug("ownership journal written",
 		"root_key", s.rootKey, "file", j.File, "generation", j.Generation, "phase", string(j.Phase))
 	return nil
 }
 
-func (s *Store) clearJournal() error {
-	remove := os.Remove
+func (s *Store) clearJournal(j *Journal) (err error) {
+	parent, err := s.captureMetadataParent()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if !parent.Identity().SameObject(j.observed.parent) {
+		return fsboundary.ErrGenerationConflict
+	}
+	file, err := fsboundary.CaptureDestination(parent, journalFileName, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil || !file.Exists() || !file.Identity().SameState(j.observed.file) {
+		return fsboundary.ErrGenerationConflict
+	}
 	if s.removeJournalFile != nil {
-		remove = s.removeJournalFile
+		if err := s.removeJournalFile(s.JournalFile()); err != nil {
+			return fmt.Errorf("ownership: clear journal: %w", err)
+		}
+		return parent.Sync()
 	}
-	if err := remove(s.JournalFile()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("ownership: clear journal: %w", err)
-	}
-	return fsyncDir(s.recordDir())
+	return file.RemoveLeaf()
 }
 
 // ReadJournal returns the in-flight journal, or nil when there is none.
 func (s *Store) ReadJournal() (*Journal, error) {
-	data, exists, err := s.readMetadata(journalFileName)
+	data, exists, observed, err := s.readObservedMetadata(journalFileName)
 	if err != nil {
 		return nil, fmt.Errorf("ownership: read journal: %w", err)
 	}
@@ -646,6 +672,7 @@ func (s *Store) ReadJournal() (*Journal, error) {
 	if j.Version != journalVersion {
 		return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(), fmt.Errorf("%w: unsupported journal version %d", ErrStateCorrupt, j.Version))
 	}
+	j.observed = observed
 	if j.RootKey != s.rootKey || j.CanonicalRoot != s.canonicalRoot {
 		return nil, coded(diag.CodeOwnershipStateRootMismatch, s.JournalFile(), ErrStateRootMismatch)
 	}
@@ -775,7 +802,7 @@ func (s *Store) rollForward(j *Journal, current *Record) ([]RecoveryOutcome, err
 	if err := s.removeStaged(j); err != nil {
 		return nil, err
 	}
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(j); err != nil {
 		return nil, err
 	}
 	slog.Warn("recovered an incomplete ownership generation",
@@ -788,7 +815,7 @@ func (s *Store) rollBack(j *Journal) ([]RecoveryOutcome, error) {
 	if err := s.removeStaged(j); err != nil {
 		return nil, err
 	}
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(j); err != nil {
 		return nil, err
 	}
 	slog.Warn("rolled back an incomplete ownership generation",
@@ -804,7 +831,7 @@ func (s *Store) abandon(j *Journal) ([]RecoveryOutcome, error) {
 	if err := s.removeStaged(j); err != nil {
 		return nil, err
 	}
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(j); err != nil {
 		return nil, err
 	}
 	slog.Error("abandoned a staged ownership generation: the aggregate changed underneath it",
