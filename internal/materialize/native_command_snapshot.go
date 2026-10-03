@@ -55,7 +55,11 @@ func readNativeCommandFile(path string, observed os.FileInfo, boundary *destinat
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	file, err := fsboundary.CaptureDestination(parent, filepath.Base(path), fsboundary.LinkPolicyRepository)
+	return readNativeCommandSnapshot(parent, filepath.Base(path), observed)
+}
+
+func readNativeCommandSnapshot(parent *fsboundary.Dir, name string, observed os.FileInfo) (data []byte, err error) {
+	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return nil, err
 	}
