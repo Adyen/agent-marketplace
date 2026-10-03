@@ -382,6 +382,7 @@ type runConfig struct {
 	scopeFilter             *bool // nil = all scopes; true = machine only; false = repo only
 	modes                   config.MaterializationModes
 	linkPublicationHook     func(string)
+	pruneClassificationHook func(string)
 	manifestPublicationHook func(string)
 }
 
@@ -426,6 +427,7 @@ type targetWork struct {
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
 	linkPublicationHook     func(string)
+	pruneClassificationHook func(string)
 	manifestPublicationHook func(string)
 	scopeFilter             *bool
 	allDiags                []diag.Diagnostic
@@ -501,6 +503,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
 	compileResult.linkPublicationHook = rc.linkPublicationHook
+	compileResult.pruneClassificationHook = rc.pruneClassificationHook
 	compileResult.manifestPublicationHook = rc.manifestPublicationHook
 	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes)
 	slog.Info("materialize end",
@@ -1167,7 +1170,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				continue
 			}
 		}
-		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook, manifestPublicationHook: compileResult.manifestPublicationHook}
+		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook, pruneClassificationHook: compileResult.pruneClassificationHook, manifestPublicationHook: compileResult.manifestPublicationHook}
 		if key.target == hcc.TargetFactory {
 			boundary.legacySkillsDir = filepath.Join(outDir, "skills")
 		}
@@ -3157,38 +3160,31 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 				desiredInDir[rel] = ""
 			}
 		}
-		stale, diags, err := staleArtifactLinks(dir, desiredInDir)
+		snapshots := make(map[string]managedLinkSnapshot)
+		stale, diags, err := staleArtifactLinks(dir, desiredInDir, snapshots)
 		if err != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("prune stale portable symlinks in %s: %v", dir, err)})
 			continue
 		}
 		tr := TargetReport{OutDir: dir, Diags: diags}
-		if dryRun {
-			tr.Removed = stale
-		}
-		if !dryRun {
-			for _, rel := range stale {
-				path, pathErr := portableOutputPath(dir, rel)
-				if pathErr != nil {
-					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: pathErr.Error()})
-					continue
+		for _, rel := range stale {
+			path, pathErr := portableOutputPath(dir, rel)
+			if pathErr != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: pathErr.Error()})
+				continue
+			}
+			var boundary *destinationBoundary
+			if len(boundaries) > 0 {
+				boundary = boundaries[0]
+			}
+			if err := pruneManagedLink(path, snapshots[rel], boundary, dryRun); err != nil {
+				if !missingPruneEntry(err) {
+					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("remove stale portable symlink %s: %v", path, err)})
 				}
-				observed, observeErr := os.Lstat(path)
-				var boundary *destinationBoundary
-				if len(boundaries) > 0 {
-					boundary = boundaries[0]
-				}
-				if observeErr == nil && observed.Mode()&os.ModeSymlink == 0 {
-					observeErr = fsboundary.ErrGenerationConflict
-				}
-				if observeErr == nil {
-					observeErr = removePortableOutput(path, observed, "", boundary)
-				}
-				if observeErr != nil && !os.IsNotExist(observeErr) {
-					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("remove stale portable symlink %s: %v", path, observeErr)})
-					continue
-				}
-				tr.Removed = append(tr.Removed, rel)
+				continue
+			}
+			tr.Removed = append(tr.Removed, rel)
+			if !dryRun {
 				cleanEmptyPortableArtifactDirs(dir, filepath.Dir(filepath.FromSlash(rel)), boundary)
 			}
 		}
@@ -3299,29 +3295,26 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	}
 
 	if pruneStaleEntries {
-		stale, staleDiags, err := staleArtifactLinks(outDir, desired)
+		snapshots := make(map[string]managedLinkSnapshot)
+		stale, staleDiags, err := staleArtifactLinks(outDir, desired, snapshots)
 		if err != nil {
 			return report, diags, err
 		}
 		diags = append(diags, staleDiags...)
-		if dryRun {
-			report.Removed = stale
-		}
-		if !dryRun {
-			for _, path := range stale {
-				leaf := filepath.Join(outDir, filepath.FromSlash(path))
-				observed, err := os.Lstat(leaf)
-				if err != nil {
-					return report, diags, err
+		for _, path := range stale {
+			leaf := filepath.Join(outDir, filepath.FromSlash(path))
+			var boundary *destinationBoundary
+			if len(portable) > 0 {
+				boundary = portable[0].boundary
+			}
+			if err := pruneManagedLink(leaf, snapshots[path], boundary, dryRun); err != nil {
+				if missingPruneEntry(err) {
+					continue
 				}
-				var boundary *destinationBoundary
-				if len(portable) > 0 {
-					boundary = portable[0].boundary
-				}
-				if err := removePortableOutput(leaf, observed, "", boundary); err != nil {
-					return report, diags, err
-				}
-				report.Removed = append(report.Removed, path)
+				return report, diags, err
+			}
+			report.Removed = append(report.Removed, path)
+			if !dryRun {
 				cleanEmptyPortableArtifactDirs(outDir, filepath.Dir(filepath.FromSlash(path)), boundary)
 			}
 		}
@@ -3333,10 +3326,13 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	return report, diags, nil
 }
 
-func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []diag.Diagnostic, error) {
+func staleArtifactLinks(outDir string, desired map[string]string, snapshots ...map[string]managedLinkSnapshot) ([]string, []diag.Diagnostic, error) {
 	var stale []string
 	var diags []diag.Diagnostic
 	err := filepath.WalkDir(outDir, func(path string, d fs.DirEntry, err error) error {
+		if missingPruneEntry(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -3355,9 +3351,19 @@ func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []d
 		if _, ok := desired[relSlash]; ok {
 			return nil
 		}
+		snapshot, err := observeManagedLink(path)
+		if missingPruneEntry(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if snapshot.observed.Mode()&os.ModeSymlink == 0 {
+			return fsboundary.ErrGenerationConflict
+		}
 		// Only mark managed symlinks as stale. User symlinks
 		// (pointing outside the cache dir) are preserved.
-		if !isManagedSymlink(path) {
+		if !strings.HasPrefix(snapshot.text, cache.CacheDir()+string(os.PathSeparator)) {
 			diags = append(diags, diag.Diagnostic{
 				Code:     "materialize.collision.user-owned",
 				Severity: diag.SeverityInfo,
@@ -3366,12 +3372,12 @@ func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []d
 			return nil
 		}
 		stale = append(stale, relSlash)
+		if len(snapshots) > 0 {
+			snapshots[0][relSlash] = snapshot
+		}
 		return nil
 	})
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, diags, nil
-		}
 		return nil, diags, err
 	}
 	sort.Strings(stale)
@@ -3889,7 +3895,14 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			continue
 		}
 		path := filepath.Join(skillsDir, name)
-		if _, ok := existingSymlinkTarget(path); !ok {
+		snapshot, err := observeManagedLink(path)
+		if missingPruneEntry(err) {
+			continue
+		}
+		if err != nil {
+			return report, err
+		}
+		if snapshot.observed.Mode()&os.ModeSymlink == 0 {
 			// Non-symlink directories are user-owned skill directories
 			// and must be preserved. Mirror the principle from
 			// staleArtifactLinks which also preserves user-owned content.
@@ -3931,7 +3944,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		}
 		// Symlink — only prune if it points to our cache (managed).
 		// User symlinks (pointing outside the cache) are preserved.
-		if !isManagedSymlink(path) {
+		if !strings.HasPrefix(snapshot.text, cache.CacheDir()+string(os.PathSeparator)) {
 			if pruneStaleEntries {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
@@ -3941,19 +3954,14 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			}
 			continue
 		}
-		if dryRun {
-			report.Removed = append(report.Removed, name)
-			continue
-		}
-		observed, err := os.Lstat(path)
-		if err != nil {
-			return report, err
-		}
 		var boundary *destinationBoundary
 		if len(portable) > 0 {
 			boundary = portable[0].boundary
 		}
-		if err := removePortableOutput(path, observed, "", boundary); err != nil {
+		if err := pruneManagedLink(path, snapshot, boundary, dryRun); err != nil {
+			if missingPruneEntry(err) {
+				continue
+			}
 			return report, err
 		}
 		report.Removed = append(report.Removed, name)
