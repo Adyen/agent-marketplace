@@ -4,4 +4,4 @@
 - [x] Capture selection/traversal/link metadata with optional absence before cleanup and hard traversal refusal.
 - [x] Verify Linux/macOS/full backup/count20 races.
 - [x] Record narrow benchmark and run validate/spec/all-entry review.
-- [ ] `openspec archive fence-backup-discovery --yes`.
+- [x] `openspec archive fence-backup-discovery --yes`.
