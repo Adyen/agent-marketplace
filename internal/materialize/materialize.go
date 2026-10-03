@@ -1465,6 +1465,9 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		symlinkLinks, copyLinks := partitionFileCopyLinks(key.target, group.links)
 
 		if len(symlinkLinks) > 0 {
+			for _, link := range symlinkLinks {
+				fileDesired[filepath.ToSlash(filepath.Join(group.reportPrefix, link.name))] = true
+			}
 			if err := prepareSkillLinkCaches(symlinkLinks, dryRun); err != nil {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.write.error",
@@ -2860,9 +2863,15 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		ensureParents(path)
 		nodes[path] = portableVirtualNode{mode: portableArtifactMode(a.Mode), content: a.Bytes}
 	}
-	var addSupport func(*fsboundary.Dir, string) error
-	addSupport = func(root *fsboundary.Dir, rel string) error {
-		entries, err := readSupportSourceDirectory(root, rel)
+	active := make(map[string]bool)
+	var addSupport func(*fsboundary.Dir, string, string) error
+	addSupport = func(root *fsboundary.Dir, sourceRel, rel string) error {
+		if active[sourceRel] {
+			return fmt.Errorf("%w: cyclic support directory alias", fsboundary.ErrUnsafePath)
+		}
+		active[sourceRel] = true
+		defer delete(active, sourceRel)
+		entries, err := readSupportSourceDirectory(root, sourceRel)
 		if err != nil {
 			return err
 		}
@@ -2877,14 +2886,11 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 			if entry.Name() == ".git" {
 				continue
 			}
-			if entry.IsDir() { // copyFile/copyDir follows source links.
-				directory, err := root.OpenPath(filepath.FromSlash(childRel))
-				if err != nil {
-					return err
-				}
-				if err := directory.Close(); err != nil {
-					return err
-				}
+			sourceChild, isDir, err := supportSourceChild(root, sourceRel, entry)
+			if err != nil {
+				return err
+			}
+			if isDir { // copyFile/copyDir follows source links.
 				// Mirror copySupportFilesExcluding: VCS internals are never
 				// part of the support tree, so the dry-run digest must
 				// exclude them exactly like the real cache copy does.
@@ -2897,12 +2903,12 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 				if _, exists := nodes[childRel]; !exists {
 					nodes[childRel] = portableVirtualNode{dir: true, mode: 0o755}
 				}
-				if err := addSupport(root, childRel); err != nil {
+				if err := addSupport(root, sourceChild, childRel); err != nil {
 					return err
 				}
 				continue
 			}
-			data, identity, err := readSupportSourceSnapshot(root, filepath.FromSlash(childRel))
+			data, identity, err := readSupportSourceSnapshot(root, sourceChild)
 			if err != nil {
 				return err
 			}
@@ -2927,7 +2933,7 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 				return "", err
 			}
 		} else {
-			err = addSupport(root, ".")
+			err = addSupport(root, ".", ".")
 			if closeErr := root.Close(); closeErr != nil {
 				return "", errors.Join(err, closeErr)
 			}
