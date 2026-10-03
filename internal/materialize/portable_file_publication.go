@@ -1,0 +1,154 @@
+package materialize
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+)
+
+func publishPortableFile(src, dst string, observed os.FileInfo, boundary *destinationBoundary) (err error) {
+	parentPath := filepath.Dir(dst)
+	capture := func(create bool) (*fsboundary.Dir, error) {
+		if boundary != nil {
+			return boundary.captureDirectory(parentPath, create)
+		}
+		absolute, err := filepath.Abs(parentPath)
+		if err != nil {
+			return nil, err
+		}
+		root, err := fsboundary.OpenDir(filepath.Dir(absolute))
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = root.Close() }()
+		if create {
+			return root.EnsurePath(filepath.Base(absolute))
+		}
+		return root.OpenPath(filepath.Base(absolute))
+	}
+	parent, err := capture(true)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	name := filepath.Base(dst)
+	var expected fsboundary.Identity
+	if observed != nil {
+		expected, err = fsboundary.FileInfoIdentity(observed)
+		if err != nil {
+			return err
+		}
+	}
+	verify := func() error {
+		current, err := native.Lstat(name)
+		if observed == nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: portable destination appeared", fsboundary.ErrGenerationConflict)
+		}
+		if err != nil {
+			return fmt.Errorf("%w: portable destination unavailable: %w", fsboundary.ErrGenerationConflict, err)
+		}
+		identity, err := fsboundary.FileInfoIdentity(current)
+		if err != nil {
+			return err
+		}
+		if !identity.SameState(expected) {
+			return fmt.Errorf("%w: portable destination changed", fsboundary.ErrGenerationConflict)
+		}
+		if identity.Mode.IsRegular() && identity.Links != 1 || !identity.Mode.IsRegular() && identity.Mode&os.ModeSymlink == 0 {
+			return fsboundary.ErrUnsafeFile
+		}
+		return nil
+	}
+	if err := verify(); err != nil {
+		return err
+	}
+	if observed != nil && observed.Mode().IsRegular() {
+		dest, captureErr := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
+		if captureErr != nil {
+			return captureErr
+		}
+		defer func() {
+			if closeErr := dest.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+		if dest.Link() != nil || !dest.Identity().SameState(expected) {
+			return fmt.Errorf("%w: portable opened destination changed", fsboundary.ErrGenerationConflict)
+		}
+		if err := dest.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
+			return err
+		}
+	}
+	source, err := fsboundary.OpenSourceFS(filepath.Dir(src))
+	if err != nil {
+		return err
+	}
+	file, err := source.Open(filepath.Base(src))
+	if err != nil {
+		return errors.Join(err, source.Close())
+	}
+	info, statErr := file.Stat()
+	data, readErr := io.ReadAll(file)
+	closeErr := errors.Join(file.Close(), source.Close())
+	if statErr != nil || readErr != nil || closeErr != nil {
+		return errors.Join(statErr, readErr, closeErr)
+	}
+	stagedFile, stagedName, err := parent.CreateTemp(".agent-marketplace-portable-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Unlink(stagedName) }()
+	if err := stagedFile.Chmod(info.Mode().Perm()); err != nil {
+		return errors.Join(err, stagedFile.Close())
+	}
+	if _, err := stagedFile.Write(data); err != nil {
+		return errors.Join(err, stagedFile.Close())
+	}
+	if err := stagedFile.Close(); err != nil {
+		return err
+	}
+	if boundary != nil && boundary.linkPublicationHook != nil {
+		boundary.linkPublicationHook(dst)
+	}
+	fresh, err := capture(false)
+	if err != nil {
+		return fmt.Errorf("%w: portable parent unavailable: %w", fsboundary.ErrGenerationConflict, err)
+	}
+	unchanged := fresh != nil && fresh.Identity().SameObject(parent.Identity())
+	if fresh != nil {
+		if closeErr := fresh.Close(); closeErr != nil {
+			return closeErr
+		}
+	}
+	if !unchanged {
+		return fmt.Errorf("%w: portable parent replaced", fsboundary.ErrGenerationConflict)
+	}
+	if err := verify(); err != nil {
+		return err
+	}
+	return native.Rename(stagedName, name)
+}

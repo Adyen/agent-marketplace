@@ -1316,7 +1316,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		var writeDiags []diag.Diagnostic
 		var matErr error
 		if mode == config.MaterializationModeFile {
-			writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired)
+			writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired, &boundary)
 		} else {
 			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired, boundary: &boundary})
 		}
@@ -1477,7 +1477,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			var tr TargetReport
 			var err error
 			if mode == config.MaterializationModeFile {
-				tr, err = syncPortableSkillTrees(groupDir, symlinkLinks, dryRun, state, key.target, group.reportPrefix, fileDesired)
+				tr, err = syncPortableSkillTrees(groupDir, symlinkLinks, dryRun, state, key.target, group.reportPrefix, fileDesired, &boundary)
 			} else {
 				tr, err = syncSkillLinks(groupDir, symlinkLinks, dryRun, !componentBlocked(blocked, group.installDirRel), portableSyncContext{state: state, target: key.target, reportPrefix: group.reportPrefix, desired: fileDesired, boundary: &boundary})
 			}
@@ -2749,7 +2749,7 @@ func portableOwnershipDecision(entry portableManifestEntry, currentDigest, desir
 // files cannot be recognized as managed by inspecting the filesystem, so
 // removal is driven exclusively by manifest entries (see prunePortableEntries).
 // Plan-level pruning here would delete user-authored files.
-func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cacheDir string, dryRun bool, _ bool, collisionMeta map[string]skillLink, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
+func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cacheDir string, dryRun bool, _ bool, collisionMeta map[string]skillLink, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool, boundaries ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic, error) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
 	for _, a := range artifacts {
@@ -2797,15 +2797,11 @@ func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cac
 			}
 		}
 		if !dryRun {
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-				return report, diags, err
+			var boundary *destinationBoundary
+			if len(boundaries) > 0 {
+				boundary = boundaries[0]
 			}
-			if info != nil && (info.Mode()&os.ModeSymlink != 0 || info.IsDir()) {
-				if err := os.RemoveAll(dst); err != nil {
-					return report, diags, err
-				}
-			}
-			if err := copyFile(src, dst); err != nil {
+			if err := publishPortableFile(src, dst, info, boundary); err != nil {
 				return report, diags, err
 			}
 			state.add(target, path, desiredDigest)
@@ -2952,7 +2948,7 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool) (TargetReport, error) {
+func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool, boundaries ...*destinationBoundary) (TargetReport, error) {
 	report := TargetReport{OutDir: skillsDir}
 	if !dryRun {
 		if err := ensureDirectoryReplacingSymlink(skillsDir); err != nil {
@@ -3003,21 +2999,27 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 			}
 		}
 		if !dryRun {
-			if info != nil {
-				if err := os.RemoveAll(dst); err != nil {
-					return report, err
-				}
-			}
 			sourceInfo, err := os.Stat(link.target)
 			if err != nil {
 				return report, err
 			}
 			if sourceInfo.IsDir() {
+				if info != nil {
+					if err := os.RemoveAll(dst); err != nil {
+						return report, err
+					}
+				}
 				if err := copyDir(link.target, dst); err != nil {
 					return report, err
 				}
-			} else if err := copyFile(link.target, dst); err != nil {
-				return report, err
+			} else {
+				var boundary *destinationBoundary
+				if len(boundaries) > 0 {
+					boundary = boundaries[0]
+				}
+				if err := publishPortableFile(link.target, dst, info, boundary); err != nil {
+					return report, err
+				}
 			}
 			state.add(target, path, desiredDigest)
 		}
