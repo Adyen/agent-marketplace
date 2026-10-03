@@ -12,10 +12,11 @@ import (
 )
 
 type SourceFS struct {
-	root    *Dir
-	native  *os.Root
-	mu      sync.Mutex
-	refusal error
+	root     *Dir
+	native   *os.Root
+	mu       sync.Mutex
+	refusal  error
+	admitted map[string]struct{}
 }
 
 func OpenSourceFS(path string) (*SourceFS, error) {
@@ -41,15 +42,8 @@ func (s *SourceFS) Open(name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
 	}
-	info, err := s.native.Lstat(filepath.FromSlash(name))
-	if err != nil {
-		return nil, err
-	}
-	if info.IsDir() {
-		directory, err := s.root.OpenPath(filepath.FromSlash(name))
-		if err != nil {
-			return nil, err
-		}
+	directory, err := s.root.OpenContainedRoot(filepath.FromSlash(name))
+	if err == nil {
 		native, err := directory.NativeRoot()
 		if err != nil {
 			_ = directory.Close()
@@ -62,6 +56,9 @@ func (s *SourceFS) Open(name string) (fs.File, error) {
 			return nil, err
 		}
 		return &sourceDirectory{File: file, native: native, directory: directory}, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, ErrUnsafePath) {
+		return nil, err
 	}
 	data, identity, err := s.read(name)
 	if err != nil {
@@ -81,9 +78,27 @@ func (s *SourceFS) Refusal() error {
 	return s.refusal
 }
 
+func (s *SourceFS) WasRead(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, admitted := s.admitted[name]
+	return admitted
+}
+
+func IsSourceRefusal(err error) bool {
+	return errors.Is(err, ErrUnsafePath) || errors.Is(err, ErrUnsafeFile) || errors.Is(err, ErrGenerationConflict) || errors.Is(err, ErrTooLarge)
+}
+
 func (s *SourceFS) read(name string) (data []byte, identity Identity, err error) {
 	defer func() {
-		if errors.Is(err, ErrUnsafePath) || errors.Is(err, ErrUnsafeFile) || errors.Is(err, ErrGenerationConflict) || errors.Is(err, ErrTooLarge) {
+		if err == nil {
+			s.mu.Lock()
+			if s.admitted == nil {
+				s.admitted = make(map[string]struct{})
+			}
+			s.admitted[name] = struct{}{}
+			s.mu.Unlock()
+		} else if IsSourceRefusal(err) {
 			s.mu.Lock()
 			if s.refusal == nil {
 				s.refusal = err
@@ -95,6 +110,9 @@ func (s *SourceFS) read(name string) (data []byte, identity Identity, err error)
 		return nil, Identity{}, &fs.PathError{Op: "read", Path: name, Err: fs.ErrInvalid}
 	}
 	source, err := CaptureDestination(s.root, filepath.FromSlash(name), LinkPolicyRepository)
+	if errors.Is(err, ErrUnsafePath) {
+		source, err = s.captureAliasedSource(name)
+	}
 	if err != nil {
 		return nil, Identity{}, fmt.Errorf("read source %s: %w", name, err)
 	}
@@ -104,6 +122,36 @@ func (s *SourceFS) read(name string) (data []byte, identity Identity, err error)
 		}
 	}()
 	return source.ReadTarget(source.Identity().Size)
+}
+
+func (s *SourceFS) captureAliasedSource(name string) (source *Destination, err error) {
+	parent, err := s.root.OpenContainedRoot(filepath.Dir(filepath.FromSlash(name)))
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = errors.Join(err, parent.Close())
+		if err != nil && source != nil {
+			err = errors.Join(err, source.Close())
+			source = nil
+		}
+	}()
+	parentRel, err := filepath.Rel(s.root.Path(), parent.Path())
+	if err != nil {
+		return nil, err
+	}
+	source, err = CaptureDestination(s.root, filepath.Join(parentRel, filepath.Base(name)), LinkPolicyRepository)
+	if err != nil {
+		return nil, err
+	}
+	parentID := s.root.Identity()
+	if len(source.logicalChain) > 0 {
+		parentID = source.logicalChain[len(source.logicalChain)-1].id
+	}
+	if !parentID.SameObject(parent.Identity()) {
+		return source, fmt.Errorf("%w: source parent changed during capture", ErrGenerationConflict)
+	}
+	return source, nil
 }
 
 func (s *SourceFS) ReadDir(name string) (entries []fs.DirEntry, err error) {
