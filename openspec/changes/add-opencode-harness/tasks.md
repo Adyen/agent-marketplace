@@ -1,0 +1,75 @@
+## 1. Prove native feasibility before enabling the target
+
+- [ ] 1.1 Build a hermetic native probe harness with a checksum-verified pinned OpenCode executable, isolated HOME/XDG/config/state/cache, sanitized overrides/environment, synthetic credentials/handlers, controlled local endpoints, network isolation, bounded process cleanup, and required non-skipped witnesses. Prove and annotate `opencode-hooks/the-release-gate-proves-hooks-in-a-controlled-runtime`.
+- [ ] 1.2 Prove the minimum command-type `PreToolUse` matcher/input/allow/block contract, including absence of rejected tool effects; test normal tools, MCP tools, and subagent paths individually before claiming coverage. Prove and annotate `opencode-hooks/a-blocking-pre-tool-hook-prevents-the-protected-effect` and `opencode-hooks/claimed-tool-consumer-paths-share-the-proven-contract`.
+- [ ] 1.3 Probe missing/disabled adapters and initialization failures before public target registration. Prove and annotate `opencode-hooks/activation-failure-cannot-become-successful-enforcement`; if native required enforcement cannot fail closed, retain a release blocker and stop target enablement until an upstream or separately proven route satisfies the spec.
+- [ ] 1.4 Prove handler failure, malformed output, missing executables, timeout/cancellation/process-tree cleanup, explicit runner budgets with below/at/above controls, native permissions, and coexistence with handwritten plugins. Annotate `opencode-hooks/handler-failure-is-bounded-and-blocks-protected-effects`, `opencode-hooks/runner-budgets-refuse-excess-without-truncation`, and `opencode-hooks/native-permissions-remain-authoritative-with-other-plugins`.
+- [ ] 1.5 Record the version/executable identity and proven event/handler/path/protocol matrix, configuration precedence/overrides, permission order/empty-policy behavior, supported source aliases, and literal/reference representability. Preserve source observations separately from execution evidence; reconcile any required spec/design refinements before enabling support.
+- [ ] 1.6 Capture benchmark baselines for affected discovery, compilation, resolution, sync, status, and repair hot paths using realistic isolated fixtures; retain benchmark guards and private raw evidence.
+
+## 2. Register the harness target and complete consumer selection
+
+- [ ] 2.1 Add the authoritative target identity/aliases/capabilities, compiler/ingester registrations, native topology, and validated installation/repair adapter bindings with completeness checks. Keep defaults unchanged; prove and annotate `harness-opencode/existing-configurations-retain-their-harness-targets` across read/init/migration/sync controls.
+- [ ] 2.2 Wire configuration validation/narrowing, `source_harness`, conversion directions/help, init, TUI, status, doctor, and backup through the registry; add real consumer witnesses for `harness-opencode/opencode-selection-reaches-consumer-workflows`.
+- [ ] 2.3 Implement OpenCode-specific source marker detection, explicit source-layout selection, legacy aliases, and deterministic deduplication using the proven native precedence. Annotate `harness-opencode/opencode-marker-distinguishes-a-shared-skills-layout` and `harness-opencode/native-aliases-do-not-create-duplicate-resources`.
+
+## 3. Implement strict native translation and safe ingestion
+
+- [ ] 3.1 Add strict JSON/JSONC and frontmatter decoding, typed native sidecars, nested modeled-field/alias/duplicate checks, empty-field reservation, and case-sensitive dictionaries. Register stable severity/error outcomes and test both alias orders and valid native groups; annotate `harness-opencode/ambiguous-execution-fields-are-rejected-in-both-orders`.
+- [ ] 3.2 Implement native skills, commands, and subagents with subagent mode, templates/placeholders, agent/model selections, and documented metadata-loss diagnostics. Add independently authored golden trees and semantic round-trip/conversion fixtures; annotate `harness-opencode/native-fields-survive-a-supported-round-trip`.
+- [ ] 3.3 Use Unicode-safe scalar emission and strict native parsing controls; annotate `harness-opencode/scalar-metadata-cannot-add-execution-fields`.
+- [ ] 3.4 Apply applicable bounded regular-file reads to native loaders and alternate paths, including opened-snapshot growth checks and installed-output retention on refusal; annotate `harness-opencode/read-limits-apply-at-the-actual-consumer-boundary` through real consumers.
+- [ ] 3.5 Diagnose unsupported rules without writing instruction files; annotate `harness-opencode/rules-preserve-shared-instructions` with existing-byte preservation and supported-resource controls.
+
+## 4. Preserve permissions and MCP meaning
+
+- [ ] 4.1 Preserve ordered native subagent permission data, explicit empty policies, native role, and supported tool mapping; suppress unknown/unrepresentable execution restrictions. Use native execution controls and annotate `harness-opencode/ordered-and-empty-agent-policies-retain-their-meaning`.
+- [ ] 4.2 Reject unenforceable skill restrictions rather than emit inert frontmatter; register `skill.opencode.security-restriction-unsupported` and annotate `harness-opencode/a-restricted-skill-is-not-emitted-as-an-unrestricted-skill` with an unrestricted sibling control.
+- [ ] 4.3 Implement typed local/remote MCP fields, command arrays, environment/headers, enabled state, and supported authentication forms. Preserve literal/reference intent without host expansion and reject unsafe whole entries; prove native-loader controls and annotate `harness-opencode/literal-and-reference-payloads-cannot-inject-configuration`.
+- [ ] 4.4 Complete bidirectional conversion across existing source layouts, including unsupported security-field/error cases, native field/loss matrices, and source-revision compatibility; extend the round-trip witnesses from task 3.2 to MCP and restrictions.
+
+## 5. Implement the fixed declarative hook adapter
+
+- [ ] 5.1 Implement the reviewed versioned dependency-free adapter and typed declaration fragments outside the plugin autoload directory; serialize metadata as data and define runner recognition/version checks. Annotate `opencode-hooks/hostile-declaration-strings-remain-inert-adapter-data` without executing source input.
+- [ ] 5.2 Compile/ingest only matrix-proven forms and register unsupported-hook/plugin diagnostics with resource suppression and nonzero consumer outcomes. Annotate `opencode-hooks/unsupported-hook-semantics-fail-visibly`; reject arbitrary or altered plugins without importing them.
+- [ ] 5.3 Apply the proven execution protocol and bounds to the generated runner, then rerun tasks 1.2–1.4 against actual compiled output rather than only feasibility fixtures. Do not claim successful enforcement when activation is absent or inactive.
+- [ ] 5.4 Merge deterministic source/selector/scope contributions and source-disambiguated support, including collection expansion and safe removal. Annotate `opencode-hooks/removing-one-contribution-preserves-the-others` in both materialization modes and native execution.
+- [ ] 5.5 Plan adapter/declarations/support as a coherent owned generation; preserve unmanaged same-path files and blocked installed contributions. Annotate `opencode-hooks/adapter-recognition-does-not-authorize-overwrite` and `opencode-hooks/support-refusal-retains-the-installed-hook-generation`, including contained-alias and independent valid controls.
+
+## 6. Resolve native roots and enforce filesystem publication authority
+
+- [ ] 6.1 Implement explicit repository/machine/custom resource and MCP destinations matching the pinned native loader, JSON/JSONC precedence, XDG, and distinct file/directory overrides. Annotate `opencode-native-configuration/native-jsonc-and-custom-destinations-remain-effective` and `opencode-native-configuration/ambiguous-destination-resolution-preserves-existing-output`.
+- [ ] 6.2 Bind both materialization modes to native paths and existing ownership policies; test contained repository aliases, user-owned machine aliases, updates/no-ops/checking, and mode preservation. Annotate `opencode-native-configuration/native-installation-and-repetition-preserve-supported-aliases`.
+- [ ] 6.3 Route source reads, aggregate leaves, support, manifests, staging/publication, and cleanup through captured descriptor authority. Cover escaping/dangling/cyclic links, hard links, special files, replaced parent/leaf generations, and no residue with actual consumer controls; annotate `opencode-native-configuration/unsafe-destination-or-payload-preserves-external-state`.
+- [ ] 6.4 Preflight effective directory/config/built-in identity collisions without changing native roles or handwritten content; annotate `opencode-native-configuration/effective-native-identity-collisions-do-not-shadow-handwritten-agents` with noncolliding controls.
+- [ ] 6.5 Coalesce only compatible overlapping scopes/destinations and refuse inseparable scope operations before mutation. Annotate `opencode-native-configuration/shared-native-destinations-retain-both-scopes` and `opencode-native-configuration/ambiguous-overlapping-scope-operations-refuse`, including aliases and both materialization modes.
+
+## 7. Reconcile shared MCP configuration through durable ownership
+
+- [ ] 7.1 Add the formatting-preserving native JSON/JSONC MCP patcher behind durable ownership, retaining handwritten bytes/comments/order/permissions and emitting no ownership markers. Annotate `opencode-native-configuration/mcp-update-preserves-handwritten-jsonc` with a real intended update followed by a no-op.
+- [ ] 7.2 Cover missing/corrupt state, unmanaged collisions, duplicate/ambiguous aggregate keys, invalid JSONC, and unpatchable forms with independent valid controls. Annotate `opencode-native-configuration/missing-ownership-and-collisions-preserve-user-entries` and `opencode-native-configuration/malformed-shared-configuration-refuses-affected-mutation`.
+- [ ] 7.3 Preserve private sensitive modes through compilation/fragment merging/direct conversion/staging/publication, existing modes on updates, mandatory private backups, and byte/mtime no-ops; reject incompatible fragment modes. Annotate `opencode-native-configuration/creation-and-conversion-retain-private-modes` using isolated permissive-umask controls.
+- [ ] 7.4 Hold the mutation session across read/derive/recover/publish and integrate canonical-root locking, generation checks, interrupted-publication recovery, and incomplete-input retention. Annotate `opencode-native-configuration/concurrent-or-interrupted-updates-preserve-an-authorized-generation` with real processes and foreign-change controls.
+
+## 8. Bind read-only inspection backup and repair
+
+- [ ] 8.1 Implement drift/status/diagnostic-only doctor using admitted explicit destinations without state/lock/backup/directory creation; annotate `opencode-native-configuration/read-only-inspection-creates-no-native-or-ownership-state` with healthy, missing, drifted, and unsafe controls.
+- [ ] 8.2 Add explicit native backup/archive mappings and private archive creation for default/custom roots without broad HOME traversal; annotate `opencode-native-configuration/machine-backup-uses-explicit-native-inventory`.
+- [ ] 8.3 Bind disjoint adoption/replacement/orphan repair to exact acquisition authority, private mandatory backups, and lock-free confirmation; annotate `opencode-native-configuration/adoption-is-byte-neutral-and-destructive-repair-requires-consent` including `--yes` negative controls.
+- [ ] 8.4 Revalidate configuration/acquisition locks/required-resource policy after confirmation and at publication; cover invalid exact snapshots, moving refs, policy changes at each boundary, cleanup, and valid repair controls. Annotate `opencode-native-configuration/stale-repair-authority-refuses-publication`.
+
+## 9. Complete end-to-end safety and compatibility evidence
+
+- [ ] 9.1 Add executable sentinels through discovery/ingestion/compilation/conversion/sync/check/status/repair and prove production never launches source resources, installs dependencies, authenticates, approves trust, or edits `.gitignore`; annotate `harness-opencode/executable-source-content-remains-inert-during-consumer-operations` without a native binary installed.
+- [ ] 9.2 Exercise Marketplace resource assessment and inspection projection for new native fields/declarations with synthetic sensitive values, attributable redacted findings, and permitted-content controls; annotate `harness-opencode/sensitive-native-fields-are-redacted-in-consumer-findings` across diagnostics/logs/telemetry/repair sinks.
+- [ ] 9.3 Add declarative repository/machine/collection installation E2E covering every selectable resource kind, removal/prune, offline verified acquisition reuse, and both materialization modes; annotate `harness-opencode/all-selectable-resource-kinds-reach-the-native-layout`. Add a real-terminal TUI selection/install journey and required behavioral command witnesses.
+- [ ] 9.4 Add multi-harness/default/committed-lock/source-revision regressions and required-resource policy controls; annotate `harness-opencode/existing-locks-and-harness-targets-remain-compatible`. Assess historical/released-client gates if compatibility infrastructure or formats are touched, without changing write formats implicitly.
+- [ ] 9.5 Measure post-change benchmarks against task 1.6 with allocation/latency evidence; report the validation overhead and retain benchmark guards without weakening safety checks.
+
+## 10. Review validate document and archive
+
+- [ ] 10.1 Update supported-target/native-path docs, conversion examples, opt-in guidance, supported version/protocol/bounds, loss/diagnostic matrices, root overrides, ownership/repair guarantees, development fixtures/skills, and changelog. Clearly document unsupported forms and enforcement-incompatible runtime modes.
+- [ ] 10.2 Audit that every new scenario above has a meaningful executed behavioral test with its exact `// spec: <capability-path>/<scenario-slug>` annotation, valid controls, stable error identity, and negative-side-effect assertions. Run affected checks, `make validate`, `make spec-check`, and touched E2E/TUI gates; run the witnessed pinned native gate separately and fail on missing/skipped proof.
+- [ ] 10.3 Privacy-screen the exact implementation diff and every outgoing commit; run OCR, report model-review exclusions, verify/fix confirmed findings, and rerun affected checks. Complete and record a separate pre-push adversarial review of consumer reachability, failure behavior, unintended writes, ownership/scope boundaries, and regression validity.
+- [ ] 10.4 Confirm all release blockers are resolved and first-release hooks are proven before advertising OpenCode full harness support; keep unresolved native activation failures blocking release rather than declaring planning or partial resource support complete.
+- [ ] 10.5 Run `openspec archive add-opencode-harness --yes` as the final task and final commit of the same pull request as the implementation.
