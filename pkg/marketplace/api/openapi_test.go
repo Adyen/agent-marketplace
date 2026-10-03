@@ -103,7 +103,7 @@ func TestOpenAPIAdminAuthDocumentsBrowserAndJSONErrors(t *testing.T) {
 			"400": {"authentication_request_invalid"},
 			"401": {"authentication_rejected"},
 			"403": {"forbidden", "origin_rejected"},
-			"503": {"authentication_unavailable"},
+			"503": {"authentication_unavailable", "admin_unavailable"},
 		},
 	}
 	for path, statuses := range wantErrors {

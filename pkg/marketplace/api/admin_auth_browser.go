@@ -32,7 +32,7 @@ func prefersAdminHTML(r *http.Request) bool {
 				continue
 			}
 			mediaType, params, err := mime.ParseMediaType(value)
-			if err != nil {
+			if err != nil || !strings.Contains(mediaType, "/") {
 				return false
 			}
 			q := 1.0
