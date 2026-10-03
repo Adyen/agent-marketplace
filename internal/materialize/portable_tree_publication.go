@@ -204,7 +204,7 @@ func publishPortableTree(src, dst string, observed os.FileInfo, ownershipDigest 
 		return fmt.Errorf("%w: portable staged tree replaced", fsboundary.ErrGenerationConflict)
 	}
 	if observed != nil {
-		if err := native.RemoveAll(name); err != nil {
+		if err := removeVerifiedPortableOutput(parent, native, name, observed, ownershipDigest); err != nil {
 			return err
 		}
 	}
