@@ -527,13 +527,11 @@ func writeTarEntry(tw *tar.Writer, fullPath, rel string, info fs.FileInfo) error
 }
 
 func extractArchive(archivePath, dstDir string, mapped ...map[string]string) error {
-	f, err := os.Open(archivePath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
+	return withBackupPayload(archivePath, func(reader io.Reader) error { return extractArchivePayload(reader, dstDir, mapped...) })
+}
 
-	gr, err := gzip.NewReader(f)
+func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string]string) error {
+	gr, err := gzip.NewReader(reader)
 	if err != nil {
 		return err
 	}

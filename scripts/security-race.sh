@@ -117,5 +117,5 @@ run_race ./internal/ownership \
     -count=20
 
 run_race ./internal/backup \
-    -run '^TestRestoreCodexSetRefusesAliasedManifest$' \
+    -run '^Test(RestoreCodexSetRefusesAliasedManifest|RestoreRefusesHardlinkedArchivePayload)$' \
     -count=20

@@ -395,12 +395,11 @@ func validateCodexArchive(archivePath, root string, managed []string) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	f, err := os.Open(archivePath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	gz, err := gzip.NewReader(f)
+	return withBackupPayload(archivePath, func(reader io.Reader) error { return validateCodexArchivePayload(reader, root, managed) })
+}
+
+func validateCodexArchivePayload(payload io.Reader, root string, managed []string) error {
+	gz, err := gzip.NewReader(payload)
 	if err != nil {
 		return err
 	}
