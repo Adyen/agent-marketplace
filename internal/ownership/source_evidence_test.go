@@ -121,8 +121,13 @@ func fileSnapshot(t *testing.T, path string) ([]byte, os.FileInfo) {
 // wrong member types).
 func writeRawState(t *testing.T, st *Store, rel, entriesJSON string) {
 	t.Helper()
-	rec := fmt.Sprintf(`{"version":1,"canonical_root":%q,"root_key":%q,"generation":1,"updated_at":"2026-10-01T00:00:00Z","files":{%q:{"content_digest":"","entries":%s}}}`,
-		st.CanonicalRoot(), st.RootKey(), rel, entriesJSON)
+	writeRawFileState(t, st, rel, `{"content_digest":"","entries":`+entriesJSON+`}`)
+}
+
+func writeRawFileState(t *testing.T, st *Store, rel, fileStateJSON string) {
+	t.Helper()
+	rec := fmt.Sprintf(`{"version":1,"canonical_root":%q,"root_key":%q,"generation":1,"updated_at":"2026-10-01T00:00:00Z","files":{%q:%s}}`,
+		st.CanonicalRoot(), st.RootKey(), rel, fileStateJSON)
 	if err := os.MkdirAll(filepath.Dir(st.StateFile()), 0o700); err != nil {
 		t.Fatal(err)
 	}
