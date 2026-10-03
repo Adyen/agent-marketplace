@@ -4,11 +4,14 @@
 package collection
 
 import (
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"gopkg.in/yaml.v3"
 )
 
@@ -92,17 +95,29 @@ type CollectionInclude struct {
 // DiscoverCollections walks the `collections/` subdirectory of skillDir and
 // parses every COLLECTION.yaml file found. registryURL, ref, and path are
 // stamped on each discovered collection for provenance tracking.
-func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([]Collection, error) {
-	collectionsDir := filepath.Join(skillDir, "collections")
-	entries, err := os.ReadDir(collectionsDir)
+func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) (results []Collection, err error) {
+	source, err := fsboundary.OpenSourceFS(skillDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("capture collection source %q: %w", skillDir, err)
+	}
+	defer func() {
+		if closeErr := source.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	collectionsDir := filepath.Join(skillDir, "collections")
+	entries, err := source.ReadDir("collections")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read collections directory %q: %w", collectionsDir, err)
 	}
 
-	var results []Collection
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			// Flat .yaml files are silently skipped.
@@ -112,7 +127,7 @@ func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([
 		}
 
 		yamlPath := filepath.Join(collectionsDir, entry.Name(), collectionFileName)
-		col, err := parseCollectionFile(yamlPath)
+		col, err := parseCollectionFile(source, filepath.ToSlash(filepath.Join("collections", entry.Name(), collectionFileName)), yamlPath)
 		if err != nil {
 			return nil, err
 		}
@@ -130,10 +145,10 @@ func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([
 	return results, nil
 }
 
-func parseCollectionFile(path string) (*Collection, error) {
-	data, err := os.ReadFile(path)
+func parseCollectionFile(source *fsboundary.SourceFS, name, path string) (*Collection, error) {
+	data, err := source.ReadFile(name)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read collection file %q: %w", path, err)

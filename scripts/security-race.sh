@@ -87,3 +87,7 @@ run_race ./internal/catalog ./internal/fsboundary \
 run_race ./internal/sourcerevision \
     -run '^TestBuildSourceHash.*$' \
     -count=20
+
+run_race ./internal/collection \
+    -run '^TestDiscoverCollectionSource.*$' \
+    -count=20
