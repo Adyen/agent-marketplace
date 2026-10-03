@@ -81,11 +81,11 @@ run_race ./internal/materialize \
     -count=20
 
 run_race ./internal/catalog ./internal/fsboundary \
-    -run '^Test(LoadPrimarySource.*|SourceFSKeepsCapturedRootAndDirectoryInfo)$' \
+    -run '^Test(LoadPrimarySource.*|LoadFactoryContainedDirectoryAliases|LoadFactoryUnsafeDirectoryAliases|DiscoverSourceRefusalPreservesIndependentSiblingPolicy|SourceFS.*)$' \
     -count=20
 
 run_race ./internal/sourcerevision \
-    -run '^TestBuildSourceHash.*$' \
+    -run '^Test(BuildSourceHash.*|BuildRefusesIngestionBoundaryWithValidSibling|Cursor.*|ResourceSourceBytesPreservesLegacyFallbackBoundary)$' \
     -count=20
 
 run_race ./internal/collection \
@@ -109,5 +109,5 @@ run_race ./internal/materialize \
     -count=20
 
 run_race ./internal/fsboundary \
-    -run '^TestRmdir.*$' \
+    -run '^Test(Rmdir.*|ReadTargetCloseFailuresRefusePayload)$' \
     -count=20

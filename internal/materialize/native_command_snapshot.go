@@ -12,12 +12,11 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
-func missingNativeCommandPruneEntry(err error) bool {
-	return errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrGenerationConflict) &&
-		!errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile)
-}
-
-func removeNativeCommandFile(path string, observed os.FileInfo, boundary *destinationBoundary) (err error) {
+func pruneNativeCommandFile(path string, observed os.FileInfo, boundary *destinationBoundary, dryRun bool) (err error) {
+	if dryRun && observed.Mode().IsRegular() {
+		_, err := readNativeCommandFile(path, observed, boundary, true)
+		return err
+	}
 	var digest string
 	if observed.Mode().IsRegular() {
 		var parent *fsboundary.Dir
@@ -39,15 +38,21 @@ func removeNativeCommandFile(path string, observed os.FileInfo, boundary *destin
 		}
 		digest = "sha256:" + hex.EncodeToString(h.Sum(nil))
 	}
-	return removePortableOutput(path, observed, digest, boundary)
+	return prunePortableOutput(path, observed, digest, "", boundary, dryRun)
 }
 
-func readNativeCommandFile(path string, observed os.FileInfo, boundary *destinationBoundary) (data []byte, err error) {
+func readNativeCommandFile(path string, observed os.FileInfo, boundary *destinationBoundary, allowMissingLeaf ...bool) (data []byte, err error) {
 	parent, err := capturePortableParent(path, boundary, false)
 	if err != nil {
+		if observed != nil && missingPruneEntry(err) {
+			return nil, fmt.Errorf("%w: observed native command parent disappeared: %w", fsboundary.ErrGenerationConflict, err)
+		}
 		return nil, err
 	}
 	if parent == nil {
+		if observed != nil {
+			return nil, fsboundary.ErrGenerationConflict
+		}
 		return nil, fs.ErrNotExist
 	}
 	defer func() {
@@ -55,10 +60,10 @@ func readNativeCommandFile(path string, observed os.FileInfo, boundary *destinat
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	return readNativeCommandSnapshot(parent, filepath.Base(path), observed)
+	return readNativeCommandSnapshot(parent, filepath.Base(path), observed, allowMissingLeaf...)
 }
 
-func readNativeCommandSnapshot(parent *fsboundary.Dir, name string, observed os.FileInfo) (data []byte, err error) {
+func readNativeCommandSnapshot(parent *fsboundary.Dir, name string, observed os.FileInfo, allowMissingLeaf ...bool) (data []byte, err error) {
 	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return nil, err
@@ -69,6 +74,9 @@ func readNativeCommandSnapshot(parent *fsboundary.Dir, name string, observed os.
 		}
 	}()
 	if !file.Exists() {
+		if observed != nil && (len(allowMissingLeaf) == 0 || !allowMissingLeaf[0]) {
+			return nil, fsboundary.ErrGenerationConflict
+		}
 		return nil, fs.ErrNotExist
 	}
 	if file.Link() != nil {

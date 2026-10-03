@@ -3981,13 +3981,9 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			if boundary != nil && boundary.pruneClassificationHook != nil {
 				boundary.pruneClassificationHook(path)
 			}
-			if dryRun {
-				_, err = readNativeCommandFile(path, observed, boundary)
-			} else {
-				err = removeNativeCommandFile(path, observed, boundary)
-			}
+			err = pruneNativeCommandFile(path, observed, boundary, dryRun)
 			if err != nil {
-				if missingNativeCommandPruneEntry(err) {
+				if missingPruneEntry(err) {
 					continue
 				}
 				return report, err
@@ -4176,14 +4172,9 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 		if boundary != nil && boundary.pruneClassificationHook != nil {
 			boundary.pruneClassificationHook(path)
 		}
-		var cleanupErr error
-		if dryRun && info.Mode().IsRegular() {
-			_, cleanupErr = readNativeCommandFile(path, info, boundary)
-		} else if !dryRun {
-			cleanupErr = removeNativeCommandFile(path, info, boundary)
-		}
+		cleanupErr := pruneNativeCommandFile(path, info, boundary, dryRun)
 		if cleanupErr != nil {
-			if missingNativeCommandPruneEntry(cleanupErr) {
+			if missingPruneEntry(cleanupErr) {
 				continue
 			}
 			return cleanupErr

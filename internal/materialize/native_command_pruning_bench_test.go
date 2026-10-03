@@ -27,7 +27,7 @@ func BenchmarkNativeCommandRemovalDisk(b *testing.B) {
 				}
 				b.StartTimer()
 				if guarded {
-					err = removeNativeCommandFile(leaf, info, nil)
+					err = pruneNativeCommandFile(leaf, info, nil, false)
 				} else {
 					err = os.Remove(leaf)
 				}
@@ -39,7 +39,6 @@ func BenchmarkNativeCommandRemovalDisk(b *testing.B) {
 	}
 }
 
-// Includes disk marker reads, generation validation and reporting, but no writes.
 func BenchmarkNativeSkillMarkedFileDryRunDisk(b *testing.B) {
 	root := b.TempDir()
 	out := filepath.Join(root, "skills")

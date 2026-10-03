@@ -448,6 +448,37 @@ func TestNativeAggregateSnapshotDisappearanceIsGenerationConflict(t *testing.T) 
 	assertNativeAggregateFilePreserved(t, retained, []byte(`{"_managed_by":"agent-marketplace"}`), observed)
 }
 
+func TestNativeAggregateSnapshotParentDisappearanceIsGenerationConflict(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "native")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "native.json")
+	data := []byte(`{"_managed_by":"agent-marketplace"}`)
+	if err := os.WriteFile(file, data, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := os.Lstat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readNativeCommandFile(file, observed, nil); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("healthy observed snapshot failed: %q %v", got, err)
+	}
+	retained := filepath.Join(base, "retained")
+	if err := os.Rename(root, retained); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readNativeCommandFile(file, observed, nil); !errors.Is(err, fsboundary.ErrGenerationConflict) {
+		t.Fatalf("disappeared observed parent was treated as genuine absence: %v", err)
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("snapshot recreated its disappeared parent: %v", err)
+	}
+	assertNativeAggregateFilePreserved(t, filepath.Join(retained, "native.json"), data, observed)
+}
+
 func nativeAggregateInventoryFixture(t *testing.T, target hcc.Target, machine bool) (string, string, []resolver.ResolvedArtifact) {
 	t.Helper()
 	home, repo := t.TempDir(), t.TempDir()
