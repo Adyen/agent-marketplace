@@ -1147,7 +1147,7 @@ func TestResolverArchiveEvidenceDriftWarnsAndStrictRejects(t *testing.T) {
 		}},
 	}}}
 
-	r := &Resolver{Cache: cache}
+	r := &Resolver{Cache: cache, ReportArchiveEvidenceDrift: true}
 	resolved, errs := r.Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeRefresh)
 	if len(resolved) != 1 {
 		t.Fatalf("drifted evidence blocked resolution: %v", errs)
@@ -1164,6 +1164,27 @@ func TestResolverArchiveEvidenceDriftWarnsAndStrictRejects(t *testing.T) {
 	}
 	if warning.MarketplaceURL != server.URL || warning.InstanceID != "mp" {
 		t.Fatalf("warning missing endpoint identity: %+v", warning)
+	}
+
+	for _, mode := range []resolver.MarketplaceResolveMode{
+		resolver.MarketplaceResolveModeRefresh,
+		resolver.MarketplaceResolveModeCached,
+		resolver.MarketplaceResolveModeCachedNoFetch,
+		resolver.MarketplaceResolveModeInspect,
+	} {
+		resolved, errs := (&Resolver{Cache: cache}).Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, mode)
+		if len(resolved) != 1 {
+			t.Fatalf("mode %v: default resolver blocked resolution: %v", mode, errs)
+		}
+		if resolved[0].MarketplaceArchiveDigest != archiveDigest {
+			t.Fatalf("mode %v: resolved archive digest %q, want served %q", mode, resolved[0].MarketplaceArchiveDigest, archiveDigest)
+		}
+		for _, err := range errs {
+			var refresh *resolver.ArchiveEvidenceRefreshedWarning
+			if errors.As(err, &refresh) {
+				t.Fatalf("mode %v: default resolver reported a lock refresh it did not persist: %v", mode, err)
+			}
+		}
 	}
 
 	strict := &Resolver{Cache: cache, LockEvidenceStrict: true}

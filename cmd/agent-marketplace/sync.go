@@ -133,7 +133,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked}
+	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked, MarketplaceReportArchiveEvidenceDrift: !locked && !offline}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors

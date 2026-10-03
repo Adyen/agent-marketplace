@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,12 +14,18 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/tui"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func newSelfCanonicalV4MarketplaceServer(t *testing.T, instanceID, resourceName string) *httptest.Server {
@@ -838,5 +845,233 @@ func TestSyncDriftedLockRefreshReportsNothingWhenSyncFails(t *testing.T) {
 				t.Fatalf("failed sync changed lock evidence: %#v -> %#v", old, record)
 			}
 		}
+	}
+}
+
+func warmCachedMarketplaceArtifact(t *testing.T, server *httptest.Server, archiveDigest string) {
+	t.Helper()
+	resp, err := http.Get(server.URL + "/api/v1/artifacts/" + strings.Replace(archiveDigest, ":", "/", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("fetch advertised artifact %s: status %d, %v", archiveDigest, resp.StatusCode, err)
+	}
+	mcache := marketplace.NewCache(filepath.Join(cache.CacheDir(), "marketplace"))
+	if _, err := mcache.WriteArtifact(archiveDigest, raw); err != nil {
+		t.Fatalf("write cached artifact: %v", err)
+	}
+	if err := mcache.MarkArtifactVerified(archiveDigest); err != nil {
+		t.Fatalf("mark cached artifact verified: %v", err)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestStatusDoesNotClaimArchiveRefreshWithStaleLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift, _ := newDriftableV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	installedPath := filepath.Join(home, ".factory", "skills", "review", "SKILL.md")
+	installedBefore, err := os.ReadFile(installedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRecord := readLockDocument(t, lockPath).Marketplaces[0].Resources[0]
+
+	newDigest := drift()
+	output, err = executeCommand("sync", "--check")
+	if err == nil || !strings.Contains(output, "locked archive digest drifted") {
+		t.Fatalf("sync --check accepted drifted evidence: %v\n%s", err, output)
+	}
+	warmCachedMarketplaceArtifact(t, server, newDigest)
+
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err = executeCommand("status")
+	if err != nil {
+		t.Fatalf("status after cached drift evidence: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "marketplace.archive-evidence-refreshed") {
+		t.Fatalf("status claimed a lock refresh it never wrote:\n%s", output)
+	}
+	if synced := statusSection(output, "SYNCED RESOURCES"); !strings.Contains(synced, "review") {
+		t.Fatalf("status did not resolve the cached refreshed artifact:\n%s", output)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBefore) {
+		t.Fatalf("status rewrote the lock: %v", err)
+	}
+	installedAfter, err := os.ReadFile(installedPath)
+	if err != nil || string(installedAfter) != string(installedBefore) {
+		t.Fatalf("status touched installed output: %v", err)
+	}
+	if got := readLockDocument(t, lockPath).Marketplaces[0].Resources[0].ArchiveDigest; got != oldRecord.ArchiveDigest {
+		t.Fatalf("status changed lock archive digest %q -> %q", oldRecord.ArchiveDigest, got)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestRemoveDoesNotClaimArchiveRefreshForRemainingPin(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift, _ := newDriftableV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	repo := t.TempDir()
+	writeSkill(t, filepath.Join(repo, "resources"), "present", "Present", nil)
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/present]}}\n")
+	withWorkingDir(t, repo)
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync initial selections: %v\n%s", err, output)
+	}
+	oldRecord := readLockDocument(t, lockPath).Marketplaces[0].Resources[0]
+
+	drift()
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err = executeCommand("remove", "present")
+	if err != nil {
+		t.Fatalf("remove unrelated directory selection: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "marketplace.archive-evidence-refreshed") {
+		t.Fatalf("remove claimed a Marketplace lock refresh it never wrote:\n%s", output)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBefore) {
+		t.Fatalf("remove rewrote the Marketplace lock: %v", err)
+	}
+	if got := readLockDocument(t, lockPath).Marketplaces[0].Resources[0].ArchiveDigest; got != oldRecord.ArchiveDigest {
+		t.Fatalf("remove changed lock archive digest %q -> %q", oldRecord.ArchiveDigest, got)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("remove lost the remaining Marketplace installation: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".factory", "skills", "present")); !os.IsNotExist(err) {
+		t.Fatalf("remove left the removed skill materialized: %v", err)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+// spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
+func TestTUISnapshotDoesNotClaimArchiveRefreshWithStaleLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift, _ := newDriftableV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	oldRecord := readLockDocument(t, lockPath).Marketplaces[0].Resources[0]
+
+	newDigest := drift()
+	output, err = executeCommand("sync", "--check")
+	if err == nil || !strings.Contains(output, "locked archive digest drifted") {
+		t.Fatalf("sync --check accepted drifted evidence: %v\n%s", err, output)
+	}
+	warmCachedMarketplaceArtifact(t, server, newDigest)
+
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var drive func(m tui.Model, cmd tea.Cmd) tui.Model
+	drive = func(m tui.Model, cmd tea.Cmd) tui.Model {
+		for cmd != nil {
+			msg := cmd()
+			if msg == nil {
+				return m
+			}
+			if batch, ok := msg.(tea.BatchMsg); ok {
+				for _, c := range batch {
+					m = drive(m, c)
+				}
+				return m
+			}
+			next, follow := m.Update(msg)
+			m = next.(tui.Model)
+			if _, isTick := msg.(spinner.TickMsg); isTick {
+				follow = nil
+			}
+			cmd = follow
+		}
+		return m
+	}
+	press := func(m tui.Model, r rune) tui.Model {
+		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		return drive(next.(tui.Model), cmd)
+	}
+	assertNoRefreshClaim := func(m tui.Model, phase string) tui.Model {
+		m = press(m, 'e')
+		if out := ansi.Strip(m.View()); strings.Contains(out, "marketplace.archive-evidence-refreshed") {
+			t.Fatalf("%s snapshot claimed a lock refresh it never wrote:\n%s", phase, out)
+		}
+		return press(m, 'e')
+	}
+
+	m := tui.NewModel(repo, home, tui.WithWorkspace(mustWorkspace(t, repo)))
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = drive(next.(tui.Model), cmd)
+	m = drive(m, m.Init())
+	if out := ansi.Strip(m.View()); !strings.Contains(out, "review") {
+		t.Fatalf("initial snapshot did not resolve the cached resource:\n%s", out)
+	}
+	m = assertNoRefreshClaim(m, "initial")
+	m = press(m, 'r')
+	if out := ansi.Strip(m.View()); !strings.Contains(out, "review") {
+		t.Fatalf("refresh snapshot did not resolve the cached resource:\n%s", out)
+	}
+	assertNoRefreshClaim(m, "refresh")
+
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBefore) {
+		t.Fatalf("TUI snapshots rewrote the lock: %v", err)
+	}
+	if got := readLockDocument(t, lockPath).Marketplaces[0].Resources[0].ArchiveDigest; got != oldRecord.ArchiveDigest {
+		t.Fatalf("TUI snapshots changed lock archive digest %q -> %q", oldRecord.ArchiveDigest, got)
 	}
 }

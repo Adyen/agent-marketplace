@@ -89,10 +89,11 @@ func IsCacheMetadataMissingError(err error) bool {
 
 // Resolver resolves Marketplace entries into resolver.ResolvedArtifact values.
 type Resolver struct {
-	HTTPClient         *http.Client
-	Cache              *Cache
-	AllowedRegistries  []string
-	LockEvidenceStrict bool
+	HTTPClient                 *http.Client
+	Cache                      *Cache
+	AllowedRegistries          []string
+	LockEvidenceStrict         bool
+	ReportArchiveEvidenceDrift bool
 }
 
 // NewResolver creates a Marketplace resolver with a default cache.
@@ -207,8 +208,10 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: fmt.Errorf("locked archive digest drifted: lock pins %q but the revision now serves %q for the same content digest; the %s lock is managed externally and cannot be refreshed by this client", pin.LockArchiveDigest, resolved.MarketplaceArchiveDigest, entry.Source.LockScope())})
 				continue
 			}
-			if warning := archiveEvidenceRefreshWarning(entry, pin, resolved.MarketplaceArchiveDigest); warning != nil {
-				errs = append(errs, warning)
+			if r.ReportArchiveEvidenceDrift {
+				if warning := archiveEvidenceRefreshWarning(entry, pin, resolved.MarketplaceArchiveDigest); warning != nil {
+					errs = append(errs, warning)
+				}
 			}
 			out = append(out, resolved)
 		}

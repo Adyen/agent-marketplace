@@ -82,7 +82,7 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 	if err != nil {
 		return nil, err
 	}
-	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease}
+	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease, MarketplaceReportArchiveEvidenceDrift: true}
 	result := runTUIExactSync(ctx, options)
 	errs := result.Errors
 	var persistedRefreshes map[archiveRefreshKey]bool
