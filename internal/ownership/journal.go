@@ -404,7 +404,7 @@ func (s *Store) assertPrecondition(m Mutation) error {
 			ErrGenerationConflict, m.ExpectPriorGeneration, currentGen)
 	}
 
-	raw, readErr := ReadAggregateFile(m.AbsFile)
+	raw, readErr := s.readAbsoluteAggregate(m.AbsFile)
 	if readErr != nil && !os.IsNotExist(readErr) {
 		return fmt.Errorf("ownership: read %s for CAS precondition: %w", m.AbsFile, readErr)
 	}
@@ -658,7 +658,7 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 	case PhaseAggregateRenamed:
 		return s.rollForward(j, current)
 	case PhasePrepared:
-		live, liveErr := ReadAggregateFile(j.AbsFile)
+		live, liveErr := s.readAbsoluteAggregate(j.AbsFile)
 		absent := liveErr != nil && os.IsNotExist(liveErr)
 		if liveErr != nil && !absent {
 			return nil, fmt.Errorf("ownership: read %s during recovery: %w", j.AbsFile, liveErr)
