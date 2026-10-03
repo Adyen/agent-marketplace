@@ -164,3 +164,31 @@ func TestConditionalPageReaderBorrowedTransactionKeepsOrdinaryRead(t *testing.T)
 		t.Fatal(err)
 	}
 }
+
+func TestConditionalPageReaderPanicReleasesOwnedTransaction(t *testing.T) {
+	s := internalTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	beforeInUse := s.db.Stats().InUse
+	if beforeInUse != 0 {
+		t.Fatalf("pool connections in use before read = %d, want 0", beforeInUse)
+	}
+	recovered := false
+	func() {
+		defer func() {
+			if r := recover(); r == "controlled callback panic" {
+				recovered = true
+			}
+		}()
+		_, _, _ = s.ReadCatalogProjectionPageConditional(ctx, store.CatalogProjectionPageRequest{Marketplace: "mp", Limit: 1}, func(store.CatalogVersion) bool {
+			panic("controlled callback panic")
+		})
+	}()
+	if !recovered {
+		t.Fatal("controlled callback panic was not recovered")
+	}
+	if inUse := s.db.Stats().InUse; inUse != beforeInUse {
+		t.Fatalf("pool connections in use after recovered panic = %d, want %d", inUse, beforeInUse)
+	}
+}
