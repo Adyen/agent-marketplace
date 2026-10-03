@@ -2887,6 +2887,9 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 				continue
 			}
 			sourceChild, isDir, err := supportSourceChild(root, sourceRel, entry)
+			if errors.Is(err, fs.SkipDir) {
+				continue
+			}
 			if err != nil {
 				return err
 			}
