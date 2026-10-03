@@ -174,20 +174,16 @@ registries:
 	if err := os.WriteFile(configPath, []byte(seed), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	proofPath, proofBytes := prepareOwnershipProofFIFO(t, env, alphaOrg)
+	pausePath, signal := prepareOwnershipPause(t, env, betaOrg)
 
 	var alpha, beta ExecResult
 	alphaDone := make(chan struct{})
 	go func() {
 		defer close(alphaDone)
-		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg}, "sync", "--no-backup")
+		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg, "AGENT_MARKETPLACE_E2E_OWNERSHIP_PAUSE": pausePath}, "sync", "--no-backup")
 	}()
 
-	fifoWriter := openFIFOWriter(t, proofPath, alphaDone, &alpha)
-	if err := os.Rename(proofPath+".seed", proofPath); err != nil {
-		_ = fifoWriter.Close()
-		t.Fatal(err)
-	}
+	fifoWriter := openFIFOWriter(t, pausePath, alphaDone, &alpha)
 
 	betaLog := filepath.Join(t.TempDir(), "beta.log")
 	betaDone := make(chan struct{})
@@ -203,7 +199,7 @@ registries:
 	// Hold the first writer long enough for the default-wait path to report
 	// contention after the second writer reaches the same root.
 	time.Sleep(1100 * time.Millisecond)
-	if _, err := fifoWriter.Write(proofBytes); err != nil {
+	if _, err := fifoWriter.Write(signal); err != nil {
 		_ = fifoWriter.Close()
 		t.Fatal(err)
 	}
