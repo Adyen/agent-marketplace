@@ -35,6 +35,7 @@ type codexSetManifest struct {
 	Version    int                         `json:"version"`
 	Operation  string                      `json:"operation"`
 	Partitions []codexSetManifestPartition `json:"partitions"`
+	observed   fsboundary.Identity
 }
 
 type codexSetManifestPartition struct {
@@ -237,6 +238,10 @@ func loadCompleteCodexSets(targetDir string) (sets []codexSetManifest, err error
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	return loadCompleteCodexSetsAt(root)
+}
+
+func loadCompleteCodexSetsAt(root *fsboundary.Dir) (sets []codexSetManifest, err error) {
 	native, err := root.NativeRoot()
 	if err != nil {
 		return nil, err
@@ -253,7 +258,7 @@ func loadCompleteCodexSets(targetDir string) (sets []codexSetManifest, err error
 	sort.Strings(paths)
 	sets = make([]codexSetManifest, 0, len(paths))
 	for _, path := range paths {
-		raw, err := readCodexManifest(root, filepath.Base(path))
+		raw, observed, err := readCodexManifest(root, filepath.Base(path))
 		if err != nil {
 			return nil, err
 		}
@@ -268,16 +273,17 @@ func loadCompleteCodexSets(targetDir string) (sets []codexSetManifest, err error
 			}
 		}
 		if complete {
+			manifest.observed = observed
 			sets = append(sets, manifest)
 		}
 	}
 	return sets, nil
 }
 
-func readCodexManifest(root *fsboundary.Dir, name string) (data []byte, err error) {
+func readCodexManifest(root *fsboundary.Dir, name string) (data []byte, identity fsboundary.Identity, err error) {
 	file, err := fsboundary.CaptureDestination(root, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
-		return nil, err
+		return nil, identity, err
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
@@ -285,14 +291,22 @@ func readCodexManifest(root *fsboundary.Dir, name string) (data []byte, err erro
 		}
 	}()
 	if file.Link() != nil {
-		return nil, fsboundary.ErrUnsafeFile
+		return nil, identity, fsboundary.ErrUnsafeFile
 	}
-	data, _, err = file.ReadTarget(file.Identity().Size)
-	return data, err
+	return file.ReadTarget(file.Identity().Size)
 }
 
-func rotateCodexSets(targetDir string, maxDays, maxPerDay int) error {
-	sets, err := loadCompleteCodexSets(targetDir)
+func rotateCodexSets(root *fsboundary.Dir, name, targetDir string, maxDays, maxPerDay int) (err error) {
+	parent, err := root.OpenPath(name)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	sets, err := loadCompleteCodexSetsAt(parent)
 	if err != nil {
 		return err
 	}
@@ -318,15 +332,45 @@ func rotateCodexSets(targetDir string, maxDays, maxPerDay int) error {
 			remove = append(remove, byDay[day]...)
 		}
 	}
+	var names []string
+	var identities []fsboundary.Identity
 	for _, set := range remove {
-		for _, partition := range set.Partitions {
-			if err := os.Remove(filepath.Join(targetDir, partition.Archive)); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-		}
-		if err := os.Remove(filepath.Join(targetDir, set.Operation+".set.json")); err != nil && !os.IsNotExist(err) {
+		manifestName := set.Operation + ".set.json"
+		if _, err := inspectRetentionMember(parent, manifestName, &set.observed); err != nil {
 			return err
 		}
+		for _, partition := range set.Partitions {
+			identity, err := inspectRetentionMember(parent, partition.Archive, nil)
+			if err != nil {
+				return err
+			}
+			names = append(names, partition.Archive)
+			identities = append(identities, identity)
+		}
+		names = append(names, manifestName)
+		identities = append(identities, set.observed)
+	}
+	for i, name := range names {
+		if _, err := inspectRetentionMember(parent, name, &identities[i]); err != nil {
+			return err
+		}
+	}
+	index := 0
+	for _, set := range remove {
+		manifestName := set.Operation + ".set.json"
+		for range set.Partitions {
+			if _, err := inspectRetentionMember(parent, manifestName, &set.observed); err != nil {
+				return err
+			}
+			if err := removeObservedBackups(parent, targetDir, names[index:index+1], identities[index:index+1]); err != nil {
+				return err
+			}
+			index++
+		}
+		if err := removeObservedBackups(parent, targetDir, names[index:index+1], identities[index:index+1]); err != nil {
+			return err
+		}
+		index++
 	}
 	return nil
 }

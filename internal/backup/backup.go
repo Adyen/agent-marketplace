@@ -217,7 +217,7 @@ func Rotate(cfg Config) (err error) {
 		}
 		targetDir := filepath.Join(dir, entry.Name())
 		if entry.Name() == codexTargetName {
-			if err := rotateCodexSets(targetDir, maxDays, maxPerDay); err != nil {
+			if err := rotateCodexSets(root, entry.Name(), targetDir, maxDays, maxPerDay); err != nil {
 				return err
 			}
 			continue

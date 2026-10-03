@@ -16,6 +16,10 @@ func removeCapturedBackups(parent *fsboundary.Dir, path string, names []string) 
 		}
 		identities[i] = identity
 	}
+	return removeObservedBackups(parent, path, names, identities)
+}
+
+func removeObservedBackups(parent *fsboundary.Dir, path string, names []string, identities []fsboundary.Identity) error {
 	for i, name := range names {
 		if err := verifyArchiveParent(parent, path); err != nil {
 			return err
