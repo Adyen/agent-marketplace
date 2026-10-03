@@ -21,6 +21,7 @@ type destinationBoundary struct {
 	linkPublicationHook     func(string)
 	pruneClassificationHook func(string)
 	pruneEnumerationHook    func(string)
+	pruneMarkerReadHook     func(string)
 	manifestPublicationHook func(string)
 }
 
