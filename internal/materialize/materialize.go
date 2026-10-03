@@ -3913,10 +3913,13 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			// materialized as symlinks, so an unmarked regular file is always
 			// user-owned.
 			observed, err := os.Lstat(path)
+			if os.IsNotExist(err) {
+				continue
+			}
 			if err != nil {
 				return report, err
 			}
-			if !isManagedCommandFile(path) {
+			if !observed.Mode().IsRegular() || !isManagedCommandFile(path) {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -3924,15 +3927,22 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				})
 				continue
 			}
-			if dryRun {
-				report.Removed = append(report.Removed, staleSkillEntryReportPath(path, name))
-				continue
-			}
 			var boundary *destinationBoundary
 			if len(portable) > 0 {
 				boundary = portable[0].boundary
 			}
+			if boundary != nil && boundary.pruneClassificationHook != nil {
+				boundary.pruneClassificationHook(path)
+			}
+			if dryRun {
+				report.Removed = append(report.Removed, name)
+				continue
+			}
 			if err := removeNativeCommandFile(path, observed, boundary); err != nil {
+				if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrGenerationConflict) &&
+					!errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) {
+					continue
+				}
 				return report, err
 			}
 			report.Removed = append(report.Removed, name)
