@@ -63,67 +63,69 @@ func CreateCodexSet(partitions []CodexPartition) (operation string, err error) {
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return "", fmt.Errorf("backup: create Codex set directory: %w", err)
 	}
-	operation, err = nextCodexOperation(targetDir, time.Now().Format("2006-01-02-150405"))
+	parent, err := fsboundary.OpenDir(targetDir)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	output := codexSetOutput{parent: parent, native: native, path: targetDir, owned: make(map[string]fsboundary.Identity)}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, output.cleanup())
+		}
+	}()
+	operation, err = nextCodexOperation(native, time.Now().Format("2006-01-02-150405"))
 	if err != nil {
 		return "", err
 	}
 	manifest := codexSetManifest{Version: 1, Operation: operation}
-	var staged, published []string
-	cleanup := func() {
-		for _, path := range append(staged, published...) {
-			if path != "" {
-				if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
-					slog.Warn("Codex backup cleanup failed", "path", path, "error", removeErr)
-				}
-			}
-		}
-	}
+	var staged []string
 	for _, partition := range partitions {
 		canonical, err := codexCanonicalRoot(partition.Root)
 		if err != nil {
-			cleanup()
 			return "", err
 		}
 		existing, err := existingPaths(partition.Root, partition.RelPaths)
 		if err != nil {
-			cleanup()
 			return "", fmt.Errorf("backup: scan Codex partition %s: %w", partition.ID, err)
 		}
 		rootKey := codexRootKey(canonical)
 		archive := fmt.Sprintf("%s-%s-%s.tar.gz", operation, partition.ID, rootKey)
-		finalPath := filepath.Join(targetDir, archive)
-		stagedPath := finalPath + ".partial"
-		if err := createArchive(partition.Root, existing, stagedPath); err != nil {
-			cleanup()
+		stagedName := archive + ".partial"
+		if err := output.write(stagedName, 0o600, func(file *os.File) error { return writeBackupSourceArchive(file, partition.Root, existing) }); err != nil {
 			return "", fmt.Errorf("backup: archive Codex partition %s: %w", partition.ID, err)
 		}
-		staged = append(staged, stagedPath)
+		staged = append(staged, stagedName)
 		manifest.Partitions = append(manifest.Partitions, codexSetManifestPartition{ID: partition.ID, RootKey: rootKey, Archive: archive, RelPaths: append([]string(nil), partition.RelPaths...)})
 	}
 	sort.Slice(manifest.Partitions, func(i, j int) bool { return manifest.Partitions[i].ID < manifest.Partitions[j].ID })
-	for i, stagedPath := range staged {
-		finalPath := strings.TrimSuffix(stagedPath, ".partial")
-		if err := os.Rename(stagedPath, finalPath); err != nil {
-			cleanup()
+	for _, name := range staged {
+		if err := output.publish(name, strings.TrimSuffix(name, ".partial")); err != nil {
 			return "", fmt.Errorf("backup: publish Codex archive: %w", err)
 		}
-		published = append(published, finalPath)
-		staged[i] = ""
 	}
 	raw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		cleanup()
 		return "", err
 	}
-	manifestPath := filepath.Join(targetDir, operation+".set.json")
-	tmp := manifestPath + ".partial"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
-		cleanup()
+	manifestName := operation + ".set.json"
+	if err := output.write(manifestName+".partial", 0o644, func(file *os.File) error { _, writeErr := file.Write(append(raw, '\n')); return writeErr }); err != nil {
 		return "", err
 	}
-	if err := os.Rename(tmp, manifestPath); err != nil {
-		_ = os.Remove(tmp)
-		cleanup()
+	if err := output.publish(manifestName+".partial", manifestName); err != nil {
 		return "", err
 	}
 	slog.Info("Codex backup set created", "operation", operation, "partitions", len(partitions))
@@ -450,16 +452,23 @@ func codexLateRestoreError(cause error, completed []string, pending []codexSetMa
 	return fmt.Errorf("backup: Codex restore failed after completed partitions %v; pending partitions %v: %w", completed, remaining, cause)
 }
 
-func nextCodexOperation(targetDir, timestamp string) (string, error) {
+func nextCodexOperation(root *os.Root, timestamp string) (string, error) {
 	for sequence := 0; ; sequence++ {
 		operation := timestamp
 		if sequence > 0 {
 			operation += "-" + strconv.Itoa(sequence)
 		}
-		if _, err := os.Stat(filepath.Join(targetDir, operation+".set.json")); os.IsNotExist(err) {
+		available := true
+		for _, suffix := range []string{".set.json", ".set.json.partial"} {
+			if _, err := root.Lstat(operation + suffix); err == nil {
+				available = false
+				break
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return "", err
+			}
+		}
+		if available {
 			return operation, nil
-		} else if err != nil {
-			return "", err
 		}
 	}
 }

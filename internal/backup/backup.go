@@ -379,7 +379,11 @@ func existingPaths(root string, relPaths []string) (out []string, err error) {
 	return out, nil
 }
 
-func createArchive(root string, relPaths []string, archivePath string, mapped ...map[string]string) (err error) {
+func createArchive(root string, relPaths []string, archivePath string, mapped ...map[string]string) error {
+	return withArchiveOutput(archivePath, func(file *os.File) error { return writeBackupSourceArchive(file, root, relPaths, mapped...) })
+}
+
+func writeBackupSourceArchive(writer io.Writer, root string, relPaths []string, mapped ...map[string]string) (err error) {
 	var source *fsboundary.Dir
 	if len(relPaths) > 0 {
 		absolute, resolveErr := filepath.Abs(root)
@@ -396,7 +400,7 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 			}
 		}()
 	}
-	return withArchiveOutput(archivePath, func(file *os.File) error { return writeArchivePayload(file, source, relPaths, mapped...) })
+	return writeArchivePayload(writer, source, relPaths, mapped...)
 }
 
 func writeArchivePayload(writer io.Writer, source *fsboundary.Dir, relPaths []string, mapped ...map[string]string) (err error) {

@@ -22,6 +22,13 @@ func withArchiveOutput(path string, write func(*os.File) error) (err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	return writeCapturedArchiveOutput(parent, absolute, write)
+}
+
+func writeCapturedArchiveOutput(parent *fsboundary.Dir, path string, write func(*os.File) error) (err error) {
+	if err := verifyArchiveParent(parent, filepath.Dir(path)); err != nil {
+		return err
+	}
 	native, err := parent.NativeRoot()
 	if err != nil {
 		return err
@@ -31,7 +38,7 @@ func withArchiveOutput(path string, write func(*os.File) error) (err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	name := filepath.Base(absolute)
+	name := filepath.Base(path)
 	file, err := native.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -80,7 +87,11 @@ func withArchiveOutput(path string, write func(*os.File) error) (err error) {
 	if !identity.SameState(currentID) {
 		return fsboundary.ErrGenerationConflict
 	}
-	fresh, err := fsboundary.OpenDir(filepath.Dir(absolute))
+	return verifyArchiveParent(parent, filepath.Dir(path))
+}
+
+func verifyArchiveParent(parent *fsboundary.Dir, path string) error {
+	fresh, err := fsboundary.OpenDir(path)
 	if err != nil {
 		return errors.Join(fsboundary.ErrGenerationConflict, err)
 	}
