@@ -601,6 +601,9 @@ func TestSyncFailedArchiveReacquisitionPreservesLastGood(t *testing.T) {
 	if !strings.Contains(output, "fetch artifact") {
 		t.Fatalf("sync did not surface the reacquisition failure:\n%s", output)
 	}
+	if strings.Contains(output, "marketplace.archive-evidence-refreshed") {
+		t.Fatalf("failed reacquisition reported a lock refresh that never persisted:\n%s", output)
+	}
 	lockAfter, err := os.ReadFile(lockPath)
 	if err != nil || string(lockAfter) != string(lockBefore) {
 		t.Fatalf("failed reacquisition rewrote the lock: %v", err)
@@ -691,6 +694,9 @@ func TestSyncDriftedLockRefreshFailsWhenLockModeChanged(t *testing.T) {
 	if !strings.Contains(output, "refresh Marketplace lock evidence") {
 		t.Fatalf("sync failure does not identify the evidence refresh: %v\n%s", err, output)
 	}
+	if strings.Contains(output, "marketplace.archive-evidence-refreshed") {
+		t.Fatalf("sync reported a lock refresh that never persisted:\n%s", output)
+	}
 	lockAfter, err := os.ReadFile(lockPath)
 	if err != nil || string(lockAfter) != string(lockBefore) {
 		t.Fatalf("failed evidence refresh rewrote the lock: %v", err)
@@ -747,6 +753,17 @@ func TestSyncCheckRejectsDriftedLockArchiveEvidence(t *testing.T) {
 	if !strings.Contains(output, "locked archive digest drifted") || !strings.Contains(output, "sync") || !strings.Contains(output, "update") {
 		t.Fatalf("sync --check error not actionable: %v\n%s", err, output)
 	}
+
+	output, err = executeCommand("sync", "--offline")
+	if err == nil {
+		t.Fatalf("sync --offline accepted drifted lock archive evidence:\n%s", output)
+	}
+	if !strings.Contains(output, "locked archive digest drifted") {
+		t.Fatalf("sync --offline error not actionable: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "marketplace.archive-evidence-refreshed") {
+		t.Fatalf("sync --offline reported a lock refresh:\n%s", output)
+	}
 	lockAfter, err := os.ReadFile(lockPath)
 	if err != nil || string(lockAfter) != string(lockBefore) {
 		t.Fatalf("sync --check rewrote the lock: %v", err)
@@ -754,5 +771,72 @@ func TestSyncCheckRejectsDriftedLockArchiveEvidence(t *testing.T) {
 	installedAfter, err := os.ReadFile(installedPath)
 	if err != nil || string(installedAfter) != string(installedBefore) {
 		t.Fatalf("sync --check touched installed output: %v", err)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestSyncDriftedLockRefreshReportsNothingWhenSyncFails(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	serverA, driftA, _ := newDriftableV4MarketplaceServer(t, "mp-a", "review")
+	defer serverA.Close()
+	serverB, driftB, failArtifactB := newDriftableV4MarketplaceServer(t, "mp-b", "audit")
+	defer serverB.Close()
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	repo := t.TempDir()
+	writeSkill(t, filepath.Join(repo, "resources"), "present", "Present", nil)
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/ghost]}}\n")
+	withWorkingDir(t, repo)
+
+	for _, tc := range []struct {
+		server *httptest.Server
+		name   string
+	}{{serverA, "review"}, {serverB, "audit"}} {
+		if output, err := executeCommand("install", tc.server.URL+"/r/tools/skill/"+tc.name, "--scope", "user", "--yes"); err != nil {
+			t.Fatalf("install from %s: %v\n%s", tc.server.URL, err, output)
+		}
+	}
+	oldDoc := readLockDocument(t, lockPath)
+	if len(oldDoc.Marketplaces) != 2 {
+		t.Fatalf("lock marketplaces = %#v", oldDoc.Marketplaces)
+	}
+
+	driftA()
+	failArtifactB(driftB())
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand("sync")
+	if err == nil {
+		t.Fatalf("sync with unreachable advertised artifact succeeded:\n%s", output)
+	}
+	if !strings.Contains(output, "fetch artifact") {
+		t.Fatalf("sync did not surface the unrelated failure:\n%s", output)
+	}
+	if !strings.Contains(output, `skill "ghost" was selected but not found`) {
+		t.Fatalf("sync dropped the unrelated warning:\n%s", output)
+	}
+	if strings.Contains(output, "marketplace.archive-evidence-refreshed") {
+		t.Fatalf("failed sync reported a lock refresh that never persisted:\n%s", output)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBefore) {
+		t.Fatalf("failed sync rewrote the lock: %v", err)
+	}
+	doc := readLockDocument(t, lockPath)
+	for i, mp := range doc.Marketplaces {
+		for j, record := range mp.Resources {
+			old := oldDoc.Marketplaces[i].Resources[j]
+			if record.ArchiveDigest != old.ArchiveDigest || record.ContentDigest != old.ContentDigest {
+				t.Fatalf("failed sync changed lock evidence: %#v -> %#v", old, record)
+			}
+		}
 	}
 }

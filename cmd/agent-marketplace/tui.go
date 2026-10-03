@@ -85,10 +85,14 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease}
 	result := runTUIExactSync(ctx, options)
 	errs := result.Errors
+	var persistedRefreshes map[archiveRefreshKey]bool
 	if len(errs) == 0 {
-		if _, refreshErr := refreshDriftedMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), result.MergedCfg, result.Warnings); refreshErr != nil {
+		var refreshErr error
+		persistedRefreshes, refreshErr = refreshDriftedMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), result.MergedCfg, result.Warnings)
+		if refreshErr != nil {
 			errs = append(errs, fmt.Errorf("refresh Marketplace lock evidence: %w", refreshErr))
 		}
 	}
+	result.Warnings = stripUnpersistedRefreshWarnings(result.Warnings, persistedRefreshes)
 	return append(lockWarnings, result.Warnings...), errors.Join(errs...)
 }

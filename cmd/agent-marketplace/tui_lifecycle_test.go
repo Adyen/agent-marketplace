@@ -5,12 +5,24 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
+
+func assertNoArchiveRefreshWarnings(t *testing.T, warnings []error) {
+	t.Helper()
+	for _, w := range warnings {
+		var refresh *resolver.ArchiveEvidenceRefreshedWarning
+		if errors.As(w, &refresh) {
+			t.Fatalf("reported a lock refresh that never persisted: %v", w)
+		}
+	}
+}
 
 // spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
 // spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
@@ -122,9 +134,11 @@ func TestTUIDependencyLifecycleFailedReacquisitionPreservesLastGood(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err == nil {
+	warnings, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false)
+	if err == nil {
 		t.Fatal("TUI sync with unreachable advertised artifact succeeded")
 	}
+	assertNoArchiveRefreshWarnings(t, warnings)
 	lockAfter, err := os.ReadFile(lockPath)
 	if err != nil || string(lockAfter) != string(lockBefore) {
 		t.Fatalf("failed reacquisition rewrote the lock: %v", err)
@@ -194,13 +208,14 @@ func TestTUIDependencyLifecycleRefreshedLockPublicationFailurePreservesLastGood(
 				t.Fatal(err)
 			}
 			mutated = false
-			_, err = runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), upgrade)
+			warnings, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), upgrade)
 			if err == nil {
 				t.Fatalf("TUI %s committed refreshed evidence onto a lock whose mode drifted", operation)
 			}
 			if !strings.Contains(err.Error(), "refresh Marketplace lock evidence") {
 				t.Fatalf("TUI %s failure does not identify the evidence refresh: %v", operation, err)
 			}
+			assertNoArchiveRefreshWarnings(t, warnings)
 			if !mutated {
 				t.Fatalf("TUI %s never attempted the refreshed Marketplace lock commit", operation)
 			}
@@ -217,5 +232,62 @@ func TestTUIDependencyLifecycleRefreshedLockPublicationFailurePreservesLastGood(
 				t.Fatalf("failed TUI %s changed lock evidence: %#v", operation, record)
 			}
 		})
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+// spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
+func TestTUIDependencyLifecycleSkippedRefreshDropsClaimButKeepsOtherWarnings(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift, _ := newDriftableV4MarketplaceServer(t, "mp", "review")
+	defer server.Close()
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+
+	output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes")
+	if err != nil {
+		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
+	}
+	oldRecord := readLockDocument(t, lockPath).Marketplaces[0].Resources[0]
+	drift()
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unrelatedWarning := errors.New("unrelated catalog warning")
+	unrelatedFailure := errors.New("unrelated materialization failure")
+	real := runTUIExactSync
+	runTUIExactSync = func(ctx context.Context, options pipeline.ResolveOptions) pipeline.SyncResult {
+		result := real(ctx, options)
+		result.Warnings = append(result.Warnings, unrelatedWarning)
+		result.Errors = append(result.Errors, unrelatedFailure)
+		return result
+	}
+	t.Cleanup(func() { runTUIExactSync = real })
+
+	warnings, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false)
+	if !errors.Is(err, unrelatedFailure) {
+		t.Fatalf("TUI sync error = %v; want the unrelated failure", err)
+	}
+	if !slices.Contains(warnings, unrelatedWarning) {
+		t.Fatalf("TUI sync dropped the unrelated warning: %v", warnings)
+	}
+	assertNoArchiveRefreshWarnings(t, warnings)
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != string(lockBefore) {
+		t.Fatalf("skipped TUI refresh rewrote the lock: %v", err)
+	}
+	record := readLockDocument(t, lockPath).Marketplaces[0].Resources[0]
+	if record.ArchiveDigest != oldRecord.ArchiveDigest || record.ContentDigest != oldRecord.ContentDigest {
+		t.Fatalf("skipped TUI refresh changed lock evidence: %#v", record)
 	}
 }

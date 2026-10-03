@@ -142,11 +142,15 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	resolvedCount := len(syncResult.Resolved)
 	report := syncResult.Report
 
+	var persistedRefreshes map[archiveRefreshKey]bool
 	if !locked && !offline && len(errs) == 0 {
-		if _, refreshErr := refreshDriftedMarketplaceLocks(ctx, repoRoot, localDir, mergedCfg, syncResult.Warnings); refreshErr != nil {
+		var refreshErr error
+		persistedRefreshes, refreshErr = refreshDriftedMarketplaceLocks(ctx, repoRoot, localDir, mergedCfg, syncResult.Warnings)
+		if refreshErr != nil {
 			errs = append(errs, fmt.Errorf("refresh Marketplace lock evidence: %w", refreshErr))
 		}
 	}
+	syncResult.Warnings = stripUnpersistedRefreshWarnings(syncResult.Warnings, persistedRefreshes)
 
 	// Collect stale selections before strict mode reclassifies them.
 	// Only collect direct selections (not collection-sourced) for pruning.
