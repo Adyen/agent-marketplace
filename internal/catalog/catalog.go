@@ -317,7 +317,15 @@ func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (cat 
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	cat, err = LoadFSWithOptions(srcFS, sourceHarness, opts)
+	return LoadSourceWithOptions(srcFS, root, sourceHarness, opts)
+}
+
+func LoadSourceWithOptions(srcFS *fsboundary.SourceFS, dir, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve load root %q: %w", dir, err)
+	}
+	cat, err := LoadFSWithOptions(srcFS, sourceHarness, opts)
 	if err != nil {
 		return nil, errors.Join(err, srcFS.Refusal())
 	}
