@@ -573,12 +573,36 @@ func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string
 			continue
 		}
 
+		if hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeSymlink {
+			fresh, captureErr := fsboundary.OpenDir(absolute)
+			if captureErr != nil {
+				return fmt.Errorf("%w: restore root unavailable: %w", fsboundary.ErrGenerationConflict, captureErr)
+			}
+			unchanged := fresh.Identity().SameObject(root.Identity())
+			if closeErr := fresh.Close(); closeErr != nil {
+				return closeErr
+			}
+			if !unchanged {
+				return fsboundary.ErrGenerationConflict
+			}
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := rejectSymlinkAncestors(dstDir, target); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			rel, err := filepath.Rel(dstDir, target)
+			if err != nil {
+				return err
+			}
+			if rel == "." {
+				continue
+			}
+			directory, err := root.EnsurePath(rel)
+			if err != nil {
+				return err
+			}
+			if err := directory.Close(); err != nil {
 				return err
 			}
 		case tar.TypeSymlink:
@@ -588,14 +612,17 @@ func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string
 			if err := rejectSymlinkAncestors(dstDir, filepath.Dir(target)); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			rel, err := filepath.Rel(dstDir, filepath.Dir(target))
+			if err != nil {
 				return err
 			}
-			if err := os.RemoveAll(target); err != nil {
+			parent, err := root.EnsurePath(rel)
+			if err != nil {
 				return err
 			}
-			if err := os.Symlink(hdr.Linkname, target); err != nil {
-				return err
+			publishErr := restoreCapturedSymlink(parent, filepath.Base(target), hdr.Linkname)
+			if closeErr := parent.Close(); publishErr != nil || closeErr != nil {
+				return errors.Join(publishErr, closeErr)
 			}
 		case tar.TypeReg:
 			if err := rejectSymlinkAncestors(dstDir, filepath.Dir(target)); err != nil {
