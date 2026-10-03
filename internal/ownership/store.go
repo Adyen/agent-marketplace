@@ -54,6 +54,8 @@ type Crasher interface {
 	Crash(point CrashPoint) error
 }
 
+var defaultCrasher func() Crasher
+
 // CrashAt returns a Crasher that fires exactly once at the given point.
 func CrashAt(point CrashPoint) Crasher { return &onceCrasher{point: point} }
 
@@ -170,6 +172,9 @@ func Open(targetRoot string, opts ...Option) (*Store, error) {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	if s.crasher == nil && defaultCrasher != nil {
+		s.crasher = defaultCrasher()
 	}
 	s.canonicalStateRoot, err = CanonicalRoot(s.stateRoot)
 	if err != nil {
