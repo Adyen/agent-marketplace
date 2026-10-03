@@ -4150,8 +4150,33 @@ func injectManagedByFrontmatter(content []byte) []byte {
 // isManagedCommandFile reports whether the file at path is a command markdown
 // file carrying the `_managed_by: agent-marketplace` ownership marker in its
 // leading frontmatter block.
-func isManagedCommandFile(path string) bool {
-	data, err := os.ReadFile(path)
+func isManagedCommandFile(path string) (managed bool) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	root, err := fsboundary.OpenDir(filepath.Dir(absolute))
+	if err != nil {
+		return false
+	}
+	defer func() {
+		if root.Close() != nil {
+			managed = false
+		}
+	}()
+	file, err := fsboundary.CaptureDestination(root, filepath.Base(absolute), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return false
+	}
+	defer func() {
+		if file.Close() != nil {
+			managed = false
+		}
+	}()
+	if file.Link() != nil {
+		return false
+	}
+	data, _, err := file.ReadTarget(file.Identity().Size)
 	if err != nil {
 		return false
 	}
