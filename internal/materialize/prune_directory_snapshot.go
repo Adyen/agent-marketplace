@@ -130,10 +130,8 @@ func readPruneDirectory(dir string, boundary *destinationBoundary, keep func(str
 			if boundary != nil && boundary.pruneMarkerReadHook != nil {
 				boundary.pruneMarkerReadHook(filepath.Join(dir, name.Name()))
 			}
-			data, readErr := readNativeCommandSnapshot(root, name.Name(), info)
-			if readErr != nil && (errors.Is(readErr, fsboundary.ErrGenerationConflict) ||
-				errors.Is(readErr, fsboundary.ErrUnsafePath) || errors.Is(readErr, fsboundary.ErrUnsafeFile) ||
-				errors.Is(readErr, fsboundary.ErrTooLarge)) {
+			data, readErr := readNativeCommandSnapshot(root, name.Name(), info, true)
+			if fsboundary.IsSourceRefusal(readErr) {
 				return nil, readErr
 			}
 			entry.managedCommand = readErr == nil && isManagedCommandContent(data)
