@@ -61,6 +61,93 @@ func TestLoadPrimarySourceRefusesForeignPayloadAlias(t *testing.T) {
 	}
 }
 
+// spec: registry-symlink-containment/primary-ingestion-refuses-foreign-payload-aliases
+func TestLoadStatOnlyMarkerRefusesPublication(t *testing.T) {
+	for _, shape := range []string{"escaping", "dangling"} {
+		t.Run(shape, func(t *testing.T) {
+			root, outside := t.TempDir(), t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".factory", "skills", "good"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, ".factory", "skills", "good", "SKILL.md"), []byte("---\nname: good\ndescription: healthy sibling\n---\n\ninert body\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			control, err := Discover(root, "factory")
+			if err != nil || len(control.Entries) != 1 || control.Entries[0].Name != "good" {
+				t.Fatalf("healthy catalog control failed: %+v %v", control, err)
+			}
+			foreign := filepath.Join(outside, "marker.json")
+			foreignBytes := []byte("not a parseable marker; metadata probes must not parse it")
+			if err := os.WriteFile(foreign, foreignBytes, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(foreign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := foreign
+			if shape == "dangling" {
+				target = "missing-marker.json"
+			}
+			if err := os.Symlink(target, filepath.Join(root, "gemini-extension.json")); err != nil {
+				t.Fatal(err)
+			}
+			cat, err := Load(root, "factory")
+			if err != nil || len(cat.Entries) != 1 || cat.Entries[0].Name != "good" {
+				t.Fatalf("metadata refusal lost the healthy sibling: %+v %v", cat, err)
+			}
+			if !errors.Is(cat.sourceRefusal, fsboundary.ErrUnsafePath) {
+				t.Errorf("stat-only marker refusal was not retained: %v", cat.sourceRefusal)
+			}
+			if _, err := cat.Discover(root, "factory"); !errors.Is(err, fsboundary.ErrUnsafePath) {
+				t.Errorf("loaded catalog published despite unsafe marker: %v", err)
+			}
+			if _, err := Discover(root, "factory"); !errors.Is(err, fsboundary.ErrUnsafePath) {
+				t.Errorf("publication discovery downgraded unsafe marker: %v", err)
+			}
+			if data, err := os.ReadFile(foreign); err != nil || string(data) != string(foreignBytes) {
+				t.Fatalf("metadata probe changed foreign bytes: %q %v", data, err)
+			}
+			if after, err := os.Stat(foreign); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+				t.Fatalf("metadata probe changed foreign metadata: %v", err)
+			}
+		})
+	}
+}
+
+// spec: registry-symlink-containment/primary-ingestion-refuses-foreign-payload-aliases
+func TestStatOnlyBundleProbesRetainRefusal(t *testing.T) {
+	for _, marker := range []string{"SKILL.md", ".factory-plugin/plugin.json"} {
+		t.Run(marker, func(t *testing.T) {
+			root, outside := t.TempDir(), t.TempDir()
+			foreign := filepath.Join(outside, "marker")
+			if err := os.WriteFile(foreign, []byte("inert foreign marker"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, marker)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(foreign, filepath.Join(root, marker)); err != nil {
+				t.Fatal(err)
+			}
+			source, err := fsboundary.OpenSourceFS(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = source.Close() })
+			var matched bool
+			if marker == "SKILL.md" {
+				matched = hasRootSkill(source)
+			} else {
+				matched = hasExplicitBundleMarker(source)
+			}
+			if matched || !errors.Is(source.Refusal(), fsboundary.ErrUnsafePath) {
+				t.Fatalf("boolean marker probe lost typed refusal: matched=%v refusal=%v", matched, source.Refusal())
+			}
+		})
+	}
+}
+
 // spec: registry-symlink-containment/contained-primary-directory-aliases-retain-factory-catalog-content
 func TestLoadFactoryContainedDirectoryAliases(t *testing.T) {
 	root := t.TempDir()
