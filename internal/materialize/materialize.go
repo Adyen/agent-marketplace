@@ -382,6 +382,7 @@ type runConfig struct {
 	scopeFilter             *bool // nil = all scopes; true = machine only; false = repo only
 	modes                   config.MaterializationModes
 	linkPublicationHook     func(string)
+	pruneEnumerationHook    func(string)
 	manifestPublicationHook func(string)
 }
 
@@ -426,6 +427,7 @@ type targetWork struct {
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
 	linkPublicationHook     func(string)
+	pruneEnumerationHook    func(string)
 	manifestPublicationHook func(string)
 	scopeFilter             *bool
 	allDiags                []diag.Diagnostic
@@ -501,6 +503,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
 	compileResult.linkPublicationHook = rc.linkPublicationHook
+	compileResult.pruneEnumerationHook = rc.pruneEnumerationHook
 	compileResult.manifestPublicationHook = rc.manifestPublicationHook
 	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes)
 	slog.Info("materialize end",
@@ -1167,7 +1170,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				continue
 			}
 		}
-		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook, manifestPublicationHook: compileResult.manifestPublicationHook}
+		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook, pruneEnumerationHook: compileResult.pruneEnumerationHook, manifestPublicationHook: compileResult.manifestPublicationHook}
 		if key.target == hcc.TargetFactory {
 			boundary.legacySkillsDir = filepath.Join(outDir, "skills")
 		}
@@ -3909,7 +3912,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 	if len(portable) > 0 {
 		readBoundary = portable[0].boundary
 	}
-	entries, err := readPruneDirectory(skillsDir, readBoundary)
+	entries, err := readPruneDirectory(skillsDir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep })
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return report, nil
@@ -3922,11 +3925,12 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			continue
 		}
 		path := filepath.Join(skillsDir, name)
-		if _, ok := existingSymlinkTarget(path); !ok {
+		observed := entry.observed
+		if observed.Mode()&os.ModeSymlink == 0 {
 			// Non-symlink directories are user-owned skill directories
 			// and must be preserved. Mirror the principle from
 			// staleArtifactLinks which also preserves user-owned content.
-			if entry.IsDir() {
+			if observed.IsDir() {
 				if pruneStaleEntries {
 					report.Diags = append(report.Diags, diag.Diagnostic{
 						Code:     "materialize.skill.user-owned-preserved",
@@ -3945,11 +3949,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			// must be preserved — managed resources in this directory are
 			// materialized as symlinks, so an unmarked regular file is always
 			// user-owned.
-			observed, err := os.Lstat(path)
-			if err != nil {
-				return report, err
-			}
-			if !isManagedCommandFile(path, readBoundary) {
+			if !entry.managedCommand {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -3958,7 +3958,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				continue
 			}
 			if dryRun {
-				report.Removed = append(report.Removed, staleSkillEntryReportPath(path, name))
+				report.Removed = append(report.Removed, name)
 				continue
 			}
 			var boundary *destinationBoundary
@@ -3973,7 +3973,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		}
 		// Symlink — only prune if it points to our cache (managed).
 		// User symlinks (pointing outside the cache) are preserved.
-		if !isManagedSymlink(path) {
+		if !strings.HasPrefix(entry.linkText, cache.CacheDir()+string(os.PathSeparator)) {
 			if pruneStaleEntries {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
@@ -3986,10 +3986,6 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		if dryRun {
 			report.Removed = append(report.Removed, name)
 			continue
-		}
-		observed, err := os.Lstat(path)
-		if err != nil {
-			return report, err
 		}
 		var boundary *destinationBoundary
 		if len(portable) > 0 {
@@ -4119,7 +4115,7 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 	if len(boundaries) > 0 {
 		readBoundary = boundaries[0]
 	}
-	entries, err := readPruneDirectory(dir, readBoundary)
+	entries, err := readPruneDirectory(dir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep })
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return nil
@@ -4132,13 +4128,10 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 			continue
 		}
 		path := filepath.Join(dir, name)
-		info, lerr := os.Lstat(path)
-		if lerr != nil {
-			continue
-		}
+		info := entry.observed
 		switch {
 		case info.Mode()&os.ModeSymlink != 0:
-			if !isManagedSymlink(path) {
+			if !strings.HasPrefix(entry.linkText, cache.CacheDir()+string(os.PathSeparator)) {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -4149,7 +4142,7 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 		case info.IsDir():
 			continue
 		default:
-			if !isManagedCommandFile(path, readBoundary) {
+			if !entry.managedCommand {
 				continue
 			}
 		}

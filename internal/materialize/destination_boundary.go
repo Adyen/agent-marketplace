@@ -19,6 +19,7 @@ type destinationBoundary struct {
 	roots                   []string
 	legacySkillsDir         string
 	linkPublicationHook     func(string)
+	pruneEnumerationHook    func(string)
 	manifestPublicationHook func(string)
 }
 
