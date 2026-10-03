@@ -1505,14 +1505,14 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	// recorded state rather than one component directory, so they cannot be
 	// narrowed per component and stay suppressed by any skip.
 	if mode == config.MaterializationModeFile && !anyBlocked(blocked) {
-		report = prunePortableStaleSymlinks(report, key, outDir, portableCleanupDirs, fileDesired, dryRun)
+		report = prunePortableStaleSymlinks(report, key, outDir, portableCleanupDirs, fileDesired, dryRun, &boundary)
 	}
 
 	var portableReports []TargetReport
 	var portableDiags []diag.Diagnostic
 	var portableErr error
 	if !anyBlocked(blocked) {
-		portableReports, portableDiags, portableErr = prunePortableEntries(state, key, outDir, repoRoot, fileDesired, dryRun)
+		portableReports, portableDiags, portableErr = prunePortableEntries(state, key, outDir, repoRoot, fileDesired, dryRun, &boundary)
 	}
 	if portableErr != nil {
 		slog.Error("materialize manifest prune failed", "target", key.target, "machine_scope", key.machineScope, "error", portableErr)
@@ -3037,7 +3037,7 @@ func portableSkillCollision(dst string, link skillLink) diag.Diagnostic {
 	return diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityWarning, Resource: link.resourceName, Message: collisionRemoveHint(dst, link.name, link)}
 }
 
-func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot string, desired map[string]bool, dryRun bool) ([]TargetReport, []diag.Diagnostic, error) {
+func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot string, desired map[string]bool, dryRun bool, boundaries ...*destinationBoundary) ([]TargetReport, []diag.Diagnostic, error) {
 	reports := make(map[string]*TargetReport)
 	var diags []diag.Diagnostic
 	keys := make([]string, 0, len(state.entries))
@@ -3064,7 +3064,8 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 		if err != nil {
 			return nil, diags, err
 		}
-		_, err = os.Lstat(path)
+		observed, statErr := os.Lstat(path)
+		err = statErr
 		if err != nil && !os.IsNotExist(err) {
 			return nil, diags, err
 		}
@@ -3083,10 +3084,14 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 			}
 		}
 		if !dryRun {
-			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			var boundary *destinationBoundary
+			if len(boundaries) > 0 {
+				boundary = boundaries[0]
+			}
+			if err := removePortableOutput(path, observed, entry.Digest, boundary); err != nil {
 				return nil, diags, err
 			}
-			cleanEmptyPortableArtifactDirs(root, filepath.Dir(filepath.FromSlash(rel)))
+			cleanEmptyPortableArtifactDirs(root, filepath.Dir(filepath.FromSlash(rel)), boundary)
 			delete(state.entries, stateKey)
 		}
 		report := reports[root]
@@ -3132,7 +3137,7 @@ func portableEntryDestination(key outputKey, outDir, repoRoot, entryPath string)
 // links are not represented in its portable manifest. Restricting the scan to
 // known harness component and resource directories keeps project and target
 // scopes isolated while preserving user-owned symlinks.
-func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cleanupDirs map[string]string, desired map[string]bool, dryRun bool) *Report {
+func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cleanupDirs map[string]string, desired map[string]bool, dryRun bool, boundaries ...*destinationBoundary) *Report {
 	dirs := make([]string, 0, len(cleanupDirs))
 	for dir := range cleanupDirs {
 		dirs = append(dirs, dir)
@@ -3157,7 +3162,10 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("prune stale portable symlinks in %s: %v", dir, err)})
 			continue
 		}
-		tr := TargetReport{OutDir: dir, Removed: stale, Diags: diags}
+		tr := TargetReport{OutDir: dir, Diags: diags}
+		if dryRun {
+			tr.Removed = stale
+		}
 		if !dryRun {
 			for _, rel := range stale {
 				path, pathErr := portableOutputPath(dir, rel)
@@ -3165,11 +3173,23 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: pathErr.Error()})
 					continue
 				}
-				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("remove stale portable symlink %s: %v", path, err)})
+				observed, observeErr := os.Lstat(path)
+				var boundary *destinationBoundary
+				if len(boundaries) > 0 {
+					boundary = boundaries[0]
+				}
+				if observeErr == nil && observed.Mode()&os.ModeSymlink == 0 {
+					observeErr = fsboundary.ErrGenerationConflict
+				}
+				if observeErr == nil {
+					observeErr = removePortableOutput(path, observed, "", boundary)
+				}
+				if observeErr != nil && !os.IsNotExist(observeErr) {
+					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("remove stale portable symlink %s: %v", path, observeErr)})
 					continue
 				}
-				cleanEmptyPortableArtifactDirs(dir, filepath.Dir(filepath.FromSlash(rel)))
+				tr.Removed = append(tr.Removed, rel)
+				cleanEmptyPortableArtifactDirs(dir, filepath.Dir(filepath.FromSlash(rel)), boundary)
 			}
 		}
 		report = appendGroupReport(report, key, outDir, prefix, tr, nil, "")
@@ -3367,7 +3387,7 @@ func cleanEmptyArtifactDirs(outDir, relPath string) {
 // cleanEmptyPortableArtifactDirs is the portable counterpart of
 // cleanEmptyArtifactDirs. Each directory is validated before reading or
 // removing it so cleanup never traverses an intermediate symlink.
-func cleanEmptyPortableArtifactDirs(outDir, relPath string) {
+func cleanEmptyPortableArtifactDirs(outDir, relPath string, boundaries ...*destinationBoundary) {
 	if relPath == "." || relPath == "" {
 		return
 	}
@@ -3381,15 +3401,13 @@ func cleanEmptyPortableArtifactDirs(outDir, relPath string) {
 			return
 		}
 		dirPath := filepath.Dir(child)
-		info, err := os.Lstat(dirPath)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		var boundary *destinationBoundary
+		if len(boundaries) > 0 {
+			boundary = boundaries[0]
+		}
+		if err := removeEmptyPortableDirectory(outDir, dirPath, boundary); err != nil {
 			return
 		}
-		entries, err := os.ReadDir(dirPath)
-		if err != nil || len(entries) > 0 {
-			return
-		}
-		_ = os.Remove(dirPath)
 	}
 }
 

@@ -70,6 +70,16 @@ func (d *Dir) Mkdir(name string, mode os.FileMode) error {
 	return nil
 }
 
+func (d *Dir) Rmdir(name string) error {
+	if err := validLeafName(name); err != nil {
+		return err
+	}
+	if err := unix.Unlinkat(int(d.file.Fd()), name, unix.AT_REMOVEDIR); err != nil {
+		return fmt.Errorf("remove empty captured directory %s: %w", name, err)
+	}
+	return nil
+}
+
 // Unlink removes the leaf name below the captured directory without
 // following it. Removal is descriptor-relative, so it can never delete a
 // leaf inside a replacement tree. A missing name reports fs.ErrNotExist.
