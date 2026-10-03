@@ -1209,7 +1209,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		// shared aggregates retain their separate ownership reconciliation.
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
 		if !coalescedGemini || key.target != hcc.TargetGemini || key.machineScope {
-			artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
+			artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun, &boundary)
 		}
 		if tw != nil && tw.nativeOnly {
 			slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)

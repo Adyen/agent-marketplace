@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -19,7 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
-func materializeNativeAggregates(ctx context.Context, report *Report, key outputKey, repoRoot string, artifacts []artifact.Artifact, blocked map[string]bool, dryRun bool) []artifact.Artifact {
+func materializeNativeAggregates(ctx context.Context, report *Report, key outputKey, repoRoot string, artifacts []artifact.Artifact, blocked map[string]bool, dryRun bool, boundaries ...*destinationBoundary) []artifact.Artifact {
 	if len(harness.NativeAggregateInstalls(key.target)) == 0 {
 		return artifacts
 	}
@@ -69,7 +72,7 @@ func materializeNativeAggregates(ctx context.Context, report *Report, key output
 				if slices.ContainsFunc(destination.AggregateRoutes, func(route harness.AggregateRoute) bool { return route.Container == "hooks" }) {
 					pruneStale = pruneStale && !componentBlocked(blocked, resourceInstallDirRel(key.target, ir.KindHook))
 				}
-				tr, routeErr = syncNativeAggregate(key, destination, rel, desired, dryRun, pruneStale)
+				tr, routeErr = syncNativeAggregate(key, destination, rel, desired, dryRun, pruneStale, boundaries...)
 			}
 			if routeErr == nil && len(tr.Written)+len(tr.Skipped)+len(tr.Removed) > 0 {
 				report.PerRoot = append(report.PerRoot, tr)
@@ -84,7 +87,11 @@ func materializeNativeAggregates(ctx context.Context, report *Report, key output
 	return remaining
 }
 
-func syncNativeAggregate(key outputKey, destination harness.Destination, rel string, desired map[string]json.RawMessage, dryRun, pruneStaleEntries bool) (TargetReport, error) {
+func syncNativeAggregate(key outputKey, destination harness.Destination, rel string, desired map[string]json.RawMessage, dryRun, pruneStaleEntries bool, boundaries ...*destinationBoundary) (TargetReport, error) {
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
 	tr := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: destination.ID, OutDir: destination.Root}
 	if !hasNativeDesiredEntries(desired) && (!pruneStaleEntries || !nativeAggregateHasManagedEntries(key.target, destination)) {
 		return tr, nil
@@ -106,8 +113,8 @@ func syncNativeAggregate(key outputKey, destination harness.Destination, rel str
 	} else if !os.IsNotExist(err) {
 		return tr, err
 	}
-	existing, err := os.ReadFile(file)
-	absent := os.IsNotExist(err)
+	existing, err := readNativeCommandFile(file, info, boundary)
+	absent := errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict)
 	if err != nil && !absent {
 		return tr, err
 	}
@@ -123,22 +130,7 @@ func syncNativeAggregate(key outputKey, destination harness.Destination, rel str
 		return tr, nil
 	}
 	if !dryRun {
-		if _, err := ensurePortableOutputDir(destination.Root, filepath.Dir(rel)); err != nil {
-			return tr, err
-		}
-		current, err := os.ReadFile(file)
-		if (absent && !os.IsNotExist(err)) || (!absent && (err != nil || !bytes.Equal(current, existing))) {
-			return tr, fmt.Errorf("native aggregate changed during reconciliation")
-		}
-		currentInfo, statErr := os.Lstat(file)
-		if absent {
-			if !os.IsNotExist(statErr) {
-				return tr, fmt.Errorf("native aggregate changed during reconciliation")
-			}
-		} else if statErr != nil || !currentInfo.Mode().IsRegular() {
-			return tr, fmt.Errorf("native aggregate changed during reconciliation")
-		}
-		if err := atomicWriteFile(file, merged, mode); err != nil {
+		if err := publishPortableBytes(file, merged, mode, info, boundary); err != nil {
 			return tr, err
 		}
 	}
@@ -344,7 +336,7 @@ func nativeAggregateHasManagedEntries(target hcc.Target, destination harness.Des
 	if _, err := validatePortableOutputDir(destination.Root, filepath.Dir(rel)); err != nil {
 		return false
 	}
-	raw, err := os.ReadFile(file)
+	raw, err := readNativeCommandFile(file, info, nil)
 	if err != nil || !bytes.Contains(raw, []byte(managedByField)) {
 		return false
 	}
