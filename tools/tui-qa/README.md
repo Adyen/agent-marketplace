@@ -30,6 +30,7 @@ Each interaction contract has its own file. The `*.spec.ts` files are PTY journe
 16. `tests/marketplace-archive-refresh.spec.ts` starts on a v4 user root declaring a Marketplace source whose lock pins the stub's original archive digest. The endpoint then serves a repaired archive digest for the same content digest, and the journey verifies that an update refreshes the user lock, reports a visible `marketplace.archive-evidence-refreshed` warning in the diagnostics overlay, leaves the materialized skill unchanged, and that a healthy repeat update emits no warning or lock write.
 17. `tests/layout-quality.spec.ts` checks that the footer keeps the command palette, help and quit hints, that the toggle and edit-config modals render as one complete frame that keeps file names visible, and that the footer and palette still fit at 50x12.
 18. `tests/wheel-burst.spec.ts` writes complete encoded wheel bursts to the PTY, including a direction reversal and a burst that reverses at the first list boundary on the overflowing status list, and verifies the terminal shows the independently expected selected resource and its details after each burst.
+19. `tests/preview-selection.spec.ts` drags across the right-hand details pane, checks inverse cells and the exact OSC52 payload, and verifies that scrolling clears the highlight while clicks and list-side drags copy nothing.
 
 `tests/target-pid.test.ts` is a helper test. It checks that the PID lookup used by the SIGTERM journey waits for the launcher to publish the PID.
 

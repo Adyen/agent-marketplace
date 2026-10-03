@@ -281,17 +281,28 @@ func TestPreviewSelectionIgnoresOutsideGestures(t *testing.T) {
 
 // spec: tui-mouse-navigation/gestures-outside-selectable-text-do-not-copy
 func TestPreviewSelectionOutsidePressCancelsPendingGesture(t *testing.T) {
-	m := selectionDetailModel(t, "alpha beta")
-	s := selSnap(m)
-	m, _ = selSend(t, m, s, selClick(33, 0))
-	m, _ = selSend(t, m, s, selClick(4, 0))
-	m, _ = selSend(t, m, s, selMotion(5, 0))
-	got, cmd := selSend(t, m, s, selRelease(5, 0))
-	if cmd != nil {
-		t.Fatalf("new list-side drag copied %q after earlier release was missed; want no clipboard write", clipboardText(t, cmd))
-	}
-	if got.previewSel.active {
-		t.Fatal("ignored new gesture retained an unfinished preview anchor")
+	for _, tt := range []struct {
+		name string
+		mod  tea.KeyMod
+	}{
+		{name: "unmodified", mod: tea.KeyMod(0)},
+		{name: "shift", mod: tea.ModShift},
+		{name: "ctrl", mod: tea.ModCtrl},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := selectionDetailModel(t, "alpha beta")
+			s := selSnap(m)
+			m, _ = selSend(t, m, s, selClick(33, 0))
+			m, _ = selSend(t, m, s, tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tt.mod, X: 4, Y: 0})
+			m, _ = selSend(t, m, s, selMotion(5, 0))
+			got, cmd := selSend(t, m, s, selRelease(5, 0))
+			if cmd != nil {
+				t.Fatalf("new list-side drag copied %q after earlier release was missed; want no clipboard write", clipboardText(t, cmd))
+			}
+			if got.previewSel.active {
+				t.Fatal("ignored new gesture retained an unfinished preview anchor")
+			}
+		})
 	}
 }
 
@@ -557,16 +568,4 @@ func TestFramePacedSelectionDropsOnStalePresentedFrame(t *testing.T) {
 		model.refresh(clock.now)
 		release(t, model)
 	})
-}
-
-func BenchmarkPreviewSelectionInput(b *testing.B) {
-	m := selectionDetailModel(b, "alpha beta gamma", "second selectable row", "third selectable row")
-	snap := selSnap(m)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		m, _ = selSend(b, m, snap, selClick(33, 0))
-		m, _ = selSend(b, m, snap, selMotion(45, 1))
-		m, _ = selSend(b, m, snap, selRelease(45, 1))
-	}
 }
