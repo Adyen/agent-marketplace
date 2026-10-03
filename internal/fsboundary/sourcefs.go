@@ -12,10 +12,11 @@ import (
 )
 
 type SourceFS struct {
-	root    *Dir
-	native  *os.Root
-	mu      sync.Mutex
-	refusal error
+	root     *Dir
+	native   *os.Root
+	mu       sync.Mutex
+	refusal  error
+	admitted map[string]struct{}
 }
 
 func OpenSourceFS(path string) (*SourceFS, error) {
@@ -77,9 +78,27 @@ func (s *SourceFS) Refusal() error {
 	return s.refusal
 }
 
+func (s *SourceFS) WasRead(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, admitted := s.admitted[name]
+	return admitted
+}
+
+func IsSourceRefusal(err error) bool {
+	return errors.Is(err, ErrUnsafePath) || errors.Is(err, ErrUnsafeFile) || errors.Is(err, ErrGenerationConflict) || errors.Is(err, ErrTooLarge)
+}
+
 func (s *SourceFS) read(name string) (data []byte, identity Identity, err error) {
 	defer func() {
-		if errors.Is(err, ErrUnsafePath) || errors.Is(err, ErrUnsafeFile) || errors.Is(err, ErrGenerationConflict) || errors.Is(err, ErrTooLarge) {
+		if err == nil {
+			s.mu.Lock()
+			if s.admitted == nil {
+				s.admitted = make(map[string]struct{})
+			}
+			s.admitted[name] = struct{}{}
+			s.mu.Unlock()
+		} else if IsSourceRefusal(err) {
 			s.mu.Lock()
 			if s.refusal == nil {
 				s.refusal = err
