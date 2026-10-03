@@ -246,11 +246,14 @@ func (m Model) handlePreviewSelection(msg previewSelectionMouseMsg) (tea.Model, 
 		m.previewSel = previewSelection{}
 		return m, nil
 	}
+	if ev, ok := msg.msg.(tea.MouseMsg); ok && ev.Mouse().Button != tea.MouseLeft {
+		if !m.previewSel.copied {
+			m.previewSel = previewSelection{}
+		}
+		return m, nil
+	}
 	switch ev := msg.msg.(type) {
 	case tea.MouseClickMsg:
-		if ev.Button != tea.MouseLeft {
-			return m, nil
-		}
 		if !m.previewSel.copied {
 			m.previewSel = previewSelection{}
 		}
@@ -260,7 +263,7 @@ func (m Model) handlePreviewSelection(msg previewSelectionMouseMsg) (tea.Model, 
 		m.previewSel = previewSelection{snap: snap, anchor: selectionCell{ev.X, ev.Y}, end: selectionCell{ev.X, ev.Y}, active: true}
 		return m, nil
 	case tea.MouseMotionMsg:
-		if !m.previewSel.active || ev.Button != tea.MouseLeft || m.previewSel.copied {
+		if !m.previewSel.active || m.previewSel.copied {
 			return m, nil
 		}
 		m.previewSel.end = snap.clamp(ev.X, ev.Y)
@@ -270,7 +273,7 @@ func (m Model) handlePreviewSelection(msg previewSelectionMouseMsg) (tea.Model, 
 		return m, nil
 	case tea.MouseReleaseMsg:
 		sel := m.previewSel
-		if !sel.active || ev.Button != tea.MouseLeft {
+		if !sel.active {
 			return m, nil
 		}
 		if !sel.dragged {

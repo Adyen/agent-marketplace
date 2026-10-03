@@ -306,6 +306,55 @@ func TestPreviewSelectionOutsidePressCancelsPendingGesture(t *testing.T) {
 	}
 }
 
+// spec: tui-mouse-navigation/gestures-outside-selectable-text-do-not-copy
+func TestPreviewSelectionNonLeftEventCancelsPendingGesture(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		msg  tea.MouseMsg
+	}{
+		{name: "right press", msg: tea.MouseClickMsg{Button: tea.MouseRight, X: 4, Y: 0}},
+		{name: "middle press", msg: tea.MouseClickMsg{Button: tea.MouseMiddle, X: 4, Y: 0}},
+		{name: "right motion", msg: tea.MouseMotionMsg{Button: tea.MouseRight, X: 4, Y: 0}},
+		{name: "right release", msg: tea.MouseReleaseMsg{Button: tea.MouseRight, X: 4, Y: 0}},
+		{name: "unbuttoned motion", msg: tea.MouseMotionMsg{Button: tea.MouseNone, X: 4, Y: 0}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := selectionDetailModel(t, "alpha beta")
+			s := selSnap(m)
+			m, _ = selSend(t, m, s, selClick(33, 0))
+			m, _ = selSend(t, m, s, selMotion(35, 0))
+			var cmd tea.Cmd
+			m, cmd = selSend(t, m, s, tt.msg)
+			if cmd != nil {
+				t.Fatalf("non-left event scheduled %v", cmd)
+			}
+			m, _ = selSend(t, m, s, selMotion(5, 0))
+			m, cmd = selSend(t, m, s, selRelease(5, 0))
+			if cmd != nil {
+				t.Fatalf("post-cancel drag copied %q; want no clipboard write", clipboardText(t, cmd))
+			}
+			if m.previewSel.active {
+				t.Fatal("non-left event retained an unfinished preview anchor")
+			}
+		})
+	}
+
+	t.Run("copied highlight survives ignored non-left press", func(t *testing.T) {
+		m := selectionDetailModel(t, "alpha beta")
+		m, cmd := selDrag(t, m, selSnap(m), 33, 0, 35, 0)
+		if got := clipboardText(t, cmd); got != "lph" {
+			t.Fatalf("setup drag copied %q, want %q", got, "lph")
+		}
+		m, cmd = selSend(t, m, selSnap(m), tea.MouseClickMsg{Button: tea.MouseRight, X: 4, Y: 0})
+		if cmd != nil {
+			t.Fatalf("right press scheduled %v", cmd)
+		}
+		if !m.previewSel.active || !m.previewSel.copied {
+			t.Fatalf("right press dropped completed selection %+v", m.previewSel)
+		}
+	})
+}
+
 // spec: tui-mouse-navigation/scrolling-clears-selection-without-changing-navigation
 func TestPreviewSelectionClearsOnScroll(t *testing.T) {
 	lines := make([]string, 30)
