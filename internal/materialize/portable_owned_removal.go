@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
@@ -185,60 +184,4 @@ func verifyPortableRemovalEntries(entries []portableRemovalEntry) (err error) {
 		}
 	}
 	return nil
-}
-
-func removeOwnedPortablePath(path string, observed os.FileInfo, wantDigest string, boundary *destinationBoundary) (err error) {
-	parent, err := capturePortableParent(path, boundary, false)
-	if err != nil {
-		if observed == nil && errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) {
-			return nil
-		}
-		return err
-	}
-	if parent == nil {
-		if observed == nil {
-			return nil
-		}
-		return fsboundary.ErrGenerationConflict
-	}
-	defer func() {
-		if closeErr := parent.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-	native, err := parent.NativeRoot()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := native.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-	if boundary != nil && boundary.linkPublicationHook != nil {
-		boundary.linkPublicationHook(path)
-	}
-	fresh, err := capturePortableParent(path, boundary, false)
-	if err != nil {
-		return err
-	}
-	if fresh == nil {
-		return fsboundary.ErrGenerationConflict
-	}
-	unchanged := fresh.Identity().SameObject(parent.Identity())
-	if err := fresh.Close(); err != nil {
-		return err
-	}
-	if !unchanged {
-		return fsboundary.ErrGenerationConflict
-	}
-	if observed == nil {
-		if _, err := native.Lstat(filepath.Base(path)); errors.Is(err, fs.ErrNotExist) {
-			return nil
-		} else if err != nil {
-			return err
-		}
-		return fsboundary.ErrGenerationConflict
-	}
-	return removeVerifiedPortableOutput(parent, native, filepath.Base(path), observed, wantDigest)
 }

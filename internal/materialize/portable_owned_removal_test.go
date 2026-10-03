@@ -297,7 +297,7 @@ func TestOwnedPortableRemovalStrictAndPruneMissingSemantics(t *testing.T) {
 	}
 	path := filepath.Join(parent, "absent")
 	boundary := &destinationBoundary{repoRoot: parent, roots: []string{parent}}
-	if err := removeOwnedPortablePath(path, nil, "", boundary); err != nil {
+	if err := removePortableOutput(path, nil, "", boundary); err != nil {
 		t.Fatalf("prune-only absence control: %v", err)
 	}
 	boundary.linkPublicationHook = func(string) {
@@ -316,7 +316,7 @@ func TestOwnedPortableRemovalStrictAndPruneMissingSemantics(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if err := removeOwnedPortablePath(path, nil, "", boundary); !errors.Is(err, fsboundary.ErrGenerationConflict) {
+	if err := removePortableOutput(path, nil, "", boundary); !errors.Is(err, fsboundary.ErrGenerationConflict) {
 		t.Fatalf("prune absence overwrote an appeared tree: %v", err)
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o500 {
