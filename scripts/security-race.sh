@@ -105,7 +105,7 @@ run_race ./internal/tui \
     -count=20
 
 run_race ./internal/materialize \
-    -run '^Test(RunPortableOutputDigest.*|RunPortableFilePublication.*|RunPortableTreePublication.*|RunPortablePrune.*|RunNativeManagedLinkPrune.*|RunNativeOwnershipMarker.*|RunNativeCommandPublication.*|RunNativeCommandPrune.*|RunPruneDirectory.*|PruneDirectory.*|RunNativeMarkerAggregate.*|RunNativeAggregate.*|NativeAggregate.*|NativePruneClassificationSnapshot|NativeSkillMarkedFilePruning|NativeCommandFilePruneMissingParity|NativeCommandSymlinkPruneClassification|RunNativeCommandSymlinkPruneRefusesReplacement|PortableRegularDigest.*|PortableTreeDigest.*)$' \
+    -run '^Test(RunPortableOutputDigest.*|RunPortableFilePublication.*|RunPortableTreePublication.*|RunPortablePrune.*|RunNativeManagedLinkPrune.*|RunNativeOwnershipMarker.*|RunNativeCommandPublication.*|RunNativeCommandPrune.*|RunPruneDirectory.*|PruneDirectory.*|RunNativeMarkerAggregate.*|RunNativeAggregate.*|NativeAggregate.*|NativePruneClassificationSnapshot|NativeSkillMarkedFilePruning|NativeCommandFilePruneMissingParity|NativeCommandSymlinkPruneClassification|RunNativeCommandSymlinkPruneRefusesReplacement|PortableRegularDigest.*|PortableTreeDigest.*|PortableTreeReadOnly.*|PortableTreeInitialInspectionCleanup|PortableTreeCleanupPreservesNestedForeignMetadata|PortableReadOnlyOwned.*|OwnedPortableRemoval.*|ReadOnlyPortablePrune.*)$' \
     -count=20
 
 run_race ./internal/fsboundary \
