@@ -115,8 +115,8 @@ func publishPortableBytes(dst string, data []byte, mode os.FileMode, observed os
 		return errors.Join(err, stagedFile.Close())
 	}
 	defer func() {
-		if current, statErr := native.Lstat(stagedName); statErr == nil && os.SameFile(created, current) {
-			_ = parent.Unlink(stagedName)
+		if cleanupErr := cleanupPortableFileStage(parent, native, stagedName, created); cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
 		}
 	}()
 	if err := stagedFile.Chmod(mode.Perm()); err != nil {
@@ -170,4 +170,21 @@ func publishPortableBytes(dst string, data []byte, mode os.FileMode, observed os
 		return fmt.Errorf("%w: staged portable file changed", fsboundary.ErrGenerationConflict)
 	}
 	return native.Rename(stagedName, name)
+}
+
+func cleanupPortableFileStage(parent *fsboundary.Dir, native *os.Root, stagedName string, created os.FileInfo) error {
+	current, err := native.Lstat(stagedName)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil // The stage disappears after successful publication.
+	}
+	if err != nil {
+		return fmt.Errorf("inspect portable staged file %s: %w", stagedName, err)
+	}
+	if !os.SameFile(created, current) {
+		return nil // Cleanup has no authority over a replacement object.
+	}
+	if err := parent.Unlink(stagedName); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove portable staged file %s: %w", stagedName, err)
+	}
+	return nil
 }
