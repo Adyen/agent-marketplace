@@ -343,33 +343,46 @@ func buildResource(root string, source *fsboundary.SourceFS, entry catalog.Entry
 	return revisionResource{Kind: entry.Kind.String(), Name: entry.Name, ContentDigest: digest, ArchiveDigest: contentDigest(archiveInput), SupportFiles: support}, nil
 }
 
-func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog.Entry) ([]byte, error) {
+func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog.Entry) (data []byte, err error) {
+	defer func() {
+		if entry.PrimarySourcePath != "" && entry.PrimarySourcePath == entry.Path && errors.Is(err, fs.ErrNotExist) && !fsboundary.IsSourceRefusal(err) {
+			err = fmt.Errorf("%w: admitted primary %q disappeared: %w", fsboundary.ErrGenerationConflict, entry.Path, err)
+		}
+	}()
+	if entry.Kind != ir.KindCollection && entry.PrimarySourcePath != "" && entry.PrimarySourcePath != entry.Path {
+		rel, err := lexicallyContained(root, entry.PrimarySourcePath)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := source.ReadFile(filepath.ToSlash(rel)); err != nil {
+			if errors.Is(err, fs.ErrNotExist) && !fsboundary.IsSourceRefusal(err) {
+				err = fmt.Errorf("%w: admitted primary %q disappeared: %w", fsboundary.ErrGenerationConflict, entry.PrimarySourcePath, err)
+			}
+			return nil, err
+		}
+	}
 	// Collections digest over their canonical IR serialization, never the raw
 	// collection definition file: entry.Path is populated for collections so
 	// consumers can locate the definition file, but hashing that file would
 	// change the source-revision compatibility basis.
 	if entry.Path != "" && entry.Kind != ir.KindCollection {
-		name := entry.Path
-		if !filepath.IsAbs(name) {
-			name = filepath.Join(root, name)
+		name, err := containedPath(root, entry.Path)
+		if err != nil {
+			return nil, err
+		}
+		if err := rejectSymlinkComponents(root, name); err != nil {
+			return nil, err
 		}
 		rel, err := lexicallyContained(root, name)
 		if err != nil {
 			return nil, err
 		}
-		err = rejectSymlinkComponents(root, name)
+		data, err := source.ReadFile(filepath.ToSlash(rel))
 		if err == nil {
-			var data []byte
-			data, err = source.ReadFile(filepath.ToSlash(rel))
-			if err == nil {
-				return data, nil
-			}
+			return data, nil
 		}
-		if !errors.Is(err, fs.ErrNotExist) || fsboundary.IsSourceRefusal(err) {
+		if entry.PrimarySourcePath == entry.Path || !errors.Is(err, fs.ErrNotExist) || fsboundary.IsSourceRefusal(err) {
 			return nil, err
-		}
-		if entry.PrimarySourcePresent {
-			return nil, fmt.Errorf("%w: admitted primary %q disappeared: %w", fsboundary.ErrGenerationConflict, entry.Path, err)
 		}
 	}
 	resource := entry.Resource
@@ -382,7 +395,7 @@ func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog
 		copy.Source = ir.SourceRef{}
 		resource = &copy
 	}
-	data, err := json.Marshal(resource)
+	data, err = json.Marshal(resource)
 	if err != nil {
 		return nil, fmt.Errorf("encode canonical resource: %w", err)
 	}

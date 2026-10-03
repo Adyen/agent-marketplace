@@ -157,7 +157,8 @@ func TestBuildRefusesIngestionBoundaryWithValidSibling(t *testing.T) {
 	}
 }
 
-func TestResourceSourceBytesRetainsSyntheticPrimaryFallback(t *testing.T) {
+// spec: registry-symlink-containment/source-revision-hashing-refuses-post-ingest-unsafe-payloads
+func TestResourceSourceBytesPreservesLegacyFallbackBoundary(t *testing.T) {
 	root := t.TempDir()
 	source, err := fsboundary.OpenSourceFS(root)
 	if err != nil {
@@ -172,9 +173,15 @@ func TestResourceSourceBytesRetainsSyntheticPrimaryFallback(t *testing.T) {
 	for _, name := range []string{"", "absent.md", "missing/primary.md"} {
 		t.Run(name, func(t *testing.T) {
 			data, err := resourceSourceBytes(root, source, catalog.Entry{Kind: ir.KindCommand, Name: "legacy", Resource: resource, Path: name})
+			if name != "" {
+				if !errors.Is(err, os.ErrNotExist) || data != nil {
+					t.Fatalf("missing disk source became canonical fallback: %s, %v", data, err)
+				}
+				return
+			}
 			want := `{"Description":"legacy control","Body":"inert command","Ext":{},"Extra":null,"Source":{"File":"","Line":0}}`
 			if err != nil || string(data) != want {
-				t.Fatalf("synthetic primary canonical fallback = %s, %v; want %s", data, err, want)
+				t.Fatalf("inline primary canonical fallback = %s, %v; want %s", data, err, want)
 			}
 		})
 	}

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/claude"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/windsurf"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -41,14 +43,14 @@ const (
 
 // Entry represents a single cataloged resource discovered from a registry.
 type Entry struct {
-	Kind                 ir.ResourceKind
-	Name                 string
-	Description          string
-	Tags                 []string
-	Resource             ir.Resource // underlying IR resource for downstream compile/materialize
-	Path                 string      // source file path (from ir.SourceRef)
-	SourceHarness        string      `json:"-"`
-	PrimarySourcePresent bool        `json:"-"`
+	Kind              ir.ResourceKind
+	Name              string
+	Description       string
+	Tags              []string
+	Resource          ir.Resource // underlying IR resource for downstream compile/materialize
+	Path              string      // source file path (from ir.SourceRef)
+	SourceHarness     string      `json:"-"`
+	PrimarySourcePath string      `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -320,8 +322,15 @@ func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (cat 
 		return nil, errors.Join(err, srcFS.Refusal())
 	}
 	cat.sourceRefusal = srcFS.Refusal()
+	definition, _ := target.Lookup(cat.SourceHarness)
 	for i := range cat.Entries {
-		cat.Entries[i].PrimarySourcePresent = srcFS.WasRead(filepath.ToSlash(cat.Entries[i].Path))
+		primary := filepath.ToSlash(cat.Entries[i].Path)
+		if !srcFS.WasRead(primary) && definition.RepoRoot != "" {
+			primary = path.Join(definition.RepoRoot, primary)
+		}
+		if srcFS.WasRead(primary) {
+			cat.Entries[i].PrimarySourcePath = filepath.Join(root, filepath.FromSlash(primary))
+		}
 		if cat.Entries[i].Path != "" && !filepath.IsAbs(cat.Entries[i].Path) {
 			cat.Entries[i].Path = filepath.Join(root, cat.Entries[i].Path)
 		}
