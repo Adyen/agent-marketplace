@@ -59,6 +59,7 @@ func TestRunPortableSourceHashRefusesForeignAlias(t *testing.T) {
 	}
 }
 
+// spec: materialization/support-directory-aliases-cannot-expose-vcs-internals
 // spec: materialization/contained-support-directory-aliases-retain-native-install-and-check
 func TestRunContainedSupportDirectoryAlias(t *testing.T) {
 	for _, mode := range []config.MaterializationMode{config.MaterializationModeFile, config.MaterializationModeSymlink} {
@@ -68,15 +69,15 @@ func TestRunContainedSupportDirectoryAlias(t *testing.T) {
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
-			if err := os.MkdirAll(filepath.Join(source, "scripts", ".git"), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(source, "scripts", ".git", "objects"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			for name, content := range map[string]string{"SKILL.md": "inert source", "scripts/helper.txt": "inert executable data", "scripts/.git/private.txt": "excluded VCS bytes"} {
+			for name, content := range map[string]string{"SKILL.md": "inert source", "scripts/helper.txt": "inert executable data", "scripts/.git/private.txt": "excluded VCS bytes", "scripts/.git/objects/private.txt": "excluded VCS object bytes"} {
 				if err := os.WriteFile(filepath.Join(source, name), []byte(content), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			}
-			for name, target := range map[string]string{"references": "scripts", "scripts/file-alias.txt": "helper.txt", "second-alias": "references"} {
+			for name, target := range map[string]string{"references": "scripts", "scripts/file-alias.txt": "helper.txt", "second-alias": "references", "vcs-alias": "scripts/.git", "vcs-subdirectory": "scripts/.git/objects"} {
 				if err := os.Symlink(target, filepath.Join(source, name)); err != nil {
 					t.Fatal(err)
 				}
@@ -113,6 +114,11 @@ func TestRunContainedSupportDirectoryAlias(t *testing.T) {
 				}
 				if _, err := os.Lstat(filepath.Join(installed, directory, ".git")); !os.IsNotExist(err) {
 					t.Fatalf("directory alias copied VCS internals: %v", err)
+				}
+			}
+			for _, alias := range []string{"vcs-alias", "vcs-subdirectory"} {
+				if _, err := os.Lstat(filepath.Join(installed, alias)); !os.IsNotExist(err) {
+					t.Fatalf("directory alias exposed VCS internals: %s %v", alias, err)
 				}
 			}
 			payload := filepath.Join(installed, "references", "helper.txt")

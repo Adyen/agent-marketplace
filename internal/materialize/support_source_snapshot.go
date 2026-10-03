@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
@@ -58,6 +59,9 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 				continue
 			}
 			sourceChild, isDir, err := supportSourceChild(root, sourceRel, entry)
+			if errors.Is(err, fs.SkipDir) {
+				continue
+			}
 			if err != nil {
 				return err
 			}
@@ -98,7 +102,15 @@ func supportSourceChild(root *fsboundary.Dir, parent string, entry os.DirEntry) 
 		return rel, false, nil
 	}
 	targetRel, err := filepath.Rel(root.Path(), directory.Path())
-	return targetRel, true, errors.Join(err, directory.Close())
+	if err := errors.Join(err, directory.Close()); err != nil {
+		return "", false, err
+	}
+	for _, component := range strings.Split(targetRel, string(filepath.Separator)) {
+		if component == ".git" {
+			return "", false, fs.SkipDir
+		}
+	}
+	return targetRel, true, nil
 }
 
 func readSupportSourceSnapshot(root *fsboundary.Dir, rel string) ([]byte, fsboundary.Identity, error) {
