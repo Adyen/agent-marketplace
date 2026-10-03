@@ -10,6 +10,18 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
+func removeNativeCommandFile(path string, observed os.FileInfo, boundary *destinationBoundary) error {
+	var digest string
+	if observed.Mode().IsRegular() {
+		var err error
+		digest, err = portablePathDigest(path)
+		if err != nil {
+			return err
+		}
+	}
+	return removePortableOutput(path, observed, digest, boundary)
+}
+
 func readNativeCommandFile(path string, observed os.FileInfo, boundary *destinationBoundary) (data []byte, err error) {
 	parent, err := capturePortableParent(path, boundary, false)
 	if err != nil {

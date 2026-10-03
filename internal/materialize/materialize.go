@@ -1499,7 +1499,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	// removal case where the resolved set no longer contains the resource.
 	// Regular files are never pruned by the symlink-oriented artifact plan,
 	// so they must be cleaned up here.
-	report = pruneUncoveredFileCopyDirs(report, key, outDir, copyDirsCovered, blocked, dryRun)
+	report = pruneUncoveredFileCopyDirs(report, key, outDir, copyDirsCovered, blocked, dryRun, &boundary)
 
 	// The two manifest-driven prune passes below walk the target's whole
 	// recorded state rather than one component directory, so they cannot be
@@ -1539,7 +1539,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 
 // pruneUncoveredFileCopyDirs removes orphaned managed file-copy resources from
 // the target's file-copy install dirs that were not handled by any copy group.
-func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, covered map[string]bool, blocked map[string]bool, dryRun bool) *Report {
+func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, covered map[string]bool, blocked map[string]bool, dryRun bool, boundaries ...*destinationBoundary) *Report {
 	info, ok := harness.TargetInfoFor(key.target)
 	if !ok || len(info.FileCopyKinds) == 0 {
 		return report
@@ -1559,7 +1559,7 @@ func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, co
 		}
 		seen[dir] = true
 		tr := TargetReport{OutDir: dir}
-		if err := pruneStaleCommandFiles(dir, nil, dryRun, &tr); err != nil {
+		if err := pruneStaleCommandFiles(dir, nil, dryRun, &tr, boundaries...); err != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
@@ -3912,6 +3912,10 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			// must be preserved — managed resources in this directory are
 			// materialized as symlinks, so an unmarked regular file is always
 			// user-owned.
+			observed, err := os.Lstat(path)
+			if err != nil {
+				return report, err
+			}
 			if !isManagedCommandFile(path) {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
@@ -3920,13 +3924,18 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				})
 				continue
 			}
-			report.Removed = append(report.Removed, staleSkillEntryReportPath(path, name))
 			if dryRun {
+				report.Removed = append(report.Removed, staleSkillEntryReportPath(path, name))
 				continue
 			}
-			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			var boundary *destinationBoundary
+			if len(portable) > 0 {
+				boundary = portable[0].boundary
+			}
+			if err := removeNativeCommandFile(path, observed, boundary); err != nil {
 				return report, err
 			}
+			report.Removed = append(report.Removed, name)
 			continue
 		}
 		// Symlink — only prune if it points to our cache (managed).
@@ -4059,7 +4068,7 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 	}
 
 	if pruneStaleEntries {
-		if err := pruneStaleCommandFiles(dir, desired, dryRun, &report); err != nil {
+		if err := pruneStaleCommandFiles(dir, desired, dryRun, &report, boundary); err != nil {
 			return report, err
 		}
 	}
@@ -4072,7 +4081,7 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 
 // pruneStaleCommandFiles removes managed command files and stale managed
 // symlinks in dir that are no longer desired. User-owned entries are preserved.
-func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport) error {
+func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport, boundaries ...*destinationBoundary) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -4107,13 +4116,18 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 				continue
 			}
 		}
-		report.Removed = append(report.Removed, name)
 		if dryRun {
+			report.Removed = append(report.Removed, name)
 			continue
 		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		var boundary *destinationBoundary
+		if len(boundaries) > 0 {
+			boundary = boundaries[0]
+		}
+		if err := removeNativeCommandFile(path, info, boundary); err != nil {
 			return err
 		}
+		report.Removed = append(report.Removed, name)
 	}
 	return nil
 }
