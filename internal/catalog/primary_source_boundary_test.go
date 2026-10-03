@@ -61,6 +61,170 @@ func TestLoadPrimarySourceRefusesForeignPayloadAlias(t *testing.T) {
 	}
 }
 
+// spec: registry-symlink-containment/contained-primary-directory-aliases-retain-factory-catalog-content
+func TestLoadFactoryContainedDirectoryAliases(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"workspace/skills/good", "authored/commands"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range map[string]string{
+		"workspace/skills/good/SKILL.md": "---\nname: good\ndescription: valid sibling\n---\n\ninert skill body\n",
+		"authored/commands/probe.md":     "---\ndescription: contained command control\n---\n\ninert command body\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, target := range map[string]string{".factory": "workspace", "workspace/commands": "../authored/commands"} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	payload := filepath.Join(root, "authored", "commands", "probe.md")
+	before, err := os.Stat(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := Load(root, "factory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goodFound, commandFound := false, false
+	for _, entry := range cat.Entries {
+		goodFound = goodFound || entry.Name == "good" && entry.Description == "valid sibling"
+		commandFound = commandFound || entry.Name == "probe" && entry.Description == "contained command control"
+	}
+	if !goodFound || !commandFound {
+		t.Fatalf("contained Factory directory alias lost authored resources: %+v %+v", cat.Entries, cat.Diagnostics)
+	}
+	if _, err := cat.Discover(root, "factory"); err != nil {
+		t.Fatalf("contained directory aliases recorded a source refusal: %v", err)
+	}
+	if after, err := os.Stat(payload); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("Factory alias ingestion changed source metadata: %v", err)
+	}
+}
+
+// spec: registry-symlink-containment/unsafe-factory-directory-aliases-refuse-publication
+func TestLoadFactoryUnsafeDirectoryAliases(t *testing.T) {
+	for _, shape := range []string{"escaped", "dangling", "external-return"} {
+		t.Run(shape, func(t *testing.T) {
+			root, outside := t.TempDir(), t.TempDir()
+			for _, dir := range []string{".factory/skills/good", "authored/commands"} {
+				if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			good := []byte("---\nname: good\ndescription: valid sibling\n---\n\ninert skill body\n")
+			if err := os.WriteFile(filepath.Join(root, ".factory", "skills", "good", "SKILL.md"), good, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			foreign := filepath.Join(outside, "probe.md")
+			foreignBytes := []byte("---\ndescription: foreign command control\n---\n\nforeign command bytes\n")
+			if err := os.WriteFile(foreign, foreignBytes, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(foreign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			control, err := Load(root, "factory")
+			if err != nil || len(control.Entries) != 1 || control.Entries[0].Name != "good" {
+				t.Fatalf("Factory sibling control failed: %+v %v", control, err)
+			}
+			target := outside
+			switch shape {
+			case "dangling":
+				target = "missing"
+			case "external-return":
+				target = filepath.Join(outside, "return")
+				if err := os.Symlink(filepath.Join(root, "authored", "commands"), target); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(target, filepath.Join(root, ".factory", "commands")); err != nil {
+				t.Fatal(err)
+			}
+			cat, err := Load(root, "factory")
+			if err != nil && !errors.Is(err, fsboundary.ErrUnsafePath) {
+				t.Fatalf("Factory directory refusal lost its typed identity: %v", err)
+			}
+			if err == nil {
+				if len(cat.Entries) != 1 || cat.Entries[0].Name != "good" {
+					t.Fatalf("unsafe Factory alias imported bytes or lost its valid sibling: %+v", cat.Entries)
+				}
+				if _, err := cat.Discover(root, "factory"); !errors.Is(err, fsboundary.ErrUnsafePath) {
+					t.Fatalf("catalog directory refusal was downgraded: %v", err)
+				}
+			}
+			if _, err := Discover(root, "factory"); !errors.Is(err, fsboundary.ErrUnsafePath) {
+				t.Fatalf("publication directory refusal was downgraded: %v", err)
+			}
+			if data, err := os.ReadFile(foreign); err != nil || string(data) != string(foreignBytes) {
+				t.Fatalf("Factory refusal changed external bytes: %q %v", data, err)
+			}
+			if after, err := os.Stat(foreign); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+				t.Fatalf("Factory refusal changed external metadata: %v", err)
+			}
+		})
+	}
+}
+
+func TestDiscoverSourceRefusalPreservesIndependentSiblingPolicy(t *testing.T) {
+	for _, shape := range []string{"root-load-error", "root-detection-refusal", "nested-load-error", "nested-diagnostic", "nested-detection-only"} {
+		t.Run(shape, func(t *testing.T) {
+			root := t.TempDir()
+			refused := root
+			if shape != "root-load-error" && shape != "root-detection-refusal" {
+				refused = filepath.Join(root, "refused")
+			}
+			writeDiscoveryFiles(t, root, map[string]string{"sibling/commands/good.md": "---\nname: good\ndescription: sibling control\n---\nGood\n"})
+			primary := "hooks/hooks.json"
+			content := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo inert"}]}]}}`
+			if shape == "nested-diagnostic" {
+				primary = "skills/bad/SKILL.md"
+				content = "---\nname: bad\ndescription: refused control\n---\nBad\n"
+				writeDiscoveryFiles(t, refused, map[string]string{"commands/survivor.md": "---\nname: survivor\ndescription: listing control\n---\nSurvivor\n"})
+			}
+			if shape == "root-detection-refusal" {
+				primary = "SKILL.md"
+				content = "---\nname: root\ndescription: detection control\n---\nRoot\n"
+			}
+			if shape == "nested-detection-only" {
+				primary = ".factory-plugin/plugin.json"
+				content = `{"name":"empty"}`
+				writeDiscoveryFiles(t, refused, map[string]string{".claude/commands/note.txt": "not a resource\n"})
+			}
+			writeDiscoveryFiles(t, refused, map[string]string{primary: content})
+			control, err := Discover(filepath.Join(root, "sibling"), "claude")
+			if err != nil || len(control.Entries) != 1 || control.Entries[0].Name != "good" {
+				t.Fatalf("sibling discovery positive control failed: %+v %v", control, err)
+			}
+			if err := os.Link(filepath.Join(refused, primary), filepath.Join(t.TempDir(), "retained-primary")); err != nil {
+				t.Fatal(err)
+			}
+			if shape == "nested-detection-only" && loadSubBundle(refused, "claude").coveredBy(control.Entries, root) {
+				t.Fatal("refused detection-only candidate was treated as covered")
+			}
+			loaded, err := Discover(root, "claude")
+			if shape == "root-load-error" || shape == "root-detection-refusal" {
+				if !errors.Is(err, fsboundary.ErrUnsafeFile) || len(loaded.Entries) != 0 {
+					t.Fatalf("root refusal fell back to sub-bundles: %+v %v", loaded, err)
+				}
+				return
+			}
+			if err != nil || len(loaded.Entries) != 1 || loaded.Entries[0].Name != "good" || len(loaded.SubBundles) != 1 {
+				t.Fatalf("refused sub-bundle leaked entries or lost sibling: %+v %v", loaded, err)
+			}
+			if len(loaded.Errors) != 1 || !errors.Is(loaded.Errors[0], fsboundary.ErrUnsafeFile) {
+				t.Fatalf("typed sub-bundle refusal was discarded: %+v", loaded.Errors)
+			}
+		})
+	}
+}
+
 // spec: registry-symlink-containment/contained-primary-file-aliases-retain-authored-content
 func TestLoadPrimarySourceContainedAliasAndHardLink(t *testing.T) {
 	for _, shape := range []string{"contained", "hardlink"} {
