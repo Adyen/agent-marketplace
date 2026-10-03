@@ -181,14 +181,13 @@ func prunePortableOutput(dst string, observed os.FileInfo, wantDigest, wantLinkT
 	if observed == nil || dryRun {
 		return nil
 	}
-	return native.RemoveAll(name)
+	return removeVerifiedPortableOutput(parent, native, name, observed, wantDigest)
 }
 
 func removeEmptyPortableDirectory(rootPath, directoryPath string, boundary *destinationBoundary) (err error) {
 	if rootPath == "" || directoryPath == "" {
 		return fmt.Errorf("%w: empty portable cleanup path", fsboundary.ErrUnsafePath)
 	}
-	// Keep the lexical root: root.Path() may have a different alias topology.
 	rootPath, err = filepath.Abs(rootPath)
 	if err != nil {
 		return err
