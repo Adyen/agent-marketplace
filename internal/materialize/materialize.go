@@ -3937,10 +3937,13 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			// materialized as symlinks, so an unmarked regular file is always
 			// user-owned.
 			observed, err := os.Lstat(path)
+			if os.IsNotExist(err) {
+				continue
+			}
 			if err != nil {
 				return report, err
 			}
-			if !isManagedCommandFile(path) {
+			if !observed.Mode().IsRegular() || !isManagedCommandFile(path) {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -3948,15 +3951,22 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				})
 				continue
 			}
-			if dryRun {
-				report.Removed = append(report.Removed, staleSkillEntryReportPath(path, name))
-				continue
-			}
 			var boundary *destinationBoundary
 			if len(portable) > 0 {
 				boundary = portable[0].boundary
 			}
-			if err := removeNativeCommandFile(path, observed, boundary); err != nil {
+			if boundary != nil && boundary.pruneClassificationHook != nil {
+				boundary.pruneClassificationHook(path)
+			}
+			if dryRun {
+				_, err = readNativeCommandFile(path, observed, boundary)
+			} else {
+				err = removeNativeCommandFile(path, observed, boundary)
+			}
+			if err != nil {
+				if missingNativeCommandPruneEntry(err) {
+					continue
+				}
 				return report, err
 			}
 			report.Removed = append(report.Removed, name)
@@ -4135,16 +4145,24 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 				continue
 			}
 		}
-		if dryRun {
-			report.Removed = append(report.Removed, name)
-			continue
-		}
 		var boundary *destinationBoundary
 		if len(boundaries) > 0 {
 			boundary = boundaries[0]
 		}
-		if err := removeNativeCommandFile(path, info, boundary); err != nil {
-			return err
+		if boundary != nil && boundary.pruneClassificationHook != nil {
+			boundary.pruneClassificationHook(path)
+		}
+		var cleanupErr error
+		if dryRun && info.Mode().IsRegular() {
+			_, cleanupErr = readNativeCommandFile(path, info, boundary)
+		} else if !dryRun {
+			cleanupErr = removeNativeCommandFile(path, info, boundary)
+		}
+		if cleanupErr != nil {
+			if missingNativeCommandPruneEntry(cleanupErr) {
+				continue
+			}
+			return cleanupErr
 		}
 		report.Removed = append(report.Removed, name)
 	}
