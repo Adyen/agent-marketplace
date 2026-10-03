@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
@@ -73,6 +74,7 @@ func readPruneDirectory(dir string, boundary *destinationBoundary, keep func(str
 	if err != nil {
 		return nil, err
 	}
+	sort.Slice(names, func(i, j int) bool { return names[i].Name() < names[j].Name() })
 	if boundary != nil && boundary.pruneEnumerationHook != nil {
 		boundary.pruneEnumerationHook(dir)
 	}
