@@ -33,6 +33,7 @@ type Input struct {
 	RootPath       string
 	SourceHarness  string
 	RevisionSchema string
+	beforeIngest   func(string)
 	beforeHash     func(string)
 }
 
@@ -108,8 +109,11 @@ func Build(input Input) (result Result, err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	if input.beforeIngest != nil {
+		input.beforeIngest(root)
+	}
 	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks, LegacyBareMCP: !contract.BareBundleMCP}
-	cat, err := catalog.LoadWithOptions(root, input.SourceHarness, options)
+	cat, err := catalog.LoadSourceWithOptions(source, root, input.SourceHarness, options)
 	loaded := cat
 	if fsboundary.IsSourceRefusal(err) {
 		return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, err)
@@ -118,7 +122,7 @@ func Build(input Input) (result Result, err error) {
 		return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, cat.SourceRefusal())
 	}
 	if err != nil || len(cat.Entries) == 0 {
-		discovered, discoverErr := catalog.DiscoverWithOptions(root, input.SourceHarness, options)
+		discovered, discoverErr := catalog.DiscoverSourceWithOptions(source, root, input.SourceHarness, options)
 		if discoverErr != nil {
 			return Result{}, fmt.Errorf("%w: load root %q: %w", ErrCatalog, input.RootPath, errors.Join(err, discoverErr))
 		}
@@ -143,7 +147,7 @@ func Build(input Input) (result Result, err error) {
 		}
 	}
 
-	collections, err := collection.DiscoverCollections(root, "", "", "", normalizedRootPath(input.RootPath))
+	collections, err := collection.DiscoverCollectionsFS(source, root, "", "", "", normalizedRootPath(input.RootPath))
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: discover collections: %w", ErrCatalog, err)
 	}
@@ -167,6 +171,9 @@ func Build(input Input) (result Result, err error) {
 	}
 	if input.beforeHash != nil {
 		input.beforeHash(root)
+	}
+	if err := source.VerifyRoot(); err != nil {
+		return Result{}, fmt.Errorf("%w: validate revision root: %w", ErrCatalog, err)
 	}
 	for _, entry := range entries {
 		kind := entry.Kind.String()
@@ -411,9 +418,12 @@ func intrinsicSupportFileDigests(root string, source *fsboundary.SourceFS, entry
 	var supportFiles []string
 	if skill, ok := entry.Resource.(*ir.Skill); ok {
 		supportFiles = skill.SupportFiles
-	} else if entry.Kind == ir.KindHook && contract.HookSupport {
-		var err error
-		supportFiles, err = catalog.HookSupportFiles(entry.Path)
+	} else if entry.Kind == ir.KindHook && contract.HookSupport && entry.Path != "" {
+		rel, err := lexicallyContained(root, entry.Path)
+		if err != nil {
+			return nil, err
+		}
+		supportFiles, err = catalog.HookSupportFilesFS(source, filepath.ToSlash(rel))
 		if err != nil {
 			return nil, err
 		}

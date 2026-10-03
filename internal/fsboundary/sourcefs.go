@@ -32,6 +32,29 @@ func OpenSourceFS(path string) (*SourceFS, error) {
 
 func (s *SourceFS) Close() error { return s.root.Close() }
 
+func (s *SourceFS) VerifyRoot() (err error) {
+	root, err := OpenDir(s.root.Path())
+	if err != nil {
+		return fmt.Errorf("%w: revision root is no longer reachable: %w", ErrGenerationConflict, err)
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	if !s.root.Identity().SameObject(root.Identity()) {
+		return fmt.Errorf("%w: captured source root was replaced", ErrGenerationConflict)
+	}
+	return nil
+}
+
+func (s *SourceFS) Sub(name string) (*SourceFS, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "sub", Path: name, Err: fs.ErrInvalid}
+	}
+	root, err := s.root.OpenContainedRoot(filepath.FromSlash(name))
+	if err != nil {
+		return nil, err
+	}
+	return &SourceFS{root: root}, nil
+}
+
 func (s *SourceFS) Open(name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}

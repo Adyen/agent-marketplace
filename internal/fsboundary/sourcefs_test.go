@@ -11,6 +11,53 @@ import (
 )
 
 // spec: registry-symlink-containment/source-directory-alias-reads-retain-captured-root-authority
+func TestSourceFSSubKeepsCapturedAuthorityAndOwnsItsLifetime(t *testing.T) {
+	parent := t.TempDir()
+	root, retained := filepath.Join(parent, "root"), filepath.Join(parent, "retained")
+	if err := os.MkdirAll(filepath.Join(root, "bundle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bundle", "payload.txt"), []byte("captured child"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	source, err := OpenSourceFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = source.Close()
+		}
+	})
+	if err := os.Rename(root, retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "bundle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bundle", "payload.txt"), []byte("replacement child"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	child, err := source.Sub("bundle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = child.Close() })
+	closed = true
+	if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := child.ReadFile("payload.txt")
+	if err != nil || string(data) != "captured child" || !child.WasRead("payload.txt") {
+		t.Fatalf("child reopened named root or borrowed closed parent: %q %v", data, err)
+	}
+	if child.Refusal() != nil {
+		t.Fatalf("valid captured child recorded refusal: %v", child.Refusal())
+	}
+}
+
+// spec: registry-symlink-containment/source-directory-alias-reads-retain-captured-root-authority
 func TestSourceFSContainedDirectoryAliases(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "authored", "nested"), 0o755); err != nil {
