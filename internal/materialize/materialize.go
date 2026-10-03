@@ -4148,9 +4148,10 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 		}
 		path := filepath.Join(dir, name)
 		info := entry.observed
+		snapshot := managedLinkSnapshot{observed: info, text: entry.linkText}
 		switch {
 		case info.Mode()&os.ModeSymlink != 0:
-			if !strings.HasPrefix(entry.linkText, cache.CacheDir()+string(os.PathSeparator)) {
+			if !strings.HasPrefix(snapshot.text, cache.CacheDir()+string(os.PathSeparator)) {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -4169,10 +4170,15 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 		if len(boundaries) > 0 {
 			boundary = boundaries[0]
 		}
-		if boundary != nil && boundary.pruneClassificationHook != nil {
-			boundary.pruneClassificationHook(path)
+		var cleanupErr error
+		if info.Mode()&os.ModeSymlink != 0 {
+			cleanupErr = pruneManagedLink(path, snapshot, boundary, dryRun)
+		} else {
+			if boundary != nil && boundary.pruneClassificationHook != nil {
+				boundary.pruneClassificationHook(path)
+			}
+			cleanupErr = pruneNativeCommandFile(path, info, boundary, dryRun)
 		}
-		cleanupErr := pruneNativeCommandFile(path, info, boundary, dryRun)
 		if cleanupErr != nil {
 			if missingPruneEntry(cleanupErr) {
 				continue
