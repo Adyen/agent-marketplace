@@ -19,7 +19,6 @@ type managedLinkSnapshot struct {
 	text     string
 }
 
-// Capture the leaf before classifying ownership; never read its target payload.
 func observeManagedLink(path string) (managedLinkSnapshot, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
