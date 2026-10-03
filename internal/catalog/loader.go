@@ -260,7 +260,7 @@ func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOp
 		// frontmatter `name:`, so a config selecting the authored name can only
 		// be correlated with this failure through the recovered name. Without
 		// it, a name/directory mismatch looks exactly like an upstream rename.
-		if declared := skill.DeclaredNameFromFile(pReal); declared != "" && declared != malformed[i].DirName {
+		if declared := skill.DeclaredNameFromSource(rootReal, pReal); declared != "" && declared != malformed[i].DirName {
 			malformed[i].DeclaredName = declared
 		}
 	}

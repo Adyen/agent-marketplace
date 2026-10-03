@@ -269,18 +269,28 @@ func ParseFailure(m MalformedSkill) string {
 // path may be a resource file or a resource directory (in which case its
 // SKILL.md is read). Returns "" when nothing usable is found.
 func DeclaredNameFromFile(path string) string {
+	root := filepath.Dir(path)
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		root = path
+	}
+	return DeclaredNameFromSource(root, path)
+}
+
+func DeclaredNameFromSource(rootPath, path string) string {
 	file := path
 	if info, err := os.Stat(file); err == nil && info.IsDir() {
 		file = filepath.Join(file, "SKILL.md")
 	}
 	// #nosec G304 -- file comes from an ingest diagnostic path inside the
 	// local cache, not from untrusted input.
-	f, err := os.Open(file)
-	if err != nil {
+	var name string
+	if err := readSourceMetadata(rootPath, file, func(f io.Reader) error {
+		name = declaredNameFromFrontmatter(f)
+		return nil
+	}); err != nil {
 		return ""
 	}
-	defer func() { _ = f.Close() }()
-	return declaredNameFromFrontmatter(f)
+	return name
 }
 
 // declaredNameFromFrontmatter scans the leading `---` fenced block for a
