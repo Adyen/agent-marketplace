@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -281,6 +282,18 @@ func DeclaredNameFromFile(path string) string {
 	}
 	defer func() { _ = f.Close() }()
 	return declaredNameFromFrontmatter(f)
+}
+
+func DeclaredNameFromFS(source fs.FS, name string) string {
+	if info, err := fs.Stat(source, name); err == nil && info.IsDir() {
+		name = path.Join(name, "SKILL.md")
+	}
+	file, err := source.Open(name)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	return declaredNameFromFrontmatter(file)
 }
 
 // declaredNameFromFrontmatter scans the leading `---` fenced block for a
