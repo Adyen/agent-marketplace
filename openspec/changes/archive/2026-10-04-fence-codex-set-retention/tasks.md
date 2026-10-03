@@ -5,4 +5,4 @@
 - [x] Preflight all selected members and revalidate authorizing manifest before each archive unlink.
 - [x] Verify Linux/macOS full backup/count20 races and validation.
 - [x] Record benchmark/strict specs/complete review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
