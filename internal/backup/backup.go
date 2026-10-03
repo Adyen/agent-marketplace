@@ -347,13 +347,33 @@ func ListBackups() (map[hcc.Target][]string, error) {
 }
 
 // existingPaths filters relPaths to those that exist on disk under root.
-func existingPaths(root string, relPaths []string) ([]string, error) {
-	var out []string
+func existingPaths(root string, relPaths []string) (out []string, err error) {
+	if len(relPaths) == 0 {
+		return nil, nil
+	}
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	source, err := fsboundary.OpenDir(absolute)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer func() {
+		if closeErr := source.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	for _, p := range relPaths {
-		if _, err := os.Lstat(filepath.Join(root, p)); err == nil {
+		info, _, readErr := readBackupSourceMetadata(source, p)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if info != nil {
 			out = append(out, p)
-		} else if !os.IsNotExist(err) {
-			return nil, err
 		}
 	}
 	return out, nil
@@ -396,18 +416,20 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 	}()
 
 	for _, rel := range relPaths {
-		fullPath := filepath.Join(root, rel)
-		info, err := os.Lstat(fullPath)
+		info, link, err := readBackupSourceMetadata(source, rel)
 		if err != nil {
 			return err
 		}
+		if info == nil {
+			return fsboundary.ErrGenerationConflict
+		}
 
 		if info.IsDir() {
-			if err := archiveDir(tw, source, root, fullPath); err != nil {
+			if err := archiveDir(tw, source, rel); err != nil {
 				return err
 			}
 		} else {
-			if err := writeTarEntry(tw, source, rel, fullPath, rel, info); err != nil {
+			if err := writeTarEntry(tw, source, rel, rel, info, link); err != nil {
 				return err
 			}
 		}
@@ -431,7 +453,7 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 			if err != nil {
 				return err
 			}
-			writeErr := writeTarEntry(tw, parent, filepath.Base(files[key]), files[key], key, info)
+			writeErr := writeTarEntry(tw, parent, filepath.Base(files[key]), key, info, "")
 			if closeErr := parent.Close(); writeErr != nil || closeErr != nil {
 				return errors.Join(writeErr, closeErr)
 			}
@@ -487,36 +509,37 @@ func backupArchiveKey(path string) (string, int) {
 	return prefix, seq
 }
 
-func archiveDir(tw *tar.Writer, source *fsboundary.Dir, root, fullPath string) error {
-	return filepath.WalkDir(fullPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+func archiveDir(tw *tar.Writer, source *fsboundary.Dir, rel string) (err error) {
+	native, err := source.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
-		info, err := d.Info()
-		if err != nil {
-			return err
+	}()
+	return fs.WalkDir(native.FS(), filepath.ToSlash(rel), func(name string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		entryRel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
+		entryRel := filepath.FromSlash(name)
 		if entryRel == "." {
 			return nil
 		}
-		return writeTarEntry(tw, source, entryRel, path, entryRel, info)
+		info, link, readErr := readBackupSourceMetadata(source, entryRel)
+		if readErr != nil {
+			return readErr
+		}
+		if info == nil {
+			return fsboundary.ErrGenerationConflict
+		}
+		return writeTarEntry(tw, source, entryRel, entryRel, info, link)
 	})
 }
 
-func writeTarEntry(tw *tar.Writer, source *fsboundary.Dir, sourceRel, fullPath, rel string, info fs.FileInfo) error {
-	var link string
+func writeTarEntry(tw *tar.Writer, source *fsboundary.Dir, sourceRel, rel string, info fs.FileInfo, link string) error {
 	isSymlink := info.Mode()&fs.ModeSymlink != 0
-	if isSymlink {
-		var err error
-		link, err = os.Readlink(fullPath)
-		if err != nil {
-			return fmt.Errorf("readlink %s: %w", fullPath, err)
-		}
-	}
 
 	hdr, err := tar.FileInfoHeader(info, link)
 	if err != nil {
