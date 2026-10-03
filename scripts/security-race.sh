@@ -109,5 +109,5 @@ run_race ./internal/materialize \
     -count=20
 
 run_race ./internal/fsboundary \
-    -run '^Test(Rmdir.*|ReadTargetCloseFailuresRefusePayload)$' \
+    -run '^Test(Rmdir.*|ReadTargetPropagatesOwnedDescriptorCloseFailures)$' \
     -count=20
