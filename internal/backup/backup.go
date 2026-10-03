@@ -172,7 +172,7 @@ func Create(managed map[hcc.Target]ManagedPaths) error {
 // Rotate enforces the two-axis retention policy:
 //   - within each calendar day keep at most cfg.MaxPerDay archives (oldest removed first)
 //   - keep archives from at most cfg.MaxDays distinct calendar days (oldest days removed first)
-func Rotate(cfg Config) error {
+func Rotate(cfg Config) (err error) {
 	maxDays := cfg.MaxDays
 	if maxDays <= 0 {
 		maxDays = defaultMaxDays
@@ -186,11 +186,29 @@ func Rotate(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(dir)
+	root, err := fsboundary.OpenDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
+		return err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
@@ -204,7 +222,7 @@ func Rotate(cfg Config) error {
 			}
 			continue
 		}
-		if err := rotateTarget(targetDir, maxDays, maxPerDay); err != nil {
+		if err := rotateTarget(root, entry.Name(), targetDir, maxDays, maxPerDay); err != nil {
 			return err
 		}
 	}
@@ -212,8 +230,26 @@ func Rotate(cfg Config) error {
 }
 
 // rotateTarget applies the two-axis retention policy to a single target directory.
-func rotateTarget(targetDir string, maxDays, maxPerDay int) error {
-	archives, err := filepath.Glob(filepath.Join(targetDir, "*.tar.gz"))
+func rotateTarget(root *fsboundary.Dir, name, targetDir string, maxDays, maxPerDay int) (err error) {
+	parent, err := root.OpenPath(name)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	archives, err := fs.Glob(native.FS(), "*.tar.gz")
 	if err != nil {
 		return fmt.Errorf("backup: list archives in %s: %w", targetDir, err)
 	}
@@ -234,16 +270,13 @@ func rotateTarget(targetDir string, maxDays, maxPerDay int) error {
 		byDay[day] = append(byDay[day], a)
 	}
 
+	var remove []string
 	// Step 1: per-day cap — remove oldest beyond maxPerDay within each day.
 	for _, day := range dayOrder {
 		group := byDay[day]
 		if len(group) > maxPerDay {
 			toRemove := group[:len(group)-maxPerDay]
-			for _, p := range toRemove {
-				if err := os.Remove(p); err != nil {
-					return fmt.Errorf("backup: remove old archive %s: %w", p, err)
-				}
-			}
+			remove = append(remove, toRemove...)
 			byDay[day] = group[len(group)-maxPerDay:]
 		}
 	}
@@ -252,14 +285,10 @@ func rotateTarget(targetDir string, maxDays, maxPerDay int) error {
 	if len(dayOrder) > maxDays {
 		oldDays := dayOrder[:len(dayOrder)-maxDays]
 		for _, day := range oldDays {
-			for _, p := range byDay[day] {
-				if err := os.Remove(p); err != nil {
-					return fmt.Errorf("backup: remove old archive %s: %w", p, err)
-				}
-			}
+			remove = append(remove, byDay[day]...)
 		}
 	}
-	return nil
+	return removeCapturedBackups(parent, targetDir, remove)
 }
 
 // archiveDay extracts the YYYY-MM-DD prefix from an archive base name.
