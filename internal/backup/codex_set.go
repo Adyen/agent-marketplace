@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -216,15 +218,40 @@ func validateCodexPartitions(partitions []CodexPartition) error {
 	return nil
 }
 
-func loadCompleteCodexSets(targetDir string) ([]codexSetManifest, error) {
-	paths, err := filepath.Glob(filepath.Join(targetDir, "*.set.json"))
+func loadCompleteCodexSets(targetDir string) (sets []codexSetManifest, err error) {
+	absolute, err := filepath.Abs(targetDir)
+	if err != nil {
+		return nil, err
+	}
+	root, err := fsboundary.OpenDir(absolute)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	paths, err := fs.Glob(native.FS(), "*.set.json")
 	if err != nil {
 		return nil, err
 	}
 	sort.Strings(paths)
-	sets := make([]codexSetManifest, 0, len(paths))
+	sets = make([]codexSetManifest, 0, len(paths))
 	for _, path := range paths {
-		raw, err := os.ReadFile(path)
+		raw, err := readCodexManifest(root, filepath.Base(path))
 		if err != nil {
 			return nil, err
 		}
@@ -234,7 +261,7 @@ func loadCompleteCodexSets(targetDir string) ([]codexSetManifest, error) {
 		}
 		complete := true
 		for _, partition := range manifest.Partitions {
-			if _, err := os.Stat(filepath.Join(targetDir, partition.Archive)); err != nil {
+			if _, err := native.Stat(partition.Archive); err != nil {
 				complete = false
 			}
 		}
@@ -243,6 +270,23 @@ func loadCompleteCodexSets(targetDir string) ([]codexSetManifest, error) {
 		}
 	}
 	return sets, nil
+}
+
+func readCodexManifest(root *fsboundary.Dir, name string) (data []byte, err error) {
+	file, err := fsboundary.CaptureDestination(root, name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil {
+		return nil, fsboundary.ErrUnsafeFile
+	}
+	data, _, err = file.ReadTarget(file.Identity().Size)
+	return data, err
 }
 
 func rotateCodexSets(targetDir string, maxDays, maxPerDay int) error {

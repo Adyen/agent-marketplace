@@ -115,3 +115,7 @@ run_race ./internal/fsboundary \
 run_race ./internal/ownership \
     -run '^Test(StoreReadAggregate.*|ApplyRetargetedParentDoesNotStageOutsideRoot|ApplyRefuses.*Generation|ApplyCapturedPublicationPreservesSharedMode)$' \
     -count=20
+
+run_race ./internal/backup \
+    -run '^TestRestoreCodexSetRefusesAliasedManifest$' \
+    -count=20
