@@ -264,8 +264,8 @@ type detailCaptureBudget struct {
 	entries int
 }
 
-func captureDetailSource(path string) *detailSourceSnapshot {
-	return captureDetailSourceLimit(path, maxDetailSourceBytes, detailTruncationMarker)
+func captureDetailSource(path string, readTargetWith ...previewTargetRead) *detailSourceSnapshot {
+	return captureDetailSourceLimit(path, maxDetailSourceBytes, detailTruncationMarker, readTargetWith...)
 }
 
 func (b *detailCaptureBudget) capture(path string) *detailSourceSnapshot {
@@ -284,8 +284,8 @@ func (b *detailCaptureBudget) capture(path string) *detailSourceSnapshot {
 	return snapshot
 }
 
-func captureDetailSourceLimit(path string, limit int, marker string) *detailSourceSnapshot {
-	content, truncated, err := readDetailSourceLimit(path, limit)
+func captureDetailSourceLimit(path string, limit int, marker string, readTargetWith ...previewTargetRead) *detailSourceSnapshot {
+	content, truncated, err := readDetailSourceLimit(path, limit, readTargetWith...)
 	if !truncated {
 		marker = ""
 	}
@@ -503,12 +503,12 @@ func readDetailSource(path string) (content string, truncated bool, err error) {
 	return readDetailSourceLimit(path, maxDetailSourceBytes)
 }
 
-func readDetailSourceLimit(path string, limit int) (content string, truncated bool, err error) {
+func readDetailSourceLimit(path string, limit int, readTargetWith ...previewTargetRead) (content string, truncated bool, err error) {
 	target := path
 	if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() {
 		target = filepath.Join(path, "SKILL.md")
 	}
-	data, err := readPreviewSource(filepath.Dir(target), target, limit)
+	data, err := readPreviewSource(filepath.Dir(target), target, limit, readTargetWith...)
 	if err != nil {
 		return "", false, err
 	}
@@ -654,12 +654,12 @@ func renderBundleEntry(t *bundleTree, relative string, width int) string {
 // is validated before joining and the final descriptor is opened without
 // following symlinks, keeping an enumeration/read race inside the resource
 // root and the regular-file-only preview contract.
-func renderBundleFile(root, relative string, width int) string {
+func renderBundleFile(root, relative string, width int, readTargetWith ...previewTargetRead) string {
 	path, err := safeBundlePath(root, relative)
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
-	data, err := readPreviewSource(root, path, maxDetailSourceBytes)
+	data, err := readPreviewSource(root, path, maxDetailSourceBytes, readTargetWith...)
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
