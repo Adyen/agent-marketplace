@@ -99,3 +99,7 @@ run_race ./cmd/agent-marketplace \
 run_race ./internal/skill ./internal/fsboundary \
     -run '^Test(DiscoverLegacySourceMetadata.*|LegacySourceMetadata.*|TargetPrefixRead.*)$' \
     -count=20
+
+run_race ./internal/tui \
+    -run '^TestDetailSourcePreview.*$' \
+    -count=20

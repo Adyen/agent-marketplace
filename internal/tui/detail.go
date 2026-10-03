@@ -3,7 +3,6 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -510,19 +508,7 @@ func readDetailSourceLimit(path string, limit int) (content string, truncated bo
 	if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() {
 		target = filepath.Join(path, "SKILL.md")
 	}
-	f, err := os.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return "", false, err
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return "", false, err
-	}
-	if !info.Mode().IsRegular() {
-		return "", false, fmt.Errorf("source is not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	data, err := readPreviewSource(filepath.Dir(target), target, limit)
 	if err != nil {
 		return "", false, err
 	}
@@ -673,19 +659,7 @@ func renderBundleFile(root, relative string, width int) string {
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
-	}
-	if !info.Mode().IsRegular() {
-		return "Error reading file: source is not a regular file"
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxDetailSourceBytes+1))
+	data, err := readPreviewSource(root, path, maxDetailSourceBytes)
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
