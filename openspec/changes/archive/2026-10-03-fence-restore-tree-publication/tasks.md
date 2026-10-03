@@ -4,4 +4,4 @@
 - [x] Capture directory preparation and symbolic namespace mutation without path reopening.
 - [x] Verify Linux/macOS full backup and count20 races.
 - [x] Record narrow benchmark costs and verify validate/spec/all-entry review.
-- [ ] `openspec archive fence-restore-tree-publication --yes`.
+- [x] `openspec archive fence-restore-tree-publication --yes`.
