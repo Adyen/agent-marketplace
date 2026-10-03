@@ -87,6 +87,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
@@ -530,7 +531,20 @@ func extractArchive(archivePath, dstDir string, mapped ...map[string]string) err
 	return withBackupPayload(archivePath, func(reader io.Reader) error { return extractArchivePayload(reader, dstDir, mapped...) })
 }
 
-func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string]string) error {
+func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string]string) (err error) {
+	absolute, err := filepath.Abs(dstDir)
+	if err != nil {
+		return err
+	}
+	root, err := fsboundary.OpenDir(absolute)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	gr, err := gzip.NewReader(reader)
 	if err != nil {
 		return err
@@ -592,22 +606,17 @@ func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string
 			} else if err != nil && !os.IsNotExist(err) {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			out, err := os.Create(target)
+			rel, err := filepath.Rel(dstDir, filepath.Dir(target))
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
-				_ = out.Close()
+			parent, err := root.EnsurePath(rel)
+			if err != nil {
 				return err
 			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-			if err := os.Chmod(target, hdr.FileInfo().Mode()); err != nil {
-				return err
+			publishErr := publishRestoredFile(parent, filepath.Base(target), tr, hdr.FileInfo().Mode())
+			if closeErr := parent.Close(); publishErr != nil || closeErr != nil {
+				return errors.Join(publishErr, closeErr)
 			}
 		}
 	}
