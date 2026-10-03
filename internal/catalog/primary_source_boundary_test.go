@@ -61,6 +61,59 @@ func TestLoadPrimarySourceRefusesForeignPayloadAlias(t *testing.T) {
 	}
 }
 
+func TestDiscoverSourceRefusalPreservesIndependentSiblingPolicy(t *testing.T) {
+	for _, shape := range []string{"root-load-error", "root-detection-refusal", "nested-load-error", "nested-diagnostic", "nested-detection-only"} {
+		t.Run(shape, func(t *testing.T) {
+			root := t.TempDir()
+			refused := root
+			if shape != "root-load-error" && shape != "root-detection-refusal" {
+				refused = filepath.Join(root, "refused")
+			}
+			writeDiscoveryFiles(t, root, map[string]string{"sibling/commands/good.md": "---\nname: good\ndescription: sibling control\n---\nGood\n"})
+			primary := "hooks/hooks.json"
+			content := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo inert"}]}]}}`
+			if shape == "nested-diagnostic" {
+				primary = "skills/bad/SKILL.md"
+				content = "---\nname: bad\ndescription: refused control\n---\nBad\n"
+				writeDiscoveryFiles(t, refused, map[string]string{"commands/survivor.md": "---\nname: survivor\ndescription: listing control\n---\nSurvivor\n"})
+			}
+			if shape == "root-detection-refusal" {
+				primary = "SKILL.md"
+				content = "---\nname: root\ndescription: detection control\n---\nRoot\n"
+			}
+			if shape == "nested-detection-only" {
+				primary = ".factory-plugin/plugin.json"
+				content = `{"name":"empty"}`
+				writeDiscoveryFiles(t, refused, map[string]string{".claude/commands/note.txt": "not a resource\n"})
+			}
+			writeDiscoveryFiles(t, refused, map[string]string{primary: content})
+			control, err := Discover(filepath.Join(root, "sibling"), "claude")
+			if err != nil || len(control.Entries) != 1 || control.Entries[0].Name != "good" {
+				t.Fatalf("sibling discovery positive control failed: %+v %v", control, err)
+			}
+			if err := os.Link(filepath.Join(refused, primary), filepath.Join(t.TempDir(), "retained-primary")); err != nil {
+				t.Fatal(err)
+			}
+			if shape == "nested-detection-only" && loadSubBundle(refused, "claude").coveredBy(control.Entries, root) {
+				t.Fatal("refused detection-only candidate was treated as covered")
+			}
+			loaded, err := Discover(root, "claude")
+			if shape == "root-load-error" || shape == "root-detection-refusal" {
+				if !errors.Is(err, fsboundary.ErrUnsafeFile) || len(loaded.Entries) != 0 {
+					t.Fatalf("root refusal fell back to sub-bundles: %+v %v", loaded, err)
+				}
+				return
+			}
+			if err != nil || len(loaded.Entries) != 1 || loaded.Entries[0].Name != "good" || len(loaded.SubBundles) != 1 {
+				t.Fatalf("refused sub-bundle leaked entries or lost sibling: %+v %v", loaded, err)
+			}
+			if len(loaded.Errors) != 1 || !errors.Is(loaded.Errors[0], fsboundary.ErrUnsafeFile) {
+				t.Fatalf("typed sub-bundle refusal was discarded: %+v", loaded.Errors)
+			}
+		})
+	}
+}
+
 // spec: registry-symlink-containment/contained-primary-file-aliases-retain-authored-content
 func TestLoadPrimarySourceContainedAliasAndHardLink(t *testing.T) {
 	for _, shape := range []string{"contained", "hardlink"} {

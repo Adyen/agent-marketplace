@@ -41,13 +41,14 @@ const (
 
 // Entry represents a single cataloged resource discovered from a registry.
 type Entry struct {
-	Kind          ir.ResourceKind
-	Name          string
-	Description   string
-	Tags          []string
-	Resource      ir.Resource // underlying IR resource for downstream compile/materialize
-	Path          string      // source file path (from ir.SourceRef)
-	SourceHarness string      `json:"-"`
+	Kind                 ir.ResourceKind
+	Name                 string
+	Description          string
+	Tags                 []string
+	Resource             ir.Resource // underlying IR resource for downstream compile/materialize
+	Path                 string      // source file path (from ir.SourceRef)
+	SourceHarness        string      `json:"-"`
+	PrimarySourcePresent bool        `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -316,10 +317,11 @@ func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (cat 
 	}()
 	cat, err = LoadFSWithOptions(srcFS, sourceHarness, opts)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, srcFS.Refusal())
 	}
 	cat.sourceRefusal = srcFS.Refusal()
 	for i := range cat.Entries {
+		cat.Entries[i].PrimarySourcePresent = srcFS.WasRead(filepath.ToSlash(cat.Entries[i].Path))
 		if cat.Entries[i].Path != "" && !filepath.IsAbs(cat.Entries[i].Path) {
 			cat.Entries[i].Path = filepath.Join(root, cat.Entries[i].Path)
 		}

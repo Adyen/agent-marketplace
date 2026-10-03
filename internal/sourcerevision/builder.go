@@ -100,6 +100,10 @@ func Build(input Input) (result Result, err error) {
 		return Result{}, fmt.Errorf("capture revision source: %w", err)
 	}
 	defer func() {
+		if refusal := source.Refusal(); refusal != nil {
+			result = Result{}
+			err = fmt.Errorf("%w: source refused: %w", ErrCatalog, errors.Join(err, refusal))
+		}
 		if closeErr := source.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
@@ -107,6 +111,9 @@ func Build(input Input) (result Result, err error) {
 	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks, LegacyBareMCP: !contract.BareBundleMCP}
 	cat, err := catalog.LoadWithOptions(root, input.SourceHarness, options)
 	loaded := cat
+	if fsboundary.IsSourceRefusal(err) {
+		return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, err)
+	}
 	if cat != nil && cat.SourceRefusal() != nil {
 		return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, cat.SourceRefusal())
 	}
@@ -114,6 +121,11 @@ func Build(input Input) (result Result, err error) {
 		discovered, discoverErr := catalog.DiscoverWithOptions(root, input.SourceHarness, options)
 		if discoverErr != nil {
 			return Result{}, fmt.Errorf("%w: load root %q: %w", ErrCatalog, input.RootPath, errors.Join(err, discoverErr))
+		}
+		for _, discoveryErr := range discovered.Errors {
+			if fsboundary.IsSourceRefusal(discoveryErr) {
+				return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, discoveryErr)
+			}
 		}
 		if err != nil || len(discovered.Entries) > 0 {
 			sourceHarness := input.SourceHarness
@@ -167,7 +179,7 @@ func Build(input Input) (result Result, err error) {
 
 		resource, err := buildResource(root, source, entry, contract)
 		if err != nil {
-			if errors.Is(err, ErrPathEscape) || errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) {
+			if errors.Is(err, ErrPathEscape) || fsboundary.IsSourceRefusal(err) {
 				return Result{}, fmt.Errorf("%w: build %s: %w", ErrCatalog, key, err)
 			}
 			warnings = append(warnings, ResourceWarning{Kind: kind, Name: entry.Name, Reason: "resource could not be built: " + err.Error()})
@@ -337,23 +349,27 @@ func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog
 	// consumers can locate the definition file, but hashing that file would
 	// change the source-revision compatibility basis.
 	if entry.Path != "" && entry.Kind != ir.KindCollection {
-		name, err := containedPath(root, entry.Path)
-		if err != nil {
-			return nil, err
-		}
-		if err := rejectSymlinkComponents(root, name); err != nil {
-			return nil, err
+		name := entry.Path
+		if !filepath.IsAbs(name) {
+			name = filepath.Join(root, name)
 		}
 		rel, err := lexicallyContained(root, name)
 		if err != nil {
 			return nil, err
 		}
-		data, err := source.ReadFile(filepath.ToSlash(rel))
+		err = rejectSymlinkComponents(root, name)
 		if err == nil {
-			return data, nil
+			var data []byte
+			data, err = source.ReadFile(filepath.ToSlash(rel))
+			if err == nil {
+				return data, nil
+			}
 		}
-		if !errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) {
+		if !errors.Is(err, fs.ErrNotExist) || fsboundary.IsSourceRefusal(err) {
 			return nil, err
+		}
+		if entry.PrimarySourcePresent {
+			return nil, fmt.Errorf("%w: admitted primary %q disappeared: %w", fsboundary.ErrGenerationConflict, entry.Path, err)
 		}
 	}
 	resource := entry.Resource
