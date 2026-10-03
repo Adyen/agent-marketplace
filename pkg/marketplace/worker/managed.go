@@ -342,6 +342,7 @@ func managedFailure(cause error, operation string) store.ManagedRefreshFailure {
 
 func recordManagedFailure(ctx context.Context, deps Deps, j store.Job, worker string, fence store.ManagedFence, p managedRefreshPayload, cause error) error {
 	failure := managedFailure(cause, p.Operation)
+	outcome := outcomeFor(cause)
 	err := deps.MetadataStore.WithTx(ctx, func(ctx context.Context, tx store.MetadataStore) error {
 		if err := managedLease(ctx, tx, j, worker); err != nil {
 			return err
@@ -349,10 +350,6 @@ func recordManagedFailure(ctx context.Context, deps Deps, j store.Job, worker st
 		recorder, ok := tx.(managedAttemptRecorder)
 		if !ok {
 			return store.ErrTopology
-		}
-		outcome := "failed"
-		if errors.Is(cause, ErrManagedSuperseded) || errors.Is(cause, store.ErrPublicationFence) {
-			outcome = "superseded"
 		}
 		if err := recorder.RecordManagedRefreshAttempt(ctx, fence, outcome, "", failure); err != nil {
 			return err
@@ -362,7 +359,7 @@ func recordManagedFailure(ctx context.Context, deps Deps, j store.Job, worker st
 	if err != nil {
 		return finishManaged(ctx, deps, j, worker, err)
 	}
-	slog.WarnContext(ctx, "managed refresh attempt failed", "job", j.ID, "registry", p.RegistryID, "outcome", outcomeFor(cause), "failure_code", failure.Code, "cause", failure.Cause)
+	slog.WarnContext(ctx, "managed refresh attempt failed", "job", j.ID, "registry", p.RegistryID, "outcome", outcome, "failure_code", failure.Code, "cause", failure.Cause)
 	return cause
 }
 
