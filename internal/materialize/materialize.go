@@ -4251,13 +4251,6 @@ func isManagedCommandContent(data []byte) bool {
 	return false
 }
 
-func staleSkillEntryReportPath(path, name string) string {
-	if _, err := os.Stat(filepath.Join(path, "SKILL.md")); err == nil {
-		return filepath.Join(name, "SKILL.md")
-	}
-	return name
-}
-
 func existingSymlinkTarget(path string) (string, bool) {
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
