@@ -195,20 +195,6 @@ Agent Marketplace MUST retain the existing admitted manifest permissions when pu
 - **WHEN** native repository or machine file-mode output repeats unchanged, updates content and later removes its owned selection
 - **THEN** the manifest repeat MUST preserve identity/mode/mtime, the real ownership update MUST publish changed bytes with existing permissions, and empty-state removal MUST remove its unchanged manifest
 
-### Requirement: Portable virtual source hashes retain captured payload authority
-
-Agent Marketplace MUST authorize skill support payloads used by read-only portable source hashing against one captured source root. Enumeration and regular singly-linked payload reads MUST be descriptor-relative, preserve one unchanged opened generation and apply captured-size streaming/growth checks without introducing a new absolute size/work budget. Contained relative file aliases and executable permissions MUST remain usable, while foreign/unsafe aliases and payload shapes MUST refuse with materialize.write.error before their bytes contribute to an ownership digest. Read-only checking MUST create no output/cache/manifest state and MUST preserve source/external bytes, identity, permissions and modification time.
-
-#### Scenario: Read-only portable source hash refuses foreign aliases
-
-- **WHEN** read-only file-mode materialization encounters a skill support alias outside its captured source root
-- **THEN** checking MUST refuse with materialize.write.error, preserve the source alias and external bytes/metadata, and create no output/cache/manifest state
-
-#### Scenario: Contained portable source hashes retain native ownership
-
-- **WHEN** a file-mode skill installed with a contained relative executable support alias is subsequently checked read-only
-- **THEN** the virtual source digest MUST retain the installed native content/mode and ownership meaning, report in sync and preserve the manifest identity/mode/mtime
-
 ### Requirement: Skill support directory aliases remain scope-contained
 
 Agent Marketplace MUST accept skill support directory aliases and alias chains whose resolution stays within the captured source root. Native installation and read-only portable checking MUST expand the same logical support tree, preserve regular singly-linked payload bytes and executable permissions, and exclude VCS internals at every level. Read-only checking MUST preserve output and source state, and unchanged file-mode output MUST remain a no-op. Escaping, dangling, cyclic, or unsafe-payload aliases MUST refuse with materialize.write.error without replacing an installed generation or importing external bytes. An alias that leaves the source root before returning to it MUST remain refused.
@@ -231,3 +217,17 @@ Agent Marketplace MUST exclude support directory aliases whose contained resolve
 
 - **WHEN** a skill has ordinary contained support aliases and aliases targeting `.git` and a nested `.git` subdirectory under different logical names
 - **THEN** native installation in either materialization mode MUST retain ordinary executable support snapshots but omit both excluded alias subtrees, and read-only checking MUST report in sync without writes
+
+### Requirement: Portable virtual source hashes retain captured payload authority
+
+Agent Marketplace MUST authorize skill support payloads used by read-only portable source hashing against one captured source root. Enumeration and regular singly-linked payload reads MUST be descriptor-relative, preserve one unchanged opened generation and apply captured-size streaming/growth checks without introducing a new absolute size/work budget. Contained relative file aliases and executable permissions MUST remain usable, while foreign/unsafe aliases and payload shapes MUST refuse with materialize.write.error before their bytes contribute to an ownership digest. Read-only checking MUST create no output/cache/manifest state and MUST preserve source/external bytes, identity, permissions and modification time.
+
+#### Scenario: Read-only portable source hash refuses foreign aliases
+
+- **WHEN** read-only file-mode materialization encounters a skill support alias outside its captured source root
+- **THEN** checking MUST refuse with materialize.write.error, preserve the source alias and external bytes/metadata, and create no output/cache/manifest state
+
+#### Scenario: Contained portable source hashes retain native ownership
+
+- **WHEN** a file-mode skill installed with a contained relative executable support alias is subsequently checked read-only
+- **THEN** the virtual source digest MUST retain the installed native content/mode and ownership meaning, report in sync and preserve the manifest identity/mode/mtime
