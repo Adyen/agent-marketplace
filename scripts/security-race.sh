@@ -103,3 +103,7 @@ run_race ./internal/skill ./internal/fsboundary \
 run_race ./internal/tui \
     -run '^TestDetailSourcePreview.*$' \
     -count=20
+
+run_race ./internal/materialize \
+    -run '^Test(RunPortableOutputDigest.*|PortableRegularDigest.*)$' \
+    -count=20

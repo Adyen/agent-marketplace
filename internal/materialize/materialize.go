@@ -3638,14 +3638,7 @@ func writePortableDigestPath(h io.Writer, path, rel string) error {
 	}
 	switch {
 	case mode.IsRegular():
-		writeHeader("file")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(h, "%d\x00", len(data))
-		_, _ = h.Write(data)
-		return nil
+		return writePortableRegularDigest(h, path, rel, info)
 	case mode.IsDir():
 		writeHeader("dir")
 		entries, err := os.ReadDir(path)
@@ -3670,6 +3663,45 @@ func writePortableDigestPath(h io.Writer, path, rel string) error {
 		writeHeader("other")
 		return nil
 	}
+}
+
+func writePortableRegularDigest(h io.Writer, path, rel string, info os.FileInfo) (err error) {
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	before, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return err
+	}
+	root, err := fsboundary.OpenDir(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	file, err := fsboundary.CaptureDestination(root, filepath.Base(path), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil || !file.Identity().SameState(before) {
+		return fmt.Errorf("%w: portable output changed before digest read", fsboundary.ErrGenerationConflict)
+	}
+	return file.ReadTargetWith(func(reader io.Reader) error {
+		if _, err := fmt.Fprintf(h, "file\x00%s\x00%#o\x00%d\x00", filepath.ToSlash(rel), before.Mode.Perm(), before.Size); err != nil {
+			return err
+		}
+		_, err := io.Copy(h, reader)
+		return err
+	})
 }
 
 func portableArtifactMode(mode fs.FileMode) fs.FileMode {
