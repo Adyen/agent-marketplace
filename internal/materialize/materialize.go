@@ -3004,12 +3004,15 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 				return report, err
 			}
 			if sourceInfo.IsDir() {
-				if info != nil {
-					if err := os.RemoveAll(dst); err != nil {
-						return report, err
-					}
+				var boundary *destinationBoundary
+				if len(boundaries) > 0 {
+					boundary = boundaries[0]
 				}
-				if err := copyDir(link.target, dst); err != nil {
+				ownedDigest := ""
+				if owned && info != nil && info.Mode()&os.ModeSymlink == 0 {
+					ownedDigest = entry.Digest
+				}
+				if err := publishPortableTree(link.target, dst, info, ownedDigest, boundary); err != nil {
 					return report, err
 				}
 			} else {
@@ -3745,34 +3748,6 @@ func filesEqual(src, dst string) (_ bool, err error) {
 			return false, dstErr
 		}
 	}
-}
-
-func copyDir(src, dst string) error {
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
-		if entry.IsDir() {
-			if err := copyDir(srcPath, dstPath); err != nil {
-				return err
-			}
-		} else {
-			if err := copyFile(srcPath, dstPath); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStaleEntries bool, portable ...portableSyncContext) (TargetReport, error) {

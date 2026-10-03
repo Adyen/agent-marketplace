@@ -105,5 +105,5 @@ run_race ./internal/tui \
     -count=20
 
 run_race ./internal/materialize \
-    -run '^Test(RunPortableOutputDigest.*|RunPortableFilePublication.*|PortableRegularDigest.*|PortableTreeDigest.*)$' \
+    -run '^Test(RunPortableOutputDigest.*|RunPortableFilePublication.*|RunPortableTreePublication.*|PortableRegularDigest.*|PortableTreeDigest.*)$' \
     -count=20

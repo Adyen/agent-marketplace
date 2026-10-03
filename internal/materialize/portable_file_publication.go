@@ -12,25 +12,7 @@ import (
 )
 
 func publishPortableFile(src, dst string, observed os.FileInfo, boundary *destinationBoundary) (err error) {
-	parentPath := filepath.Dir(dst)
-	capture := func(create bool) (*fsboundary.Dir, error) {
-		if boundary != nil {
-			return boundary.captureDirectory(parentPath, create)
-		}
-		absolute, err := filepath.Abs(parentPath)
-		if err != nil {
-			return nil, err
-		}
-		root, err := fsboundary.OpenDir(filepath.Dir(absolute))
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = root.Close() }()
-		if create {
-			return root.EnsurePath(filepath.Base(absolute))
-		}
-		return root.OpenPath(filepath.Base(absolute))
-	}
+	capture := func(create bool) (*fsboundary.Dir, error) { return capturePortableParent(dst, boundary, create) }
 	parent, err := capture(true)
 	if err != nil {
 		return err
