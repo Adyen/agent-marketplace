@@ -77,7 +77,30 @@ func TestRunContainedSupportDirectoryAlias(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for name, target := range map[string]string{"references": "scripts", "scripts/file-alias.txt": "helper.txt", "second-alias": "references", "vcs-alias": "scripts/.git", "vcs-subdirectory": "scripts/.git/objects"} {
+			if err := os.MkdirAll(filepath.Join(source, "scripts", "dir", "real", "child", ".git", "objects"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, payload := range []struct {
+				name string
+				data string
+				mode os.FileMode
+			}{
+				{"run.sh", "#!/bin/sh\nprintf nested\\n\n", 0o755},
+				{"notes.txt", "nested support bytes\n", 0o640},
+				{".git/objects/private.txt", "excluded nested VCS bytes", 0o600},
+			} {
+				if err := os.WriteFile(filepath.Join(source, "scripts", "dir", "real", "child", payload.name), []byte(payload.data), payload.mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for name, target := range map[string]string{
+				"references": "scripts", "scripts/file-alias.txt": "helper.txt", "second-alias": "references",
+				"vcs-alias": "scripts/.git", "vcs-subdirectory": "scripts/.git/objects",
+				"scripts/dir/contained": "real", "scripts/dir/alias-child": "contained/child",
+				"nested-alias":                     "scripts/dir/alias-child",
+				"scripts/dir/vcs-via-intermediate": "contained/child/.git/objects",
+				"vcs-via-intermediate":             "scripts/dir/contained/child/.git",
+			} {
 				if err := os.Symlink(target, filepath.Join(source, name)); err != nil {
 					t.Fatal(err)
 				}
@@ -116,15 +139,50 @@ func TestRunContainedSupportDirectoryAlias(t *testing.T) {
 					t.Fatalf("directory alias copied VCS internals: %v", err)
 				}
 			}
-			for _, alias := range []string{"vcs-alias", "vcs-subdirectory"} {
+			for _, directory := range []string{
+				"scripts/dir/real/child", "scripts/dir/contained/child", "scripts/dir/alias-child",
+				"references/dir/alias-child", "second-alias/dir/alias-child", "nested-alias",
+			} {
+				for _, payload := range []struct {
+					name string
+					data string
+					mode os.FileMode
+				}{
+					{"run.sh", "#!/bin/sh\nprintf nested\\n\n", 0o755},
+					{"notes.txt", "nested support bytes\n", 0o640},
+				} {
+					path := filepath.Join(installed, directory, payload.name)
+					if data, err := os.ReadFile(path); err != nil || string(data) != payload.data {
+						t.Fatalf("nested native payload %s: %q %v", path, data, err)
+					}
+					if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != payload.mode {
+						t.Fatalf("nested payload %s is not a regular %o snapshot: %v", path, payload.mode, err)
+					}
+				}
+				if _, err := os.Lstat(filepath.Join(installed, directory, ".git")); !os.IsNotExist(err) {
+					t.Fatalf("nested alias copied VCS internals: %s %v", directory, err)
+				}
+			}
+			for _, alias := range []string{
+				"vcs-alias", "vcs-subdirectory", "vcs-via-intermediate",
+				"scripts/dir/vcs-via-intermediate", "references/dir/vcs-via-intermediate", "second-alias/dir/vcs-via-intermediate",
+			} {
 				if _, err := os.Lstat(filepath.Join(installed, alias)); !os.IsNotExist(err) {
 					t.Fatalf("directory alias exposed VCS internals: %s %v", alias, err)
 				}
 			}
-			payload := filepath.Join(installed, "references", "helper.txt")
+			payload := filepath.Join(installed, "scripts", "dir", "alias-child", "run.sh")
 			before, err := os.Stat(payload)
 			if err != nil {
 				t.Fatal(err)
+			}
+			sourceBefore := make(map[string]os.FileInfo)
+			for _, rel := range []string{"scripts/dir/alias-child", "scripts/dir/contained", "scripts/dir/real/child/run.sh", "scripts/dir/real/child/notes.txt"} {
+				info, err := os.Lstat(filepath.Join(source, rel))
+				if err != nil {
+					t.Fatal(err)
+				}
+				sourceBefore[rel] = info
 			}
 			check, err := Run(t.Context(), repo, resolved, WithMaterializationModes(modes), WithDryRun())
 			if err != nil {
@@ -137,6 +195,16 @@ func TestRunContainedSupportDirectoryAlias(t *testing.T) {
 			if after, err := os.Stat(payload); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
 				t.Fatalf("read-only check changed the alias payload: %v", err)
 			}
+			for rel, before := range sourceBefore {
+				if after, err := os.Lstat(filepath.Join(source, rel)); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+					t.Fatalf("read-only check changed source %s: %v", rel, err)
+				}
+			}
+			for rel, text := range map[string]string{"scripts/dir/alias-child": "contained/child", "scripts/dir/contained": "real"} {
+				if got, err := os.Readlink(filepath.Join(source, rel)); err != nil || got != text {
+					t.Fatalf("read-only check changed source alias %s: %q %v", rel, got, err)
+				}
+			}
 			repeat, err := Run(t.Context(), repo, resolved, WithMaterializationModes(modes))
 			if err != nil {
 				t.Fatal(err)
@@ -145,7 +213,7 @@ func TestRunContainedSupportDirectoryAlias(t *testing.T) {
 			if after, err := os.Stat(payload); err != nil || before.Mode() != after.Mode() || mode == config.MaterializationModeFile && (!os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime())) {
 				t.Fatalf("alias payload repeat changed mode or file-mode identity: %v", err)
 			}
-			if data, err := os.ReadFile(payload); err != nil || string(data) != "inert executable data" {
+			if data, err := os.ReadFile(payload); err != nil || string(data) != "#!/bin/sh\nprintf nested\\n\n" {
 				t.Fatalf("repeat changed alias payload: %q %v", data, err)
 			}
 		})
@@ -154,99 +222,101 @@ func TestRunContainedSupportDirectoryAlias(t *testing.T) {
 
 // spec: materialization/unsafe-support-directory-aliases-preserve-the-installed-generation
 func TestRunUnsafeSupportDirectoryAlias(t *testing.T) {
-	for _, kind := range []string{"external", "dangling", "cycle", "external-return", "hardlink"} {
-		t.Run(kind, func(t *testing.T) {
-			home, repo, source, outside := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
-			t.Setenv("HOME", home)
-			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
-			if err := os.Mkdir(filepath.Join(source, "scripts"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(source, "scripts", "helper.txt"), []byte("safe support"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			foreign := filepath.Join(outside, "foreign.txt")
-			if err := os.WriteFile(foreign, []byte("foreign inert bytes"), 0o640); err != nil {
-				t.Fatal(err)
-			}
-			foreignBefore, err := os.Stat(foreign)
-			if err != nil {
-				t.Fatal(err)
-			}
-			alias := filepath.Join(source, "references")
-			if err := os.Symlink("scripts", alias); err != nil {
-				t.Fatal(err)
-			}
-			resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "alias-probe", Path: source, Resource: ir.NewSkill("alias-probe", "alias control", "inert body", nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}}}
-			modes := config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeSymlink}
-			initial, err := Run(t.Context(), repo, resolved, WithMaterializationModes(modes))
-			if err != nil {
-				t.Fatal(err)
-			}
-			requireNoErrorDiags(t, initial.Diags)
-			installed := filepath.Join(repo, ".factory", "skills", "alias-probe", "references", "helper.txt")
-			before, err := os.Stat(installed)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Remove(alias); err != nil {
-				t.Fatal(err)
-			}
-			target := outside
-			switch kind {
-			case "dangling":
-				target = "missing"
-			case "cycle":
-				target = "."
-			case "external-return":
-				target = filepath.Join(outside, "return")
-				if err := os.Symlink(filepath.Join(source, "scripts"), target); err != nil {
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeFile, config.MaterializationModeSymlink} {
+		for _, kind := range []string{"external", "dangling", "cycle", "external-return", "hardlink"} {
+			t.Run(string(mode)+"/"+kind, func(t *testing.T) {
+				home, repo, source, outside := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+				t.Setenv("HOME", home)
+				t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+				t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+				t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+				if err := os.Mkdir(filepath.Join(source, "scripts"), 0o755); err != nil {
 					t.Fatal(err)
 				}
-			case "hardlink":
-				target = "scripts"
-				if err := os.Link(filepath.Join(source, "scripts", "helper.txt"), filepath.Join(source, "scripts", "second.txt")); err != nil {
+				if err := os.WriteFile(filepath.Join(source, "scripts", "helper.txt"), []byte("safe support"), 0o755); err != nil {
 					t.Fatal(err)
 				}
-			}
-			if err := os.Symlink(target, alias); err != nil {
-				t.Fatal(err)
-			}
-			for _, dryRun := range []bool{true, false} {
-				opts := []RunOption{WithMaterializationModes(modes)}
-				if dryRun {
-					opts = append(opts, WithDryRun())
+				foreign := filepath.Join(outside, "foreign.txt")
+				if err := os.WriteFile(foreign, []byte("foreign inert bytes"), 0o640); err != nil {
+					t.Fatal(err)
 				}
-				report, err := Run(t.Context(), repo, resolved, opts...)
-				if err != nil || !hasDiagCode(report.Diags, "materialize.write.error") {
-					t.Fatalf("unsafe directory alias did not refuse: %+v %v", report, err)
+				foreignBefore, err := os.Stat(foreign)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if data, err := os.ReadFile(installed); err != nil || string(data) != "safe support" {
-					t.Fatalf("refusal changed native bytes: %q %v", data, err)
+				alias := filepath.Join(source, "references")
+				if err := os.Symlink("scripts", alias); err != nil {
+					t.Fatal(err)
 				}
-				if after, err := os.Stat(installed); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
-					t.Fatalf("refusal changed installed generation: %v", err)
+				resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "alias-probe", Path: source, Resource: ir.NewSkill("alias-probe", "alias control", "inert body", nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}}}
+				modes := config.MaterializationModes{Project: mode, Machine: config.MaterializationModeSymlink}
+				initial, err := Run(t.Context(), repo, resolved, WithMaterializationModes(modes))
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			if data, err := os.ReadFile(foreign); err != nil || string(data) != "foreign inert bytes" {
-				t.Fatalf("refusal changed foreign bytes: %q %v", data, err)
-			}
-			if after, err := os.Stat(foreign); err != nil || !os.SameFile(foreignBefore, after) || foreignBefore.Mode() != after.Mode() || !foreignBefore.ModTime().Equal(after.ModTime()) {
-				t.Fatalf("refusal changed foreign metadata: %v", err)
-			}
-			for _, scope := range []string{home, repo} {
-				if err := filepath.WalkDir(scope, func(path string, entry os.DirEntry, err error) error {
-					if err == nil && strings.HasPrefix(entry.Name(), ".support-staging-") {
-						t.Errorf("source refusal left staging residue: %s", path)
+				requireNoErrorDiags(t, initial.Diags)
+				installed := filepath.Join(repo, ".factory", "skills", "alias-probe", "references", "helper.txt")
+				before, err := os.Stat(installed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(alias); err != nil {
+					t.Fatal(err)
+				}
+				target := outside
+				switch kind {
+				case "dangling":
+					target = "missing"
+				case "cycle":
+					target = "."
+				case "external-return":
+					target = filepath.Join(outside, "return")
+					if err := os.Symlink(filepath.Join(source, "scripts"), target); err != nil {
+						t.Fatal(err)
 					}
-					return err
-				}); err != nil {
+				case "hardlink":
+					target = "scripts"
+					if err := os.Link(filepath.Join(source, "scripts", "helper.txt"), filepath.Join(source, "scripts", "second.txt")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Symlink(target, alias); err != nil {
 					t.Fatal(err)
 				}
-			}
-		})
+				for _, dryRun := range []bool{true, false} {
+					opts := []RunOption{WithMaterializationModes(modes)}
+					if dryRun {
+						opts = append(opts, WithDryRun())
+					}
+					report, err := Run(t.Context(), repo, resolved, opts...)
+					if err != nil || !hasDiagCode(report.Diags, "materialize.write.error") {
+						t.Fatalf("unsafe directory alias did not refuse: %+v %v", report, err)
+					}
+					if data, err := os.ReadFile(installed); err != nil || string(data) != "safe support" {
+						t.Fatalf("refusal changed native bytes: %q %v", data, err)
+					}
+					if after, err := os.Stat(installed); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+						t.Fatalf("refusal changed installed generation: %v", err)
+					}
+				}
+				if data, err := os.ReadFile(foreign); err != nil || string(data) != "foreign inert bytes" {
+					t.Fatalf("refusal changed foreign bytes: %q %v", data, err)
+				}
+				if after, err := os.Stat(foreign); err != nil || !os.SameFile(foreignBefore, after) || foreignBefore.Mode() != after.Mode() || !foreignBefore.ModTime().Equal(after.ModTime()) {
+					t.Fatalf("refusal changed foreign metadata: %v", err)
+				}
+				for _, scope := range []string{home, repo} {
+					if err := filepath.WalkDir(scope, func(path string, entry os.DirEntry, err error) error {
+						if err == nil && strings.HasPrefix(entry.Name(), ".support-staging-") {
+							t.Errorf("source refusal left staging residue: %s", path)
+						}
+						return err
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			})
+		}
 	}
 }
 
