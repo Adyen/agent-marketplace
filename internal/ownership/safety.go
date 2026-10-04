@@ -129,7 +129,7 @@ func (s *Store) backupOnlyLocked(rel, absFile string, reason Reason) (string, er
 	if err := s.ensureUnderRoot(absFile); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
+	if err := s.prepareStateDirectory(filepath.Join(ownershipDirName, s.rootKey)); err != nil {
 		return "", fmt.Errorf("ownership: create state directory: %w", err)
 	}
 	generation := uint64(0)
@@ -169,9 +169,19 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	}
 
 	dir := s.SafetyBackupDir(rel)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	relative := filepath.Join(safetyDirName, s.rootKey, fileSlug(rel))
+	if err := s.prepareStateDirectory(relative); err != nil {
 		return "", "", false, fmt.Errorf("ownership: create safety backup directory: %w", err)
 	}
+	parent, err := s.captureStateDirectory(relative)
+	if err != nil {
+		return "", "", false, err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	stamp := s.now().UTC().Format("20060102T150405.000000000Z")
 
 	// Validate the entries before writing any bytes: invalid entries must not
@@ -182,29 +192,79 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 		}
 	}
 
-	backupFile, err := os.CreateTemp(dir, stamp+"-*"+backupSuffix)
+	if err := s.verifyStateDirectory(parent, relative); err != nil {
+		return "", "", false, err
+	}
+	backupFile, name, err := parent.CreateTemp(stamp + "-*" + backupSuffix)
 	if err != nil {
 		return "", "", false, fmt.Errorf("ownership: create safety backup: %w", err)
 	}
-	backupPath = backupFile.Name()
-	removeBackup := func() {
-		_ = backupFile.Close()
-		_ = os.Remove(backupPath)
+	backupPath = filepath.Join(dir, name)
+	info, err := backupFile.Stat()
+	if err != nil {
+		return "", "", false, errors.Join(err, backupFile.Close())
 	}
+	created, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return "", "", false, errors.Join(err, backupFile.Close())
+	}
+	published := false
+	defer func() {
+		if backupFile != nil {
+			if closeErr := backupFile.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}
+		if published {
+			return
+		}
+		native, openErr := parent.NativeRoot()
+		if openErr != nil {
+			err = errors.Join(err, openErr)
+			return
+		}
+		defer func() {
+			if closeErr := native.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+		info, inspectErr := native.Lstat(name)
+		if errors.Is(inspectErr, fs.ErrNotExist) {
+			return
+		}
+		if inspectErr != nil {
+			err = errors.Join(err, inspectErr)
+			return
+		}
+		identity, inspectErr := fsboundary.FileInfoIdentity(info)
+		if inspectErr != nil {
+			err = errors.Join(err, inspectErr)
+			return
+		}
+		if identity.SameObject(created) {
+			err = errors.Join(err, parent.Unlink(name))
+		}
+	}()
 	if n, writeErr := backupFile.Write(raw); writeErr != nil {
-		removeBackup()
 		return "", "", false, fmt.Errorf("ownership: write safety backup: %w", writeErr)
 	} else if n != len(raw) {
-		removeBackup()
 		return "", "", false, fmt.Errorf("ownership: write safety backup: short write (%d/%d bytes)", n, len(raw))
 	}
 	if err := backupFile.Sync(); err != nil {
-		removeBackup()
 		return "", "", false, fmt.Errorf("ownership: sync safety backup: %w", err)
 	}
-	if err := backupFile.Close(); err != nil {
-		_ = os.Remove(backupPath)
-		return "", "", false, fmt.Errorf("ownership: close safety backup: %w", err)
+	info, err = backupFile.Stat()
+	if err != nil {
+		return "", "", false, err
+	}
+	produced, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return "", "", false, err
+	}
+	closeErr := backupFile.Close()
+	backupFile = nil
+	if closeErr != nil {
+		return "", "", false, fmt.Errorf("ownership: close safety backup: %w", closeErr)
 	}
 	manifest := BackupManifest{
 		Version:        1,
@@ -223,9 +283,31 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	if err != nil {
 		return "", "", false, fmt.Errorf("ownership: marshal backup manifest: %w", err)
 	}
-	if err := atomicWrite(metaPathFor(backupPath), append(metaBytes, '\n'), 0o600); err != nil {
+	payload, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
+	if err != nil {
 		return "", "", false, err
 	}
+	defer func() {
+		if closeErr := payload.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if payload.Link() != nil || !payload.Identity().SameState(produced) {
+		return "", "", false, fsboundary.ErrGenerationConflict
+	}
+	validate := func() error {
+		if err := s.verifyStateDirectory(parent, relative); err != nil {
+			return err
+		}
+		return payload.ReadTargetWith(func(io.Reader) error { return nil })
+	}
+	if err := validate(); err != nil {
+		return "", "", false, err
+	}
+	if _, err := writeObservedMetadataFile(parent, filepath.Base(metaPathFor(backupPath)), append(metaBytes, '\n'), validate); err != nil {
+		return "", "", false, err
+	}
+	published = true
 	slog.Info("safety backup written",
 		"root_key", s.rootKey, "file", rel, "generation", generation, "reason", string(reason),
 		"prior_digest", priorDigest, "prior_absent", priorAbsent, "prior_size", len(raw), "retain", s.retain)

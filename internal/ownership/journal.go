@@ -243,7 +243,7 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 	// STEP 1: mandatory raw-byte safety backup, BEFORE anything is prepared.
 	// Invariant established: the user's exact bytes are recoverable from the XDG
 	// state root for every later crash point.
-	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
+	if err := s.prepareStateDirectory(filepath.Join(ownershipDirName, s.rootKey)); err != nil {
 		return Result{}, coded(diag.CodeOwnershipSafetyBackup, m.Rel, err)
 	}
 	backupPath, priorDigest, priorAbsent, err := s.writeSafetyBackup(m.Rel, m.AbsFile, generation, m.Reason, m.Entries)

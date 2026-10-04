@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
@@ -35,6 +36,42 @@ func (s *Store) captureStateDirectory(relative string) (parent *fsboundary.Dir, 
 		return nil, err
 	}
 	return anchor.OpenPath(rel)
+}
+
+func (s *Store) prepareStateDirectory(relative string) (err error) {
+	if !fs.ValidPath(filepath.ToSlash(relative)) || relative == "." {
+		return fsboundary.ErrUnsafePath
+	}
+	current, err := fsboundary.OpenDir(string(filepath.Separator))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if current != nil {
+			if closeErr := current.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
+	absolute := filepath.Join(s.canonicalStateRoot, relative)
+	for _, name := range strings.Split(strings.TrimPrefix(absolute, string(filepath.Separator)), string(filepath.Separator)) {
+		next, openErr := current.OpenPath(name)
+		if errors.Is(openErr, fs.ErrNotExist) && !errors.Is(openErr, fsboundary.ErrUnsafePath) {
+			if createErr := current.Mkdir(name, 0o700); createErr != nil && !errors.Is(createErr, fs.ErrExist) {
+				return createErr
+			}
+			next, openErr = current.OpenPath(name)
+		}
+		if openErr != nil {
+			return openErr
+		}
+		previous := current
+		current = next
+		if closeErr := previous.Close(); closeErr != nil {
+			return closeErr
+		}
+	}
+	return s.verifyStateDirectory(current, relative)
 }
 
 func (s *Store) verifyMetadataParent(parent *fsboundary.Dir) error {
@@ -71,6 +108,10 @@ func (s *Store) writeObservedMetadata(name string, data []byte) (pin metadataPin
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	return writeObservedMetadataFile(parent, name, data, func() error { return s.verifyMetadataParent(parent) })
+}
+
+func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte, validate func() error) (pin metadataPin, err error) {
 	destination, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return pin, err
@@ -148,7 +189,7 @@ func (s *Store) writeObservedMetadata(name string, data []byte) (pin metadataPin
 	if closeErr != nil {
 		return pin, closeErr
 	}
-	if err := s.verifyMetadataParent(parent); err != nil {
+	if err := validate(); err != nil {
 		return pin, err
 	}
 	output, err := fsboundary.CaptureDestination(parent, stagedName, fsboundary.LinkPolicyRepository)
