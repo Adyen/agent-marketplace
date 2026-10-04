@@ -66,4 +66,5 @@ The `route` label holds the registered route pattern, or `unmatched`, never the 
 
 ## Related documentation
 
+- [How to reset and reindex a registry](./reset-and-reindex-a-registry.md)
 - [Marketplace health and metrics reference](../../reference/marketplace-health-and-metrics.md)
