@@ -5,4 +5,4 @@
 - [x] Reuse selected-generation removal and captured empty-only directory cleanup.
 - [x] Verify Linux/macOS ownership/materialize/count20 CAS/crash races/validate.
 - [x] Record benchmark/spec/full review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
