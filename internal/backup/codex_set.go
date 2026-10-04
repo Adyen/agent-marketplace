@@ -149,7 +149,19 @@ func RestoreCodexSet(partitions []CodexPartition) (operation string, err error) 
 		return "", err
 	}
 	targetDir := filepath.Join(dir, codexTargetName)
-	manifests, err := loadCompleteCodexSets(targetDir)
+	parent, err := fsboundary.OpenDir(targetDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			return "", errors.New("backup: no complete Codex backup set matches the current canonical root keys")
+		}
+		return "", err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	manifests, err := loadCompleteCodexSetsAt(parent)
 	if err != nil {
 		return "", err
 	}
@@ -173,19 +185,69 @@ func RestoreCodexSet(partitions []CodexPartition) (operation string, err error) 
 	if selected == nil {
 		return "", errors.New("backup: no complete Codex backup set matches the current canonical root keys")
 	}
-	for _, archived := range selected.Partitions {
+	sources := make([]*fsboundary.Destination, len(selected.Partitions))
+	defer func() {
+		for _, source := range sources {
+			if source != nil {
+				if closeErr := source.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}
+		}
+	}()
+	for i, archived := range selected.Partitions {
 		partition := current[archived.ID]
-		if err := validateCodexArchive(filepath.Join(targetDir, archived.Archive), partition.Root, archived.RelPaths); err != nil {
+		source, err := fsboundary.CaptureDestination(parent, archived.Archive, fsboundary.LinkPolicyRepository)
+		if err != nil {
+			return "", err
+		}
+		sources[i] = source
+		if source.Link() != nil {
+			return "", fsboundary.ErrUnsafeFile
+		}
+		if !source.Exists() {
+			return "", fsboundary.ErrGenerationConflict
+		}
+		if err := source.ReadTargetWith(func(reader io.Reader) error {
+			return validateCodexArchivePayload(reader, partition.Root, archived.RelPaths)
+		}); err != nil {
 			return "", fmt.Errorf("backup: preflight Codex partition %s: %w", archived.ID, err)
 		}
+	}
+	slog.Debug("Codex backup set preflight completed", "operation", selected.Operation, "phase", "preflight-complete", "partitions", len(selected.Partitions))
+	verify := func() error {
+		if err := verifyArchiveParent(parent, targetDir); err != nil {
+			return err
+		}
+		if _, err := inspectRetentionMember(parent, selected.Operation+".set.json", &selected.observed); err != nil {
+			return err
+		}
+		for i, archived := range selected.Partitions {
+			canonical, err := codexCanonicalRoot(current[archived.ID].Root)
+			if err != nil {
+				return err
+			}
+			if codexRootKey(canonical) != keys[archived.ID] {
+				return fsboundary.ErrGenerationConflict
+			}
+			if err := sources[i].ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	var completed []string
 	for i, archived := range selected.Partitions {
 		partition := current[archived.ID]
-		if err := os.MkdirAll(partition.Root, 0o755); err != nil {
+		if err := verify(); err != nil {
 			return "", codexLateRestoreError(err, completed, selected.Partitions[i:])
 		}
-		if err := extractArchive(filepath.Join(targetDir, archived.Archive), partition.Root); err != nil {
+		if err := sources[i].ReadTargetWith(func(reader io.Reader) error {
+			if err := os.MkdirAll(partition.Root, 0o755); err != nil {
+				return err
+			}
+			return extractArchivePayload(reader, partition.Root)
+		}); err != nil {
 			return "", codexLateRestoreError(err, completed, selected.Partitions[i:])
 		}
 		completed = append(completed, archived.ID)
@@ -436,15 +498,15 @@ func validCodexManagedPath(rel string) bool {
 }
 
 func validateCodexArchive(archivePath, root string, managed []string) error {
+	return withBackupPayload(archivePath, func(reader io.Reader) error { return validateCodexArchivePayload(reader, root, managed) })
+}
+
+func validateCodexArchivePayload(payload io.Reader, root string, managed []string) error {
 	if info, err := os.Lstat(root); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
 		return fmt.Errorf("destination root %s is not a real directory", root)
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return withBackupPayload(archivePath, func(reader io.Reader) error { return validateCodexArchivePayload(reader, root, managed) })
-}
-
-func validateCodexArchivePayload(payload io.Reader, root string, managed []string) error {
 	gz, err := gzip.NewReader(payload)
 	if err != nil {
 		return err
