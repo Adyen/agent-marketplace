@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -516,6 +517,82 @@ func TestSyncLockedRejectsDriftedArchiveEvidenceAndUpdateHeals(t *testing.T) {
 	}
 	if !strings.Contains(output, "content digest unchanged") {
 		t.Fatalf("healthy update output changed:\n%s", output)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestUpdateHealsDriftedArchiveEvidenceForCollectionMember(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, drift := newDriftableV4MarketplaceCollectionServer(t, "mp", "bundle", "review")
+	defer server.Close()
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	if output, err := executeCommand("install", server.URL+"/r/tools/collection/bundle", "--scope", "user", "--yes"); err != nil {
+		t.Fatalf("install Marketplace collection: %v\n%s", err, output)
+	}
+	records := func() map[string]lockfile.MarketplaceResourceLock {
+		doc := readLockDocument(t, lockPath)
+		if len(doc.Marketplaces) != 1 {
+			t.Fatalf("lock marketplaces = %#v", doc.Marketplaces)
+		}
+		byKind := map[string]lockfile.MarketplaceResourceLock{}
+		for _, record := range doc.Marketplaces[0].Resources {
+			byKind[record.Kind] = record
+		}
+		return byKind
+	}
+	before := records()
+	if before["collection"].Name != "bundle" || before["skill"].Name != "review" || len(before["skill"].SelectedBy) == 0 {
+		t.Fatalf("installed lock lacks a collection-selected member: %#v", before)
+	}
+
+	newDigest := drift()
+	if output, err := executeCommand("sync", "--locked"); err == nil || !strings.Contains(output, "locked archive digest drifted") {
+		t.Fatalf("sync --locked accepted drifted member evidence: %v\n%s", err, output)
+	}
+
+	output, err := executeCommand("update")
+	if err != nil {
+		t.Fatalf("update after member archive drift: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "marketplace.archive-evidence-refreshed") || !strings.Contains(output, newDigest) {
+		t.Fatalf("update did not report the member's archive-evidence refresh:\n%s", output)
+	}
+	after := records()
+	member := after["skill"]
+	if string(member.ArchiveDigest) != newDigest || member.ContentDigest != before["skill"].ContentDigest || member.Revision != before["skill"].Revision {
+		t.Fatalf("update did not heal member lock evidence: %#v", member)
+	}
+	if fmt.Sprint(member.SelectedBy) != fmt.Sprint(before["skill"].SelectedBy) {
+		t.Fatalf("update changed member selection: %#v, was %#v", member, before["skill"])
+	}
+	if fmt.Sprint(after["collection"]) != fmt.Sprint(before["collection"]) {
+		t.Fatalf("update changed the unchanged collection record: %#v, was %#v", after["collection"], before["collection"])
+	}
+	for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
+		if output, err := executeCommand(args...); err != nil {
+			t.Fatalf("%v after update healed the lock: %v\n%s", args, err, output)
+		}
+	}
+
+	lockBefore := readTestFile(t, lockPath)
+	output, err = executeCommand("update")
+	if err != nil {
+		t.Fatalf("healthy update: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "marketplace.archive-evidence-refreshed") || !strings.Contains(output, "leaf is pinned by a collection revision") {
+		t.Fatalf("healthy update output changed:\n%s", output)
+	}
+	if !bytes.Equal(lockBefore, readTestFile(t, lockPath)) {
+		t.Fatal("healthy update rewrote the lock")
 	}
 }
 
