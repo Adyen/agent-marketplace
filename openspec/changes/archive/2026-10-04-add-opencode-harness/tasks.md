@@ -40,4 +40,4 @@ filesystem, ownership, acquisition, and repair requirements remain applicable.
 - [x] 4.5 Update user/library/native-path docs and the runtime protocol/version/limits note. Record the new harness support and intentional first-release limits in these change artifacts.
 - [x] 4.6 Audit annotated scenario witnesses; run affected checks, `make validate`, `make spec-check`, and the combined E2E and TUI gates. Run the native gate separately.
 - [x] 4.7 Privacy-screen the exact outgoing implementation, run OCR including test logic, report excluded files, fix confirmed findings, and complete a separate pre-push adversarial review.
-- [ ] 4.8 Commit the implementation, archive this change as the final commit, and push the branch with the user's author/committer attribution.
+- [x] 4.8 Commit the implementation, archive this change as the final commit, and push the branch with the user's author/committer attribution.

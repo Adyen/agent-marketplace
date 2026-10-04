@@ -50,6 +50,8 @@ handwritten aggregate/adapter ownership and scope boundaries; and whether
 regression tests exercise actual outcomes. No unresolved actionable defect was
 identified in that review. This is scoped evidence, not proof of absence of bugs.
 
+Reviewed implementation revision: `d77d3e76`.
+
 Reviewed code content SHA-256 (sorted paths plus NUL-delimited file contents):
 `7336fe1a26ef31fc835295b1ce0f72ac905b92047a0b5a2469e35390b6066fc0`.
 
