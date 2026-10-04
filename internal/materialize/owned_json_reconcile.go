@@ -730,8 +730,9 @@ func retainPostponedOwnership(patch *ownedJSONPatch, existing []ownedJSONExistin
 		if !containsOwnershipID(stale, entry.value.ID) {
 			continue
 		}
-		resource, _ := proof.Resource(entry.value.ID)
-		patch.owned = append(patch.owned, ownership.Entry{Kind: entry.value.ID.Kind, Container: entry.value.ID.Container, Key: entry.value.ID.Key, IdentityDigest: entry.value.ID.IdentityDigest, ValueDigest: entry.value.ValueDigest, Resource: resource})
+		if owned, ok := proof.Entry(entry.value.ID); ok {
+			patch.owned = append(patch.owned, owned)
+		}
 	}
 }
 

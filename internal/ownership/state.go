@@ -639,6 +639,15 @@ func (p Proof) OwnedIDs() []EntryID {
 	return ids
 }
 
+func (p Proof) Entry(id EntryID) (Entry, bool) {
+	e, ok := p.entries[id.mapKey()]
+	if !ok {
+		return Entry{}, false
+	}
+	e.SourceEvidence = append([]HookSourceEvidence(nil), e.SourceEvidence...)
+	return e, true
+}
+
 // Resource returns the marketplace resource recorded for an owned identity.
 func (p Proof) Resource(id EntryID) (string, bool) {
 	e, ok := p.entries[id.mapKey()]

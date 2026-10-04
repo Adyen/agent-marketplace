@@ -942,6 +942,152 @@ func TestNativeHookJSONFIFOChild(t *testing.T) {
 	}
 }
 
+func TestNativeHookPostponedOwnershipRetainsProof(t *testing.T) {
+	const (
+		fpAlpha = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		fpBeta  = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		fpGamma = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	)
+	classify := func(t *testing.T, spec ownedJSONFileSpec, doc []byte, proof ownership.Proof) ([]ownedJSONExistingEntry, ownership.DriftReport) {
+		t.Helper()
+		parsed, err := jsonc.Parse(spec.rel, doc)
+		if err != nil {
+			t.Fatalf("parse fixture aggregate: %v", err)
+		}
+		container, _, err := ownedJSONContainerNode(parsed, spec)
+		if err != nil || container == nil {
+			t.Fatalf("fixture container missing: %v", err)
+		}
+		existing, err := ownedJSONExistingEntries(spec, container)
+		if err != nil {
+			t.Fatalf("fixture existing entries: %v", err)
+		}
+		existingValues := make([]ownership.EntryValue, 0, len(existing))
+		for _, e := range existing {
+			existingValues = append(existingValues, e.value)
+		}
+		return existing, ownership.Classify(proof, existingValues, nil)
+	}
+
+	t.Run("clean_hook_retains_source_proof", func(t *testing.T) {
+		repoRoot, home, codexHome := nativeHookJSONTestEnvironment(t)
+		tc := nativeHookJSONCaseByName(t, "factory_repo")
+		_, spec, err := nativeHookJSONLayout(outputKey{target: tc.target, machineScope: tc.machineScope}, repoRoot)
+		if err != nil {
+			t.Fatal("native hook layout did not resolve")
+		}
+		root, err := ownership.CanonicalRoot(tc.root(repoRoot, home, codexHome))
+		if err != nil {
+			t.Fatal("expected root could not be canonicalized")
+		}
+		work := nativeHookJSONWork(t, tc, "alpha", nativeHookJSONSelectedCommand)
+		rule := string(work.entries[0].raw)
+		entry := nativeHookProofEntry(t, tc.event, rule, "alpha", fpAlpha)
+		entry.SourceEvidence = []ownership.HookSourceEvidence{{Resource: "beta", SourceDigest: fpBeta}}
+
+		handwritten := nativeHookJSONGroup(nativeHookJSONManualCommand, tc.matcher, "")
+		doc := []byte(`{` + nativeHookJSONJSONString(tc.otherEvent) + `:[` + handwritten + `],` +
+			nativeHookJSONJSONString(tc.event) + `:[` + rule + `]}` + "\n")
+		path := filepath.Join(root, filepath.FromSlash(spec.rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal("create aggregate parent")
+		}
+		if err := os.WriteFile(path, doc, 0o640); err != nil {
+			t.Fatal("seed native aggregate")
+		}
+		satDigest := ownership.Digest([]byte(`{"type":"prompt"}`))
+		satisfaction := ownership.HookSatisfaction{
+			Container:      tc.otherEvent,
+			IdentityDigest: ownership.HookIdentityDigest(tc.otherEvent, satDigest),
+			ValueDigest:    satDigest,
+			Sources:        []ownership.HookSourceEvidence{{Resource: "gamma", SourceDigest: fpGamma}},
+		}
+		store := writeNativeSatisfactionState(t, root, nativeHookLayout{rel: spec.rel}, doc,
+			[]ownership.Entry{entry}, []ownership.HookSatisfaction{satisfaction})
+		proof, err := store.Proof(spec.rel)
+		if err != nil {
+			t.Fatalf("Proof: %v", err)
+		}
+		existing, drift := classify(t, spec, doc, proof)
+		if len(drift.Stale) != 1 || drift.Stale[0] != entry.ID() {
+			t.Fatalf("stale = %#v, want only the owned hook identity", drift.Stale)
+		}
+
+		patch := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, true)
+		if len(patch.prune) != 0 || len(patch.deleteHookEvent) != 0 {
+			t.Fatal("incomplete run pruned or deleted content")
+		}
+		if len(patch.prunePostponed) != 1 || patch.prunePostponed[0] != entry.ID() {
+			t.Fatalf("prunePostponed = %#v, want the stale owned identity", patch.prunePostponed)
+		}
+		if len(patch.owned) != 1 || !reflect.DeepEqual(patch.owned[0], entry) {
+			t.Fatalf("postponed retention = %#v, want the recorded entry %#v", patch.owned, entry)
+		}
+		elements := patch.hookElements[tc.event]
+		if len(elements) != 1 || string(elements[0]) != rule {
+			t.Fatal("incomplete run dropped the retained element bytes")
+		}
+		if len(patch.hookElements[tc.otherEvent]) != 1 {
+			t.Fatal("incomplete run changed the handwritten element")
+		}
+		patch.owned[0].SourceEvidence[0].SourceDigest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+		if owned, ok := proof.Entry(entry.ID()); !ok || !reflect.DeepEqual(owned, entry) {
+			t.Fatal("the retained entry aliases proof state")
+		}
+
+		complete := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, false)
+		if len(complete.owned) != 0 || len(complete.prune) != 1 {
+			t.Fatal("complete-run control did not prune the stale entry")
+		}
+	})
+
+	t.Run("edited_mcp_entry_retains_recorded_digest", func(t *testing.T) {
+		nativeHookJSONTestEnvironment(t)
+		root := t.TempDir()
+		const rel = "mcp_config.json"
+		spec := ownedJSONFileSpec{rel: rel, container: "mcpServers", keyed: true}
+		original := `{"command":"orig","type":"stdio"}`
+		edited := `{"command":"edited","type":"stdio"}`
+		recorded := ownership.Entry{
+			Kind:           ownership.KindMcpServer,
+			Container:      "mcpServers",
+			Key:            "server",
+			IdentityDigest: ownership.McpIdentityDigest("server"),
+			ValueDigest:    ownership.Digest([]byte(original)),
+			Resource:       "res",
+		}
+		doc := []byte(`{"mcpServers":{"other":{"command":"keep","type":"stdio"},"server":` + edited + `}}` + "\n")
+		if err := os.WriteFile(filepath.Join(root, rel), doc, 0o640); err != nil {
+			t.Fatal("seed edited keyed aggregate")
+		}
+		store := writeNativeSatisfactionState(t, root, nativeHookLayout{rel: rel}, doc, []ownership.Entry{recorded}, nil)
+		proof, err := store.Proof(rel)
+		if err != nil {
+			t.Fatalf("Proof: %v", err)
+		}
+		existing, drift := classify(t, spec, doc, proof)
+		if len(drift.Stale) != 1 || drift.Stale[0] != recorded.ID() {
+			t.Fatalf("stale = %#v, want only the recorded server identity", drift.Stale)
+		}
+
+		patch := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, true)
+		if len(patch.owned) != 1 || !reflect.DeepEqual(patch.owned[0], recorded) {
+			t.Fatalf("postponed retention = %#v, want the recorded entry %#v", patch.owned, recorded)
+		}
+		if patch.owned[0].ValueDigest == ownership.Digest([]byte(edited)) {
+			t.Fatal("postponed retention adopted the hand-edited bytes as owned-clean")
+		}
+		if len(patch.deleteMcp) != 0 || len(patch.prune) != 0 || len(patch.writeMcp) != 0 {
+			t.Fatal("incomplete run wrote, pruned, or deleted keyed entries")
+		}
+
+		complete := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, false)
+		if len(complete.owned) != 0 || len(complete.prune) != 1 || len(complete.deleteMcp) != 1 {
+			t.Fatal("complete-run control did not prune the stale keyed entry")
+		}
+	})
+}
+
 func TestNativeHookJSONFIFOIsBounded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
