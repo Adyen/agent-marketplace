@@ -50,7 +50,7 @@ func readBackupSourceMetadata(root *fsboundary.Dir, rel string) (info fs.FileInf
 	if info.Mode()&fs.ModeSymlink != 0 {
 		link, err = native.Readlink(name)
 		if err != nil {
-			return nil, "", err
+			return nil, "", errors.Join(fsboundary.ErrGenerationConflict, err)
 		}
 		after, statErr := native.Lstat(name)
 		if statErr != nil {
