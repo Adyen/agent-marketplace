@@ -83,7 +83,8 @@ type configWrittenMsg struct {
 }
 
 type syncDoneMsg struct {
-	err error
+	err      error
+	warnings []error
 }
 
 const (
@@ -97,6 +98,7 @@ type updateDoneMsg struct {
 	snapshot   snapshotLoadedMsg
 	stage      string
 	err        error
+	warnings   []error
 }
 
 // detailContentMsg carries the glamour-rendered resource content for the
@@ -1168,7 +1170,8 @@ func runDependencySyncCmd(ctx context.Context, workspace pipeline.Workspace, syn
 		if err != nil {
 			return syncDoneMsg{err: err}
 		}
-		return syncDoneMsg{err: sync(ctx, ws)}
+		warnings, syncErr := sync(ctx, ws)
+		return syncDoneMsg{err: syncErr, warnings: warnings}
 	}
 }
 
@@ -1178,10 +1181,16 @@ func runDependencyUpdateCmd(ctx context.Context, workspace pipeline.Workspace, h
 		if err != nil {
 			return updateDoneMsg{generation: generation, stage: updateStageRefresh, err: err}
 		}
-		lifecycleErr := update(ctx, ws)
+		warnings, lifecycleErr := update(ctx, ws)
 		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
-		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh}
+		for _, warning := range warnings {
+			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
+		}
+		current.diagnostics = deduplicateDiagnostics(current.diagnostics)
+		current.errs = diagnosticValues(current.diagnostics, diagnosticError)
+		current.warnings = diagnosticValues(current.diagnostics, diagnosticWarning)
+		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh, warnings: warnings}
 		if lifecycleErr != nil {
 			result.err = fmt.Errorf("update %s failed: %w", result.stage, lifecycleErr)
 		} else if reloadErr := errors.Join(diagnosticErrors(current.diagnostics)...); reloadErr != nil {
