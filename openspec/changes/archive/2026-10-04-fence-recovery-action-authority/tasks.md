@@ -5,4 +5,4 @@
 - [x] Existing validated publisher callback and optional public recovery read checkpoint.
 - [x] Prepared cleanup refusal preserves actual stage, restored authority genuinely rolls back.
 - [x] Final Linux/macOS/recovery races/validate/spec/lifecycle cost/all-file review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
