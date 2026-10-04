@@ -477,10 +477,13 @@ func (s *Store) nextRecord(current *Record, rel string, contentDigest string, en
 		}
 		return a.IdentityDigest < b.IdentityDigest
 	})
-	if len(sorted) == 0 {
+	fileState := next.Files[rel]
+	fileState.ContentDigest = contentDigest
+	fileState.Entries = sorted
+	if len(sorted) == 0 && len(fileState.HookSatisfactions) == 0 {
 		delete(next.Files, rel)
 	} else {
-		next.Files[rel] = FileState{ContentDigest: contentDigest, Entries: sorted}
+		next.Files[rel] = fileState
 	}
 	return next, nil
 }

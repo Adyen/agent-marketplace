@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -741,6 +742,83 @@ func TestNativeSatisfactionMirrorFingerprint(t *testing.T) {
 			assertNativeSatisfactionUnmanaged(t, store, nativeRoot, hcc.TargetFactory, false, satisfaction.ID())
 			assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
 			assertFileUnchanged(t, store.StateFile(), stateBefore, stateMode, stateMtime)
+		})
+	}
+}
+
+// spec: hook-native-location-tolerance/satisfaction-only-state-remains-unowned
+func TestNativeSatisfactionSurvivesOwnedMutation(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	resolved, sourceRoot := namedHookFixture(t, config.RepoCommitted, hcc.TargetFactory, "alpha")
+	fingerprint := namedFingerprint(t, sourceRoot, "alpha", string(hcc.TargetFactory), HookScopeRepository)
+	seed := sharedNativeSeed(t, hcc.TargetFactory, false)
+	layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
+	postBefore := `{"hooks":[{"command":"echo post-before","type":"command"}],"matcher":"Execute"}`
+	postAfter := `{"hooks":[{"command":"echo post-after","type":"command"}],"matcher":"Execute"}`
+	baseDoc := []byte(`{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + postBefore + `]}` + "\n")
+	updatedDoc := []byte(`{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + postAfter + `]}` + "\n")
+	removedDoc := []byte(`{"PreToolUse":[` + seed.rule + `]}` + "\n")
+
+	for _, tc := range []struct {
+		name    string
+		next    []byte
+		entries []ownership.Entry
+	}{
+		{name: "owned_update", next: updatedDoc, entries: []ownership.Entry{nativeHookProofEntry(t, "PostToolUse", postAfter, "other", "")}},
+		{name: "owned_removal", next: removedDoc},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			nativeRoot := filepath.Join(repoRoot, ".factory")
+			nativePath := writeNativeFile(t, nativeRoot, layout, baseDoc)
+			satisfaction := nativeHookSatisfaction(t, seed.event, seed.rule,
+				[]ownership.HookSourceEvidence{{Resource: "alpha", SourceDigest: fingerprint}})
+			owned := nativeHookProofEntry(t, "PostToolUse", postBefore, "other", "")
+			store := writeNativeSatisfactionState(t, nativeRoot, layout, baseDoc,
+				[]ownership.Entry{owned}, []ownership.HookSatisfaction{satisfaction})
+
+			priorProof, err := store.Proof(layout.rel)
+			if err != nil {
+				t.Fatalf("Proof: %v", err)
+			}
+			if _, err := store.Apply(ownership.Mutation{
+				Rel: layout.rel, AbsFile: nativePath, NextBytes: tc.next,
+				Entries: tc.entries, Reason: ownership.ReasonSync,
+				ExpectPriorGeneration: priorProof.Generation(),
+				ExpectPriorDigest:     ownership.Digest(baseDoc),
+			}); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			mutated, err := os.ReadFile(nativePath)
+			if err != nil || !bytes.Equal(mutated, tc.next) {
+				t.Fatalf("mutated native file = %q (err %v)", mutated, err)
+			}
+
+			proof, err := store.Proof(layout.rel)
+			if err != nil {
+				t.Fatalf("Proof after owned mutation: %v", err)
+			}
+			if got := proof.HookSatisfactions(); !reflect.DeepEqual(got, []ownership.HookSatisfaction{satisfaction}) {
+				t.Fatalf("satisfaction evidence after owned mutation = %+v, want %+v", got, satisfaction)
+			}
+			if proof.OwnedCount() != len(tc.entries) {
+				t.Fatalf("owned count = %d, want %d", proof.OwnedCount(), len(tc.entries))
+			}
+			nativeSnap, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
+			stateSnap, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
+
+			report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+			if err != nil {
+				t.Fatalf("sync after owned mutation: %v", err)
+			}
+			assertNoMaterializeErrors(t, report)
+			assertPathAbsent(t, legacyHookFileFor(hcc.TargetFactory, false, repoRoot, home))
+			assertNoMaterializeChanges(t, report)
+			assertNativeSatisfactionUnmanaged(t, store, nativeRoot, hcc.TargetFactory, false, satisfaction.ID())
+			assertFileUnchanged(t, nativePath, nativeSnap, nativeMode, nativeMtime)
+			assertFileUnchanged(t, store.StateFile(), stateSnap, stateMode, stateMtime)
 		})
 	}
 }

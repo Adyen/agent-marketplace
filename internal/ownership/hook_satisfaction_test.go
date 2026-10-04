@@ -386,3 +386,92 @@ func TestHookSatisfactionInvalidStateRefusesWithoutMutation(t *testing.T) {
 		})
 	}
 }
+
+// spec: hook-native-location-tolerance/satisfaction-only-state-remains-unowned
+func TestHookSatisfactionSurvivesOwnedMutation(t *testing.T) {
+	hookDoc := `"hooks":{"PreToolUse":[` + hookSatisfactionValueA + `]}`
+	beforeDoc := `{` + hookDoc + `,"mcpServers":{"docs":{"command":"echo before"}}}`
+	cases := []struct {
+		name    string
+		nextDoc string
+		entries []Entry
+	}{
+		{
+			name:    "owned_update",
+			nextDoc: `{` + hookDoc + `,"mcpServers":{"docs":{"command":"echo after"}}}`,
+			entries: []Entry{mcpEntry("docs", "docs-server", `{"command":"echo after"}`)},
+		},
+		{
+			name:    "owned_removal",
+			nextDoc: `{` + hookDoc + `,"mcpServers":{}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, st := newHookSatisfactionStore(t, beforeDoc)
+			satisfaction := fixtureHookSatisfaction("PreToolUse", hookSatisfactionValueA,
+				HookSourceEvidence{Resource: "beta", SourceDigest: hookSatisfactionFPBeta},
+				HookSourceEvidence{Resource: "alpha", SourceDigest: hookSatisfactionFPAlpha},
+			)
+			owned := mcpEntry("docs", "docs-server", `{"command":"echo before"}`)
+			entriesJSON, err := json.Marshal([]Entry{owned})
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeRawFileState(t, st, f.rel, rawHookSatisfactionFileState(string(entriesJSON), "["+rawHookSatisfaction(t, satisfaction)+"]"))
+
+			priorProof, err := st.Proof(f.rel)
+			if err != nil {
+				t.Fatalf("Proof: %v", err)
+			}
+			prior, _ := f.readAggregate()
+			if _, err := st.Apply(Mutation{
+				Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(tc.nextDoc),
+				Entries: tc.entries, Reason: ReasonSync,
+				ExpectPriorGeneration: priorProof.Generation(),
+				ExpectPriorDigest:     Digest([]byte(prior)),
+			}); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+
+			expected := satisfaction
+			expected.Sources = []HookSourceEvidence{
+				{Resource: "alpha", SourceDigest: hookSatisfactionFPAlpha},
+				{Resource: "beta", SourceDigest: hookSatisfactionFPBeta},
+			}
+			proof, err := st.Proof(f.rel)
+			if err != nil {
+				t.Fatalf("Proof after mutation: %v", err)
+			}
+			if got := proof.HookSatisfactions(); !reflect.DeepEqual(got, []HookSatisfaction{expected}) {
+				t.Fatalf("satisfaction evidence after owned mutation = %+v, want %+v", got, expected)
+			}
+			satID := satisfaction.ID()
+			if proof.Classify(satID, satisfaction.ValueDigest) != StatusUnmanaged {
+				t.Fatal("handwritten satisfaction became owned through mutation")
+			}
+			if _, ok := proof.Resource(satID); ok {
+				t.Fatal("satisfaction identity gained a resource")
+			}
+			if _, ok := proof.SourceDigest(satID); ok {
+				t.Fatal("satisfaction identity gained a source digest")
+			}
+			if proof.HasHookSource(satID, "alpha", hookSatisfactionFPAlpha) {
+				t.Fatal("satisfaction identity gained owned-source proof")
+			}
+			if proof.OwnedCount() != len(tc.entries) {
+				t.Fatalf("owned count = %d, want %d", proof.OwnedCount(), len(tc.entries))
+			}
+			if len(tc.entries) == 1 {
+				if !reflect.DeepEqual(proof.OwnedIDs(), []EntryID{tc.entries[0].ID()}) ||
+					proof.Classify(tc.entries[0].ID(), tc.entries[0].ValueDigest) != StatusOwnedClean {
+					t.Fatalf("updated owned entry = %v", proof.OwnedIDs())
+				}
+			}
+			got, ok := f.readAggregate()
+			if !ok || got != tc.nextDoc {
+				t.Fatalf("aggregate = %q, want %q", got, tc.nextDoc)
+			}
+		})
+	}
+}
