@@ -21,7 +21,7 @@ func WithoutRepositoryBaseForTest(target target.Target) (restore func(), err err
 	selected.RepositoryBase = nil
 	catalogs[target] = selected
 	shipped = func() (*registry, error) {
-		return &registry{catalogs: catalogs}, nil
+		return &registry{catalogs: catalogs, pluginNames: maps.Clone(loaded.pluginNames)}, nil
 	}
 	return func() { shipped = original }, nil
 }

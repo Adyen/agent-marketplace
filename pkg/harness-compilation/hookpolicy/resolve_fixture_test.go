@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -197,4 +198,147 @@ func TestCompileRefusesTokenWhenCatalogLacksRepositoryBase(t *testing.T) {
 		t.Fatalf("no-token Factory Compile: %v", err)
 	}
 	assertFactoryCompileHook(t, control, "echo no-token")
+}
+
+// spec: hook-resources/no-plugin-only-variable-or-cache-path-is-emitted
+// spec: hook-resources/unknown-variables-are-left-unchanged
+func TestCompileRefusesForeignPluginVariables(t *testing.T) {
+	targets := []hcc.Target{
+		hcc.TargetClaude, hcc.TargetFactory, hcc.TargetCursor, hcc.TargetGemini,
+		hcc.TargetWindsurf, hcc.TargetDevin, hcc.TargetCodex,
+	}
+	scopes := []struct {
+		name  string
+		scope hcc.Scope
+	}{
+		{name: "repository", scope: hcc.ScopeProject},
+		{name: "machine", scope: hcc.ScopeUser},
+	}
+	supportBase := func(tgt hcc.Target, scope hcc.Scope) string {
+		if scope == hcc.ScopeUser {
+			return "/tmp/hook-support/source/guard"
+		}
+		return "." + string(tgt) + "/hook-support/source/guard"
+	}
+	sources := []struct {
+		name   string
+		source string
+	}{
+		{name: "default", source: ""},
+		{name: "claude", source: "claude"},
+	}
+	tokens := []struct {
+		name  string
+		token string
+	}{
+		{name: "bare", token: "$DROID_PLUGIN_ROOT"},
+		{name: "braced", token: "${DROID_PLUGIN_ROOT}"},
+		{name: "quoted", token: `"${DROID_PLUGIN_ROOT}"`},
+	}
+	for _, src := range sources {
+		for _, tgt := range targets {
+			for _, sc := range scopes {
+				for _, tok := range tokens {
+					t.Run(src.name+"/"+string(tgt)+"/"+sc.name+"/"+tok.name, func(t *testing.T) {
+						command := "echo private_foreign_token_probe; " + tok.token + "/scripts/check.sh"
+						var options []ir.HookOption
+						if src.source != "" {
+							options = append(options, ir.WithHookSource(src.source))
+						}
+						hook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", command, "command", nil, ir.SourceRef{}, options...)
+						result, err := hcc.Compile(hook, tgt,
+							hcc.WithPluginRoot(supportBase(tgt, sc.scope)),
+							hcc.WithScope(sc.scope))
+						if err != nil {
+							t.Fatalf("Compile: %v", err)
+						}
+						if result == nil || !result.HasErrors() {
+							t.Fatalf("Compile = %+v, want an error diagnostic", result)
+						}
+						if len(result.Artifacts) != 0 {
+							t.Fatalf("a refused hook must emit zero artifacts, got %d", len(result.Artifacts))
+						}
+						if len(result.Diagnostics) != 1 {
+							t.Fatalf("diagnostics = %+v, want exactly one", result.Diagnostics)
+						}
+						diagnostic := result.Diagnostics[0]
+						if diagnostic.Code != diag.CodeHookEnvUnrepresentable || diagnostic.Severity != hcc.SeverityError {
+							t.Fatalf("diagnostic = %+v, want error %q", diagnostic, diag.CodeHookEnvUnrepresentable)
+						}
+						for _, leaked := range []string{"DROID_PLUGIN_ROOT", "private_foreign_token_probe", command} {
+							if strings.Contains(diagnostic.Message, leaked) || strings.Contains(diagnostic.Hint, leaked) {
+								t.Fatalf("diagnostic leaks a payload value %q: %+v", leaked, diagnostic)
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+
+	factoryHook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Execute",
+		`"${DROID_PLUGIN_ROOT}"/scripts/check.sh`, "command", nil, ir.SourceRef{}, ir.WithHookSource("factory"))
+	declaredProject, err := hcc.Compile(factoryHook, hcc.TargetFactory,
+		hcc.WithPluginRoot(".factory/hook-support/source/guard"), hcc.WithScope(hcc.ScopeProject))
+	if err != nil {
+		t.Fatalf("declared-token Factory Compile: %v", err)
+	}
+	assertFactoryCompileHook(t, declaredProject, `"$FACTORY_PROJECT_DIR"/.factory/hook-support/source/guard/scripts/check.sh`)
+	declaredMachine, err := hcc.Compile(factoryHook, hcc.TargetFactory,
+		hcc.WithPluginRoot("/tmp/hook-support/source/guard"), hcc.WithScope(hcc.ScopeUser))
+	if err != nil {
+		t.Fatalf("declared-token Factory Compile: %v", err)
+	}
+	assertFactoryCompileHook(t, declaredMachine, "/tmp/hook-support/source/guard/scripts/check.sh")
+
+	unknownCommand := "echo $HOME ${AM_PRIVATE_CUSTOM_VAR}"
+	encoded, err := json.Marshal(unknownCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tgt := range targets {
+		for _, sc := range scopes {
+			t.Run("unknown/"+string(tgt)+"/"+sc.name, func(t *testing.T) {
+				hook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", unknownCommand, "command", nil,
+					ir.SourceRef{}, ir.WithHookSource("claude"))
+				result, err := hcc.Compile(hook, tgt,
+					hcc.WithPluginRoot(supportBase(tgt, sc.scope)),
+					hcc.WithScope(sc.scope))
+				if err != nil {
+					t.Fatalf("Compile: %v", err)
+				}
+				if result == nil || result.HasErrors() {
+					t.Fatalf("Compile = %+v, want no error diagnostics", result)
+				}
+				if len(result.Artifacts) != 1 {
+					t.Fatalf("artifacts = %d, want 1", len(result.Artifacts))
+				}
+				if !strings.Contains(string(result.Artifacts[0].Bytes), string(encoded)) {
+					t.Fatalf("artifact = %s, want the command emitted verbatim", result.Artifacts[0].Bytes)
+				}
+			})
+		}
+	}
+
+	restore, err := hookpolicy.WithoutRepositoryBaseForTest(target.TargetFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restore)
+	overridden, err := hcc.Compile(
+		ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash",
+			"echo private_foreign_token_probe; ${DROID_PLUGIN_ROOT}/scripts/check.sh", "command", nil,
+			ir.SourceRef{}, ir.WithHookSource("claude")),
+		hcc.TargetFactory,
+		hcc.WithPluginRoot(".factory/hook-support/source/guard"), hcc.WithScope(hcc.ScopeProject))
+	if err != nil {
+		t.Fatalf("overridden Factory Compile: %v", err)
+	}
+	if overridden == nil || len(overridden.Artifacts) != 0 || len(overridden.Diagnostics) != 1 {
+		t.Fatalf("overridden Compile = %+v, want no artifacts and one diagnostic", overridden)
+	}
+	if diagnostic := overridden.Diagnostics[0]; diagnostic.Code != diag.CodeHookEnvUnrepresentable ||
+		diagnostic.Severity != hcc.SeverityError {
+		t.Fatalf("overridden diagnostic = %+v, want error %q", diagnostic, diag.CodeHookEnvUnrepresentable)
+	}
 }

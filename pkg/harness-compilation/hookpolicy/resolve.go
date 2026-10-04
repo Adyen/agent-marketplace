@@ -194,7 +194,7 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 		if !resolveTimeout(h, dst, srcCat.Timeout, dstCat.Timeout, dstEvent, true, &res, warn, fail) {
 			return res
 		}
-		rewriteCommand(h, srcCat, dstCat, res.Event, scope, supportBase, true, &res, fail)
+		rewriteCommand(h, srcCat, dstCat, res.Event, scope, supportBase, true, r.pluginNames, &res, fail)
 		return res
 	}
 
@@ -232,7 +232,7 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 	if !resolveTimeout(h, dst, srcUnit(srcCat), dstCat.Timeout, dstEvent, false, &res, warn, fail) {
 		return res
 	}
-	rewriteCommand(h, srcCat, dstCat, res.Event, scope, supportBase, false, &res, fail)
+	rewriteCommand(h, srcCat, dstCat, res.Event, scope, supportBase, false, r.pluginNames, &res, fail)
 	return res
 }
 
@@ -388,9 +388,9 @@ func resolveTimeout(h *ir.Hook, dst target.Target, src, dstUnit timeoutPolicy, d
 var envReference = regexp.MustCompile(`"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?`)
 
 // rewriteCommand applies design D6: $NAME/${NAME} references are resolved
-// through the source catalog. References no source catalog declares are left
+// through the source catalog. References no shipped catalog recognizes are left
 // unchanged. sameHarness keeps every non-plugin reference as authored.
-func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scope, supportBase string, sameHarness bool, res *Resolved, fail func(string, string, string) bool) bool {
+func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scope, supportBase string, sameHarness bool, pluginNames map[string]bool, res *Resolved, fail func(string, string, string) bool) bool {
 	command := h.Command
 	matches := envReference.FindAllStringSubmatchIndex(command, -1)
 	if len(matches) == 0 {
@@ -408,6 +408,9 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 		}
 		concept, plugin, declared := lookupEnv(srcCat, name)
 		if !declared {
+			if pluginNames[name] {
+				return fail(diag.CodeHookEnvUnrepresentable, "A plugin-only variable is not declared by the hook source; hook suppressed", "Use a variable declared by the source harness")
+			}
 			continue
 		}
 		out.WriteString(command[pos:m[0]])
