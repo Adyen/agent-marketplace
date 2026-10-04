@@ -3,6 +3,7 @@ package backup
 import (
 	"archive/tar"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -55,6 +56,39 @@ func TestMappedRestoreRefusesReplacedGeneration(t *testing.T) {
 }
 
 // spec: backup-recovery/restore-file-hardlink-refuses-without-foreign-write
+func TestRestoreKeepsUnreadableArchivedModes(t *testing.T) {
+	for _, mode := range []os.FileMode{0o0600, 0o0640, 0o0400, 0o0200, 0o0000} {
+		t.Run(fmt.Sprintf("mode=%#o", mode), func(t *testing.T) {
+			parent, chainErr := fsboundary.OpenDir(t.TempDir())
+			if chainErr != nil {
+				t.Fatal(chainErr)
+			}
+			t.Cleanup(func() { _ = parent.Close() })
+			if err := publishRestoredFile(parent, "restored.md", strings.NewReader("inert restored payload"), mode); err != nil {
+				t.Fatalf("restore publication refused archived mode %#o: %v", mode, err)
+			}
+			path := filepath.Join(parent.Path(), "restored.md")
+			info, err := os.Stat(path)
+			if err != nil || info.Mode().Perm() != mode.Perm() {
+				t.Fatalf("published mode drifted: %#o %v want %#o", info.Mode().Perm(), err, mode)
+			}
+			data, err := os.OpenFile(path, os.O_RDONLY, 0)
+			if err != nil && mode.Perm()&0o400 != 0 {
+				t.Fatalf("published content unreadable: %v", err)
+			}
+			if data != nil {
+				got, readErr := io.ReadAll(data)
+				if readErr != nil || string(got) != "inert restored payload" {
+					t.Fatalf("published bytes drifted: %q %v", got, readErr)
+				}
+				if closeErr := data.Close(); closeErr != nil {
+					t.Fatal(closeErr)
+				}
+			}
+		})
+	}
+}
+
 func TestRestoreRegularFileRefusesHardlinkedDestination(t *testing.T) {
 	home, root := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)

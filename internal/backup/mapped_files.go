@@ -65,7 +65,11 @@ func restoreMappedFile(reader io.Reader, header *tar.Header, mappings []map[stri
 	}
 	defer func() {
 		if closeErr := anchor.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			if err != nil {
+				err = errors.Join(err, closeErr)
+			} else {
+				err = closeErr
+			}
 		}
 	}()
 	captured, err := anchor.OpenPath(filepath.Base(parent))
@@ -74,7 +78,11 @@ func restoreMappedFile(reader io.Reader, header *tar.Header, mappings []map[stri
 	}
 	defer func() {
 		if closeErr := captured.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			if err != nil {
+				err = errors.Join(err, closeErr)
+			} else {
+				err = closeErr
+			}
 		}
 	}()
 	return publishRestoredFile(captured, filepath.Base(destination), reader, header.FileInfo().Mode().Perm())

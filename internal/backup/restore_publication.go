@@ -16,7 +16,11 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			if err != nil {
+				err = errors.Join(err, closeErr)
+			} else {
+				err = closeErr
+			}
 		}
 	}()
 	if file.Link() != nil {
@@ -26,17 +30,26 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 	if err != nil {
 		return err
 	}
-	created, err := staged.Stat()
-	if err != nil {
-		return errors.Join(err, staged.Close())
-	}
+	var created os.FileInfo
+	stagedClosed := false
+	defer func() {
+		if !stagedClosed {
+			if closeErr := staged.Close(); closeErr != nil {
+				if err != nil {
+					err = errors.Join(err, closeErr)
+				} else {
+					err = closeErr
+				}
+			}
+		}
+	}()
 	defer func() {
 		native, openErr := parent.NativeRoot()
 		if openErr != nil {
 			err = errors.Join(err, openErr)
 			return
 		}
-		if current, statErr := native.Lstat(stageName); statErr == nil && os.SameFile(created, current) {
+		if current, statErr := native.Lstat(stageName); statErr == nil && created != nil && os.SameFile(created, current) {
 			if removeErr := parent.Unlink(stageName); removeErr != nil {
 				err = errors.Join(err, removeErr)
 			}
@@ -45,19 +58,23 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	if _, err := io.Copy(staged, reader); err != nil {
-		return errors.Join(err, staged.Close())
+	created, err = staged.Stat()
+	if err != nil {
+		return err
 	}
-	if err := staged.Chmod(mode); err != nil {
-		return errors.Join(err, staged.Close())
+	// The archived mode can revoke our own read access; apply it only after the
+	// payload is written and the staged name is validated against the still-open
+	// descriptor.
+	if _, err := io.Copy(staged, reader); err != nil {
+		return err
 	}
 	info, err := staged.Stat()
 	if err != nil {
-		return errors.Join(err, staged.Close())
+		return err
 	}
-	identity, err := fsboundary.FileInfoIdentity(info)
-	if closeErr := staged.Close(); err != nil || closeErr != nil {
-		return errors.Join(err, closeErr)
+	written, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return err
 	}
 	snapshot, err := fsboundary.CaptureDestination(parent, stageName, fsboundary.LinkPolicyRepository)
 	if err != nil {
@@ -65,14 +82,36 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 	}
 	defer func() {
 		if closeErr := snapshot.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			if err != nil {
+				err = errors.Join(err, closeErr)
+			} else {
+				err = closeErr
+			}
 		}
 	}()
-	if snapshot.Link() != nil || !snapshot.Identity().SameState(identity) {
+	if snapshot.Link() != nil || !snapshot.Identity().SameState(written) {
 		return fsboundary.ErrGenerationConflict
 	}
 	if err := snapshot.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
 		return err
+	}
+	if err := staged.Chmod(mode); err != nil {
+		return err
+	}
+	info, err = staged.Stat()
+	if err != nil {
+		return err
+	}
+	identity, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return err
+	}
+	if !identity.SameObject(written) || identity.Mode.Perm() != mode.Perm() {
+		return fsboundary.ErrGenerationConflict
+	}
+	stagedClosed = true
+	if closeErr := staged.Close(); closeErr != nil {
+		return closeErr
 	}
 	if file.Exists() {
 		if err := file.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
