@@ -60,7 +60,7 @@ type pruneDirectoryEntry struct {
 
 func (e pruneDirectoryEntry) Name() string { return e.name }
 
-func readPruneDirectory(dir string, boundary *destinationBoundary, keep func(string) bool) (entries []pruneDirectoryEntry, err error) {
+func readPruneDirectory(dir string, boundary *destinationBoundary, keep func(string) bool, classifyRegular bool) (entries []pruneDirectoryEntry, err error) {
 	root, err := capturePruneDirectory(dir, boundary)
 	if err != nil {
 		return nil, err
@@ -126,17 +126,26 @@ func readPruneDirectory(dir string, boundary *destinationBoundary, keep func(str
 			if !before.SameState(after) {
 				return nil, fsboundary.ErrGenerationConflict
 			}
-		} else if info.Mode().IsRegular() {
-			if boundary != nil && boundary.pruneMarkerReadHook != nil {
-				boundary.pruneMarkerReadHook(filepath.Join(dir, name.Name()))
+		} else if classifyRegular && info.Mode().IsRegular() {
+			identity, err := fsboundary.FileInfoIdentity(info)
+			if err != nil {
+				return nil, err
 			}
-			data, readErr := readNativeCommandSnapshot(root, name.Name(), info)
-			if readErr != nil && (errors.Is(readErr, fsboundary.ErrGenerationConflict) ||
-				errors.Is(readErr, fsboundary.ErrUnsafePath) || errors.Is(readErr, fsboundary.ErrUnsafeFile) ||
-				errors.Is(readErr, fsboundary.ErrTooLarge)) {
-				return nil, readErr
+			// A file that is already multiply linked cannot have been written by
+			// this tool as output: marker readers keep it unowned instead of
+			// blocking an otherwise independent sync.
+			if identity.Links == 1 {
+				if boundary != nil && boundary.pruneMarkerReadHook != nil {
+					boundary.pruneMarkerReadHook(filepath.Join(dir, name.Name()))
+				}
+				data, readErr := readNativeCommandSnapshot(root, name.Name(), info)
+				if readErr != nil && (errors.Is(readErr, fsboundary.ErrGenerationConflict) ||
+					errors.Is(readErr, fsboundary.ErrUnsafePath) || errors.Is(readErr, fsboundary.ErrUnsafeFile) ||
+					errors.Is(readErr, fsboundary.ErrTooLarge)) {
+					return nil, readErr
+				}
+				entry.managedCommand = readErr == nil && isManagedCommandContent(data)
 			}
-			entry.managedCommand = readErr == nil && isManagedCommandContent(data)
 		}
 		entries = append(entries, entry)
 	}

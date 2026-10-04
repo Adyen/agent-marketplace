@@ -25,7 +25,7 @@ func BenchmarkPruneDirectoryReadDisk(b *testing.B) {
 				var err error
 				if captured {
 					var entries []pruneDirectoryEntry
-					entries, err = readPruneDirectory(dir, nil, nil)
+					entries, err = readPruneDirectory(dir, nil, nil, true)
 					count = len(entries)
 				} else {
 					var entries []os.DirEntry

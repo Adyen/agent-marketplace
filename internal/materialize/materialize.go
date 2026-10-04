@@ -3928,7 +3928,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 	if len(portable) > 0 {
 		readBoundary = portable[0].boundary
 	}
-	entries, err := readPruneDirectory(skillsDir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep })
+	entries, err := readPruneDirectory(skillsDir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep }, pruneStaleEntries)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return report, nil
@@ -4138,7 +4138,7 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 	if len(boundaries) > 0 {
 		readBoundary = boundaries[0]
 	}
-	entries, err := readPruneDirectory(dir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep })
+	entries, err := readPruneDirectory(dir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep }, true)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return nil
