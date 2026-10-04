@@ -841,12 +841,58 @@ func (s *Store) abandon(j *Journal) ([]RecoveryOutcome, error) {
 	return outcomes, coded(diag.CodeOwnershipForeignChange, j.File, ErrForeignChange)
 }
 
-func (s *Store) removeStaged(j *Journal) error {
+func (s *Store) removeStaged(j *Journal) (err error) {
 	if j.StagedPath == "" {
 		return nil
 	}
-	if err := os.Remove(j.StagedPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("ownership: remove staged file: %w", err)
+	prefix := fmt.Sprintf("%s.am-staged-%d-", j.AbsFile, j.Generation)
+	if !filepath.IsAbs(j.StagedPath) || !strings.HasPrefix(j.StagedPath, prefix) || filepath.Dir(j.StagedPath) != filepath.Dir(j.AbsFile) {
+		return fsboundary.ErrUnsafePath
 	}
-	return nil
+	if err := s.ensureUnderRoot(j.AbsFile); err != nil {
+		return errors.Join(fsboundary.ErrUnsafePath, err)
+	}
+	parent, err := s.captureAggregateParent(j.StagedPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	file, err := fsboundary.CaptureDestination(parent, filepath.Base(j.StagedPath), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil {
+		return fsboundary.ErrUnsafeFile
+	}
+	if !file.Exists() {
+		return nil
+	}
+	data, _, err := file.ReadTarget(file.Identity().Size)
+	if err != nil {
+		return err
+	}
+	if Digest(data) != j.NextDigest {
+		return fsboundary.ErrGenerationConflict
+	}
+	fresh, err := s.captureAggregateParent(j.StagedPath)
+	if err != nil {
+		return err
+	}
+	unchanged := fresh.Identity().SameObject(parent.Identity())
+	if err := fresh.Close(); err != nil {
+		return err
+	}
+	if !unchanged {
+		return fsboundary.ErrGenerationConflict
+	}
+	return file.RemoveLeaf()
 }
