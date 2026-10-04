@@ -104,6 +104,7 @@ func TestDefinitionsAppendCodexWithoutChangingExistingTargets(t *testing.T) {
 		{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4},
 		{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
 		{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
+		{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
 	}
 	if got := Definitions(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Definitions() = %#v, want %#v", got, want)

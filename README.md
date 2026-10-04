@@ -5,7 +5,7 @@ resources into the AI coding tools you use. A resource is a skill, command,
 subagent, hook, or MCP server. The tool reads resources from registries (Git
 repositories or local folders) and from hosted Marketplaces, then writes each
 one in the native layout of every harness you target: Factory Droid, Claude
-Code, Cursor, Windsurf, Gemini CLI, Devin CLI, and Codex.
+Code, Cursor, Windsurf, Gemini CLI, Devin CLI, Codex, and OpenCode.
 
 It is meant for teams and organizations that share agent resources across many
 repositories and machines, and for developers who want one command to keep
@@ -490,6 +490,54 @@ entry, and the mode does not change how their ownership is tracked.
 
 ---
 
+## OpenCode
+
+Select OpenCode with `H` in the TUI or add `opencode` to your `harnesses:` list.
+It is opt-in; existing defaults keep their targets.
+
+```yaml
+apiVersion: agent-marketplace/v4
+harnesses: [opencode]
+```
+
+| Resource | Repository output | Machine output |
+|---|---|---|
+| Skill | `.opencode/skills/<name>/SKILL.md` | `$XDG_CONFIG_HOME/opencode/skills/<name>/SKILL.md` |
+| Command | `.opencode/commands/<name>.md` | `$XDG_CONFIG_HOME/opencode/commands/<name>.md` |
+| Subagent | `.opencode/agents/<name>.md` | `$XDG_CONFIG_HOME/opencode/agents/<name>.md` |
+| Hook | `.opencode/hooks/agent-marketplace/<name>.json` plus a shared adapter in `plugins/` | The same paths under the machine root |
+| MCP | `opencode.json` or the existing `opencode.jsonc`, under `mcp` | The machine root's `opencode.json` or existing `opencode.jsonc`, under `mcp` |
+
+Without `XDG_CONFIG_HOME`, the machine root is `~/.config/opencode`.
+An absolute `OPENCODE_CONFIG_DIR` selects the resource directory; an absolute
+`OPENCODE_CONFIG` selects the configuration file separately. Existing native
+configuration in `.opencode` takes precedence over the repository root file.
+Sync preserves handwritten MCP entries, comments, unrelated settings, and file
+permissions through durable ownership state. `doctor --repair` uses the same
+adoption and confirmation rules as the other owned aggregates.
+
+Both materialization modes work. The fixed hook adapter is always copied as a
+regular file so it discovers declarations beside its installed location.
+Commands retain `$ARGUMENTS` and positional placeholders; agents retain native
+subagent mode and supported tool/permission rules. Unsupported restrictions
+produce errors rather than being silently dropped. Rules and arbitrary JS/TS
+plugin conversion are unsupported.
+
+Conversion is bidirectional:
+
+```sh
+agent-marketplace convert --from claude --to opencode --out ./converted ./registry
+agent-marketplace convert --from opencode --to claude --out ./converted-back ./workspace
+```
+
+The command-hook adapter supports `PreToolUse` for ordinary tools with bare tool
+names, `|` alternatives, or `*`. Active callbacks run handlers in the native
+workspace before the tool and block on handler failure or a blocking decision.
+OpenCode can skip absent, disabled, or failed plugins; those hooks are inactive.
+The [compatibility note](docs/harness-validation/opencode.md) documents the
+verified OpenCode 1.18.34 protocol, limits, diagnostics, and supported mappings.
+Installation and conversion use Go only and do not need an OpenCode executable.
+
 ## Codex
 
 Codex is not in any default harness list. To use it, press `H` in the TUI and
@@ -900,7 +948,7 @@ agent-marketplace status                         Exact locks, resources, harness
 agent-marketplace migrate [--scope <scope>] [--dry-run]     Convert legacy v2/v3 configs to v4
 agent-marketplace convert --from <h> --to <h> [--out <dir>] <path>   One-shot layout conversion
 agent-marketplace doctor                         Local harness/root diagnostics, Devin CLI detection
-agent-marketplace doctor --repair                Preview (and on a terminal, confirm) Devin/Codex ownership recovery
+agent-marketplace doctor --repair                Preview (and on a terminal, confirm) native aggregate ownership recovery
 agent-marketplace doctor --repair --yes          Adopt exact matches without prompting; never removes or replaces entries
 agent-marketplace backup {create,list,restore}   Manage backups of machine-scope harness folders
 agent-marketplace gc [--dry-run]                 Remove orphaned registry cache directories

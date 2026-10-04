@@ -35,6 +35,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "BeforeTool",
 		TargetDevin:    "PreToolUse", // Devin: bundled 3000.3 docs; 3000.3.27 probe pending.
 		TargetCodex:    "PreToolUse",
+		TargetOpenCode: "tool.execute.before",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -46,6 +47,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "AfterTool",
 		TargetDevin:    "PostToolUse", // Devin: bundled 3000.3 docs; 3000.3.27 probe pending.
 		TargetCodex:    "PostToolUse",
+		TargetOpenCode: "",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0, Windsurf Cascade docs
@@ -57,6 +59,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "BeforeAgent",
 		TargetDevin:    "UserPromptSubmit", // Devin: bundled 3000.3 docs; 3000.3.27 probe pending.
 		TargetCodex:    "UserPromptSubmit",
+		TargetOpenCode: "",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0, Windsurf Cascade docs
@@ -68,6 +71,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "",     // unmappable: no Gemini equivalent in v0
 		TargetDevin:    "Stop", // Devin: bundled 3000.3 docs; 3000.3.27 probe pending.
 		TargetCodex:    "Stop",
+		TargetOpenCode: "",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0, Windsurf Cascade docs
@@ -79,6 +83,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "", // unmappable: no Gemini equivalent in v0
 		TargetDevin:    "", // unmappable: Devin documents no subagent-stop event
 		TargetCodex:    "", // same name, but no direct Claude-to-Codex lifecycle equivalent
+		TargetOpenCode: "",
 	}},
 
 	// Codex-only event; other targets have no documented equivalent.
@@ -90,6 +95,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "",
 		TargetDevin:    "",
 		TargetCodex:    "", // native Codex only; no cross-harness equivalent
+		TargetOpenCode: "",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -101,6 +107,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "", // unmappable: no Gemini equivalent
 		TargetDevin:    "", // unmappable: Devin documents no notification event
 		TargetCodex:    "", // unmappable: Codex documents no notification event
+		TargetOpenCode: "",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -112,8 +119,9 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "PreCompress",
 		// unmappable: Devin documents PostCompaction (after), which is a
 		// semantic inversion of PreCompact (before); never map them together.
-		TargetDevin: "",
-		TargetCodex: "", // same name, but no direct Claude-to-Codex lifecycle equivalent
+		TargetDevin:    "",
+		TargetCodex:    "", // same name, but no direct Claude-to-Codex lifecycle equivalent
+		TargetOpenCode: "",
 	}},
 
 	// PostCompact is a Codex event that runs after compaction. It is distinct
@@ -126,6 +134,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "",
 		TargetDevin:    "",
 		TargetCodex:    "", // native Codex only; no cross-harness equivalent
+		TargetOpenCode: "",
 	}},
 
 	// Devin-documented events. Devin cells: bundled 3000.3 documentation
@@ -140,6 +149,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "", // unmappable: no Gemini equivalent
 		TargetDevin:    "PermissionRequest",
 		TargetCodex:    "", // same name, but no direct Devin-to-Codex lifecycle equivalent
+		TargetOpenCode: "",
 	}},
 
 	{Claude: "SessionStart", Targets: map[Target]string{
@@ -150,6 +160,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "",             // unmappable: no Gemini equivalent
 		TargetDevin:    "SessionStart",
 		TargetCodex:    "SessionStart",
+		TargetOpenCode: "",
 	}},
 
 	{Claude: "SessionEnd", Targets: map[Target]string{
@@ -160,6 +171,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "",           // unmappable: no Gemini equivalent
 		TargetDevin:    "SessionEnd",
 		TargetCodex:    "", // same name, but no direct Devin-to-Codex lifecycle equivalent
+		TargetOpenCode: "",
 	}},
 
 	// PostCompaction is a Devin event that runs after compaction. It is not the
@@ -173,6 +185,7 @@ var hookEventTable = []hookEventEntry{
 		TargetGemini:   "", // unmappable: no Gemini equivalent
 		TargetDevin:    "PostCompaction",
 		TargetCodex:    "", // unmappable: Codex's event is PostCompact, not PostCompaction
+		TargetOpenCode: "",
 	}},
 }
 

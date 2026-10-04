@@ -155,6 +155,8 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 		writeReport, err = materializeCodexConversion(result, canonicalOutput, matOpts, dryRun, rootGuard, &outputRoot)
 	case "devin":
 		writeReport, err = materializeDevinConversion(result, canonicalOutput, matOpts, dryRun, rootGuard, &outputRoot)
+	case "opencode":
+		writeReport, err = materializeOpenCodeConversion(result, canonicalOutput, matOpts, dryRun, rootGuard, &outputRoot)
 	default:
 		if err := rootGuard(); err != nil {
 			return err
@@ -958,6 +960,27 @@ func materializeDevinConversion(result *hcc.Result, outDir string, matOpts []hcc
 		validate:        validateDevinConversionStage,
 		pruneCandidates: pruneCodexConversionStaleCandidates,
 		outputRoot:      outputRoot,
+	}.materialize(result, outDir, matOpts, dryRun)
+}
+
+func materializeOpenCodeConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool, rootGuard func() error, outputRoot *conversionRootSnapshot) (*hcc.WriteReport, error) {
+	shared := []string{"opencode.json"}
+	if result == nil {
+		return nil, errors.New("OpenCode conversion result must not be nil")
+	}
+	for _, a := range result.Artifacts {
+		if _, err := a.Policy(); err != nil {
+			return nil, err
+		}
+	}
+	return conversionPublisher{target: "OpenCode", rootGuard: rootGuard, shared: shared,
+		clone: func(input *hcc.Result) (*hcc.Result, error) {
+			return cloneNonOwningConversionResult(input, shared), nil
+		},
+		preflight: func(dir string) error {
+			return preflightConversionPaths(dir, []string{"opencode.json", "opencode.jsonc"}, "OpenCode")
+		},
+		validate: validateDevinConversionStage, pruneCandidates: pruneCodexConversionStaleCandidates, outputRoot: outputRoot,
 	}.materialize(result, outDir, matOpts, dryRun)
 }
 

@@ -300,6 +300,12 @@ devin-probe:
 	@AGENT_MARKETPLACE_DEVIN_PROBES=1 DEVIN_PROBE_REQUIRE=$(DEVIN_PROBE_REQUIRE) \
 		CGO_ENABLED=0 $(GO) test -v -count=1 -timeout 10m ./internal/devinprobe/
 
+# OpenCode feasibility is a separate witnessed native gate, before registration.
+# Requires a cached Linux arm64 image and the pinned executable; never downloads.
+.PHONY: opencode-probe
+opencode-probe:
+	bash tools/opencode-probe/run.sh
+
 .PHONY: harness-compat-check harness-compat-config
 
 harness-compat-check:

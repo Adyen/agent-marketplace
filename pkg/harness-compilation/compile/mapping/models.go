@@ -67,8 +67,9 @@ var modelTable = []modelEntry{
 		// reproduce it; it is a recorded capture, not a local assertion. Evidence:
 		// docs/devin-cli-harness-spec-3000.3.md and internal/devinprobe/manual.go
 		// entry model-alias-list.
-		TargetDevin: "sonnet",
-		TargetCodex: modelUnmappable,
+		TargetDevin:    "sonnet",
+		TargetCodex:    modelUnmappable,
+		TargetOpenCode: "anthropic/claude-sonnet-4-5-20250929",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -83,8 +84,9 @@ var modelTable = []modelEntry{
 		// unauthenticated probe suite cannot reproduce it. Evidence:
 		// docs/devin-cli-harness-spec-3000.3.md and internal/devinprobe/manual.go
 		// entry model-alias-list.
-		TargetDevin: "opus",
-		TargetCodex: modelUnmappable,
+		TargetDevin:    "opus",
+		TargetCodex:    modelUnmappable,
+		TargetOpenCode: "anthropic/claude-opus-4-20250514",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -103,8 +105,9 @@ var modelTable = []modelEntry{
 		// unauthenticated probe suite cannot reproduce it. Evidence:
 		// docs/devin-cli-harness-spec-3000.3.md and internal/devinprobe/manual.go
 		// entry model-alias-list.
-		TargetDevin: "haiku",
-		TargetCodex: modelUnmappable,
+		TargetDevin:    "haiku",
+		TargetCodex:    modelUnmappable,
+		TargetOpenCode: "anthropic/claude-haiku-3-5-20241022",
 	}},
 
 	// --- Specific model IDs ---
@@ -119,8 +122,9 @@ var modelTable = []modelEntry{
 		// Devin: no stable alias for a pinned/versioned model family. The plan
 		// forbids guessing versioned IDs, so this is unmappable (omit + warn),
 		// not an inherit-style passthrough.
-		TargetDevin: modelUnmappable,
-		TargetCodex: modelUnmappable,
+		TargetDevin:    modelUnmappable,
+		TargetCodex:    modelUnmappable,
+		TargetOpenCode: "anthropic/claude-sonnet-4-5-20250929",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -133,8 +137,9 @@ var modelTable = []modelEntry{
 		// Devin: no stable alias for a pinned/versioned model family. The plan
 		// forbids guessing versioned IDs, so this is unmappable (omit + warn),
 		// not an inherit-style passthrough.
-		TargetDevin: modelUnmappable,
-		TargetCodex: modelUnmappable,
+		TargetDevin:    modelUnmappable,
+		TargetCodex:    modelUnmappable,
+		TargetOpenCode: "anthropic/claude-opus-4-20250514",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -147,8 +152,9 @@ var modelTable = []modelEntry{
 		// Devin: no stable alias for a pinned/versioned model family. The plan
 		// forbids guessing versioned IDs, so this is unmappable (omit + warn),
 		// not an inherit-style passthrough.
-		TargetDevin: modelUnmappable,
-		TargetCodex: modelUnmappable,
+		TargetDevin:    modelUnmappable,
+		TargetCodex:    modelUnmappable,
+		TargetOpenCode: "anthropic/claude-haiku-3-5-20241022",
 	}},
 
 	// --- Gemini-native model families (for Gemini→other compilation) ---
@@ -175,8 +181,9 @@ var modelTable = []modelEntry{
 		// probe suite cannot reproduce it. Evidence:
 		// docs/devin-cli-harness-spec-3000.3.md and internal/devinprobe/manual.go
 		// entry model-alias-list.
-		TargetDevin: modelUnmappable,
-		TargetCodex: modelUnmappable,
+		TargetDevin:    modelUnmappable,
+		TargetCodex:    modelUnmappable,
+		TargetOpenCode: "google/gemini-3-preview",
 	}},
 
 	// Last verified: 2026-04-24 against Gemini CLI
@@ -198,8 +205,9 @@ var modelTable = []modelEntry{
 		// gemini-3-preview (Pro-class) row above stays unmappable. Evidence:
 		// docs/devin-cli-harness-spec-3000.3.md and internal/devinprobe/manual.go
 		// entry model-alias-list.
-		TargetDevin: "gemini",
-		TargetCodex: modelUnmappable,
+		TargetDevin:    "gemini",
+		TargetCodex:    modelUnmappable,
+		TargetOpenCode: "google/gemini-3-flash-preview",
 	}},
 }
 

@@ -115,6 +115,11 @@ type NativeAggregate struct {
 }
 
 var nativeLayouts = map[Target]NativeLayout{
+	TargetOpenCode: {Partitions: []NativePartition{{
+		ID: "default", Prefix: ".", Components: []string{"skills", "commands", "agents", "hooks", "plugins"},
+		ResourcePaths: map[ir.ResourceKind]string{ir.KindSkill: "skills/%s/SKILL.md", ir.KindCommand: "commands/%s.md", ir.KindSubagent: "agents/%s.md", ir.KindHook: "hooks/agent-marketplace/%s.json"},
+		Aggregates:    []NativeAggregate{{Kind: ir.KindMcpServer, Project: NativeAggregateFile{Path: "opencode.json", Member: "mcp"}, User: NativeAggregateFile{Path: "opencode.json", Member: "mcp"}}},
+	}}},
 	TargetClaude: {Partitions: []NativePartition{
 		{
 			ID:         "default",

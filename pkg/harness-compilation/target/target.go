@@ -19,6 +19,7 @@ const (
 	TargetGemini   Target = "gemini"
 	TargetDevin    Target = "devin"
 	TargetCodex    Target = "codex"
+	TargetOpenCode Target = "opencode"
 )
 
 // Definition is the metadata every target must declare. Compiler and Ingester
@@ -65,6 +66,7 @@ var definitions = []Definition{
 	// before it.
 	{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
 	{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
+	{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
 }
 
 // Definitions returns all target declarations in stable display order.

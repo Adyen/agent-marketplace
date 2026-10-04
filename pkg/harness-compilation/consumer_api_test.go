@@ -143,7 +143,11 @@ func TestRootPackageCompilesAndMaterializesWithoutBlankImports(t *testing.T) {
 				hcc.WithWriteMode(hcc.WriteModeSync))
 			requiresExternalReconciliation := false
 			for _, candidate := range result.Artifacts {
-				if candidate.ExternalReconciliationRequired {
+				policy, policyErr := candidate.Policy()
+				if policyErr != nil {
+					t.Fatal(policyErr)
+				}
+				if policy.IsExternal() {
 					requiresExternalReconciliation = true
 					break
 				}
@@ -189,7 +193,8 @@ func TestRootPackageIngestsEveryDeclaredSource(t *testing.T) {
 		// shape autodetection recognizes, and this test asserts Autodetect as
 		// well as IngestBundle. The direct `~/.config/devin` shape deliberately
 		// fails that assertion, which is covered in ingest/devin.
-		hcc.HarnessDevin: {".devin/skills/demo-skill/SKILL.md": {Data: []byte("---\nname: demo-skill\ndescription: Demo skill\n---\nDo the thing\n")}},
+		hcc.HarnessDevin:    {".devin/skills/demo-skill/SKILL.md": {Data: []byte("---\nname: demo-skill\ndescription: Demo skill\n---\nDo the thing\n")}},
+		hcc.HarnessOpenCode: {".opencode/commands/check.md": {Data: []byte("Check the changes\n")}},
 		hcc.HarnessCodex: {
 			".codex/agents/demo-agent.toml": {Data: []byte("name = 'demo-agent'\ndescription = 'Demo agent'\ndeveloper_instructions = 'Review the thing'\n")},
 		},

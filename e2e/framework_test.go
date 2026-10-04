@@ -507,7 +507,7 @@ func (e *Env) subprocessEnv() []string {
 
 func isSandboxedAppEnv(key string) bool {
 	switch key {
-	case "HOME", "PATH", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME":
+	case "HOME", "PATH", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR":
 		return true
 	default:
 		return strings.HasPrefix(key, "AGENT_MARKETPLACE_")

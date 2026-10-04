@@ -148,6 +148,7 @@ Supported targets are:
 | `gemini` | Gemini CLI |
 | `devin` | Devin CLI |
 | `codex` | Codex |
+| `opencode` | OpenCode |
 
 Target names are lowercase. Unknown targets fail with `v4.harness`.
 

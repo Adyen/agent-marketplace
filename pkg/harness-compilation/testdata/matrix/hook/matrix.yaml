@@ -327,3 +327,121 @@ cells:
         - ingest.codex.bundle-manifest-synthesized
       allowedLosses:
         - name
+    - from: claude
+      to: opencode
+      class: cross
+      allowedLosses:
+        - command
+        - timeout
+    - from: opencode
+      to: claude
+      class: cross
+      allowedLosses:
+        - command
+        - timeout
+    - from: factory
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+      allowedLosses:
+        - command
+        - timeout
+    - from: opencode
+      to: factory
+      class: cross
+      allowedLosses:
+        - command
+        - timeout
+    - from: cursor
+      to: opencode
+      class: drop
+      diagnostics:
+        - hook.opencode.unsupported
+      allowedLosses:
+        - command
+        - timeout
+    - from: opencode
+      to: cursor
+      class: cross
+      allowedLosses:
+        - command
+        - timeout
+    - from: windsurf
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - command
+        - command
+        - timeout
+        - name
+    - from: opencode
+      to: windsurf
+      class: cross
+      diagnostics:
+        - hook.windsurf.timeout-unsupported
+      allowedLosses:
+        - command
+        - name
+        - command
+        - timeout
+    - from: gemini
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - matcher
+        - command
+        - timeout
+        - name
+    - from: opencode
+      to: gemini
+      class: cross
+      allowedLosses:
+        - matcher
+        - name
+        - command
+        - timeout
+    - from: devin
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - command
+        - command
+        - timeout
+    - from: opencode
+      to: devin
+      class: cross
+      allowedLosses:
+        - command
+        - command
+        - timeout
+    - from: codex
+      to: opencode
+      class: cross
+      diagnostics:
+        - hook.native-literal-unsupported
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - name
+        - command
+        - timeout
+    - from: opencode
+      to: codex
+      class: cross
+      allowedLosses:
+        - command
+        - name
+        - command
+        - timeout
+    - from: opencode
+      to: opencode
+      class: identity
+      allowedLosses:
+        - command
+        - timeout

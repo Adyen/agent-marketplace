@@ -188,7 +188,7 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 		return out
 	}
 
-	doc, parseErr := jsonc.Parse(rel, raw)
+	doc, parseErr := jsonc.ParseWithOptions(rel, raw, options.parseOptions)
 	if parseErr != nil {
 		// "Malformed JSON is safety-backed up before parsing, left unchanged, and
 		// reported with a precise parse location."

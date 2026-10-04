@@ -2,7 +2,7 @@
 
 See `proposal.md` for scope and motivation. The current target registry validates compiler/ingester completeness and native topology; Devin and Codex bind native installation and repair through validated installation adapters. Shared configuration already has durable ownership state, private safety backups, mutation sessions, generation checks, and journaled recovery. The `materialization` and `owned-entry-reconciliation` specifications remain applicable to OpenCode.
 
-OpenCode v1.18.34 is the investigation baseline, not a certified supported version. The following primary-source observations constrain the design:
+OpenCode v1.18.34 is the verified command-hook runtime baseline. The following primary-source observations constrain the design:
 
 - [Skills](https://opencode.ai/docs/skills/) accept limited metadata; unknown frontmatter is not execution enforcement.
 - [Configuration substitution](https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/src/config/variable.ts) expands environment values before JSONC parsing and then searches for file references. Environment expansion can therefore introduce syntax or file reads before typed validation.
@@ -17,7 +17,7 @@ These are source observations. Native execution proof is a required implementati
 **Goals:**
 
 - Reuse the established pure translation, destination admission, ownership, and consumer-policy boundaries rather than introducing a parallel installation system.
-- Put native execution feasibility first, before registering a publicly supported target that cannot meet its security contract.
+- Implement native agent support with explicit compatibility limits and native execution evidence for advertised hook behavior.
 - Keep all new executable behavior in a small reviewable adapter and expose registry-authored hook content as typed inspectable data.
 - Make every security claim testable through the actual conversion, native installation, checking, and repair consumers with valid controls and negative-side-effect assertions.
 
@@ -36,7 +36,7 @@ The first implementation phase creates controlled probes and records a versioned
 
 The matrix records the native version/executable digest, supported event and handler forms, tool consumer paths, lifecycle ordering, matcher vocabulary, input/output protocol, subprocess environment and working directory, timeout/cancellation behavior, activation failures, and supported runtime modes. Unsupported paths are named explicitly. No broad default permission grant or asynchronous notification fallback is allowed.
 
-**Activation is a stop condition:** the v1.18.34 source permits skipped initialization and disabled external plugins. A runner that executes correctly only after successful activation does not prove required enforcement. The gate must establish that each supported required-enforcement configuration prevents protected effects when activation fails. If the native runtime cannot do that, target release remains blocked pending upstream support or a separately proven route; neither a warning nor dropping hooks completes this change. User choice fixes this release requirement, so implementation must not silently reduce scope.
+**Native activation semantics:** the v1.18.34 runtime permits skipped initialization and disabled external plugins. Following the user's implementation direction, this change provides agent support through native plugins rather than a separate global enforcement system. Active allow/block behavior and inactive-plugin behavior are measured separately. Inactive callbacks are documented and are never presented as required enforcement.
 
 Alternative considered: release skills/commands/subagents/MCP and postpone hooks. Rejected because proven hooks are required in the first release. Alternative considered: infer compatibility from callback types. Rejected because timing, exceptions, bypass paths, and activation failure are runtime behaviors.
 
@@ -46,7 +46,7 @@ Add `TargetOpenCode`, compiler/ingester registrations, aliases, capabilities, UI
 
 The declared topology uses native plural directories: skills, commands, agents, and plugins under repository `.opencode` and the supported machine OpenCode resource directory. MCP configuration is an explicitly mapped external aggregate, not a broad output root. `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` are resolved separately according to the pinned loader; unsupported relative or ambiguous destinations refuse. JSON/JSONC precedence and native config-defined/built-in identity collisions are checked before choosing output. Source-layout legacy singular aliases and compatible shared skills locations are ingested once using proven native precedence.
 
-Where runtime overrides affect multiple scopes, resolve all active destinations before mutation, canonicalize their identities, and use existing overlap planning. Coalesce only compatible work; conflicts or inseparable scope-restricted operations refuse. Existing explicitly supported machine aliases remain usable; a repository override cannot silently confer authority outside its authorized scope.
+Where runtime overrides affect multiple scopes, resolve all active destinations before mutation, canonicalize their identities, and use existing overlap planning. Refuse repository/machine selections sharing a resource root or MCP file before publication; separate native scopes use the existing planner. Existing explicitly supported machine aliases remain usable; a repository override cannot silently confer authority outside its authorized scope.
 
 Alternative considered: add OpenCode to the legacy single-root tables alone. Rejected because external configuration, precedence, repair, and overlapping roots need the validated adapter boundary.
 
@@ -62,13 +62,13 @@ Alternative considered: retain unknown security fields as metadata or omit one u
 
 ### 4. Generate one fixed hook adapter with typed contributions
 
-Use one versioned, dependency-free fixed adapter per resolved native resource destination, with declarations outside the autoloaded plugin directory and source-disambiguated support payloads. The compiler emits typed declaration fragments; bundle merging produces deterministic contribution order and the fixed runner artifact. Registry names, metadata, commands, and payloads are serialized as data, never interpolated into executable source. Commands execute only later in the native runtime under the proven handler protocol.
+Use one versioned, dependency-free fixed adapter per resolved native resource destination, with declarations outside the autoloaded plugin directory and source-bound support payloads with conflicting output claims refused. The compiler emits typed declaration fragments; bundle merging produces deterministic contribution order and the fixed runner artifact. Registry names, metadata, commands, and payloads are serialized as data, never interpolated into executable source. Commands execute only later in the native runtime under the proven handler protocol.
 
 A recognized adapter template/version and validated declaration document support non-executing ingestion. A changed runner, unsupported version, arbitrary plugin, or ambiguous declaration produces a stable diagnostic. Template recognition or a source digest identifies source format only; destination overwrite/prune still requires the existing file/tree ownership policy. The adapter/declarations/support artifacts are planned as one logical installed generation, so refused support cannot publish a partially updated runner or declaration set.
 
 Use existing hook source-root substitution and captured support-source admission. Machine-scope commands remain location-independent; repository commands retain authorized scope-relative behavior. Contributions retain selector/source/scope identity so collection expansion, removal, and ordinary pruning cannot erase surviving hooks. Coexisting handwritten plugins are not modified to create artificial parity.
 
-The proposed runner policy is a 60-second default handler deadline, explicit positive timeouts up to 600 seconds, a 600-second total event deadline, 1 MiB serialized input, 1 MiB combined stdout/stderr per handler, and at most 64 handler invocations per tool event. These are explicit new conservative runner bounds, not claims about existing native defaults: they bound each stream, invocation count, and total time while allowing longer explicitly declared handlers. Explicit declarations exceeding supported bounds fail compilation with `hook.opencode.unsupported`; runtime overflow blocks required protected effects and cleans the attempt's process tree. Source-support admission retains existing applicable read policy rather than inventing a separate aggregate source budget. If feasibility proof requires a different runner policy, revise the spec, design, and boundary cases before enabling support; do not silently truncate or weaken restrictions.
+The proposed runner policy is a 60-second default handler deadline, explicit positive timeouts up to 600 seconds, a 600-second total event deadline, 1 MiB serialized input, 1 MiB combined stdout/stderr per handler, and at most 64 handler invocations per tool event. These are explicit new conservative runner bounds, not claims about existing native defaults: they bound each stream, invocation count, and total time while allowing longer explicitly declared handlers. Explicit declarations exceeding supported bounds fail compilation with `hook.opencode.unsupported`; runtime overflow blocks active callbacks and cleans the handler process group. Source-support admission retains existing applicable read policy rather than inventing a separate aggregate source budget. If feasibility proof requires a different runner policy, revise the spec, design, and boundary cases before enabling support; do not silently truncate or weaken restrictions.
 
 Alternative considered: arbitrary generated plugins per resource or copied npm plugin packages. Rejected because they enlarge the executable/review surface, complicate additive ordering, and introduce dependency installation. Alternative considered: parse arbitrary plugin source heuristically. Rejected because executable behavior cannot be recovered safely by importing or guessing.
 
@@ -104,7 +104,7 @@ Cover multi-harness/default/lock/source-revision regressions, Marketplace inspec
 
 ## Risks / Trade-offs
 
-- [Required activation enforcement may be unavailable in the investigated native version] → Gate it first; retain a release blocker until upstream or another proven route satisfies the contract. Do not advertise the target prematurely.
+- [Plugins can be disabled or fail initialization] → Document native activation limits and prove active callback behavior without promising global enforcement.
 - [Native config precedence or startup changes between versions] → Pin executable identity, exercise actual loaders, and require the compatibility gate for version changes.
 - [Environment substitution makes literal encoding impossible for some values] → Preserve typed reference intent and suppress unrepresentable output with an error.
 - [A shared adapter makes one invalid contribution affect a common artifact] → Validate contributions before merging, retain blocked installed contributions, and publish only a coherent safe generation.

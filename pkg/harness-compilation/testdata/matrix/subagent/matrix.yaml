@@ -11,11 +11,6 @@ cells:
       allowedLosses:
         - disallowedTools
         - isolation
-    # This cell still produces no artifact, but NOT because of
-    # subagent.devin.tool-unknown, which is a warning since bead
-    # agent-marketplace-pu6b. The two security-restriction ERRORS
-    # (disallowedTools and isolation, which Devin has no field for) are what
-    # suppress it; the tool warning rides along.
     - from: claude
       to: devin
       class: cross
@@ -60,11 +55,6 @@ cells:
       allowedLosses:
         - disallowedTools
         - isolation
-    # subagent.devin.tool-unknown is a WARNING since bead
-    # agent-marketplace-pu6b, so this cell now PRODUCES a profile with the
-    # allowed-tools key omitted instead of being suppressed. `tools` therefore
-    # joins the expected losses, and subagent.devin.effort-dropped surfaces
-    # because the compiler no longer returns before reaching it.
     - from: cursor
       to: devin
       class: cross
@@ -168,8 +158,6 @@ cells:
       allowedLosses:
         - disallowedTools
         - isolation
-    # Same reversal as cursor-to-devin (bead agent-marketplace-pu6b): the
-    # profile is emitted without allowed-tools instead of being suppressed.
     - from: factory
       to: devin
       class: cross
@@ -225,9 +213,6 @@ cells:
         - disallowedTools
         - effort
         - isolation
-    # Same reversal as cursor-to-devin (bead agent-marketplace-pu6b). Gemini
-    # ingestion already drops effort, so the newly reachable diagnostic here is
-    # the model one rather than effort-dropped.
     - from: gemini
       to: devin
       class: cross
@@ -419,3 +404,148 @@ cells:
       diagnostics:
         - ingest.windsurf.bundle-manifest-synthesized
         - ingest.windsurf.subagent-via-agents-md-skipped
+    - from: claude
+      to: opencode
+      class: drop
+      diagnostics:
+        - subagent.opencode.restriction-unsupported
+      allowedLosses:
+        - tools
+        - disallowedTools
+        - effort
+        - isolation
+    - from: opencode
+      to: claude
+      class: drop
+      diagnostics:
+        - compile.opencode.native-semantics-unsupported
+    - from: factory
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.factory.reasoning-effort-mapped-to-model
+        - compile.opencode.field-dropped
+      allowedLosses:
+        - disallowedTools
+        - isolation
+        - tools
+        - disallowedTools
+        - effort
+        - isolation
+    - from: opencode
+      to: factory
+      class: drop
+      diagnostics:
+        - compile.opencode.native-semantics-unsupported
+      allowedLosses:
+        - disallowedTools
+        - isolation
+    - from: cursor
+      to: opencode
+      class: cross
+      diagnostics:
+        - compile.opencode.field-dropped
+      allowedLosses:
+        - disallowedTools
+        - isolation
+        - tools
+        - disallowedTools
+        - effort
+        - isolation
+    - from: opencode
+      to: cursor
+      class: drop
+      diagnostics:
+        - compile.opencode.native-semantics-unsupported
+      allowedLosses:
+        - disallowedTools
+        - isolation
+    - from: windsurf
+      to: opencode
+      class: drop
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.subagent-via-agents-md-skipped
+      allowedLosses:
+        - tools
+        - disallowedTools
+        - effort
+        - isolation
+    - from: opencode
+      to: windsurf
+      class: drop
+      diagnostics:
+        - compile.opencode.native-semantics-unsupported
+    - from: gemini
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - disallowedTools
+        - effort
+        - isolation
+        - model
+        - tools
+        - disallowedTools
+        - effort
+        - isolation
+    - from: opencode
+      to: gemini
+      class: drop
+      diagnostics:
+        - compile.opencode.native-semantics-unsupported
+      allowedLosses:
+        - disallowedTools
+        - effort
+        - isolation
+        - model
+    - from: devin
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - disallowedTools
+        - effort
+        - isolation
+        - tools
+        - tools
+        - disallowedTools
+        - effort
+        - isolation
+    - from: opencode
+      to: devin
+      class: drop
+      diagnostics:
+        - compile.opencode.native-semantics-unsupported
+    - from: codex
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - ingest.codex.field-dropped
+        - subagent.codex.model-dropped
+        - compile.opencode.field-dropped
+      allowedLosses:
+        - disallowedTools
+        - isolation
+        - model
+        - tools
+        - tools
+        - disallowedTools
+        - effort
+        - isolation
+    - from: opencode
+      to: codex
+      class: drop
+      diagnostics:
+        - compile.opencode.native-semantics-unsupported
+    - from: opencode
+      to: opencode
+      class: identity
+      allowedLosses:
+        - tools
+        - disallowedTools
+        - effort
+        - isolation

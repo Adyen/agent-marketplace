@@ -59,7 +59,7 @@ Compilation and ingestion SHALL support skills, commands, subagents, MCP servers
 
 ### Requirement: Translation preserves execution authority
 
-Explicit execution restrictions SHALL retain their effective meaning, including ordered permission rules and explicit empty policies. Unsupported restrictions SHALL suppress the affected resource with a severity-error diagnostic and make the consuming conversion or synchronization exit nonzero. Agent Marketplace SHALL NOT replace restrictions with inert metadata, broaden permissions, change a subagent to a primary agent, or modify consumer-wide permission policy to make a conversion succeed. Unsupported skill restrictions SHALL report `skill.opencode.security-restriction-unsupported`; subagent and MCP restrictions SHALL use `subagent.security-restriction-unsupported` and `mcp.security-restriction-unsupported` respectively.
+Explicit execution restrictions SHALL retain their effective meaning, including ordered permission rules and explicit empty policies. Unsupported restrictions SHALL suppress the affected resource with a severity-error diagnostic and make the consuming conversion or synchronization exit nonzero. Agent Marketplace SHALL NOT replace restrictions with inert metadata, broaden permissions, change a subagent to a primary agent, or modify consumer-wide permission policy to make a conversion succeed. Unsupported skill restrictions SHALL report `skill.opencode.security-restriction-unsupported`; subagent and MCP restrictions SHALL use `subagent.opencode.restriction-unsupported` and `mcp.opencode.unrepresentable` respectively.
 
 #### Scenario: A restricted skill is not emitted as an unrestricted skill
 
@@ -75,12 +75,12 @@ Explicit execution restrictions SHALL retain their effective meaning, including 
 
 ### Requirement: Native parsing has one bounded interpretation
 
-OpenCode JSON/JSONC and frontmatter ingestion SHALL reject duplicate keys, conflicting aliases of modeled fields, malformed typed values, and untyped extras that supply reserved execution fields, including nested and explicitly empty fields. Arbitrary resource and environment dictionary keys SHALL remain case-sensitive. Unicode separators in scalar metadata SHALL remain scalar data. Applicable read limits SHALL cover every admitted loader and opened regular-file read; oversized or growing input SHALL refuse before unsafe output. Rejected input SHALL report severity-error `ingest.opencode.load-resource-failed` without including sensitive values.
+OpenCode JSON/JSONC and frontmatter ingestion SHALL reject duplicate keys, conflicting aliases of modeled fields, malformed typed values, and untyped extras that supply reserved execution fields, including nested and explicitly empty fields. Unsupported YAML merge fields and inline config command/agent definitions SHALL report an error; an inline identity SHALL suppress the Markdown resource it overrides. Comment-only frontmatter SHALL remain valid. Arbitrary resource and environment dictionary keys SHALL remain case-sensitive. Unicode separators in scalar metadata SHALL remain scalar data. Applicable read limits SHALL cover every admitted loader and opened regular-file read; oversized or growing input SHALL refuse before unsafe output. Rejected input SHALL report severity-error `ingest.opencode.invalid-resource` or `ingest.opencode.read-refused` without including sensitive values.
 
 #### Scenario: Ambiguous execution fields are rejected in both orders
 
 - **WHEN** native input contains exact duplicates or conflicting modeled-field aliases in either order, including nested or empty execution fields
-- **THEN** ingestion SHALL report `ingest.opencode.load-resource-failed` and suppress the affected resource
+- **THEN** ingestion SHALL report `ingest.opencode.invalid-resource` and suppress the affected resource
 - **AND** valid native groups and distinct case-sensitive dictionary keys SHALL retain their intended behavior
 
 #### Scenario: Scalar metadata cannot add execution fields
@@ -102,7 +102,7 @@ Ingestion SHALL NOT expand source references against host environment values or 
 
 - **WHEN** MCP values contain literal reference-like text, intentional references, hostile quotes, or synthetic file-reference sentinels
 - **THEN** Marketplace ingestion SHALL perform no host reference expansion and native loading of supported output SHALL retain the intended values without extra configuration fields or unintended file reads
-- **AND** unrepresentable MCP values SHALL suppress the server with `mcp.security-restriction-unsupported`
+- **AND** unrepresentable MCP values SHALL suppress the server with `mcp.opencode.unrepresentable`
 
 ### Requirement: Production workflows do not execute source resources
 

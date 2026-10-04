@@ -28,7 +28,7 @@ OpenCode full harness support SHALL include a documented supported hook subset i
 
 ### Requirement: Generated hooks separate executable adapters from declarations
 
-Native hook adapters SHALL contain reviewed fixed executable behavior and validated declarations treated only as data. Registry metadata SHALL NOT become executable adapter source. The supported source layout SHALL allow non-executing ingestion of validated declarations with a recognized adapter version. Arbitrary JS/TS plugins and altered or incompatible adapter representations SHALL NOT be imported or executed; they SHALL be diagnosed explicitly. Source recognition SHALL NOT establish destination ownership.
+Native hook adapters SHALL contain reviewed fixed executable behavior and validated declarations treated only as data. Registry metadata SHALL NOT become executable adapter source. The supported source layout SHALL allow non-executing ingestion of validated strict-JSON declarations with a recognized adapter version. Nullable or non-string matchers, comments, and trailing commas SHALL be refused rather than accepted with different native meanings. Arbitrary JS/TS plugins and altered or incompatible adapter representations SHALL NOT be imported or executed; they SHALL be diagnosed explicitly. Source recognition SHALL NOT establish destination ownership.
 
 #### Scenario: Hostile declaration strings remain inert adapter data
 
@@ -58,20 +58,20 @@ Supported hook contributions SHALL retain deterministic ordering, selection iden
 - **THEN** synchronization SHALL report `materialize.hook.support-refused` and retain the installed affected hook, support bytes, and ownership proof
 - **AND** contained valid support aliases and independent valid hook contributions SHALL retain their intended installation behavior
 
-### Requirement: Required hook enforcement fails closed
+### Requirement: Active hooks follow native plugin semantics
 
-Hooks advertised as required blocking enforcement SHALL NOT permit protected effects when their adapter is absent or inactive, their handler cannot execute, or their output/failure violates the supported contract. The compatibility contract SHALL specify activation, malformed output, missing executables, nonzero exits, cancellation, and child-process cleanup. The supported runner SHALL use a 60-second default handler deadline, accept explicit positive deadlines no greater than 600 seconds, and limit a tool event to 600 seconds total, 64 handler invocations, 1 MiB serialized input, and 1 MiB combined stdout/stderr per handler. Excess SHALL refuse rather than truncate into apparent success. Runtime configurations that disable external plugins SHALL be identified as incompatible with required enforcement. A runtime that cannot provide the promised behavior SHALL block release; warning-only degradation SHALL NOT satisfy acceptance. Adapters SHALL NOT grant permissions or rewrite provider/authentication configuration to simulate equivalence.
+Successfully loaded hooks SHALL block protected effects when their handler cannot execute or violates the supported output/failure contract. The compatibility contract SHALL specify activation, malformed output, missing executables, nonzero exits, deadlines, and handler process-group cleanup. The supported runner SHALL use a 60-second default handler deadline, accept explicit positive deadlines no greater than 600 seconds, and limit a tool event to 600 seconds total, 64 handler invocations, 1 MiB serialized input, and 1 MiB combined stdout/stderr per handler. Excess SHALL refuse rather than truncate into apparent success. Absent, disabled, or failed plugins follow OpenCode's native behavior and SHALL be documented as inactive; Agent Marketplace SHALL NOT claim global required-enforcement guarantees or introduce a separate enforcement system. Adapters SHALL NOT grant permissions or rewrite provider/authentication configuration.
 
 #### Scenario: Activation failure cannot become successful enforcement
 
-- **WHEN** required hook initialization fails or the runtime disables its external plugin adapter
-- **THEN** the combination SHALL fail the required-enforcement compatibility gate and SHALL NOT be advertised as enforced
-- **AND** release evidence SHALL demonstrate that supported required-enforcement configurations prevent protected effects on activation failure
+- **WHEN** hook initialization fails or the runtime disables its external plugin adapter
+- **THEN** the compatibility matrix SHALL record the observed native behavior and SHALL NOT advertise the inactive callback as enforced
+- **AND** native evidence SHALL include working active allow/block controls and inactive-plugin controls
 
 #### Scenario: Handler failure is bounded and blocks protected effects
 
-- **WHEN** a required blocking handler is missing, times out, is canceled, emits malformed or excessive output, or exits unsuccessfully under the documented contract
-- **THEN** native execution SHALL prevent the protected effect, terminate attempt-owned child processes, and produce a bounded non-sensitive failure
+- **WHEN** a required blocking handler is missing, times out, emits malformed or excessive output, or exits unsuccessfully under the documented contract
+- **THEN** native execution SHALL prevent the protected effect, terminate its handler process group, and produce a bounded non-sensitive failure
 - **AND** successful valid handlers SHALL still permit their documented effects
 
 #### Scenario: Native permissions remain authoritative with other plugins

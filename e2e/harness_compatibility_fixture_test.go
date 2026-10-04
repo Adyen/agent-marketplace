@@ -73,6 +73,11 @@ resources:
     kind: mcp
 `, f.name("collection"), f.name("skill"), f.name("command"), f.name("subagent"), f.name("mcp-a"), f.name("mcp-b"))
 	files["rule-source/.factory/rules/"+f.name("rule")+".md"] = "Always preserve " + f.name("rule-body") + ".\n"
+	if target == "opencode" {
+		// OpenCode supports only the before-tool command subset.
+		files["hooks/hooks.json"] = fmt.Sprintf(`{"hooks":{"PreToolUse":[{"type":"command","matcher":"Bash","command":%q},{"type":"command","matcher":"Read","command":%q}]}}`, f.hookCommand("hook-a"), f.hookCommand("hook-b"))
+		files["collections/"+f.name("collection")+"/COLLECTION.yaml"] = strings.ReplaceAll(files["collections/"+f.name("collection")+"/COLLECTION.yaml"], "UserPromptSubmit-command", "PreToolUse-command-2")
+	}
 	for path, content := range files {
 		e.WriteFile(filepath.Join(f.registry, filepath.FromSlash(path)), content)
 	}
@@ -140,6 +145,18 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 		paths["subagent"] = []string{".codex/agents/" + f.name("subagent") + ".toml"}
 		paths["hook"] = []string{".codex/hooks.json"}
 		paths["mcp"] = []string{".codex/config.toml"}
+	case "opencode":
+		if scope == "user" {
+			root = ".config/opencode"
+		}
+		paths["skill"] = []string{root + "/skills/" + f.name("skill") + "/SKILL.md"}
+		paths["command"] = []string{root + "/commands/" + f.name("command") + ".md"}
+		paths["subagent"] = []string{root + "/agents/" + f.name("subagent") + ".md"}
+		paths["hook"] = []string{root + "/hooks/agent-marketplace/PreToolUse-command.json", root + "/hooks/agent-marketplace/PreToolUse-command-2.json"}
+		paths["mcp"] = []string{"opencode.json"}
+		if scope == "user" {
+			paths["mcp"] = []string{root + "/opencode.json"}
+		}
 	}
 	for kind, entries := range paths {
 		for i, path := range entries {

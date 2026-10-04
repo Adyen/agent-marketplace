@@ -41,20 +41,15 @@ OpenCode native resource files and trees SHALL support both materialization mode
 - **THEN** the affected resource SHALL fail with a stable severity-error diagnostic and preserve the existing definition and effective role
 - **AND** valid noncolliding resources SHALL remain eligible for installation
 
-### Requirement: Overlapping scopes reconcile only compatible work
+### Requirement: Overlapping native scopes refuse before mutation
 
-Repository, machine, and custom destinations that identify the same native output SHALL be preflighted together. Compatible desired contributions SHALL reconcile once and retain every active selection. Conflicting values, incompatible materialization modes, and scope-restricted operations that cannot isolate the requested scope SHALL report `materialize.destination.overlap` before mutation.
-
-#### Scenario: Shared native destinations retain both scopes
-
-- **WHEN** compatible repository and machine selections share one canonical OpenCode destination
-- **THEN** synchronization SHALL retain both scopes' desired resources and handwritten content without duplicate publication or no-op rewrites
-- **AND** removing a safely separable selection SHALL preserve resources still desired by another selection
+Repository, machine, and custom destinations that identify the same native output SHALL be preflighted together. This release SHALL report `materialize.destination.overlap` before mutation when repository and machine selections share a resource root or MCP file. Separate native destinations SHALL support both scopes normally.
 
 #### Scenario: Ambiguous overlapping scope operations refuse
 
-- **WHEN** shared destinations have conflicting desired values or an operation cannot isolate its requested scope
+- **WHEN** repository and machine selections share a canonical native resource root or MCP file
 - **THEN** the operation SHALL report `materialize.destination.overlap` and preserve native output and ownership state
+- **AND** separate native destinations SHALL remain eligible for installation
 
 ### Requirement: MCP entries use durable ownership and faithful patching
 

@@ -1,6 +1,6 @@
 # Harness compilation library
 
-This Go library converts AI-agent configuration resources from a canonical source format (the Claude plugin layout) into the layout each harness expects. It has seven conversion targets: Claude Code, Factory Droid, Cursor, Windsurf, Gemini CLI, Devin CLI, and Codex. Each target registers both a compiler and an ingester, so each one works as a `--from` source and as a `--to` destination. The library never decides which targets a caller uses.
+This Go library converts AI-agent configuration resources from a canonical source format (the Claude plugin layout) into the layout each harness expects. It has eight conversion targets: Claude Code, Factory Droid, Cursor, Windsurf, Gemini CLI, Devin CLI, Codex, and OpenCode. Each target registers both a compiler and an ingester, so each one works as a `--from` source and as a `--to` destination. The library never decides which targets a caller uses.
 
 ## Design
 
@@ -137,6 +137,7 @@ hcc convert --autodetect --to factory ./my-plugin
 | Gemini CLI | `TargetGemini` | Extension directory (`gemini-extension.json` at root) |
 | Devin CLI | `TargetDevin` | Project `.devin/`; user `~/.config/devin/` |
 | Codex | `TargetCodex` | Partitioned: `.agents/` skills plus `.codex/` configuration; the consumer resolves scope and `CODEX_HOME` |
+| OpenCode | `TargetOpenCode` | Project `.opencode/`; machine XDG `opencode/`; native MCP file resolved by the consumer |
 
 [`target/target.go`](target/target.go) is the authoritative declaration of
 every target: its identity, label, both roots, and its compiler, ingester,
@@ -144,7 +145,7 @@ conversion, and UI capabilities. Read targets from it instead of hardcoding a
 list. `ValidateTargetRegistrations()` checks the registry and the actual
 compiler and ingester registrations against each other in both directions.
 
-Codex, Devin, and Claude register a validated topology descriptor in
+OpenCode, Codex, Devin, and Claude register a validated topology descriptor in
 [`target/native_layout.go`](target/native_layout.go). The descriptor does not
 depend on scope. It lists the target's partitions, the resource path pattern for
 each kind, and the shared aggregate file each kind merges into at each scope.
@@ -202,7 +203,7 @@ Codex-specific notes:
   [hooks](https://developers.openai.com/codex/hooks), and
   [MCP](https://developers.openai.com/codex/mcp), plus the
   [config reference](https://developers.openai.com/codex/config-file/config-reference)
-  for `oauth_resource`. The Codex compiler and ingester tests and the 7×7 matrix
+  for `oauth_resource`. The Codex compiler and ingester tests and the 8×8 matrix
   pin the exact fixture outcomes and losses; see
   [`field-matrix.md`](field-matrix.md) and [`diag/codes.md`](diag/codes.md).
 
@@ -237,3 +238,18 @@ UPDATE_GOLDEN=1 go test -run TestGolden ./...
 ## Status
 
 v0.x. The 7×7 translation matrix and the core API are implemented. The design document lists the deferred items.
+
+OpenCode-specific notes:
+
+- Skills, commands, and agents use native plural directories. Ingestion also accepts
+  singular aliases, with the plural path winning for the same filename. Detection
+  requires `.opencode`; explicit ingestion also accepts a native config directory.
+- MCP fragments use typed external ownership policy. Consumers resolve the actual
+  JSON/JSONC file and reconcile only entries proven owned; OpenCode permits trailing
+  commas without changing the default JSONC parser behavior for other callers.
+- Native sidecars preserve command selections, agent permission order and empty
+  policies, tool controls, MCP reference intent, authentication, and timeout fields.
+  Conversion to another target rejects unrepresentable execution semantics.
+- Hooks emit data declarations plus a fixed dependency-free adapter. Arbitrary
+  executable source plugins are diagnosed without loading them. See the
+  [OpenCode compatibility note](../../docs/harness-validation/opencode.md).

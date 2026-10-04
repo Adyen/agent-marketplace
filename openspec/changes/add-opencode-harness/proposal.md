@@ -5,8 +5,8 @@ OpenCode users cannot currently select it as a harness target or import its sour
 ## What Changes
 
 - Add opt-in `opencode` selection across configuration, initialization, TUI, status, doctor, backup, and bidirectional conversion while keeping existing defaults unchanged.
-- Compile and ingest native skills, commands, subagents, MCP servers, and a documented supported hook subset in repository and machine scopes, including supported custom roots.
-- Require first-release native execution evidence for hooks, including activation, blocking, failures, cancellation, and consumer-path coverage. Unsupported individual forms fail closed; postponing the entire hook resource kind is not an acceptable release.
+- Compile and ingest native skills, commands, subagents, MCP servers, and a documented supported hook subset in repository and machine scopes, including supported custom roots. Shared repository/machine custom destinations refuse before mutation.
+- Require first-release native execution evidence for hooks, including activation, blocking, handler failures, deadlines, and explicitly advertised consumer paths. Unsupported individual forms fail closed; postponing the entire hook resource kind is not an acceptable release.
 - Reconcile OpenCode JSON/JSONC MCP entries through durable ownership state, private backups, journaled publication, and safe repair while preserving handwritten configuration.
 - Preserve effective permissions, literal/reference meaning, strict parsing, descriptor-based filesystem safety, bounded reads, exact acquisition authority, and incomplete-input preservation through every entry point.
 - Diagnose rules and arbitrary executable plugins as unsupported without executing source code or changing shared instructions, trust, authentication state, or consumer-wide permission policy.

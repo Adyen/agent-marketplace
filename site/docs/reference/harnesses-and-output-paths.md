@@ -15,6 +15,7 @@ The roots and per-kind paths come from `pkg/harness-compilation/target` and `int
 | Gemini CLI | `gemini` |
 | Devin CLI | `devin` |
 | Codex | `codex` |
+| OpenCode | `opencode` |
 
 Use these identifiers in `harnesses:` lists, in `source_harness:`, and with `convert --from` and `convert --to`. Identifiers are lowercase. An unknown identifier in a v4 configuration fails with `v4.harness`, and `convert` rejects one with an error that lists the valid names.
 
@@ -31,6 +32,7 @@ Each harness has a repository root and a machine root. Resources selected by the
 | Gemini CLI | `<repo>/.gemini` | `~/.gemini` |
 | Devin CLI | `<repo>/.devin` | `~/.config/devin` |
 | Codex | `<repo>/.agents` (skills, commands) and `<repo>/.codex` (subagents, hooks, mcp) | `~/.agents` (skills, commands) and `~/.codex` or `$CODEX_HOME` (subagents, hooks, mcp) |
+| OpenCode | `<repo>/.opencode` plus native repository configuration | `$XDG_CONFIG_HOME/opencode` or `~/.config/opencode` |
 
 Codex splits its files across two roots. When `CODEX_HOME` is set, it replaces `~/.codex` for machine subagents, hooks, and MCP servers. It never moves skills, which stay in `~/.agents`. `CODEX_HOME` must be an absolute path; a relative value stops the run with an error.
 
@@ -112,6 +114,31 @@ Factory commands are always regular files, even in symlink mode, because the Dro
 
 Hooks and MCP servers share one `settings.json` per scope. The Gemini compiler also produces a `gemini-extension.json` file, but sync does not install it. Its `mcpServers` entries go into `settings.json` instead.
 
+### OpenCode
+
+OpenCode is opt-in. Select `opencode` through the harness modal or configuration.
+
+| Kind | Repository path | Machine path relative to its root |
+|---|---|---|
+| skill | `.opencode/skills/<name>/SKILL.md` | `skills/<name>/SKILL.md` |
+| command | `.opencode/commands/<name>.md` | `commands/<name>.md` |
+| subagent | `.opencode/agents/<name>.md` | `agents/<name>.md` |
+| hook | `.opencode/hooks/agent-marketplace/<name>.json` | `hooks/agent-marketplace/<name>.json` |
+| hook adapter | `.opencode/plugins/agent-marketplace.js` | `plugins/agent-marketplace.js` |
+| mcp | `opencode.json` or existing `opencode.jsonc`, under `mcp` | `opencode.json` or existing `opencode.jsonc`, under `mcp` |
+
+The machine root follows `XDG_CONFIG_HOME`, falling back to `~/.config/opencode`.
+Absolute `OPENCODE_CONFIG_DIR` and `OPENCODE_CONFIG` override the resource
+folder and configuration file separately. Native configuration already in
+`.opencode` takes precedence over the repository root configuration.
+
+Commands stay commands, and agents use native subagent mode. The fixed hook
+adapter is a regular file in both materialization modes. Supported command
+`PreToolUse` hooks run through native plugins; absent, disabled, or failed
+plugins are inactive. Rules and arbitrary executable plugin conversion are
+unsupported. For protocol details, see the repository's OpenCode compatibility
+note under `docs/harness-validation/opencode.md`.
+
 ### Windsurf
 
 | Kind | Repository path | Machine path |
@@ -134,7 +161,7 @@ In the default `symlink` mode, skills, commands, and subagents are symlinks into
 Shared files, such as `hooks.json`, `.mcp.json`, `settings.json`, `.codex/config.toml`, and `.devin/mcp_config.json`, hold entries from several sources as well as entries you wrote yourself. They are always regular files in both modes. Sync edits them in place, adds and removes only the entries it installed, and keeps your own entries, comments, and unrelated settings. How it tells its entries apart depends on the harness:
 
 - Claude Code, Factory Droid, Cursor, and Windsurf files, and Gemini CLI hooks, mark each installed entry with `"_managed_by": "agent-marketplace"`.
-- Devin CLI and Codex files, and Gemini CLI MCP servers, contain no marker. Sync records which entries it owns in state files under `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`). If that record is missing or damaged, sync treats every existing entry as yours, removes nothing, and refuses to overwrite an entry with the same name. See the [filesystem layout reference](./filesystem-layout.md).
+- Devin CLI, Codex, and OpenCode files, and Gemini CLI MCP servers, contain no marker. Sync records which entries it owns in state files under `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`). If that record is missing or damaged, sync treats every existing entry as yours, removes nothing, and refuses to overwrite an entry with the same name. See the [filesystem layout reference](./filesystem-layout.md).
 
 ## Related documentation
 

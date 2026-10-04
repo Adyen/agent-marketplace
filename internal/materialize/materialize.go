@@ -219,7 +219,7 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 
 func (s *portableState) entry(target hcc.Target, path string) (portableManifestEntry, bool) {
 	entry, ok := s.entries[portableManifestKey(target, path)]
-	if ok && target == hcc.Target(targetmeta.TargetCodex) && !s.matchesCodexRoot(entry) {
+	if ok && (target == hcc.TargetCodex || target == hcc.TargetOpenCode) && !s.matchesNativeRoot(entry) {
 		return portableManifestEntry{}, false
 	}
 	return entry, ok
@@ -228,7 +228,7 @@ func (s *portableState) entry(target hcc.Target, path string) (portableManifestE
 func (s *portableState) add(target hcc.Target, path, digest string) {
 	path = filepath.ToSlash(filepath.Clean(path))
 	entry := portableManifestEntry{Target: string(target), Path: path, Digest: digest}
-	if target == hcc.Target(targetmeta.TargetCodex) {
+	if target == hcc.TargetCodex || target == hcc.TargetOpenCode {
 		key := outputKey{target: target, machineScope: s.machineScope}
 		if id, root, _, err := portableEntryDestination(key, "", s.repoRoot, path); err == nil {
 			entry.RootID, entry.RootKey = id, ownership.RootKey(root)
@@ -237,8 +237,8 @@ func (s *portableState) add(target hcc.Target, path, digest string) {
 	s.entries[portableManifestKey(target, path)] = entry
 }
 
-func (s *portableState) matchesCodexRoot(entry portableManifestEntry) bool {
-	key := outputKey{target: hcc.Target(targetmeta.TargetCodex), machineScope: s.machineScope}
+func (s *portableState) matchesNativeRoot(entry portableManifestEntry) bool {
+	key := outputKey{target: hcc.Target(entry.Target), machineScope: s.machineScope}
 	id, root, _, err := portableEntryDestination(key, "", s.repoRoot, entry.Path)
 	return err == nil && entry.RootID == id && entry.RootKey == ownership.RootKey(root)
 }
@@ -446,14 +446,15 @@ type targetWork struct {
 
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
-	linkPublicationHook func(string)
-	scopeFilter         *bool
-	allDiags            []diag.Diagnostic
-	byTarget            map[outputKey]*targetWork
-	skillLinks          map[outputKey]map[string]*skillLinkGroup
-	allOutputs          map[outputKey]bool
-	blocked             blockedOutputs
-	blockedResources    []BlockedResource
+	openCodeAggregateScope *bool
+	linkPublicationHook    func(string)
+	scopeFilter            *bool
+	allDiags               []diag.Diagnostic
+	byTarget               map[outputKey]*targetWork
+	skillLinks             map[outputKey]map[string]*skillLinkGroup
+	allOutputs             map[outputKey]bool
+	blocked                blockedOutputs
+	blockedResources       []BlockedResource
 	// artifactMeta maps (outputKey → artifact relative path → skillLink metadata)
 	// for artifacts that remain in result.Artifacts (not extracted into skillLinks).
 	// Used to generate rich collision hints in syncArtifactLinks.
@@ -492,6 +493,9 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	// Phase 1: Group skills by target and track all output keys.
 	work, allOutputs, blocked, allDiags := buildWorkItems(resolved, repoRoot)
 	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "diagnostics", len(allDiags))
+	if refusal := normalizeOpenCodeScopes(work, allOutputs, repoRoot); refusal != nil {
+		return &Report{Diags: append(allDiags, *refusal), PerTarget: map[hcc.Target]TargetReport{}}, nil
+	}
 
 	// Apply scope filter: remove output keys that don't match the requested scope.
 	if rc.scopeFilter != nil {
@@ -517,6 +521,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	// Phase 2: Compile each work item and collect artifacts per target.
 	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, repoRoot)
 	compileResult.scopeFilter = rc.scopeFilter
+	compileResult.openCodeAggregateScope = openCodeAggregateScope(work, rc.scopeFilter, allOutputs)
 	slog.Debug("materialize compile complete", "targets", len(compileResult.byTarget), "diagnostics", len(compileResult.allDiags))
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
@@ -999,14 +1004,15 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	}
 
 	return compilePhaseResult{
-		allDiags:         allDiags,
-		byTarget:         byTarget,
-		skillLinks:       skillLinks,
-		allOutputs:       allOutputs,
-		blocked:          blocked,
-		blockedResources: blockedResources,
-		artifactMeta:     artifactMeta,
-		ownedState:       ownedState,
+		openCodeAggregateScope: openCodeAggregateScope(work, nil, allOutputs),
+		allDiags:               allDiags,
+		byTarget:               byTarget,
+		skillLinks:             skillLinks,
+		allOutputs:             allOutputs,
+		blocked:                blocked,
+		blockedResources:       blockedResources,
+		artifactMeta:           artifactMeta,
+		ownedState:             ownedState,
 	}
 }
 
@@ -1070,6 +1076,12 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		return report
 	}
 
+	if d := preflightOpenCodeDestinations(&compileResult, repoRoot); d != nil {
+		report.Diags = append(report.Diags, *d)
+		return report
+	}
+	report.Diags = append(report.Diags, preflightOpenCodeResources(&compileResult, repoRoot)...)
+
 	composition, adapterErr := newMaterializeAdapterComposition()
 	if adapterErr != nil {
 		for key := range compileResult.allOutputs {
@@ -1132,11 +1144,16 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			})
 			continue
 		}
+		// A shared config file has one reconciliation plan; distinct resource
+		// roots still need their normal cleanup when selections change scope.
+		if key.target == hcc.TargetOpenCode && compileResult.openCodeAggregateScope != nil && key.machineScope != *compileResult.openCodeAggregateScope {
+			adapterDestinations = adapterDestinations[:1]
+		}
 		outDir := repoRoot
 		if len(adapterDestinations) > 0 {
 			// A single destination owns the whole output root (Devin); multiple
 			// destinations are partitions under the scope base (Codex).
-			if len(adapterDestinations) == 1 {
+			if len(adapterDestinations) == 1 || key.target == hcc.TargetOpenCode {
 				outDir = adapterDestinations[0].Root
 			} else if key.machineScope {
 				outDir = home
@@ -1186,7 +1203,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				continue
 			}
 		}
-		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook}
+		boundary := destinationBoundary{machineScope: key.machineScope || (key.target == hcc.TargetOpenCode && (os.Getenv("OPENCODE_CONFIG_DIR") != "" || os.Getenv("OPENCODE_CONFIG") != "")), repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook}
 		if key.target == hcc.TargetFactory {
 			boundary.legacySkillsDir = filepath.Join(outDir, "skills")
 		}
@@ -1275,7 +1292,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
 			continue
 		}
-		if mode == config.MaterializationModeFile {
+		if mode == config.MaterializationModeFile || (key.target == hcc.TargetOpenCode && plan.reportPrefix == "plugins") {
 			planRoot := outDir
 			if plan.root != "" {
 				planRoot = plan.root
@@ -1333,7 +1350,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		var writeReport *hcc.WriteReport
 		var writeDiags []diag.Diagnostic
 		var matErr error
-		if mode == config.MaterializationModeFile {
+		if mode == config.MaterializationModeFile || (key.target == hcc.TargetOpenCode && plan.reportPrefix == "plugins") {
 			writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired)
 		} else {
 			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired, boundary: &boundary})
@@ -3051,7 +3068,7 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 		if entry.Target != string(key.target) || desired[entry.Path] {
 			continue
 		}
-		if key.target == hcc.Target(targetmeta.TargetCodex) && !state.matchesCodexRoot(entry) {
+		if (key.target == hcc.TargetCodex || key.target == hcc.TargetOpenCode) && !state.matchesNativeRoot(entry) {
 			continue
 		}
 		if info, ok := harness.TargetInfoFor(key.target); ok && info.PreservesLegacyPath(entry.Path, key.machineScope) {
@@ -3111,7 +3128,14 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 }
 
 func portableEntryDestination(key outputKey, outDir, repoRoot, entryPath string) (string, string, string, error) {
-	if key.target != hcc.Target(targetmeta.TargetCodex) {
+	if key.target == hcc.TargetOpenCode {
+		destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+		if err != nil {
+			return "", "", "", err
+		}
+		return destinations[0].ID, destinations[0].Root, entryPath, nil
+	}
+	if key.target != hcc.TargetCodex {
 		return "default", outDir, entryPath, nil
 	}
 	destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
@@ -3557,6 +3581,14 @@ func collectHookSupportFiles(sourcePath string, target hcc.Target, sourceHarness
 		data, identity, err := readSupportSourceSnapshot(root, name)
 		if err != nil {
 			return nil, err
+		}
+		if sourceHarness == string(hcc.TargetOpenCode) && strings.HasSuffix(name, ".json") {
+			var declaration struct{ Format string }
+			if jsonc.Unmarshal(name, data, &declaration) == nil && strings.HasPrefix(declaration.Format, "agent-marketplace/opencode-hook-") {
+				// Sibling declarations are independently selected resources, not
+				// support files. Copying them would activate unselected hooks.
+				continue
+			}
 		}
 		artifacts = append(artifacts, artifact.Artifact{Path: hooksDirRel + "/" + name, Bytes: data, Mode: identity.Mode})
 	}
@@ -4226,7 +4258,7 @@ func CodexMachineManagedPaths(repoRoot string) (map[string][]string, error) {
 		if entry.Target != string(target) {
 			continue
 		}
-		if !state.matchesCodexRoot(entry) {
+		if !state.matchesNativeRoot(entry) {
 			continue
 		}
 		id, _, rel, err := portableEntryDestination(key, "", repoRoot, entry.Path)

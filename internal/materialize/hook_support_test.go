@@ -86,3 +86,27 @@ func TestHookSupportExclusions(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenCodeHookSupportDoesNotActivateSiblingDeclarations(t *testing.T) {
+	directory := t.TempDir()
+	for name, content := range map[string]string{
+		"selected.json":   `{"format":"agent-marketplace/opencode-hook-v1"}`,
+		"unselected.json": `{"format":"agent-marketplace/opencode-hook-v1","command":"false"}`,
+		"commented.json":  `{ /* comment */ "format":"agent-marketplace/opencode-hook-v1","command":"false"}`,
+		"data.json":       `{"payload":"ordinary support"}`,
+		"check.sh":        "true\n",
+	} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := collectHookSupportFiles(filepath.Join(directory, "selected.json"), hcc.TargetOpenCode, "opencode")
+	if err != nil || len(files) != 2 {
+		t.Fatalf("support: %v %#v", err, files)
+	}
+	for _, file := range files {
+		if filepath.Base(file.Path) != "data.json" && filepath.Base(file.Path) != "check.sh" {
+			t.Fatalf("unselected declaration copied: %s", file.Path)
+		}
+	}
+}

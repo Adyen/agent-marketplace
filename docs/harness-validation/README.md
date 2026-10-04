@@ -2,7 +2,7 @@
 
 This contributor guide explains how every supported harness target is
 validated: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, and
-`windsurf` (the registry in `pkg/harness-compilation/target`). Start with the
+`windsurf`, and `opencode` (the registry in `pkg/harness-compilation/target`). Start with the
 target guide, then follow the implementation links below.
 
 ## Principle: inspect every resource the native CLI can expose

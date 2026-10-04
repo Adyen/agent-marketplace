@@ -37,6 +37,7 @@ const (
 	TargetGemini   = targetmeta.TargetGemini
 	TargetDevin    = targetmeta.TargetDevin
 	TargetCodex    = targetmeta.TargetCodex
+	TargetOpenCode = targetmeta.TargetOpenCode
 )
 
 // Harness is a backward-compatible alias for Target. It allows callers to
@@ -52,6 +53,7 @@ const (
 	HarnessGemini   Harness = TargetGemini
 	HarnessDevin    Harness = TargetDevin
 	HarnessCodex    Harness = TargetCodex
+	HarnessOpenCode Harness = TargetOpenCode
 )
 
 // TargetDefinition is the shared metadata declaration for a target.
