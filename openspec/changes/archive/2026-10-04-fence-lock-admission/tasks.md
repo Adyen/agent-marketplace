@@ -5,4 +5,4 @@
 - [x] Bounded FIFO and late link preservation controls.
 - [x] Linux/macOS full ownership/count20 lock/race/compatibility/validate.
 - [x] Verify final spec/review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
