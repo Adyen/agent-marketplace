@@ -5,4 +5,4 @@
 - [x] Verify late state replacement preserves metadata/journal after actual native publication.
 - [x] Linux/macOS full ownership and repeated original-state/CAS/crash gates.
 - [x] Record benchmark/validate/spec/full review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
