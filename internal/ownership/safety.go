@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -328,7 +329,14 @@ func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 		if manifest.Version != 1 || manifest.RootKey != s.rootKey || manifest.File != rel {
 			continue
 		}
-		out = append(out, RetainedBackup{Path: path, Manifest: manifest})
+		pin, exists, err := captureSafetyPayload(parent, name)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+		out = append(out, RetainedBackup{Path: path, Manifest: manifest, source: s, relative: relative, name: name, observed: pin})
 	}
 	if err := s.verifyStateDirectory(parent, relative); err != nil {
 		return nil, err
@@ -340,9 +348,73 @@ func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 type RetainedBackup struct {
 	Path     string
 	Manifest BackupManifest
+	source   *Store
+	relative string
+	name     string
+	observed metadataPin
 }
 
 // RawBytes returns the exact retained pre-mutation bytes.
-func (b RetainedBackup) RawBytes() ([]byte, error) {
-	return os.ReadFile(b.Path)
+func (b RetainedBackup) RawBytes() (data []byte, err error) {
+	if b.source == nil {
+		return nil, fsboundary.ErrUnsafePath
+	}
+	parent, err := b.source.captureStateDirectory(b.relative)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+			data = nil
+		}
+	}()
+	if !parent.Identity().SameObject(b.observed.parent) {
+		return nil, fsboundary.ErrGenerationConflict
+	}
+	file, err := fsboundary.CaptureDestination(parent, b.name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+			data = nil
+		}
+	}()
+	if file.Link() != nil || !file.Exists() || !file.Identity().SameState(b.observed.file) {
+		return nil, fsboundary.ErrGenerationConflict
+	}
+	data, _, err = file.ReadTarget(b.observed.file.Size)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.source.verifyStateDirectory(parent, b.relative); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func captureSafetyPayload(parent *fsboundary.Dir, name string) (pin metadataPin, exists bool, err error) {
+	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return pin, false, err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil {
+		return pin, false, fsboundary.ErrUnsafeFile
+	}
+	if !file.Exists() {
+		return pin, false, nil
+	}
+	if err := file.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
+		return pin, false, err
+	}
+	identity := parent.Identity()
+	pin = metadataPin{parent: fsboundary.Identity{Device: identity.Device, Inode: identity.Inode}, file: file.Identity()}
+	return pin, true, nil
 }
