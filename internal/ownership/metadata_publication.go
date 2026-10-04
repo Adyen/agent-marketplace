@@ -18,6 +18,10 @@ func (s *Store) captureStateDirectory(relative string) (parent *fsboundary.Dir, 
 	if !fs.ValidPath(filepath.ToSlash(relative)) || relative == "." {
 		return nil, fsboundary.ErrUnsafePath
 	}
+	return captureAbsoluteDirectory(filepath.Join(s.canonicalStateRoot, relative))
+}
+
+func captureAbsoluteDirectory(absolute string) (parent *fsboundary.Dir, err error) {
 	anchor, err := fsboundary.OpenDir(string(filepath.Separator))
 	if err != nil {
 		return nil, err
@@ -31,7 +35,7 @@ func (s *Store) captureStateDirectory(relative string) (parent *fsboundary.Dir, 
 			}
 		}
 	}()
-	rel, err := filepath.Rel(anchor.Path(), filepath.Join(s.canonicalStateRoot, relative))
+	rel, err := filepath.Rel(anchor.Path(), absolute)
 	if err != nil {
 		return nil, err
 	}
@@ -42,6 +46,10 @@ func (s *Store) prepareStateDirectory(relative string) (err error) {
 	if !fs.ValidPath(filepath.ToSlash(relative)) || relative == "." {
 		return fsboundary.ErrUnsafePath
 	}
+	return preparePrivateDirectory(filepath.Join(s.canonicalStateRoot, relative))
+}
+
+func preparePrivateDirectory(absolute string) (err error) {
 	current, err := fsboundary.OpenDir(string(filepath.Separator))
 	if err != nil {
 		return err
@@ -53,7 +61,6 @@ func (s *Store) prepareStateDirectory(relative string) (err error) {
 			}
 		}
 	}()
-	absolute := filepath.Join(s.canonicalStateRoot, relative)
 	for _, name := range strings.Split(strings.TrimPrefix(absolute, string(filepath.Separator)), string(filepath.Separator)) {
 		next, openErr := current.OpenPath(name)
 		if errors.Is(openErr, fs.ErrNotExist) && !errors.Is(openErr, fsboundary.ErrUnsafePath) {
@@ -71,7 +78,18 @@ func (s *Store) prepareStateDirectory(relative string) (err error) {
 			return closeErr
 		}
 	}
-	return s.verifyStateDirectory(current, relative)
+	fresh, err := captureAbsoluteDirectory(absolute)
+	if err != nil {
+		return err
+	}
+	unchanged := fresh.Identity().SameObject(current.Identity())
+	if err := fresh.Close(); err != nil {
+		return err
+	}
+	if !unchanged {
+		return fsboundary.ErrGenerationConflict
+	}
+	return nil
 }
 
 func (s *Store) verifyMetadataParent(parent *fsboundary.Dir) error {

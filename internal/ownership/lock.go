@@ -687,23 +687,21 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 	if err := ctx.Err(); err != nil {
 		return nil, 0, 0, fmt.Errorf("ownership: lock %s: %w", path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, 0, 0, fmt.Errorf("ownership: create lock directory %s: %w", filepath.Dir(path), err)
-	}
+
 	// O_CREATE without O_EXCL: the file is created once per root and reused
 	// forever. Recreating it would split the lock across two inodes.
 	//
-	// lockOpenFlags adds O_NOFOLLOW on unix. Acquisition TRUNCATES this path to
+	// Captured creation adds O_NOFOLLOW. Acquisition truncates the descriptor to
 	// write its diagnostics-only metadata, so a symlink in the final component
 	// would let anything that can write into locks/ redirect that truncation at
 	// a file the lock does not own — including this package's own ownership
 	// record two directories away. A symlinked lock path is refused loudly
 	// instead: it is never something this package created.
-	f, err := os.OpenFile(path, lockOpenFlags, 0o644)
+	f, err := s.openLockFile()
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("ownership: open lock file %s: %w", path, err)
 	}
-	if err := validateLockFile(f); err != nil {
+	if err := s.validateLockAuthority(f); err != nil {
 		return nil, 0, 0, errors.Join(err, f.Close())
 	}
 
@@ -721,7 +719,7 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 		lockErr := try(f)
 		switch {
 		case lockErr == nil:
-			if err := validateLockFile(f); err != nil {
+			if err := s.validateLockAuthority(f); err != nil {
 				return nil, time.Since(start), attempts, errors.Join(err, f.Close())
 			}
 			waited := time.Since(start)
@@ -860,7 +858,7 @@ func (s *Store) writeLockMetadata(f *os.File) {
 	line := fmt.Sprintf("pid=%d host=%s argv0=%s acquired=%s\n",
 		os.Getpid(), lockHost(), sanitizeLockField(filepath.Base(os.Args[0])),
 		s.now().UTC().Format(time.RFC3339Nano))
-	if err := validateLockFile(f); err != nil {
+	if err := s.validateLockAuthority(f); err != nil {
 		slog.Debug("refused unsafe advisory lock metadata write", "root_key", s.rootKey, "err", err)
 		return
 	}

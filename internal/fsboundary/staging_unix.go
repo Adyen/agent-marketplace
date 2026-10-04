@@ -20,6 +20,29 @@ import (
 // is never a symlink, and it starts owner-only until the caller chmods it.
 const stagedCreateFlags = unix.O_RDWR | unix.O_CREAT | unix.O_EXCL | unix.O_NOFOLLOW | unix.O_CLOEXEC
 
+func (d *Dir) OpenPersistentFile(name string, mode fs.FileMode) (*os.File, error) {
+	if err := validLeafName(name); err != nil {
+		return nil, err
+	}
+	flags := unix.O_RDWR | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
+	fd, err := unix.Openat(int(d.file.Fd()), name, flags|unix.O_CREAT, uint32(mode.Perm()))
+	if errors.Is(err, unix.ENOENT) {
+		fd, err = unix.Openat(int(d.file.Fd()), name, flags, 0)
+	}
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), filepath.Join(d.path, name))
+	identity, err := identityOf(file)
+	if err == nil && (!identity.Mode.IsRegular() || identity.Links != 1) {
+		err = ErrUnsafeFile
+	}
+	if err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
+}
+
 // CreateTemp creates a new regular file directly below the captured
 // directory and returns it open for writing together with its leaf name.
 // Pattern follows os.CreateTemp: a "*" is replaced with random text, or

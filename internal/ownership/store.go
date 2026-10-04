@@ -76,6 +76,8 @@ func (c *onceCrasher) Crash(point CrashPoint) error {
 type Store struct {
 	stateRoot          string
 	canonicalStateRoot string
+	canonicalLockRoot  string
+	lockRootErr        error
 	canonicalRoot      string
 	rootKey            string
 
@@ -180,6 +182,7 @@ func Open(targetRoot string, opts ...Option) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.canonicalLockRoot, s.lockRootErr = CanonicalRoot(filepath.Dir(s.LockPath()))
 	// Env var > in-process configuration > code default, per AGENTS.md. The
 	// resolution happens AFTER the options so the env var genuinely wins; see
 	// [LockTimeoutEnvVar] for why that direction is the right one. A malformed
