@@ -198,7 +198,7 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 			return Result{}, err
 		}
 	}
-	current, loadErr := s.Load()
+	current, originalRecord, loadErr := s.loadObservedRecord()
 	if loadErr != nil && !errors.Is(loadErr, ErrStateMissing) {
 		// A key collision must never be resolved by overwriting the other root's
 		// record, and corrupt state must not be silently re-based at generation 1.
@@ -366,7 +366,11 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 	// CAS PRECONDITION: refuse if the record or aggregate changed since the caller
 	// read them. With locking this should never fire; without locking it is the
 	// only thing that prevents lost updates.
-	if err := s.assertPrecondition(m); err != nil {
+	preconditionErr := s.assertPrecondition(m)
+	if preconditionErr == nil {
+		preconditionErr = s.verifyOriginalRecord(originalRecord, current != nil)
+	}
+	if err := preconditionErr; err != nil {
 		s.cleanupAfterCASFailure(journal, backupPath)
 		s.observeLock(LockEvent{Kind: LockCASConflict, Path: m.AbsFile, Err: err})
 		if errors.Is(err, ErrGenerationConflict) {
@@ -417,7 +421,7 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 	}
 
 	// STEP 6: atomically commit the matching ownership generation.
-	if err := s.commitRecord(next); err != nil {
+	if err := s.commitRecordWithValidation(next, func() error { return s.verifyOriginalRecord(originalRecord, current != nil) }); err != nil {
 		return Result{}, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), err)
 	}
 

@@ -14,9 +14,15 @@ type metadataPin struct {
 	file   fsboundary.Identity
 }
 
-func (s *Store) readMetadata(name string) ([]byte, bool, error) {
-	data, exists, _, err := s.readObservedMetadata(name)
-	return data, exists, err
+func (s *Store) verifyOriginalRecord(pin metadataPin, existed bool) error {
+	_, exists, current, err := s.readObservedMetadata(stateFileName)
+	if err != nil {
+		return err
+	}
+	if existed != exists || (existed && !pin.file.SameState(current.file)) || (pin.parent.Inode != 0 && !pin.parent.SameObject(current.parent)) {
+		return errors.Join(ErrGenerationConflict, fsboundary.ErrGenerationConflict)
+	}
+	return nil
 }
 
 func (s *Store) readObservedMetadata(name string) (data []byte, exists bool, pin metadataPin, err error) {
@@ -56,6 +62,7 @@ func readObservedMetadataFile(parent *fsboundary.Dir, name string) (data []byte,
 		return nil, false, pin, fsboundary.ErrUnsafeFile
 	}
 	if !file.Exists() {
+		pin.parent = parent.Identity()
 		return nil, false, pin, nil
 	}
 	data, pin.file, err = file.ReadTarget(file.Identity().Size)

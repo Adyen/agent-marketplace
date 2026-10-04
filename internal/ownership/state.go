@@ -300,16 +300,21 @@ func (s *Store) missingStateError() error {
 // record that went away. That is a reporting distinction only: the code, the
 // severity, and the nil record are identical either way.
 func (s *Store) Load() (*Record, error) {
-	data, exists, err := s.readMetadata(stateFileName)
+	record, _, err := s.loadObservedRecord()
+	return record, err
+}
+
+func (s *Store) loadObservedRecord() (*Record, metadataPin, error) {
+	data, exists, pin, err := s.readObservedMetadata(stateFileName)
 	if err != nil {
-		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %w", ErrStateCorrupt, err))
+		return nil, pin, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %w", ErrStateCorrupt, err))
 	}
 	if !exists {
-		return nil, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
+		return nil, pin, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
 	}
 	var rec Record
 	if err := json.Unmarshal(data, &rec); err != nil {
-		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: malformed JSON", ErrStateCorrupt))
+		return nil, pin, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: malformed JSON", ErrStateCorrupt))
 	}
 	normalizeHookEntries(&rec)
 	if err := validateRecord(&rec, s.canonicalRoot, s.rootKey); err != nil {
@@ -317,18 +322,22 @@ func (s *Store) Load() (*Record, error) {
 		if errors.Is(err, ErrStateRootMismatch) {
 			code = diag.CodeOwnershipStateRootMismatch
 		}
-		return nil, coded(code, s.StateFile(), err)
+		return nil, pin, coded(code, s.StateFile(), err)
 	}
 	if rec.Files == nil {
 		rec.Files = map[string]FileState{}
 	}
-	return &rec, nil
+	return &rec, pin, nil
 }
 
 // commitRecord writes the record atomically and durably: temp file in the same
 // directory, fsync the file, rename over the target, fsync the directory. On any
 // crash the reader sees either the whole previous record or the whole new one.
 func (s *Store) commitRecord(rec *Record) error {
+	return s.commitRecordWithValidation(rec, nil)
+}
+
+func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (err error) {
 	if err := validateRecord(rec, s.canonicalRoot, s.rootKey); err != nil {
 		return err
 	}
@@ -337,7 +346,28 @@ func (s *Store) commitRecord(rec *Record) error {
 		return fmt.Errorf("ownership: marshal record: %w", err)
 	}
 	data = append(data, '\n')
-	return s.writeMetadata(stateFileName, data)
+	if validate == nil {
+		return s.writeMetadata(stateFileName, data)
+	}
+	if err := validate(); err != nil {
+		return err
+	}
+	parent, err := s.captureMetadataParent()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	_, err = writeObservedMetadataFile(parent, stateFileName, data, func() error {
+		if err := s.verifyMetadataParent(parent); err != nil {
+			return err
+		}
+		return validate()
+	})
+	return err
 }
 
 // nextRecord builds the record that a mutation will commit, from the currently
