@@ -21,7 +21,7 @@ import (
 func TestPruneDirectoryMarkerReadRefusals(t *testing.T) {
 	for _, commandLane := range []bool{false, true} {
 		for _, dryRun := range []bool{false, true} {
-			for _, mutation := range []string{"hardlink", "replacement", "escaping-alias", "disappearance", "healthy"} {
+			for _, mutation := range []string{"hardlink", "hardlink-after-enumeration", "replacement", "escaping-alias", "disappearance", "healthy"} {
 				t.Run(fmt.Sprintf("commands=%v/dry-run=%v/%s", commandLane, dryRun, mutation), func(t *testing.T) {
 					root, external := t.TempDir(), t.TempDir()
 					dir := filepath.Join(root, "native")
@@ -78,6 +78,17 @@ func TestPruneDirectoryMarkerReadRefusals(t *testing.T) {
 						}
 						hit = true
 						switch mutation {
+						case "hardlink-after-enumeration":
+							if err := os.Remove(leaf); err != nil {
+								t.Fatal(err)
+							}
+							if err := os.Link(externalPath, leaf); err != nil {
+								t.Fatal(err)
+							}
+							replacement, err = os.Lstat(leaf)
+							if err != nil {
+								t.Fatal(err)
+							}
 						case "replacement", "escaping-alias":
 							if err := os.Rename(leaf, retained); err != nil {
 								t.Fatal(err)
@@ -110,18 +121,22 @@ func TestPruneDirectoryMarkerReadRefusals(t *testing.T) {
 					} else {
 						report, err = syncSkillLinks(dir, nil, dryRun, true, portableSyncContext{boundary: boundary})
 					}
-					if !hit {
+					if mutation == "hardlink" {
+						if hit {
+							t.Fatal("pre-existing hardlink reached the marker-read seam instead of staying unowned")
+						}
+					} else if !hit {
 						t.Fatal("captured marker-read seam not reached")
 					}
-					wantErr := map[string]error{"hardlink": fsboundary.ErrUnsafeFile, "replacement": fsboundary.ErrGenerationConflict, "escaping-alias": fsboundary.ErrUnsafePath}[mutation]
+					wantErr := map[string]error{"hardlink-after-enumeration": fsboundary.ErrUnsafeFile, "replacement": fsboundary.ErrGenerationConflict, "escaping-alias": fsboundary.ErrUnsafePath}[mutation]
 					if wantErr != nil {
 						if !errors.Is(err, wantErr) || len(report.Removed) != 0 {
 							t.Fatalf("snapshot refusal became non-ownership/success: %+v %v, want %v", report, err, wantErr)
 						}
 						assertNativePruneFileSnapshot(t, managedPath, marked, managedInfo)
 						switch mutation {
-						case "hardlink":
-							assertNativePruneFileSnapshot(t, leaf, marked, probeInfo)
+						case "hardlink-after-enumeration":
+							assertNativePruneFileSnapshot(t, leaf, marked, replacement)
 						case "replacement":
 							assertNativePruneFileSnapshot(t, leaf, []byte("replacement user bytes\n"), replacement)
 							assertNativePruneFileSnapshot(t, retained, marked, retainedInfo)
@@ -138,8 +153,11 @@ func TestPruneDirectoryMarkerReadRefusals(t *testing.T) {
 							t.Fatal(err)
 						}
 						want := []string{"a-probe.md", "b-managed.md"}
-						if mutation == "disappearance" {
+						if mutation == "disappearance" || mutation == "hardlink" {
 							want = []string{"b-managed.md"}
+						}
+						if mutation == "hardlink" {
+							assertNativePruneFileSnapshot(t, leaf, marked, probeInfo)
 						}
 						if !slices.Equal(report.Removed, want) {
 							t.Fatalf("healthy removals=%v want=%v", report.Removed, want)
@@ -168,6 +186,9 @@ func TestPruneDirectoryMarkerReadRefusals(t *testing.T) {
 					wantNames := []string{"a-probe.md", "b-managed.md", "c-user.md"}
 					if wantErr == nil && !dryRun {
 						wantNames = []string{"c-user.md"}
+						if mutation == "hardlink" {
+							wantNames = []string{"a-probe.md", "c-user.md"}
+						}
 					} else if mutation == "disappearance" {
 						wantNames = []string{"b-managed.md", "c-user.md"}
 					}
@@ -177,6 +198,47 @@ func TestPruneDirectoryMarkerReadRefusals(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// spec: materialization/prune-directory-refusal-precedes-foreign-discovery
+func TestPruneDirectorySkipsClassificationWithoutPruning(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprint("dry-run=", dryRun), func(t *testing.T) {
+			root, external := t.TempDir(), t.TempDir()
+			dir := filepath.Join(root, "native")
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			marked := []byte("---\n_managed_by: agent-marketplace\n---\n\ninert marked payload\n")
+			externalPath := filepath.Join(external, "external.md")
+			if err := os.WriteFile(externalPath, marked, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			leaf := filepath.Join(dir, "a-linked.md")
+			if err := os.Link(externalPath, leaf); err != nil {
+				t.Fatal(err)
+			}
+			probeInfo, err := os.Lstat(leaf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			boundary := &destinationBoundary{repoRoot: root, roots: []string{dir}}
+			classified := false
+			boundary.pruneMarkerReadHook = func(string) { classified = true }
+			report, err := syncSkillLinks(dir, nil, dryRun, false, portableSyncContext{boundary: boundary})
+			if err != nil {
+				t.Fatalf("hardlinked marker blocked a sync that does not prune: %v", err)
+			}
+			if classified {
+				t.Fatal("marker classification ran while pruning was disabled")
+			}
+			if len(report.Removed) != 0 {
+				t.Fatalf("pruning-disabled sync reported removals: %v", report.Removed)
+			}
+			assertNativePruneFileSnapshot(t, leaf, marked, probeInfo)
+			assertNativePruneFileSnapshot(t, externalPath, marked, probeInfo)
+		})
 	}
 }
 
@@ -217,12 +279,12 @@ func TestRunPruneDirectoryMarkerRefusalHasNativeDiagnostic(t *testing.T) {
 				t.Fatal(err)
 			}
 			report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}, func(cfg *runConfig) { cfg.dryRun = dryRun })
-			if err != nil || !hasDiagCode(report.Diags, "materialize.write.error") {
-				t.Fatalf("native snapshot refusal was hidden: %+v %v", report, err)
+			if err != nil || diag.HasErrors(report.Diags) {
+				t.Fatalf("known multiply linked marker blocked the native repeat: %+v %v", report, err)
 			}
 			for _, tr := range report.TargetReports() {
 				if len(tr.Removed) != 0 {
-					t.Fatalf("refused native discovery reported removals: %+v", tr)
+					t.Fatalf("known hardlink was reported removed: %+v", tr)
 				}
 			}
 			assertNativePruneFileSnapshot(t, leaf, data, info)
