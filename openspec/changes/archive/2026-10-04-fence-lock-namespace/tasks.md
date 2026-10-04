@@ -5,4 +5,4 @@
 - [x] Refuse replaced waiting leaf, preserve supported aliases/read-only diagnostics.
 - [x] Resolve native concurrent creation with one noncreating fallback; 50 waiter/stress controls.
 - [x] Final Linux/macOS/race/validate/spec/benchmark/all-file review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
