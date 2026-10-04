@@ -68,7 +68,7 @@ func TestMarketplaceDiscoveryDetailShowsOperatorExposedRejection(t *testing.T) {
 }
 
 func TestMarketplaceDiscoveryDetailShowsMetadataWithoutSourcePathError(t *testing.T) {
-	for _, kind := range []string{"skill", "collection", "command"} {
+	for _, kind := range []string{"collection", "command"} {
 		t.Run(kind, func(t *testing.T) {
 			m := modelWithSelectedRow(t, marketplaceDiscoveryRow(kind, "review-"+kind, mpapi.AvailabilityAvailable))
 			m.width = 100
@@ -277,6 +277,118 @@ func TestMarketplaceArchiveDetailFailsClosed(t *testing.T) {
 			}
 			if !contains(out, "Error reading resource") {
 				t.Fatalf("failed archive did not produce an actionable state:\n%s", out)
+			}
+		})
+	}
+}
+
+// spec: tui-navigation/installed-skill-definition-and-supporting-files-remain-browsable
+func TestInstalledMarketplaceStagedSkillShowsVirtualPrimary(t *testing.T) {
+	staged := filepath.Join(t.TempDir(), "sha256_"+strings.Repeat("a", 64))
+	if err := os.MkdirAll(staged, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	notes := []byte("# Notes\n\nSupporting instructions.")
+	if err := os.WriteFile(filepath.Join(staged, "notes.md"), notes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillResource := ir.NewSkill("grill", "Grill things", "# Grill with docs\n\nPrimary instructions.", nil, nil, ir.SourceRef{})
+	skillResource.SupportFiles = []string{"notes.md"}
+	r := installedMarketplaceRow(ir.KindSkill, "grill", staged)
+	r.Artifact.Resource = skillResource
+
+	m := modelWithSelectedRow(t, r)
+	m.width = 100
+	m.height = 30
+	m, cmd := enterDetail(t, m)
+	if m.bundle == nil {
+		t.Fatalf("staged skill did not open a bundle; viewport:\n%s", ansi.Strip(m.detailViewport.View()))
+	}
+	if m.detailSelectedPath != "SKILL.md" {
+		t.Fatalf("initial staged-skill selection = %q, want SKILL.md", m.detailSelectedPath)
+	}
+	var names []string
+	for _, entry := range m.bundle.entries() {
+		names = append(names, entry.RelPath)
+	}
+	for _, want := range []string{"SKILL.md", "notes.md"} {
+		found := false
+		for _, got := range names {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("staged bundle missing %q in %v", want, names)
+		}
+	}
+	if cmd == nil {
+		t.Fatal("enter did not schedule a primary preview")
+	}
+	updated, _ := m.Update(cmd().(detailContentMsg))
+	m = updated.(Model)
+	if out := ansi.Strip(m.detailViewport.View()); !contains(out, "Primary instructions.") {
+		t.Fatalf("virtual primary preview missing body:\n%s", out)
+	}
+
+	next, cmd := m.moveBundleCursor(1)
+	m = next.(Model)
+	if m.detailSelectedPath != "notes.md" {
+		t.Fatalf("moving down selected %q, want notes.md", m.detailSelectedPath)
+	}
+	updated, _ = m.Update(cmd().(detailContentMsg))
+	m = updated.(Model)
+	if out := ansi.Strip(m.detailViewport.View()); !contains(out, "Supporting instructions.") {
+		t.Fatalf("support file preview missing body:\n%s", out)
+	}
+
+	entries, err := os.ReadDir(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "notes.md" {
+		t.Fatalf("staging directory mutated: %v", entries)
+	}
+	data, err := os.ReadFile(filepath.Join(staged, "notes.md"))
+	if err != nil || string(data) != string(notes) {
+		t.Fatalf("support file changed: %v", err)
+	}
+}
+
+// spec: tui-navigation/installed-skill-definition-and-supporting-files-remain-browsable
+func TestInstalledMarketplaceStagedSkillFailsVisibly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  func(t *testing.T) row
+	}{
+		{name: "missing directory", row: func(t *testing.T) row {
+			r := installedMarketplaceRow(ir.KindSkill, "grill", filepath.Join(t.TempDir(), "missing"))
+			r.Artifact.Resource = ir.NewSkill("grill", "Grill", "# Grill", nil, nil, ir.SourceRef{})
+			return r
+		}},
+		{name: "staged support without attached skill", row: func(t *testing.T) row {
+			staged := t.TempDir()
+			if err := os.WriteFile(filepath.Join(staged, "notes.md"), []byte("# Notes\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return installedMarketplaceRow(ir.KindSkill, "grill", staged)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := modelWithSelectedRow(t, tc.row(t))
+			m.width = 100
+			m.height = 30
+			m.detailViewport.SetContent("stale preview content")
+			m, cmd := enterDetail(t, m)
+			if cmd != nil || m.bundle != nil || m.detailSelectedPath != "" {
+				t.Fatalf("invalid staged skill opened a bundle: cmd=%v bundle=%v", cmd, m.bundle != nil)
+			}
+			out := ansi.Strip(m.detailViewport.View())
+			if !contains(out, "Error reading resource") || contains(out, "stale preview content") {
+				t.Fatalf("invalid staged skill did not fail visibly:\n%s", out)
+			}
+			if strings.Contains(out, ".cache") || strings.Contains(out, "sha256_") {
+				t.Fatalf("error leaked cache internals:\n%s", out)
 			}
 		})
 	}

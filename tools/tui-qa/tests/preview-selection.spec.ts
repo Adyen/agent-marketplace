@@ -2,92 +2,21 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit, type TestTerminal } from "./helpers.js";
+import {
+  declineLegacyMigration,
+  defineFixture,
+  findTextRun,
+  osc52Capture,
+  sgrDrag as drag,
+  step,
+  waitForExit,
+  waitForInverse
+} from "./helpers.js";
 
 const journey = defineFixture("preview-selection", ["tui"], 80, 24, { overflowStatus: true });
 test.use(journey.options);
 test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
-
-const sgr = (code: number, x: number, y: number, final: "M" | "m"): string =>
-  `\x1b[<${code};${x + 1};${y + 1}${final}`;
-const drag = (x0: number, y0: number, x1: number, y1: number): string =>
-  sgr(0, x0, y0, "M") + sgr(32, x1, y1, "M") + sgr(0, x1, y1, "m");
-
-const osc52Capture = (terminal: TestTerminal): { payloads(): string[] } => {
-  const pty = (terminal as unknown as { _pty?: { onData(cb: (data: string) => void): void } })._pty;
-  assert.ok(pty, "test terminal does not expose a PTY output stream");
-  const chunks: string[] = [];
-  pty.onData((data) => chunks.push(data));
-  return {
-    payloads(): string[] {
-      return [...chunks.join("").matchAll(/\x1b\]52;[^;\x07\x1b]*;([^\x07\x1b]*)[\x07\x1b]/g)].map(
-        (match) => match[1]
-      );
-    },
-  };
-};
-
-interface HeadlessCell {
-  isInverse(): number;
-}
-interface HeadlessLine {
-  translateToString(trimRight?: boolean): string;
-  getCell(x: number): HeadlessCell | undefined;
-  readonly length: number;
-}
-interface HeadlessBuffer {
-  baseY: number;
-  length: number;
-  getLine(y: number): HeadlessLine | undefined;
-}
-
-const xterm = (terminal: TestTerminal): { buffer: { active: HeadlessBuffer } } =>
-  (terminal as unknown as { _term: { buffer: { active: HeadlessBuffer } } })._term;
-
-interface TextRun {
-  x: number;
-  y: number;
-  text: string;
-  cells: HeadlessCell[];
-}
-
-const findTextRun = (terminal: TestTerminal, text: RegExp): TextRun | undefined => {
-  const buffer = xterm(terminal).buffer.active;
-  for (let y = buffer.baseY; y < buffer.length; y++) {
-    const line = buffer.getLine(y);
-    if (!line) continue;
-    const match = text.exec(line.translateToString(false));
-    if (!match) continue;
-    const cells: HeadlessCell[] = [];
-    for (let x = match.index; x < match.index + match[0].length; x++) {
-      const cell = line.getCell(x);
-      if (cell) cells.push(cell);
-    }
-    return { x: match.index, y: y - buffer.baseY, text: match[0], cells };
-  }
-  return undefined;
-};
-
-const waitForInverse = async (
-  terminal: TestTerminal,
-  text: RegExp,
-  want: number
-): Promise<void> => {
-  const deadline = Date.now() + 5_000;
-  const wanted = want !== 0;
-  let run: TextRun | undefined;
-  while (Date.now() < deadline) {
-    run = findTextRun(terminal, text);
-    if (run && run.cells.length > 0 && run.cells.every((cell) => (cell.isInverse() !== 0) === wanted)) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  assert.ok(run, `expected visible text matching ${text}`);
-  assert.ok(
-    run.cells.every((cell) => (cell.isInverse() !== 0) === wanted),
-    `expected ${JSON.stringify(run.text)} at (${run.x},${run.y}) to be inverse=${want}`
-  );
-};
 
 // spec: tui-mouse-navigation/terminal-gestures-deliver-only-the-selected-text
 test("right-pane drag highlights, copies on release, and leaves wheel and clicks untouched", async ({ terminal }) => {

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -693,14 +694,24 @@ func renderMarketplaceDetailContent(t theme, r row) string {
 // serve bounded verified in-memory content; filesystem trees keep the
 // descriptor-based no-follow preview path.
 func renderBundleEntry(t theme, tr *bundleTree, relative string, width int) string {
+	return renderBundleEntryContext(context.Background(), t, tr, relative, width)
+}
+
+func renderBundleEntryContext(ctx context.Context, t theme, tr *bundleTree, relative string, width int) string {
 	if tr == nil {
 		return "Error reading file: no bundle content available"
 	}
 	if tr.files != nil {
 		data, ok := tr.files[relative]
 		if !ok {
+			if tr.inspection != nil {
+				return tr.inspection.renderFile(ctx, t.dark, relative, width)
+			}
 			return "Error reading file: archive member is not available"
 		}
+		return renderBundleContent(t.dark, relative, data, len(data) > maxDetailSourceBytes, width)
+	}
+	if data, ok := tr.virtual[relative]; ok {
 		return renderBundleContent(t.dark, relative, data, len(data) > maxDetailSourceBytes, width)
 	}
 	return renderBundleFile(t.dark, tr.root, relative, width)
@@ -788,11 +799,11 @@ func safeBundlePath(root, relative string) (string, error) {
 }
 
 // loadBundleDetailContent is the asynchronous selected-file preview path.
-func loadBundleDetailContent(t theme, bundle *bundleTree, relative string, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
+func loadBundleDetailContent(ctx context.Context, t theme, bundle *bundleTree, relative string, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
 	return func() tea.Msg {
 		return detailContentMsg{
 			generation: generation,
-			content:    renderBundleEntry(t, bundle, relative, width),
+			content:    renderBundleEntryContext(ctx, t, bundle, relative, width),
 			width:      width,
 			keepScroll: keepScroll,
 			path:       relative,

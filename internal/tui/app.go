@@ -870,6 +870,39 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		generation := m.beginRequest(requestSnapshot)
 		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 
+	case marketplaceDetailMsg:
+		if m.pane != paneDetail || msg.key == "" || msg.key != m.detailKey || !m.acceptsRequest(requestDetail, msg.generation) {
+			return m, nil
+		}
+		m.previewSel = previewSelection{}
+		if msg.err != nil {
+			m.bundle = nil
+			m.detailSelectedPath = ""
+			m.detailRenderWidth = m.previewWidth()
+			m.detailStickyBottom = false
+			m.detailViewport.SetContent(renderMarketplaceInspectionError(msg.err))
+			m.detailViewport.GotoTop()
+			return m, nil
+		}
+		m.bundle = msg.bundle
+		m.detailLegacyRender = false
+		m.detailSelectedPath = msg.bundle.selectedPath()
+		m.ensureBundleCursorVisible()
+		if msg.width > 0 && msg.width != m.previewWidth() {
+			if rerender := m.rerenderDetailAtWidth(m.width); rerender != nil {
+				return m, rerender
+			}
+		}
+		renderedWidth := msg.width
+		if renderedWidth <= 0 {
+			renderedWidth = m.previewWidth()
+		}
+		m.detailRenderWidth = renderedWidth
+		m.detailStickyBottom = false
+		m.detailViewport.SetContent(msg.content)
+		m.detailViewport.GotoTop()
+		return m, nil
+
 	case detailContentMsg:
 		if m.pane != paneDetail || (msg.path != "" && msg.path != m.detailSelectedPath) || !m.acceptsRequest(requestDetail, msg.generation) {
 			return m, nil
@@ -1259,10 +1292,13 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 			m.enterDetailPane()
 			generation := m.beginRequest(requestDetail)
 			recordActionSpan(m.ctx, "browse", map[string]string{"view": "detail", "resource.kind": r.Artifact.Kind.String()})
-			if m.bundle == nil || m.detailSelectedPath == "" {
-				return m, nil
+			if m.bundle != nil && m.detailSelectedPath != "" {
+				return m, loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), false)
 			}
-			return m, loadBundleDetailContent(m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), false)
+			if marketplaceInspectableSkill(r) {
+				return m, loadMarketplaceSkillDetail(m.observedContext(ctxOrBackground(m.ctx)), m.currentTheme(), r, generation, m.previewWidth())
+			}
+			return m, nil
 		}
 		return m, nil
 
@@ -1468,6 +1504,13 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 		return
 	}
 	if isMarketplaceDetailOnly(current) {
+		if m.bundle != nil && m.bundle.inspection != nil {
+			m.ensureBundleCursorVisible()
+			return
+		}
+		if marketplaceInspectableSkill(current) && m.requests.active(requestDetail) != 0 {
+			return
+		}
 		m.bundle = nil
 		m.detailSelectedPath = ""
 		m.cancelRequest(requestDetail)
@@ -1677,7 +1720,7 @@ func (m Model) queueBundlePreview(keepScroll bool) (tea.Model, tea.Cmd) {
 		if rowKey(r) == m.detailKey {
 			generation := m.beginRequest(requestDetail)
 			m.detailViewport.SetContent("Loading…")
-			return m, loadBundleDetailContent(m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
+			return m, loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
 		}
 	}
 	return m, nil
@@ -1714,7 +1757,11 @@ func (m *Model) enterDetailPane() {
 			m.detailViewport.SetContent(renderDetailFullContent(m.currentTheme(), r, m.previewWidth()))
 		} else if isMarketplaceDetailOnly(r) {
 			m.bundle = nil
-			m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), r))
+			if marketplaceInspectableSkill(r) {
+				m.detailViewport.SetContent("Loading verified Marketplace preview…")
+			} else {
+				m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), r))
+			}
 		} else if bundle, err := bundleTreeForRow(r); err != nil {
 			m.bundle = nil
 			m.detailViewport.SetContent("Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine))
@@ -1749,14 +1796,17 @@ func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
 		return nil
 	}
 	for _, r := range m.rows {
-		if rowKey(r) != m.detailKey || r.Artifact.Path == "" {
+		if rowKey(r) != m.detailKey {
+			continue
+		}
+		if r.Artifact.Path == "" && (m.bundle == nil || m.bundle.inspection == nil) {
 			continue
 		}
 		generation := m.beginRequest(requestDetail)
 		if m.detailLegacyRender || m.bundle == nil || m.detailSelectedPath == "" {
 			return loadDetailContent(m.currentTheme(), r, generation, width, true)
 		}
-		return loadBundleDetailContent(m.currentTheme(), m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
+		return loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
 	}
 	return nil
 }
