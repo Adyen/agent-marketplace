@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"syscall"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 // The unix half of the advisory lock. It is deliberately written against the
@@ -21,7 +23,22 @@ import (
 // the final component: acquisition truncates this file to write its metadata,
 // and a symlink would aim that truncation at a file this package does not own.
 // A real lock file is always a regular file this package created.
-const lockOpenFlags = os.O_CREATE | os.O_RDWR | syscall.O_NOFOLLOW
+const lockOpenFlags = os.O_CREATE | os.O_RDWR | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_CLOEXEC
+
+func validateLockFile(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	identity, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return err
+	}
+	if !identity.Mode.IsRegular() || identity.Links != 1 {
+		return fsboundary.ErrUnsafeFile
+	}
+	return nil
+}
 
 // tryLockFile takes an exclusive advisory lock on f WITHOUT blocking.
 //

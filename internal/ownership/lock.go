@@ -703,6 +703,9 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("ownership: open lock file %s: %w", path, err)
 	}
+	if err := validateLockFile(f); err != nil {
+		return nil, 0, 0, errors.Join(err, f.Close())
+	}
 
 	start := time.Now()
 	deadline := start.Add(s.clampedLockTimeout())
@@ -718,6 +721,9 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 		lockErr := try(f)
 		switch {
 		case lockErr == nil:
+			if err := validateLockFile(f); err != nil {
+				return nil, time.Since(start), attempts, errors.Join(err, f.Close())
+			}
 			waited := time.Since(start)
 			if waited >= LockContendedReportThreshold {
 				slog.Info("waited for another agent-marketplace process to release the ownership lock",
@@ -854,6 +860,10 @@ func (s *Store) writeLockMetadata(f *os.File) {
 	line := fmt.Sprintf("pid=%d host=%s argv0=%s acquired=%s\n",
 		os.Getpid(), lockHost(), sanitizeLockField(filepath.Base(os.Args[0])),
 		s.now().UTC().Format(time.RFC3339Nano))
+	if err := validateLockFile(f); err != nil {
+		slog.Debug("refused unsafe advisory lock metadata write", "root_key", s.rootKey, "err", err)
+		return
+	}
 	if _, err := f.Seek(0, 0); err != nil {
 		slog.Debug("could not rewind the advisory lock file for its metadata; the lock itself is unaffected",
 			"root_key", s.rootKey, "err", err)
