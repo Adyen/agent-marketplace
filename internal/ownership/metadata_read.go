@@ -8,6 +8,7 @@ import (
 )
 
 var errMetadataCleanup = errors.New("ownership: metadata cleanup failed")
+var errMetadataRead = errors.New("ownership: metadata read refused")
 
 type metadataPin struct {
 	parent fsboundary.Identity
@@ -26,6 +27,11 @@ func (s *Store) verifyOriginalRecord(pin metadataPin, existed bool) error {
 }
 
 func (s *Store) readObservedMetadata(name string) (data []byte, exists bool, pin metadataPin, err error) {
+	defer func() {
+		if err != nil {
+			err = errors.Join(errMetadataRead, err)
+		}
+	}()
 	parent, err := s.captureMetadataParent()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {

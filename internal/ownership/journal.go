@@ -758,7 +758,7 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 	}
 
 	current, loadErr := s.Load()
-	if loadErr != nil && errors.Is(loadErr, ErrStateRootMismatch) {
+	if loadErr != nil && (errors.Is(loadErr, ErrStateRootMismatch) || errors.Is(loadErr, errMetadataRead)) {
 		return nil, loadErr
 	}
 
