@@ -319,14 +319,36 @@ func metaPathFor(backupPath string) string {
 }
 
 // pruneSafetyBackups keeps the newest s.retain backups for one canonical output
-// file and deletes each older backup together with its manifest, so evidence and
-// bytes are always retained or dropped as a pair.
+// file and selects each older backup together with its manifest. Both members
+// are validated before deletion; the pair is not one atomic removal.
 //
 // Retention is by NAME, and names are UTC timestamps with nanosecond precision
 // plus a collision sequence, so lexical order is chronological order and the
 // policy does not depend on mtimes that a restore or a copy could rewrite.
-func (s *Store) pruneSafetyBackups(dir string) error {
-	entries, err := os.ReadDir(dir)
+func (s *Store) pruneSafetyBackups(dir string) (err error) {
+	relative, err := filepath.Rel(s.stateRoot, dir)
+	if err != nil {
+		return err
+	}
+	parent, err := s.captureStateDirectory(relative)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
 	if err != nil {
 		return fmt.Errorf("ownership: list safety backups: %w", err)
 	}
@@ -340,16 +362,22 @@ func (s *Store) pruneSafetyBackups(dir string) error {
 		return nil
 	}
 	sort.Strings(backups)
+	var removals []safetyLeafRemoval
 	for _, name := range backups[:len(backups)-s.retain] {
-		path := filepath.Join(dir, name)
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("ownership: prune safety backup: %w", err)
-		}
-		if err := os.Remove(metaPathFor(path)); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("ownership: prune safety backup manifest: %w", err)
+		for _, member := range []string{name, filepath.Base(metaPathFor(name))} {
+			pin, exists, err := captureSafetyPayload(parent, member)
+			if err != nil {
+				return err
+			}
+			removals = append(removals, safetyLeafRemoval{name: member, identity: pin.file, exists: exists})
 		}
 	}
-	return fsyncDir(dir)
+	for _, removal := range removals {
+		if err := s.removeSafetyLeaf(parent, relative, removal); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SafetyBackups returns the retained backups for one canonical output file,
