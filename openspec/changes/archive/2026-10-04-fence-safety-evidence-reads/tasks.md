@@ -5,4 +5,4 @@
 - [x] Preserve filtering/JSON/ordinary unreadable behavior but propagate unsafe/generation/cleanup refusals.
 - [x] Cover hardlinks/unsafe parents/bounded FIFO and full Linux/macOS/count20 evidence-metadata races/validate.
 - [x] Record benchmark/strict specs/complete review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
