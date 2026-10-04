@@ -113,5 +113,5 @@ run_race ./internal/fsboundary \
     -count=20
 
 run_race ./internal/ownership \
-    -run '^Test(StoreReadAggregate.*|ApplyRetargetedParentDoesNotStageOutsideRoot|ApplyRefuses.*Generation|ApplyCapturedPublicationPreservesSharedMode)$' \
+    -run '^Test(StoreReadAggregate.*|ApplyRetargetedParentDoesNotStageOutsideRoot|ApplyRefuses.*Generation|ApplyCapturedPublicationPreservesSharedMode|ApplyStagedRefusalDisarmsJournalForRecovery)$' \
     -count=20
