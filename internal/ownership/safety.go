@@ -425,7 +425,7 @@ func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 	out = make([]RetainedBackup, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		metaBytes, exists, _, err := readObservedMetadataFile(parent, filepath.Base(metaPathFor(path)))
+		metaBytes, exists, manifestPin, err := readObservedMetadataFile(parent, filepath.Base(metaPathFor(path)))
 		if err != nil {
 			if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) || errors.Is(err, errMetadataCleanup) {
 				return nil, err
@@ -449,7 +449,8 @@ func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 		if !exists {
 			continue
 		}
-		out = append(out, RetainedBackup{Path: path, Manifest: manifest, source: s, relative: relative, name: name, observed: pin})
+		manifestPin.parent = pin.parent
+		out = append(out, RetainedBackup{Path: path, Manifest: manifest, source: s, relative: relative, name: name, observed: pin, manifestObserved: manifestPin})
 	}
 	if err := s.verifyStateDirectory(parent, relative); err != nil {
 		return nil, err
@@ -459,12 +460,13 @@ func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 
 // RetainedBackup is one retained safety backup and its manifest.
 type RetainedBackup struct {
-	Path     string
-	Manifest BackupManifest
-	source   *Store
-	relative string
-	name     string
-	observed metadataPin
+	Path             string
+	Manifest         BackupManifest
+	source           *Store
+	relative         string
+	name             string
+	observed         metadataPin
+	manifestObserved metadataPin
 }
 
 // RawBytes returns the exact retained pre-mutation bytes.
