@@ -372,7 +372,11 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 		}
 		defer func() {
 			if closeErr := source.Close(); closeErr != nil {
-				err = errors.Join(err, closeErr)
+				if err != nil {
+					err = errors.Join(err, closeErr)
+				} else {
+					err = closeErr
+				}
 			}
 		}()
 	}
@@ -432,8 +436,14 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 				return err
 			}
 			writeErr := writeTarEntry(tw, parent, filepath.Base(files[key]), files[key], key, info)
-			if closeErr := parent.Close(); writeErr != nil || closeErr != nil {
+			closeErr := parent.Close()
+			switch {
+			case writeErr != nil && closeErr != nil:
 				return errors.Join(writeErr, closeErr)
+			case writeErr != nil:
+				return writeErr
+			case closeErr != nil:
+				return closeErr
 			}
 		}
 	}
