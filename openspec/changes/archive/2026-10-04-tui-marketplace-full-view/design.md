@@ -2,7 +2,7 @@
 
 Installed mirror skills with supporting files resolve to a staging directory containing those files but no primary Markdown definition. The canonical skill IR is already attached to the resolved row. Archive-backed skills already synthesize `SKILL.md`. Discovery rows have no local source path; the Marketplace client already verifies inspection manifests, revision identity, file media types and content digests. The detail request generation guards against superseded responses.
 
-Full view composes a fixed-width tree and preview. The tree root line is not currently truncated. Its rendered width can therefore exceed the column range used by mouse routing and preview selection. This is a hypothesis to prove with a long-label regression before correcting the layout.
+Full view composes a fixed-width tree and preview. Baseline measurement shows Lip Gloss already fits the rendered panes to their allocated columns, so long bundle labels do not displace the preview or its mouse-selection coordinates. The long-label regressions are retained as witnesses of that existing behavior rather than evidence of a new render correction.
 
 ## Goals / Non-Goals
 
@@ -24,9 +24,9 @@ Fetch supporting text files lazily on selection through the existing selected-fi
 
 On resize, reflow accepted primary/file content at the current preview width; reject old-width presentation without dropping the accepted verified tree. Exit, resource replacement and newer detail generations supersede outstanding responses. Same-resource snapshot refresh must not discard an accepted inspection tree merely because its row still lacks a local path.
 
-### Rendering honors the allocated tree width
+### Rendering continues to honor the allocated tree width
 
-Prove the long-root failure through the real full-view composition and frame-paced mouse path. Truncate the root and any empty/error tree rows ANSI-aware, then fit the entire tree to its allocated dimensions. Do not change selection coordinates or expand selectable regions to compensate for an oversized tree. Keep selection based on the last displayed frame.
+Exercise the long-root case through the real full-view composition and frame-paced mouse path. Baseline verification showed the existing layout already constrains the tree and preview to their allocated dimensions, so no render correction is introduced; the tests remain as regression witnesses. Do not change selection coordinates or expand selectable regions. Keep selection based on the last displayed frame.
 
 ## Risks / Trade-offs
 

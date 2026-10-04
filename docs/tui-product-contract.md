@@ -55,11 +55,13 @@ Discovery rows show their Marketplace and Registry identity, and the TUI sanitiz
 
 ### Marketplace row detail
 
-Opening a Marketplace row's detail never performs a network request and never resolves a registry-relative path against the consumer workspace.
+Opening a Marketplace row's detail never resolves a registry-relative path against the consumer workspace.
 
-- A discovery-only row (one without local verified content) opens a bounded metadata detail showing its index fields (kind, name, status, Marketplace endpoint, registry, revision, digest) instead of fabricated file content. An installable row ends with an install hint; a blocked, revoked, or otherwise unavailable row reports that it is not currently installable.
+- A discovery-only skill row that is currently installable (one without local verified content) asynchronously loads its exact revision's verified inspection from the Marketplace endpoint. The primary file renders first; supporting text files are fetched lazily on selection. The inspection verifies the endpoint's instance identity, the manifest's registry, kind, name, revision, and content digest against the discovery item, and re-verifies each file response against the accepted manifest. Browsing performs no installation, configuration, acquisition-lock, or materialization writes. Unavailable, corrupt, unsupported, or identity-mismatched inspection content produces an actionable failure state; binary and other non-text files show identity information instead of bytes. A superseded inspection response cannot replace another resource's open detail.
+- Any other discovery-only row (one without local verified content) opens a bounded metadata detail showing its index fields (kind, name, status, Marketplace endpoint, registry, revision, digest) instead of fabricated file content. An installable row ends with an install hint; a blocked, revoked, or otherwise unavailable row reports that it is not currently installable.
 - An installed pin whose verified content is missing reports that sync can restore it.
 - An installed pin backed by a verified canonical `artifact.tar.gz` opens the same split bundle browser over the archive's members. The sibling verification marker must be present, the archive is size-bounded and re-validated before any member reaches the preview, and missing or corrupt content fails closed.
+- An installed skill whose verified supporting files are staged separately from its canonical definition gains one virtual `SKILL.md` member compiled from the skill's attached verified IR; the supporting files keep their filesystem-backed rendering, nothing is written into the staging directory, and missing canonical primary content fails visibly.
 - A canonical skill payload is presented as a synthetic `SKILL.md` with YAML frontmatter and its Markdown body; the internal IR JSON is not exposed.
 
 ## Mutation operations

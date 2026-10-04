@@ -1,6 +1,6 @@
 ## Why
 
-Marketplace skills with staged supporting files omit their primary definition from the full-view browser. Skills found through Marketplace discovery cannot be inspected before installation, and long bundle labels can displace the preview from its mouse-selection coordinates.
+Marketplace skills with staged supporting files omit their primary definition from the full-view browser, and skills found through Marketplace discovery cannot be inspected before installation.
 
 ## What Changes
 

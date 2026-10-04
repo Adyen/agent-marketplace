@@ -12,5 +12,5 @@
 
 - [x] 3.1 Add or extend a direct terminal journey proving Marketplace full-view primary/support browsing, drag selection and pointer scrolling together; verify with `make tui-qa-check` and `make tui-qa`, and retain before/after captures.
 - [x] 3.2 Reconcile published TUI interaction claims and the journey index; verify every new scenario has a test binding with `make spec-check`.
-- [x] 3.3 Run focused package regressions, `make validate`, strict OpenSpec validation, and before/after render/input benchmarks; retain logs and benchmark comparison.
-- [ ] 3.4 Run `openspec archive tui-marketplace-full-view --yes` in this pull request and verify synchronized main specs with `make spec-check`.
+- [ ] 3.3 Run focused package regressions, `make validate`, strict OpenSpec validation, and before/after render/input benchmarks; retain logs and benchmark comparison.
+- [x] 3.4 Run `openspec archive tui-marketplace-full-view --yes` in this pull request and verify synchronized main specs with `make spec-check`.
