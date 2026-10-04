@@ -16,7 +16,11 @@ type metadataPin struct {
 }
 
 func (s *Store) verifyOriginalRecord(pin metadataPin, existed bool) error {
-	_, exists, current, err := s.readObservedMetadata(stateFileName)
+	return s.verifyOriginalMetadata(stateFileName, pin, existed)
+}
+
+func (s *Store) verifyOriginalMetadata(name string, pin metadataPin, existed bool) error {
+	_, exists, current, err := s.readObservedMetadata(name)
 	if err != nil {
 		return err
 	}

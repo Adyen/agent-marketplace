@@ -41,6 +41,7 @@ const (
 	CrashAfterStateCommit CrashPoint = "after-state-commit"
 	// CrashAfterJournalCleanup: the generation is complete.
 	CrashAfterJournalCleanup CrashPoint = "after-journal-cleanup"
+	CrashAfterRecoveryRead   CrashPoint = "after-recovery-read"
 )
 
 // ErrInjectedCrash is returned by [Store.Apply] when a [Crasher] fires. It is

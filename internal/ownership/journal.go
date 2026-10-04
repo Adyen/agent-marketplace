@@ -757,14 +757,26 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 		return nil, nil
 	}
 
-	current, loadErr := s.Load()
+	current, original, loadErr := s.loadObservedRecord()
 	if loadErr != nil && (errors.Is(loadErr, ErrStateRootMismatch) || errors.Is(loadErr, errMetadataRead)) {
 		return nil, loadErr
+	}
+	if err := s.crash(CrashAfterRecoveryRead); err != nil {
+		return nil, err
+	}
+	validate := func() error {
+		if err := s.verifyOriginalMetadata(journalFileName, j.observed, true); err != nil {
+			return err
+		}
+		return s.verifyOriginalRecord(original, original.file.Inode != 0)
+	}
+	if err := validate(); err != nil {
+		return nil, err
 	}
 
 	switch j.Phase {
 	case PhaseAggregateRenamed:
-		return s.rollForward(j, current)
+		return s.rollForward(j, current, validate)
 	case PhasePrepared:
 		live, liveErr := s.readAbsoluteAggregate(j.AbsFile)
 		absent := liveErr != nil && os.IsNotExist(liveErr)
@@ -774,7 +786,7 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 		switch {
 		case !absent && Digest(live) == j.NextDigest:
 			// The rename happened in the window before the phase update.
-			return s.rollForward(j, current)
+			return s.rollForward(j, current, validate)
 		case absent && j.PriorAbsent, !absent && Digest(live) == j.PriorDigest:
 			return s.rollBack(j)
 		default:
@@ -786,7 +798,7 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 	}
 }
 
-func (s *Store) rollForward(j *Journal, current *Record) ([]RecoveryOutcome, error) {
+func (s *Store) rollForward(j *Journal, current *Record, validate func() error) ([]RecoveryOutcome, error) {
 	action := ActionRolledForward
 	if current != nil && current.Generation >= j.Generation {
 		action = ActionAlreadyCommitted
@@ -795,7 +807,7 @@ func (s *Store) rollForward(j *Journal, current *Record) ([]RecoveryOutcome, err
 			return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(),
 				fmt.Errorf("%w: journal has no ownership generation to commit", ErrStateCorrupt))
 		}
-		if err := s.commitRecord(j.NextRecord); err != nil {
+		if err := s.commitRecordWithValidation(j.NextRecord, validate); err != nil {
 			return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), err)
 		}
 	}
