@@ -79,6 +79,17 @@ type HookSourceEvidence struct {
 	SourceDigest string `json:"source_digest"`
 }
 
+type HookSatisfaction struct {
+	Container      string               `json:"container"`
+	IdentityDigest string               `json:"identity_digest"`
+	ValueDigest    string               `json:"value_digest"`
+	Sources        []HookSourceEvidence `json:"sources"`
+}
+
+func (s HookSatisfaction) ID() EntryID {
+	return EntryID{Kind: KindHook, Container: s.Container, IdentityDigest: s.IdentityDigest}
+}
+
 // EntryID is the identity half of an [Entry], with no value digest, so a caller
 // can ask about an entry without asserting what it contains.
 type EntryID struct {
@@ -101,8 +112,9 @@ func (id EntryID) mapKey() string {
 type FileState struct {
 	// ContentDigest is the digest of the whole file as this package last wrote
 	// it. A mismatch means the file changed outside our control.
-	ContentDigest string  `json:"content_digest"`
-	Entries       []Entry `json:"entries"`
+	ContentDigest     string             `json:"content_digest"`
+	Entries           []Entry            `json:"entries"`
+	HookSatisfactions []HookSatisfaction `json:"hook_satisfactions,omitempty"`
 }
 
 // Record is the durable ownership record for one canonical target root.
@@ -241,6 +253,39 @@ func validateEntry(e Entry) error {
 	return nil
 }
 
+func validateHookSatisfaction(s HookSatisfaction) error {
+	if !safeToken.MatchString(s.Container) {
+		return fmt.Errorf("%w: hook satisfaction container", ErrUnsafeStateValue)
+	}
+	if !digestPattern.MatchString(s.IdentityDigest) {
+		return fmt.Errorf("%w: hook satisfaction identity digest is not a sha256 digest", ErrUnsafeStateValue)
+	}
+	if !digestPattern.MatchString(s.ValueDigest) {
+		return fmt.Errorf("%w: hook satisfaction value digest is not a sha256 digest", ErrUnsafeStateValue)
+	}
+	if s.IdentityDigest != HookIdentityDigest(s.Container, s.ValueDigest) {
+		return fmt.Errorf("%w: hook satisfaction identity digest does not match value", ErrUnsafeStateValue)
+	}
+	if len(s.Sources) == 0 {
+		return fmt.Errorf("%w: hook satisfaction has no source evidence", ErrUnsafeStateValue)
+	}
+	seenSources := make(map[string]struct{}, len(s.Sources))
+	for _, source := range s.Sources {
+		if !safeToken.MatchString(source.Resource) {
+			return fmt.Errorf("%w: hook satisfaction source resource name", ErrUnsafeStateValue)
+		}
+		if !digestPattern.MatchString(source.SourceDigest) {
+			return fmt.Errorf("%w: hook satisfaction source digest is not a sha256 digest", ErrUnsafeStateValue)
+		}
+		key := source.Resource + "\x00" + source.SourceDigest
+		if _, duplicate := seenSources[key]; duplicate {
+			return fmt.Errorf("%w: duplicate hook satisfaction source pair", ErrUnsafeStateValue)
+		}
+		seenSources[key] = struct{}{}
+	}
+	return nil
+}
+
 func validateRecord(r *Record, canonicalRoot, rootKey string) error {
 	if r.Version != stateVersion {
 		return fmt.Errorf("%w: unsupported state version %d", ErrStateCorrupt, r.Version)
@@ -262,6 +307,17 @@ func validateRecord(r *Record, canonicalRoot, rootKey string) error {
 			if err := validateEntry(e); err != nil {
 				return errors.Join(ErrStateCorrupt, err)
 			}
+		}
+		seenSatisfactions := make(map[string]struct{}, len(fs.HookSatisfactions))
+		for _, satisfaction := range fs.HookSatisfactions {
+			if err := validateHookSatisfaction(satisfaction); err != nil {
+				return errors.Join(ErrStateCorrupt, err)
+			}
+			key := satisfaction.ID().mapKey()
+			if _, duplicate := seenSatisfactions[key]; duplicate {
+				return errors.Join(ErrStateCorrupt, fmt.Errorf("%w: duplicate hook satisfaction identity", ErrUnsafeStateValue))
+			}
+			seenSatisfactions[key] = struct{}{}
 		}
 	}
 	return nil
@@ -421,10 +477,13 @@ func (s *Store) nextRecord(current *Record, rel string, contentDigest string, en
 		}
 		return a.IdentityDigest < b.IdentityDigest
 	})
-	if len(sorted) == 0 {
+	fileState := next.Files[rel]
+	fileState.ContentDigest = contentDigest
+	fileState.Entries = sorted
+	if len(sorted) == 0 && len(fileState.HookSatisfactions) == 0 {
 		delete(next.Files, rel)
 	} else {
-		next.Files[rel] = FileState{ContentDigest: contentDigest, Entries: sorted}
+		next.Files[rel] = fileState
 	}
 	return next, nil
 }
@@ -464,10 +523,11 @@ func (s *Store) Proof(rel string) (Proof, error) {
 		entries[e.ID().mapKey()] = e
 	}
 	return Proof{
-		file:          rel,
-		generation:    rec.Generation,
-		contentDigest: fs.ContentDigest,
-		entries:       entries,
+		file:              rel,
+		generation:        rec.Generation,
+		contentDigest:     fs.ContentDigest,
+		entries:           entries,
+		hookSatisfactions: fs.HookSatisfactions,
 	}, nil
 }
 
@@ -514,10 +574,11 @@ func (s Status) String() string {
 // [Store.Proof]. This is the structural half of "doctor primitives cannot infer
 // ownership heuristically".
 type Proof struct {
-	file          string
-	generation    uint64
-	contentDigest string
-	entries       map[string]Entry
+	file              string
+	generation        uint64
+	contentDigest     string
+	entries           map[string]Entry
+	hookSatisfactions []HookSatisfaction
 }
 
 // File returns the output-relative file the proof covers.
@@ -528,6 +589,25 @@ func (p Proof) Generation() uint64 { return p.generation }
 
 // ContentDigest returns the digest of the file as this package last wrote it.
 func (p Proof) ContentDigest() string { return p.contentDigest }
+
+func (p Proof) HookSatisfactions() []HookSatisfaction {
+	satisfactions := make([]HookSatisfaction, len(p.hookSatisfactions))
+	for i, satisfaction := range p.hookSatisfactions {
+		satisfactions[i] = satisfaction
+		satisfactions[i].Sources = append([]HookSourceEvidence(nil), satisfaction.Sources...)
+	}
+	sort.Slice(satisfactions, func(i, j int) bool {
+		a, b := satisfactions[i], satisfactions[j]
+		return a.Container < b.Container || a.Container == b.Container && a.IdentityDigest < b.IdentityDigest
+	})
+	for i := range satisfactions {
+		sort.Slice(satisfactions[i].Sources, func(a, b int) bool {
+			left, right := satisfactions[i].Sources[a], satisfactions[i].Sources[b]
+			return left.Resource < right.Resource || left.Resource == right.Resource && left.SourceDigest < right.SourceDigest
+		})
+	}
+	return satisfactions
+}
 
 // OwnedCount returns how many entries the proof covers.
 func (p Proof) OwnedCount() int { return len(p.entries) }
