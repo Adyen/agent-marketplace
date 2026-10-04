@@ -65,6 +65,7 @@ type Journal struct {
 	NextRecord *Record `json:"next_record"`
 	UpdatedAt  string  `json:"updated_at"`
 	observed   metadataPin
+	safety     *safetyAttempt
 }
 
 // Mutation is one aggregate write plus the ownership it claims.
@@ -246,7 +247,7 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 	if err := s.prepareStateDirectory(filepath.Join(ownershipDirName, s.rootKey)); err != nil {
 		return Result{}, coded(diag.CodeOwnershipSafetyBackup, m.Rel, err)
 	}
-	backupPath, priorDigest, priorAbsent, err := s.writeSafetyBackup(m.Rel, m.AbsFile, generation, m.Reason, m.Entries)
+	backupPath, priorDigest, priorAbsent, safety, err := s.writeSafetyBackup(m.Rel, m.AbsFile, generation, m.Reason, m.Entries)
 	if err != nil {
 		// A failed mandatory backup REFUSES the mutation. Writing without a
 		// backup would be exactly the failure mode the plan forbids.
@@ -272,6 +273,7 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 		AbsFile:       m.AbsFile,
 		StagedPath:    stagedPathFor(m.AbsFile, generation),
 		BackupPath:    backupPath,
+		safety:        safety,
 		PriorDigest:   priorDigest,
 		PriorAbsent:   priorAbsent,
 		NextDigest:    nextDigest,
@@ -487,8 +489,8 @@ func (s *Store) assertPrecondition(m Mutation) error {
 	return nil
 }
 
-// cleanupAfterCASFailure removes the staged file, the journal, and the safety
-// backup just written, so a failed compare-and-swap leaves no durable trace.
+// cleanupAfterCASFailure removes this attempt's staged file, journal and safety
+// backup; replaced generations are preserved and cleanup refusals are logged.
 func (s *Store) cleanupAfterCASFailure(journal *Journal, backupPath string) {
 	if err := s.removeStaged(journal); err != nil {
 		slog.Warn("could not remove the staged file after a CAS failure",
@@ -499,22 +501,16 @@ func (s *Store) cleanupAfterCASFailure(journal *Journal, backupPath string) {
 			"root_key", s.rootKey, "journal", s.JournalFile(), "err", err)
 	}
 	if backupPath != "" {
-		if err := os.Remove(backupPath); err != nil {
+		if err := s.removeSafetyAttempt(journal.safety); err != nil {
 			slog.Warn("could not remove the safety backup after a CAS failure",
 				"root_key", s.rootKey, "backup_path", backupPath, "err", err)
-		}
-		if err := os.Remove(metaPathFor(backupPath)); err != nil {
-			slog.Warn("could not remove the safety backup manifest after a CAS failure",
-				"root_key", s.rootKey, "meta_path", metaPathFor(backupPath), "err", err)
+			return
 		}
 	}
 	// best-effort: remove empty backup directories
-	dir := s.SafetyBackupDir(journal.File)
-	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
-		if err := os.Remove(dir); err != nil {
-			slog.Warn("could not remove an empty safety backup directory after a CAS failure",
-				"root_key", s.rootKey, "dir", dir, "err", err)
-		}
+	if err := s.removeEmptySafetyDirectory(journal.safety); err != nil {
+		slog.Warn("could not remove an empty safety backup directory after a CAS failure",
+			"root_key", s.rootKey, "dir", s.SafetyBackupDir(journal.File), "err", err)
 	}
 }
 
