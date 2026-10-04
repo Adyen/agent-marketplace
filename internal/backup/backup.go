@@ -621,8 +621,14 @@ func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string
 				return err
 			}
 			publishErr := restoreCapturedSymlink(parent, filepath.Base(target), hdr.Linkname)
-			if closeErr := parent.Close(); publishErr != nil || closeErr != nil {
+			closeErr := parent.Close()
+			switch {
+			case publishErr != nil && closeErr != nil:
 				return errors.Join(publishErr, closeErr)
+			case publishErr != nil:
+				return publishErr
+			case closeErr != nil:
+				return closeErr
 			}
 		case tar.TypeReg:
 			if err := rejectSymlinkAncestors(dstDir, filepath.Dir(target)); err != nil {
@@ -642,8 +648,14 @@ func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string
 				return err
 			}
 			publishErr := publishRestoredFile(parent, filepath.Base(target), tr, hdr.FileInfo().Mode())
-			if closeErr := parent.Close(); publishErr != nil || closeErr != nil {
+			closeErr := parent.Close()
+			switch {
+			case publishErr != nil && closeErr != nil:
 				return errors.Join(publishErr, closeErr)
+			case publishErr != nil:
+				return publishErr
+			case closeErr != nil:
+				return closeErr
 			}
 		}
 	}
