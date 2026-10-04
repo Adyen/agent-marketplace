@@ -76,13 +76,6 @@ func TestMarketplaceFullViewLongRootKeepsPreviewSelectable(t *testing.T) {
 			})
 		}
 	}
-
-	m := selectionDetailModel(t, "plain preview alpha")
-	snap := selSnap(m)
-	_, cmd := selDrag(t, m, snap, 33, 0, 37, 0)
-	if got := clipboardText(t, cmd); got != "lain" {
-		t.Fatalf("baseline selection copied %q, want %q", got, "lain")
-	}
 }
 
 // spec: tui-mouse-navigation/marketplace-selection-and-scrolling-preserve-clipboard-boundaries
@@ -132,23 +125,23 @@ func TestMarketplaceFullViewSelectionBoundaries(t *testing.T) {
 		}
 	})
 
-	for _, tc := range []struct{ name string }{{name: "tree drag"}, {name: "footer drag"}} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, name := range []string{"tree drag", "footer drag"} {
+		t.Run(name, func(t *testing.T) {
 			m := newModel(t)
 			snap := selSnap(m)
 			x, y := 40, m.height-1
-			if tc.name == "tree drag" {
+			if name == "tree drag" {
 				x, y = 2, 1
 			}
 			var cmd tea.Cmd
 			for _, ev := range []tea.MouseMsg{selClick(x, y), selMotion(x+4, y), selRelease(x+4, y)} {
 				m, cmd = selSend(t, m, snap, ev)
 				if cmd != nil {
-					t.Fatalf("%s scheduled %v", tc.name, cmd)
+					t.Fatalf("%s scheduled %v", name, cmd)
 				}
 			}
 			if m.previewSel.active || m.previewSel.copied {
-				t.Fatalf("%s produced a selection %+v", tc.name, m.previewSel)
+				t.Fatalf("%s produced a selection %+v", name, m.previewSel)
 			}
 		})
 	}

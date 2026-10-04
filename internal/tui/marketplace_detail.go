@@ -41,9 +41,6 @@ func loadMarketplaceSkillDetail(ctx context.Context, t theme, r row, generation 
 			return marketplaceDetailMsg{generation: generation, key: key, err: err}
 		}
 		d := r.MarketplaceDiscovery
-		if d == nil {
-			return fail(errors.New("marketplace discovery metadata is missing"))
-		}
 		item := d.Item
 		if item.RegistryID == "" || item.Kind != ir.KindSkill.String() || item.Name == "" || item.Revision == "" || item.ContentDigest == "" {
 			return fail(errors.New("marketplace discovery did not provide an exact revision"))
@@ -118,7 +115,7 @@ func (s *marketplaceInspection) renderFile(ctx context.Context, dark bool, relat
 		if label == "" {
 			label = "unknown"
 		}
-		return fmt.Sprintf("%s\n\n%s file (%s, %d bytes) — preview is not supported for this file type.",
+		return fmt.Sprintf("%s\n\n%s file (%s, %d bytes). Preview is not supported for this file type.",
 			detailFileName(relative), file.InspectionClass, sanitizeTerminalData(label, terminalSingleLine), file.Size)
 	}
 	ctx, cancel := context.WithTimeout(ctxOrBackground(ctx), marketplace.DefaultSearchTimeout)

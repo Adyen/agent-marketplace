@@ -327,7 +327,6 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 			t.Fatalf("inspection mutated %s (err=%v)", path, err)
 		}
 	}
-	t.Logf("inspection HTTP paths: %v", f.log())
 }
 
 // spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
@@ -546,7 +545,7 @@ func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 		f := newInspectionFixture(t, nil)
 		m := inspectionModel(t, f.row())
 		m, cmd := enterDetail(t, m)
-		updated, resizeCmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 		m = updated.(Model)
 		msg := cmd().(marketplaceDetailMsg)
 		updated, reflow := m.Update(msg)
@@ -557,10 +556,9 @@ func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 		if reflow == nil {
 			t.Fatal("stale-width acceptance did not schedule a reflow")
 		}
-		_ = resizeCmd
 		contentMsg, ok := reflow().(detailContentMsg)
 		if !ok {
-			t.Fatalf("reflow produced %T, want detailContentMsg", reflow())
+			t.Fatalf("reflow did not produce a detailContentMsg: %v", msg)
 		}
 		if contentMsg.width != previewWidthFor(120) {
 			t.Fatalf("reflow width = %d, want %d", contentMsg.width, previewWidthFor(120))

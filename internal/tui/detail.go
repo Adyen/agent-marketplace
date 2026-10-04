@@ -367,7 +367,7 @@ func renderDetailFullContent(t theme, r row, width int) string {
 			if err != nil {
 				return "Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 			}
-			return renderBundleEntry(t, tree, tree.selectedPath(), width)
+			return renderBundleEntry(context.Background(), t, tree, tree.selectedPath(), width)
 		}
 	}
 	if r.Artifact.Kind == ir.KindSkill && r.Artifact.Path != "" && r.DetailSource == nil {
@@ -693,11 +693,7 @@ func renderMarketplaceDetailContent(t theme, r row) string {
 // renderBundleEntry renders one selected bundle member. Archive-backed trees
 // serve bounded verified in-memory content; filesystem trees keep the
 // descriptor-based no-follow preview path.
-func renderBundleEntry(t theme, tr *bundleTree, relative string, width int) string {
-	return renderBundleEntryContext(context.Background(), t, tr, relative, width)
-}
-
-func renderBundleEntryContext(ctx context.Context, t theme, tr *bundleTree, relative string, width int) string {
+func renderBundleEntry(ctx context.Context, t theme, tr *bundleTree, relative string, width int) string {
 	if tr == nil {
 		return "Error reading file: no bundle content available"
 	}
@@ -803,7 +799,7 @@ func loadBundleDetailContent(ctx context.Context, t theme, bundle *bundleTree, r
 	return func() tea.Msg {
 		return detailContentMsg{
 			generation: generation,
-			content:    renderBundleEntryContext(ctx, t, bundle, relative, width),
+			content:    renderBundleEntry(ctx, t, bundle, relative, width),
 			width:      width,
 			keepScroll: keepScroll,
 			path:       relative,
