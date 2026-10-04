@@ -5,4 +5,4 @@
 - [x] Compare full removal generations and verify replacement preservation.
 - [x] Verify Linux/macOS full ownership and repeated retention/healthy policy races.
 - [x] Record benchmark/validate/spec/review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
