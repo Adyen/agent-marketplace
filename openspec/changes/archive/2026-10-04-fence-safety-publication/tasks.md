@@ -5,4 +5,4 @@
 - [x] Reuse actual captured state/journal metadata writer for sidecar publication.
 - [x] Preserve replacement producer and prevent sidecar claims; full Linux/macOS/count20 publication/crash/metadata races/validate.
 - [x] Record benchmark/strict specs/complete review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
