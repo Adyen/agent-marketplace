@@ -2,13 +2,17 @@ package ownership
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 const (
@@ -267,15 +271,34 @@ func (s *Store) pruneSafetyBackups(dir string) error {
 
 // SafetyBackups returns the retained backups for one canonical output file,
 // oldest first, each paired with its manifest. A backup whose manifest is
-// missing or unreadable is skipped: bytes without recorded provenance are not
-// evidence.
-func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
+// missing or ordinarily unreadable is skipped; unsafe shapes and cleanup
+// failures refuse. Bytes without recorded provenance are not evidence.
+func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 	dir := s.SafetyBackupDir(rel)
-	entries, err := os.ReadDir(dir)
+	relative := filepath.Join(safetyDirName, s.rootKey, fileSlug(rel))
+	parent, err := s.captureStateDirectory(relative)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
 			return nil, nil
 		}
+		return nil, fmt.Errorf("ownership: list safety backups: %w", err)
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
 		return nil, fmt.Errorf("ownership: list safety backups: %w", err)
 	}
 	var names []string
@@ -285,11 +308,17 @@ func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
 		}
 	}
 	sort.Strings(names)
-	out := make([]RetainedBackup, 0, len(names))
+	out = make([]RetainedBackup, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		metaBytes, err := os.ReadFile(metaPathFor(path))
+		metaBytes, exists, _, err := readObservedMetadataFile(parent, filepath.Base(metaPathFor(path)))
 		if err != nil {
+			if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) || errors.Is(err, errMetadataCleanup) {
+				return nil, err
+			}
+			continue
+		}
+		if !exists {
 			continue
 		}
 		var manifest BackupManifest
@@ -300,6 +329,9 @@ func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
 			continue
 		}
 		out = append(out, RetainedBackup{Path: path, Manifest: manifest})
+	}
+	if err := s.verifyStateDirectory(parent, relative); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

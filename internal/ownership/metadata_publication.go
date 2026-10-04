@@ -9,7 +9,14 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
-func (s *Store) captureMetadataParent() (parent *fsboundary.Dir, err error) {
+func (s *Store) captureMetadataParent() (*fsboundary.Dir, error) {
+	return s.captureStateDirectory(filepath.Join(ownershipDirName, s.rootKey))
+}
+
+func (s *Store) captureStateDirectory(relative string) (parent *fsboundary.Dir, err error) {
+	if !fs.ValidPath(filepath.ToSlash(relative)) || relative == "." {
+		return nil, fsboundary.ErrUnsafePath
+	}
 	anchor, err := fsboundary.OpenDir(string(filepath.Separator))
 	if err != nil {
 		return nil, err
@@ -23,7 +30,7 @@ func (s *Store) captureMetadataParent() (parent *fsboundary.Dir, err error) {
 			}
 		}
 	}()
-	rel, err := filepath.Rel(anchor.Path(), filepath.Join(s.canonicalStateRoot, ownershipDirName, s.rootKey))
+	rel, err := filepath.Rel(anchor.Path(), filepath.Join(s.canonicalStateRoot, relative))
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +38,11 @@ func (s *Store) captureMetadataParent() (parent *fsboundary.Dir, err error) {
 }
 
 func (s *Store) verifyMetadataParent(parent *fsboundary.Dir) error {
-	fresh, err := s.captureMetadataParent()
+	return s.verifyStateDirectory(parent, filepath.Join(ownershipDirName, s.rootKey))
+}
+
+func (s *Store) verifyStateDirectory(parent *fsboundary.Dir, relative string) error {
+	fresh, err := s.captureStateDirectory(relative)
 	if err != nil {
 		return err
 	}

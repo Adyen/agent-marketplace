@@ -7,6 +7,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
+var errMetadataCleanup = errors.New("ownership: metadata cleanup failed")
+
 type metadataPin struct {
 	parent fsboundary.Identity
 	file   fsboundary.Identity
@@ -30,13 +32,24 @@ func (s *Store) readObservedMetadata(name string) (data []byte, exists bool, pin
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	data, exists, pin, err = readObservedMetadataFile(parent, name)
+	if err != nil || !exists {
+		return data, exists, pin, err
+	}
+	if err := s.verifyMetadataParent(parent); err != nil {
+		return nil, false, pin, err
+	}
+	return data, true, pin, nil
+}
+
+func readObservedMetadataFile(parent *fsboundary.Dir, name string) (data []byte, exists bool, pin metadataPin, err error) {
 	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return nil, false, pin, err
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			err = errors.Join(err, errMetadataCleanup, closeErr)
 		}
 	}()
 	if file.Link() != nil {
@@ -47,9 +60,6 @@ func (s *Store) readObservedMetadata(name string) (data []byte, exists bool, pin
 	}
 	data, pin.file, err = file.ReadTarget(file.Identity().Size)
 	if err != nil {
-		return nil, false, pin, err
-	}
-	if err := s.verifyMetadataParent(parent); err != nil {
 		return nil, false, pin, err
 	}
 	pin.parent = parent.Identity()
