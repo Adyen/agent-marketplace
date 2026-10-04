@@ -5,4 +5,4 @@
 - [x] Preserve changed stage bytes/evidence and existing crash/collision/absence behavior.
 - [x] Verify full Linux/macOS ownership/count20 cleanup-crash races/validate.
 - [x] Record benchmark/strict specs/complete review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
