@@ -160,7 +160,7 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks", ".claude-plugin"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -196,7 +196,7 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "droids", "hooks", ".factory-plugin"},
+			Components: []string{"skills", "commands", "droids", "hooks", "hook-support", ".factory-plugin"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -226,7 +226,7 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -287,7 +287,7 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands"},
+			Components: []string{"skills", "commands", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:   "skills/%s/SKILL.md",
 				ir.KindCommand: "commands/%s.md",
@@ -315,7 +315,7 @@ var nativeLayouts = map[Target]NativeLayout{
 			Prefix: ".",
 			// Project hooks merge into a root-level file (hooks.v1.json),
 			// never a hooks directory, so hooks is not a component.
-			Components: []string{"skills", "agents"},
+			Components: []string{"skills", "agents", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "skills/%s/SKILL.md",
@@ -359,7 +359,7 @@ var nativeLayouts = map[Target]NativeLayout{
 			Prefix:               ".codex",
 			MachineRootEnv:       "CODEX_HOME",
 			InstallationEvidence: true,
-			Components:           []string{"agents"},
+			Components:           []string{"agents", "hook-support"},
 			ResourcePaths:        map[ir.ResourceKind]string{ir.KindSubagent: "agents/%s.toml"},
 			Aggregates: []NativeAggregate{
 				{

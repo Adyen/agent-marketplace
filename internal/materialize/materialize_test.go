@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -2514,7 +2515,7 @@ func TestRunHookArtifactsAreNotPrunedOnSecondSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	hook := ir.NewHook("pre-tool-use", "PreToolUse", "${DROID_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{})
+	hook := ir.NewHook("pre-tool-use", "PreToolUse", "echo check", "command", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{
 			Entry:     catalog.Entry{Name: "pre-tool-use", Resource: hook},
@@ -2559,29 +2560,30 @@ func TestRunHookArtifactsAreNotPrunedOnSecondSync(t *testing.T) {
 	}
 }
 
-// spec: materialization/machine-scope-hook-command-uses-the-absolute-machine-root
-// spec: materialization/repository-scope-hook-command-stays-repository-relative
 func TestFactoryHookCommandRootIsStableAcrossWorkingDirectories(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repo := t.TempDir()
-	machineHook := ir.NewHook("user-check", "PreToolUse", "${DROID_PLUGIN_ROOT}/hooks/check.sh", "command", nil, ir.SourceRef{})
-	user := []resolver.ResolvedArtifact{{
-		Entry: catalog.Entry{Name: "user-check", Resource: machineHook}, Source: config.UserPersonal,
-		Harnesses: []hcc.Target{hcc.TargetFactory},
-	}}
+	machineSource := nativeSupportSource(t, "claude", "hooks/hooks.json", nativeSupportClaudeFiles("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"))
+	machineSource.Source = config.UserPersonal
+	machineSource.Harnesses = []hcc.Target{hcc.TargetFactory}
+	machineResolved := nativeSupportResolve(t, hcc.TargetFactory, true, []resolver.ResolvedArtifact{machineSource})
 	machineFile := filepath.Join(home, ".factory", "hooks", "hooks.json")
+	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
 	var first []byte
 	for _, root := range []string{home, repo} {
-		if _, err := Run(context.Background(), root, user); err != nil {
-			t.Fatalf("materialize machine hook from %s: %v", root, err)
+		report, err := Run(context.Background(), root, machineResolved)
+		if err != nil || hasErrorDiagnostics(report.Diags) {
+			t.Fatalf("materialize machine hook from %s: %v %v", root, err, report.Diags)
 		}
 		content, err := os.ReadFile(machineFile)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(content), filepath.Join(home, ".factory", "hooks", "check.sh")) {
-			t.Fatalf("machine hook must use absolute root, got %s", content)
+		commands := nativeSupportCommands(t, loc, machineFile, 1)
+		installed, _ := loc.installedRef(t, commands[0], repo, home, true)
+		if commands[0] != filepath.ToSlash(installed) {
+			t.Fatalf("machine hook command = %q, want absolute support path %q", commands[0], installed)
 		}
 		if first != nil && !bytes.Equal(first, content) {
 			t.Fatalf("machine hook bytes changed across roots:\n%s\n%s", first, content)
@@ -2589,19 +2591,22 @@ func TestFactoryHookCommandRootIsStableAcrossWorkingDirectories(t *testing.T) {
 		first = content
 	}
 
-	repoHook := ir.NewHook("repo-check", "PreToolUse", "${DROID_PLUGIN_ROOT}/hooks/repo-check.sh", "command", nil, ir.SourceRef{})
-	if _, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{{
-		Entry: catalog.Entry{Name: "repo-check", Resource: repoHook}, Source: config.RepoCommitted,
-		Harnesses: []hcc.Target{hcc.TargetFactory},
-	}}); err != nil {
+	repoSource := nativeSupportSource(t, "claude", "hooks/hooks.json", nativeSupportClaudeFiles("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"))
+	repoSource.Source = config.RepoCommitted
+	repoSource.Harnesses = []hcc.Target{hcc.TargetFactory}
+	repoResolved := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{repoSource})
+	if _, err := Run(context.Background(), repo, repoResolved); err != nil {
 		t.Fatalf("materialize repository hook: %v", err)
 	}
-	content, err := os.ReadFile(filepath.Join(repo, ".factory", "hooks", "hooks.json"))
-	if err != nil {
-		t.Fatal(err)
+	repoFile := filepath.Join(repo, ".factory", "hooks", "hooks.json")
+	commands := nativeSupportCommands(t, loc, repoFile, 1)
+	installed, ref := loc.installedRef(t, commands[0], repo, home, false)
+	wantCommand := loc.repoBase + filepath.ToSlash(ref)
+	if commands[0] != wantCommand || strings.Contains(commands[0], repo+"/.factory") {
+		t.Fatalf("repository hook command = %q, want repository-relative support path %q", commands[0], wantCommand)
 	}
-	if !strings.Contains(string(content), ".factory/hooks/repo-check.sh") || strings.Contains(string(content), repo+"/.factory") {
-		t.Fatalf("repository hook must use relative root, got %s", content)
+	if data, err := os.ReadFile(installed); err != nil || string(data) != nativeSupportScriptBody {
+		t.Fatalf("repository support file = %q (%v)", data, err)
 	}
 }
 
@@ -2613,10 +2618,10 @@ func TestRunMultipleHooksSameEventBothSurvive(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	hook1 := ir.NewHookWithMatcher("post-tool-use-1", "PostToolUse", "Edit|Create|MultiEdit",
-		"${DROID_PLUGIN_ROOT}/remind.sh", "command", nil, ir.SourceRef{})
-	hook2 := ir.NewHookWithMatcher("post-tool-use-2", "PostToolUse", "Read",
-		"${DROID_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{})
+	hook1 := ir.NewHookWithMatcher("post-tool-use-1", "PostToolUse", "Write|Edit",
+		"echo remind.sh", "command", nil, ir.SourceRef{})
+	hook2 := ir.NewHookWithMatcher("post-tool-use-2", "PostToolUse", "Bash",
+		"echo check.sh", "command", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{Entry: catalog.Entry{Name: "post-tool-use-1", Resource: hook1}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
 		{Entry: catalog.Entry{Name: "post-tool-use-2", Resource: hook2}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
@@ -2689,10 +2694,10 @@ func TestRunMultipleHooksSameEventSameMatcherBothSurvive(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	hook1 := ir.NewHookWithMatcher("post-tool-use-remind", "PostToolUse", "Edit|Create|MultiEdit",
-		"${DROID_PLUGIN_ROOT}/remind.sh", "command", nil, ir.SourceRef{})
-	hook2 := ir.NewHookWithMatcher("post-tool-use-check", "PostToolUse", "Edit|Create|MultiEdit",
-		"${DROID_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{})
+	hook1 := ir.NewHookWithMatcher("post-tool-use-remind", "PostToolUse", "Write|Edit",
+		"echo remind.sh", "command", nil, ir.SourceRef{})
+	hook2 := ir.NewHookWithMatcher("post-tool-use-check", "PostToolUse", "Write|Edit",
+		"echo check.sh", "command", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{Entry: catalog.Entry{Name: "post-tool-use-remind", Resource: hook1}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
 		{Entry: catalog.Entry{Name: "post-tool-use-check", Resource: hook2}, Source: config.RepoPersonal, Harnesses: []hcc.Target{hcc.TargetFactory}},
@@ -2765,25 +2770,33 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	// Create source dirs with scripts.
+	// Create source dirs with hook definitions and scripts.
 	sourceDir1 := t.TempDir()
+	definition1 := filepath.Join(sourceDir1, "hooks.json")
+	if err := os.WriteFile(definition1, []byte(`{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/remind.sh"}]}]}`), 0o644); err != nil {
+		t.Fatalf("write sourceDir1 hooks.json: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sourceDir1, "remind.sh"), []byte("#!/bin/bash\necho remind\n"), 0o755); err != nil {
 		t.Fatalf("write remind.sh: %v", err)
 	}
 	sourceDir2 := t.TempDir()
+	definition2 := filepath.Join(sourceDir2, "hooks.json")
+	if err := os.WriteFile(definition2, []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`), 0o644); err != nil {
+		t.Fatalf("write sourceDir2 hooks.json: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sourceDir2, "check.sh"), []byte("#!/bin/bash\necho check\n"), 0o755); err != nil {
 		t.Fatalf("write check.sh: %v", err)
 	}
 
-	hook1 := ir.NewHookWithMatcher("post-tool-use-remind", "PostToolUse", "Edit|Create|MultiEdit",
-		".factory/hooks/remind.sh", "command", nil, ir.SourceRef{File: filepath.Join(sourceDir1, "hooks.json")})
-	hook2 := ir.NewHookWithMatcher("pre-tool-use-check", "PreToolUse", "Read",
-		".factory/hooks/check.sh", "command", nil, ir.SourceRef{File: filepath.Join(sourceDir2, "hooks.json")})
+	hook1 := ir.NewHookWithMatcherOptions("post-tool-use-remind", "PostToolUse", "Write|Edit",
+		"${CLAUDE_PLUGIN_ROOT}/remind.sh", "command", nil, ir.SourceRef{File: definition1}, ir.WithHookSource("claude"))
+	hook2 := ir.NewHookWithMatcherOptions("pre-tool-use-check", "PreToolUse", "Bash",
+		"${CLAUDE_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{File: definition2}, ir.WithHookSource("claude"))
 
 	// First sync: both hooks active.
 	resolvedBoth := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "post-tool-use-remind", Resource: hook1, Path: filepath.Join(sourceDir1, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
-		{Entry: catalog.Entry{Name: "pre-tool-use-check", Resource: hook2, Path: filepath.Join(sourceDir2, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		{Entry: catalog.Entry{Name: "post-tool-use-remind", Resource: hook1, Path: definition1, SourceHarness: "claude"}, RegistryURL: sourceDir1, CatalogKey: sourceDir1, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		{Entry: catalog.Entry{Name: "pre-tool-use-check", Resource: hook2, Path: definition2, SourceHarness: "claude"}, RegistryURL: sourceDir2, CatalogKey: sourceDir2, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
 	}
 	if _, err := Run(context.Background(), repoRoot, resolvedBoth); err != nil {
 		t.Fatalf("first run: %v", err)
@@ -2806,7 +2819,7 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 
 	// Second sync: exclude hook1 (PostToolUse). Only hook2 remains.
 	resolvedOnly2 := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "pre-tool-use-check", Resource: hook2, Path: filepath.Join(sourceDir2, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		{Entry: catalog.Entry{Name: "pre-tool-use-check", Resource: hook2, Path: definition2, SourceHarness: "claude"}, RegistryURL: sourceDir2, CatalogKey: sourceDir2, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
 	}
 	if _, err := Run(context.Background(), repoRoot, resolvedOnly2); err != nil {
 		t.Fatalf("second run: %v", err)
@@ -2827,36 +2840,52 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 		t.Errorf("PreToolUse should still be present: %s", content2)
 	}
 
-	// The remind.sh symlink should have been pruned.
-	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "hooks", "remind.sh")); !os.IsNotExist(err) {
-		t.Errorf("remind.sh symlink should have been pruned")
+	// The remind.sh support artifact should have been pruned while the
+	// namespaced check.sh artifact survives.
+	supportLeaves := map[string]bool{}
+	if err := filepath.WalkDir(filepath.Join(repoRoot, ".factory", "hook-support"), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			supportLeaves[filepath.Base(p)] = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk hook-support: %v", err)
 	}
-	// The check.sh symlink should still exist.
-	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "hooks", "check.sh")); err != nil {
-		t.Errorf("check.sh symlink should still exist: %v", err)
+	if supportLeaves["remind.sh"] {
+		t.Errorf("remind.sh support artifact should have been pruned")
+	}
+	if !supportLeaves["check.sh"] {
+		t.Errorf("check.sh support artifact should still exist")
 	}
 }
 
-// TestRunHookSupportFilesAreSymlinked verifies that support files (scripts)
-// alongside hooks.json in the source directory are materialized as symlinks
-// in the hooks output directory, and are pruned when the hook is removed.
-// spec: hook-resources/support-scripts-are-installed-beside-the-hook-file
+// TestRunHookSupportFilesAreSymlinked verifies that support files materialize
+// as symlinks under the hook's support path and are pruned when the hook is removed.
 func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	// Create a source directory with hooks.json and a support script.
+	// Create a source directory with hooks.json and its referenced support script.
 	sourceDir := t.TempDir()
+	hooksFile := filepath.Join(sourceDir, "hooks.json")
+	command := "${CLAUDE_PLUGIN_ROOT}/remind.sh"
+	hooks := fmt.Sprintf(`{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":%q}]}]}`, command)
+	if err := os.WriteFile(hooksFile, []byte(hooks), 0o644); err != nil {
+		t.Fatalf("write source hooks.json: %v", err)
+	}
 	scriptContent := []byte("#!/bin/bash\necho 'remind to fix isolated builds'\n")
 	if err := os.WriteFile(filepath.Join(sourceDir, "remind.sh"), scriptContent, 0o755); err != nil {
 		t.Fatalf("write source script: %v", err)
 	}
 
-	hook := ir.NewHookWithMatcher("post-tool-use-remind", "PostToolUse", "Edit|Create|MultiEdit",
-		"${DROID_PLUGIN_ROOT}/hooks/remind.sh", "command", nil, ir.SourceRef{File: filepath.Join(sourceDir, "hooks.json")})
+	hook := ir.NewHookWithMatcherOptions("post-tool-use-remind", "PostToolUse", "Write|Edit",
+		command, "command", nil, ir.SourceRef{File: hooksFile}, ir.WithHookSource("claude"))
 	resolved := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "post-tool-use-remind", Resource: hook, Path: filepath.Join(sourceDir, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		{Entry: catalog.Entry{Name: "post-tool-use-remind", Resource: hook, Path: hooksFile, SourceHarness: "claude"}, RegistryURL: sourceDir, CatalogKey: sourceDir, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
 	}
 
 	// First sync: hooks.json and remind.sh should both be materialized.
@@ -2864,10 +2893,9 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 
-	hooksDir := filepath.Join(repoRoot, ".factory", "hooks")
-
-	// hooks.json should be a real file (merge artifact).
-	hooksJSON := filepath.Join(hooksDir, "hooks.json")
+	// hooks.json should be a real file (merge artifact) at the target's
+	// declared aggregate path.
+	hooksJSON := filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
 	info, err := os.Lstat(hooksJSON)
 	if err != nil {
 		t.Fatalf("hooks.json not materialized: %v", err)
@@ -2876,8 +2904,13 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 		t.Errorf("hooks.json should be a real file, not a symlink")
 	}
 
-	// remind.sh should be a symlink (regular artifact).
-	scriptLink := filepath.Join(hooksDir, "remind.sh")
+	// remind.sh should be a symlink (regular artifact) under the hook's
+	// namespaced support directory.
+	scriptMatches, _ := filepath.Glob(filepath.Join(repoRoot, ".factory", "hook-support", "*", "post-tool-use-remind", "remind.sh"))
+	if len(scriptMatches) != 1 {
+		t.Fatalf("expected one namespaced remind.sh, got %v", scriptMatches)
+	}
+	scriptLink := scriptMatches[0]
 	scriptInfo, err := os.Lstat(scriptLink)
 	if err != nil {
 		t.Fatalf("remind.sh not materialized: %v", err)
@@ -2906,17 +2939,13 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 	}
 }
 
-// spec: hook-resources/factory-commands-point-into-the-install-root
 func TestRunFactoryHookCommandPointsIntoInstallRoot(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
-
-	sourceDir := t.TempDir()
-	hook := ir.NewHook("pre-tool-use-check", "PreToolUse",
-		"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh", "command", nil, ir.SourceRef{File: filepath.Join(sourceDir, "hooks.json")})
-	resolved := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "pre-tool-use-check", Resource: hook, Path: filepath.Join(sourceDir, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
-	}
+	provider := nativeSupportSource(t, "claude", "hooks/hooks.json", nativeSupportClaudeFiles("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"))
+	provider.Source = config.RepoCommitted
+	provider.Harnesses = []hcc.Target{hcc.TargetFactory}
+	resolved := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{provider})
 
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -2926,24 +2955,16 @@ func TestRunFactoryHookCommandPointsIntoInstallRoot(t *testing.T) {
 		t.Fatalf("unexpected error diagnostics: %v", report.Diags)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(repoRoot, ".factory", "hooks", "hooks.json"))
-	if err != nil {
-		t.Fatalf("read materialized hooks.json: %v", err)
+	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
+	hookFile := filepath.Join(repoRoot, filepath.FromSlash(loc.repoFile))
+	commands := nativeSupportCommands(t, loc, hookFile, 1)
+	installed, ref := loc.installedRef(t, commands[0], repoRoot, "", false)
+	wantCommand := loc.repoBase + filepath.ToSlash(ref)
+	if commands[0] != wantCommand || !strings.HasPrefix(commands[0], `"$FACTORY_PROJECT_DIR"/.factory/hook-support/`) {
+		t.Fatalf("materialized command = %q, want repository-relative support path %q", commands[0], wantCommand)
 	}
-	var document map[string][]struct {
-		Hooks []struct {
-			Command string `json:"command"`
-		} `json:"hooks"`
-	}
-	if err := json.Unmarshal(raw, &document); err != nil {
-		t.Fatalf("materialized hooks.json is not valid JSON: %v\n%s", err, raw)
-	}
-	groups := document["PreToolUse"]
-	if len(groups) != 1 || len(groups[0].Hooks) != 1 {
-		t.Fatalf("materialized hooks.json does not contain exactly one PreToolUse handler: %s", raw)
-	}
-	if got := groups[0].Hooks[0].Command; got != ".factory/hooks/check.sh" {
-		t.Fatalf("materialized command = %q, want the repository-relative install-root path %q", got, ".factory/hooks/check.sh")
+	if data, err := os.ReadFile(installed); err != nil || string(data) != nativeSupportScriptBody {
+		t.Fatalf("installed support file = %q (%v)", data, err)
 	}
 }
 

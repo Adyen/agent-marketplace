@@ -130,8 +130,10 @@ func TestLoadHooks(t *testing.T) {
 	if len(hooks) != 1 {
 		t.Fatalf("len(hooks) = %d, want 1", len(hooks))
 	}
-	if hooks[0].Command != "${CLAUDE_PLUGIN_ROOT}/check.sh" {
-		t.Fatalf("Command = %q, want %q", hooks[0].Command, "${CLAUDE_PLUGIN_ROOT}/check.sh")
+	// The command keeps the authored Factory token; the resolver translates
+	// ${DROID_PLUGIN_ROOT} through the catalog at compile time.
+	if hooks[0].Command != "${DROID_PLUGIN_ROOT}/check.sh" {
+		t.Fatalf("Command = %q, want %q", hooks[0].Command, "${DROID_PLUGIN_ROOT}/check.sh")
 	}
 	if hooks[0].Matcher != "Read" {
 		t.Fatalf("Matcher = %q, want %q", hooks[0].Matcher, "Read")

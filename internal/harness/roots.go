@@ -446,6 +446,15 @@ func targetInfoFromPartition(partition targetmeta.NativePartition) TargetInfo {
 	// whose directories diverge has no single install dir to describe, and
 	// borrowing the project directory would mis-describe user scope.
 	for _, aggregate := range partition.Aggregates {
+		// A hook aggregate owns the per-hook support directory; the
+		// descriptor's SupportDir is the resource install root for hook
+		// support artifacts, relative to the partition root.
+		if aggregate.Kind == ir.KindHook && aggregate.SupportDir != "" {
+			if info.ResourceDirs == nil {
+				info.ResourceDirs = make(map[ir.ResourceKind]string)
+			}
+			info.ResourceDirs[aggregate.Kind] = aggregate.SupportDir
+		}
 		if _, ok := partition.ResourcePaths[aggregate.Kind]; ok {
 			continue
 		}
@@ -488,9 +497,6 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	// Claude deliberately leaves SkillPathPattern unset: materialize
 	// activates frontmatter injection when a pattern is declared, and the
 	// Claude compiler already renders it.
-	// Hook resources still install under the hooks component until the
-	// hook-support migration (design D8) moves them.
-	claudeInfo.ResourceDirs[ir.KindHook] = "hooks"
 
 	factoryInfo, err := targetInfoFromLayout(targetmeta.TargetFactory)
 	if err != nil {
@@ -498,7 +504,6 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	}
 	factoryInfo.Roots = roots[hcc.TargetFactory]
 	factoryInfo.SkillPathPattern = "skills/%s/SKILL.md"
-	factoryInfo.ResourceDirs[ir.KindHook] = "hooks"
 	// TEMPORARY WORKAROUND: Factory's droid CLI does not follow
 	// symlinked command files, so commands must be materialized as
 	// real files. Remove this once Factory resolves symlink loading.
@@ -512,7 +517,6 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	}
 	cursorInfo.Roots = roots[hcc.TargetCursor]
 	cursorInfo.SkillPathPattern = "skills/%s/SKILL.md"
-	cursorInfo.ResourceDirs[ir.KindHook] = "hooks"
 
 	windsurfInfo, err := targetInfoFromLayout(targetmeta.TargetWindsurf)
 	if err != nil {
@@ -535,7 +539,6 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 		Project: []string{".windsurf/hooks"},
 		User:    []string{"hooks"},
 	}
-	windsurfInfo.ResourceDirs[ir.KindHook] = ".windsurf/hook-support"
 
 	geminiInfo, err := targetInfoFromLayout(targetmeta.TargetGemini)
 	if err != nil {

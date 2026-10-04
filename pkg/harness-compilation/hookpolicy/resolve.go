@@ -208,7 +208,7 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 			fail(eventUnmappableCode(dst), "The event has no exact catalog equivalent on the target; hook suppressed", "Use an event the target documents")
 			return res
 		}
-		name, ev, found := selectEvent(dstCat, srcEvent.Canonical, h, srcCat)
+		name, ev, found := selectEvent(dstCat, srcEvent.Canonical, h, srcCat, srcEvent)
 		if !found {
 			fail(eventUnmappableCode(dst), "The event has no exact catalog equivalent on the target; hook suppressed", "Use an event the target documents")
 			return res
@@ -220,7 +220,7 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 			// The event name encodes the tool selection (Windsurf); the
 			// matcher was consumed by event selection and emits nothing.
 			res.Matcher = ""
-		} else if !resolveMatcher(h, dst, srcCat, dstCat, dstEvent, &res, fail) {
+		} else if !resolveMatcher(h, dst, srcCat, dstCat, srcEvent, dstEvent, &res, fail) {
 			return res
 		}
 		if !slices.Contains(dstEvent.Types, h.Type) {
@@ -239,7 +239,7 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 // selectEvent picks the target event for a canonical event name. Targets that
 // encode the tool set in the event name (Windsurf) choose the split entry
 // whose declared tool set equals the decoded matcher concept set.
-func selectEvent(dstCat catalog, canonical string, h *ir.Hook, srcCat catalog) (string, event, bool) {
+func selectEvent(dstCat catalog, canonical string, h *ir.Hook, srcCat catalog, srcEvent event) (string, event, bool) {
 	type candidate struct {
 		name string
 		ev   event
@@ -264,7 +264,7 @@ func selectEvent(dstCat catalog, canonical string, h *ir.Hook, srcCat catalog) (
 	if len(splits) == 0 || h.Matcher == "" {
 		return "", event{}, false
 	}
-	decoded, err := decodeSourceMatcher(h, srcCat)
+	decoded, err := decodeSourceMatcher(h, srcCat, srcEvent)
 	if err != nil {
 		return "", event{}, false
 	}
@@ -292,25 +292,35 @@ func conceptSetEqual(tools []string, set map[string]bool) bool {
 }
 
 // decodeSourceMatcher decodes a hook matcher through its source harness's
-// catalog. Ingesters store canonical (Claude-spelled) tool names in IR while
-// keeping the source harness's provenance, so a matcher the source catalog
-// cannot decode is retried through the canonical catalog.
-func decodeSourceMatcher(h *ir.Hook, srcCat catalog) (toolpolicy.DecodedMatcher, error) {
+// catalog. The matcher is the source harness's native spelling, so a matcher
+// the source catalog cannot decode fails rather than being reinterpreted
+// through another harness's vocabulary. A hook whose event itself declares
+// the tool set — the Windsurf split events — carries no matcher member; the
+// decoded set then comes from the source event's declared tools so
+// cross-harness targets still produce an exact matcher.
+func decodeSourceMatcher(h *ir.Hook, srcCat catalog, srcEvent event) (toolpolicy.DecodedMatcher, error) {
 	decoded, err := toolpolicy.DecodeMatcher(target.Target(h.HookSource), h.Matcher, matcherSpec(srcCat))
-	if err == nil {
-		return decoded, nil
-	}
-	reg, rerr := shipped()
-	claudeCat, ok := reg.catalogs[target.TargetClaude]
-	if rerr != nil || !ok {
+	if err != nil {
 		return toolpolicy.DecodedMatcher{}, err
 	}
-	return toolpolicy.DecodeMatcher("", h.Matcher, matcherSpec(claudeCat))
+	if decoded.Empty {
+		switch {
+		case len(srcEvent.Tools) != 0:
+			set := make(map[string]bool, len(srcEvent.Tools))
+			for _, concept := range srcEvent.Tools {
+				set[concept] = true
+			}
+			return toolpolicy.DecodedMatcher{Concepts: set}, nil
+		case srcEvent.MCP:
+			return toolpolicy.DecodedMatcher{MCPAll: true}, nil
+		}
+	}
+	return decoded, nil
 }
 
 // resolveMatcher emits the target-native matcher. Events without a tool
 // matcher reject a non-empty source matcher rather than dropping it.
-func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, dstEvent event, res *Resolved, fail func(string, string, string) bool) bool {
+func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, srcEvent, dstEvent event, res *Resolved, fail func(string, string, string) bool) bool {
 	switch dstEvent.Matcher {
 	case "", MatcherKindNone:
 		if h.Matcher != "" {
@@ -318,7 +328,7 @@ func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, dstEv
 		}
 		res.Matcher = ""
 	case MatcherKindTool:
-		decoded, err := decodeSourceMatcher(h, srcCat)
+		decoded, err := decodeSourceMatcher(h, srcCat, srcEvent)
 		if err != nil {
 			return fail(diag.CodeHookMatcherUntranslatable, "No exact tool coverage on the target for this matcher; hook suppressed", "Use exact tool names the target documents")
 		}
@@ -532,6 +542,23 @@ func nameReplacement(command string, m []int, name string) string {
 	return b.String()
 }
 
+// machineSupportBaseLiteral renders an absolute machine-scope support base as
+// a safe shell word: unchanged when every character is already word-safe,
+// otherwise a POSIX single-quoted literal with embedded single quotes escaped.
+// The machine destination root is a real HOME/CODEX_HOME path that can carry
+// spaces or shell metacharacters; the emitted command must still reference
+// that literal directory, never an expansion.
+func machineSupportBaseLiteral(base string) string {
+	for _, r := range base {
+		safe := r == '/' || r == '.' || r == '_' || r == '-' ||
+			('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || ('0' <= r && r <= '9')
+		if !safe {
+			return "'" + strings.ReplaceAll(base, "'", `'\''`) + "'"
+		}
+	}
+	return base
+}
+
 // supportReference renders the installed support-directory reference for a
 // plugin-root token.
 func supportReference(c catalog, scope Scope, supportBase string) (string, diag.Diagnostic, bool) {
@@ -542,7 +569,7 @@ func supportReference(c catalog, scope Scope, supportBase string) (string, diag.
 		return refuse()
 	}
 	if scope == ScopeMachine {
-		return supportBase, diag.Diagnostic{}, true
+		return machineSupportBaseLiteral(supportBase), diag.Diagnostic{}, true
 	}
 	rb := c.RepositoryBase
 	if rb == nil {
@@ -564,4 +591,40 @@ func supportReference(c catalog, scope Scope, supportBase string) (string, diag.
 		return `"$` + v.Names[0] + `"/` + rel, diag.Diagnostic{}, true
 	}
 	return refuse()
+}
+
+// HasEquivalentEvent reports whether the hook's event has a catalog-declared
+// equivalent on dst, sharing Resolve's event-selection logic — including
+// target tool-split events matched against the hook's decoded matcher. It is
+// metadata-only: it inspects the event and matcher, never the command or
+// prompt payload, and does not duplicate resolution work.
+func HasEquivalentEvent(h *ir.Hook, dst target.Target) bool {
+	r, err := shipped()
+	if err != nil {
+		return false
+	}
+	src := target.Target(h.HookSource)
+	if src == "" {
+		src = target.TargetClaude
+	}
+	srcCat, ok := r.catalogs[src]
+	if !ok {
+		return false
+	}
+	dstCat, ok := r.catalogs[dst]
+	if !ok {
+		return false
+	}
+	srcEvent, declared := srcCat.Events[h.Event]
+	if !declared {
+		return false
+	}
+	if src == dst {
+		return true
+	}
+	if srcEvent.Canonical == "" {
+		return false
+	}
+	_, _, found := selectEvent(dstCat, srcEvent.Canonical, h, srcCat, srcEvent)
+	return found
 }

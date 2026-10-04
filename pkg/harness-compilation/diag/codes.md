@@ -94,6 +94,7 @@ comparison in non-test code.
 | `mcp.codex.plugin-root-unresolved` | An MCP value references the plugin root but no plugin root was configured; the token was left unexpanded | Compile with a plugin root so the value resolves, or use an absolute path |
 | `ingest.codex.prompt-deprecated` | A deprecated Codex prompt was ingested as a command | Move the prompt to a command skill under `.agents/skills` |
 | `ingest.codex.field-dropped` | A benign native Codex field has no canonical equivalent and was omitted | Remove the field or keep the resource in Codex format |
+| `ingest.codex.hook-event-unmappable` | Codex hook event is outside the documented Codex vocabulary; the original event name was preserved | Use a documented Codex event (PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, SessionEnd); an undocumented event cannot be translated |
 | `rule.factory.metadata-dropped` | Factory rules are plain markdown; description/globs/alwaysApply metadata dropped | Factory does not support rule frontmatter (description or conditional glob-scoped application); the rule body is emitted verbatim |
 | `compile.canonical-field-overrides-extra` | Canonical field overrides a conflicting preserved extra | The canonical modeled value wins; rename the extension field to preserve both values |
 | `hook.timeout-rounded` | Timeout unit conversion to seconds rounded up to the next whole second | Use a whole-second timeout or accept the rounded value |

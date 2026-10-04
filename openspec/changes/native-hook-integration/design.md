@@ -422,11 +422,12 @@ allowlist like `TestCommandIsolationGuard`.
 
 ### D15: Source-revision compatibility
 
-Hook and tool provenance change the IR JSON fallback projection. This change
-adds the next source-revision generator version after PR #276's v4, with
-frozen vectors for every supported earlier version, including hook- and
-tool-bearing fixtures for each layout. Normal source-byte hashing is
-unchanged. No lock is refreshed without `update`.
+Hook and tool provenance are runtime data and must not change the historical
+IR JSON fallback projections used by source-revision generators v1 through
+v4. Keep the existing schemas and generator versions, with frozen vectors
+including hook- and tool-bearing fixtures for each layout. Normal source-byte
+hashing is unchanged. No lock is refreshed without `update`. An explicit
+update uses an already supported generator version; no new version is added.
 
 ## Risks / Trade-offs
 

@@ -2,29 +2,36 @@ package materialize
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	"golang.org/x/sys/unix"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
-	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
-type hookSupportOutput struct {
-	output outputKey
-	path   string
-}
-
-type hookSupportSource struct {
-	path    string
-	target  hcc.Target
-	harness string
+type hookSupportPlan struct {
+	relBase   string
+	artifacts []artifact.Artifact
+	err       error
 }
 
 type hookSupportClaim struct {
@@ -33,35 +40,65 @@ type hookSupportClaim struct {
 	conflict  bool
 }
 
-func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[int][]string) {
-	support := make(map[int][]artifact.Artifact)
-	cached := make(map[hookSupportSource][]artifact.Artifact)
-	claims := make(map[hookSupportOutput]*hookSupportClaim)
-	var keys []hookSupportOutput
+func prepareHookSupport(work []skillTarget) (map[int]hookSupportPlan, map[int][]string) {
+	plans := make(map[int]hookSupportPlan)
+	type collectKey struct{ root, definition, definitionDir, harness string }
+	cached := make(map[collectKey][]artifact.Artifact)
+	collectErrs := make(map[collectKey]error)
+	claims := make(map[string]*hookSupportClaim)
+	var keys []string
 	for i, w := range work {
 		if w.skill.Resource == nil || w.skill.Resource.Kind() != ir.KindHook {
 			continue
 		}
-		source := hookSupportSource{path: materializationSourcePath(w.skill), target: w.target, harness: w.skill.SourceHarness}
-		files, exists := cached[source]
-		if !exists {
-			files = collectHookSupportFiles(source.path, w.target, source.harness)
-			cached[source] = files
+		root, definition, definitionDir, ok, err := hookSupportSource(w.skill)
+		if err != nil {
+			plans[i] = hookSupportPlan{err: err}
+			continue
 		}
-		support[i] = files
+		if !ok {
+			plans[i] = hookSupportPlan{}
+			continue
+		}
+		sourceKey, err := hookSupportSourceKey(w.skill)
+		if err != nil {
+			plans[i] = hookSupportPlan{err: err}
+			continue
+		}
+		relBase, err := hookSupportRelBase(w, sourceKey)
+		if err != nil {
+			plans[i] = hookSupportPlan{err: err}
+			continue
+		}
+		plan := hookSupportPlan{relBase: relBase}
+		key := collectKey{root: root, definition: definition, definitionDir: definitionDir, harness: w.skill.SourceHarness}
+		files, exists := cached[key]
+		if !exists {
+			files, err = collectHookSupportFiles(w.skill, root, definition, definitionDir)
+			cached[key] = files
+			collectErrs[key] = err
+		}
+		if err := collectErrs[key]; err != nil {
+			plan.err = err
+			plans[i] = plan
+			continue
+		}
 		for _, file := range files {
-			key := hookSupportOutput{output: outputKey{target: w.target, machineScope: w.machineScope}, path: file.Path}
-			claim := claims[key]
+			staged := artifact.Artifact{Path: path.Join(relBase, file.Path), Bytes: file.Bytes, Mode: file.Mode}
+			plan.artifacts = append(plan.artifacts, staged)
+			claimKey := fmt.Sprintf("%s\x00%t\x00%s", w.target, w.machineScope, staged.Path)
+			claim := claims[claimKey]
 			if claim == nil {
-				claim = &hookSupportClaim{artifact: file}
-				claims[key] = claim
-				keys = append(keys, key)
+				claim = &hookSupportClaim{artifact: staged}
+				claims[claimKey] = claim
+				keys = append(keys, claimKey)
 			}
-			if !bytes.Equal(claim.artifact.Bytes, file.Bytes) || claim.artifact.Mode.Perm() != file.Mode.Perm() {
+			if !bytes.Equal(claim.artifact.Bytes, staged.Bytes) || claim.artifact.Mode.Perm() != staged.Mode.Perm() {
 				claim.conflict = true
 			}
 			claim.producers = append(claim.producers, i)
 		}
+		plans[i] = plan
 	}
 	conflicts := make(map[int][]string)
 	for _, key := range keys {
@@ -70,31 +107,492 @@ func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[in
 			continue
 		}
 		for _, i := range claim.producers {
-			conflicts[i] = append(conflicts[i], key.path)
+			conflicts[i] = append(conflicts[i], claim.artifact.Path)
 		}
 	}
-	return support, conflicts
+	return plans, conflicts
 }
 
-func hookSupportExclusions(sourcePath, sourceHarness string) map[string]bool {
-	primary := filepath.Base(sourcePath)
-	excluded := map[string]bool{primary: true}
-	info, ok := harness.TargetInfoFor(hcc.Target(sourceHarness))
-	if !ok {
-		return excluded
+func hookSupportDirFor(w skillTarget) (string, error) {
+	dir, _, err := hookSupportAggregateLayout(w)
+	return dir, err
+}
+
+func hookSupportAggregateLayout(w skillTarget) (dir, aggregatePath string, err error) {
+	declaration, err := nativeHookAggregateForScope(targetmeta.Target(w.target), w.machineScope)
+	if err != nil {
+		return "", "", err
 	}
-	files := append(slices.Clone(info.AggregateFiles.Project), info.AggregateFiles.User...)
-	for _, source := range files {
-		if filepath.Base(source) != primary {
+	return path.Join(declaration.partition.Prefix, declaration.aggregate.SupportDir),
+		path.Join(declaration.partition.Prefix, declaration.file.Path), nil
+}
+
+func hookSupportRelBase(w skillTarget, sourceKey string) (string, error) {
+	dir, err := hookSupportDirFor(w)
+	if err != nil {
+		return "", err
+	}
+	name := w.skill.InstalledName
+	if name == "" {
+		name = w.skill.Name
+	}
+	if err := ir.ValidateName(name); err != nil {
+		return "", err
+	}
+	return path.Join(dir, sourceKey, name), nil
+}
+
+func hookSupportSourceKey(res resolver.ResolvedArtifact) (string, error) {
+	identity, err := nativeHookSourceIdentity(res)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(identity))
+	return hookSupportSlug(res) + "-" + hex.EncodeToString(sum[:]), nil
+}
+
+func hookSupportSlug(res resolver.ResolvedArtifact) string {
+	raw := ""
+	if res.IsMarketplace {
+		raw = strings.TrimSpace(res.MarketplaceRegistryID)
+		if name := strings.TrimSpace(res.MarketplaceResourceName); name != "" {
+			if raw != "" {
+				raw += "-" + name
+			} else {
+				raw = name
+			}
+		}
+	} else {
+		raw = strings.TrimSpace(res.RegistryURL)
+	}
+	raw = strings.TrimRight(raw, "/")
+	raw = strings.TrimSuffix(raw, ".git")
+	if i := strings.LastIndexAny(raw, "/\\"); i >= 0 {
+		raw = raw[i+1:]
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
+		if !ok {
+			if lastDash {
+				continue
+			}
+			b.WriteByte('-')
+			lastDash = true
 			continue
 		}
-		for _, sibling := range files {
-			if filepath.Dir(source) == filepath.Dir(sibling) {
-				excluded[filepath.Base(sibling)] = true
+		b.WriteRune(r)
+		lastDash = r == '-'
+	}
+	slug := strings.Trim(b.String(), "-.")
+	if slug == "" {
+		return "source"
+	}
+	if len(slug) > 64 {
+		slug = strings.Trim(slug[:64], "-.")
+	}
+	if slug == "" {
+		return "source"
+	}
+	return slug
+}
+
+func hookSupportCommandBase(w skillTarget, repoRoot, relBase string) (string, error) {
+	if relBase == "" {
+		return "", nil
+	}
+	_, aggregatePath, err := hookSupportAggregateLayout(w)
+	if err != nil {
+		return "", err
+	}
+	destinations, err := harness.ResolveDestinations(w.target, w.machineScope, repoRoot)
+	if err != nil {
+		return "", err
+	}
+	for _, destination := range destinations {
+		if len(destination.AggregateRoutes) > 0 {
+			continue
+		}
+		if _, err := destination.RouteArtifact(aggregatePath); err != nil {
+			continue
+		}
+		rel, err := destination.RouteArtifact(relBase)
+		if err != nil {
+			continue
+		}
+		abs := filepath.Join(destination.Root, filepath.FromSlash(rel))
+		if w.machineScope {
+			return abs, nil
+		}
+		repoAbs, err := filepath.Abs(repoRoot)
+		if err != nil {
+			return "", err
+		}
+		repoRoots := []string{filepath.Clean(repoAbs)}
+		if canonical, cerr := ownership.CanonicalRoot(repoRoot); cerr == nil && canonical != repoRoots[0] {
+			repoRoots = append(repoRoots, canonical)
+		}
+		matched := false
+		var repoRel string
+		for _, root := range repoRoots {
+			rel, relErr := filepath.Rel(root, abs)
+			if relErr != nil {
+				continue
+			}
+			repoRel = filepath.ToSlash(rel)
+			if repoRel != ".." && !strings.HasPrefix(repoRel, "../") && !path.IsAbs(repoRel) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return "", fmt.Errorf("hook support directory %s is outside the repository root", relBase)
+		}
+		return repoRel, nil
+	}
+	return "", fmt.Errorf("target %s has no hook support destination in this scope", w.target)
+}
+
+func hookSupportSource(res resolver.ResolvedArtifact) (root, definition, definitionDir string, ok bool, err error) {
+	if res.IsMarketplace {
+		switch res.MarketplaceAcquisition {
+		case config.MarketplaceAcquisitionMirror:
+			p := res.Path
+			if p == "" {
+				return "", "", "", false, nil
+			}
+			if !filepath.IsAbs(p) {
+				return "", "", "", false, fmt.Errorf("mirror support path is not absolute")
+			}
+			info, err := os.Lstat(p)
+			if err != nil {
+				return "", "", "", false, err
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return "", "", "", false, fmt.Errorf("mirror support path is a symlink")
+			}
+			if info.IsDir() {
+				root, err := filepath.Abs(p)
+				return root, "", "", true, err
+			}
+			if info.Mode().IsRegular() {
+				return "", "", "", false, nil
+			}
+			return "", "", "", false, fmt.Errorf("mirror support path is not a regular archive or directory")
+		case config.MarketplaceAcquisitionIndexOnly:
+			if res.StagedSourceDir == "" || res.Path == "" ||
+				!filepath.IsAbs(res.StagedSourceDir) || !filepath.IsAbs(res.Path) {
+				return "", "", "", false, fmt.Errorf("index-only hook source is incomplete")
+			}
+			return hookSupportSourceLocation(res.StagedSourceDir, res.Path)
+		default:
+			return "", "", "", false, fmt.Errorf("marketplace hook source mode is unavailable")
+		}
+	}
+
+	sourceFile := filepath.Clean(filepath.FromSlash(compilepkg.SourceOf(res.Resource).File))
+	if !res.IsLocal() && filepath.IsAbs(sourceFile) && sourceFile != filepath.Clean(res.Path) {
+		relative := commonTrailingSlashPath(sourceFile, filepath.Clean(res.Path))
+		if relative == "" || !fs.ValidPath(relative) || relative == "." {
+			return "", "", "", false, fmt.Errorf("pinned hook definition has no valid source-relative path")
+		}
+		root := sourceFile
+		for range strings.Split(relative, "/") {
+			root = filepath.Dir(root)
+		}
+		return filepath.Clean(root), relative, path.Dir(relative), true, nil
+	}
+
+	definition = materializationSourcePath(res)
+	if definition == "" {
+		return "", "", "", false, nil
+	}
+	root = ""
+	if res.IsLocal() {
+		root = res.RegistryURL
+	} else if res.RegistryURL != "" {
+		if res.CatalogKey == "" {
+			return "", "", "", false, fmt.Errorf("configured hook source has no cache root")
+		}
+		root = cache.BaseCachePath(res.CatalogKey)
+	}
+	if root == "" {
+		return "", "", "", false, fmt.Errorf("hook definition has no configured source root")
+	}
+	if res.RegistryPath != "" {
+		raw := filepath.ToSlash(filepath.FromSlash(res.RegistryPath))
+		rel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(res.RegistryPath)))
+		if raw != rel || rel != "." && !fs.ValidPath(rel) {
+			return "", "", "", false, fmt.Errorf("configured hook source path is invalid")
+		}
+		if rel != "." {
+			root = filepath.Join(root, filepath.FromSlash(rel))
+		}
+	}
+	return hookSupportSourceLocation(root, definition)
+}
+
+func hookSupportSourceLocation(sourceRoot, definitionPath string) (root, definition, definitionDir string, ok bool, err error) {
+	root, err = filepath.Abs(sourceRoot)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	if filepath.IsAbs(definitionPath) {
+		if filepath.Clean(definitionPath) != definitionPath {
+			return "", "", "", false, fmt.Errorf("hook definition path is not clean")
+		}
+	} else {
+		rel := filepath.ToSlash(filepath.FromSlash(definitionPath))
+		if !fs.ValidPath(rel) {
+			return "", "", "", false, fmt.Errorf("hook definition path is invalid")
+		}
+		definitionPath = filepath.Join(root, filepath.FromSlash(rel))
+	}
+	definitionPath, err = filepath.Abs(definitionPath)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	rel, err := filepath.Rel(root, definitionPath)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	definition = filepath.ToSlash(filepath.Clean(rel))
+	if definition == "." || !fs.ValidPath(definition) {
+		return "", "", "", false, fmt.Errorf("hook definition is outside its configured source root")
+	}
+	return filepath.Clean(root), definition, path.Dir(definition), true, nil
+}
+
+func openHookSupportDirAt(rootFD int, relative string) (int, error) {
+	if relative == "" || relative == "." {
+		return unix.Dup(rootFD)
+	}
+	if !fs.ValidPath(relative) {
+		return -1, fmt.Errorf("hook support directory path is invalid")
+	}
+	currentFD := rootFD
+	ownedFD := -1
+	for _, component := range strings.Split(relative, "/") {
+		nextFD, err := openFingerprintDir(currentFD, component)
+		if ownedFD >= 0 {
+			_ = unix.Close(ownedFD)
+		}
+		if err != nil {
+			return -1, err
+		}
+		currentFD = nextFD
+		ownedFD = nextFD
+	}
+	return ownedFD, nil
+}
+
+func openHookSupportFileAt(dirFD int, relative string, total int64) (*os.File, fs.FileMode, int64, error) {
+	if !fs.ValidPath(relative) {
+		return nil, 0, 0, fmt.Errorf("hook support file path is invalid")
+	}
+	components := strings.Split(relative, "/")
+	currentFD := dirFD
+	ownedFD := -1
+	for _, component := range components[:len(components)-1] {
+		nextFD, err := openFingerprintDir(currentFD, component)
+		if ownedFD >= 0 {
+			_ = unix.Close(ownedFD)
+		}
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		currentFD = nextFD
+		ownedFD = nextFD
+	}
+	if ownedFD >= 0 {
+		defer func() { _ = unix.Close(ownedFD) }()
+	}
+	file, _, err := openFingerprintFile(currentFD, components[len(components)-1])
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
+		_ = file.Close()
+		return nil, 0, 0, fmt.Errorf("stat hook support file: %w", err)
+	}
+	if stat.Nlink != 1 {
+		_ = file.Close()
+		return nil, 0, 0, fmt.Errorf("hook support file has multiple hard links")
+	}
+	remaining := int64(hookSourceFingerprintMaxBytes) - total
+	if stat.Size < 0 || remaining < 0 || stat.Size > remaining {
+		_ = file.Close()
+		return nil, 0, 0, fmt.Errorf("hook support source exceeds the existing size limit")
+	}
+	return file, fs.FileMode(stat.Mode & 0o777), stat.Size, nil
+}
+
+func validateHookSupportPeer(dirFD int, name string) error {
+	file, _, _, err := openHookSupportFileAt(dirFD, name, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}
+
+func collectHookSupportFiles(res resolver.ResolvedArtifact, sourceRoot, definition, definitionDir string) ([]artifact.Artifact, error) {
+	if !filepath.IsAbs(sourceRoot) {
+		return nil, fmt.Errorf("hook source root is not absolute")
+	}
+	if definition != "" && (!fs.ValidPath(definition) || path.IsAbs(definition) || path.Dir(definition) != definitionDir) {
+		return nil, fmt.Errorf("hook definition path is invalid")
+	}
+	rootFD, err := unix.Open(sourceRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open hook source root: %w", err)
+	}
+	defer func() { _ = unix.Close(rootFD) }()
+	dirFD, err := openHookSupportDirAt(rootFD, definitionDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = unix.Close(dirFD) }()
+
+	excluded, inventoryDir := hookSupportExclusions(res, definitionDir)
+	definitionName := ""
+	var total int64
+	if definition != "" {
+		definitionName = path.Base(definition)
+		file, _, size, err := openHookSupportFileAt(dirFD, definitionName, total)
+		if err != nil {
+			return nil, err
+		}
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
+		total += size
+	}
+	for peer := range excluded {
+		if peer != definitionName {
+			if err := validateHookSupportPeer(dirFD, peer); err != nil {
+				return nil, err
 			}
 		}
 	}
-	return excluded
+
+	var files []artifact.Artifact
+	if err := walkFingerprintDir(dirFD, func(relative string) error {
+		if relative == definitionName || excluded[relative] {
+			return nil
+		}
+		for peer := range excluded {
+			if strings.HasPrefix(relative, peer+"/") {
+				return fmt.Errorf("native hook aggregate peer is not a regular file")
+			}
+		}
+		if inventoryDir && !strings.Contains(relative, "/") && strings.HasSuffix(relative, ".json") {
+			file, _, size, err := openHookSupportFileAt(dirFD, relative, total)
+			if errors.Is(err, unix.ENOENT) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
+			total += size
+			return nil
+		}
+		file, mode, size, err := openHookSupportFileAt(dirFD, relative, total)
+		if err != nil {
+			return err
+		}
+		data, readErr := readFingerprintFD(file, relative, &total)
+		closeErr := file.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if int64(len(data)) != size {
+			return fmt.Errorf("hook support file changed while reading")
+		}
+		files = append(files, artifact.Artifact{Path: relative, Bytes: data, Mode: mode})
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	for peer := range excluded {
+		if peer != definitionName {
+			if err := validateHookSupportPeer(dirFD, peer); err != nil {
+				return nil, err
+			}
+		}
+	}
+	slices.SortFunc(files, func(a, b artifact.Artifact) int { return strings.Compare(a.Path, b.Path) })
+	return files, nil
+}
+
+func hookSupportExclusions(res resolver.ResolvedArtifact, definitionDir string) (map[string]bool, bool) {
+	excluded := make(map[string]bool)
+	if res.SourceHarness == "" {
+		return excluded, false
+	}
+	if res.SourceHarness == "windsurf" && (definitionDir == ".windsurf/hooks" || definitionDir == "hooks") {
+		return excluded, true
+	}
+	lookupDir := definitionDir
+	sourceFile := filepath.Clean(filepath.FromSlash(compilepkg.SourceOf(res.Resource).File))
+	rawRegistryPath := filepath.ToSlash(filepath.FromSlash(res.RegistryPath))
+	registryPath := filepath.ToSlash(filepath.Clean(filepath.FromSlash(res.RegistryPath)))
+	if !res.IsLocal() && filepath.IsAbs(sourceFile) && sourceFile != filepath.Clean(res.Path) &&
+		rawRegistryPath == registryPath && registryPath != "." && fs.ValidPath(registryPath) {
+		if lookupDir == registryPath {
+			lookupDir = "."
+		} else if strings.HasPrefix(lookupDir, registryPath+"/") {
+			lookupDir = strings.TrimPrefix(lookupDir, registryPath+"/")
+		}
+	}
+	for _, aggregatePath := range hookSourceAggregatePaths(res.SourceHarness) {
+		dir, name := path.Split(aggregatePath)
+		dir = strings.TrimSuffix(dir, "/")
+		if dir == "" {
+			dir = "."
+		}
+		if dir == lookupDir {
+			excluded[name] = true
+		}
+	}
+	return excluded, false
+}
+
+// hookSourceAggregatePaths returns the source-harness native aggregate
+// locations — project, user, and declared legacy — relative to the source
+// root, resolved through the source target's registered native layout.
+func hookSourceAggregatePaths(sourceHarness string) []string {
+	definition, ok := targetmeta.Lookup(sourceHarness)
+	if !ok {
+		return nil
+	}
+	layout, ok := targetmeta.LookupNativeLayout(definition.Target)
+	if !ok {
+		return nil
+	}
+	var paths []string
+	for _, partition := range layout.Partitions {
+		for _, aggregate := range partition.Aggregates {
+			for _, file := range []targetmeta.NativeAggregateFile{aggregate.Project, aggregate.User} {
+				p := path.Join(definition.RepoRoot, partition.Prefix, file.Path)
+				paths = append(paths, p)
+				for _, legacy := range file.Legacy {
+					paths = append(paths, path.Join(definition.RepoRoot, partition.Prefix, legacy))
+				}
+			}
+		}
+	}
+	return paths
 }
 
 func retainBlockedHookArtifacts(outDir string, artifacts []artifact.Artifact) ([]artifact.Artifact, error) {

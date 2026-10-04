@@ -162,24 +162,19 @@ func hook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnos
 		slog.Warn("codex hook suppressed", "resource", h.Name(), "reason", "invalid_additional_context_limit")
 		return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex hook has an invalid additional context limit; hook suppressed")}, nil
 	}
-	native := h.Ext.Codex != nil && h.Ext.Codex.NativeHook
-	event := h.Event
-	matcher := h.Matcher
-	command := h.Command
-	timeout := h.Timeout
+	// Event, matcher, type, timeout, and command translation always come from
+	// the catalog-driven hookpolicy resolver (OpenSpec native-hook-integration,
+	// task 3.4). Native hooks arrive here with HookSource provenance — the
+	// guard normalizes BASE-era Ext.Codex.NativeHook hooks that lack it — so
+	// the resolver's same-harness path keeps the native event spelling while
+	// still applying the declared-type, SessionEnd timeout-bound, and
+	// plugin-root refusal rules.
 	var diagnostics []diag.Diagnostic
-	if native {
-		// A native Codex hook keeps its event name verbatim; it is valid only
-		// where the catalog declares it for same-harness output.
+	if h.HookSource == string(targetmeta.TargetCodex) {
+		// A native Codex hook is valid only where the catalog declares it;
+		// undeclared events and matchers on matcher-less events are refused so
+		// the hook cannot silently widen.
 		if !hookpolicy.IsDeclaredEvent(targetmeta.TargetCodex, h.Event) {
-			slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)
-			return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex does not execute this hook event or handler; hook suppressed")}, nil
-		}
-		if h.Timeout != nil && *h.Timeout < 0 {
-			slog.Warn("codex hook suppressed", "resource", h.Name(), "reason", "invalid_timeout")
-			return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex hook has an invalid timeout; hook suppressed")}, nil
-		}
-		if h.Type != "command" && h.Type != "mcp_tool" {
 			slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)
 			return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex does not execute this hook event or handler; hook suppressed")}, nil
 		}
@@ -189,30 +184,18 @@ func hook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnos
 			slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)
 			return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex does not execute this hook event or handler; hook suppressed")}, nil
 		}
-		if h.Event == "SessionEnd" && timeout != nil && *timeout > 3 {
-			capped := 3
-			timeout = &capped
-			diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, h.Name(), h.Source, "SessionEnd supports at most a three-second timeout; timeout was capped"))
-		}
-	} else {
-		// Event, matcher, timeout, and command translation come from the
-		// catalog-driven hookpolicy resolver (OpenSpec
-		// native-hook-integration, task 3.4). The SessionEnd per-event
-		// timeout bound caps with compile.codex.field-dropped, and a matcher
-		// on an event the catalog declares without matchers is refused
-		// rather than dropped so the hook cannot widen.
-		scope := hookpolicy.ScopeRepository
-		if opts.Scope() == compile.ScopeUser {
-			scope = hookpolicy.ScopeMachine
-		}
-		resolved := hookpolicy.Resolve(h, targetmeta.TargetCodex, scope, opts.PluginRoot())
-		if resolved.Failed() {
-			slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)
-			return nil, resolved.Diagnostics, nil
-		}
-		event, matcher, command, timeout = resolved.Event, resolved.Matcher, resolved.Command, resolved.Timeout
-		diagnostics = append(diagnostics, resolved.Diagnostics...)
 	}
+	scope := hookpolicy.ScopeRepository
+	if opts.Scope() == compile.ScopeUser {
+		scope = hookpolicy.ScopeMachine
+	}
+	resolved := hookpolicy.Resolve(h, targetmeta.TargetCodex, scope, opts.PluginRoot())
+	if resolved.Failed() {
+		slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)
+		return nil, resolved.Diagnostics, nil
+	}
+	event, matcher, command, timeout := resolved.Event, resolved.Matcher, resolved.Command, resolved.Timeout
+	diagnostics = append(diagnostics, resolved.Diagnostics...)
 	sessionEndAsync := event == "SessionEnd" && h.Ext.Codex != nil && h.Ext.Codex.HookAsync != nil && *h.Ext.Codex.HookAsync
 	if command == "" {
 		slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)

@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
@@ -167,6 +168,16 @@ func (c guardedCompiler) translate(resource ir.Resource, translate func(ir.Resou
 func GuardNativeCodexTranslation(resource ir.Resource, target Target, translate func(ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error)) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	if _, _, err := ir.ValidateResource(resource); err != nil {
 		return nil, nil, err
+	}
+	// BASE-era Codex-native hooks carry Ext.Codex.NativeHook without the
+	// HookSource provenance newer ingesters record. Normalize a clone to the
+	// codex source so the catalog resolver understands native-only events on
+	// every public path (Compile, Lookup, direct target compilers); the
+	// caller's IR is never mutated.
+	if hook, ok := resource.(*ir.Hook); ok && hook.HookSource == "" && hook.Ext.Codex != nil && hook.Ext.Codex.NativeHook {
+		clone := *hook
+		clone.HookSource = string(TargetCodex)
+		resource = &clone
 	}
 	nativeDiagnostics := codexNativeLossDiagnostics(resource, target)
 	if diag.HasErrors(nativeDiagnostics) {
@@ -359,7 +370,7 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 		}
 		nativeCodex := typed.Ext.Codex != nil && typed.Ext.Codex.NativeHook
 		if nativeCodex {
-			if _, ok := mapping.NativeCodexHookEvent(typed.Event, typed.Matcher, target); !ok {
+			if !hookpolicy.HasEquivalentEvent(typed, target) {
 				return diagnostic(diag.CodeHookEventUnmappable, diag.SeverityError, "Target cannot preserve this hook event; hook suppressed", typed.Source)
 			}
 			if strings.Contains(typed.Command, "${") {

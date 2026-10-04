@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // ownedJSONHookIdentity returns the total identity digest for a hook rule. The
@@ -174,7 +176,13 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 	rel := file.rel
 	abs := filepath.Join(outDir, rel)
 
-	raw, readErr := ownership.ReadAggregateFile(abs)
+	var raw []byte
+	var readErr error
+	if file.hookShape != "" {
+		raw, readErr = ownership.ReadAggregateFileAt(outDir, rel)
+	} else {
+		raw, readErr = ownership.ReadAggregateFile(abs)
+	}
 	switch {
 	case readErr == nil:
 	case os.IsNotExist(readErr):
@@ -215,6 +223,14 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 			}
 		}
 		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, parseErr, options.malformedCode))
+		return out
+	}
+	if envelopeErr := validateOwnedJSONEnvelope(doc, file, os.IsNotExist(readErr)); envelopeErr != nil {
+		out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, envelopeErr))
+		return out
+	}
+	if desiredShapeErr := validateOwnedJSONDesiredHooks(file, desired); desiredShapeErr != nil {
+		out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, desiredShapeErr))
 		return out
 	}
 
@@ -270,6 +286,13 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 	if dryRun {
 		out.written = true
 		return out
+	}
+	if file.hookShape != "" {
+		if err := ensureOwnedJSONHookParent(outDir, rel); err != nil {
+			out.diags = append(out.diags, ownedAggregateDiag(options.writeCode, key, rel,
+				fmt.Sprintf("prepare aggregate parent for %q: %v", ownedAggregateLabel(outDir, rel), err)))
+			return out
+		}
 	}
 
 	priorGen, priorDigest := ownedAggregatePriorForApply(raw, readErr, proof)
@@ -327,6 +350,132 @@ func ownedJSONContainerNode(doc *jsonc.Document, file ownedJSONFileSpec) (contai
 	return node, member, nil
 }
 
+func ownedJSONScalar(raw []byte) bool {
+	var value any
+	if err := ownedJSONDecode(raw, &value); err != nil {
+		return false
+	}
+	switch value.(type) {
+	case nil, bool, string, json.Number:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateOwnedJSONEnvelope(doc *jsonc.Document, file ownedJSONFileSpec, allowMissing bool) error {
+	if len(file.envelope) == 0 {
+		return nil
+	}
+	root := doc.Root()
+	if root.Kind() != jsonc.KindObject {
+		return fmt.Errorf("aggregate %q root is not a JSON object; it was left unchanged", file.rel)
+	}
+	keys := make([]string, 0, len(file.envelope))
+	for key := range file.envelope {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		expectedRaw, err := json.Marshal(file.envelope[key])
+		if err != nil || !ownedJSONScalar(expectedRaw) {
+			return fmt.Errorf("aggregate %q declares a non-scalar envelope member %q", file.rel, key)
+		}
+		member, present := root.Member(key)
+		if !present {
+			if !allowMissing {
+				return fmt.Errorf("aggregate %q is missing declared envelope member %q; it was left unchanged", file.rel, key)
+			}
+			if !doc.SetMember(root, key, expectedRaw) {
+				return fmt.Errorf("aggregate %q could not create declared envelope member %q", file.rel, key)
+			}
+			continue
+		}
+		actualRaw := member.Raw()
+		if !ownedJSONScalar(actualRaw) {
+			return fmt.Errorf("aggregate %q envelope member %q is not a scalar; it was left unchanged", file.rel, key)
+		}
+		actual, err := canonicalOwnedJSON(actualRaw)
+		if err != nil {
+			return fmt.Errorf("aggregate %q envelope member %q is invalid; it was left unchanged", file.rel, key)
+		}
+		expected, err := canonicalOwnedJSON(expectedRaw)
+		if err != nil || !bytes.Equal(actual, expected) {
+			return fmt.Errorf("aggregate %q envelope member %q differs from its declaration; it was left unchanged", file.rel, key)
+		}
+	}
+	return nil
+}
+
+func validateOwnedJSONHookRule(shape targetmeta.HookShape, rule *jsonc.Node) error {
+	if rule == nil || rule.Kind() != jsonc.KindObject {
+		return fmt.Errorf("hook entry is not an object")
+	}
+	switch shape {
+	case targetmeta.HookShapeEventHandlers:
+		return nil
+	case targetmeta.HookShapeMatcherGroups:
+		handlers, ok := rule.Member("hooks")
+		if !ok || handlers.Kind() != jsonc.KindArray {
+			return fmt.Errorf("matcher group does not contain a hooks array")
+		}
+		for i := 0; i < handlers.Len(); i++ {
+			handler, _ := handlers.Element(i)
+			if handler.Kind() != jsonc.KindObject {
+				return fmt.Errorf("matcher group contains a non-object handler")
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("hook aggregate declares an unsupported entry shape")
+	}
+}
+
+func validateOwnedJSONDesiredHooks(file ownedJSONFileSpec, desired []ownedJSONEntry) error {
+	if file.hookShape == "" {
+		return nil
+	}
+	for _, entry := range desired {
+		if entry.rel != file.rel || entry.container == "" {
+			return fmt.Errorf("aggregate %q has an invalid desired hook entry", file.rel)
+		}
+		doc, err := jsonc.Parse(file.rel, entry.raw)
+		if err != nil {
+			return fmt.Errorf("aggregate %q desired hook entry is invalid", file.rel)
+		}
+		if err := validateOwnedJSONHookRule(file.hookShape, doc.Root()); err != nil {
+			return fmt.Errorf("aggregate %q desired hook entry does not match its declared shape", file.rel)
+		}
+	}
+	return nil
+}
+
+func ensureOwnedJSONHookParent(outDir, rel string) error {
+	root, err := ownership.CanonicalRoot(outDir)
+	if err != nil {
+		return fmt.Errorf("aggregate root is unsafe: %w", err)
+	}
+	parent := filepath.Dir(filepath.Join(outDir, filepath.FromSlash(rel)))
+	canonicalParent, err := ownership.CanonicalRoot(parent)
+	if err != nil {
+		return fmt.Errorf("aggregate parent is unsafe: %w", err)
+	}
+	if canonicalParent != filepath.Clean(parent) {
+		return fmt.Errorf("aggregate parent contains a symlink")
+	}
+	relative, err := filepath.Rel(root, canonicalParent)
+	if err != nil || !fs.ValidPath(filepath.ToSlash(relative)) {
+		return fmt.Errorf("aggregate parent is outside its owned root")
+	}
+	if info, statErr := os.Stat(canonicalParent); statErr == nil && !info.IsDir() || statErr != nil && !os.IsNotExist(statErr) {
+		return fmt.Errorf("aggregate parent is not a safe directory")
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("create aggregate parent: %w", err)
+	}
+	return nil
+}
+
 // ownedJSONExistingEntry pairs an on-disk entry's ownership identity with where it
 // lives, so a patch can address it without re-deriving anything.
 type ownedJSONExistingEntry struct {
@@ -368,6 +517,9 @@ func ownedJSONExistingEntries(file ownedJSONFileSpec, container *jsonc.Node) ([]
 	for _, event := range container.Keys() {
 		node, _ := container.Member(event)
 		if node.Kind() != jsonc.KindArray {
+			if file.hookShape != "" {
+				return nil, fmt.Errorf("aggregate %q event %q is not an array of declared hook entries; it was left unchanged", rel, event)
+			}
 			// A non-array hook event is not a shape this target writes. It is
 			// left alone rather than rewritten, and it contributes no entries,
 			// so nothing about it can be pruned either.
@@ -377,6 +529,11 @@ func ownedJSONExistingEntries(file ownedJSONFileSpec, container *jsonc.Node) ([]
 		}
 		for i := 0; i < node.Len(); i++ {
 			element, _ := node.Element(i)
+			if file.hookShape != "" {
+				if err := validateOwnedJSONHookRule(file.hookShape, element); err != nil {
+					return nil, fmt.Errorf("aggregate %q event %q entry %d does not match its declared hook shape; it was left unchanged", rel, event, i)
+				}
+			}
 			canonical, err := jsonc.Canonicalize(rel, element.Raw())
 			if err != nil {
 				return nil, fmt.Errorf("aggregate %q event %q entry %d is not valid JSON; it was left unchanged", rel, event, i)

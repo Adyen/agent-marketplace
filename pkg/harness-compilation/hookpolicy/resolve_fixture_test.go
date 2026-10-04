@@ -1,17 +1,18 @@
 package hookpolicy_test
 
-// Resolver-level run of the independently authored conversion fixtures
-// (OpenSpec native-hook-integration, task 3.1). The Compile-level runner in
-// conversions_fixture_test.go stays env-gated until every target translator
-// consumes hookpolicy; this runner verifies the resolver directly against
-// the same fixture file.
+// Resolver-level run of the independently authored conversion fixtures.
+// The Compile-level runner in conversions_fixture_test.go exercises the
+// same fixture file through the public boundary; this runner verifies the
+// resolver directly.
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strconv"
 	"testing"
 
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -94,4 +95,106 @@ func resolveCodes(res hookpolicy.Resolved) []string {
 
 func hasResolveCode(res hookpolicy.Resolved, code string) bool {
 	return diag.HasCode(res.Diagnostics, code)
+}
+
+func TestMachineSupportBaseIsQuotedAsLiteral(t *testing.T) {
+	hook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{}, ir.WithHookSource("claude"))
+	cases := []struct {
+		name string
+		base string
+		want string
+	}{
+		{name: "safe path", base: "/tmp/hook-support/source/guard", want: "/tmp/hook-support/source/guard/scripts/check.sh"},
+		{name: "shell metacharacters", base: "/tmp/hook support/it's/$HOME/`tick`", want: "'/tmp/hook support/it'\\''s/$HOME/`tick`'/scripts/check.sh"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved := hookpolicy.Resolve(hook, target.TargetFactory, hookpolicy.ScopeMachine, tc.base)
+			if resolved.Failed() {
+				t.Fatalf("machine hook resolution failed: %+v", resolved.Diagnostics)
+			}
+			if resolved.Command != tc.want {
+				t.Fatalf("command = %q, want %q", resolved.Command, tc.want)
+			}
+		})
+	}
+}
+
+func assertFactoryCompileHook(t *testing.T, result *hcc.Result, wantCommand string) {
+	t.Helper()
+	if result == nil || result.HasErrors() {
+		t.Fatalf("Factory Compile failed: %+v", result)
+	}
+	if len(result.Artifacts) != 1 {
+		t.Fatalf("Factory artifact count = %d, want 1", len(result.Artifacts))
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(result.Artifacts[0].Bytes, &document); err != nil {
+		t.Fatalf("Factory hook artifact is invalid JSON: %v", err)
+	}
+	if len(document) != 1 {
+		t.Fatalf("Factory hook artifact keys = %v, want bare PreToolUse map", document)
+	}
+	preToolUse, ok := document["PreToolUse"]
+	if !ok {
+		t.Fatalf("Factory hook artifact lacks PreToolUse: %v", document)
+	}
+	var groups []struct {
+		Matcher string `json:"matcher"`
+		Hooks   []struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(preToolUse, &groups); err != nil {
+		t.Fatalf("Factory PreToolUse groups are invalid: %v", err)
+	}
+	if len(groups) != 1 || groups[0].Matcher != "Execute" || len(groups[0].Hooks) != 1 ||
+		groups[0].Hooks[0].Type != "command" || groups[0].Hooks[0].Command != wantCommand {
+		t.Fatalf("Factory hook emission = %+v, want one Execute command %q", groups, wantCommand)
+	}
+}
+
+// spec: hook-resources/missing-repository-base-refuses-token-commands
+func TestCompileRefusesTokenWhenCatalogLacksRepositoryBase(t *testing.T) {
+	hook := ir.NewHookWithMatcherOptions(
+		"guard", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil,
+		ir.SourceRef{}, ir.WithHookSource("claude"),
+	)
+	options := []hcc.Option{
+		hcc.WithPluginRoot(".factory/hook-support/source/guard"),
+		hcc.WithScope(hcc.ScopeProject),
+	}
+
+	beforeOverride, err := hcc.Compile(hook, hcc.TargetFactory, options...)
+	if err != nil {
+		t.Fatalf("default-catalog Factory Compile: %v", err)
+	}
+	assertFactoryCompileHook(t, beforeOverride, `"$FACTORY_PROJECT_DIR"/.factory/hook-support/source/guard/scripts/check.sh`)
+
+	restore, err := hookpolicy.WithoutRepositoryBaseForTest(target.TargetFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restore)
+
+	refused, err := hcc.Compile(hook, hcc.TargetFactory, options...)
+	if err != nil {
+		t.Fatalf("no-repository-base Factory Compile: %v", err)
+	}
+	if refused == nil || len(refused.Artifacts) != 0 || len(refused.Diagnostics) != 1 {
+		t.Fatalf("no-base token Compile = %+v, want no artifacts and one diagnostic", refused)
+	}
+	diagnostic := refused.Diagnostics[0]
+	if diagnostic.Code != diag.CodeHookSupportPathUnrepresentable || diagnostic.Severity != hcc.SeverityError {
+		t.Fatalf("no-base token diagnostic = %+v", diagnostic)
+	}
+
+	literalHook := *hook
+	literalHook.Command = "echo no-token"
+	control, err := hcc.Compile(&literalHook, hcc.TargetFactory, options...)
+	if err != nil {
+		t.Fatalf("no-token Factory Compile: %v", err)
+	}
+	assertFactoryCompileHook(t, control, "echo no-token")
 }

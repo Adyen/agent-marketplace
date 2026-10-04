@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,15 +20,17 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 	t.Setenv("HOME", home)
 	origin, working := createBareRepoWithWorkingClone(t, "user-resources.git")
 	writeSkill(t, working, "shared", "User selection", nil)
-	writeFile(t, filepath.Join(working, "hooks", "hooks.json"), `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/hooks/user-check.sh"}]}]}}`)
+	writeFile(t, filepath.Join(working, "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/user-check.sh"}]}]}`)
+	writeFile(t, filepath.Join(working, "hooks", "user-check.sh"), "#!/bin/sh\necho user-scope-check\n")
 	commitAndPushAll(t, working, "Add user resources")
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory, devin]\nsources: {user: {git: 'file://"+origin+"', ref: main}}\nresources: {user: {include: [skill/shared, hook/PreToolUse-command]}}\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory, devin]\nsources: {user: {git: 'file://"+origin+"', ref: main, source_harness: factory}}\nresources: {user: {include: [skill/shared, hook/PreToolUse-command]}}\n")
 
 	repo := filepath.Join(t.TempDir(), "repo")
 	local := filepath.Join(repo, "resources")
 	writeSkill(t, local, "shared", "Repository selection", nil)
-	writeFile(t, filepath.Join(local, "hooks", "hooks.json"), `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/hooks/repo-check.sh"}]}]}}`)
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared, hook/PreToolUse-command]}}\n")
+	writeFile(t, filepath.Join(local, "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/repo-check.sh"}]}]}`)
+	writeFile(t, filepath.Join(local, "hooks", "repo-check.sh"), "#!/bin/sh\necho repo-scope-check\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources, source_harness: factory}}\nresources: {repo: {include: [skill/shared, hook/PreToolUse-command]}}\n")
 	withWorkingDir(t, repo)
 
 	assertState := func() {
@@ -41,13 +44,59 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(home, ".config", "devin", "skills", "shared")); err != nil {
 			t.Fatalf("user Devin skill was pruned: %v", err)
 		}
-		machineHooks, err := os.ReadFile(filepath.Join(home, ".factory", "hooks", "hooks.json"))
-		if err != nil || !strings.Contains(string(machineHooks), filepath.Join(home, ".factory", "hooks", "user-check.sh")) {
-			t.Fatalf("machine hook command: %v\n%s", err, machineHooks)
+		hookCommand := func(base, file string) string {
+			t.Helper()
+			data, err := os.ReadFile(filepath.Join(base, ".factory", "hooks", "hooks.json"))
+			if err != nil {
+				t.Fatalf("read %s hook file: %v", file, err)
+			}
+			var document map[string][]struct {
+				Matcher string `json:"matcher"`
+				Hooks   []struct {
+					Type    string `json:"type"`
+					Command string `json:"command"`
+				} `json:"hooks"`
+			}
+			if err := json.Unmarshal(data, &document); err != nil {
+				t.Fatalf("decode %s hook file: %v\n%s", file, err, data)
+			}
+			groups, ok := document["PreToolUse"]
+			if !ok || len(document) != 1 || len(groups) != 1 {
+				t.Fatalf("%s hook file PreToolUse groups = %v, want exactly one\n%s", file, document["PreToolUse"], data)
+			}
+			if groups[0].Matcher != "Execute" {
+				t.Fatalf("%s hook matcher = %q, want Execute", file, groups[0].Matcher)
+			}
+			if len(groups[0].Hooks) != 1 || groups[0].Hooks[0].Type != "command" {
+				t.Fatalf("%s hook handlers = %+v, want exactly one command handler", file, groups[0].Hooks)
+			}
+			return groups[0].Hooks[0].Command
 		}
-		repoHooks, err := os.ReadFile(filepath.Join(repo, ".factory", "hooks", "hooks.json"))
-		if err != nil || !strings.Contains(string(repoHooks), ".factory/hooks/repo-check.sh") {
-			t.Fatalf("repository hook command: %v\n%s", err, repoHooks)
+		installedScript := func(base, name, wantContent string) string {
+			t.Helper()
+			matches, err := filepath.Glob(filepath.Join(base, ".factory", "hook-support", "*", "PreToolUse-command", name))
+			if err != nil || len(matches) != 1 {
+				t.Fatalf("installed %s script matches = %v, %v; want exactly one", name, matches, err)
+			}
+			data, err := os.ReadFile(matches[0])
+			if err != nil || string(data) != wantContent {
+				t.Fatalf("installed %s script: %v\n%s", name, err, data)
+			}
+			return matches[0]
+		}
+		machineScript := installedScript(home, "user-check.sh", "#!/bin/sh\necho user-scope-check\n")
+		machineCommand := hookCommand(home, "machine")
+		if want := filepath.ToSlash(machineScript); machineCommand != want {
+			t.Fatalf("machine hook command = %q, want installed support path %q", machineCommand, want)
+		}
+		repoScript := installedScript(repo, "repo-check.sh", "#!/bin/sh\necho repo-scope-check\n")
+		repoRel, err := filepath.Rel(repo, repoScript)
+		if err != nil {
+			t.Fatalf("repository support script is outside the repository: %v", err)
+		}
+		repoCommand := hookCommand(repo, "repository")
+		if want := `"$FACTORY_PROJECT_DIR"/` + filepath.ToSlash(repoRel); repoCommand != want {
+			t.Fatalf("repository hook command = %q, want %q", repoCommand, want)
 		}
 	}
 	run := func(root string, args ...string) {

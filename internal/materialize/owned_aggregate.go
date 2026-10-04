@@ -20,6 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 const ownedJSONEmptyDocument = "{}\n"
@@ -90,6 +91,8 @@ func (w *ownedJSONAggregateWork) markIncomplete(rel string) {
 type ownedJSONFileSpec struct {
 	rel            string
 	container      string
+	envelope       map[string]any
+	hookShape      targetmeta.HookShape
 	keyed          bool
 	rawValueDigest bool
 }

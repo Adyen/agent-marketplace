@@ -383,11 +383,21 @@ func TestUnsupportedHooksAreSuppressedDuringIngestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bundle.Resources) != 1 || bundle.Resources[0].Kind() != ir.KindHook {
-		t.Fatalf("resources = %#v, want only supported command hook", bundle.Resources)
+	// Unsupported handler types are still skipped at ingestion; the
+	// undeclared Notification event is preserved verbatim with a warning
+	// instead of being dropped, and the resolver refuses it cross-harness.
+	if len(bundle.Resources) != 2 {
+		t.Fatalf("resources = %#v, want the command hook plus the preserved Notification hook", bundle.Resources)
 	}
-	if !hasDiagnosticCode(bundle.Diagnostics, "ingest.codex.hook-unsupported") {
-		t.Fatalf("diagnostics = %#v", bundle.Diagnostics)
+	for _, r := range bundle.Resources {
+		if r.Kind() != ir.KindHook {
+			t.Fatalf("resource = %#v, want only hooks", r)
+		}
+	}
+	for _, code := range []string{diag.CodeIngestCodexHookUnsupported, diag.CodeIngestCodexHookEventUnmappable} {
+		if !hasDiagnosticCode(bundle.Diagnostics, code) {
+			t.Fatalf("diagnostics = %#v, want %q", bundle.Diagnostics, code)
+		}
 	}
 }
 
@@ -500,12 +510,14 @@ func TestSessionEndAsyncIsNormalizedToSynchronous(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bundle.Resources) != 1 || diag.HasErrors(bundle.Diagnostics) || !hasDiagnosticCode(bundle.Diagnostics, diag.CodeIngestCodexFieldDropped) {
-		t.Fatalf("bundle = %#v, want synchronous hook plus normalization warning", bundle)
+	// Ingestion keeps the authored async value; the Codex compiler still
+	// normalizes SessionEnd to synchronous at emission.
+	if len(bundle.Resources) != 1 || diag.HasErrors(bundle.Diagnostics) {
+		t.Fatalf("bundle = %#v, want the preserved hook", bundle)
 	}
 	hook := bundle.Resources[0].(*ir.Hook)
-	if hook.Ext.Codex.HookAsync != nil {
-		t.Fatalf("native async provenance = %#v, want normalized absence", hook.Ext.Codex.HookAsync)
+	if hook.Ext.Codex.HookAsync == nil || !*hook.Ext.Codex.HookAsync {
+		t.Fatalf("native async provenance = %#v, want preserved true", hook.Ext.Codex.HookAsync)
 	}
 	result, err := compile.Compile(hook, compile.TargetCodex)
 	if err != nil {
@@ -523,12 +535,14 @@ func TestSessionEndTimeoutIsCapped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bundle.Resources) != 1 || diag.HasErrors(bundle.Diagnostics) || !hasDiagnosticCode(bundle.Diagnostics, diag.CodeIngestCodexFieldDropped) {
-		t.Fatalf("bundle = %#v, want capped hook plus normalization warning", bundle)
+	// Ingestion keeps the authored timeout; the documented 3-second bound is
+	// applied by the resolver at compile time.
+	if len(bundle.Resources) != 1 || diag.HasErrors(bundle.Diagnostics) {
+		t.Fatalf("bundle = %#v, want the preserved hook", bundle)
 	}
 	hook := bundle.Resources[0].(*ir.Hook)
-	if hook.Timeout == nil || *hook.Timeout != 3 {
-		t.Fatalf("timeout = %#v, want 3", hook.Timeout)
+	if hook.Timeout == nil || *hook.Timeout != 30 {
+		t.Fatalf("timeout = %#v, want the authored 30", hook.Timeout)
 	}
 	result, err := compile.Compile(hook, compile.TargetCodex)
 	if err != nil {
@@ -594,8 +608,11 @@ func TestHookUnknownContainersAndUnsupportedMatchersFailClosed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(bundle.Resources) != 1 || bundle.Resources[0].(*ir.Hook).Command != "./safe" {
-			t.Fatalf("resources = %#v, want only safe PreToolUse hook", bundle.Resources)
+		// The malformed entry is skipped; matchers on events are preserved as
+		// authored — the resolver, not the ingester, rejects a matcher on an
+		// event that declares none.
+		if len(bundle.Resources) != 3 {
+			t.Fatalf("resources = %#v, want the three well-formed hooks", bundle.Resources)
 		}
 		if !hasDiagnosticCode(bundle.Diagnostics, diag.CodeIngestCodexHookUnsupported) {
 			t.Fatalf("diagnostics = %#v", bundle.Diagnostics)
@@ -1084,8 +1101,8 @@ func TestNativeLiteralTokensRoundTripWithoutInterpolation(t *testing.T) {
 			t.Fatalf("round trip %s = %#v, %#v", resource.Name(), artifacts, diagnostics)
 		}
 		text := string(artifacts[0].Bytes)
-		if resource.Kind() == ir.KindHook && !strings.Contains(text, "${CLAUDE_PLUGIN_ROOT}/native") {
-			t.Fatalf("native hook token changed: %s", text)
+		if resource.Kind() == ir.KindHook && !strings.Contains(text, `$(git rev-parse --show-toplevel)\"/plugins/demo/native`) {
+			t.Fatalf("native hook token not resolved to the installed support base: %s", text)
 		}
 		switch resource.Name() {
 		case "native-stdio":

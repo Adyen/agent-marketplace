@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -181,33 +183,51 @@ func TestRunExpandsCodexPluginRootFromBundle(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", state)
 	hookPath := filepath.Join(bundleRoot, "hooks", "hooks.json")
+	hookCommand := "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"
+	hookDefinition := fmt.Sprintf(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}`, hookCommand)
 	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(hookPath, []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(hookPath, []byte(hookDefinition), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hookScript := filepath.Join(bundleRoot, "hooks", "scripts", "check.sh")
+	if err := os.MkdirAll(filepath.Dir(hookScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookScript, []byte("echo codex bundle\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	mcpPath := filepath.Join(bundleRoot, ".mcp.json")
 	if err := os.WriteFile(mcpPath, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hook := ir.NewHook("check", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
+	hook := ir.NewHookWithMatcherOptions("check", "PreToolUse", "Bash", hookCommand, "command", nil, ir.SourceRef{File: "hooks/hooks.json"}, ir.WithHookSource("claude"))
 	mcp := ir.NewMcpServer("docs", "node", []string{"${CLAUDE_PLUGIN_ROOT}/server.js"}, nil, nil, ir.SourceRef{File: ".mcp.json"})
 	resolved := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: hook.Name(), Path: hookPath, Resource: hook}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}},
+		{Entry: catalog.Entry{Name: hook.Name(), Path: hookPath, Resource: hook, SourceHarness: "claude"}, RegistryURL: bundleRoot, CatalogKey: bundleRoot, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}},
 		{Entry: catalog.Entry{Name: mcp.Name(), Path: mcpPath, Resource: mcp}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}},
 	}
 	if report, err := Run(context.Background(), repo, resolved); err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("Run: report=%#v err=%v", report, err)
 	}
-	for _, path := range []string{filepath.Join(repo, ".codex", "hooks.json"), filepath.Join(repo, ".codex", "config.toml")} {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(raw), "${CLAUDE_PLUGIN_ROOT}") || !strings.Contains(string(raw), filepath.ToSlash(bundleRoot)) {
-			t.Errorf("%s did not expand plugin root from bundle:\n%s", path, raw)
-		}
+	loc := nativeSupportLocationFor(t, hcc.Target(targetmeta.TargetCodex))
+	hookFile := filepath.Join(repo, ".codex", "hooks.json")
+	commands := nativeSupportCommands(t, loc, hookFile, 1)
+	installed, ref := loc.installedRef(t, commands[0], repo, home, false)
+	wantCommand := loc.repoBase + filepath.ToSlash(ref)
+	if commands[0] != wantCommand {
+		t.Fatalf("Codex hook command = %q, want installed support path %q", commands[0], wantCommand)
+	}
+	if data, err := os.ReadFile(installed); err != nil || string(data) != "echo codex bundle\n" {
+		t.Fatalf("Codex support script = %q (%v)", data, err)
+	}
+	mcpRaw, err := os.ReadFile(filepath.Join(repo, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(mcpRaw), "${CLAUDE_PLUGIN_ROOT}") || !strings.Contains(string(mcpRaw), filepath.ToSlash(bundleRoot)) {
+		t.Errorf(".codex/config.toml did not expand plugin root from bundle:\n%s", mcpRaw)
 	}
 }
 

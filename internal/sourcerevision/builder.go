@@ -333,6 +333,7 @@ func resourceSourceBytes(root string, entry catalog.Entry, contract lockfile.Sou
 		}
 	}
 	resource := entry.Resource
+	resource = legacyHookToolProjection(resource)
 	if !contract.ModelProvenance {
 		resource = legacyModelProjection(resource)
 	}

@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -36,7 +37,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
-	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -770,10 +770,29 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if hasBinding {
 			aggregateHandler = binding.handler
 		}
+		resourceKind := w.skill.Resource.Kind()
+		isHook := resourceKind == ir.KindHook
+		var plan hookSupportPlan
+		if isHook {
+			plan = hookSupport[index]
+		}
 		if paths := supportConflicts[index]; len(paths) > 0 {
 			blockResource(key, w)
 			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeMaterializeHookSupportConflict, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: fmt.Sprintf("hook support paths conflict across selected sources: %s; affected hooks were not emitted", strings.Join(paths, ", ")), Hint: "Rename the conflicting support files or exclude one hook provider", Source: compilepkg.SourceOf(w.skill.Resource)})
+			continue
+		}
+		if isHook && plan.err != nil {
+			blockResource(key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+			allDiags = append(allDiags, diag.Diagnostic{
+				Code:     "materialize.compile.error",
+				Severity: diag.SeverityError,
+				Target:   string(w.target),
+				Resource: w.skill.Name,
+				Message:  "Hook support could not be prepared safely; hook suppressed",
+				Source:   compilepkg.SourceOf(w.skill.Resource),
+			})
 			continue
 		}
 		if w.skill.IsMarketplace && w.skill.InstalledName != "" {
@@ -787,7 +806,26 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			w.skill.Resource = renamed
 		}
 		compileOptions := []hcc.Option{}
-		if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
+		if isHook {
+			commandBase, err := hookSupportCommandBase(w, repoRoot, plan.relBase)
+			if err != nil {
+				blockResource(key, w)
+				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+				allDiags = append(allDiags, diag.Diagnostic{
+					Code:     "materialize.compile.error",
+					Severity: diag.SeverityError,
+					Target:   string(w.target),
+					Resource: w.skill.Name,
+					Message:  "Hook support destination could not be resolved safely; hook suppressed",
+					Source:   compilepkg.SourceOf(w.skill.Resource),
+				})
+				continue
+			}
+			compileOptions = append(compileOptions, hcc.WithPluginRoot(commandBase))
+			if w.machineScope {
+				compileOptions = append(compileOptions, hcc.WithScope(hcc.ScopeUser))
+			}
+		} else if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
 			compileOptions = append(compileOptions, hcc.WithPluginRoot(pluginRoot))
 		}
 		// Resources that emit merge-with-existing JSON fragments must carry the
@@ -843,8 +881,6 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			tw.diags = append(tw.diags, result.Diagnostics...)
 			continue
 		}
-		resourceKind := w.skill.Resource.Kind()
-
 		// Ownership-reconciled fragments leave the generic artifact pipeline
 		// before any marker-merge or whole-file plan can see them.
 		if aggregateHandler != nil {
@@ -856,32 +892,6 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				continue
 			}
 			result.Artifacts = rest
-		}
-
-		// For hooks, expand ${DROID_PLUGIN_ROOT} to an installed root.
-		// Factory Droid only sets DROID_PLUGIN_ROOT for plugin-scoped hooks,
-		// not workspace-level hooks (.factory/hooks/). Repository hooks run
-		// from the repo root, so their paths can be relative. Machine hooks
-		// run from any repo and must always use the absolute machine root.
-		if resourceKind == ir.KindHook && !harness.IsInstallationAdapterTarget(w.target) {
-			if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
-				pluginRoot := roots.For(w.machineScope, repoRoot)
-				if pluginRoot != "" {
-					if !w.machineScope {
-						relPath, err := filepath.Rel(repoRoot, pluginRoot)
-						if err == nil && !strings.HasPrefix(relPath, "..") {
-							pluginRoot = relPath
-						}
-					}
-					for i := range result.Artifacts {
-						result.Artifacts[i].Bytes = bytes.ReplaceAll(
-							result.Artifacts[i].Bytes,
-							[]byte("${DROID_PLUGIN_ROOT}"),
-							[]byte(pluginRoot),
-						)
-					}
-				}
-			}
 		}
 
 		// Legacy tolerance for ownership-proven native hooks: a selected hook
@@ -970,14 +980,8 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				}
 			}
 		} else {
-			// For hooks, collect support files (scripts, etc.) from the
-			// source directory and add them as regular non-fragment artifacts.
-			// They will be symlinked into the hooks directory alongside the
-			// merged hooks.json, and automatically pruned by staleArtifactLinks
-			// (which only removes symlinks, never the regular hooks.json file)
-			// when a hook is excluded.
 			if resourceKind == ir.KindHook {
-				result.Artifacts = append(result.Artifacts, hookSupport[index]...)
+				result.Artifacts = append(result.Artifacts, plan.artifacts...)
 			}
 			var linked []compiledResourceLink
 			result.Artifacts, linked = splitResourceArtifacts(w.target, resourceKind, w.skill.Name, result.Artifacts)
@@ -1344,7 +1348,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			}
 			report.Diags = append(report.Diags, writeDiags...)
 		}
-		if componentBlocked(blocked, plan.reportPrefix) && componentName(plan.reportPrefix) == componentName(resourceInstallDirRel(key.target, ir.KindHook)) {
+		if componentBlocked(blocked, plan.reportPrefix) && componentName(plan.reportPrefix) == hookAggregateComponent(key) {
 			retained, err := retainBlockedHookArtifacts(plan.outDir, mergeArtifacts)
 			if err != nil {
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("retain blocked hook entries in %s: %v", plan.outDir, err)})
@@ -1667,10 +1671,30 @@ func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Art
 	if !ok {
 		return subtreeMaterializePlans(outDir, artifacts, generatedComponents(target), artifactRootPrefix(target), noPruneComponents(target, linkedSkills))
 	}
+	noPrune := noPruneComponents(target, linkedSkills)
 	if info.PlanStrategy == harness.PlanWindsurf {
-		return windsurfMaterializePlans(outDir, artifacts, machineScope, noPruneComponents(target, linkedSkills))
+		support, rest := splitDeclaredHookSupportArtifacts(target, machineScope, artifacts)
+		supportComponent := componentName(info.ResourceInstallDir(ir.KindHook))
+		plans := subtreeMaterializePlans(outDir, support, []string{supportComponent}, "", noPrune)
+		return append(plans, windsurfMaterializePlans(outDir, rest, machineScope, noPrune, supportComponent)...)
 	}
-	return subtreeMaterializePlans(outDir, artifacts, info.Components, info.ArtifactRootPrefix, noPruneComponents(target, linkedSkills))
+	return subtreeMaterializePlans(outDir, artifacts, info.Components, info.ArtifactRootPrefix, noPrune)
+}
+
+func splitDeclaredHookSupportArtifacts(target hcc.Target, machineScope bool, artifacts []artifact.Artifact) (support, rest []artifact.Artifact) {
+	root, _, err := hookSupportAggregateLayout(skillTarget{target: target, machineScope: machineScope})
+	if err != nil {
+		return nil, artifacts
+	}
+	prefix := path.Clean(root)
+	for _, a := range artifacts {
+		if strings.HasPrefix(a.Path, prefix+"/") {
+			support = append(support, a)
+		} else {
+			rest = append(rest, a)
+		}
+	}
+	return support, rest
 }
 
 func codexMaterializePlans(repoRoot string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
@@ -1798,7 +1822,7 @@ func orderedComponents(components []string, scoped map[string][]artifact.Artifac
 	return append(ordered, extra...)
 }
 
-func windsurfMaterializePlans(outDir string, artifacts []artifact.Artifact, machineScope bool, noPrune map[string]bool) []materializePlan {
+func windsurfMaterializePlans(outDir string, artifacts []artifact.Artifact, machineScope bool, noPrune map[string]bool, supportComponent string) []materializePlan {
 	var root []artifact.Artifact
 	scoped := make(map[string][]artifact.Artifact)
 	for _, a := range artifacts {
@@ -1816,8 +1840,16 @@ func windsurfMaterializePlans(outDir string, artifacts []artifact.Artifact, mach
 		root = append(root, a)
 	}
 
+	nativeComponents := generatedComponents(hcc.TargetWindsurf)
+	components := make([]string, 0, len(nativeComponents))
+	for _, component := range nativeComponents {
+		if component != supportComponent {
+			components = append(components, component)
+		}
+	}
+	delete(scoped, supportComponent)
 	var plans []materializePlan
-	for _, component := range orderedComponents(generatedComponents(hcc.TargetWindsurf), scoped) {
+	for _, component := range orderedComponents(components, scoped) {
 		componentArtifacts := scoped[component]
 		componentOutDir := filepath.Join(outDir, windsurfDir, component)
 		reportPrefix := filepath.Join(windsurfDir, component)
@@ -2039,6 +2071,32 @@ func resourceInstallDirRel(target hcc.Target, kind ir.ResourceKind) string {
 		return ""
 	}
 	return info.ResourceInstallDir(kind)
+}
+
+// hookAggregateComponent returns the component containing the target's hook
+// aggregate file in this scope, or "" when it sits at the partition root.
+func hookAggregateComponent(key outputKey) string {
+	layout, ok := targetmeta.LookupNativeLayout(targetmeta.Target(key.target))
+	if !ok {
+		return ""
+	}
+	for _, partition := range layout.Partitions {
+		for _, aggregate := range partition.Aggregates {
+			if aggregate.Kind != ir.KindHook {
+				continue
+			}
+			file := aggregate.Project
+			if key.machineScope {
+				file = aggregate.User
+			}
+			installed := file.Path
+			if len(file.Legacy) > 0 {
+				installed = file.Legacy[0]
+			}
+			return componentName(path.Join(partition.Prefix, path.Dir(installed)))
+		}
+	}
+	return ""
 }
 
 func resourceArtifactMatches(resourceName, artifactRel string) bool {
@@ -3570,48 +3628,6 @@ func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, 
 		}
 	}
 	return nil
-}
-
-// collectHookSupportFiles scans the directory containing the source hooks.json
-// for non-hooks.json files and returns them as regular (non-fragment) artifacts.
-// These artifacts are symlinked into the hooks output directory alongside the
-// merged hooks.json, and are automatically pruned by staleArtifactLinks when
-// a hook is excluded (only symlinks are pruned, never the regular hooks.json).
-func collectHookSupportFiles(sourcePath string, target hcc.Target, sourceHarness string) []artifact.Artifact {
-	if sourcePath == "" {
-		return nil
-	}
-	sourceDir := filepath.Dir(sourcePath)
-	names, err := catalog.HookSupportFiles(sourcePath)
-	if err != nil {
-		return nil
-	}
-	hooksDirRel := resourceInstallDirRel(target, ir.KindHook)
-	if hooksDirRel == "" {
-		return nil
-	}
-	excluded := hookSupportExclusions(sourcePath, sourceHarness)
-	var artifacts []artifact.Artifact
-	for _, name := range names {
-		if excluded[name] || (sourceHarness == string(hcc.TargetWindsurf) && filepath.Base(sourceDir) == "hooks" && strings.HasSuffix(name, ".json")) {
-			continue
-		}
-		srcPath := filepath.Join(sourceDir, name)
-		data, err := os.ReadFile(srcPath)
-		if err != nil {
-			continue
-		}
-		info, err := os.Stat(srcPath)
-		if err != nil {
-			continue
-		}
-		artifacts = append(artifacts, artifact.Artifact{
-			Path:  hooksDirRel + "/" + name,
-			Bytes: data,
-			Mode:  info.Mode(),
-		})
-	}
-	return artifacts
 }
 
 func copyFile(src, dst string) error {

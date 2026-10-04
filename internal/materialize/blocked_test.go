@@ -15,16 +15,16 @@ func TestBlockedComponentsForMapsResourcesToTheirOwnedOutput(t *testing.T) {
 		resource     ir.Resource
 		want         []string
 	}{
-		{name: "a devin hook is aggregate-scoped", target: hcc.TargetDevin, resource: ir.NewHook("h", "PostToolUse", "echo", "command", nil, ir.SourceRef{})},
-		{name: "a machine devin hook is aggregate-scoped", target: hcc.TargetDevin, machineScope: true, resource: ir.NewHook("h", "PostToolUse", "echo", "command", nil, ir.SourceRef{})},
+		{name: "a devin hook blocks its support dir", target: hcc.TargetDevin, resource: ir.NewHook("h", "PostToolUse", "echo", "command", nil, ir.SourceRef{}), want: []string{"hook-support"}},
+		{name: "a machine devin hook blocks its support dir", target: hcc.TargetDevin, machineScope: true, resource: ir.NewHook("h", "PostToolUse", "echo", "command", nil, ir.SourceRef{}), want: []string{"hook-support"}},
 		{name: "a devin mcp server is aggregate-scoped", target: hcc.TargetDevin, resource: ir.NewMcpServer("m", "bin", nil, nil, nil, ir.SourceRef{})},
-		{name: "a codex hook is aggregate-scoped", target: hcc.TargetCodex, resource: ir.NewHook("h", "Stop", "echo", "command", nil, ir.SourceRef{})},
+		{name: "a codex hook blocks its support dir and .codex aggregate", target: hcc.TargetCodex, resource: ir.NewHook("h", "Stop", "echo", "command", nil, ir.SourceRef{}), want: []string{"hook-support", ".codex"}},
 		{name: "a codex mcp server is aggregate-scoped", target: hcc.TargetCodex, resource: ir.NewMcpServer("m", "bin", nil, nil, nil, ir.SourceRef{})},
 		{name: "a devin skill blocks skills", target: hcc.TargetDevin, resource: ir.NewSkill("s", "d", "b", nil, nil, ir.SourceRef{}), want: []string{"skills"}},
 		{name: "a devin command blocks skills", target: hcc.TargetDevin, resource: ir.NewCommand("c", "d", "b", nil, ir.SourceRef{}), want: []string{"skills"}},
 		{name: "a devin subagent blocks agents", target: hcc.TargetDevin, resource: ir.NewSubagent("a", "d", "b", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), want: []string{"agents"}},
 		{name: "an unmapped devin rule fails closed", target: hcc.TargetDevin, resource: ir.NewRule("r", "d", "b", nil, false, nil, ir.SourceRef{}), want: []string{blockedAllComponents}},
-		{name: "a claude hook blocks hooks", target: hcc.TargetClaude, resource: ir.NewHook("h", "PostToolUse", "echo", "command", nil, ir.SourceRef{}), want: []string{"hooks"}},
+		{name: "a claude hook blocks hook-support and hooks", target: hcc.TargetClaude, resource: ir.NewHook("h", "PostToolUse", "echo", "command", nil, ir.SourceRef{}), want: []string{"hook-support", "hooks"}},
 		{name: "an unmapped claude mcp fails closed", target: hcc.TargetClaude, resource: ir.NewMcpServer("m", "bin", nil, nil, nil, ir.SourceRef{}), want: []string{blockedAllComponents}},
 		{name: "a machine windsurf command blocks global workflows", target: hcc.TargetWindsurf, machineScope: true, resource: ir.NewCommand("c", "d", "b", nil, ir.SourceRef{}), want: []string{"global_workflows"}},
 	}

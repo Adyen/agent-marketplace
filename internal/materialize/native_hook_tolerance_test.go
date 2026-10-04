@@ -739,7 +739,7 @@ func TestMalformedNativeHookFileReportsBlockedResource(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	repoRoot := t.TempDir()
-	resolved, _ := toleranceHookFixture(t, config.RepoCommitted, hcc.TargetFactory)
+	resolved, _ := marketplaceHookFixture(t, hcc.TargetFactory, "sha256:abababababababababababababababababababababababababababababababab")
 	resolved.Kind = ir.KindHook
 	resolved.IsMarketplace = true
 	resolved.InstalledName = "deploy-copy"
@@ -748,13 +748,23 @@ func TestMalformedNativeHookFileReportsBlockedResource(t *testing.T) {
 	if err := os.MkdirAll(nativeRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nativeRoot, "hooks.json"), []byte(`{"PreToolUse":"not-an-array"}`), 0o644); err != nil {
+	nativeFile := filepath.Join(nativeRoot, "hooks.json")
+	legacyFile := filepath.Join(nativeRoot, "hooks", "hooks.json")
+	if _, err := os.Lstat(legacyFile); !os.IsNotExist(err) {
+		t.Fatalf("legacy aggregate already exists: %v", err)
+	}
+	if err := os.WriteFile(nativeFile, []byte(`{"PreToolUse":"not-an-array"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativeFile)
 
 	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 	if err != nil {
 		t.Fatalf("sync: %v", err)
+	}
+	assertFileUnchanged(t, nativeFile, nativeBefore, nativeMode, nativeMtime)
+	if _, err := os.Lstat(legacyFile); !os.IsNotExist(err) {
+		t.Fatalf("legacy aggregate was created: %v", err)
 	}
 	if !diag.HasCode(report.Diags, diag.CodeHookNativeToleranceRefused) {
 		t.Fatalf("missing %s diagnostic: %#v", diag.CodeHookNativeToleranceRefused, report.Diags)
@@ -920,6 +930,13 @@ func TestNativeOwnedHookDoesNotDeleteSurvivingLegacyEntry(t *testing.T) {
 	layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
 	seedNativeOwnedHook(t, nativeRoot, layout, nativeSeedFor(t, hcc.TargetFactory, false),
 		toleranceFingerprint(t, src, "factory", HookScopeRepository))
+	nativePath := filepath.Join(nativeRoot, filepath.FromSlash(layout.rel))
+	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
+	store, err := ownership.Open(nativeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 
 	legacyDir := filepath.Join(nativeRoot, "hooks")
 	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
@@ -931,13 +948,15 @@ func TestNativeOwnedHookDoesNotDeleteSurvivingLegacyEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+	if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	data, err := os.ReadFile(legacyPath)
 	if err != nil || string(data) != string(legacyBefore) {
 		t.Fatalf("surviving managed legacy entry changed or was deleted: %v %q", err, data)
 	}
+	assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
+	assertFileUnchanged(t, store.StateFile(), stateBefore, stateMode, stateMtime)
 }
 
 // When a valid native proof exists, the surviving-managed-twin check reads
@@ -977,7 +996,7 @@ func TestNativeProofWithUnsafeLegacyFileFailsClosed(t *testing.T) {
 		return resolved, repoRoot, legacyDir
 	}
 	assertRefused := func(t *testing.T, repoRoot string, resolved resolver.ResolvedArtifact) {
-		report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+		report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 		if err != nil {
 			t.Fatalf("sync: %v", err)
 		}
@@ -1058,7 +1077,7 @@ func TestNativeProofWithUnsafeLegacyFileFailsClosed(t *testing.T) {
 		}
 		done := make(chan result, 1)
 		go func() {
-			report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+			report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 			done <- result{report, err}
 		}()
 		var res result
@@ -1098,11 +1117,23 @@ func TestNativeProofWithUnsafeLegacyFileFailsClosed(t *testing.T) {
 	// twin still keeps its exact bytes with no refusal.
 	t.Run("ordinary_managed_twin", func(t *testing.T) {
 		resolved, repoRoot, legacyDir := setup(t)
+		nativeRoot := filepath.Join(repoRoot, ".factory")
+		layout, ok := nativeHookLayoutFor(hcc.TargetFactory, false)
+		if !ok {
+			t.Fatal("Factory native hook layout is unavailable")
+		}
+		nativePath := filepath.Join(nativeRoot, filepath.FromSlash(layout.rel))
+		nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
+		store, err := ownership.Open(nativeRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 		legacyPath := filepath.Join(legacyDir, "hooks.json")
 		if err := os.WriteFile(legacyPath, managedTwin, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+		report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 		if err != nil {
 			t.Fatalf("sync: %v", err)
 		}
@@ -1112,6 +1143,8 @@ func TestNativeProofWithUnsafeLegacyFileFailsClosed(t *testing.T) {
 		if data, err := os.ReadFile(legacyPath); err != nil || string(data) != string(managedTwin) {
 			t.Fatalf("ordinary managed twin changed or deleted: %v %q", err, data)
 		}
+		assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
+		assertFileUnchanged(t, store.StateFile(), stateBefore, stateMode, stateMtime)
 	})
 }
 

@@ -339,6 +339,13 @@ type Hook struct {
 	Ext        extpkg.Bag     // Optional target-specific sidecars
 	Extra      map[string]any // Preserved unknown fields
 	Source     SourceRef      // Origin in the source bundle
+
+	// GroupExtraKeys names the Extra keys the ingester promoted from the
+	// enclosing hook group rather than from the handler object itself (for
+	// example Factory's group-level commandRegex). It is metadata for
+	// source-revision digest projections that must replay the historical
+	// handler-level Extra view; it never serializes into lock payloads.
+	GroupExtraKeys map[string]bool `json:"-"`
 }
 
 // HookOption customizes the additive hook fields.

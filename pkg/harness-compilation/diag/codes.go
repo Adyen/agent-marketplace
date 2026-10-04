@@ -85,6 +85,7 @@ const (
 	CodeMcpCodexPluginRootUnresolved        = "mcp.codex.plugin-root-unresolved"        // Value carries ${CLAUDE_PLUGIN_ROOT} but no plugin root was configured
 	CodeIngestCodexPromptDeprecated         = "ingest.codex.prompt-deprecated"          // Deprecated prompt ingested as command
 	CodeIngestCodexFieldDropped             = "ingest.codex.field-dropped"              // Benign native Codex field omitted
+	CodeIngestCodexHookEventUnmappable      = "ingest.codex.hook-event-unmappable"      // Codex hook event is outside the documented vocabulary; name preserved
 	CodeRuleFactoryMetadataDropped          = "rule.factory.metadata-dropped"           // Factory rules are plain markdown; globs/alwaysApply dropped
 	CodeCanonicalFieldOverridesExtra        = "compile.canonical-field-overrides-extra" // Canonical field wins over conflicting preserved extra
 	CodeHookTimeoutRounded                  = "hook.timeout-rounded"                    // Timeout conversion to seconds rounded up to the next whole second
@@ -552,6 +553,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMcpCodexPluginRootUnresolved, SeverityWarning, "An MCP value references the plugin root but no plugin root was configured; the token was left unexpanded", "Compile with a plugin root so the value resolves, or use an absolute path"},
 	{CodeIngestCodexPromptDeprecated, SeverityWarning, "A deprecated Codex prompt was ingested as a command", "Move the prompt to a command skill under .agents/skills"},
 	{CodeIngestCodexFieldDropped, SeverityWarning, "A benign native Codex field has no canonical equivalent and was omitted", "Remove the field or keep the resource in Codex format"},
+	{CodeIngestCodexHookEventUnmappable, SeverityWarning, "Codex hook event is outside the documented Codex vocabulary; the original event name was preserved", "Use a documented Codex event (PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, SessionEnd); an undocumented event cannot be translated"},
 	{CodeRuleFactoryMetadataDropped, SeverityWarning, "Factory rules are plain markdown; globs/alwaysApply metadata dropped", "Factory does not support conditional (glob-scoped) rule application; the rule body is emitted verbatim"},
 	{CodeCanonicalFieldOverridesExtra, SeverityWarning, "Canonical field overrides a conflicting preserved extra", "The canonical modeled value wins; rename the extension field to preserve both values"},
 	{CodeHookTimeoutRounded, SeverityWarning, "Timeout unit conversion to seconds rounded up to the next whole second", "Use a whole-second timeout or accept the rounded value"},

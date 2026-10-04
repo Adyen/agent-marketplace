@@ -16,7 +16,7 @@ func TestDevinNativeLayoutIsAvailable(t *testing.T) {
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "agents"},
+			Components: []string{"skills", "agents", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "skills/%s/SKILL.md",
@@ -101,7 +101,7 @@ func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks", ".claude-plugin"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",

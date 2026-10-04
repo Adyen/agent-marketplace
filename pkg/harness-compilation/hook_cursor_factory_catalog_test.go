@@ -48,7 +48,7 @@ func TestCursorReceivesNativeEventNames(t *testing.T) {
 // spec: hook-resources/factory-hooks-keep-native-tool-names
 func TestFactoryHooksKeepNativeToolNames(t *testing.T) {
 	src := fstest.MapFS{
-		"hooks/hooks.json": &fstest.MapFile{Data: []byte(`{
+		".factory/hooks.json": &fstest.MapFile{Data: []byte(`{
 			"PreToolUse": [
 				{
 					"matcher": "Execute",
@@ -58,7 +58,7 @@ func TestFactoryHooksKeepNativeToolNames(t *testing.T) {
 			]
 		}`)},
 	}
-	hooks, _, err := factoryingest.LoadHooks(src, "hooks/hooks.json")
+	hooks, _, err := factoryingest.LoadHooks(src, ".factory/hooks.json")
 	if err != nil {
 		t.Fatalf("factory LoadHooks: %v", err)
 	}

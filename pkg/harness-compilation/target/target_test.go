@@ -42,7 +42,7 @@ func TestCodexNativeLayoutIsAvailable(t *testing.T) {
 			Prefix:               ".codex",
 			MachineRootEnv:       "CODEX_HOME",
 			InstallationEvidence: true,
-			Components:           []string{"agents"},
+			Components:           []string{"agents", "hook-support"},
 			ResourcePaths:        map[ir.ResourceKind]string{ir.KindSubagent: "agents/%s.toml"},
 			Aggregates: []NativeAggregate{
 				{

@@ -42,23 +42,44 @@ func additiveSafetyWrite(t *testing.T, path, body string) {
 
 func additiveSafetyProvider(t *testing.T, target hcc.Target, machine bool, command, script string) resolver.ResolvedArtifact {
 	t.Helper()
-	root := t.TempDir()
-	additiveSafetyWrite(t, filepath.Join(root, "hooks", "hooks.json"), fmt.Sprintf(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}`, command))
-	if script != "" {
-		additiveSafetyWrite(t, filepath.Join(root, "hooks", "shared.sh"), script)
+	return additiveSafetyProviderInRegistry(t, t.TempDir(), "", target, machine, command, script)
+}
+
+func additiveSafetyProviderInRegistry(t *testing.T, registryRoot, sourceSubdir string, target hcc.Target, machine bool, command, script string) resolver.ResolvedArtifact {
+	t.Helper()
+	sourceRoot := registryRoot
+	if sourceSubdir != "" {
+		sourceRoot = filepath.Join(registryRoot, filepath.FromSlash(sourceSubdir))
 	}
-	cat, err := catalog.Load(root, "factory")
+	additiveSafetyWrite(t, filepath.Join(sourceRoot, "hooks", "hooks.json"), fmt.Sprintf(`{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":%q}]}]}`, command))
+	if script != "" {
+		additiveSafetyWrite(t, filepath.Join(sourceRoot, "hooks", "shared.sh"), script)
+	}
+	cat, err := catalog.Load(sourceRoot, "factory")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(cat.Entries) != 1 {
 		t.Fatalf("expected one source hook, got %v", cat.Entries)
 	}
+	entry := cat.Entries[0]
+	entry.Name = "guard"
+	if hook, ok := entry.Resource.(*ir.Hook); ok {
+		hook.SetName(entry.Name)
+	} else {
+		t.Fatal("source entry is not a hook")
+	}
 	source := config.RepoCommitted
 	if machine {
 		source = config.UserPersonal
 	}
-	return resolver.ResolvedArtifact{Entry: cat.Entries[0], RegistryURL: root, CatalogKey: root, Source: source, Harnesses: []hcc.Target{target}}
+	return resolver.ResolvedArtifact{
+		Entry:       entry,
+		RegistryURL: registryRoot,
+		CatalogKey:  registryRoot,
+		Source:      source,
+		Harnesses:   []hcc.Target{target},
+	}
 }
 
 func additiveSafetyCommands(t *testing.T, file, container, event string) []string {
@@ -108,7 +129,6 @@ func additiveSafetyCommands(t *testing.T, file, container, event string) []strin
 	return commands
 }
 
-// spec: hook-resources/every-harness-target-receives-hooks-in-both-scopes-and-modes
 func TestAdditiveHooksAllTargetsScopesAndModes(t *testing.T) {
 	targets := []struct {
 		target                               hcc.Target
@@ -176,37 +196,56 @@ func TestAdditiveHooksAllTargetsScopesAndModes(t *testing.T) {
 	}
 }
 
-// spec: hook-resources/conflicting-support-files-refuse-the-affected-hooks
 func TestAdditiveHookSupportConflictPreservesInstalledBytes(t *testing.T) {
 	for _, target := range []hcc.Target{hcc.TargetFactory, hcc.TargetWindsurf} {
 		for _, machine := range []bool{false, true} {
 			for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
 				t.Run(fmt.Sprintf("%s/machine=%t/%s", target, machine, mode), func(t *testing.T) {
 					repo, home := additiveSafetyEnv(t)
-					first := additiveSafetyProvider(t, target, machine, "${CLAUDE_PLUGIN_ROOT}/hooks/shared.sh", "echo first-script")
-					second := additiveSafetyProvider(t, target, machine, "${CLAUDE_PLUGIN_ROOT}/hooks/shared.sh", "echo second-script")
-					root, native, support := filepath.Join(repo, ".factory"), "hooks/hooks.json", "hooks/shared.sh"
+					registryRoot := t.TempDir()
+					first := additiveSafetyProviderInRegistry(t, registryRoot, "first", target, machine, "echo first", "echo first-script")
+					second := additiveSafetyProviderInRegistry(t, registryRoot, "second", target, machine, "echo second", "echo second-script")
+					// Both hooks share one configured source identity and
+					// installed name, so their differing shared.sh bytes
+					// claim the same namespaced support path.
+					root, native := filepath.Join(repo, ".factory"), "hooks/hooks.json"
 					if machine {
 						root = filepath.Join(home, ".factory")
 					}
+					supportRoot := filepath.Join(root, "hook-support")
 					if target == hcc.TargetWindsurf {
-						root, native, support = filepath.Join(repo, ".windsurf"), "hooks.json", "hook-support/shared.sh"
+						root, native = filepath.Join(repo, ".windsurf"), "hooks.json"
 						if machine {
 							root = filepath.Join(home, ".codeium", "windsurf")
+							supportRoot = filepath.Join(root, "hook-support")
+						} else {
+							supportRoot = filepath.Join(repo, "hook-support")
 						}
 					}
-					native, support = filepath.Join(root, native), filepath.Join(root, support)
+					native = filepath.Join(root, native)
+					supportOf := func(t *testing.T) string {
+						t.Helper()
+						matches, err := filepath.Glob(filepath.Join(supportRoot, "*", "*", "shared.sh"))
+						if err != nil || len(matches) != 1 {
+							t.Fatalf("installed support script under %s: %v %v", supportRoot, matches, err)
+						}
+						return matches[0]
+					}
 					opts := []RunOption{WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode})}
 					report, _ := Run(context.Background(), repo, []resolver.ResolvedArtifact{first, second}, opts...)
 					assertSupportConflictDiagnostics(t, report)
-					for _, file := range []string{native, support} {
+					for _, file := range []string{native} {
 						if _, err := os.Lstat(file); !os.IsNotExist(err) {
 							t.Fatalf("conflicting fresh output exists at %s: %v", file, err)
 						}
 					}
+					if matches, _ := filepath.Glob(filepath.Join(supportRoot, "*", "*", "shared.sh")); len(matches) != 0 {
+						t.Fatalf("conflicting support tree installed: %v", matches)
+					}
 					if report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{first}, opts...); err != nil || hasErrorDiagnostics(report.Diags) {
 						t.Fatalf("seed: %v, %v", err, report)
 					}
+					support := supportOf(t)
 					nativeBefore, err := os.ReadFile(native)
 					if err != nil {
 						t.Fatal(err)
@@ -286,7 +325,6 @@ func TestWindsurfMalformedHooksPreserveBytes(t *testing.T) {
 	}
 }
 
-// spec: hook-resources/blocked-windsurf-hooks-keep-their-installed-entries
 func TestWindsurfIncompleteHooksRetainManagedSiblings(t *testing.T) {
 	repo, _ := additiveSafetyEnv(t)
 	file := filepath.Join(repo, ".windsurf", "hooks.json")

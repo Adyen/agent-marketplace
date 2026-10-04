@@ -225,12 +225,7 @@ func (ins *nativeHookInspection) hookSatisfied(fingerprint, resource string) boo
 		if id.Kind != ownership.KindHook {
 			continue
 		}
-		recorded, ok := ins.proof.Resource(id)
-		if !ok || recorded != resource {
-			continue
-		}
-		digest, ok := ins.proof.SourceDigest(id)
-		if !ok || digest != fingerprint {
+		if !ins.proof.HasHookSource(id, resource, fingerprint) {
 			continue
 		}
 		valueDigest, present := ins.current[id]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,7 +33,7 @@ func TestNativeHookDefinitionsDoNotConflict(t *testing.T) {
 			sourceHarness: "devin",
 			write: func(t *testing.T, root, command string, index int) {
 				dir := filepath.Join(root, ".devin")
-				additiveSafetyWrite(t, filepath.Join(dir, "hooks.v1.json"), fmt.Sprintf(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}`, command))
+				additiveSafetyWrite(t, filepath.Join(dir, "hooks.v1.json"), fmt.Sprintf(`{"PreToolUse":[{"matcher":"exec","hooks":[{"type":"command","command":%q}]}]}`, command))
 				addHookSupportFiles(t, dir, index)
 			},
 			excluded:    []string{"hooks.v1.json", "config.json", "mcp_config.json"},
@@ -43,7 +44,7 @@ func TestNativeHookDefinitionsDoNotConflict(t *testing.T) {
 			sourceHarness: "devin",
 			write: func(t *testing.T, root, command string, index int) {
 				dir := filepath.Join(root, ".devin")
-				additiveSafetyWrite(t, filepath.Join(dir, "config.json"), fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}}`, command))
+				additiveSafetyWrite(t, filepath.Join(dir, "config.json"), fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"exec","hooks":[{"type":"command","command":%q}]}]}}`, command))
 				addHookSupportFiles(t, dir, index)
 			},
 			excluded:    []string{"hooks.v1.json", "config.json", "mcp_config.json"},
@@ -146,22 +147,37 @@ func TestNativeHookDefinitionsDoNotConflict(t *testing.T) {
 					if !reflect.DeepEqual(got, []string{"echo first", "echo second"}) {
 						t.Fatalf("commands = %v", got)
 					}
-					supportDir := filepath.Join(repo, ".windsurf", "hook-support")
+					supportDir := filepath.Join(repo, "hook-support")
+					// Support payloads install under per-source namespaces
+					// (<key>/<hook name>/); compare basenames across the tree.
+					payloads := map[string]string{}
+					walkErr := filepath.WalkDir(supportDir, func(p string, d fs.DirEntry, err error) error {
+						if err != nil || d.IsDir() {
+							return err
+						}
+						data, rerr := os.ReadFile(p)
+						if rerr != nil {
+							return rerr
+						}
+						payloads[filepath.Base(p)] = string(data)
+						return nil
+					})
+					if walkErr != nil {
+						t.Fatalf("walk support dir: %v", walkErr)
+					}
 					for _, name := range tt.excluded {
-						if _, err := os.Stat(filepath.Join(supportDir, name)); !os.IsNotExist(err) {
-							t.Fatalf("excluded support file %s exists: %v", name, err)
+						if _, ok := payloads[name]; ok {
+							t.Fatalf("excluded support file %s exists under %s", name, supportDir)
 						}
 					}
 					for i, name := range []string{"first.sh", "second.sh"} {
-						data, err := os.ReadFile(filepath.Join(supportDir, name))
-						if err != nil || string(data) != "echo support "+strconv.Itoa(i) {
-							t.Fatalf("support %s = %q, %v", name, data, err)
+						if data, ok := payloads[name]; !ok || data != "echo support "+strconv.Itoa(i) {
+							t.Fatalf("support %s = %q", name, data)
 						}
 					}
 					if tt.wantPayload {
-						data, err := os.ReadFile(filepath.Join(supportDir, "payload.json"))
-						if err != nil || string(data) != `{"key":"value"}` {
-							t.Fatalf("payload = %q, %v", data, err)
+						if data, ok := payloads["payload.json"]; !ok || data != `{"key":"value"}` {
+							t.Fatalf("payload = %q", data)
 						}
 					}
 				})

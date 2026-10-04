@@ -40,6 +40,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: cursor
       to: claude
       class: cross
@@ -84,6 +86,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: devin
       to: claude
       class: cross
@@ -135,6 +139,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: factory
       to: claude
       class: cross
@@ -167,6 +173,7 @@ cells:
         - ingest.factory.bundle-manifest-synthesized
       allowedLosses:
         - command
+        - matcher
       roundTripLosses:
         - command
     - from: factory
@@ -187,6 +194,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: gemini
       to: claude
       class: cross
@@ -290,6 +299,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: claude
       to: codex
       class: cross
@@ -396,10 +407,15 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: codex
       to: codex
       class: identity
       diagnostics:
         - ingest.codex.bundle-manifest-synthesized
       allowedLosses:
+        - command
         - name
+      roundTripLosses:
+        - command

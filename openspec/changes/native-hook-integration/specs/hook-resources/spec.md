@@ -703,27 +703,30 @@ SHALL be read.
 - **THEN** ingestion MUST produce one hook per handler from `hooks`
 - **AND** `permissions` MUST NOT produce a resource
 
-#### Scenario: Cursor native hooks are ingested with canonical events
+#### Scenario: Cursor native hooks retain native events on ingestion
 
 - **WHEN** a registry source contains `.cursor/hooks.json` with a
   `beforeSubmitPrompt` handler
-- **THEN** ingestion MUST produce a hook whose canonical event is
-  `UserPromptSubmit`, with Cursor recorded as its source harness
+- **THEN** ingestion MUST produce a hook whose native event is
+  `beforeSubmitPrompt`, with Cursor recorded as its source harness
 
 #### Scenario: Devin Desktop workspace hooks are ingested for Windsurf
 
 - **WHEN** a Windsurf registry source contains `.devin/hooks.json` with a
   `pre_run_command` handler
-- **THEN** ingestion MUST produce a `PreToolUse` hook covering the shell tool,
-  with Windsurf recorded as its source harness
+- **THEN** ingestion MUST produce a hook whose native event is
+  `pre_run_command`, with Windsurf recorded as its source harness
 
 ### Requirement: Existing acquisition locks keep verifying
 
-Hook and tool source provenance SHALL be recorded under a new source-revision
-generator version. Acquisition locks written by earlier supported generator
-versions SHALL keep verifying with their frozen projection through `sync`,
-`sync --locked`, and `sync --check`. Only an explicit `update` SHALL move a
-lock to the new version.
+Hook and tool source provenance SHALL be retained in runtime resources without
+introducing a new source-revision schema or generator version. Existing
+source-revision versions `v1` through `v4` SHALL keep their historical digest
+projections. New hook and tool provenance SHALL NOT change those projections.
+Acquisition locks SHALL keep verifying through `sync`, `sync --locked`, and
+`sync --check` without an implicit lock refresh. An explicit `update` may
+refresh the selected source revision using an already supported generator
+version from `v1` through `v4`.
 
 #### Scenario: Pre-change hook lock verifies unchanged
 
@@ -731,4 +734,5 @@ lock to the new version.
   for a registry that provides hooks
 - **THEN** `sync --locked` and `sync --check` MUST succeed and keep the lock
   bytes
-- **AND** only `update` MUST move the lock to the new source-revision version
+- **AND** an explicit `update` MAY refresh the selected source revision but
+  MUST use an already supported generator version from `v1` through `v4`

@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
@@ -266,12 +267,13 @@ func hooksFromEvents(events map[string][]hookRule, file string, names *hookNamer
 	var resources []ir.Resource
 	var diags []diag.Diagnostic
 	for _, devinEvent := range eventNames {
-		event, eventMatcher, ok := mapping.ReverseHookEvent(devinEvent, mapping.TargetDevin)
-		if !ok {
+		// The event name is preserved verbatim; canonical translation is the
+		// resolver's job through the recorded Devin provenance.
+		event := devinEvent
+		if !hookpolicy.IsDeclaredEvent(mapping.TargetDevin, devinEvent) {
 			// The event NAME is a vocabulary term, not user content, so naming
 			// it is safe and is the only actionable part of the report.
 			slog.Warn("devin hook event unmappable", "source", ingest.HarnessDevin, "event", devinEvent, "file", file)
-			event = devinEvent
 			diags = append(diags, diag.Diagnostic{
 				Code:     diag.CodeIngestDevinHookEventUnmappable,
 				Severity: diag.SeverityWarning,
@@ -294,15 +296,10 @@ func hooksFromEvents(events map[string][]hookRule, file string, names *hookNamer
 				// whether a payload is executed.
 				hookType = "command"
 			}
-			// The rule's own matcher wins over any matcher the event name
-			// implied. Devin never encodes a matcher in the event name (that is
-			// a Windsurf shape), so eventMatcher is always "" today; keeping
-			// the precedence explicit means a future Devin event that DOES
-			// imply one cannot silently override the author's value.
-			matcher := eventMatcher
-			if rule.Matcher != "" {
-				matcher = rule.Matcher
-			}
+			// The authored matcher is kept verbatim; Devin never encodes a
+			// matcher in the event name, so there is no implied matcher to
+			// apply or override.
+			matcher := rule.Matcher
 			name := names.next(event, hookType)
 			options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt), ir.WithHookSource(string(mapping.TargetDevin))}
 			if rule.Timeout != nil {

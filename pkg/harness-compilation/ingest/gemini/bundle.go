@@ -672,7 +672,15 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 				extra = nil
 			}
 
-			baseName := strings.ToLower(strings.ReplaceAll(event, " ", "-")) + "-" + hookType
+			// Hook names become catalog resource keys, so they keep the
+			// historical canonical-event spelling (e.g. BeforeTool hooks are
+			// named pretooluse-command) even though the IR event stays
+			// native.
+			nameEvent := event
+			if canonical, _, known := hookpolicy.LegacyEvent(mapping.TargetGemini, event); known {
+				nameEvent = canonical
+			}
+			baseName := strings.ToLower(strings.ReplaceAll(nameEvent, " ", "-")) + "-" + hookType
 			name := baseName
 			for suffix := 2; usedNames[name]; suffix++ {
 				name = fmt.Sprintf("%s-%d", baseName, suffix)

@@ -34,12 +34,12 @@
   name, missing evidence. Annotate
   `hook-resources/invalid-catalog-fails-the-check`. Verify
   `go test ./pkg/harness-compilation/hookpolicy -count=1` passes
-- [ ] 1.4 Copy `catalogs/testdata/conversions.yaml` to
+- [x] 1.4 Copy `catalogs/testdata/conversions.yaml` to
   `hookpolicy/testdata/conversions.yaml`, and add a fixture runner through
   the public `Compile` path. The fixtures must fail on the unchanged
   translators before sections 2–3 land. Verify the red run, then the green
   run after section 3
-- [ ] 1.5 Add `make catalog-check`. It runs `toolpolicy`/`hookpolicy`
+- [x] 1.5 Add `make catalog-check`. It runs `toolpolicy`/`hookpolicy`
   validation, the conversion fixtures, the matrix goldens, PR #276's
   `model-catalog-check` when present, and the generated-docs freshness
   check. Add `make catalog-docs`, generating
@@ -116,7 +116,7 @@ hook matrix goldens deliberately.
   `renamed-tools-are-accepted-through-aliases`
 - [x] 3.6 Cursor. Annotate `cursor-receives-native-event-names`
 - [x] 3.7 Factory Droid. Annotate `factory-hooks-keep-native-tool-names`
-- [ ] 3.8 Add cross-target tests through the public `Compile` path and
+- [x] 3.8 Add cross-target tests through the public `Compile` path and
   annotate them:
   - `unmappable-events-are-errors-on-every-target`
   - `differently-timed-events-are-never-equated`
@@ -130,33 +130,33 @@ hook matrix goldens deliberately.
   - `unknown-variables-are-left-unchanged`
 
   Verify `go test ./pkg/harness-compilation/... -count=1` passes
-- [ ] 3.9 Delete `compile/mapping/hook_events.go` and the hook entries in
+- [x] 3.9 Delete `compile/mapping/hook_events.go` and the hook entries in
   `envvars.go`, keeping MCP env mapping. Verify nothing references
   `mapping.HookEvent`, `ReverseHookEvent`, or `NativeCodexHookEvent`
 
 ## 4. Ingestion and source revisions
 
-- [ ] 4.1 Record `HookSource` in every ingester and stop normalizing native
+- [x] 4.1 Record `HookSource` in every ingester and stop normalizing native
   values early. Add native-location ingestion for `.claude/settings.json`,
   `.factory/hooks.json`, `.cursor/hooks.json`, and Windsurf's
   `.devin/hooks.json`, with the autodetection rule from the design Risks.
   Annotate:
   - `claude-settings-hooks-are-ingested`
-  - `cursor-native-hooks-are-ingested-with-canonical-events`
+  - `cursor-native-hooks-retain-native-events-on-ingestion`
   - `devin-desktop-workspace-hooks-are-ingested-for-windsurf`
 
   Add a two-way autodetection test for `.devin/`. Verify the ingest tests
   pass
-- [ ] 4.2 Add the next source-revision generator version for hook and tool
-  provenance, with frozen vectors for every earlier supported version and
-  hook- and tool-bearing fixtures for each layout. Annotate a CLI lock test
-  with `pre-change-hook-lock-verifies-unchanged`. Verify
-  `go test ./internal/sourcerevision -count=1` and the command lock tests
-  pass
+- [x] 4.2 Preserve the existing source-revision schemas and generator versions
+  for hook and tool provenance. Keep historical digest projections unchanged,
+  with frozen vectors for every supported version and hook- and tool-bearing
+  fixtures for each layout. Do not introduce a new generator version. Annotate
+  a CLI lock test with `pre-change-hook-lock-verifies-unchanged`. Verify
+  `go test ./internal/sourcerevision -count=1` and the command lock tests pass
 
 ## 5. Materialization (internal consumes library declarations only)
 
-- [ ] 5.1 Replace the hook support routing with per-hook
+- [x] 5.1 Replace the hook support routing with per-hook
   `hook-support/<source>/<hook>/` directories supplied as an opaque base.
   Delete the Factory `${DROID_PLUGIN_ROOT}` byte replacement and the
   cache-root `WithPluginRoot` injection for hooks. Annotate:
