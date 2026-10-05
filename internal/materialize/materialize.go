@@ -2834,10 +2834,16 @@ func portableLinkedDesiredDigest(link skillLink, dryRun bool) (string, error) {
 	if !dryRun {
 		return portablePathDigest(link.target)
 	}
-	if link.cacheDir != "" && len(link.artifacts) == 1 && link.target == filepath.Join(link.cacheDir, filepath.FromSlash(link.artifacts[0].Path)) {
+	if portableLinkIsSingleArtifact(link) {
 		return portableArtifactDigest(link.artifacts[0]), nil
 	}
 	return portableSkillVirtualDigest(link)
+}
+
+// portableLinkIsSingleArtifact reports a link to one compiled cache file, whose
+// desired content comes from the artifact alone rather than a source tree.
+func portableLinkIsSingleArtifact(link skillLink) bool {
+	return link.cacheDir != "" && len(link.artifacts) == 1 && link.target == filepath.Join(link.cacheDir, filepath.FromSlash(link.artifacts[0].Path))
 }
 
 type portableVirtualNode struct {
@@ -2863,87 +2869,24 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		ensureParents(path)
 		nodes[path] = portableVirtualNode{mode: portableArtifactMode(a.Mode), content: a.Bytes}
 	}
-	active := make(map[string]bool)
-	var addSupport func(*fsboundary.Dir, string, string) error
-	addSupport = func(root *fsboundary.Dir, sourceRel, rel string) error {
-		if active[sourceRel] {
-			return fmt.Errorf("%w: cyclic support directory alias", fsboundary.ErrUnsafePath)
+	err := walkPortableSkillSupport(link, func(childRel string) {
+		ensureParents(childRel)
+		// copyDir does not chmod an already-created directory, so an
+		// artifact-created parent keeps its existing 0755 mode.
+		if _, exists := nodes[childRel]; !exists {
+			nodes[childRel] = portableVirtualNode{dir: true, mode: 0o755}
 		}
-		active[sourceRel] = true
-		defer delete(active, sourceRel)
-		entries, err := readSupportSourceDirectory(root, sourceRel)
+	}, func(root *fsboundary.Dir, sourceChild, childRel string) error {
+		data, identity, err := readSupportSourceSnapshot(root, sourceChild)
 		if err != nil {
 			return err
 		}
-		for _, entry := range entries {
-			childRel := filepath.ToSlash(filepath.Join(rel, entry.Name()))
-			if childRel == "SKILL.md" {
-				continue
-			}
-			// Mirror copySupportFilesExcluding: VCS internals are never
-			// part of the support tree, so the dry-run digest must
-			// exclude them exactly like the real cache copy does.
-			if entry.Name() == ".git" {
-				continue
-			}
-			sourceChild, isDir, err := supportSourceChild(root, sourceRel, entry)
-			if errors.Is(err, fs.SkipDir) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if isDir { // copyFile/copyDir follows source links.
-				// Mirror copySupportFilesExcluding: VCS internals are never
-				// part of the support tree, so the dry-run digest must
-				// exclude them exactly like the real cache copy does.
-				if entry.Name() == ".git" {
-					continue
-				}
-				ensureParents(childRel)
-				// copyDir does not chmod an already-created directory, so an
-				// artifact-created parent keeps its existing 0755 mode.
-				if _, exists := nodes[childRel]; !exists {
-					nodes[childRel] = portableVirtualNode{dir: true, mode: 0o755}
-				}
-				if err := addSupport(root, sourceChild, childRel); err != nil {
-					return err
-				}
-				continue
-			}
-			data, identity, err := readSupportSourceSnapshot(root, sourceChild)
-			if err != nil {
-				return err
-			}
-			ensureParents(childRel)
-			nodes[childRel] = portableVirtualNode{mode: identity.Mode.Perm(), content: data}
-		}
+		ensureParents(childRel)
+		nodes[childRel] = portableVirtualNode{mode: identity.Mode.Perm(), content: data}
 		return nil
-	}
-	if link.sourceDir != "" {
-		if len(link.declaredSupport) > 0 {
-			if err := verifyDeclaredSupportFiles(link.sourceDir, link.declaredSupport); err != nil {
-				return "", err
-			}
-		}
-		absolute, err := filepath.Abs(link.sourceDir)
-		if err != nil {
-			return "", err
-		}
-		root, err := fsboundary.OpenDir(absolute)
-		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				return "", err
-			}
-		} else {
-			err = addSupport(root, ".", ".")
-			if closeErr := root.Close(); closeErr != nil {
-				return "", errors.Join(err, closeErr)
-			}
-			if err != nil {
-				return "", err
-			}
-		}
+	})
+	if err != nil {
+		return "", err
 	}
 	paths := make([]string, 0, len(nodes))
 	for path := range nodes {
@@ -2961,6 +2904,85 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		_, _ = h.Write(node.content)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// walkPortableSkillSupport visits the support tree prepareSkillLinkCache would
+// copy from link.sourceDir: contained directory aliases are expanded through
+// the captured source root, escaping/dangling/cyclic aliases refuse, and VCS
+// internals and the compiled primary are skipped. visitFile receives the
+// captured root and the root-relative source path of each support file.
+func walkPortableSkillSupport(link skillLink, visitDir func(childRel string), visitFile func(root *fsboundary.Dir, sourceChild, childRel string) error) error {
+	if link.sourceDir == "" {
+		return nil
+	}
+	if len(link.declaredSupport) > 0 {
+		if err := verifyDeclaredSupportFiles(link.sourceDir, link.declaredSupport); err != nil {
+			return err
+		}
+	}
+	active := make(map[string]bool)
+	var addSupport func(*fsboundary.Dir, string, string) error
+	addSupport = func(root *fsboundary.Dir, sourceRel, rel string) error {
+		if active[sourceRel] {
+			return fmt.Errorf("%w: cyclic support directory alias", fsboundary.ErrUnsafePath)
+		}
+		active[sourceRel] = true
+		defer delete(active, sourceRel)
+		entries, err := readSupportSourceDirectory(root, sourceRel)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			childRel := filepath.ToSlash(filepath.Join(rel, entry.Name()))
+			// Mirror copySupportFilesExcluding: VCS internals are never part
+			// of the support tree, exactly like the real cache copy.
+			if childRel == "SKILL.md" || entry.Name() == ".git" {
+				continue
+			}
+			sourceChild, isDir, err := supportSourceChild(root, sourceRel, entry)
+			if errors.Is(err, fs.SkipDir) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if isDir { // copyFile/copyDir follows source links.
+				visitDir(childRel)
+				if err := addSupport(root, sourceChild, childRel); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := visitFile(root, sourceChild, childRel); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	absolute, err := filepath.Abs(link.sourceDir)
+	if err != nil {
+		return err
+	}
+	root, err := fsboundary.OpenDir(absolute)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	err = addSupport(root, ".", ".")
+	if closeErr := root.Close(); closeErr != nil {
+		return errors.Join(err, closeErr)
+	}
+	return err
+}
+
+// validatePortableSkillSupportStructure applies the support-tree authority
+// rules of the dry-run digest without reading payload bytes: aliases must stay
+// contained and every support payload must be a single-link regular file. A
+// read-only check uses it for symlinks whose desired content is not needed.
+func validatePortableSkillSupportStructure(link skillLink) error {
+	return walkPortableSkillSupport(link, func(string) {}, inspectSupportSourceLeaf)
 }
 
 func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool) (TargetReport, error) {
@@ -3779,7 +3801,6 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 	}
 	report := TargetReport{OutDir: skillsDir}
 	desired := make(map[string]string, len(links))
-	desiredDigests := make(map[string]string, len(links))
 	linkMeta := make(map[string]skillLink, len(links))
 	orderedLinks := append([]skillLink(nil), links...)
 	slices.SortFunc(orderedLinks, func(a, b skillLink) int {
@@ -3789,15 +3810,17 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		return strings.Compare(a.target, b.target)
 	})
 	for _, link := range orderedLinks {
-		if state != nil {
-			digest, err := portableLinkedDesiredDigest(link, dryRun)
-			if err != nil {
-				return report, err
-			}
-			desiredDigests[link.name] = digest
-		}
 		desired[link.name] = link.target
 		linkMeta[link.name] = link
+		// A real sync revalidates the source support tree while preparing the
+		// link cache. A read-only check skips that and hashes desired content
+		// only for legacy migration, so apply the same support-tree authority
+		// structurally, without reading payload bytes, to every linked source.
+		if state != nil && dryRun && !portableLinkIsSingleArtifact(link) {
+			if err := validatePortableSkillSupportStructure(link); err != nil {
+				return report, err
+			}
+		}
 	}
 
 	if !dryRun {
@@ -3823,8 +3846,14 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				if digestErr != nil {
 					return report, digestErr
 				}
-				migrationAllowed = (entry.Digest != "" && currentDigest == entry.Digest) ||
-					(entry.Digest == "" && currentDigest == desiredDigests[name])
+				ownedDigest := entry.Digest
+				if ownedDigest == "" {
+					ownedDigest, digestErr = portableLinkedDesiredDigest(linkMeta[name], dryRun)
+					if digestErr != nil {
+						return report, digestErr
+					}
+				}
+				migrationAllowed = currentDigest == ownedDigest
 			} else {
 				migrationAllowed = true
 			}
