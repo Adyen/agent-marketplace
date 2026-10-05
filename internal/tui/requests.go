@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type requestKind string
@@ -125,6 +125,14 @@ func (s *operationState) finish(id operationID) {
 	if s.accepts(id) {
 		s.active = nil
 	}
+}
+
+// issue allocates a fresh operation identity without taking the serializer.
+// Phase observation for non-serialized operations (sync/update) uses these
+// identities so their events can never be mistaken for another operation's.
+func (s *operationState) issue() operationID {
+	s.next++
+	return s.next
 }
 
 func (m *Model) beginOperation(kind operationKind) (operationID, bool) {

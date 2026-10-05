@@ -55,6 +55,50 @@ describe('registry indexing attempts', () => {
     expect(fetcher.mock.calls[2]?.[0]).not.toContain('before=')
   })
 
+  // spec: marketplace-publication/failed-publication-records-the-conflict-cause
+  it.each([
+    { outcome: 'failed', failure_code: 'publication_conflict', failure_cause: 'Publication conflicts with an existing resource revision.' },
+    { outcome: 'superseded', failure_code: 'superseded', failure_cause: 'A newer configuration superseded this refresh.' },
+  ])('shows recorded diagnostics for $outcome attempts', async (diagnostics) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([{ ...event, ...diagnostics }])))
+    const wrapper = render()
+    await flushPromises()
+    const details = wrapper.find('[aria-label="Attempt diagnostics"]')
+    expect(details.exists()).toBe(true)
+    expect(details.find('code').text()).toBe(diagnostics.failure_code)
+    expect(details.text()).toContain(diagnostics.failure_cause)
+    expect(wrapper.html()).not.toContain('not returned by this endpoint')
+  })
+
+  it.each(['failed', 'superseded'])('explains absent historical diagnostics for %s attempts', async (outcome) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([{ ...event, outcome }])))
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('[aria-label="Attempt diagnostics"]').text()).toContain('No failure details were recorded for this attempt.')
+    expect(wrapper.html()).not.toContain('not returned by this endpoint')
+  })
+
+  it.each(['started', 'succeeded'])('does not show failure details for %s attempts', async (outcome) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([{ ...event, outcome, failure_code: 'unexpected', failure_cause: 'Unexpected details' }])))
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('[aria-label="Attempt diagnostics"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Unexpected details')
+  })
+
+  it('renders diagnostic values as text rather than markup', async () => {
+    const failure_code = '<img src=x onerror=alert(1)>'
+    const failure_cause = '<script>alert(1)</script>'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([{ ...event, failure_code, failure_cause }])))
+    const wrapper = render()
+    await flushPromises()
+    const details = wrapper.find('[aria-label="Attempt diagnostics"]')
+    expect(details.text()).toContain(failure_code)
+    expect(details.text()).toContain(failure_cause)
+    expect(details.find('img').exists()).toBe(false)
+    expect(details.find('script').exists()).toBe(false)
+  })
+
   it('does not present a failed initial request as an empty successful history', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')))
     const wrapper = render()

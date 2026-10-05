@@ -57,6 +57,7 @@ type readOnlyExactView struct {
 func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, allowMissingLocks bool) (context.Context, readOnlyExactView) {
 	bySource := make(map[string]readOnlyLockedGit)
 	byIdentity := make(map[string][]readOnlyLockedGit)
+	verifiedCatalogs := make(map[string]map[string]*catalog.Catalog)
 	var metadata []LockMetadata
 	var viewErrors []error
 	var viewWarnings []error
@@ -137,10 +138,18 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 			}
 			if openErr == nil {
 				for _, root := range registry.Roots {
-					if _, verifyErr := sourcerevision.VerifyLockedGitRoot(snapshot, root); verifyErr != nil {
+					verified, verifyErr := sourcerevision.VerifyLockedGitRootWithCatalog(snapshot, root)
+					if verifyErr != nil {
 						errorCode = "lock.manifest-mismatch"
 						openErr = fmt.Errorf("verify locked root %q: %w", root.Path, verifyErr)
 						break
+					}
+					if verified.Catalog != nil && root.RevisionSchema == lockfile.CurrentRevisionSchema {
+						path := filepath.Clean(filepath.Join(snapshot, filepath.FromSlash(root.Path)))
+						if verifiedCatalogs[path] == nil {
+							verifiedCatalogs[path] = make(map[string]*catalog.Catalog)
+						}
+						verifiedCatalogs[path][root.SourceHarness] = verified.Catalog
 					}
 				}
 			}
@@ -185,7 +194,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 		}
 		return locked.snapshot, canonical + "@" + locked.commit + ":" + entry.Path, nil
 	})
-	return ctx, readOnlyExactView{catalogOption: catalog.WithExactSnapshots(exactSnapshot), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors, warnings: viewWarnings, release: releaseAll}
+	return ctx, readOnlyExactView{catalogOption: catalog.WithVerifiedExactSnapshots(exactSnapshot, verifiedCatalogs), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors, warnings: viewWarnings, release: releaseAll}
 }
 
 func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries []config.RegistryEntry) (lockfile.Document, error) {

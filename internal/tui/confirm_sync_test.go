@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // noopSyncCmd replaces runSyncCmd in tests so that anyCmdProducesQuitMsg
@@ -125,8 +125,8 @@ func TestSyncDoneMsgWithoutQuitAfterSyncDoesNotQuit(t *testing.T) {
 	updated, cmd := m.Update(syncDoneMsg{err: nil})
 	got := updated.(Model)
 
-	if got.syncing {
-		t.Fatalf("syncDoneMsg should clear syncing")
+	if !got.syncing {
+		t.Fatalf("syncDoneMsg should keep syncing active until the authoritative reload")
 	}
 	if got.quitAfterSync {
 		t.Fatalf("syncDoneMsg should not set quitAfterSync")
@@ -188,6 +188,7 @@ func TestConfirmCancelClearsQuitAfterSync(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/guarded-submission
 func TestConfirmYesWhileSyncingDoesNotStartSecondSync(t *testing.T) {
 	m := newTestModel()
 	m.pane = paneConfirm

@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -98,58 +97,51 @@ func migrationPathsForPrompt(prompt migrationPrompt) config.MigratePaths {
 	return paths
 }
 
-var styleMigrationModal = lipgloss.NewStyle().
-	Border(lipgloss.DoubleBorder()).
-	BorderForeground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"}).
-	Background(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1A1A1A"}).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1A1A1A", Dark: "#F8F8F2"}).
-	Padding(1, 2)
-
+// renderMigrationModal leads with what was found and the decision, so the
+// explanatory detail is what drops first on short terminals.
 func renderMigrationModal(m Model) string {
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"}).
-		Render("Configuration migration required")
-
-	keyStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"})
-
-	dim := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"})
-
-	var b strings.Builder
-	b.WriteString(title + "\n\n")
-	b.WriteString("This configuration can be migrated to agent-marketplace/v4.\n")
-	b.WriteString("Existing v2 and v3 configurations remain readable if you decline.\n")
-	b.WriteString("The migrated root declares:\n```yaml\napiVersion: agent-marketplace/v4\n```\n\n")
-	b.WriteString("Runs the in-process equivalent of:\n")
-	b.WriteString("```sh\nagent-marketplace migrate --scope user\n```\n\n")
-	b.WriteString("The migration preserves source selections and layer policies, but regenerates canonical YAML.\n\n")
-	b.WriteString("Detected legacy configuration in:\n")
+	t := m.currentTheme()
+	title := warnTitleStyle(t).Render("Configuration migration required")
+	body := []string{"Legacy configuration found:"}
 	for _, cfg := range m.migrationPrompt.configs {
-		fmt.Fprintf(&b, "  • %s: %s\n", cfg.label, cfg.path)
+		body = append(body, fmt.Sprintf("  • %s: %s", cfg.label, shortenPath(cfg.path, m.homeDir, modalInnerWidth(m)-6-len(cfg.label))))
 	}
-	b.WriteString("\n")
-	b.WriteString(dim.Render("Migration is transactional; unsupported or lossy inputs are left unchanged."))
-	b.WriteString("\n\n")
-	b.WriteString("  " + keyStyle.Render("[enter]") + " or " + keyStyle.Render("[m]") + "  migrate to v4\n")
-	b.WriteString("  " + keyStyle.Render("[l]") + " or " + keyStyle.Render("[esc]") + "  leave config unchanged")
-
-	return styleMigrationModal.Render(b.String())
+	body = append(body, "", "Migrate it to agent-marketplace/v4? Existing v2 and v3 configurations remain readable if you leave them unchanged.")
+	m.ensureMigrationForm()
+	if m.migrationForm != nil {
+		body = append(body, "", m.migrationForm.View())
+	}
+	dim := dimTextStyle(t)
+	body = append(body, "",
+		dim.Render("Equivalent command:  agent-marketplace migrate --scope user"),
+		dim.Render("Migrated root:       apiVersion: agent-marketplace/v4"),
+		dim.Render("The migration preserves source selections and layer policies, but regenerates canonical YAML. It is transactional; unsupported or lossy inputs are left unchanged."))
+	return modalFrame(m, t.warn, title, body, []footerHint{{"enter/m", "migrate"}, {"l/esc", "leave unchanged"}})
 }
 
-func (m Model) handleMigrationModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, m.keys.MigrationRun):
-		m.pane = paneList
-		return m, m.runMigrationCmd()
-	case key.Matches(msg, m.keys.MigrationLeave):
-		m.pane = paneList
-		m.migrationDismissed = true
-		m.toast = "Config left unchanged"
-		m.toastExp = time.Now().Add(2 * time.Second)
-		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), toastExpiryCmd(2*time.Second))
+func (m Model) handleMigrationModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.ensureMigrationForm()
+	if key.Matches(msg, m.keys.MigrationLeave) {
+		return m.leaveMigration()
+	}
+	m.migrationForm = updateModalForm(m.migrationForm, msg)
+	if m.migrationForm != nil && m.migrationForm.State == huh.StateCompleted {
+		if m.migrationValue != nil && *m.migrationValue {
+			m.pane = paneList
+			m.migrationForm = nil
+			m.migrationValue = nil
+			return m, m.runMigrationCmd()
+		}
+		return m.leaveMigration()
 	}
 	return m, nil
+}
+
+func (m Model) leaveMigration() (tea.Model, tea.Cmd) {
+	m.pane = paneList
+	m.migrationForm = nil
+	m.migrationValue = nil
+	m.migrationDismissed = true
+	m.pushToast("Config left unchanged", 2*time.Second)
+	return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), toastExpiryCmd(2*time.Second))
 }
