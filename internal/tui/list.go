@@ -2,21 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
+	"charm.land/lipgloss/v2"
 	"github.com/Adyen/agent-marketplace/internal/skill"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/cellbuf"
-)
-
-var (
-	styleSectionHeader = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
-
-	styleSectionCount = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#888888"})
 )
 
 // renderList renders the left pane using the precomputed m.flatItems slice.
@@ -24,7 +16,7 @@ var (
 // existing glyph + name rendering. The cursor highlights either a section
 // header or a skill row depending on what it points to.
 func renderList(m Model, visibleHeight int) string {
-	if m.loading {
+	if m.loading && len(m.flatItems) == 0 {
 		return styleListEmpty.Render("Loading resources...")
 	}
 
@@ -41,14 +33,23 @@ func renderList(m Model, visibleHeight int) string {
 	}
 	var b strings.Builder
 	renderedHeight := 0
+	compact := compactTerminalLayout(m)
 	for i := m.listOffset; i < len(m.flatItems); i++ {
-		line := formatFlatItem(m.flatItems[i], listWidth)
+		var line string
+		var itemHeight int
 		if i == m.cursor {
-			line = styleSelected.Render(line)
+			// Wrap before styling: a whole-line SGR run has no breakable
+			// spaces, so wrapping after styling would split words.
+			line, itemHeight = fitFlatItem(m.flatItems[i], formatFlatItem(m.flatItems[i], listWidth, compact), listWidth)
+			wrapped := strings.Split(line, "\n")
+			for j, l := range wrapped {
+				wrapped[j] = styleSelected.Render(l)
+			}
+			line = strings.Join(wrapped, "\n")
 		} else {
-			line = stylizeFlatItem(m.flatItems[i], listWidth)
+			line = stylizeFlatItem(m.flatItems[i], listWidth, compact)
+			line, itemHeight = fitFlatItem(m.flatItems[i], line, listWidth)
 		}
-		line, itemHeight := fitFlatItem(m.flatItems[i], line, listWidth)
 		if renderedHeight > 0 && renderedHeight+itemHeight > visibleHeight {
 			break
 		}
@@ -63,8 +64,30 @@ func renderList(m Model, visibleHeight int) string {
 	return b.String()
 }
 
-func flatItemHeight(item flatItem, width int) int {
-	_, height := fitFlatItem(item, formatFlatItem(item, width), width)
+func flatItemHeight(item flatItem, width int, compact bool) int {
+	if item.Kind == flatSection {
+		if width < 1 {
+			return 0
+		}
+		return 1
+	}
+	memo := item.Row.labelMemo
+	color := colorCapable()
+	if memo != nil && memo.valid && memo.depth == item.Depth &&
+		memo.width == width && memo.compact == compact && memo.color == color {
+		return memo.height
+	}
+	_, height := fitFlatItem(item, formatFlatItem(item, width, compact), width)
+	if memo != nil {
+		*memo = rowLabelMemo{
+			depth:   item.Depth,
+			width:   width,
+			compact: compact,
+			color:   color,
+			height:  height,
+			valid:   true,
+		}
+	}
 	return height
 }
 
@@ -82,8 +105,53 @@ func fitFlatItem(it flatItem, line string, width int) (string, int) {
 	if ansi.StringWidth(line) <= width {
 		return line, 1
 	}
-	wrapped := cellbuf.Wrap(line, width, "")
+	wrapped := wrapFlatItemLine(line, width)
 	return wrapped, strings.Count(wrapped, "\n") + 1
+}
+
+// wordRunes matches the non-space segments wrapFlatItemLine treats as
+// unbreakable words, keeping every separator byte verbatim.
+var wordRunes = regexp.MustCompile(`\S+`)
+
+// wrapFlatItemLine wraps a rendered row at spaces only, so hyphenated names
+// (and badges like "P-") stay contiguous and legible. It never substitutes
+// input characters; a word that still exceeds the width (e.g. a name longer
+// than the whole pane) falls back to a hard wrap to keep the output bounded.
+func wrapFlatItemLine(line string, width int) string {
+	var lines []string
+	var cur strings.Builder
+	curWidth := 0
+	flush := func() {
+		if cur.Len() > 0 {
+			lines = append(lines, cur.String())
+			cur.Reset()
+			curWidth = 0
+		}
+	}
+	pos := 0
+	for _, loc := range wordRunes.FindAllStringIndex(line, -1) {
+		sep, word := line[pos:loc[0]], line[loc[0]:loc[1]]
+		pos = loc[1]
+		wordWidth := ansi.StringWidth(word)
+		if wordWidth > width {
+			flush()
+			segments := strings.Split(ansi.Hardwrap(word, width, false), "\n")
+			lines = append(lines, segments[:len(segments)-1]...)
+			cur.WriteString(segments[len(segments)-1])
+			curWidth = ansi.StringWidth(segments[len(segments)-1])
+			continue
+		}
+		if sepWidth := ansi.StringWidth(sep); cur.Len() > 0 && curWidth+sepWidth+wordWidth > width {
+			flush()
+		} else {
+			cur.WriteString(sep)
+			curWidth += sepWidth
+		}
+		cur.WriteString(word)
+		curWidth += wordWidth
+	}
+	flush()
+	return strings.Join(lines, "\n")
 }
 
 // fitSectionTitle truncates a section title so indent + fold glyph + title
@@ -100,9 +168,8 @@ func fitSectionTitle(title string, depth, count, width int) string {
 
 // formatFlatItem returns the unstyled text for a flat item, used for the
 // selected (highlighted) row. Sections indent by SectionDepth, skill rows
-// indent by Depth (which buildTree sets to SectionDepth+1 of the enclosing
-// section).
-func formatFlatItem(it flatItem, width int) string {
+// indent by Depth (which buildStatusTree sets to 1 for resource rows).
+func formatFlatItem(it flatItem, width int, compact bool) string {
 	switch it.Kind {
 	case flatSection:
 		indent := strings.Repeat("  ", it.SectionDepth)
@@ -114,24 +181,20 @@ func formatFlatItem(it flatItem, width int) string {
 	case flatArtifact:
 		indent := strings.Repeat("  ", it.Depth)
 		r := it.Row
-		g := r.Glyph()
+		g := statusSymbol(r)
+		badge := scopeBadgeColumn(r)
 		name := resourceLabel(r)
-		badge := originBadge(r)
-		badgeSuffix := ""
-		if badge != "" {
-			badgeSuffix = " " + badge
-		}
 		harnessSuffix := ""
 		if hb := harnessBadge(r); hb != "" {
 			harnessSuffix = " " + hb
 		}
-		return fmt.Sprintf("%s%s %s%s%s", indent, g, name, badgeSuffix, harnessSuffix)
+		return fmt.Sprintf("%s%s %s %s%s", indent, g, badge, name, harnessSuffix)
 	}
 	return ""
 }
 
 // stylizeFlatItem applies per-element colors for unselected rows.
-func stylizeFlatItem(it flatItem, width int) string {
+func stylizeFlatItem(it flatItem, width int, compact bool) string {
 	switch it.Kind {
 	case flatSection:
 		indent := strings.Repeat("  ", it.SectionDepth)
@@ -145,23 +208,55 @@ func stylizeFlatItem(it flatItem, width int) string {
 	case flatArtifact:
 		indent := strings.Repeat("  ", it.Depth)
 		r := it.Row
-		g := r.Glyph()
+		g := statusSymbol(r)
 		name := resourceLabel(r)
-		glyphRendered := glyphStyle(g).Render(g)
-		badge := originBadge(r)
-		badgeSuffix := ""
-		if badge != "" {
-			badgeSuffix = " " + badgeStyle(badge).Render(badge)
+		if len(r.searchMatchRunes) > 0 {
+			name = highlightNameMatches(r, name)
 		}
+		glyphRendered := glyphStyle(g).Render(g)
+		badge := badgeStyle(originBadge(r)).Render(scopeBadgeColumn(r))
 		harnessSuffix := ""
 		if hb := harnessBadge(r); hb != "" {
 			harnessSuffix = " " + harnessBadgeStyle().Render(hb)
 		}
-		return fmt.Sprintf("%s%s %s%s%s", indent, glyphRendered, name, badgeSuffix, harnessSuffix)
+		return fmt.Sprintf("%s%s %s %s%s", indent, glyphRendered, badge, name, harnessSuffix)
 	}
-	return formatFlatItem(it, width)
+	return formatFlatItem(it, width, compact)
 }
 
 func resourceLabel(r row) string {
-	return sanitizeTerminalData(skill.KindLabel(r.Artifact.Kind)+" "+r.Artifact.Name, terminalSingleLine)
+	registry := r.RegistryName
+	if registry == "" {
+		registry = registryDisplayName(r.RegistryURL)
+	}
+	if registry == "" {
+		registry = "(local)"
+	}
+	return sanitizeTerminalData(skill.KindLabel(r.Artifact.Kind)+" "+registry+"/"+r.Artifact.Name, terminalSingleLine)
+}
+
+func scopeBadgeColumn(r row) string {
+	if r.IsAvailable || r.IsMalformed {
+		return "   "
+	}
+	badge := originBadge(r)
+	for ansi.StringWidth(badge) < 3 {
+		badge += " "
+	}
+	return badge
+}
+
+// highlightNameMatches styles the matched name runes inside the sanitized
+// label, shifting the name-relative indexes by the kind prefix width.
+func highlightNameMatches(r row, label string) string {
+	nameWidth := utf8.RuneCountInString(sanitizeTerminalData(r.Artifact.Name, terminalSingleLine))
+	offset := utf8.RuneCountInString(label) - nameWidth
+	if offset < 0 {
+		return label
+	}
+	idx := make([]int, 0, len(r.searchMatchRunes))
+	for _, ri := range r.searchMatchRunes {
+		idx = append(idx, ri+offset)
+	}
+	return lipgloss.StyleRunes(label, idx, styleSearchMatch, lipgloss.NewStyle())
 }

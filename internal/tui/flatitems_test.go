@@ -8,37 +8,18 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func TestModelRebuildFlatItemsReflectsActiveTab(t *testing.T) {
+func TestModelRebuildFlatItemsGroupsByStatus(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
-		mkRow("deploy", withProject, withRegistry("infra.git", "infra")),
+		mkRow("deploy", withAvailable, withRegistry("infra.git", "infra")),
 	}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 
 	paths := sectionPaths(m.flatItems)
-	found := false
-	for _, p := range paths {
-		if p == "scope:global" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("scope tab should yield scope:global section, got %v", paths)
-	}
-
-	m.activeTab = tabRegistry
-	m.rebuildFlatItems()
-	paths = sectionPaths(m.flatItems)
-	found = false
-	for _, p := range paths {
-		if p == "registry:skills:security" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("registry tab should yield registry:skills:security, got %v", paths)
+	if len(paths) != 2 || paths[0] != "status:enabled" || paths[1] != "status:available" {
+		t.Fatalf("expected status sections [status:enabled status:available], got %v", paths)
 	}
 }
 
@@ -48,15 +29,15 @@ func TestToggleFoldCurrentSectionTogglesFoldState(t *testing.T) {
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 
-	// Move cursor to the top-level scope:global section.
+	// Move cursor to the status:enabled section.
 	m.cursor = 0
-	if m.flatItems[m.cursor].SectionPath != "scope:global" {
-		t.Fatalf("expected cursor on scope:global, got %q", m.flatItems[m.cursor].SectionPath)
+	if m.flatItems[m.cursor].SectionPath != "status:enabled" {
+		t.Fatalf("expected cursor on status:enabled, got %q", m.flatItems[m.cursor].SectionPath)
 	}
 
 	m.toggleFoldAtCursor()
-	if !m.currentFoldState()["scope:global"] {
-		t.Fatalf("toggleFoldAtCursor should collapse scope:global")
+	if !m.currentFoldState()["status:enabled"] {
+		t.Fatalf("toggleFoldAtCursor should collapse status:enabled")
 	}
 
 	m.rebuildFlatItems()
@@ -64,15 +45,15 @@ func TestToggleFoldCurrentSectionTogglesFoldState(t *testing.T) {
 	// When collapsed, child items must not appear.
 	for _, it := range m.flatItems {
 		if it.Kind == flatArtifact && it.Row.Artifact.Name == "audit" {
-			t.Fatalf("audit should be hidden under collapsed scope:global")
+			t.Fatalf("audit should be hidden under collapsed status:enabled")
 		}
 	}
 
 	// Toggle again — expand.
 	m.cursor = 0
 	m.toggleFoldAtCursor()
-	if m.currentFoldState()["scope:global"] {
-		t.Fatalf("toggleFoldAtCursor should expand scope:global on second call")
+	if m.currentFoldState()["status:enabled"] {
+		t.Fatalf("toggleFoldAtCursor should expand status:enabled on second call")
 	}
 }
 
@@ -80,14 +61,14 @@ func TestCollapseAllAndExpandAllAffectAllSections(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
 		mkRow("a", withGlobal, withRegistry("sec.git", "security")),
-		mkRow("b", withProject, withRegistry("infra.git", "infra")),
+		mkRow("b", withAvailable, withRegistry("infra.git", "infra")),
 	}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 
 	m.collapseAllSections()
 	fs := m.currentFoldState()
-	if !fs["scope:global"] || !fs["scope:project"] {
+	if !fs["status:enabled"] || !fs["status:available"] {
 		t.Fatalf("collapseAllSections should collapse all top-level sections, got %v", fs)
 	}
 
@@ -100,58 +81,31 @@ func TestCollapseAllAndExpandAllAffectAllSections(t *testing.T) {
 	}
 }
 
-func TestFoldStateIsPerTab(t *testing.T) {
-	m := NewModel("/repo", "/home")
-	m.rows = []row{
-		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
-	}
-	m.filteredRows = m.rows
-
-	// Collapse scope:global on the Scope tab.
-	m.rebuildFlatItems()
-	m.cursor = 0
-	m.toggleFoldAtCursor()
-
-	// Switch to Registry tab — scope:global fold should not bleed over.
-	m.switchTab(tabRegistry)
-	m.rebuildFlatItems()
-	if m.currentFoldState()["scope:global"] {
-		t.Fatalf("Registry tab should not share Scope tab's fold state")
-	}
-
-	// Back to Scope — fold state restored.
-	m.switchTab(tabScope)
-	m.rebuildFlatItems()
-	if !m.currentFoldState()["scope:global"] {
-		t.Fatalf("Scope tab fold state should persist across tab switches")
-	}
-}
-
 func TestCursorSkipsFromFoldedSectionToNextVisible(t *testing.T) {
-	// With scope:global collapsed, pressing down from scope:global should
-	// land on the next visible item (scope:project or subsequent section).
+	// With status:enabled collapsed, pressing down from it should land on the
+	// next visible item (status:available).
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
 		mkRow("a", withGlobal, withRegistry("sec.git", "security")),
-		mkRow("b", withProject, withRegistry("infra.git", "infra")),
+		mkRow("b", withAvailable, withRegistry("infra.git", "infra")),
 	}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 
-	// cursor on scope:global, collapse it.
+	// cursor on status:enabled, collapse it.
 	m.cursor = 0
 	m.toggleFoldAtCursor()
 	m.rebuildFlatItems()
 
-	// After collapse, scope:global is still at index 0; pressing down should
-	// go to scope:project (next top-level section).
+	// After collapse, status:enabled is still at index 0; pressing down should
+	// go to status:available (next top-level section).
 	m.cursor = 0
 	if m.cursor+1 >= len(m.flatItems) {
 		t.Fatalf("expected at least 2 flat items after collapse, got %d", len(m.flatItems))
 	}
 	next := m.flatItems[1]
-	if next.Kind != flatSection || next.SectionPath != "scope:project" {
-		t.Fatalf("expected scope:project at index 1 after collapse, got %+v", next)
+	if next.Kind != flatSection || next.SectionPath != "status:available" {
+		t.Fatalf("expected status:available at index 1 after collapse, got %+v", next)
 	}
 }
 
@@ -196,7 +150,7 @@ func TestSelectedRowReturnsFalseForSectionCursor(t *testing.T) {
 	}
 }
 
-func TestRenderListIndentsNestedSectionsUnderParent(t *testing.T) {
+func TestRenderListIndentsRowsUnderSection(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.loading = false
 	m.rows = []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
@@ -206,25 +160,25 @@ func TestRenderListIndentsNestedSectionsUnderParent(t *testing.T) {
 	out := renderList(m, 24)
 	lines := splitByNewline(out)
 
-	// Find the Global and security lines.
-	var globalLine, securityLine string
+	// Find the Enabled header and the audit row.
+	var sectionLine, rowLine string
 	for _, l := range lines {
-		if contains(l, "Global") {
-			globalLine = l
+		if contains(l, "Enabled") {
+			sectionLine = l
 		}
-		if contains(l, "security") {
-			securityLine = l
+		if contains(l, "audit") {
+			rowLine = l
 		}
 	}
-	if globalLine == "" || securityLine == "" {
-		t.Fatalf("expected Global and security lines in:\n%s", out)
+	if sectionLine == "" || rowLine == "" {
+		t.Fatalf("expected Enabled and audit lines in:\n%s", out)
 	}
 
-	globalIndent := leadingSpaces(globalLine)
-	securityIndent := leadingSpaces(securityLine)
-	if securityIndent <= globalIndent {
-		t.Fatalf("nested 'security' (indent=%d) should indent deeper than parent 'Global' (indent=%d)",
-			securityIndent, globalIndent)
+	sectionIndent := leadingSpaces(sectionLine)
+	rowIndent := leadingSpaces(rowLine)
+	if rowIndent <= sectionIndent {
+		t.Fatalf("row 'audit' (indent=%d) should indent deeper than section 'Enabled' (indent=%d)",
+			rowIndent, sectionIndent)
 	}
 }
 
@@ -279,8 +233,9 @@ func TestRenderListShowsSectionHeadersAndSkillLines(t *testing.T) {
 
 	out := renderList(m, 24)
 
-	// Should contain the Global section header (▼ glyph + title) and the skill.
-	for _, fragment := range []string{"Global", "audit", "▼"} {
+	// Should contain the Enabled section header (▼ glyph + title) and the
+	// registry-qualified skill label.
+	for _, fragment := range []string{"Enabled", "security/audit", "▼"} {
 		if !contains(out, fragment) {
 			t.Fatalf("renderList output missing %q:\n%s", fragment, out)
 		}
@@ -293,7 +248,7 @@ func TestRenderListUsesCollapsedGlyphForFoldedSections(t *testing.T) {
 	m.rows = []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
-	// Collapse scope:global
+	// Collapse status:enabled
 	m.cursor = 0
 	m.toggleFoldAtCursor()
 	m.rebuildFlatItems()
@@ -375,6 +330,7 @@ func TestRenderListShowsRegistryOverrideHarnessBadge(t *testing.T) {
 func TestRenderListShowsResourceKindForEveryRow(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.loading = false
+	m.width = 120
 	m.rows = []row{
 		mkRow("audit", withGlobal, withKind(ir.KindSkill), withRegistry("resources.git", "resources")),
 		mkRow("continue", withGlobal, withKind(ir.KindCommand), withRegistry("resources.git", "resources")),
@@ -386,7 +342,7 @@ func TestRenderListShowsResourceKindForEveryRow(t *testing.T) {
 	m.rebuildFlatItems()
 
 	out := renderList(m, 24)
-	for _, want := range []string{"skill audit", "command continue", "subagent worker", "hook pre-tool-use", "mcp memory"} {
+	for _, want := range []string{"skill resources/audit", "command resources/continue", "subagent resources/worker", "hook resources/pre-tool-use", "mcp resources/memory"} {
 		if !contains(out, want) {
 			t.Fatalf("renderList output missing %q:\n%s", want, out)
 		}
