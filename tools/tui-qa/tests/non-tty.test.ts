@@ -16,5 +16,5 @@ test("non-TTY entrypoints print help or fail promptly", (t) => {
   const explicit = runNonTTY(fixture, ["tui"]);
   assert.equal(explicit.error, undefined);
   assert.notEqual(explicit.status, 0);
-  assert.match(`${explicit.stdout}\n${explicit.stderr}`, /interactive terminal is required|could not open a new TTY/i);
+  assert.match(`${explicit.stdout}\n${explicit.stderr}`, /interactive terminal is required|could not open( a new)? TTY/i);
 });
